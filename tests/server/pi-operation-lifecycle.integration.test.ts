@@ -619,6 +619,32 @@ describe("native shell input", () => {
     expect((await readFile(String(truncated.fullOutputPath))).length).toBe(
       80000,
     );
+    const tree = await f.runtime.branchTree(f.sessionId);
+    const shellNodes = tree.nodes.filter((node) => node.role === "shell");
+    expect(shellNodes).toHaveLength(3);
+    expect(
+      shellNodes.every(
+        (node) => node.canSwitch && !node.canEdit && !node.canFork,
+      ),
+    ).toBe(true);
+    for (const [query, command, context] of [
+      ["EXTENSION_BASH_RESULT", "!!fixture-hook", "Excluded from context"],
+      ["EXTENSION_CUSTOM_OPERATIONS", "!fixture-ops", "Included in context"],
+    ]) {
+      const matches = await f.runtime.branchTree(f.sessionId, { query });
+      const node = matches.nodes.find(
+        (candidate) => candidate.role === "shell",
+      )!;
+      const detail = await f.runtime.branchEntry({
+        sessionId: f.sessionId,
+        viewId: snapshot.active!.transcriptPage.viewId,
+        targetId: node.id,
+        offset: 0,
+      });
+      expect(detail.text).toContain(command);
+      expect(detail.text).toContain(context);
+      expect(detail.text).not.toContain('"role"');
+    }
     expect(f.modelRequests).toHaveLength(0);
     expect(snapshot.active?.projectionConflict).toBeNull();
   }, 20_000);
@@ -890,6 +916,7 @@ async function compactThenReturnToEarlierPoint(
     revision: tree.revision,
     targetId: "00000008",
     mode: "switch",
+    summarize: false,
   });
 }
 

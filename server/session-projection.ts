@@ -15,6 +15,8 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { interruptAssistantToolCalls } from "../shared/assistant-stream.js";
 import {
+  type BranchEntryResponse,
+  type BranchTreeQuery,
   type BranchTreeResponse,
   type ComposerHistoryPage,
   MAX_SESSION_ID_CHARS,
@@ -46,8 +48,13 @@ import { projectSafeValue } from "./safe-projection.js";
 import type { SessionRecord } from "./session-catalog.js";
 import { JsonlObjectDecoder } from "./session-jsonl.js";
 import {
+  BRANCH_CONTENT_PAGE_CHARS,
   BRANCH_TREE_MAX_BYTES,
+  boundedEditableText,
   boundedUserText,
+  branchEntryContent,
+  branchEntryText,
+  branchNode,
   projectSessionTree,
 } from "./session-tree.js";
 
@@ -213,7 +220,17 @@ export interface SessionProjectionView {
     cwd?: string,
     fileNameForPath?: ComposerHistoryFileNameResolver,
   ): ComposerHistoryPage;
-  branchTree(effectiveLeafId?: string | null): BranchTreeResponse;
+  branchTree(
+    effectiveLeafId?: string | null,
+    query?: BranchTreeQuery,
+  ): BranchTreeResponse;
+  branchEntry(
+    id: string,
+    offset: number,
+    effectiveLeafId: string | null,
+  ): BranchEntryResponse;
+  branchImage(id: string, index: number): { data: Buffer; mimeType: string };
+  editableText(id: string, maxChars: number): string;
   entry(id: string): ProjectionEntryTarget | null;
   /** Committed append suffix after an operation's admitted durable tail. */
   entriesAfter(tailEntryId: string | null): readonly SessionEntry[];
@@ -1168,8 +1185,55 @@ export class SessionProjection
     return boundedUserText(entry, maxChars);
   }
 
+  editableText(id: string, maxChars: number): string {
+    const entry = this.currentEntriesById.get(id);
+    if (!entry) throw requestError("Branch target does not exist", 404);
+    return boundedEditableText(entry, maxChars);
+  }
+
+  branchEntry(
+    id: string,
+    offset: number,
+    effectiveLeafId: string | null,
+  ): BranchEntryResponse {
+    const entry = this.currentEntriesById.get(id);
+    if (!entry) throw requestError("History point no longer exists", 404);
+    const text = branchEntryText(entry, "separate");
+    if (offset > text.length)
+      throw requestError("History content offset is invalid", 400);
+    const end = Math.min(text.length, offset + BRANCH_CONTENT_PAGE_CHARS);
+    const content = branchEntryContent(entry);
+    const images = Array.isArray(content)
+      ? content.flatMap((block, index) =>
+          block.type === "image" ? [{ index, mimeType: block.mimeType }] : [],
+        )
+      : [];
+    return {
+      sessionId: this.sessionId,
+      revision: this.revision,
+      node: branchNode(entry, false, id === effectiveLeafId),
+      text: text.slice(offset, end),
+      totalChars: text.length,
+      nextOffset: end < text.length ? end : null,
+      images,
+    };
+  }
+
+  branchImage(id: string, index: number): { data: Buffer; mimeType: string } {
+    const entry = this.currentEntriesById.get(id);
+    const content = entry ? branchEntryContent(entry) : undefined;
+    const block = Array.isArray(content) ? content[index] : undefined;
+    if (block?.type !== "image")
+      throw requestError("History image no longer exists", 404);
+    return {
+      data: Buffer.from(block.data, "base64"),
+      mimeType: block.mimeType,
+    };
+  }
+
   branchTree(
     effectiveLeafId: string | null = this.currentLeafId,
+    query: BranchTreeQuery = {},
   ): BranchTreeResponse {
     if (
       effectiveLeafId !== null &&
@@ -1177,7 +1241,11 @@ export class SessionProjection
     ) {
       throw requestError("Effective branch leaf does not exist", 409);
     }
-    const tree = projectSessionTree(this.currentEntries, effectiveLeafId);
+    const tree = projectSessionTree(
+      this.currentEntries,
+      effectiveLeafId,
+      query,
+    );
     const response: BranchTreeResponse = {
       sessionId: this.sessionId,
       revision: this.revision,
@@ -1186,7 +1254,11 @@ export class SessionProjection
       effectiveLeafId,
       activePath: tree.activePath,
       nodes: tree.nodes,
+      ...(tree.leadingPrompt ? { leadingPrompt: tree.leadingPrompt } : {}),
       truncated: tree.truncated,
+      nextBefore: tree.nextBefore,
+      routeLeafId: tree.routeLeafId,
+      rootCount: tree.rootCount,
       health: this.health,
     };
     if (Buffer.byteLength(JSON.stringify(response)) > BRANCH_TREE_MAX_BYTES) {

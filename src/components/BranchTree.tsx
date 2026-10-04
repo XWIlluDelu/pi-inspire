@@ -1,16 +1,15 @@
 import {
   AlertTriangle,
+  ArrowLeft,
+  ChevronDown,
   ChevronRight,
-  ChevronsDownUp,
-  ChevronsUpDown,
-  GitFork,
+  GitBranch,
   History,
   Loader2,
-  PencilLine,
   Search,
 } from "lucide-react";
 import {
-  type CSSProperties,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -18,576 +17,507 @@ import {
   useState,
 } from "react";
 import type {
+  BranchEntryResponse,
   BranchTreeNode,
+  BranchTreeQuery,
   BranchTreeResponse,
 } from "../../shared/contracts";
 import { sessionDraft } from "../session-drafts";
+import { resourceReferenceFromEventTarget } from "../resources";
 import { shallowEqual, store, useAppState } from "../store";
 import { ContextPaneState } from "./ContextPaneState";
-import { relativeTime } from "./transcript-rows";
+import { ImagePreview } from "./ImagePreview";
+import { RichText } from "./RichText";
 
-const MAX_VISIBLE_BRANCH_LANE = 4;
-const AUTO_EXPAND_MAX_GROUPS = 4;
-const AUTO_EXPAND_MAX_NODES = 24;
-
-function confirmAction(message: string): boolean {
-  return window.confirm(message);
-}
-
-function editFromPrompt(node: BranchTreeNode): void {
-  const sessionId = store.getState().sessionId;
-  if (
-    sessionId &&
-    sessionDraft(sessionId) &&
-    !confirmAction(
-      "Move to before this message and replace your current composer draft with its original text?",
-    )
-  )
-    return;
-  void store.navigateBranch(node.id, "edit");
-}
-
-function actionTargets(actionId: string | null, nodeId: string): boolean {
-  return actionId?.slice(actionId.indexOf(":") + 1) === nodeId;
-}
-
-interface HistoryGroup {
+interface Turn {
   id: string;
   prompt: BranchTreeNode | null;
   entries: BranchTreeNode[];
-  nodes: BranchTreeNode[];
-  parentId: string | null;
-  childIds: string[];
-  active: boolean;
-  current: boolean;
-  currentAtLatest: boolean;
-  latest: boolean;
-  latestPath: boolean;
-  forkCount: number;
-  lane: number;
-  laneOverflow: boolean;
 }
 
-interface VisibleHistoryGroup {
-  group: HistoryGroup;
-  entries: BranchTreeNode[];
-  promptMatch: boolean;
-}
-
-function nearestGroupId(
-  parentId: string | null,
-  nodesById: ReadonlyMap<string, BranchTreeNode>,
-  groupIdByNode: ReadonlyMap<string, string>,
-): string | null {
-  const seen = new Set<string>();
-  let cursor = parentId;
-  while (cursor && !seen.has(cursor)) {
-    seen.add(cursor);
-    const groupId = groupIdByNode.get(cursor);
-    if (groupId) return groupId;
-    cursor = nodesById.get(cursor)?.parentId ?? null;
-  }
-  return null;
-}
-
-/**
- * Convert Pi's ordered entry tree into prompt-anchored sections. A normal
- * linear conversation stays on lane zero; only actual sibling paths consume
- * horizontal branch lanes.
- */
-function projectHistoryGroups(tree: BranchTreeResponse): HistoryGroup[] {
-  const nodesById = new Map(tree.nodes.map((node) => [node.id, node]));
-  const groupIdByNode = new Map<string, string>();
-  const groupsById = new Map<string, HistoryGroup>();
-  const groups: HistoryGroup[] = [];
-
-  for (const node of tree.nodes) {
-    const parentGroupId = nearestGroupId(
-      node.parentId,
-      nodesById,
-      groupIdByNode,
-    );
-    const groupId =
-      node.role === "user"
-        ? `turn:${node.id}`
-        : (parentGroupId ?? `context:${node.id}`);
-    let group = groupsById.get(groupId);
-    if (!group) {
-      group = {
-        id: groupId,
+function conversationOutline(nodes: BranchTreeNode[]) {
+  const turns: Turn[] = [];
+  for (const node of nodes) {
+    if (node.role === "user" || !turns.length)
+      turns.push({
+        id: node.id,
         prompt: node.role === "user" ? node : null,
         entries: [],
-        nodes: [],
-        parentId: node.role === "user" ? parentGroupId : null,
-        childIds: [],
-        active: false,
-        current: false,
-        currentAtLatest: false,
-        latest: false,
-        latestPath: false,
-        forkCount: 0,
-        lane: 0,
-        laneOverflow: false,
-      };
-      groups.push(group);
-      groupsById.set(groupId, group);
-    }
-    group.nodes.push(node);
-    if (node.role !== "user") group.entries.push(node);
-    groupIdByNode.set(node.id, groupId);
+      });
+    if (node.role !== "user") turns.at(-1)!.entries.push(node);
   }
-
-  for (const group of groups) {
-    if (!group.parentId) continue;
-    groupsById.get(group.parentId)?.childIds.push(group.id);
-  }
-
-  const latestPath = new Set<string>();
-  const latestSeen = new Set<string>();
-  let latestCursor = tree.durableLeafId;
-  while (latestCursor && !latestSeen.has(latestCursor)) {
-    latestSeen.add(latestCursor);
-    latestPath.add(latestCursor);
-    latestCursor = nodesById.get(latestCursor)?.parentId ?? null;
-  }
-
-  const childCountByNode = new Map<string, number>();
-  for (const node of tree.nodes) {
-    if (!node.parentId) continue;
-    childCountByNode.set(
-      node.parentId,
-      (childCountByNode.get(node.parentId) ?? 0) + 1,
+  const first = turns[0];
+  const hiddenStart =
+    first &&
+    !first.prompt &&
+    !first.entries.some(
+      (node) =>
+        (node.role !== "metadata" &&
+          !(node.type === "message" && node.role === "system")) ||
+        node.type === "compaction" ||
+        node.type === "branch_summary",
     );
-  }
-  for (const group of groups) {
-    group.active = group.nodes.some((node) => node.active);
-    group.current = group.nodes.some((node) => node.leaf);
-    group.currentAtLatest =
-      group.current && tree.effectiveLeafId === tree.durableLeafId;
-    group.latest = group.nodes.some((node) => node.id === tree.durableLeafId);
-    group.latestPath = group.nodes.some((node) => latestPath.has(node.id));
-    group.forkCount = group.nodes.reduce(
-      (count, node) =>
-        count + Math.max(0, (childCountByNode.get(node.id) ?? 0) - 1),
-      0,
-    );
-  }
-
-  const rootGroups = groups.filter((group) => !group.parentId);
-  for (const group of groups) {
-    if (group.active) continue;
-    const parent = group.parentId
-      ? (groupsById.get(group.parentId) ?? null)
-      : null;
-    const siblings = parent
-      ? parent.childIds
-          .map((id) => groupsById.get(id))
-          .filter((candidate): candidate is HistoryGroup => Boolean(candidate))
-      : rootGroups;
-    const inactiveSiblings = siblings.filter((candidate) => !candidate.active);
-    const primary =
-      inactiveSiblings.find((candidate) => candidate.latestPath) ??
-      inactiveSiblings[0];
-    const baseLane = parent
-      ? parent.active
-        ? 1
-        : Math.max(1, parent.lane)
-      : 1;
-    const alternateIndex = inactiveSiblings
-      .filter((candidate) => candidate !== primary)
-      .indexOf(group);
-    const lane =
-      group === primary ? baseLane : baseLane + Math.max(1, alternateIndex + 1);
-    group.lane = Math.min(MAX_VISIBLE_BRANCH_LANE, lane);
-    group.laneOverflow = lane > MAX_VISIBLE_BRANCH_LANE;
-  }
-
-  return groups;
+  return {
+    turns: hiddenStart ? turns.slice(1) : turns,
+    startBranches: hiddenStart
+      ? first.entries.filter((node) => (node.childCount ?? 0) > 1)
+      : [],
+  };
 }
 
-function humanizeType(type: string): string {
-  switch (type) {
-    case "branch_summary":
-      return "Summary";
-    case "compaction":
-      return "Compact";
-    case "custom_message":
-      return "System";
-    case "label":
-      return "Label";
-    case "model_change":
-      return "Model";
-    case "session_info":
-      return "Session";
-    case "thinking_level_change":
-      return "Thinking";
-    default:
-      return type
-        .replaceAll("_", " ")
-        .replace(/\b\w/g, (character) => character.toUpperCase());
-  }
+function pointKind(node: BranchTreeNode): string {
+  if (node.role === "user") return "Your input";
+  if (node.role === "assistant") return "Response";
+  if (node.role === "tool") return "Tool result";
+  if (node.role === "shell") return "Shell command";
+  if (node.type === "custom_message") return "Extension message";
+  const kinds: Record<string, string> = {
+    compaction: "Conversation summary",
+    branch_summary: "Carried summary",
+    model_change: "Model setting",
+    thinking_level_change: "Thinking setting",
+    tools_change: "Tool setting",
+    context_edit: "Context update",
+    session_info: "Session title",
+    label: "Label",
+    custom: "Extension data",
+  };
+  return kinds[node.type] ?? "Session event";
 }
 
-function nodeKind(node: BranchTreeNode): string {
-  switch (node.role) {
-    case "user":
-      return "You";
-    case "assistant":
-      return "Assistant";
-    case "tool":
-      return "Tool";
-    case "system":
-      return "System";
-    case "metadata":
-      return humanizeType(node.type);
-  }
-}
-
-function nodeText(node: BranchTreeNode): string {
-  if (node.snippet && node.label.endsWith(node.snippet)) return node.snippet;
-  return node.label || node.snippet || humanizeType(node.type);
-}
-
-function exactTime(timestamp: string): string {
-  const parsed = Date.parse(timestamp);
-  return Number.isFinite(parsed)
-    ? new Date(parsed).toLocaleString()
-    : timestamp;
-}
-
-function nodeMatches(node: BranchTreeNode, query: string): boolean {
-  return [node.label, node.snippet, node.role, node.type, nodeKind(node)]
-    .join("\n")
-    .toLocaleLowerCase()
-    .includes(query);
-}
-
-function groupActivitySummary(group: HistoryGroup): string {
-  const assistant = group.entries.filter(
-    (node) => node.role === "assistant",
-  ).length;
-  const tools = group.entries.filter((node) => node.role === "tool").length;
-  const other = group.entries.length - assistant - tools;
-  const parts: string[] = [];
-  if (assistant)
-    parts.push(`${assistant} ${assistant === 1 ? "response" : "responses"}`);
-  if (tools) parts.push(`${tools} ${tools === 1 ? "tool" : "tools"}`);
-  if (other) parts.push(`${other} ${other === 1 ? "event" : "events"}`);
-  if (!parts.length) parts.push("No later activity");
-  if (group.forkCount)
-    parts.push(
-      `${group.forkCount} ${group.forkCount === 1 ? "fork" : "forks"}`,
-    );
-  return parts.join(" · ");
-}
-
-function groupStatus(group: HistoryGroup): string | null {
-  if (group.current) return group.currentAtLatest ? "Current" : "Viewing";
-  if (group.latest) return "Latest";
-  if (!group.active) return "Alternate";
-  return null;
-}
-
-function EventRow({
-  node,
-  durableLeafId,
-  blockedReason,
-  actionId,
+function HistoryImage({
+  targetId,
+  index,
 }: {
-  node: BranchTreeNode;
-  durableLeafId: string | null;
-  blockedReason: string | null;
-  actionId: string | null;
+  targetId: string;
+  index: number;
 }) {
-  const text = nodeText(node);
-  const current = node.leaf;
-  const latest = node.id === durableLeafId;
-  const actionable = node.canSwitch || current;
-  const state = current
-    ? latest
-      ? "Current"
-      : "Viewing"
-    : latest
-      ? "Latest"
-      : null;
-  const content = (
-    <>
-      <span className="branch-event__dot" aria-hidden />
-      <span className="branch-event__kind">{nodeKind(node)}</span>
-      <span className="branch-event__text">{text}</span>
-      <span className="branch-event__tail">
-        {actionTargets(actionId, node.id) ? (
-          <Loader2 size={12} className="spin" aria-label="Switching point" />
-        ) : state ? (
-          state
-        ) : (
-          <time dateTime={node.timestamp} title={exactTime(node.timestamp)}>
-            {relativeTime(node.timestamp)}
-          </time>
-        )}
-      </span>
-      {actionable && !current ? (
-        <ChevronRight size={13} className="branch-event__arrow" aria-hidden />
-      ) : null}
-    </>
-  );
-
-  if (!actionable) {
-    return (
-      <div
-        className="branch-event"
-        data-path={node.active || undefined}
-        title={`${node.label}\n${exactTime(node.timestamp)}`}
+  const [url, setUrl] = useState<string>();
+  const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    setUrl(undefined);
+    setError(false);
+    let objectUrl: string | undefined;
+    void store
+      .readBranchImage(targetId, index, controller.signal)
+      .then((blob) => {
+        if (controller.signal.aborted) return;
+        if (!blob) {
+          setError(true);
+          return;
+        }
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setError(true);
+      });
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [targetId, index, attempt]);
+  return error ? (
+    <div className="history-image-error">
+      <span>Image unavailable</span>
+      <button
+        type="button"
+        className="button button--quiet"
+        onClick={() => setAttempt((value) => value + 1)}
       >
-        {content}
-      </div>
-    );
-  }
-  return (
-    <button
-      type="button"
-      className="branch-event branch-event--action"
-      data-path={node.active || undefined}
-      data-current={current || undefined}
-      aria-current={current ? "step" : undefined}
-      aria-label={
-        current
-          ? `Current point: ${node.label}`
-          : `Switch to point: ${node.label}`
-      }
-      title={
-        current
-          ? `${node.label}\nCurrent conversation point`
-          : blockedReason
-            ? `${node.label}\n${blockedReason}`
-            : `${node.label}\nSwitch the conversation to this point`
-      }
-      disabled={current || blockedReason !== null}
-      onClick={() => void store.navigateBranch(node.id, "switch")}
-    >
-      {content}
-    </button>
+        Retry image
+      </button>
+    </div>
+  ) : url ? (
+    <ImagePreview
+      className="history-detail__image"
+      src={url}
+      alt="image in this history entry"
+    />
+  ) : (
+    <span role="status">Loading image…</span>
   );
 }
 
-function HistoryTurn({
-  visible,
-  expanded,
-  searching,
-  durableLeafId,
-  bounded,
-  blockedReason,
-  actionId,
-  onToggle,
+/** History has read-only inspection state; AppStore/Pi still own the active
+ * conversation. Keeping the outline mounted preserves its exact place. */
+export function BranchTree({
+  onContextChange,
 }: {
-  visible: VisibleHistoryGroup;
-  expanded: boolean;
-  searching: boolean;
-  durableLeafId: string | null;
-  bounded: boolean;
-  blockedReason: string | null;
-  actionId: string | null;
-  onToggle: () => void;
-}) {
-  const { group, entries } = visible;
-  const prompt = group.prompt;
-  const title = prompt
-    ? nodeText(prompt)
-    : bounded
-      ? "Activity before the loaded boundary"
-      : "Session setup and metadata";
-  const timestamp = prompt?.timestamp ?? group.nodes[0]?.timestamp ?? "";
-  const status = groupStatus(group);
-  const hasEntries = entries.length > 0;
-  const promptBusy = prompt !== null && actionTargets(actionId, prompt.id);
-  const editDisabled = blockedReason !== null || !prompt?.canEdit;
-  const forkDisabled = blockedReason !== null || !prompt?.canFork;
-  const editTitle = !prompt?.canEdit
-    ? "The root prompt cannot be edited"
-    : (blockedReason ?? "Edit from this prompt");
-  const forkTitle = !prompt?.canFork
-    ? "Switch to this path before forking"
-    : (blockedReason ?? "Fork from this prompt");
-
-  return (
-    <section
-      className="branch-turn"
-      data-path={group.active || undefined}
-      data-current={group.current || undefined}
-      data-alternate={!group.active || undefined}
-      data-lane-overflow={group.laneOverflow || undefined}
-      style={{ "--branch-lane": group.lane } as CSSProperties}
-    >
-      <span className="branch-turn__rail" aria-hidden>
-        <span className="branch-turn__node" />
-      </span>
-      <div className="branch-turn__header">
-        <button
-          type="button"
-          className="branch-turn__summary"
-          aria-expanded={hasEntries ? expanded : undefined}
-          aria-label={
-            hasEntries
-              ? `${expanded ? "Collapse" : "Expand"} activity for ${title}`
-              : `History point: ${title}`
-          }
-          disabled={!hasEntries}
-          onClick={onToggle}
-        >
-          <ChevronRight
-            size={13}
-            className={`branch-turn__chevron ${expanded ? "branch-turn__chevron--open" : ""}`}
-            aria-hidden
-          />
-          <span className="branch-turn__copy">
-            <span className="branch-turn__meta">
-              <span className="branch-turn__author">
-                {prompt ? "You" : "Context"}
-              </span>
-              {timestamp ? (
-                <time dateTime={timestamp} title={exactTime(timestamp)}>
-                  {relativeTime(timestamp)}
-                </time>
-              ) : null}
-              {status ? (
-                <span
-                  className="branch-turn__status"
-                  data-status={status.toLowerCase()}
-                >
-                  {status}
-                </span>
-              ) : null}
-              {group.lane > 0 && status !== "Alternate" ? (
-                <span className="branch-turn__status" data-status="alternate">
-                  Branch
-                </span>
-              ) : null}
-            </span>
-            <strong
-              className="branch-turn__title"
-              title={prompt?.label ?? title}
-            >
-              {title}
-            </strong>
-            <span className="branch-turn__activity">
-              {searching && !visible.promptMatch
-                ? `${entries.length} ${entries.length === 1 ? "matching event" : "matching events"}`
-                : groupActivitySummary(group)}
-            </span>
-          </span>
-        </button>
-        {prompt ? (
-          <div className="branch-turn__actions">
-            {promptBusy ? (
-              <Loader2
-                size={13}
-                className="spin branch-turn__busy"
-                aria-label="Branch action in progress"
-              />
-            ) : null}
-            <button
-              type="button"
-              className="icon-button"
-              aria-label={`Edit from here: ${prompt.label}`}
-              title={editTitle}
-              disabled={editDisabled}
-              onClick={() => editFromPrompt(prompt)}
-            >
-              <PencilLine size={13} aria-hidden />
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              aria-label={`Fork from here: ${prompt.label}`}
-              title={forkTitle}
-              disabled={forkDisabled}
-              onClick={() => void store.forkBranch(prompt.id)}
-            >
-              <GitFork size={13} aria-hidden />
-            </button>
-          </div>
-        ) : null}
-      </div>
-      {expanded && hasEntries ? (
-        <div
-          className="branch-turn__events"
-          role="group"
-          aria-label={`Activity for ${title}`}
-        >
-          {entries.map((node) => (
-            <EventRow
-              key={node.id}
-              node={node}
-              durableLeafId={durableLeafId}
-              blockedReason={blockedReason}
-              actionId={actionId}
-            />
-          ))}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-export function BranchTree() {
+  onContextChange?: () => void;
+} = {}) {
   const state = useAppState(
     (source) => ({
       sessionId: source.sessionId,
-      branchTree: source.branchTree,
-      branchTreeLoading: source.branchTreeLoading,
-      branchTreeError: source.branchTreeError,
-      branchActionId: source.branchActionId,
-      projectionHealth: source.projectionHealth,
-      projectionConflict: source.projectionConflict,
+      tree: source.branchTree,
+      loading: source.branchTreeLoading,
+      error: source.branchTreeError,
+      actionId: source.branchActionId,
+      health: source.projectionHealth,
+      conflict: source.projectionConflict,
+      runState: source.runState,
+      bashRunning: source.bashRunning,
+      pendingCount: source.queue.totalCount,
+      dialogCount: source.extensionUiRequests.length,
+      viewId: source.transcriptViewId,
     }),
     shallowEqual,
   );
-  const tree = state.branchTree;
   const [query, setQuery] = useState("");
-  const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
-  const initializedTreeRef = useRef<string | null>(null);
-  const positionedLeafRef = useRef<string | null>(null);
-  const rowsRef = useRef<HTMLDivElement | null>(null);
-  const groups = useMemo(
-    () => (tree ? projectHistoryGroups(tree) : []),
+  const [page, setPage] = useState<BranchTreeResponse | null>(null);
+  const [routeLeaf, setRouteLeaf] = useState<string>();
+  const [reading, setReading] = useState(false);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [routes, setRoutes] = useState<{
+    parentId: string;
+    page: BranchTreeResponse;
+  } | null>(null);
+  const [selected, setSelected] = useState<BranchTreeNode | null>(null);
+  const [detail, setDetail] = useState<BranchEntryResponse | null>(null);
+  const [carrySummary, setCarrySummary] = useState(false);
+  const [instructions, setInstructions] = useState("");
+  const [summarizing, setSummarizing] = useState(false);
+  const rowsRef = useRef<HTMLDivElement>(null);
+  const backRef = useRef<HTMLButtonElement>(null);
+  const selectedButtonRef = useRef<HTMLButtonElement | null>(null);
+  const outlineScrollRef = useRef(0);
+  const outlineOwnerRef = useRef<string | null>(null);
+  const readOwnerRef = useRef<AbortController | null>(null);
+  const identityRef = useRef<string | null>(null);
+  const loadedSearchRef = useRef<string | null>(null);
+  const tree = page ?? state.tree;
+  const searching = Boolean(query.trim());
+  const { turns, startBranches } = useMemo(
+    () =>
+      conversationOutline(
+        tree
+          ? [...(tree.leadingPrompt ? [tree.leadingPrompt] : []), ...tree.nodes]
+          : [],
+      ),
     [tree],
   );
-  const normalizedQuery = query.trim().toLocaleLowerCase();
+
+  const retireRead = useCallback((owner = readOwnerRef.current) => {
+    if (!owner || readOwnerRef.current !== owner) return;
+    owner.abort();
+    readOwnerRef.current = null;
+    setReading(false);
+  }, []);
+  const beginRead = useCallback(() => {
+    retireRead();
+    const owner = new AbortController();
+    readOwnerRef.current = owner;
+    setReadError(null);
+    return owner;
+  }, [retireRead]);
+  const ownsRead = useCallback(
+    (owner: AbortController) =>
+      readOwnerRef.current === owner && !owner.signal.aborted,
+    [],
+  );
+
+  const performRead = useCallback(
+    async <T,>(
+      owner: AbortController,
+      request: (signal: AbortSignal) => Promise<T | null>,
+      commit: (result: T) => void,
+      failure: string,
+    ) => {
+      setReading(true);
+      try {
+        const result = await request(owner.signal);
+        if (ownsRead(owner)) {
+          if (result) commit(result);
+          else setReadError("History changed. Try this read again.");
+        }
+      } catch (error) {
+        if (ownsRead(owner))
+          setReadError(error instanceof Error ? error.message : failure);
+      } finally {
+        if (ownsRead(owner)) retireRead(owner);
+      }
+    },
+    [ownsRead, retireRead],
+  );
 
   useEffect(() => {
-    const identity = tree ? `${tree.sessionId}\u0000${tree.incarnation}` : null;
-    if (initializedTreeRef.current === identity) return;
-    initializedTreeRef.current = identity;
+    const identity = `${state.sessionId ?? ""}\0${state.viewId ?? ""}`;
+    if (identityRef.current === identity) return;
+    identityRef.current = identity;
+    retireRead();
     setQuery("");
-    setExpandedGroups(
-      groups.length <= AUTO_EXPAND_MAX_GROUPS &&
-        (tree?.nodes.length ?? 0) <= AUTO_EXPAND_MAX_NODES
-        ? new Set(
-            groups
-              .filter((group) => group.entries.length > 0)
-              .map((group) => group.id),
-          )
-        : new Set(),
-    );
-  }, [groups, tree]);
+    setPage(null);
+    setRouteLeaf(undefined);
+    setRoutes(null);
+    setSelected(null);
+    setDetail(null);
+    setCarrySummary(false);
+    setInstructions("");
+    setReadError(null);
+    setExpanded(new Set());
+    setSummarizing(false);
+    loadedSearchRef.current = null;
+  }, [state.sessionId, state.viewId, retireRead]);
 
-  useLayoutEffect(() => {
-    const leafIdentity = tree
-      ? `${tree.sessionId}\u0000${tree.incarnation}\u0000${tree.effectiveLeafId ?? ""}`
-      : null;
-    if (!leafIdentity) {
-      positionedLeafRef.current = null;
+  useEffect(() => {
+    if (!state.tree || selected) return;
+    if (!query.trim() && !routeLeaf) {
+      setPage((current) =>
+        current && current.revision !== state.tree!.revision ? null : current,
+      );
       return;
     }
-    if (positionedLeafRef.current === leafIdentity) return;
-    positionedLeafRef.current = leafIdentity;
-    const target = rowsRef.current?.querySelector<HTMLElement>(
-      '.branch-turn[data-current="true"]',
+    const key = `${state.tree.revision}\0${query.trim()}\0${routeLeaf ?? ""}`;
+    if (loadedSearchRef.current === key) return;
+    const controller = beginRead();
+    const timer = setTimeout(
+      () => {
+        void performRead(
+          controller,
+          (signal) =>
+            store.readBranchTree(
+              query.trim() ? { query: query.trim() } : { leafId: routeLeaf },
+              signal,
+            ),
+          (result) => {
+            loadedSearchRef.current = key;
+            setPage(result);
+          },
+          "History could not be loaded",
+        );
+      },
+      searching ? 180 : 0,
     );
-    target?.scrollIntoView({ block: "nearest" });
-  }, [tree]);
+    return () => {
+      clearTimeout(timer);
+      retireRead(controller);
+    };
+  }, [
+    query,
+    routeLeaf,
+    state.tree,
+    selected,
+    searching,
+    beginRead,
+    performRead,
+    retireRead,
+  ]);
+
+  useEffect(() => () => readOwnerRef.current?.abort(), []);
+  useLayoutEffect(() => {
+    if (selected) backRef.current?.focus();
+    else {
+      if (rowsRef.current) rowsRef.current.scrollTop = outlineScrollRef.current;
+      selectedButtonRef.current?.focus({ preventScroll: true });
+    }
+  }, [selected]);
+
+  useLayoutEffect(() => {
+    if (searching) {
+      outlineOwnerRef.current = null;
+      return;
+    }
+    if (
+      !tree ||
+      selected ||
+      tree.sessionId !== state.sessionId ||
+      (routeLeaf && page?.routeLeafId !== routeLeaf)
+    )
+      return;
+    const owner = `${state.sessionId}\0${state.viewId}\0${routeLeaf ?? ""}`;
+    if (outlineOwnerRef.current === owner) return;
+    const endpoint =
+      rowsRef.current?.querySelector<HTMLElement>("[data-history-end]");
+    if (!endpoint) return;
+    outlineOwnerRef.current = owner;
+    endpoint.scrollIntoView({ block: "nearest" });
+    if (routeLeaf)
+      endpoint
+        .querySelector<HTMLButtonElement>(".history-prompt")
+        ?.focus({ preventScroll: true });
+  }, [
+    tree,
+    page,
+    selected,
+    searching,
+    routeLeaf,
+    state.sessionId,
+    state.viewId,
+  ]);
+
+  async function read<T>(
+    request: (signal: AbortSignal) => Promise<T | null>,
+    commit: (result: T) => void,
+    failure: string,
+  ) {
+    await performRead(beginRead(), request, commit, failure);
+  }
+
+  async function readPage(options: BranchTreeQuery, append = false) {
+    await read(
+      (signal) => store.readBranchTree(options, signal),
+      (result) =>
+        setPage(
+          append && tree
+            ? { ...result, nodes: [...result.nodes, ...tree.nodes] }
+            : result,
+        ),
+      "History could not be loaded",
+    );
+  }
+
+  async function readSelected(node: BranchTreeNode) {
+    setDetail(null);
+    await read(
+      (signal) => store.readBranchEntry(node.id, 0, signal),
+      setDetail,
+      "This point could not be previewed",
+    );
+  }
+
+  async function preview(node: BranchTreeNode, button: HTMLButtonElement) {
+    outlineScrollRef.current = rowsRef.current?.scrollTop ?? 0;
+    selectedButtonRef.current = button;
+    setSelected(node);
+    setCarrySummary(false);
+    setInstructions("");
+    await readSelected(node);
+  }
+
+  async function loadContent() {
+    if (!detail || detail.nextOffset === null) return;
+    await read(
+      (signal) =>
+        store.readBranchEntry(detail.node.id, detail.nextOffset!, signal),
+      (result) => setDetail({ ...result, text: detail.text + result.text }),
+      "More content could not be loaded",
+    );
+  }
+
+  async function showRoutes(parentId: string, before?: string) {
+    if (!before && routes?.parentId === parentId) {
+      retireRead();
+      setRoutes(null);
+      return;
+    }
+    await read(
+      (signal) =>
+        store.readBranchTree(
+          { parentId, ...(before ? { before } : {}) },
+          signal,
+        ),
+      (result) =>
+        setRoutes({
+          parentId,
+          page:
+            before && routes
+              ? { ...result, nodes: [...result.nodes, ...routes.page.nodes] }
+              : result,
+        }),
+      "Routes could not be loaded",
+    );
+  }
+
+  const blocked = state.actionId
+    ? "A history action is in progress"
+    : state.loading || state.error
+      ? "Refresh History before continuing"
+      : state.conflict ||
+          state.health.status !== "ok" ||
+          tree?.health.status !== "ok"
+        ? "Recover this session before continuing"
+        : null;
+  const sameSessionBlocked =
+    blocked ??
+    (state.runState !== "idle" || state.bashRunning
+      ? "Wait until the current task finishes before changing this conversation"
+      : state.pendingCount
+        ? "Send or clear Pending input before changing this conversation"
+        : state.dialogCount
+          ? "Answer the open dialog before changing this conversation"
+          : null);
+
+  async function navigate(summarize: boolean) {
+    if (!selected || sameSessionBlocked) return;
+    const sessionId = store.getState().sessionId;
+    if (
+      selected.canEdit &&
+      sessionId &&
+      sessionDraft(sessionId) &&
+      !window.confirm(
+        "Replace your current draft with this message and continue from before it?",
+      )
+    )
+      return;
+    setSummarizing(summarize);
+    const ok = await store.navigateBranch(
+      selected.id,
+      selected.canEdit ? "edit" : "switch",
+      {
+        summarize,
+        ...(summarize && instructions.trim()
+          ? { customInstructions: instructions.trim() }
+          : {}),
+      },
+    );
+    setSummarizing(false);
+    if (ok) {
+      setSelected(null);
+      setDetail(null);
+      onContextChange?.();
+    }
+  }
+
+  async function copySelected(mode: "fork" | "clone") {
+    if (!selected || blocked) return;
+    const ok = await (mode === "fork"
+      ? store.forkBranch(selected.id)
+      : store.cloneBranch(selected.id));
+    if (ok) onContextChange?.();
+  }
+
+  function routeChoices(parentId: string) {
+    if (routes?.parentId !== parentId) return null;
+    return (
+      <div
+        className="history-routes"
+        role="group"
+        aria-label="Routes from this point"
+      >
+        {routes.page.nodes.map((node) => (
+          <button
+            type="button"
+            className="history-route"
+            key={node.id}
+            onClick={() => {
+              setRouteLeaf(node.routeLeafId ?? node.id);
+              setRoutes(null);
+              setQuery("");
+              setPage(null);
+              outlineScrollRef.current = 0;
+            }}
+          >
+            <GitBranch size={13} aria-hidden />
+            <span>{node.snippet || pointKind(node)}</span>
+            {node.active ? <small>Current route</small> : null}
+          </button>
+        ))}
+        {routes.page.nextBefore ? (
+          <button
+            type="button"
+            className="button button--quiet"
+            disabled={reading}
+            onClick={() => void showRoutes(parentId, routes.page.nextBefore!)}
+          >
+            More routes
+          </button>
+        ) : null}
+      </div>
+    );
+  }
 
   if (!state.sessionId)
     return (
@@ -596,212 +526,469 @@ export function BranchTree() {
         title="Open a session to inspect history."
       />
     );
-  if (!tree && state.branchTreeLoading)
-    return (
-      <ContextPaneState
-        icon={<Loader2 size={17} className="spin" aria-hidden />}
-        title="Loading history…"
-      />
-    );
   if (!tree)
     return (
       <ContextPaneState
-        icon={<AlertTriangle size={17} aria-hidden />}
-        title="History is unavailable."
-        role="alert"
+        icon={
+          state.loading ? (
+            <Loader2 size={17} className="spin" aria-hidden />
+          ) : (
+            <AlertTriangle size={17} aria-hidden />
+          )
+        }
+        title={state.loading ? "Loading history…" : "History is unavailable."}
       >
-        <button
-          type="button"
-          className="button res__state-action"
-          onClick={() => void store.loadBranchTree()}
-        >
-          Retry
-        </button>
+        {!state.loading ? (
+          <button
+            type="button"
+            className="button"
+            onClick={() => void store.loadBranchTree()}
+          >
+            Retry
+          </button>
+        ) : null}
       </ContextPaneState>
     );
-
-  const blockedReason = state.branchActionId
-    ? "Another branch action is in progress"
-    : state.branchTreeLoading
-      ? "History is refreshing"
-      : state.branchTreeError
-        ? "Refresh History before using branch actions"
-        : tree.health.status !== "ok"
-          ? (tree.health.message ?? "Session projection is unavailable")
-          : state.projectionHealth.status !== "ok" || state.projectionConflict
-            ? "Resolve the session projection before using branch actions"
-            : null;
-  const branchCount = groups.reduce(
-    (count, group) => count + group.forkCount,
-    0,
-  );
-  const promptCount = groups.filter((group) => group.prompt).length;
-  const visibleGroups: VisibleHistoryGroup[] = groups.flatMap((group) => {
-    if (!normalizedQuery)
-      return [{ group, entries: group.entries, promptMatch: false }];
-    const promptMatch = Boolean(
-      group.prompt && nodeMatches(group.prompt, normalizedQuery),
-    );
-    const entries = group.entries.filter((node) =>
-      nodeMatches(node, normalizedQuery),
-    );
-    return promptMatch || entries.length > 0
-      ? [{ group, entries, promptMatch }]
-      : [];
-  });
-  const matchCount = normalizedQuery
-    ? groups.reduce(
-        (count, group) =>
-          count +
-          group.nodes.filter((node) => nodeMatches(node, normalizedQuery))
-            .length,
-        0,
-      )
-    : 0;
-  const expandableGroups = groups.filter((group) => group.entries.length > 0);
-  const allExpanded =
-    expandableGroups.length > 0 &&
-    expandableGroups.every((group) => expandedGroups.has(group.id));
-
-  const toggleAll = () => {
-    setExpandedGroups((current) => {
-      const next = new Set(current);
-      if (allExpanded) {
-        for (const group of expandableGroups) next.delete(group.id);
-      } else {
-        for (const group of expandableGroups) next.add(group.id);
-      }
-      return next;
-    });
-  };
 
   return (
     <section
       className="branch-tree"
-      aria-label="Conversation history and branches"
-      aria-busy={state.branchTreeLoading || undefined}
+      aria-label="Conversation history"
+      aria-busy={reading || state.loading || undefined}
     >
-      {state.branchTreeError ? (
+      {state.error || readError ? (
         <div className="branches__stale" role="alert">
-          {state.branchTreeError}
-        </div>
-      ) : tree.health.status !== "ok" ? (
-        <div className="branches__stale" role="alert">
-          {tree.health.message ?? "Session projection is unavailable"}
+          {readError ?? state.error}
         </div>
       ) : null}
-      <div
-        className="branch-tree__toolbar"
-        role="toolbar"
-        aria-label="History controls"
-      >
-        <span className="branch-tree__summary">
-          {promptCount > 0
-            ? `${promptCount} ${tree.truncated ? "loaded " : ""}${promptCount === 1 ? "turn" : "turns"}`
-            : `${tree.nodes.length} ${tree.nodes.length === 1 ? "entry" : "entries"}`}
-          {branchCount > 0
-            ? ` · ${branchCount} ${branchCount === 1 ? "fork" : "forks"}`
-            : tree.truncated
-              ? " · bounded"
-              : " · linear"}
-        </span>
-        <span className="branch-tree__toolbar-actions">
-          <button
-            type="button"
-            className="icon-button"
-            aria-label={
-              allExpanded ? "Collapse all activity" : "Expand all activity"
-            }
-            title={
-              allExpanded ? "Collapse all activity" : "Expand all activity"
-            }
-            disabled={expandableGroups.length === 0}
-            onClick={toggleAll}
-          >
-            {allExpanded ? (
-              <ChevronsDownUp size={14} aria-hidden />
-            ) : (
-              <ChevronsUpDown size={14} aria-hidden />
-            )}
-          </button>
-        </span>
-      </div>
-      {tree.nodes.length > 0 ? (
+      <div className="history-outline" hidden={selected !== null}>
         <label className="branch-tree__search">
-          <Search size={13} aria-hidden />
+          <Search size={14} aria-hidden />
           <input
             type="search"
             value={query}
-            placeholder="Search loaded history"
-            aria-label="Search loaded history"
-            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Find in history"
+            aria-label="Find in history"
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setPage(null);
+              loadedSearchRef.current = null;
+              outlineScrollRef.current = 0;
+            }}
             onKeyDown={(event) => {
-              if (event.key !== "Escape") return;
-              event.preventDefault();
-              event.stopPropagation();
-              if (query) setQuery("");
-              else event.currentTarget.blur();
+              if (event.key === "Escape" && query) {
+                event.preventDefault();
+                event.stopPropagation();
+                setQuery("");
+                setPage(null);
+                loadedSearchRef.current = null;
+              }
             }}
           />
-          <output aria-label="History search matches" aria-live="polite">
-            {normalizedQuery
-              ? matchCount === 1
-                ? "1 match"
-                : `${matchCount} matches`
-              : ""}
-          </output>
+          {reading ? (
+            <Loader2
+              size={13}
+              className="spin"
+              aria-label="Searching history"
+            />
+          ) : null}
         </label>
-      ) : null}
-      <div className="branch-tree__rows" ref={rowsRef}>
-        {tree.truncated ? (
-          <div className="branch-tree__boundary" role="status">
-            <span className="branch-tree__boundary-mark" aria-hidden>
-              •••
-            </span>
-            <span>
-              <strong>Earlier entries omitted</strong>
-              <small>
-                This bounded view starts with the latest loaded activity.
-              </small>
-            </span>
+        {routeLeaf && !searching ? (
+          <div className="history-route-notice">
+            <span>Inspecting another route</span>
+            <button
+              type="button"
+              className="button button--quiet"
+              onClick={() => {
+                setRouteLeaf(undefined);
+                setPage(null);
+              }}
+            >
+              Current conversation
+            </button>
           </div>
         ) : null}
-        {tree.nodes.length === 0 ? (
-          <ContextPaneState
-            icon={<History size={17} aria-hidden />}
-            title="History appears after the first message."
-          />
-        ) : visibleGroups.length === 0 ? (
-          <div className="branch-tree__no-results">
-            No loaded history matches “{query}”.
-          </div>
-        ) : (
-          visibleGroups.map((visible) => {
-            const expanded = expandedGroups.has(visible.group.id);
-            return (
-              <HistoryTurn
-                key={visible.group.id}
-                visible={visible}
-                expanded={expanded}
-                searching={Boolean(normalizedQuery)}
-                durableLeafId={tree.durableLeafId}
-                bounded={tree.truncated}
-                blockedReason={blockedReason}
-                actionId={state.branchActionId}
-                onToggle={() => {
-                  setExpandedGroups((current) => {
-                    const next = new Set(current);
-                    if (next.has(visible.group.id))
-                      next.delete(visible.group.id);
-                    else next.add(visible.group.id);
-                    return next;
-                  });
-                }}
-              />
-            );
-          })
-        )}
+        <div className="branch-tree__rows" ref={rowsRef}>
+          {tree.nextBefore && (!(searching || routeLeaf) || page) ? (
+            <button
+              type="button"
+              className="button button--quiet history-load"
+              disabled={reading}
+              onClick={() =>
+                void readPage(
+                  {
+                    before: tree.nextBefore!,
+                    ...(searching
+                      ? { query: query.trim() }
+                      : routeLeaf
+                        ? { leafId: routeLeaf }
+                        : {}),
+                  },
+                  true,
+                )
+              }
+            >
+              {searching ? "More matches" : "Earlier conversation"}
+            </button>
+          ) : null}
+          {!searching &&
+          ((tree.rootCount ?? 0) > 1 ||
+            (!tree.effectiveLeafId && (tree.rootCount ?? 0) > 0)) ? (
+            <div className="history-starts">
+              <button
+                type="button"
+                className="history-disclosure"
+                onClick={() => void showRoutes("")}
+              >
+                <GitBranch size={13} aria-hidden />
+                {tree.effectiveLeafId
+                  ? "Other starts"
+                  : "Recorded conversation"}
+              </button>
+              {routeChoices("")}
+            </div>
+          ) : null}
+          {!searching &&
+            startBranches.map((node) => (
+              <div className="history-starts" key={node.id}>
+                <button
+                  type="button"
+                  className="history-disclosure"
+                  onClick={() => void showRoutes(node.id)}
+                >
+                  <GitBranch size={13} aria-hidden />
+                  Other starts
+                </button>
+                {routeChoices(node.id)}
+              </div>
+            ))}
+          {(searching || routeLeaf) && !page ? (
+            <p className="history-empty" role="status">
+              {readError
+                ? "Refresh History to try again."
+                : searching
+                  ? "Searching history…"
+                  : "Loading conversation…"}
+            </p>
+          ) : searching ? (
+            tree.nodes.length ? (
+              tree.nodes
+                .filter(
+                  (node) =>
+                    !(node.type === "message" && node.role === "system"),
+                )
+                .map((node) => (
+                  <button
+                    type="button"
+                    className="history-result"
+                    key={node.id}
+                    onClick={(event) => void preview(node, event.currentTarget)}
+                  >
+                    <small>{pointKind(node)}</small>{" "}
+                    <span>{node.snippet || node.label}</span>
+                  </button>
+                ))
+            ) : (
+              <p className="history-empty">No history matches “{query}”.</p>
+            )
+          ) : turns.length ? (
+            turns.map((turn, index) => {
+              const open = expanded.has(turn.id);
+              const activity = turn.entries.filter(
+                (node) => !(node.type === "message" && node.role === "system"),
+              );
+              const endpoint = index === turns.length - 1;
+              const current =
+                turn.prompt?.leaf ||
+                turn.entries.some((node) => node.leaf) ||
+                (endpoint &&
+                  (tree.routeLeafId ?? tree.effectiveLeafId) ===
+                    tree.effectiveLeafId);
+              const branching = [turn.prompt, ...turn.entries].filter(
+                (node): node is BranchTreeNode =>
+                  Boolean(node && (node.childCount ?? 0) > 1),
+              );
+              return (
+                <section
+                  className="history-turn"
+                  data-history-end={endpoint || undefined}
+                  key={turn.id}
+                  data-current={current || undefined}
+                >
+                  {turn.prompt ? (
+                    <button
+                      type="button"
+                      className="history-prompt"
+                      onClick={(event) =>
+                        void preview(turn.prompt!, event.currentTarget)
+                      }
+                    >
+                      <span>{turn.prompt.snippet || "Image input"}</span>{" "}
+                      {current ? <small>Current conversation</small> : null}
+                    </button>
+                  ) : null}
+                  {activity.length ? (
+                    <button
+                      type="button"
+                      className="history-disclosure"
+                      aria-expanded={open}
+                      onClick={() =>
+                        setExpanded((value) => {
+                          const next = new Set(value);
+                          if (next.has(turn.id)) next.delete(turn.id);
+                          else next.add(turn.id);
+                          return next;
+                        })
+                      }
+                    >
+                      {open ? (
+                        <ChevronDown size={13} aria-hidden />
+                      ) : (
+                        <ChevronRight size={13} aria-hidden />
+                      )}
+                      {turn.prompt
+                        ? "Replies and activity"
+                        : "Conversation activity"}
+                    </button>
+                  ) : null}
+                  {open ? (
+                    <div className="history-entries">
+                      {activity.map((node) => (
+                        <button
+                          type="button"
+                          className="history-entry"
+                          key={node.id}
+                          onClick={(event) =>
+                            void preview(node, event.currentTarget)
+                          }
+                        >
+                          <small>{pointKind(node)}</small>{" "}
+                          <span>{node.snippet || node.label}</span>{" "}
+                          {node.leaf ? (
+                            <span className="history-position">
+                              Current point
+                            </span>
+                          ) : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  {branching.map((node) => (
+                    <div className="history-branch-point" key={node.id}>
+                      <button
+                        type="button"
+                        className="history-disclosure"
+                        onClick={() => void showRoutes(node.id)}
+                        title={`Routes after ${node.snippet || pointKind(node)}`}
+                      >
+                        <GitBranch size={13} aria-hidden />
+                        Other routes
+                      </button>
+                      {routeChoices(node.id)}
+                    </div>
+                  ))}
+                </section>
+              );
+            })
+          ) : (
+            <ContextPaneState
+              icon={<History size={17} aria-hidden />}
+              title="History appears after the first message."
+            />
+          )}
+        </div>
       </div>
+      {selected ? (
+        <div
+          className="history-detail"
+          onKeyDown={(event) => {
+            // React portals bubble here even when another surface owns focus.
+            if (
+              event.key !== "Escape" ||
+              !event.currentTarget.contains(event.target as Node)
+            )
+              return;
+            event.preventDefault();
+            event.stopPropagation();
+            retireRead();
+            setSelected(null);
+          }}
+        >
+          <header className="history-detail__header">
+            <button
+              ref={backRef}
+              type="button"
+              className="button button--quiet"
+              onClick={() => {
+                retireRead();
+                setSelected(null);
+                setReadError(null);
+              }}
+            >
+              <ArrowLeft size={14} aria-hidden />
+              Back to history
+            </button>
+            {selected.leaf ? <span>Current point</span> : null}
+          </header>
+          <div
+            className="history-detail__body"
+            onClick={(event) => {
+              const reference = resourceReferenceFromEventTarget(event.target);
+              if (!reference) return;
+              event.preventDefault();
+              void store.openResource(reference);
+            }}
+          >
+            <div className="history-detail__kind">{pointKind(selected)}</div>
+            {detail ? (
+              <>
+                <RichText
+                  text={detail.text}
+                  variant={selected.role === "user" ? "user" : "assistant"}
+                />
+                {detail.nextOffset !== null ? (
+                  <button
+                    type="button"
+                    className="button button--quiet history-load"
+                    disabled={reading}
+                    onClick={() => void loadContent()}
+                  >
+                    Read more content
+                  </button>
+                ) : null}
+                {detail.images?.map((image) => (
+                  <HistoryImage
+                    key={image.index}
+                    targetId={selected.id}
+                    index={image.index}
+                  />
+                ))}
+              </>
+            ) : readError && !reading ? (
+              <button
+                type="button"
+                className="button button--quiet"
+                onClick={() => void readSelected(selected)}
+              >
+                Retry preview
+              </button>
+            ) : reading ? (
+              <p role="status">
+                <Loader2 size={14} className="spin" aria-hidden /> Loading
+                complete content…
+              </p>
+            ) : null}
+          </div>
+          <div className="history-detail__actions">
+            {state.actionId ? (
+              <p role="status">
+                <Loader2 size={14} className="spin" aria-hidden />
+                {summarizing
+                  ? "Summarizing the conversation being left…"
+                  : "Opening the conversation…"}
+                {summarizing ? (
+                  <button
+                    type="button"
+                    className="button button--quiet"
+                    onClick={() => void store.abort()}
+                  >
+                    Stop summary
+                  </button>
+                ) : null}
+              </p>
+            ) : (
+              <>
+                <div
+                  className="history-action-group"
+                  role="group"
+                  aria-label="This session"
+                >
+                  <h3>This session</h3>
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={
+                      Boolean(sameSessionBlocked) || !detail || selected.leaf
+                    }
+                    title={
+                      selected.canEdit
+                        ? "Move before this input and prepare it in Composer"
+                        : "Continue after this point"
+                    }
+                    onClick={() =>
+                      void navigate(carrySummary && !tree.skipSummaryPrompt)
+                    }
+                  >
+                    {selected.canEdit
+                      ? "Edit in this session"
+                      : "Continue here"}
+                  </button>
+                  {!tree.skipSummaryPrompt && !selected.leaf ? (
+                    <div className="history-summary">
+                      <label title="Carry a summary of the conversation being left">
+                        <input
+                          type="checkbox"
+                          checked={carrySummary}
+                          disabled={Boolean(sameSessionBlocked) || !detail}
+                          onChange={(event) =>
+                            setCarrySummary(event.target.checked)
+                          }
+                        />
+                        Carry branch summary
+                      </label>
+                      {carrySummary ? (
+                        <textarea
+                          aria-label="Summary instructions"
+                          value={instructions}
+                          maxLength={2000}
+                          placeholder="Optional summary instructions"
+                          onChange={(event) =>
+                            setInstructions(event.target.value)
+                          }
+                        />
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {sameSessionBlocked ? (
+                    <p className="history-detail__blocked">
+                      {sameSessionBlocked}
+                    </p>
+                  ) : null}
+                </div>
+                <div
+                  className="history-action-group"
+                  role="group"
+                  aria-label="New session"
+                >
+                  <h3>New session</h3>
+                  <div className="history-copy-actions">
+                    {selected.canFork ? (
+                      <button
+                        type="button"
+                        className="button button--quiet"
+                        disabled={Boolean(blocked) || !detail}
+                        title="Copy before this input and prepare it as the new draft"
+                        onClick={() => void copySelected("fork")}
+                      >
+                        Fork to new session
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="button button--quiet"
+                      disabled={Boolean(blocked) || !detail}
+                      title="Copy through this point with an empty draft"
+                      onClick={() => void copySelected("clone")}
+                    >
+                      Clone through here
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

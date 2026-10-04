@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import inspireBranchBridge from "../../server/extensions/inspire-branch-bridge.js";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import inspireBranchBridge from "../../server/extensions/inspire-branch-bridge.js";
+import { RETRY_STATE_SUFFIX } from "../../shared/branch-bridge-protocol.js";
 
 const command = "inspire_branch_abcdefghijklmnopqrstuvwxyz123456";
 const statusKey = "inspire_status_abcdefghijklmnopqrstuvwxyz123456";
@@ -27,10 +28,14 @@ function setup(
     argument: string,
     context: ExtensionCommandContext,
   ) => Promise<void>;
+  const handlers = new Map<string, typeof handler>();
+  const getSettings = vi.fn(() => ({}) as { retry?: { enabled?: boolean } });
   const api = {
+    on: vi.fn(),
+    getSettings,
     registerCommand(name: string, value: { handler: typeof handler }) {
-      expect(name).toBe(command);
-      handler = value.handler;
+      handlers.set(name, value.handler);
+      if (name === command) handler = value.handler;
     },
   } as unknown as ExtensionAPI;
   inspireBranchBridge(api);
@@ -43,6 +48,7 @@ function setup(
     sessionManager: {
       getSessionId: () => sessionId,
       getLeafId: () => leaf,
+      getEntries: () => [],
       getEntry: (id: string) => (id === "target" ? { id } : undefined),
     },
     navigateTree: vi.fn(async (target: string, options: unknown) => {
@@ -55,7 +61,7 @@ function setup(
         statuses.push([key, text]),
     },
   } as unknown as ExtensionCommandContext;
-  return { handler, context, statuses, navigateTree };
+  return { handler, handlers, getSettings, context, statuses, navigateTree };
 }
 
 function argument(nonce = "nonce_abcdefghijklmnopqrstuvwxyz123456") {
@@ -77,12 +83,60 @@ function decoded(statuses: Array<[string, string | undefined]>) {
   ) as Record<string, unknown>;
 }
 
+describe("inspire retry state extension", () => {
+  it.each([undefined, false, true])(
+    "reports the effective setting %s with Pi's absent-field default",
+    async (enabled) => {
+      const fixture = setup();
+      fixture.getSettings.mockReturnValue(
+        enabled === undefined ? {} : { retry: { enabled } },
+      );
+      const request = {
+        v: 1,
+        nonce: "nonce_abcdefghijklmnopqrstuvwxyz123456",
+        workerId,
+        sessionId,
+      };
+      await fixture.handlers.get(`${command}${RETRY_STATE_SUFFIX}`)!(
+        Buffer.from(JSON.stringify(request)).toString("base64url"),
+        fixture.context,
+      );
+      expect(fixture.statuses).toHaveLength(1);
+      expect(fixture.statuses[0]![0]).toBe(`${statusKey}${RETRY_STATE_SUFFIX}`);
+      expect(decoded(fixture.statuses)).toEqual({
+        ...request,
+        autoRetryEnabled: enabled ?? true,
+      });
+      expect(fixture.context.navigateTree).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects a settings read for another session before reading settings", async () => {
+    const fixture = setup();
+    const request = {
+      v: 1,
+      nonce: "nonce_abcdefghijklmnopqrstuvwxyz123456",
+      workerId,
+      sessionId: "another-session",
+    };
+    await expect(
+      fixture.handlers.get(`${command}${RETRY_STATE_SUFFIX}`)!(
+        Buffer.from(JSON.stringify(request)).toString("base64url"),
+        fixture.context,
+      ),
+    ).rejects.toThrow("invalid retry state owner");
+    expect(fixture.getSettings).not.toHaveBeenCalled();
+    expect(fixture.statuses).toHaveLength(0);
+  });
+});
+
 describe("inspire branch extension", () => {
   it("uses public unsummarized navigation and emits one bounded final nonce result", async () => {
     const fixture = setup();
     await fixture.handler(argument(), fixture.context);
     expect(fixture.context.navigateTree).toHaveBeenCalledWith("target", {
       summarize: false,
+      customInstructions: undefined,
     });
     expect(fixture.statuses).toHaveLength(1);
     expect(fixture.statuses[0]![0]).toBe(statusKey);
@@ -130,6 +184,7 @@ describe("inspire branch extension", () => {
       ok: false,
       error: "tree hook failed",
       beforeLeaf: "old-leaf",
+      effectiveLeaf: "old-leaf",
     });
   });
 });

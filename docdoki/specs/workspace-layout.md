@@ -104,14 +104,32 @@ independent project shells in [[terminal]].
   navigation. The same vertical hierarchy fills the contextual drawer on narrow screens rather than
   becoming a second component arrangement.
 
-  History is an operational Pi branch/time-travel surface, not Git branch selection, a duplicate
-  Transcript, or an audit-only raw log. It groups the bounded loaded entry tree by user turn, keeps
-  a linear conversation on one rail, spends horizontal lanes only on actual alternate turn paths,
-  and marks current, latest, and alternate state explicitly. Response activity is progressively
-  disclosed beneath its prompt, with loaded-history search and global folding for inspection; exact
-  actionable entries remain available for switching, while prompts retain Pi-authorized edit and
-  fork actions. The center Transcript remains the authority for reading and searching full
-  conversation content.
+  History is a conversation outline for inspecting and deliberately continuing Pi history, not a
+  graph editor, duplicate Transcript, or raw audit log. User prompts lead its compact default view;
+  reply/event detail and alternate routes are disclosed where relevant. Other starts also exposes
+  branch points in a hidden metadata-only prefix, keeping first-input alternatives reachable.
+  Merely selecting a point
+  previews its complete content inside History without changing Pi's active context or the Composer.
+  Returning to the outline preserves search, loaded history, scroll and focus. Opening an alternate
+  route reveals its chosen/latest point, not its shared oldest ancestor; returning to Current
+  conversation only restores the active conversation's outline. Exact node actions explicitly distinguish
+  editing/continuing in this session from creating an independent Fork or Clone, without an action
+  toolbar on every outline row. Search reaches complete retained history across branches, and older
+  points remain reachable through progressive loading; bounded responses never define the limit of
+  accessible history. The center Transcript remains the active conversation surface.
+
+  The session title opens its action menu. Rename is first and overlaps the title, so repeating a
+  click or tap at the same point enters the inline editor. Clone and Export follow; there is no
+  separate menu or Clone button beside the title. The menu supports arrows, Enter and Escape;
+  dismissal returns focus to the title. Export opens the shared format-and-download dialog without
+  reading or changing the message draft.
+  `/clone` and the command palette invoke the same Clone action. It opens an independent copy of the recorded active branch without
+  sending a model prompt or changing the source's work, pending input, or draft. The earlier-branch
+  notice offers `Clone from here` for the same endpoint-inclusive meaning. [[session-branches]]
+  defines native navigation, Fork/Clone boundaries, and optional branch summaries. On a narrow screen,
+  a successful context-changing action closes the modal contextual drawer to reveal the resulting
+  conversation/draft; read-only preview and Back keep it open. Implementation evidence:
+  [[follow-history-cloning-2026-10-02]].
 
   Terminal presents the current project's ordered shell tabs without splits; hiding the pane
   detaches its views without ending PTYs, and focus mode or an independent same-origin window can

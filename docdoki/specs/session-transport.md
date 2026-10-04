@@ -188,8 +188,10 @@ and explicit re-open, cancelled-response/401 ownership, and the unconfirmed-crea
   rows or live overlays. This also applies to system checkpoints returned with a compaction and
   system messages inside aggregate agent events. Full, incremental, reopened, and branch views
   share the same filtering while preserving the SDK's per-entry message identities and the
-  chronological compaction summary. Filtering never changes persisted bytes or drops ownership
-  claims.
+  chronological compaction summary. History search, complete-content preview and image access share
+  this exclusion; system placeholders do not create empty search results. Structured-key redaction
+  remains shared with the ordinary projection, without an additional text-redaction rule. Filtering
+  never changes persisted bytes or drops ownership claims.
 
 - Assistant overlay text/thinking and tool-argument string appends produced by the trusted reducer
   account for appended JSON bytes, preview metadata, and stream-revision growth without serializing

@@ -101,8 +101,9 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "clone",
-    description: "Clone the current branch into a new Pi session",
-    execution: "terminal",
+    description:
+      "Clone the current branch into a new session without sending a prompt",
+    execution: "client",
   },
   {
     name: "trust",

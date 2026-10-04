@@ -1,11 +1,14 @@
 import type {
+  BranchEntryResponse,
   BranchForkResponse,
+  BranchNavigateRequest,
   BranchNavigateResponse,
+  BranchTreeQuery,
   BranchTreeResponse,
   ProjectionConflict,
   ProjectionHealth,
 } from "../../shared/contracts";
-import { ApiError, type Api } from "../api";
+import { type Api, ApiError } from "../api";
 
 export interface BranchControllerState {
   sessionId: string | null;
@@ -37,7 +40,7 @@ interface BranchViewTicket {
 
 interface EarlierBranchSelection {
   durableLeafId: string;
-  effectiveLeafId: string;
+  effectiveLeafId: string | null;
 }
 
 interface BranchControllerHost {
@@ -49,7 +52,11 @@ interface BranchControllerHost {
   beginForkSelection(): number;
   transportGeneration(): number;
   handleAuthFailure(): void;
-  applyNavigation(response: BranchNavigateResponse): void;
+  draftRevision(): number;
+  applyNavigation(
+    response: BranchNavigateResponse,
+    draftRevision: number,
+  ): void;
   applyFork(response: BranchForkResponse): void;
   refreshSessionCatalog(): void;
   notify(kind: "warning", text: string): void;
@@ -74,13 +81,14 @@ export class BranchController {
       branchTreeLoading: false,
       branchActionId: null,
       branchTreeError: state.branchTree
-        ? "Branch history is stale — reload after the session selection settles"
+        ? "Refresh History after switching sessions"
         : null,
     });
   }
 
   invalidateForViewChange(): void {
     this.invalidateRequests();
+    this.host.patch({ branchTreeLoading: false, branchActionId: null });
   }
 
   /** A new bootstrap owns a different API client, so an old tree/action can
@@ -92,7 +100,7 @@ export class BranchController {
       branchTreeLoading: false,
       branchActionId: null,
       branchTreeError: state.branchTree
-        ? "Branch history is stale — refresh after reconnecting"
+        ? "Refresh History after reconnecting"
         : null,
     });
   }
@@ -105,7 +113,7 @@ export class BranchController {
     if (this.host.state().branchTree) {
       this.host.patch({
         branchTreeError:
-          "Branch history is stale — refresh to use branch actions",
+          "The conversation changed — refresh History before continuing",
       });
     }
   }
@@ -133,7 +141,7 @@ export class BranchController {
       ) {
         this.host.patch({
           branchTreeError:
-            "Branch history belongs to a different view — refresh the session before using branch actions",
+            "The conversation changed — refresh History before continuing",
         });
         return;
       }
@@ -155,7 +163,7 @@ export class BranchController {
         branchTreeError:
           error instanceof Error
             ? error.message
-            : "Failed to load branch history",
+            : "History could not be loaded",
       });
     } finally {
       // An ordinary append can advance the leaf without invalidating the
@@ -173,12 +181,90 @@ export class BranchController {
     }
   }
 
-  async navigate(targetId: string, mode: "switch" | "edit"): Promise<boolean> {
+  /** Outlines bind the current position; immutable entry/image reads bind only
+   * the selected view. The pane cancels replaced searches and previews. */
+  async readTree(
+    query: BranchTreeQuery,
+    signal?: AbortSignal,
+  ): Promise<BranchTreeResponse | null> {
+    return this.read((api, sessionId) =>
+      api.branchTree(sessionId, query, signal),
+    );
+  }
+
+  async readEntry(
+    targetId: string,
+    offset = 0,
+    signal?: AbortSignal,
+  ): Promise<BranchEntryResponse | null> {
+    const viewId = this.host.state().transcriptViewId;
+    if (!viewId) return null;
+    return this.read(
+      (api, sessionId) =>
+        api.branchEntry({ sessionId, viewId, targetId, offset }, signal),
+      "view",
+    );
+  }
+
+  async readImage(
+    targetId: string,
+    index: number,
+    signal?: AbortSignal,
+  ): Promise<Blob | null> {
+    const viewId = this.host.state().transcriptViewId;
+    if (!viewId) return null;
+    return this.read(
+      (api, sessionId) =>
+        api.branchImage({ sessionId, viewId, targetId }, index, signal),
+      "view",
+    );
+  }
+
+  private async read<T>(
+    perform: (api: Api, sessionId: string) => Promise<T>,
+    ownership: "position" | "view" = "position",
+  ): Promise<T | null> {
+    const api = this.host.api();
+    const state = this.host.state();
+    if (!api || !state.sessionId) return null;
+    const ticket = this.viewTicket(state);
+    const generation = this.host.transportGeneration();
+    try {
+      const result = await perform(api, state.sessionId);
+      return this.host.api() === api &&
+        this.host.transportGeneration() === generation &&
+        this.ownsView(ticket, ownership)
+        ? result
+        : null;
+    } catch (error) {
+      if (
+        this.host.api() !== api ||
+        this.host.transportGeneration() !== generation
+      )
+        return null;
+      if (error instanceof ApiError && error.status === 401) {
+        this.host.handleAuthFailure();
+        return null;
+      }
+      if (!this.ownsView(ticket, ownership)) return null;
+      throw error;
+    }
+  }
+
+  async navigate(
+    targetId: string,
+    mode: "switch" | "edit",
+    options: Pick<
+      BranchNavigateRequest,
+      "summarize" | "customInstructions"
+    > = {},
+  ): Promise<boolean> {
     const api = this.host.api();
     const state = this.host.state();
     const sessionId = state.sessionId;
     const tree = state.branchTree;
     if (!api || !sessionId || !tree || this.actionsBlocked(state)) return false;
+    const draftRevision = this.host.draftRevision();
     return this.runAction(
       `${mode}:${targetId}`,
       api,
@@ -189,9 +275,14 @@ export class BranchController {
           revision: tree.revision,
           targetId,
           mode,
+          ...options,
         }),
       async (response) => {
-        this.host.applyNavigation(response);
+        if (response.cancelled) {
+          this.host.notify("warning", "Conversation change cancelled");
+          return false;
+        }
+        this.host.applyNavigation(response, draftRevision);
         await this.loadTree();
       },
       "Branch navigation failed",
@@ -206,10 +297,7 @@ export class BranchController {
     await this.loadTree();
     const state = this.host.state();
     if (state.sessionId !== sessionId) return false;
-    const node = state.branchTree?.nodes.find(
-      (candidate) => candidate.id === targetId,
-    );
-    if (!node?.canFork) {
+    if (!state.branchTree || state.branchTreeError) {
       this.host.notify(
         "warning",
         state.branchTreeError ?? "That input is no longer available to fork",
@@ -248,6 +336,41 @@ export class BranchController {
         this.host.refreshSessionCatalog();
       },
       "Fork failed",
+      "view",
+    );
+  }
+
+  async clone(targetId?: string): Promise<boolean> {
+    const sessionId = this.host.state().sessionId;
+    if (!sessionId) return false;
+    await this.loadTree();
+    const api = this.host.api();
+    const state = this.host.state();
+    const tree = state.branchTree;
+    if (
+      !api ||
+      state.sessionId !== sessionId ||
+      !tree ||
+      this.actionsBlocked(state)
+    )
+      return false;
+    const selectionRequest = this.host.beginForkSelection();
+    return this.runAction(
+      `clone:${targetId ?? "current"}`,
+      api,
+      { ...this.viewTicket(state), selectionRequest },
+      () =>
+        api.cloneBranch({
+          sessionId,
+          revision: tree.revision,
+          ...(targetId ? { targetId } : {}),
+        }),
+      (response) => {
+        this.host.applyFork(response);
+        this.host.refreshSessionCatalog();
+      },
+      "Clone failed",
+      "view",
     );
   }
 
@@ -256,8 +379,9 @@ export class BranchController {
     api: Api,
     ticket: BranchViewTicket,
     perform: () => Promise<T>,
-    commit: (response: T) => void | Promise<void>,
+    commit: (response: T) => boolean | void | Promise<boolean | void>,
     fallbackError: string,
+    ownership: "position" | "view" = "position",
   ): Promise<boolean> {
     const actionRequest = ++this.actionRequest;
     const transportGeneration = this.host.transportGeneration();
@@ -265,13 +389,15 @@ export class BranchController {
       actionRequest === this.actionRequest &&
       this.host.api() === api &&
       this.host.transportGeneration() === transportGeneration;
-    const owns = (): boolean => ownsRequest() && this.ownsView(ticket);
+    // Independent copies capture their prefix at admission. Source progress may
+    // continue while publishing; only a replaced view/selection invalidates opening it.
+    const owns = (): boolean =>
+      ownsRequest() && this.ownsView(ticket, ownership);
     this.host.patch({ branchActionId: actionId, branchTreeError: null });
     try {
       const response = await perform();
       if (!owns()) return false;
-      await commit(response);
-      return true;
+      return (await commit(response)) !== false;
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         if (
@@ -291,7 +417,7 @@ export class BranchController {
       if (ownsRequest() && this.host.state().branchActionId === actionId)
         this.host.patch({
           branchActionId: null,
-          ...(!this.ownsView(ticket)
+          ...(!this.ownsView(ticket, ownership)
             ? {
                 branchTreeError:
                   "Branch history changed — refresh to use branch actions",
@@ -308,12 +434,7 @@ export class BranchController {
     const sessionId = state.sessionId;
     const durableLeafId = state.transcriptDurableLeafId;
     const effectiveLeafId = state.transcriptEffectiveLeafId;
-    if (
-      !sessionId ||
-      !durableLeafId ||
-      !effectiveLeafId ||
-      durableLeafId === effectiveLeafId
-    ) {
+    if (!sessionId || !durableLeafId || durableLeafId === effectiveLeafId) {
       return null;
     }
     await this.loadTree();
@@ -344,13 +465,6 @@ export class BranchController {
     return branch ? this.navigate(branch.durableLeafId, "switch") : false;
   }
 
-  async forkCurrent(): Promise<boolean> {
-    const branch = await this.resolveCurrentEarlierBranch(
-      "Branch history changed — refresh the session before forking",
-    );
-    return branch ? this.fork(branch.effectiveLeafId) : false;
-  }
-
   private invalidateRequests(): void {
     this.treeRequest += 1;
     this.actionRequest += 1;
@@ -368,13 +482,17 @@ export class BranchController {
     };
   }
 
-  private ownsView(ticket: BranchViewTicket): boolean {
+  private ownsView(
+    ticket: BranchViewTicket,
+    ownership: "position" | "view" = "position",
+  ): boolean {
     const state = this.host.state();
     return (
       state.sessionId === ticket.sessionId &&
       this.host.selectionGeneration() === ticket.selectionGeneration &&
       state.transcriptViewId === ticket.viewId &&
-      state.transcriptEffectiveLeafId === ticket.effectiveLeafId &&
+      (ownership === "view" ||
+        state.transcriptEffectiveLeafId === ticket.effectiveLeafId) &&
       this.host.selectionRequest() === ticket.selectionRequest
     );
   }

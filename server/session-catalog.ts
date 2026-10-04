@@ -15,6 +15,8 @@ import {
   type SessionRecord,
 } from "./session-metadata.js";
 
+import { searchSessionRecords } from "./session-search.js";
+
 export type { SessionRecord } from "./session-metadata.js";
 
 const CACHE_MS = 5_000;
@@ -73,6 +75,7 @@ export interface SessionCatalogLike {
     query?: string;
     offset?: number;
     limit?: number;
+    signal?: AbortSignal;
   }): Promise<SessionListResponse>;
   listByIds(ids: readonly string[]): Promise<SessionSummary[]>;
   listByCwds(cwds: readonly string[]): Promise<SessionSummary[]>;
@@ -211,12 +214,17 @@ export class SessionCatalog implements SessionCatalogLike {
   }
 
   async list(
-    options: { query?: string; offset?: number; limit?: number } = {},
+    options: {
+      query?: string;
+      offset?: number;
+      limit?: number;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<SessionListResponse> {
     const sessions = (await this.refresh()).filter(
       (session) => !this.ambiguousIds.has(session.id),
     );
-    const query = options.query?.trim().toLowerCase().slice(0, 200) ?? "";
+    const query = options.query?.trim().slice(0, 200) ?? "";
     const requestedOffset = Number.isFinite(options.offset)
       ? Math.floor(options.offset!)
       : 0;
@@ -232,7 +240,7 @@ export class SessionCatalog implements SessionCatalogLike {
       Math.max(1, requestedLimit),
     );
     const filtered = query
-      ? sessions.filter((session) => session.searchText.includes(query))
+      ? await searchSessionRecords(sessions, query, options.signal)
       : sessions;
 
     return {

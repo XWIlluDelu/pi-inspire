@@ -13,6 +13,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useRef,
   useState,
 } from "react";
 import { isAbortableRunState, type ThemePreference } from "../shared/contracts";
@@ -669,6 +670,7 @@ export function App() {
   );
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const navSearchRef = useRef<HTMLInputElement>(null);
   const narrowViewport = useMediaQuery("(max-width: 900px)");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -718,6 +720,19 @@ export function App() {
   }, []);
   const closeCommandPalette = useCallback(() => setPaletteOpen(false), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const openSessionSearch = useCallback(() => {
+    setPaletteOpen(false);
+    setSettingsOpen(false);
+    if (narrowViewport) {
+      store.setResourcesOpen(false);
+      setMobileNavOpen(true);
+    } else setNavCollapsed(false);
+    // Let the old modal release focus and the existing navigation mount first.
+    requestAnimationFrame(() => {
+      navSearchRef.current?.focus();
+      navSearchRef.current?.select();
+    });
+  }, [narrowViewport]);
 
   const toggleNavigation = useCallback(() => {
     if (narrowViewport) {
@@ -753,12 +768,15 @@ export function App() {
     setSettingsOpen(false);
   }, [extensionOverlayOpen]);
 
+  const showCommandPalette = useCallback(() => {
+    setSettingsOpen(false);
+    setMobileNavOpen(false);
+    setPaletteOpen(true);
+  }, []);
   const openCommandPalette = useCallback(() => {
     if (extensionOverlayOpen || hasActiveModal()) return;
-    setSettingsOpen(false);
-    setPaletteOpen(true);
-  }, [extensionOverlayOpen]);
-
+    showCommandPalette();
+  }, [extensionOverlayOpen, showCommandPalette]);
   const toggleSettings = useCallback(() => {
     if (settingsOpen) {
       setSettingsOpen(false);
@@ -780,7 +798,7 @@ export function App() {
   useEffect(() => {
     const request = state.nativeCommandUiRequest;
     if (!request) return;
-    if (request.sessionId !== store.getState().sessionId) {
+    if (request.sessionId !== (store.getState().sessionId ?? "")) {
       store.consumeNativeCommandUiRequest(request.id);
       return;
     }
@@ -795,13 +813,17 @@ export function App() {
       setSettingsCategory("updates");
       setSettingsOpen(true);
     } else if (request.action === "sessions") {
-      setSettingsOpen(false);
-      setPaletteOpen(true);
+      openSessionSearch();
     } else if (request.action === "new") {
       newSession();
     }
     store.consumeNativeCommandUiRequest(request.id);
-  }, [extensionOverlayOpen, newSession, state.nativeCommandUiRequest]);
+  }, [
+    extensionOverlayOpen,
+    newSession,
+    openSessionSearch,
+    state.nativeCommandUiRequest,
+  ]);
 
   useLayoutEffect(() => {
     if (!state.bootstrapped || !focusedTerminalLaunchRequested()) return;
@@ -931,6 +953,7 @@ export function App() {
         isModal={isNavModal}
         onClose={closeMobileNavigation}
         selectedSessionId={state.sessionId}
+        searchInputRef={navSearchRef}
         onNewSession={newSession}
         onSelectSession={openSession}
       />
@@ -1064,6 +1087,7 @@ export function App() {
           onToggleCtx={toggleResources}
           onNewSession={newSession}
           onOpenSession={openSession}
+          onFindSession={openSessionSearch}
         />
       ) : null}
       <ExtensionUiDialog />

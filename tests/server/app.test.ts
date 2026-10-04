@@ -1289,6 +1289,45 @@ describe("local host API", () => {
       snapshot: await runtime.openSession("mock-active"),
       editorText: "original",
     });
+    const sourceSnapshot = await runtime.openSession("mock-active");
+    const clone = vi.spyOn(runtime, "cloneBranch").mockResolvedValue({
+      sessionId: "cloned",
+      editorText: "",
+      snapshot: {
+        ...sourceSnapshot,
+        active: { ...sourceSnapshot.active!, sessionId: "cloned" },
+      },
+    });
+    const entry = vi.spyOn(runtime, "branchEntry").mockResolvedValue({
+      sessionId: "mock-active",
+      revision: 3,
+      text: "Complete retained answer",
+      totalChars: 24,
+      nextOffset: null,
+      node: {
+        id: "a1",
+        parentId: "u1",
+        type: "message",
+        role: "assistant",
+        depth: 1,
+        label: "Answer",
+        snippet: "Answer",
+        timestamp: "2026-08-01",
+        active: true,
+        leaf: true,
+        canSwitch: true,
+        canEdit: false,
+        canFork: false,
+      },
+      images: [{ index: 0, mimeType: "image/png" }],
+    });
+    const image = vi.spyOn(runtime, "branchImage").mockResolvedValue({
+      mimeType: "image/png",
+      data: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aPe8AAAAASUVORK5CYII=",
+        "base64",
+      ),
+    });
 
     await request(application.server)
       .get("/api/branches/tree?sessionId=mock-active")
@@ -1298,7 +1337,52 @@ describe("local host API", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(200)
       .expect((response) => expect(response.body.revision).toBe(3));
-    expect(tree).toHaveBeenCalledWith("mock-active");
+    expect(tree).toHaveBeenCalledWith("mock-active", {});
+    await request(application.server)
+      .get("/api/branches/tree?sessionId=mock-active&query=retained&before=a1")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(tree).toHaveBeenLastCalledWith("mock-active", {
+      query: "retained",
+      before: "a1",
+    });
+    const readQuery =
+      "sessionId=mock-active&targetId=a1&viewId=view-1&offset=0";
+    await request(application.server)
+      .get(`/api/branches/entry?${readQuery}`)
+      .expect(401);
+    await request(application.server)
+      .get(`/api/branches/image?${readQuery}&index=0`)
+      .expect(401);
+    expect(entry).not.toHaveBeenCalled();
+    expect(image).not.toHaveBeenCalled();
+    await request(application.server)
+      .get(`/api/branches/entry?${readQuery}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200)
+      .expect((response) =>
+        expect(response.body.text).toBe("Complete retained answer"),
+      );
+    expect(entry).toHaveBeenCalledWith({
+      sessionId: "mock-active",
+      targetId: "a1",
+      viewId: "view-1",
+      offset: 0,
+    });
+    await request(application.server)
+      .get(`/api/branches/image?${readQuery}&index=0`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200)
+      .expect("Content-Type", /image\/png/)
+      .expect("Cache-Control", "private, no-store");
+    expect(image).toHaveBeenCalledWith(
+      { sessionId: "mock-active", targetId: "a1", viewId: "view-1", offset: 0 },
+      0,
+    );
+    await request(application.server)
+      .get(`/api/branches/image?${readQuery}&index=-1`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(400);
 
     await request(application.server)
       .post("/api/branches/navigate")
@@ -1337,6 +1421,27 @@ describe("local host API", () => {
       sessionId: "mock-active",
       revision: 3,
       targetId: "u1",
+    });
+    await request(application.server)
+      .post("/api/branches/clone")
+      .send({ sessionId: "mock-active", revision: 3 })
+      .expect(401);
+    expect(clone).not.toHaveBeenCalled();
+    await request(application.server)
+      .post("/api/branches/clone")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", revision: 3, rawPath: "/forged" })
+      .expect(400);
+    await request(application.server)
+      .post("/api/branches/clone")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", revision: 3, targetId: "a1" })
+      .expect(200)
+      .expect((response) => expect(response.body.editorText).toBe(""));
+    expect(clone).toHaveBeenLastCalledWith({
+      sessionId: "mock-active",
+      revision: 3,
+      targetId: "a1",
     });
   });
 

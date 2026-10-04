@@ -221,7 +221,7 @@ export interface EventSlice {
   extensionDisplays: ExtensionDisplay[];
   notices: Notice[];
   statuses: Record<string, string>;
-  editorText: { text: string; nonce: number } | null;
+  editorText: { text: string; nonce: number; draftRevision?: number } | null;
   windowTitle: string | null;
   nextNoticeId: number;
 }

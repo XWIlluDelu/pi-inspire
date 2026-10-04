@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { browserWorkspace } from "../tests/browser/fixtures/workspace.mjs";
 import { testPiCommand } from "./test-pi-command.mjs";
@@ -56,6 +56,14 @@ await writeFile(
   `${Array.from({ length: 2500 }, (_, index) => `native shell line ${index + 1}`).join("\n")}\nCOMPLETE_NATIVE_SHELL_LOG_END\n`,
 );
 
+const historyImage = (
+  await readFile(
+    resolve(
+      browserWorkspace,
+      "tests/browser/fixtures/file-previews/training curve.png",
+    ),
+  )
+).toString("base64");
 const child = spawn(
   process.execPath,
   [resolve("node_modules", "tsx", "dist", "cli.mjs"), "server/index.ts"],
@@ -77,6 +85,7 @@ const child = spawn(
       INSPIRE_PI_COMMAND: testPiCommand,
       INSPIRE_MOCK: "1",
       INSPIRE_MOCK_WORKSPACE: browserWorkspace,
+      INSPIRE_MOCK_HISTORY_IMAGE: historyImage,
       INSPIRE_MOCK_STREAM_INTERVAL_MS: "250",
       INSPIRE_PREFERENCES_PATH: preferencesPath,
       INSPIRE_STATE_PATH: instanceStatePath,

@@ -4,6 +4,8 @@ import {
   type ActiveSnapshot,
   type ActivityFoldVisibilityPreference,
   type AssistantRoundDisplayPreference,
+  type BranchNavigateRequest,
+  type BranchTreeQuery,
   type CompletionAttentionPreference,
   type ComposerHistoryEntry,
   type ContentTextSizePreference,
@@ -75,7 +77,11 @@ import { UpdateController } from "./controllers/update-controller";
 import { WorkspaceController } from "./controllers/workspace-controller";
 import { type Notice, parseExtensionDisplays } from "./events";
 import { supportedThinkingLevels } from "./model-options";
-import { sessionDraft, setSessionDraft } from "./session-drafts";
+import {
+  sessionDraft,
+  sessionDraftRevision,
+  setSessionDraft,
+} from "./session-drafts";
 import {
   deriveSnapshotTransition,
   type SnapshotMode,
@@ -142,10 +148,6 @@ function terminalCommandGuidance(command: string): string {
       return "Project trust is managed by Pi. Use /trust in Pi's terminal to change a saved decision, then /reload here to start a fresh worker.";
     case "import":
       return "Session import can replace the active Pi runtime. Run it in Pi's terminal flow, where the source path and replacement confirmation stay visible.";
-    case "clone":
-      return "Browser cloning is not implemented. /clone requires Pi's terminal in the intended session; opening the project terminal does not resume this session. Never open its JSONL in a second Pi process while INSΠRE owns the worker.";
-    case "scoped-models":
-      return "INSΠRE's model picker searches every available model. Pi's Ctrl+P model-cycle scope is terminal-specific and remains configurable there.";
     default:
       return "This command currently requires Pi's trusted terminal interface.";
   }
@@ -206,16 +208,27 @@ export class AppStore {
     beginForkSelection: () => ++this.selectionRequest,
     transportGeneration: () => this.transportGeneration,
     handleAuthFailure: () => this.handleAuthFailure(),
-    applyNavigation: (response) => {
+    draftRevision: () => sessionDraftRevision(this.state.sessionId!),
+    applyNavigation: (response, draftRevision) => {
+      const sessionId = this.state.sessionId!;
+      const ownsDraft = sessionDraftRevision(sessionId) === draftRevision;
       this.applySnapshot(response.snapshot);
-      if (response.editorText !== undefined) {
-        this.set({
-          editorText: {
-            text: response.editorText,
-            nonce: (this.state.editorText?.nonce ?? 0) + 1,
-          },
-        });
+      if (response.editorText === undefined) return;
+      if (!ownsDraft) {
+        this.notify(
+          "warning",
+          "Conversation changed; your newer draft was kept.",
+        );
+        return;
       }
+      setSessionDraft(sessionId, response.editorText);
+      this.set({
+        editorText: {
+          text: response.editorText,
+          nonce: (this.state.editorText?.nonce ?? 0) + 1,
+          draftRevision: sessionDraftRevision(sessionId),
+        },
+      });
     },
     applyFork: (response) => {
       this.applySnapshot(response.snapshot);
@@ -1413,15 +1426,22 @@ export class AppStore {
     return native.name === "compact" || owner?.source === "builtin";
   };
 
+  /** Palette actions never borrow an unfinished message's artifacts. */
+  runPaletteNativeCommand = (input: string): PromptAcceptedResponse | false => {
+    const command = parseNativeCommand(input);
+    return command ? this.executeNativeCommand(input, command, false) : false;
+  };
+
   private executeNativeCommand(
     input: string,
     command: NonNullable<ReturnType<typeof parseNativeCommand>>,
+    includeDraftArtifacts = true,
   ): PromptAcceptedResponse | false {
     const sessionId = this.state.sessionId;
     if (!sessionId || !command) return false;
     if (
-      this.state.attachments.length > 0 ||
-      this.state.projectFiles.length > 0
+      includeDraftArtifacts &&
+      (this.state.attachments.length > 0 || this.state.projectFiles.length > 0)
     ) {
       this.presentCommandActivity(
         sessionId,
@@ -1513,6 +1533,10 @@ export class AppStore {
     }
     if (command.name === "changelog") {
       this.requestNativeCommandUi(sessionId, "updates");
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (command.name === "clone") {
+      void this.cloneCurrentBranch();
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "tree" || command.name === "fork") {
@@ -2505,10 +2529,21 @@ export class AppStore {
 
   loadBranchTree = (): Promise<void> => this.branches.loadTree();
 
+  readBranchTree = (query: BranchTreeQuery, signal?: AbortSignal) =>
+    this.branches.readTree(query, signal);
+  readBranchEntry = (targetId: string, offset = 0, signal?: AbortSignal) =>
+    this.branches.readEntry(targetId, offset, signal);
+  readBranchImage = (targetId: string, index: number, signal?: AbortSignal) =>
+    this.branches.readImage(targetId, index, signal);
+
   navigateBranch = (
     targetId: string,
     mode: "switch" | "edit",
-  ): Promise<boolean> => this.branches.navigate(targetId, mode);
+    options: Pick<
+      BranchNavigateRequest,
+      "summarize" | "customInstructions"
+    > = {},
+  ): Promise<boolean> => this.branches.navigate(targetId, mode, options);
 
   forkFromEntry = (targetId: string): Promise<boolean> =>
     this.branches.forkFromEntry(targetId);
@@ -2518,7 +2553,9 @@ export class AppStore {
 
   returnToLatestBranch = (): Promise<boolean> => this.branches.returnToLatest();
 
-  forkCurrentBranch = (): Promise<boolean> => this.branches.forkCurrent();
+  cloneBranch = (targetId: string): Promise<boolean> =>
+    this.branches.clone(targetId);
+  cloneCurrentBranch = (): Promise<boolean> => this.branches.clone();
 
   setGitSurfaceVisible = (surface: string, visible: boolean): void => {
     this.git.setSurfaceVisible(surface, visible);

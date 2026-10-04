@@ -8,8 +8,8 @@ import {
 } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { MAX_SESSION_ID_CHARS } from "../shared/contracts.js";
-import { JsonlObjectDecoder, PersistedJsonlError } from "./session-jsonl.js";
 import { getAgentDir } from "./pi-runtime.js";
+import { JsonlObjectDecoder, PersistedJsonlError } from "./session-jsonl.js";
 
 const MAX_INDEXED_TEXT_CHARS = 10_000;
 const MAX_SESSION_PATH_CHARS = 32_768;
@@ -82,19 +82,23 @@ function timestamp(value: unknown): number | null {
     : null;
 }
 
-function messageText(message: Record<string, unknown>): string {
+function messageText(
+  message: Record<string, unknown>,
+  limit = MAX_INDEXED_TEXT_CHARS,
+): string {
   const content = message.content;
-  if (typeof content === "string")
-    return content.slice(0, MAX_INDEXED_TEXT_CHARS);
+  if (typeof content === "string") return content.slice(0, limit);
   if (!Array.isArray(content)) return "";
   let text = "";
+  let hasTextBlock = false;
   for (const value of content) {
     const block = recordValue(value);
     if (block?.type !== "text" || typeof block.text !== "string") continue;
-    const separator = text ? " " : "";
-    const remaining = MAX_INDEXED_TEXT_CHARS - text.length;
+    const separator = hasTextBlock ? " " : "";
+    const remaining = limit - text.length;
     if (remaining <= 0) break;
     text += `${separator}${block.text}`.slice(0, remaining);
+    hasTextBlock = true;
   }
   return text;
 }
@@ -227,6 +231,7 @@ async function scanSessionFile(
   start: number,
   previous: SessionMetadataState | null,
   fallbackModified: number,
+  onEntry?: (entry: Record<string, unknown>) => void,
 ): Promise<{
   state: SessionMetadataState;
   record: Omit<SessionRecord, "source"> | null;
@@ -250,8 +255,10 @@ async function scanSessionFile(
     const length = Math.min(buffer.length, size - offset);
     const { bytesRead } = await handle.read(buffer, 0, length, offset);
     if (bytesRead === 0) break;
-    for (const entry of decoder.push(buffer.subarray(0, bytesRead)))
+    for (const entry of decoder.push(buffer.subarray(0, bytesRead))) {
       applyEntry(state, entry, fallbackModified);
+      onEntry?.(entry);
+    }
     offset += bytesRead;
   }
   return {
@@ -312,6 +319,31 @@ async function pathAddressesVersion(
       canonical === canonicalPath &&
       details.isFile() &&
       fileVersion(details) === version
+    );
+  } catch (error) {
+    if (isDisappearedPath(error)) return false;
+    throw error;
+  }
+}
+
+/** Under Pi's one-writer append rule, growth preserves the admitted byte prefix. */
+async function pathAddressesPrefix(
+  path: string,
+  canonicalPath: string,
+  prefix: SessionSourceIdentity,
+): Promise<boolean> {
+  try {
+    const [canonical, details] = await Promise.all([
+      realpath(path),
+      lstat(path, { bigint: true }),
+    ]);
+    return (
+      canonical === canonicalPath &&
+      details.isFile() &&
+      details.dev === prefix.dev &&
+      details.ino === prefix.ino &&
+      (details.size > prefix.size ||
+        fileVersion(details) === fileVersion(prefix))
     );
   } catch (error) {
     if (isDisappearedPath(error)) return false;
@@ -411,6 +443,100 @@ export class SessionMetadataIndex {
       ),
     );
     return records.filter((record): record is SessionRecord => record !== null);
+  }
+
+  /** Worker-only scan: one complete session at a time, never cached. */
+  async scanSearch(
+    sessions: readonly SessionRecord[],
+    query: string,
+    nativeSearchPath: string,
+  ): Promise<SessionRecord[]> {
+    // This internal Pi dependency is deliberately loaded only inside search.
+    // The parsed object remains opaque; Pi owns both parsing and matching.
+    const { parseSearchQuery, matchSession } = (await import(
+      nativeSearchPath
+    )) as {
+      parseSearchQuery(query: string): { error?: string };
+      matchSession(
+        session: {
+          id: string;
+          cwd: string;
+          name?: string;
+          allMessagesText: string;
+        },
+        parsed: { error?: string },
+      ): { matches: boolean };
+    };
+    const parsed = parseSearchQuery(query);
+    if (parsed.error) return [];
+    const matches: SessionRecord[] = [];
+    for (const session of sessions) {
+      const handle = await open(
+        session.path,
+        constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+      );
+      try {
+        const before = await handle.stat({ bigint: true });
+        const canonical = await realpath(session.path);
+        const source = session.source;
+        if (
+          !before.isFile() ||
+          !source ||
+          source.dev !== before.dev ||
+          source.ino !== before.ino ||
+          before.size > BigInt(Number.MAX_SAFE_INTEGER) ||
+          !(await pathAddressesPrefix(session.path, canonical, before))
+        ) {
+          throw new Error("Session source changed; refresh the session list");
+        }
+        let name: string | undefined;
+        const messages: string[] = [];
+        const scan = await scanSessionFile(
+          handle,
+          session.path,
+          Number(before.size),
+          0,
+          null,
+          Number(before.mtimeNs / 1_000_000n),
+          (entry) => {
+            if (entry.type === "session_info")
+              name =
+                typeof entry.name === "string"
+                  ? entry.name.trim() || undefined
+                  : undefined;
+            if (entry.type !== "message") return;
+            const message = recordValue(entry.message);
+            if (message?.role !== "user" && message?.role !== "assistant")
+              return;
+            const text = messageText(message, Number.POSITIVE_INFINITY);
+            if (text) messages.push(text);
+          },
+        );
+        if (
+          scan.record?.id !== session.id ||
+          scan.record.cwd !== session.cwd ||
+          (await handle.stat({ bigint: true })).size < before.size ||
+          !(await pathAddressesPrefix(session.path, canonical, before))
+        ) {
+          throw new Error("Session source changed while searching; try again");
+        }
+        if (
+          matchSession(
+            {
+              id: session.id,
+              cwd: session.cwd,
+              name,
+              allMessagesText: messages.join(" "),
+            },
+            parsed,
+          ).matches
+        )
+          matches.push(session);
+      } finally {
+        await handle.close();
+      }
+    }
+    return matches;
   }
 
   private async read(

@@ -39,6 +39,8 @@ export function parseBridgeResult(text: unknown): BranchBridgeResult {
     typeof value.cancelled !== "boolean" ||
     !leaf(value.beforeLeaf) ||
     !leaf(value.effectiveLeaf) ||
+    (value.summaryId !== undefined &&
+      (typeof value.summaryId !== "string" || !value.summaryId)) ||
     (value.error !== undefined &&
       (typeof value.error !== "string" || value.error.length > 300)) ||
     Object.keys(value).some(
@@ -52,6 +54,7 @@ export function parseBridgeResult(text: unknown): BranchBridgeResult {
           "cancelled",
           "beforeLeaf",
           "effectiveLeaf",
+          "summaryId",
           "error",
         ].includes(key),
     )

@@ -967,6 +967,7 @@ export type BranchNodeRole =
   | "user"
   | "assistant"
   | "tool"
+  | "shell"
   | "system"
   | "metadata";
 
@@ -984,6 +985,36 @@ export interface BranchTreeNode {
   canSwitch: boolean;
   canEdit: boolean;
   canFork: boolean;
+  /** Complete native child count, independent of this page. */
+  childCount?: number;
+  /** Latest retained descendant for read-only route inspection. */
+  routeLeafId?: string;
+}
+
+export interface BranchTreeQuery {
+  before?: string;
+  query?: string;
+  /** Read another ancestor path without moving Pi's active leaf. */
+  leafId?: string;
+  /** List routes at this actual branch point; empty string means roots. */
+  parentId?: string;
+}
+
+export interface BranchEntryRequest {
+  sessionId: string;
+  viewId: string;
+  targetId: string;
+  offset?: number;
+}
+
+export interface BranchEntryResponse {
+  sessionId: string;
+  revision: number;
+  node: BranchTreeNode;
+  text: string;
+  nextOffset: number | null;
+  totalChars: number;
+  images?: Array<{ index: number; mimeType: string }>;
 }
 
 export interface BranchTreeResponse {
@@ -994,7 +1025,13 @@ export interface BranchTreeResponse {
   effectiveLeafId: string | null;
   activePath: string[];
   nodes: BranchTreeNode[];
+  /** The containing input when this route page begins inside a long turn. */
+  leadingPrompt?: BranchTreeNode;
   truncated: boolean;
+  nextBefore?: string | null;
+  routeLeafId?: string | null;
+  rootCount?: number;
+  skipSummaryPrompt?: boolean;
   health: ProjectionHealth;
 }
 
@@ -1003,17 +1040,28 @@ export interface BranchNavigateRequest {
   revision: number;
   targetId: string;
   mode: "switch" | "edit";
+  summarize?: boolean;
+  customInstructions?: string;
 }
 
 export interface BranchNavigateResponse {
   snapshot: ActiveSnapshot;
   editorText?: string;
+  /** Native cancellation did not move the conversation or prepare a draft. */
+  cancelled?: boolean;
 }
 
 export interface BranchForkRequest {
   sessionId: string;
   revision: number;
   targetId: string;
+}
+
+export interface BranchCloneRequest {
+  sessionId: string;
+  revision: number;
+  /** Omitted clones the recorded effective endpoint, including a null root. */
+  targetId?: string;
 }
 
 export interface BranchForkResponse {

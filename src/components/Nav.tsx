@@ -12,7 +12,15 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { memo, useEffect, useRef, useState } from "react";
+import {
+  memo,
+  type Ref,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   isBusyRunState,
   projectNameFromCwd,
@@ -93,6 +101,7 @@ export const Nav = memo(function Nav({
   onClose,
   onNewSession,
   onSelectSession,
+  searchInputRef,
 }: {
   collapsed: boolean;
   selectedSessionId?: string | null;
@@ -100,6 +109,7 @@ export const Nav = memo(function Nav({
   onClose?: () => void;
   onNewSession: () => void;
   onSelectSession: (id: string) => void;
+  searchInputRef?: Ref<HTMLInputElement>;
 }) {
   const {
     sessions,
@@ -107,6 +117,7 @@ export const Nav = memo(function Nav({
     pinnedProjectCwds,
     curatedHiddenSessionIds,
     hiddenProjectCwds,
+    collapsedGroupCwds,
     activeSessionId,
     openingSessionId,
     sessionStatuses,
@@ -128,6 +139,7 @@ export const Nav = memo(function Nav({
       pinnedProjectCwds: state.prefs.pinnedProjectCwds,
       curatedHiddenSessionIds: state.prefs.hiddenSessionIds,
       hiddenProjectCwds: state.prefs.hiddenProjectCwds,
+      collapsedGroupCwds: state.prefs.navCollapsedGroups,
       activeSessionId: state.sessionId,
       openingSessionId: state.openingSessionId,
       sessionStatuses: state.sessionStatuses,
@@ -165,6 +177,71 @@ export const Nav = memo(function Nav({
   );
   const navRef = isModal ? modalNavRef : internalNavRef;
   const [hiddenOpen, setHiddenOpen] = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [searchSelection, setSearchSelection] = useState<{
+    query: string;
+    id: string | null;
+  }>({ query: sessionQuery, id: null });
+  const composing = useRef(false);
+  const selectionStatusId = useId();
+  const sections = useMemo(
+    () =>
+      splitNavSections(sessions, {
+        pinnedSessionIds,
+        pinnedProjectCwds,
+        hiddenSessionIds: curatedHiddenSessionIds,
+        hiddenProjectCwds,
+      }),
+    [
+      sessions,
+      pinnedSessionIds,
+      pinnedProjectCwds,
+      curatedHiddenSessionIds,
+      hiddenProjectCwds,
+    ],
+  );
+  const searching = sessionQuery.trim() !== "";
+  const hiddenExpanded = searching || hiddenOpen;
+  const searchResults = useMemo(() => {
+    const folderRows = (groups: typeof sections.groups) =>
+      groups.flatMap((group) =>
+        searching || !collapsedGroupCwds.includes(group.cwd)
+          ? group.sessions
+          : [],
+      );
+    return [
+      ...sections.pinned,
+      ...folderRows(sections.pinnedGroups),
+      ...folderRows(sections.groups),
+      ...(hiddenExpanded
+        ? [...folderRows(sections.hiddenGroups), ...sections.hidden]
+        : []),
+    ];
+  }, [sections, searching, hiddenExpanded, collapsedGroupCwds]);
+  const highlighted = searchFocused
+    ? searchSelection.query === sessionQuery
+      ? (searchResults.find((session) => session.id === searchSelection.id) ??
+        searchResults[0])
+      : searchResults[0]
+    : undefined;
+  const highlightedSessionId = highlighted?.id ?? null;
+  useEffect(() => {
+    setSearchSelection((previous) => {
+      if (
+        previous.query === sessionQuery &&
+        (searchResults.length === 0 ||
+          searchResults.some((session) => session.id === previous.id))
+      )
+        return previous;
+      return { query: sessionQuery, id: searchResults[0]?.id ?? null };
+    });
+  }, [sessionQuery, searchResults]);
+  useEffect(() => {
+    if (!highlightedSessionId) return;
+    navRef.current
+      ?.querySelector(".nav__row--highlighted .nav__row-main")
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [highlightedSessionId, navRef]);
   const [deleteCandidate, setDeleteCandidate] = useState<SessionSummary | null>(
     null,
   );
@@ -188,19 +265,12 @@ export const Nav = memo(function Nav({
     );
   }
 
-  const { pinned, pinnedGroups, groups, hiddenGroups, hidden } =
-    splitNavSections(sessions, {
-      pinnedSessionIds,
-      pinnedProjectCwds,
-      hiddenSessionIds: curatedHiddenSessionIds,
-      hiddenProjectCwds,
-    });
+  const { pinned, pinnedGroups, groups, hiddenGroups, hidden } = sections;
   const folders = [...pinnedGroups, ...groups];
   const allFolders = [...folders, ...hiddenGroups];
   const nameCounts = new Map<string, number>();
   for (const group of allFolders)
     nameCounts.set(group.name, (nameCounts.get(group.name) ?? 0) + 1);
-  const searching = sessionQuery.trim() !== "";
   const shownBaseRows = Math.min(sessionListNextOffset, sessionListTotal);
   const hasOlderSessions = sessionListNextOffset < sessionListTotal;
   const sessionListBusy =
@@ -238,7 +308,6 @@ export const Nav = memo(function Nav({
   // Hidden is a curation drawer, not a browsing group: it opens on demand and
   // starts closed again next time. Search reveals matches inside it without
   // reclassifying them out of Hidden.
-  const hiddenExpanded = searching || hiddenOpen;
   const hiddenSessions = [
     ...hiddenGroups.flatMap((group) => group.sessions),
     ...hidden,
@@ -311,20 +380,73 @@ export const Nav = memo(function Nav({
         <label className="nav__search">
           <Search size={13} aria-hidden />
           <input
+            ref={searchInputRef}
             type="search"
             placeholder="Search sessions"
             aria-label="Search sessions"
             value={sessionQuery}
+            aria-describedby={selectionStatusId}
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => setSearchFocused(false)}
+            onCompositionStart={() => {
+              composing.current = true;
+            }}
+            onCompositionEnd={() => {
+              composing.current = false;
+            }}
             onChange={(event) => store.searchSessions(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key !== "Escape") return;
+              if (
+                event.nativeEvent.isComposing ||
+                composing.current ||
+                event.nativeEvent.keyCode === 229
+              ) {
+                event.stopPropagation();
+                return;
+              }
+              if (
+                event.altKey ||
+                event.ctrlKey ||
+                event.metaKey ||
+                event.shiftKey
+              )
+                return;
+              if (
+                !["ArrowUp", "ArrowDown", "Enter", "Escape"].includes(event.key)
+              )
+                return;
               event.preventDefault();
               event.stopPropagation();
-              if (sessionQuery) store.searchSessions("");
-              else event.currentTarget.blur();
+              if (event.key === "Escape") {
+                if (sessionQuery) store.searchSessions("");
+                else event.currentTarget.blur();
+              } else if (event.key === "Enter") {
+                if (highlighted && highlighted.id !== openingSessionId)
+                  onSelectSession(highlighted.id);
+              } else if (searchResults.length > 0) {
+                const index = searchResults.findIndex(
+                  (session) => session.id === highlightedSessionId,
+                );
+                const next = Math.max(
+                  0,
+                  Math.min(
+                    searchResults.length - 1,
+                    index + (event.key === "ArrowDown" ? 1 : -1),
+                  ),
+                );
+                setSearchSelection({
+                  query: sessionQuery,
+                  id: searchResults[next]!.id,
+                });
+              }
             }}
           />
         </label>
+        <span id={selectionStatusId} className="sr-only" role="status">
+          {highlighted
+            ? `${highlighted.title}. Up and Down select a session; Enter opens it.`
+            : ""}
+        </span>
       </div>
       {sessionActionError ? (
         <p className="nav__error" role="alert">
@@ -349,6 +471,7 @@ export const Nav = memo(function Nav({
                 key={session.id}
                 session={session}
                 selectedSessionId={visibleSessionId}
+                highlightedSessionId={highlightedSessionId}
                 showProject
                 onSelect={onSelectSession}
               />
@@ -364,6 +487,7 @@ export const Nav = memo(function Nav({
               searching={searching}
               showContext={(nameCounts.get(group.name) ?? 0) > 1}
               selectedSessionId={visibleSessionId}
+              highlightedSessionId={highlightedSessionId}
               onSelectSession={onSelectSession}
             />
           );
@@ -463,6 +587,7 @@ export const Nav = memo(function Nav({
                     searching={searching}
                     showContext={(nameCounts.get(group.name) ?? 0) > 1}
                     selectedSessionId={visibleSessionId}
+                    highlightedSessionId={highlightedSessionId}
                     hidden
                     onSelectSession={onSelectSession}
                     onDeleteSession={setDeleteCandidate}
@@ -473,6 +598,7 @@ export const Nav = memo(function Nav({
                     key={session.id}
                     session={session}
                     selectedSessionId={visibleSessionId}
+                    highlightedSessionId={highlightedSessionId}
                     showProject
                     onSelect={onSelectSession}
                     onDelete={setDeleteCandidate}

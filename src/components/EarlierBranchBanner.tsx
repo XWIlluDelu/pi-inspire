@@ -20,7 +20,7 @@ export const EarlierBranchBanner = memo(function EarlierBranchBanner() {
       shallowEqual,
     );
   const viewingEarlierBranch = Boolean(
-    durableLeafId && effectiveLeafId && durableLeafId !== effectiveLeafId,
+    durableLeafId && durableLeafId !== effectiveLeafId,
   );
   if (!viewingEarlierBranch) return null;
 
@@ -32,11 +32,7 @@ export const EarlierBranchBanner = memo(function EarlierBranchBanner() {
     >
       <GitBranch size={16} aria-hidden />
       <div className="earlier-branch-banner__copy">
-        <strong>Viewing an earlier branch</strong>
-        <span>
-          New messages continue from this point until you return to the latest
-          branch.
-        </span>
+        <strong>Continuing from earlier history</strong>
         {treeError ? (
           <span className="earlier-branch-banner__error" role="alert">
             {treeError}
@@ -57,9 +53,10 @@ export const EarlierBranchBanner = memo(function EarlierBranchBanner() {
           type="button"
           className="button button--quiet"
           disabled={busy}
-          onClick={() => void store.forkCurrentBranch()}
+          title="Copy through this point into a new session with an empty draft"
+          onClick={() => void store.cloneCurrentBranch()}
         >
-          Fork from here
+          Clone from here
         </button>
       </div>
     </section>

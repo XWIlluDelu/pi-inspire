@@ -19,7 +19,11 @@ import {
 } from "../composer-history";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import { supportedThinkingLevels } from "../model-options";
-import { sessionDraft, setSessionDraft } from "../session-drafts";
+import {
+  sessionDraft,
+  sessionDraftRevision,
+  setSessionDraft,
+} from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
@@ -263,8 +267,15 @@ export const Composer = memo(function Composer() {
 
   const editorNonce = state.editorText?.nonce;
   // biome-ignore lint/correctness/useExhaustiveDependencies: Pi's nonce is the editor-delivery revision; same-nonce payload changes must not replace a draft.
-  useEffect(() => {
-    if (state.editorText) updateDraft(state.editorText.text);
+  useLayoutEffect(() => {
+    const delivery = state.editorText;
+    if (
+      delivery &&
+      (delivery.draftRevision === undefined ||
+        (sessionId &&
+          sessionDraftRevision(sessionId) === delivery.draftRevision))
+    )
+      updateDraft(delivery.text);
   }, [editorNonce]);
 
   const canSend = Boolean(

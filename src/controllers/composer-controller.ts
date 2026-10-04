@@ -689,6 +689,7 @@ export class ComposerController {
   ): void {
     if (this.host.state().sessionId !== scope.sessionId) return;
     const composer = this.forSession(scope.sessionId);
+    if (entry || composer.historyDraft) touchSessionDraft(scope.sessionId);
     if (!entry) {
       this.restoreHistoryDraft(composer);
       this.prune(scope.sessionId, composer);
@@ -754,6 +755,7 @@ export class ComposerController {
     if (!composer) return;
     const scopeKey = composerHistoryScopeKey(scope);
     if (composer.historyDraft?.scopeKey !== scopeKey) return;
+    touchSessionDraft(scope.sessionId);
     this.commitHistoryDraft(composer);
     this.publish(scope.sessionId);
   }
@@ -761,6 +763,7 @@ export class ComposerController {
   cancelHistoryPreview(sessionId: string): void {
     const composer = this.composers.get(sessionId);
     if (!composer) return;
+    if (composer.historyDraft) touchSessionDraft(sessionId);
     this.restoreHistoryDraft(composer);
     this.prune(sessionId, composer);
     this.publish(sessionId);
@@ -803,6 +806,7 @@ export class ComposerController {
         status: "uploading",
       };
     });
+    touchSessionDraft(sessionId);
     composer.attachments = [...composer.attachments, ...pending];
     const upload = new AbortController();
     for (const item of pending) this.uploads.set(item.localId, upload);
@@ -915,7 +919,10 @@ export class ComposerController {
     const target = composer.attachments.find(
       (item) => item.localId === localId,
     );
-    if (target) this.withdrawUpload(target.localId);
+    if (target) {
+      touchSessionDraft(sessionId);
+      this.withdrawUpload(target.localId);
+    }
     if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
     composer.attachments = composer.attachments.filter(
       (item) => item.localId !== localId,
@@ -951,6 +958,7 @@ export class ComposerController {
       );
       return;
     }
+    touchSessionDraft(sessionId);
     composer.projectFiles = [...composer.projectFiles, path];
     this.publish(sessionId);
   }
@@ -960,6 +968,7 @@ export class ComposerController {
     if (!sessionId) return;
     const composer = this.composers.get(sessionId);
     if (!composer) return;
+    if (composer.projectFiles.includes(path)) touchSessionDraft(sessionId);
     composer.projectFiles = composer.projectFiles.filter(
       (item) => item !== path,
     );

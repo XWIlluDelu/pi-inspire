@@ -318,7 +318,7 @@ export const ContextPane = memo(function ContextPane({
         <ChangesPane state={state} />
       ) : state.contextMode === "branches" ? (
         <div className="res__body res__body--branches">
-          <BranchTree />
+          <BranchTree onContextChange={isModal ? onClose : undefined} />
         </div>
       ) : (
         <Suspense

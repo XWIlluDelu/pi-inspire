@@ -58,12 +58,14 @@ export const CommandPalette = memo(function CommandPalette({
   onToggleCtx,
   onNewSession,
   onOpenSession,
+  onFindSession = () => { store.runPaletteNativeCommand("/resume"); },
 }: {
   onClose: () => void;
   onToggleNav: () => void;
   onToggleCtx: () => void;
   onNewSession: () => void;
   onOpenSession: (id: string) => void;
+  onFindSession?: () => void;
 }) {
   const state = useAppState((appState) => {
     const catalogTitle = appState.sessions.find(
@@ -127,6 +129,12 @@ export const CommandPalette = memo(function CommandPalette({
 
   const items = useMemo<PaletteItem[]>(() => {
     const actions: PaletteItem[] = [
+      {
+        id: "resume",
+        group: "Actions",
+        title: "Find a session",
+        run: onFindSession,
+      },
       { id: "new", group: "Actions", title: "New session", run: onNewSession },
       {
         id: "refresh",
@@ -252,6 +260,12 @@ export const CommandPalette = memo(function CommandPalette({
     }
     if (state.sessionId) {
       actions.push({
+        id: "clone",
+        group: "Conversation",
+        title: "Clone current branch",
+        run: () => void store.cloneCurrentBranch(),
+      });
+      actions.push({
         id: "rename",
         group: "Actions",
         title: "Rename session…",
@@ -374,6 +388,7 @@ export const CommandPalette = memo(function CommandPalette({
     onToggleCtx,
     onNewSession,
     onOpenSession,
+    onFindSession,
   ]);
 
   const words = searchQuery

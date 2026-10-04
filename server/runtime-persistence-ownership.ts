@@ -459,8 +459,7 @@ export class RuntimePersistenceOwnershipController {
     if (!appendedEntries || result.previousLeafId === undefined) {
       return { owned: false, reason: "entries-unavailable" };
     }
-    const expectedParentId =
-      slot.navigationLease?.effectiveLeafId ?? result.previousLeafId ?? null;
+    const expectedParentId = this.appendParent(slot, result);
     try {
       const response = await rpc.request<Record<string, unknown>>({
         type: "get_entries",
@@ -508,7 +507,11 @@ export class RuntimePersistenceOwnershipController {
         matchedExpectations,
       );
       for (const entry of appendedEntries.slice(expectationsConsumed)) {
-        if (entry.type === "custom")
+        if (
+          entry.type === "custom" ||
+          entry.type === "branch_summary" ||
+          entry.type === "label"
+        )
           this.rememberAbsorbedPersistenceEntry(slot, entry);
       }
       if (slot.navigationLease) slot.navigationLease = null;
@@ -521,6 +524,23 @@ export class RuntimePersistenceOwnershipController {
     } catch {
       return { owned: false, reason: "worker-entries-unavailable" };
     }
+  }
+
+  private appendParent(
+    slot: RuntimeSlot,
+    result: ProjectionReconcileResult,
+  ): string | null {
+    const pending = slot.pendingBranchBridge;
+    const first = result.appendedEntries?.[0];
+    if (
+      pending?.summarize &&
+      first?.type === "branch_summary" &&
+      first.fromId === pending.beforeLeafId
+    )
+      return pending.navigationParentId ?? null;
+    return slot.navigationLease
+      ? slot.navigationLease.effectiveLeafId
+      : (result.previousLeafId ?? null);
   }
 
   async appendedEntriesOwnership(
@@ -569,8 +589,7 @@ export class RuntimePersistenceOwnershipController {
       }
     }
 
-    let expectedParent =
-      slot.navigationLease?.effectiveLeafId ?? result.previousLeafId ?? null;
+    let expectedParent = this.appendParent(slot, result);
     const matchedExpectations: PersistenceExpectation[] = [];
     for (const entry of result.appendedEntries) {
       if (entry.parentId !== expectedParent)

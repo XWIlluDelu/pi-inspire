@@ -7,6 +7,8 @@ covers:
   - server/pi-session-directory.ts
   - server/project-directories.ts
   - server/session-metadata.ts
+  - server/session-search.ts
+  - server/session-search-worker.ts
   - server/session-jsonl.ts
   - server/session-preview.ts
   - server/session-projection.ts
@@ -122,6 +124,25 @@ Let the user move between existing terminal Pi and inspire without losing histor
   without retaining full message text. It owns a deterministic newest-first filtered order plus
   validated bounded `offset`/`limit` and total.
 
+  Nonempty catalog queries separately search Pi session name, cwd, session ID, and complete retained
+  user/assistant text, including retained branches and text beyond the bounded first-message
+  summary. Tool output, thinking blocks, and non-text content do not enter this text corpus. Queries
+  use the installed Pi selector's multi-keyword/fuzzy tokens, whitespace-normalized quoted phrases,
+  and case-insensitive `re:` regex; invalid or empty regex yields no matches. Results remain in
+  chronological catalog order with authoritative totals and explicit pagination, not a filter over
+  the browser's already-loaded rows.
+
+  Search reads one session's complete admitted JSONL prefix at a time without retaining a
+  whole-catalog conversation cache. Same-inode append may continue while that prefix is read under
+  Pi's one-writer rule; equal-size observations require an unchanged stat version, and truncation,
+  replaced/rebound paths, or changed header identity fail the query rather than searching a cached
+  or replacement conversation. An isolated worker loads the installed selector's internal
+  parser/matcher only for search, keeping synchronous parsing/fuzzy/regex work off the Host event
+  loop. Request cancellation retires obsolete workers; a 30-second deadline makes an expensive
+  query retryable with a simpler expression. Missing/incompatible selector internals fail search,
+  not ordinary listing or Host startup. Evidence and the internal-module compatibility boundary:
+  [[follow-session-search-2026-10-02]].
+
   A root scan failure aborts the refresh instead of publishing a partial catalog, and a present
   session that becomes temporarily unreadable or malformed retains its last complete summary; open
   and delete consumers revalidate the current path, source identity, and header before acting on
@@ -133,8 +154,10 @@ Let the user move between existing terminal Pi and inspire without losing histor
 
   It keeps chronological base pages separate from curated/live hydration, advances only by
   `response.offset + response.sessions.length`, deduplicates identities without changing that
-  cursor, and uses latest-wins reset semantics for query and explicit refresh. Session and project
-  curation reclassify known rows synchronously; only newly off-page owners run bounded id/cwd
+  cursor, and uses latest-wins reset semantics for query and explicit refresh. Retiring a list
+  generation also aborts its pending HTTP observation and corresponding full-content search;
+  generation ownership still rejects late responses from transports that ignore cancellation.
+  Session and project curation reclassify known rows synchronously; only newly off-page owners run bounded id/cwd
   hydration, without resetting chronology or presenting the confirmed catalog as globally loading.
   All id and cwd hydration unions are deduplicated and split within their host route bounds;
   authentication loss follows the shared auth boundary, while other partial hydration failures

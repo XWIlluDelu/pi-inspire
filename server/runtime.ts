@@ -14,16 +14,24 @@ import {
   PENDING_IMAGE_SUFFIX,
 } from "../shared/branch-bridge-protocol.js";
 import {
+  isBranchEditTarget,
+  nativeNavigationLeaf,
+} from "../shared/branch-node-actions.js";
+import {
   nativeCommand,
   parseCommandInvocation,
   parseNativeCommand,
 } from "../shared/commands.js";
 import {
   type ActiveSnapshot,
+  type BranchCloneRequest,
+  type BranchEntryRequest,
+  type BranchEntryResponse,
   type BranchForkRequest,
   type BranchForkResponse,
   type BranchNavigateRequest,
   type BranchNavigateResponse,
+  type BranchTreeQuery,
   type BranchTreeResponse,
   type ComposerHistoryEntry,
   type ComposerHistoryPage,
@@ -104,6 +112,7 @@ import {
 
 export { PARTIAL_PERSISTENCE_TIMEOUT_MS } from "./runtime-projection-coordinator.js";
 
+import { getAgentDir, SettingsManager } from "./pi-runtime.js";
 import {
   exactPendingInput,
   mergePendingQueues,
@@ -320,7 +329,16 @@ export interface RuntimeLike {
     sessionId: string,
     start?: number,
   ): Promise<ComposerHistoryPage>;
-  branchTree(sessionId: string): Promise<BranchTreeResponse>;
+  branchTree(
+    sessionId: string,
+    query?: BranchTreeQuery,
+  ): Promise<BranchTreeResponse>;
+  branchEntry(request: BranchEntryRequest): Promise<BranchEntryResponse>;
+  branchImage(
+    request: BranchEntryRequest,
+    index: number,
+  ): Promise<{ data: Buffer; mimeType: string }>;
+  cloneBranch(request: BranchCloneRequest): Promise<BranchForkResponse>;
   navigateBranch(
     request: BranchNavigateRequest,
   ): Promise<BranchNavigateResponse>;
@@ -835,9 +853,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private effectiveLeaf(slot: RuntimeSlot): string | null {
-    return (
-      slot.navigationLease?.effectiveLeafId ?? slot.projection?.leafId ?? null
-    );
+    return slot.navigationLease
+      ? slot.navigationLease.effectiveLeafId
+      : (slot.projection?.leafId ?? null);
   }
 
   private renewView(slot: RuntimeSlot): void {
@@ -2835,7 +2853,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
-  async branchTree(sessionId: string): Promise<BranchTreeResponse> {
+  async branchTree(
+    sessionId: string,
+    query: BranchTreeQuery = {},
+  ): Promise<BranchTreeResponse> {
     this.assertMaintenanceAvailable();
     const slot = this.requireSlot(sessionId);
     return this.useSlot(slot, async () => {
@@ -2844,10 +2865,54 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (!slot.projection)
         throw requestError("Session projection is not available", 503);
       return {
-        ...slot.projection.branchTree(this.effectiveLeaf(slot)),
+        ...slot.projection.branchTree(this.effectiveLeaf(slot), query),
+        revision: slot.branchRevision,
+        skipSummaryPrompt:
+          SettingsManager.create(
+            slot.cwd,
+            getAgentDir(),
+          ).getBranchSummarySettings().skipPrompt ?? false,
+      };
+    });
+  }
+
+  async branchEntry(request: BranchEntryRequest): Promise<BranchEntryResponse> {
+    const slot = this.requireSlot(request.sessionId);
+    return this.useSlot(slot, async () => {
+      await this.reconcileSlot(slot, false);
+      this.throwIfConflicted(slot);
+      this.requireHistoryView(slot, request.viewId);
+      if (!slot.projection)
+        throw requestError("History content is unavailable", 503);
+      return {
+        ...slot.projection.branchEntry(
+          request.targetId,
+          request.offset ?? 0,
+          this.effectiveLeaf(slot),
+        ),
         revision: slot.branchRevision,
       };
     });
+  }
+
+  async branchImage(
+    request: BranchEntryRequest,
+    index: number,
+  ): Promise<{ data: Buffer; mimeType: string }> {
+    const slot = this.requireSlot(request.sessionId);
+    return this.useSlot(slot, async () => {
+      await this.reconcileSlot(slot, false);
+      this.throwIfConflicted(slot);
+      this.requireHistoryView(slot, request.viewId);
+      if (!slot.projection)
+        throw requestError("History image is unavailable", 503);
+      return slot.projection.branchImage(request.targetId, index);
+    });
+  }
+
+  private requireHistoryView(slot: RuntimeSlot, viewId: string): void {
+    if (slot.viewId !== viewId)
+      throw requestError("The branch changed; reopen this History point", 409);
   }
 
   private requireFreshBranchRevision(
@@ -2941,23 +3006,20 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       const target = projection.entry(request.targetId);
       if (!target) throw requestError("Branch target does not exist", 404);
 
-      let navigationTarget = request.targetId;
-      let editorText: string | undefined;
-      if (request.mode === "edit") {
-        editorText = projection.userText(request.targetId, MAX_PROMPT_CHARS);
-        if (target.parentId === null) {
-          throw requestError(
-            "Editing the root user message is not supported by Pi's public navigation API",
-            409,
-          );
-        }
-        navigationTarget = target.parentId;
-      } else if (target.type === "message" && target.role === "user") {
-        throw requestError("Use Edit from here for a user message", 409);
-      }
-
+      const editable = isBranchEditTarget(target);
+      if (editable !== (request.mode === "edit"))
+        throw requestError(
+          editable
+            ? "Use Edit from here for this message"
+            : "This point continues after the selected entry",
+          409,
+        );
+      const editorText = editable
+        ? projection.editableText(request.targetId, MAX_PROMPT_CHARS)
+        : undefined;
       const beforeLeaf = this.effectiveLeaf(slot);
-      if (navigationTarget === beforeLeaf)
+      const navigationTarget = nativeNavigationLeaf(target, beforeLeaf);
+      if (request.targetId === beforeLeaf)
         return {
           snapshot: await this.snapshotSlot(slot),
           ...(editorText ? { editorText } : {}),
@@ -2971,13 +3033,20 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         throw requestError("A branch operation is already pending", 409);
 
       const pending = this.makePendingBranch(slot, bridge);
+      pending.navigationParentId = navigationTarget;
+      pending.beforeLeafId = beforeLeaf;
+      pending.summarize = request.summarize ?? false;
       const bridgeRequest: BranchBridgeRequest = {
         v: BRANCH_BRIDGE_VERSION,
         nonce: pending.nonce,
         workerId: bridge.workerId,
         sessionId: slot.id,
         operation: "navigate",
-        targetId: navigationTarget,
+        targetId: request.targetId,
+        summarize: request.summarize ?? false,
+        ...(request.customInstructions
+          ? { customInstructions: request.customInstructions }
+          : {}),
       };
       const payload = encodeBranchBridgeJson(
         bridgeRequest,
@@ -3008,6 +3077,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             throw error;
           },
         );
+      pending.finished = promptFence;
       let timeout: ReturnType<typeof setTimeout> | undefined;
       const resultFence = Promise.race([
         pending.result,
@@ -3026,7 +3096,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         promptFence,
       ]);
       if (timeout) clearTimeout(timeout);
-      if (slot.pendingBranchBridge === pending) slot.pendingBranchBridge = null;
       if (
         promptOutcome.status === "rejected" &&
         !isPiRpcOutcomeUnknown(promptOutcome.reason) &&
@@ -3066,12 +3135,35 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           "Branch navigation verification exceeded its bound; the worker was stopped",
         );
       }
+      const delta = verified.entries as SessionEntry[];
+      const summary = delta[0];
+      const summaryAppend = Boolean(
+        request.summarize &&
+          result.summaryId &&
+          summary?.type === "branch_summary" &&
+          summary.id === result.summaryId &&
+          summary.parentId === navigationTarget &&
+          summary.fromId === beforeLeaf,
+      );
+      let parent = navigationTarget;
+      const validDelta = delta.every((entry, index) => {
+        const valid =
+          entry.parentId === parent &&
+          ((index === 0 && summaryAppend) ||
+            entry.type === "label" ||
+            entry.type === "custom");
+        parent = entry.id;
+        return valid;
+      });
       await this.reconcileSlot(slot, true);
+      if (slot.pendingBranchBridge === pending) slot.pendingBranchBridge = null;
       if (
         slot.conflict ||
-        projection.revision !== sourceProjectionRevision ||
-        projection.fingerprint !== sourceProjectionFingerprint ||
-        verified.entries.length !== 0 ||
+        (delta.length === 0
+          ? projection.revision !== sourceProjectionRevision ||
+            projection.fingerprint !== sourceProjectionFingerprint
+          : !validDelta ||
+            !delta.every((entry) => projection.persistedEntryMatches(entry))) ||
         verified.leafId !== result.effectiveLeaf ||
         result.beforeLeaf !== beforeLeaf
       )
@@ -3085,10 +3177,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             slot,
             "Cancelled branch navigation changed the effective leaf",
           );
-        throw requestError(
-          "Branch navigation was cancelled by an extension",
-          409,
-        );
+        return { snapshot: await this.snapshotSlot(slot), cancelled: true };
       }
       if (!result.ok || result.error) {
         if (result.effectiveLeaf !== beforeLeaf)
@@ -3098,7 +3187,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           );
         throw requestError(result.error ?? "Branch navigation failed", 409);
       }
-      if (result.effectiveLeaf !== navigationTarget) {
+      if (
+        result.effectiveLeaf !==
+        (delta.length > 0 ? delta.at(-1)!.id : navigationTarget)
+      ) {
         return this.failUnknownBranchOutcome(
           slot,
           "Branch navigation reached an unexpected leaf; the worker was stopped",
@@ -3126,22 +3218,31 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       });
       return {
         snapshot: await this.snapshotSlot(slot),
-        ...(editorText ? { editorText } : {}),
+        ...(editorText !== undefined ? { editorText } : {}),
       };
     });
   }
 
   async forkBranch(request: BranchForkRequest): Promise<BranchForkResponse> {
-    return this.withMaintenanceOperation(() => this.forkBranchInside(request));
+    return this.withMaintenanceOperation(() =>
+      this.copyBranchInside(request, "fork"),
+    );
   }
 
-  private async forkBranchInside(
-    request: BranchForkRequest,
+  async cloneBranch(request: BranchCloneRequest): Promise<BranchForkResponse> {
+    return this.withMaintenanceOperation(() =>
+      this.copyBranchInside(request, "clone"),
+    );
+  }
+
+  private async copyBranchInside(
+    request: BranchForkRequest | BranchCloneRequest,
+    mode: "fork" | "clone",
   ): Promise<BranchForkResponse> {
     const source = this.requireSlot(request.sessionId);
     const selectionAtDispatch = this.selectionSequence;
     return this.mutateSlot(source, async () => {
-      // The addressed source and its fresh branch revision authorize Fork;
+      // The addressed source and its fresh revision authorize this copy;
       // another browser's Host selection does not own this source view.
       await this.reconcileSlot(source, true);
       this.throwIfConflicted(source);
@@ -3151,27 +3252,28 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (!projection || !sourcePath) {
         throw requestError("Fork requires a materialized source Session", 409);
       }
-      const tree = projection.branchTree(this.effectiveLeaf(source));
-      const node = tree.nodes.find(
-        (candidate) => candidate.id === request.targetId,
-      );
-      if (!node?.canFork) {
+      const targetId = request.targetId ?? this.effectiveLeaf(source);
+      const node = targetId === null ? null : projection.entry(targetId);
+      if (
+        (targetId !== null && !node) ||
+        (mode === "fork" && (node?.type !== "message" || node.role !== "user"))
+      )
         throw requestError(
-          "Fork requires a user message on the active branch",
+          mode === "fork"
+            ? "Fork requires a retained user message"
+            : "That History point no longer exists",
           409,
         );
-      }
-      const editorText = projection.userText(
-        request.targetId,
-        MAX_PROMPT_CHARS,
-      );
+      const editorText =
+        mode === "fork" ? projection.userText(targetId!, MAX_PROMPT_CHARS) : "";
       const staged = await this.stageFork({
         sourcePath,
         sourceSessionId: source.id,
         sourceCommittedBytes: projection.committedBytes,
         sourceFingerprint: projection.fingerprint,
-        targetId: request.targetId,
-        targetParentId: node.parentId,
+        targetId,
+        targetParentId: node?.parentId ?? null,
+        mode,
       });
       const destinationId = staged.destinationId;
       const destinationPath = resolve(staged.destinationPath);
@@ -3227,8 +3329,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           stagedProjection.sessionId !== destinationId ||
           resolve(stagedProjection.path) !== resolve(staged.stagedPath) ||
           stagedProjection.health.status === "error" ||
-          stagedProjection.leafId !== node.parentId ||
-          stagedProjection.entry(request.targetId) !== null
+          stagedProjection.leafId !== staged.destinationLeafId ||
+          (mode === "fork" &&
+            targetId !== null &&
+            Boolean(stagedProjection.entry(targetId)))
         ) {
           throw requestError("Pi produced an invalid fork destination", 409);
         }
@@ -3273,8 +3377,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           destinationProjection.sessionId !== destinationId ||
           resolve(destinationProjection.path) !== destinationPath ||
           destinationProjection.health.status === "error" ||
-          destinationProjection.leafId !== node.parentId ||
-          destinationProjection.entry(request.targetId) !== null
+          destinationProjection.leafId !== staged.destinationLeafId ||
+          (mode === "fork" &&
+            targetId !== null &&
+            Boolean(destinationProjection.entry(targetId)))
         ) {
           throw new Error("Published fork destination failed revalidation");
         }
@@ -3350,7 +3456,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           await destinationProjection?.close().catch(() => undefined);
         if (!published) throw error;
         this.catalog.invalidate();
-        const message = `Fork created Session ${destinationId}, but INSΠRE could not attach it. Refresh Sessions and open that destination instead of retrying the fork`;
+        const message = `${mode === "clone" ? "Clone" : "Fork"} created Session ${destinationId}, but INSΠRE could not attach it. Refresh Sessions and open that destination instead of retrying`;
         this.logRuntimeError(destinationId, error, "fork_post_publish");
         throw requestError(message, 409, { cause: error });
       } finally {
@@ -3632,7 +3738,41 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           this.extensionUi.clear(slot, "aborted");
           return;
         }
-        if (slot.pendingPrompt === rpc || slot.pendingBranchBridge) {
+        if (
+          slot.pendingBranchBridge?.summarize &&
+          slot.pendingExtensionUiRequests.size === 0
+        ) {
+          // Generic abort acknowledges before native summarization finishes.
+          // Wait for this handler, not acknowledgement; an uncooperative hook
+          // retains the explicit Stop fallback rather than blocking forever.
+          const branch = slot.pendingBranchBridge;
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              Promise.all([
+                rpc.request({ type: "abort" }, 3_000),
+                branch.result,
+                branch.finished,
+              ]),
+              new Promise<never>((_, reject) => {
+                timer = setTimeout(
+                  () =>
+                    reject(
+                      new Error(
+                        "Branch summary cancellation was not confirmed",
+                      ),
+                    ),
+                  3_000,
+                );
+              }),
+            ]);
+          } catch {
+            await this.stopWriter(slot, "prompt");
+            slot.runState = slot.conflict ? "conflict" : "aborted";
+          } finally {
+            clearTimeout(timer);
+          }
+        } else if (slot.pendingPrompt === rpc || slot.pendingBranchBridge) {
           // Pi abort need not interrupt a pre-prompt hook. Explicit Stop retires
           // its owner outside the persistence FIFO waiting on that same hook.
           await this.stopWriter(slot, "prompt");

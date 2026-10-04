@@ -1,13 +1,19 @@
 import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { nativeNavigationLeaf } from "../shared/branch-node-actions.js";
 import { parseNativeCommand } from "../shared/commands.js";
 import type {
   ActiveSnapshot,
+  BranchCloneRequest,
+  BranchEntryRequest,
+  BranchEntryResponse,
   BranchForkRequest,
   BranchForkResponse,
   BranchNavigateRequest,
   BranchNavigateResponse,
+  BranchTreeQuery,
   BranchTreeResponse,
   ComposerHistoryEntry,
   ComposerHistoryPage,
@@ -35,13 +41,25 @@ import type {
 import { emptyPendingQueues } from "../shared/contracts.js";
 import { pendingTextSummary } from "../shared/pending-preview.js";
 import { sequentialUserTurnAnchors } from "../shared/user-turns.js";
-import { projectComposerHistoryPage } from "./composer-history.js";
 import { lastAssistantText } from "./assistant-text.js";
+import { projectComposerHistoryPage } from "./composer-history.js";
 import type { GitInspectionLike } from "./git-inspection.js";
+import {
+  HISTORY_FIXTURE_SESSION_ID,
+  historyFixtureEntries,
+  historyFixtureMessages,
+} from "./mock-history.js";
 import { requestError } from "./request-error.js";
 import type { ResourceContext } from "./resources.js";
 import type { RuntimeLike } from "./runtime.js";
 import type { SessionCatalogLike, SessionRecord } from "./session-catalog.js";
+import {
+  BRANCH_CONTENT_PAGE_CHARS,
+  branchEntryContent,
+  branchEntryText,
+  branchNode,
+  projectSessionTree,
+} from "./session-tree.js";
 
 const now = Date.now();
 // Browser acceptance runs point this at an isolated workspace so resource and
@@ -82,6 +100,15 @@ const baseSummaries: SessionSummary[] = [
 ];
 
 const browserFixtureSummaries: SessionSummary[] = [
+  {
+    id: HISTORY_FIXTURE_SESSION_ID,
+    cwd: mockWorkspace,
+    project: "browser fixtures",
+    title: "Calibration history fixture",
+    created: new Date(now - 10_000).toISOString(),
+    modified: new Date(now - 5_000).toISOString(),
+    messageCount: 1342,
+  },
   {
     id: COMPACTION_FIXTURE_SESSION_ID,
     cwd: mockWorkspace,
@@ -341,6 +368,7 @@ const resourceFixtureMessages = [
 ];
 
 function messagesForFixture(id: string): unknown[] {
+  if (id === HISTORY_FIXTURE_SESSION_ID) return historyFixtureMessages();
   if (id === COMPACTION_FIXTURE_SESSION_ID)
     return [
       {
@@ -570,13 +598,14 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     runState: "idle",
     sessionStatuses: {},
   };
-  private readonly pendingTexts = new Map<string, string>();
   private readonly sessions = new Map<
     string,
     NonNullable<ActiveSnapshot["active"]>
   >();
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly pendingBySession = new Map<string, PendingQueues>();
+  private readonly pendingTexts = new Map<string, string>();
+  private readonly historyEntries = new Map<string, SessionEntry[]>();
   private nextSession = 0;
   private nextPending = 0;
 
@@ -718,6 +747,12 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
         ],
       };
       this.sessions.set(id, active);
+      const entries = this.mockEntries(id);
+      if (id !== BRANCH_FIXTURE_SESSION_ID) {
+        active.durableLeafId = active.effectiveLeafId =
+          entries.at(-1)?.id ?? null;
+        active.transcriptPage.effectiveLeafId = active.effectiveLeafId;
+      }
     }
     if (!active) throw new Error("Mock session activation failed");
 
@@ -886,6 +921,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     const timestamp = Date.now();
     const user = { role: "user", content: request.message, timestamp };
     active.transcriptPage.messages.push(user);
+    this.recordMockMessage(active, user);
     active.transcriptPage.composerHistoryVersion = String(
       active.transcriptPage.messages.length,
     );
@@ -909,6 +945,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       timestamp: timestamp + 1,
     };
     active.transcriptPage.messages.push(assistant);
+    this.recordMockMessage(active, assistant);
     this.emitSession(sessionId, { type: "message_start", message: assistant });
     const chunks = answer.match(/.{1,14}/gs) ?? [answer];
     let index = 0;
@@ -1238,116 +1275,190 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     );
   }
 
-  async branchTree(sessionId: string): Promise<BranchTreeResponse> {
+  private mockEntries(sessionId: string): SessionEntry[] {
+    const existing = this.historyEntries.get(sessionId);
+    if (existing) return existing;
     const active = this.requireSession(sessionId);
-    if (sessionId !== BRANCH_FIXTURE_SESSION_ID) {
-      return {
-        sessionId,
-        revision: active.transcriptPage.revision,
-        incarnation: "mock",
-        durableLeafId: null,
-        effectiveLeafId: null,
-        activePath: [],
-        nodes: [],
-        truncated: false,
-        health: { status: "ok" },
-      };
+    if (sessionId === HISTORY_FIXTURE_SESSION_ID) {
+      const entries = historyFixtureEntries();
+      this.historyEntries.set(sessionId, entries);
+      return entries;
     }
-    const durableLeafId = active.durableLeafId ?? BRANCH_LATEST_LEAF_ID;
-    const effectiveLeafId = active.effectiveLeafId ?? BRANCH_EARLIER_LEAF_ID;
-    const viewingEarlier = effectiveLeafId !== durableLeafId;
-    return {
-      sessionId,
-      revision: active.transcriptPage.revision,
-      incarnation: "mock-branch",
-      durableLeafId,
-      effectiveLeafId,
-      activePath: viewingEarlier
-        ? [BRANCH_EARLIER_LEAF_ID]
-        : [BRANCH_EARLIER_LEAF_ID, BRANCH_LATEST_LEAF_ID],
-      nodes: [
-        {
-          id: BRANCH_EARLIER_LEAF_ID,
-          parentId: null,
-          depth: 0,
-          type: "message",
-          role: "user",
-          label: "Earlier request",
-          snippet: "Inspect the earlier branch",
-          timestamp: new Date(now - 60_000).toISOString(),
-          active: viewingEarlier,
-          leaf: viewingEarlier,
-          canSwitch: !viewingEarlier,
-          canEdit: true,
-          canFork: true,
-        },
-        {
-          id: BRANCH_LATEST_LEAF_ID,
-          parentId: BRANCH_EARLIER_LEAF_ID,
-          depth: 1,
-          type: "message",
-          role: "assistant",
-          label: "Latest response",
-          snippet: "Continue from the durable leaf",
-          timestamp: new Date(now - 30_000).toISOString(),
-          active: !viewingEarlier,
-          leaf: !viewingEarlier,
-          canSwitch: viewingEarlier,
-          canEdit: false,
-          canFork: false,
-        },
-      ],
-      truncated: false,
-      health: { status: "ok" },
-    };
+    let parentId: string | null = null;
+    const entries = active.transcriptPage.messages.map((message, index) => {
+      const record = message as Record<string, unknown>;
+      const id =
+        sessionId === BRANCH_FIXTURE_SESSION_ID && index === 1
+          ? BRANCH_EARLIER_LEAF_ID
+          : sessionId === BRANCH_FIXTURE_SESSION_ID &&
+              index === active.transcriptPage.messages.length - 1
+            ? BRANCH_LATEST_LEAF_ID
+            : typeof record.entryId === "string"
+              ? record.entryId
+              : `mock-point-${sessionId}-${index}`;
+      record.entryId = id;
+      const entry = {
+        type: "message",
+        id,
+        parentId,
+        timestamp: new Date(now + index).toISOString(),
+        message,
+      } as SessionEntry;
+      parentId = id;
+      return entry;
+    });
+    this.historyEntries.set(sessionId, entries);
+    return entries;
   }
-  async navigateBranch(
-    request: BranchNavigateRequest,
-  ): Promise<BranchNavigateResponse> {
-    const active = this.requireSession(request.sessionId);
-    if (
-      request.sessionId !== BRANCH_FIXTURE_SESSION_ID ||
-      request.mode !== "switch" ||
-      request.targetId !== BRANCH_LATEST_LEAF_ID ||
-      request.revision !== active.transcriptPage.revision
-    ) {
-      throw requestError("Mock branch target is unavailable", 409);
-    }
-    active.effectiveLeafId = BRANCH_LATEST_LEAF_ID;
+
+  private recordMockMessage(
+    active: NonNullable<ActiveSnapshot["active"]>,
+    message: Record<string, unknown>,
+  ): void {
+    const entries = this.mockEntries(active.sessionId);
+    const id = `mock-point-${active.sessionId}-${entries.length}`;
+    message.entryId = id;
+    entries.push({
+      type: "message",
+      id,
+      parentId: active.effectiveLeafId ?? null,
+      timestamp: new Date().toISOString(),
+      message,
+    } as unknown as SessionEntry);
+    active.durableLeafId = active.effectiveLeafId = id;
     active.navigationLeased = false;
     active.transcriptPage = {
       ...active.transcriptPage,
       revision: active.transcriptPage.revision + 1,
-      viewId: `mock-view-${active.sessionId}-latest`,
-      effectiveLeafId: BRANCH_LATEST_LEAF_ID,
+      effectiveLeafId: id,
     };
-    return { snapshot: await this.snapshot() };
   }
-  async forkBranch(request: BranchForkRequest): Promise<BranchForkResponse> {
-    const source = this.requireSession(request.sessionId);
+
+  async branchTree(
+    sessionId: string,
+    query: BranchTreeQuery = {},
+  ): Promise<BranchTreeResponse> {
+    const active = this.requireSession(sessionId);
+    const entries = this.mockEntries(sessionId);
+    const leaf = entries.at(-1)?.id ?? null;
+    const effectiveLeafId =
+      active.effectiveLeafId === undefined ? leaf : active.effectiveLeafId;
+    return {
+      sessionId,
+      revision: active.transcriptPage.revision,
+      incarnation: "mock",
+      durableLeafId:
+        active.durableLeafId === undefined ? leaf : active.durableLeafId,
+      effectiveLeafId,
+      ...projectSessionTree(entries, effectiveLeafId, query),
+      health: { status: "ok" },
+    };
+  }
+  async branchEntry(request: BranchEntryRequest): Promise<BranchEntryResponse> {
+    const tree = await this.branchTree(request.sessionId, { query: "" });
+    const entries = this.mockEntries(request.sessionId);
+    const entry = entries.find(
+      (candidate) => candidate.id === request.targetId,
+    );
     if (
-      request.sessionId !== BRANCH_FIXTURE_SESSION_ID ||
-      request.targetId !== BRANCH_EARLIER_LEAF_ID ||
-      request.revision !== source.transcriptPage.revision
-    ) {
-      throw requestError("Mock branch target is unavailable", 409);
-    }
-    const sessionId = `mock-branch-fork-${++this.nextSession}`;
+      !entry ||
+      request.viewId !==
+        this.requireSession(request.sessionId).transcriptPage.viewId
+    )
+      throw requestError("That History point is unavailable", 409);
+    const node = branchNode(
+      entry,
+      tree.activePath.includes(entry.id),
+      tree.effectiveLeafId === entry.id,
+    );
+    const text = branchEntryText(entry, "separate");
+    const content = branchEntryContent(entry);
+    const images = Array.isArray(content)
+      ? content.flatMap((block, index) =>
+          block.type === "image" ? [{ index, mimeType: block.mimeType }] : [],
+        )
+      : [];
+    const offset = request.offset ?? 0;
+    const end = Math.min(text.length, offset + BRANCH_CONTENT_PAGE_CHARS);
+    return {
+      sessionId: request.sessionId,
+      revision: tree.revision,
+      node,
+      text: text.slice(offset, end),
+      nextOffset: end < text.length ? end : null,
+      totalChars: text.length,
+      images,
+    };
+  }
+  async branchImage(
+    request: BranchEntryRequest,
+    index: number,
+  ): Promise<{ mimeType: string; data: Buffer }> {
+    await this.branchEntry(request);
+    const entry = this.mockEntries(request.sessionId).find(
+      (candidate) => candidate.id === request.targetId,
+    )!;
+    const content = branchEntryContent(entry);
+    const image = Array.isArray(content) ? content[index] : undefined;
+    if (image?.type !== "image")
+      throw requestError("No image at this History point", 404);
+    return {
+      mimeType: image.mimeType,
+      data: Buffer.from(image.data, "base64"),
+    };
+  }
+  async cloneBranch(request: BranchCloneRequest): Promise<BranchForkResponse> {
+    const tree = await this.branchTree(request.sessionId);
+    return this.copyMockBranch(
+      request,
+      request.targetId === undefined ? tree.effectiveLeafId : request.targetId,
+    );
+  }
+  private async copyMockBranch(
+    request: BranchCloneRequest,
+    targetId: string | null,
+  ): Promise<BranchForkResponse> {
+    const source = this.requireSession(request.sessionId);
+    if (request.revision !== source.transcriptPage.revision)
+      throw requestError("History changed; refresh it before cloning", 409);
+    const entries = this.mockEntries(request.sessionId);
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    const copied: SessionEntry[] = [];
+    for (
+      let entry = targetId ? byId.get(targetId) : undefined;
+      entry;
+      entry = entry.parentId ? byId.get(entry.parentId) : undefined
+    )
+      copied.unshift(entry);
+    const sessionId = `mock-branch-clone-${++this.nextSession}`;
     const destination = structuredClone(source);
     destination.sessionId = sessionId;
     destination.sessionFile = `/mock/${sessionId}.jsonl`;
-    destination.sessionName = "Fork of earlier branch";
-    destination.durableLeafId = BRANCH_EARLIER_LEAF_ID;
-    destination.effectiveLeafId = BRANCH_EARLIER_LEAF_ID;
+    destination.sessionName = "Clone of current branch";
+    destination.durableLeafId = targetId;
+    destination.effectiveLeafId = targetId;
     destination.navigationLeased = false;
     destination.transcriptPage = {
       ...destination.transcriptPage,
       sessionId,
       revision: 1,
       viewId: `mock-view-${sessionId}`,
-      effectiveLeafId: BRANCH_EARLIER_LEAF_ID,
+      effectiveLeafId: targetId,
+      messages: copied
+        .flatMap((entry) =>
+          entry.type === "message"
+            ? [
+                { ...entry.message, entryId: entry.id } as unknown as Record<
+                  string,
+                  unknown
+                >,
+              ]
+            : [],
+        )
+        .slice(-24),
     };
     this.sessions.set(sessionId, destination);
+    this.historyEntries.set(sessionId, structuredClone(copied));
     this.state.active = destination;
     this.state.runState = "idle";
     this.state.sessionStatuses[sessionId] = { runState: "idle" };
@@ -1355,12 +1466,79 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       id: sessionId,
       cwd: destination.cwd,
       project: "browser fixtures",
-      title: "Fork of earlier branch",
+      title: destination.sessionName,
       created: new Date().toISOString(),
       modified: new Date().toISOString(),
       messageCount: destination.transcriptPage.messages.length,
     });
     return { sessionId, snapshot: await this.snapshot(), editorText: "" };
+  }
+  async navigateBranch(
+    request: BranchNavigateRequest,
+  ): Promise<BranchNavigateResponse> {
+    const active = this.requireSession(request.sessionId);
+    if (request.revision !== active.transcriptPage.revision)
+      throw requestError("History changed; refresh it before continuing", 409);
+    const detail = await this.branchEntry({
+      ...request,
+      viewId: active.transcriptPage.viewId,
+      offset: 0,
+    });
+    const beforeLeaf = (await this.branchTree(request.sessionId))
+      .effectiveLeafId;
+    const leaf = nativeNavigationLeaf(detail.node, beforeLeaf);
+    active.effectiveLeafId = leaf;
+    active.navigationLeased = active.durableLeafId !== leaf;
+    const byId = new Map(
+      this.mockEntries(request.sessionId).map((entry) => [entry.id, entry]),
+    );
+    const path: SessionEntry[] = [];
+    for (
+      let entry = leaf ? byId.get(leaf) : undefined;
+      entry;
+      entry = entry.parentId ? byId.get(entry.parentId) : undefined
+    )
+      path.unshift(entry);
+    active.transcriptPage = {
+      ...active.transcriptPage,
+      revision: active.transcriptPage.revision + 1,
+      viewId: `mock-view-${active.sessionId}-latest`,
+      effectiveLeafId: leaf,
+      messages: path
+        .flatMap((entry) =>
+          entry.type === "message"
+            ? [
+                { ...entry.message, entryId: entry.id } as unknown as Record<
+                  string,
+                  unknown
+                >,
+              ]
+            : [],
+        )
+        .slice(-24),
+    };
+    return {
+      snapshot: await this.snapshot(),
+      ...(detail.node.canEdit ? { editorText: detail.text } : {}),
+    };
+  }
+  async forkBranch(request: BranchForkRequest): Promise<BranchForkResponse> {
+    const detail = await this.branchEntry({
+      ...request,
+      viewId: this.requireSession(request.sessionId).transcriptPage.viewId,
+    });
+    if (!detail.node.canFork)
+      throw requestError("Fork requires a user input", 409);
+    const result = await this.copyMockBranch(request, detail.node.parentId);
+    const destination = this.requireSession(result.sessionId);
+    destination.sessionName = "Fork of selected input";
+    const summary = summaries.find((item) => item.id === result.sessionId);
+    if (summary) summary.title = destination.sessionName;
+    return {
+      ...result,
+      snapshot: await this.snapshot(),
+      editorText: detail.text,
+    };
   }
   async resourceContext(sessionId: string): Promise<ResourceContext> {
     const active = this.sessions.get(sessionId);

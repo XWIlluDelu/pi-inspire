@@ -3,7 +3,7 @@ import {
   defaultPreferences,
   type SessionSummary,
 } from "../../shared/contracts";
-import { ApiError, type Api } from "../../src/api";
+import { type Api, ApiError } from "../../src/api";
 import {
   SessionCatalogController,
   type SessionCatalogPatch,
@@ -85,19 +85,27 @@ describe("SessionCatalogController", () => {
       total: number;
     }>();
     const harness = createHarness();
-    harness.sessions.mockImplementation((query: string) =>
-      query === "old" ? oldPage.promise : newPage.promise,
+    const oldQuery = 'token "body phrase"';
+    const newQuery = "re:Assistant-[A-Z]+";
+    const signals: AbortSignal[] = [];
+    harness.sessions.mockImplementation(
+      (query: string, _offset: number, _limit: number, signal: AbortSignal) => {
+        signals.push(signal);
+        return query === oldQuery ? oldPage.promise : newPage.promise;
+      },
     );
 
-    const oldLoad = harness.controller.load("old");
-    const newLoad = harness.controller.load("new");
+    const oldLoad = harness.controller.load(oldQuery);
+    const newLoad = harness.controller.load(newQuery);
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(false);
     newPage.resolve({ sessions: [session("new")], offset: 0, total: 1 });
     await newLoad;
     oldPage.resolve({ sessions: [session("old")], offset: 0, total: 1 });
     await oldLoad;
 
     expect(harness.state()).toMatchObject({
-      sessionQuery: "new",
+      sessionQuery: newQuery,
       sessions: [session("new")],
       sessionListNextOffset: 1,
     });

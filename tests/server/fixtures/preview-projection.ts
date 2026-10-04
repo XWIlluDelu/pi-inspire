@@ -14,6 +14,7 @@ import {
   type SessionProjectionView,
 } from "../../../server/session-projection.js";
 import type {
+  BranchEntryResponse,
   BranchTreeResponse,
   ComposerHistoryPage,
   TranscriptActivityPage,
@@ -198,6 +199,18 @@ export class PreviewProjection
   }
 
   branchTree(): BranchTreeResponse {
+    throw requestError("Branch history is unavailable for this preview", 503);
+  }
+
+  branchEntry(): BranchEntryResponse {
+    throw requestError("Branch history is unavailable for this preview", 503);
+  }
+
+  branchImage(): { data: Buffer; mimeType: string } {
+    throw requestError("Branch history is unavailable for this preview", 503);
+  }
+
+  editableText(): string {
     throw requestError("Branch history is unavailable for this preview", 503);
   }
 

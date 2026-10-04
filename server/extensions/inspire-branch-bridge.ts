@@ -40,6 +40,10 @@ function parseRequest(argument: string, workerId: string): BranchBridgeRequest {
     !TOKEN.test(value.sessionId) ||
     typeof value.targetId !== "string" ||
     !ENTRY_ID.test(value.targetId) ||
+    (value.summarize !== undefined && typeof value.summarize !== "boolean") ||
+    (value.customInstructions !== undefined &&
+      (typeof value.customInstructions !== "string" ||
+        value.customInstructions.length > 2000)) ||
     Object.keys(value).some(
       (key) =>
         ![
@@ -49,6 +53,8 @@ function parseRequest(argument: string, workerId: string): BranchBridgeRequest {
           "sessionId",
           "operation",
           "targetId",
+          "summarize",
+          "customInstructions",
         ].includes(key),
     )
   )
@@ -217,13 +223,27 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
         if (!ctx.sessionManager.getEntry(request.targetId))
           throw new Error("branch target does not exist");
         result.beforeLeaf = ctx.sessionManager.getLeafId();
+        const beforeCount = ctx.sessionManager.getEntries().length;
         const navigation = await ctx.navigateTree(request.targetId, {
-          summarize: false,
+          summarize: request.summarize ?? false,
+          customInstructions: request.customInstructions,
         });
+        // RPC command contexts expose cancellation, not AgentSession's returned
+        // summaryEntry. Read the native appended entry from SessionManager.
+        const summary = ctx.sessionManager
+          .getEntries()
+          .slice(beforeCount)
+          .find(
+            (entry) =>
+              entry.type === "branch_summary" &&
+              entry.fromId === result.beforeLeaf,
+          );
+        if (summary) result.summaryId = summary.id;
         result.cancelled = navigation.cancelled;
         result.effectiveLeaf = ctx.sessionManager.getLeafId();
         result.ok = !navigation.cancelled;
       } catch (error) {
+        result.effectiveLeaf = ctx.sessionManager.getLeafId();
         result.error = boundedError(error);
         if (request) {
           result.nonce = request.nonce;

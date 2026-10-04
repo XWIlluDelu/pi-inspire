@@ -157,6 +157,20 @@ Give daily Pi work a coherent graphical home that starts focused and can expand 
   show only a partial selection, and while any target is selected, opening, working, or conflicted.
   Session deletion leaves project files and project folders unchanged.
 
+- The existing sidebar search reaches session name, cwd, ID, and complete retained user/assistant
+  text through the Host catalog, using Pi's fuzzy keywords, quoted phrases, and `re:` regex. The
+  corpus, source-authority, and execution boundary live in [[session-continuity]]; no second search
+  panel or filter toolbar is introduced.
+
+  While the search input owns focus, unmodified Up/Down highlights visible results in the same
+  project/Pin/Hidden order as navigation; Enter opens the highlighted identity. Focus stays in the
+  input, the highlighted row scrolls into view, and a live status names the choice for assistive
+  technology. Highlighting is distinct from the opened session. The same identity survives page
+  append, same-query refresh, and curation reordering; a changed query cannot open an old result
+  while its response is pending. Modifier-based text editing and IME composition keep their keys,
+  including composition-confirming Enter and Escape. Keyboard movement never loads another page
+  implicitly, and searching/clearing leaves both active-session and start drafts intact.
+
 - Older chronological history is reached with an explicit `Load older sessions` control, never
   implicit scrolling. It reports the number of server rows consumed out of the query total, exposes
   loading/retry/end states to keyboard and assistive technology, and sits below the chronological

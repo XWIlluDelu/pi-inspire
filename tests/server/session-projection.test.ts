@@ -85,6 +85,41 @@ afterEach(async () => {
 });
 
 describe("SessionProjection framing and last-good state", () => {
+  it("returns images separately in History detail without removing literal image-description text", async () => {
+    const text = "Keep the literal [Image: image/png] text.";
+    const { projection } = await fixture([
+      message(
+        "mixed-input",
+        null,
+        "user",
+        [
+          { type: "text", text },
+          {
+            type: "image",
+            mimeType: "image/png",
+            data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+          },
+        ],
+        1,
+      ),
+    ]);
+    try {
+      expect(
+        projection.branchEntry("mixed-input", 0, "mixed-input"),
+      ).toMatchObject({
+        text,
+        totalChars: text.length,
+        nextOffset: null,
+        images: [{ index: 1, mimeType: "image/png" }],
+      });
+      expect(projection.branchTree("mixed-input").nodes[0]?.snippet).toBe(
+        `${text} [Image: image/png]`,
+      );
+    } finally {
+      await projection.close();
+    }
+  });
+
   it("invalidates composer history on user append, branch change, and same-ID rewrite", async () => {
     const first = message("u1", null, "user", "first", 1);
     const { path, projection } = await fixture([first]);

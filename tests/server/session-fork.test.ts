@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import {
   appendFile,
   mkdtemp,
-  readFile,
   readdir,
+  readFile,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -77,7 +77,39 @@ afterEach(async () => {
   );
 });
 
-describe("independent session fork", () => {
+describe("independent session fork and clone", () => {
+  it.each(["u2", "a2", null])(
+    "clones inclusively through %s without writing the source",
+    async (targetId) => {
+      const { sourcePath, bytes, request } = await fixture();
+      const staged = await stageSessionFork({
+        ...request,
+        mode: "clone",
+        targetId,
+        targetParentId:
+          targetId === "a2" ? "u2" : targetId === "u2" ? "a1" : null,
+      });
+      const lines = (await readFile(staged.stagedPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(lines[0]).toMatchObject({
+        type: "session",
+        parentSession: sourcePath,
+        id: staged.destinationId,
+      });
+      expect(lines.slice(1).map((entry) => entry.id)).toEqual(
+        targetId === "a2"
+          ? ["u1", "a1", "u2", "a2"]
+          : targetId === "u2"
+            ? ["u1", "a1", "u2"]
+            : [],
+      );
+      expect(staged.destinationLeafId).toBe(targetId);
+      expect(await readFile(sourcePath)).toEqual(bytes);
+      await discardStagedSessionFork(staged);
+    },
+  );
   it("creates and atomically publishes a Pi-native branch without writing the source", async () => {
     const { sourcePath, bytes, request } = await fixture();
     const staged = await stageSessionFork(request);

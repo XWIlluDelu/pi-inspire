@@ -51,11 +51,13 @@ const list = () => within(document.querySelector(".nav__list") as HTMLElement);
 
 let deletedSessions: Set<string>;
 let extraSessions: (typeof alpha)[];
+let searchPageSize: number | undefined;
 
 describe("session navigation controls", () => {
   beforeEach(async () => {
     deletedSessions = new Set();
     extraSessions = [];
+    searchPageSize = undefined;
     installFakeWebSocket();
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap")) {
@@ -177,8 +179,17 @@ describe("session navigation controls", () => {
             !deletedSessions.has(session.id) &&
             session.title.toLowerCase().includes(query),
         );
+        const offset = Number(
+          new URL(url, "http://local").searchParams.get("offset") ?? 0,
+        );
+        const limit = searchPageSize ?? 40;
         return {
-          body: { sessions, total: sessions.length, offset: 0, limit: 40 },
+          body: {
+            sessions: sessions.slice(offset, offset + limit),
+            total: sessions.length,
+            offset,
+            limit,
+          },
         };
       }
       if (url.startsWith("/api/preferences") && init.method === "PATCH")
@@ -186,6 +197,7 @@ describe("session navigation controls", () => {
       return undefined;
     });
     await store.init("token");
+    await store.loadSessions("");
     await waitFor(() => expect(store.getState().sessions).toHaveLength(2));
   });
 
@@ -449,6 +461,100 @@ describe("session navigation controls", () => {
       "Session moved to Trash",
     );
     expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
+  });
+
+  it("selects search results in visual order, retaining session identity across pages and curation", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(
+      <Nav
+        collapsed={false}
+        onNewSession={() => undefined}
+        onSelectSession={onSelect}
+      />,
+    );
+    const search = screen.getByRole("searchbox", { name: "Search sessions" });
+    extraSessions = [gamma];
+    searchPageSize = 2;
+    await user.click(search);
+    await user.type(search, "session");
+    await screen.findByText("Beta session");
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByText("Alpha session").closest(".nav__row")).toHaveClass(
+      "nav__row--highlighted",
+    );
+    expect(search).toHaveFocus();
+    expect(store.getState().sessionListNextOffset).toBe(2);
+    expect(screen.queryByText("Gamma session")).not.toBeInTheDocument();
+    await store.loadOlderSessions();
+    await screen.findByText("Gamma session");
+    expect(store.getState().sessionListNextOffset).toBe(3);
+    await user.keyboard("{Enter}");
+    expect(onSelect).toHaveBeenLastCalledWith("alpha");
+    await user.click(
+      screen.getByRole("button", { name: 'Pin "Alpha session"' }),
+    );
+    await user.click(search);
+    expect(screen.getByText("Alpha session").closest(".nav__row")).toHaveClass(
+      "nav__row--highlighted",
+    );
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(onSelect).toHaveBeenLastCalledWith("beta");
+    await user.keyboard("{ArrowUp}");
+    await user.click(
+      screen.getByRole("button", { name: 'Hide "Alpha session"' }),
+    );
+    await user.click(search);
+    const hidden = document.querySelector(".nav__group--hidden") as HTMLElement;
+    expect(
+      within(hidden).getByText("Alpha session").closest(".nav__row"),
+    ).toHaveClass("nav__row--highlighted");
+    await user.keyboard("{ArrowUp}{Enter}");
+    expect(onSelect).toHaveBeenLastCalledWith("gamma");
+
+    fireEvent.change(search, { target: { value: "beta" } });
+    onSelect.mockClear();
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(onSelect).not.toHaveBeenCalled();
+    await screen.findByText("Beta session");
+    await user.keyboard("{Enter}");
+    expect(onSelect).toHaveBeenCalledWith("beta");
+  });
+
+  it("leaves composition and modified editing keys to the search input, while Escape clears before blurring", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(
+      <Nav
+        collapsed={false}
+        onNewSession={() => undefined}
+        onSelectSession={onSelect}
+      />,
+    );
+    const search = screen.getByRole("searchbox", { name: "Search sessions" });
+    await user.click(search);
+    await user.type(search, "session");
+    await screen.findByText("Beta session");
+    const highlighted = () =>
+      document.querySelector(".nav__row--highlighted .nav__row-name")
+        ?.textContent;
+    expect(highlighted()).toBe("Beta session");
+    fireEvent.compositionStart(search);
+    for (const key of ["ArrowDown", "Enter", "Escape"])
+      fireEvent.keyDown(search, { key });
+    fireEvent.compositionEnd(search);
+    fireEvent.keyDown(search, { key: "ArrowDown", isComposing: true });
+    fireEvent.keyDown(search, { key: "Enter", keyCode: 229 });
+    fireEvent.keyDown(search, { key: "ArrowDown", shiftKey: true });
+    expect(highlighted()).toBe("Beta session");
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(search).toHaveValue("session");
+    expect(search).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(search).toHaveValue("");
+    expect(search).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(search).not.toHaveFocus();
   });
 
   it("reaches both row actions with the keyboard", async () => {

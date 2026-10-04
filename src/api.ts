@@ -1,10 +1,14 @@
 import type {
   ActiveSnapshot,
   BootstrapResponse,
+  BranchCloneRequest,
+  BranchEntryRequest,
+  BranchEntryResponse,
   BranchForkRequest,
   BranchForkResponse,
   BranchNavigateRequest,
   BranchNavigateResponse,
+  BranchTreeQuery,
   BranchTreeResponse,
   ComposerHistoryPage,
   GitDiffResponse,
@@ -607,10 +611,56 @@ export function createApi(token: string | null = null) {
         token,
         `/api/composer/history?sessionId=${encodeURIComponent(sessionId)}&start=${start}`,
       ),
-    branchTree: (sessionId: string) =>
+    branchTree: (
+      sessionId: string,
+      query: BranchTreeQuery = {},
+      signal?: AbortSignal,
+    ) =>
       request<BranchTreeResponse>(
         token,
-        `/api/branches/tree?sessionId=${encodeURIComponent(sessionId)}`,
+        `/api/branches/tree?${new URLSearchParams({ sessionId, ...query }).toString()}`,
+        { signal },
+      ),
+    branchEntry: (body: BranchEntryRequest, signal?: AbortSignal) =>
+      request<BranchEntryResponse>(
+        token,
+        `/api/branches/entry?${new URLSearchParams({
+          sessionId: body.sessionId,
+          viewId: body.viewId,
+          targetId: body.targetId,
+          offset: String(body.offset ?? 0),
+        }).toString()}`,
+        { signal },
+      ),
+    branchImage: (
+      body: BranchEntryRequest,
+      index: number,
+      signal?: AbortSignal,
+    ) =>
+      observeRequest(signal, { mutation: false }, async (signal) => {
+        const response = await applicationFetch(
+          `/api/branches/image?${new URLSearchParams({
+            sessionId: body.sessionId,
+            viewId: body.viewId,
+            targetId: body.targetId,
+            index: String(index),
+          }).toString()}`,
+          {
+            signal,
+            credentials: "same-origin",
+            headers: authorizationHeader(token),
+          },
+        );
+        await ensureOk(response);
+        return response.blob();
+      }),
+    cloneBranch: (body: BranchCloneRequest) =>
+      post<BranchForkResponse>(
+        token,
+        "/api/branches/clone",
+        body,
+        {},
+        { timeoutMs: LONG_HTTP_OBSERVATION_TIMEOUT_MS },
       ),
     navigateBranch: (body: BranchNavigateRequest, signal?: AbortSignal) =>
       post<BranchNavigateResponse>(
@@ -630,10 +680,11 @@ export function createApi(token: string | null = null) {
           timeoutMs: LONG_HTTP_OBSERVATION_TIMEOUT_MS,
         },
       ),
-    sessions: (query: string, offset = 0, limit = 40) =>
+    sessions: (query: string, offset = 0, limit = 40, signal?: AbortSignal) =>
       request<SessionListResponse>(
         token,
         `/api/sessions?q=${encodeURIComponent(query)}&offset=${offset}&limit=${limit}`,
+        { signal },
       ),
     refreshSessions: () =>
       post<{ ok: boolean }>(token, "/api/sessions/refresh"),

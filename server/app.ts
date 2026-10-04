@@ -331,13 +331,31 @@ const composerHistorySchema = z
       .optional(),
   })
   .strict();
-const branchTreeSchema = z.object({ sessionId: sessionIdField });
+const branchTreeSchema = z
+  .object({
+    sessionId: sessionIdField,
+    before: z.string().min(1).max(200).optional(),
+    query: z.string().max(2000).optional(),
+    leafId: z.string().min(1).max(200).optional(),
+    parentId: z.string().max(200).optional(),
+  })
+  .strict();
+const branchEntrySchema = z
+  .object({
+    sessionId: sessionIdField,
+    viewId: z.string().min(1).max(200),
+    targetId: z.string().min(1).max(200),
+    offset: z.coerce.number().int().min(0).optional(),
+  })
+  .strict();
 const branchNavigateSchema = z
   .object({
     sessionId: sessionIdField,
     revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
     targetId: z.string().min(1).max(200),
     mode: z.enum(["switch", "edit"]),
+    summarize: z.boolean().optional(),
+    customInstructions: z.string().max(2000).optional(),
   })
   .strict();
 const branchForkSchema = z
@@ -347,6 +365,9 @@ const branchForkSchema = z
     targetId: z.string().min(1).max(200),
   })
   .strict();
+const branchCloneSchema = branchForkSchema.extend({
+  targetId: z.string().min(1).max(200).optional(),
+});
 const gitStatusSchema = z.object({ sessionId: sessionIdField });
 const gitDiffSchema = z.object({
   sessionId: sessionIdField,
@@ -967,7 +988,22 @@ export function createInspireServer(deps: AppDependencies): {
 
   app.get("/api/sessions", async (request, response) => {
     const { q, offset, limit } = sessionQuerySchema.parse(request.query);
-    response.json(await deps.catalog.list({ query: q, offset, limit }));
+    const observer = new AbortController();
+    const cancel = () => observer.abort();
+    response.once("close", cancel);
+    try {
+      const page = await deps.catalog.list({
+        query: q,
+        offset,
+        limit,
+        signal: observer.signal,
+      });
+      if (!observer.signal.aborted) response.json(page);
+    } catch (error) {
+      if (!observer.signal.aborted) throw error;
+    } finally {
+      response.off("close", cancel);
+    }
   });
   app.post("/api/sessions/refresh", async (_request, response) => {
     await deps.catalog.refresh(true);
@@ -1512,8 +1548,34 @@ export function createInspireServer(deps: AppDependencies): {
     response.json(await deps.runtime.composerHistory(sessionId, start));
   });
   app.get("/api/branches/tree", async (request, response) => {
-    const { sessionId } = branchTreeSchema.parse(request.query);
-    response.json(await deps.runtime.branchTree(sessionId));
+    const { sessionId, ...query } = branchTreeSchema.parse(request.query);
+    response.json(await deps.runtime.branchTree(sessionId, query));
+  });
+  app.get("/api/branches/entry", async (request, response) => {
+    response.json(
+      await deps.runtime.branchEntry(branchEntrySchema.parse(request.query)),
+    );
+  });
+  app.get("/api/branches/image", async (request, response) => {
+    const { index, ...query } = request.query;
+    const image = await deps.runtime.branchImage(
+      branchEntrySchema.parse(query),
+      z.coerce.number().int().min(0).parse(index),
+    );
+    response.setHeader("Cache-Control", "private, no-store");
+    response.type(
+      ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
+        image.mimeType,
+      )
+        ? image.mimeType
+        : "application/octet-stream",
+    );
+    response.send(image.data);
+  });
+  app.post("/api/branches/clone", async (request, response) => {
+    response.json(
+      await deps.runtime.cloneBranch(branchCloneSchema.parse(request.body)),
+    );
   });
   app.post("/api/branches/navigate", async (request, response) => {
     response.json(

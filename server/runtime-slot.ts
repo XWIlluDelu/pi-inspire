@@ -75,6 +75,11 @@ export interface PendingBranchBridge {
   resolve: (result: BranchBridgeResult) => void;
   reject: (error: Error) => void;
   result: Promise<BranchBridgeResult>;
+  navigationParentId?: string | null;
+  beforeLeafId?: string | null;
+  summarize?: boolean;
+  /** The stock command response fences the completed branch handler. */
+  finished?: Promise<void>;
 }
 
 export interface PendingPartialPersistence {
@@ -92,7 +97,7 @@ interface NavigationLease {
   workerId: string;
   sourceRevision: number;
   durableLeafId: string | null;
-  effectiveLeafId: string;
+  effectiveLeafId: string | null;
   targetId: string;
   mode: "switch" | "edit";
 }

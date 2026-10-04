@@ -246,10 +246,9 @@ history keep one result per native execution. [[pi-integration]] owns execution 
 
 ### History, extension interaction, and Pending
 
-- The contextual History mode shows the bounded Pi conversation tree, active path, and effective
-  leaf; it is unrelated to Git branch selection. Branch switching, edit-from-here, and fork are
-  explicit confirmed actions; edit and fork copy the original user text into the destination
-  composer without auto-submitting it, and unsupported root-user edit is visibly unavailable. A
+- History inspection is read-only. Continue/Edit and independent Fork/Clone are explicit actions
+  under [[session-branches]], separate from Git branch selection. Edit confirms only when it would
+  replace an existing draft; Edit and Fork prepare the selected input without submitting it. A
   settled user turn exposes a direct fork shortcut keyed by its opaque Pi entry id; the browser
   refreshes the authoritative tree and reuses the same revision-checked fork operation rather than
   implementing a second branch path. A known branch load or action failure remains actionable inside

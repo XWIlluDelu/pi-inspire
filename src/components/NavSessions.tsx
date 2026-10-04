@@ -32,12 +32,14 @@ const INDICATOR_LABELS: Record<SessionIndicator, string> = {
 export const SessionRow = memo(function SessionRow({
   session,
   selectedSessionId,
+  highlightedSessionId,
   showProject = false,
   onSelect,
   onDelete,
 }: {
   session: SessionSummary;
   selectedSessionId: string | null;
+  highlightedSessionId?: string | null;
   showProject?: boolean;
   onSelect: (id: string) => void;
   onDelete?: (session: SessionSummary) => void;
@@ -99,7 +101,9 @@ export const SessionRow = memo(function SessionRow({
   const attentionLabel = attention ? INDICATOR_LABELS[attention] : null;
   const title = session.title || "New session";
   return (
-    <div className={`nav__row ${selected ? "nav__row--active" : ""}`}>
+    <div
+      className={`nav__row ${selected ? "nav__row--active" : ""} ${session.id === highlightedSessionId ? "nav__row--highlighted" : ""}`}
+    >
       <button
         type="button"
         className="nav__row-main"
@@ -210,6 +214,7 @@ export function ProjectGroup({
   searching,
   showContext,
   selectedSessionId,
+  highlightedSessionId,
   hidden = false,
   onSelectSession,
   onDeleteSession,
@@ -219,6 +224,7 @@ export function ProjectGroup({
   searching: boolean;
   showContext: boolean;
   selectedSessionId: string | null;
+  highlightedSessionId?: string | null;
   hidden?: boolean;
   onSelectSession: (id: string) => void;
   onDeleteSession?: (session: SessionSummary) => void;
@@ -325,6 +331,7 @@ export function ProjectGroup({
               key={session.id}
               session={session}
               selectedSessionId={selectedSessionId}
+              highlightedSessionId={highlightedSessionId}
               onSelect={onSelectSession}
               onDelete={hidden ? onDeleteSession : undefined}
             />
