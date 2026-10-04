@@ -540,12 +540,9 @@
   animation: float-in var(--dur-standard) var(--ease-standard);
 }
 
-.dropdown__menu--down {
-  top: calc(100% + var(--space-1));
-}
-
-.dropdown__menu--up {
-  bottom: calc(100% + var(--space-1));
+.dropdown__menu--floating {
+  position: fixed;
+  min-width: 0;
 }
 
 .dropdown__option {
@@ -562,7 +559,13 @@
 }
 
 .dropdown__option--active {
-  background: var(--bg-inset);
+  background: var(--accent-tint);
+}
+
+@media (hover: hover) {
+  :is(.dropdown__menu, .model-picker__list)[data-keyboard-active="false"] .dropdown__option:hover {
+    background: var(--accent-tint);
+  }
 }
 
 .dropdown__option[aria-selected="true"] {
@@ -586,6 +589,22 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.dropdown__option--described {
+  white-space: normal;
+}
+
+.dropdown__option-description {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+@media (pointer: coarse) {
+  .dropdown__menu--floating .dropdown__option {
+    min-height: 44px;
+  }
 }
 
 /* Bordered form-field variant (Settings): follows the text-field focus
@@ -854,10 +873,8 @@
 /* Project-file picker */
 
 .picker {
-  position: absolute;
-  bottom: calc(100% + var(--space-2));
-  left: 0;
-  width: min(420px, 100%);
+  position: fixed;
+  min-width: 0;
   background: var(--bg-raised);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
@@ -865,8 +882,13 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  z-index: 10;
+  z-index: 42;
   animation: float-in var(--dur-standard) var(--ease-standard);
+}
+
+.picker > .file-search-controls,
+.picker > .picker__empty {
+  flex: 0 0 auto;
 }
 
 @keyframes float-in {
@@ -895,8 +917,11 @@
 }
 
 .picker__list {
+  min-height: 0;
   max-height: 260px;
+  flex: 1 1 auto;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-1);
   display: flex;
   flex-direction: column;
@@ -905,6 +930,7 @@
 
 .picker__row {
   display: flex;
+  flex-shrink: 0;
   align-items: baseline;
   gap: var(--space-2);
   border: 0;
@@ -916,9 +942,14 @@
   color: var(--ink);
 }
 
-.picker__row:hover,
 .picker__row--active {
-  background: var(--bg-inset);
+  background: var(--accent-tint);
+}
+
+@media (hover: hover) {
+  .picker[data-keyboard-active="false"] .picker__row:not(:disabled):hover {
+    background: var(--accent-tint);
+  }
 }
 
 .picker__row--added {
@@ -986,7 +1017,12 @@
 
 .completion__option--active {
   background: var(--accent-tint);
-  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+@media (hover: hover) {
+  .completion[data-keyboard-active="false"] .completion__option:hover {
+    background: var(--accent-tint);
+  }
 }
 
 .completion__title {

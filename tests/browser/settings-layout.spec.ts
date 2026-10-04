@@ -1,6 +1,28 @@
 import { expect, test } from "@playwright/test";
 import { modelSettingsScenario, pairAndOpen } from "./fixtures/model-settings";
 
+test("Tab from a Settings dropdown skips collapsed content and reaches its disclosure", async ({
+  page,
+}) => {
+  await modelSettingsScenario(page);
+  await pairAndOpen(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await settings.getByRole("button", { name: "Models", exact: true }).click();
+  const thinking = settings.getByRole("combobox", { name: "Default thinking" });
+  await thinking.click();
+  await expect(
+    page.getByRole("listbox", { name: "Default thinking" }),
+  ).toBeVisible();
+  await thinking.press("Tab");
+  await expect(
+    settings.locator(".models-saved-entries > summary"),
+  ).toBeFocused();
+  await expect(
+    page.getByRole("listbox", { name: "Default thinking" }),
+  ).toHaveCount(0);
+});
+
 for (const touch of [false, true]) {
   test.describe(touch ? "touch settings" : "desktop settings", () => {
     test.use({

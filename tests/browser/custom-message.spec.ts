@@ -213,11 +213,29 @@ test("sender-led custom messages retain exact content, raw inspection, keyboard 
     name: "sender_with_a_very_long_unbroken_name_".repeat(5),
   });
   await expect(longCard).toContainText("The full body is still here.");
-  expect(
-    await longCard.evaluate(
-      (element) => element.scrollWidth <= element.clientWidth + 1,
-    ),
-  ).toBe(true);
+  const wrappedHeader = await longCard.evaluate((element) => {
+    const header = element
+      .querySelector(".custom-message__head")!
+      .getBoundingClientRect();
+    const icon = element
+      .querySelector(".custom-message__head > svg")!
+      .getBoundingClientRect();
+    const copy = element
+      .querySelector(".custom-message__copy")!
+      .getBoundingClientRect();
+    return {
+      fits: element.scrollWidth <= element.clientWidth + 1,
+      headerHeight: header.height,
+      copyHeight: copy.height,
+      iconCenter: icon.y + icon.height / 2,
+      copyCenter: copy.y + copy.height / 2,
+      headerCenter: header.y + header.height / 2,
+    };
+  });
+  expect(wrappedHeader.fits).toBe(true);
+  expect(wrappedHeader.headerHeight).toBeGreaterThan(wrappedHeader.copyHeight);
+  expect(wrappedHeader.iconCenter).toBeCloseTo(wrappedHeader.headerCenter, 1);
+  expect(wrappedHeader.copyCenter).toBeCloseTo(wrappedHeader.headerCenter, 1);
   await longCard.screenshot({
     path: "output/playwright/intercom-card-long-sender-320.png",
   });

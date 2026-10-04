@@ -30,6 +30,36 @@ const models = [
 ];
 
 describe("model picker interaction", () => {
+  it("keeps the selected model when pointer hover ends and resumes keyboard navigation", () => {
+    const change = vi.fn();
+    render(
+      <ModelSelector
+        value={models[0]!}
+        models={models}
+        recent={[]}
+        onChange={change}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Model" }));
+    const search = screen.getByRole("combobox", { name: "Search models" });
+    const hover = screen.getByRole("option", { name: /Claude Haiku/ });
+    fireEvent.pointerMove(hover, { pointerType: "mouse" });
+    fireEvent.mouseLeave(hover);
+    expect(document.querySelector(".dropdown__option--active")).toBeNull();
+    expect(search).not.toHaveAttribute("aria-activedescendant");
+    expect(
+      screen.getByRole("option", { name: /Claude Sonnet/ }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(change).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(search, { key: "End" });
+    expect(
+      document.getElementById(search.getAttribute("aria-activedescendant")!),
+    ).toHaveClass("dropdown__option--active");
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(change).toHaveBeenCalledWith("openai", "gpt-5");
+  });
+
   it("bounds mounted rows while search and keyboard navigation reach the end of a large available set", () => {
     const available = Array.from({ length: 2400 }, (_, index) => ({
       provider: "fixture",

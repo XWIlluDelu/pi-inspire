@@ -593,6 +593,7 @@ export const Composer = memo(function Composer() {
           disabled={sessionOpening}
           onClick={() => setPickerOpen((value) => !value)}
           aria-label="Add project files"
+          aria-haspopup="dialog"
           aria-expanded={pickerOpen}
           title="Reference project files"
         >
@@ -674,6 +675,7 @@ export const Composer = memo(function Composer() {
       </div>
       {pickerOpen && sessionId ? (
         <ProjectFilePicker
+          anchorRef={projectPickerButtonRef}
           scope={sessionId}
           showHidden={state.workspaceShowHidden}
           onShowHiddenChange={store.setWorkspaceShowHidden}
@@ -681,12 +683,7 @@ export const Composer = memo(function Composer() {
           disabled={sessionOpening}
           search={store.searchProjectFiles}
           onAdd={(file) => store.addProjectFile(file.path)}
-          onClose={() => {
-            setPickerOpen(false);
-            requestAnimationFrame(() =>
-              projectPickerButtonRef.current?.focus(),
-            );
-          }}
+          onClose={() => setPickerOpen(false)}
         />
       ) : null}
     </form>

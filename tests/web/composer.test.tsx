@@ -1331,7 +1331,7 @@ describe("caret completion", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("closes completion on Escape without reaching the global shortcut", async () => {
+  it("dismisses completion without reopening at an unchanged caret and keeps keyboard focus through hover", async () => {
     clearLeftovers();
     render(<Composer />);
     const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
@@ -1350,7 +1350,33 @@ describe("caret completion", () => {
     ).not.toBeInTheDocument();
     textarea.setSelectionRange(3, 3);
     fireEvent.select(textarea);
+    const list = await screen.findByRole("listbox", {
+      name: "Slash command completions",
+    });
+    fireEvent.pointerMove(within(list).getAllByRole("option")[0]!, {
+      pointerType: "mouse",
+    });
+    fireEvent.mouseLeave(list);
+    expect(document.querySelector(".completion__option--active")).toBeNull();
+    expect(textarea).not.toHaveAttribute("aria-activedescendant");
+    fireEvent.keyDown(textarea, { key: "ArrowDown" });
+    expect(
+      document.querySelector(".completion__option--active"),
+    ).not.toBeNull();
+
+    fireEvent.pointerDown(document.body);
+    expect(list).not.toBeInTheDocument();
+    fireEvent.select(textarea);
+    expect(
+      screen.queryByRole("listbox", { name: "Slash command completions" }),
+    ).toBeNull();
+    textarea.setSelectionRange(2, 2);
+    fireEvent.select(textarea);
     await screen.findByRole("listbox", { name: "Slash command completions" });
+    fireEvent.focusIn(document.body);
+    expect(
+      screen.queryByRole("listbox", { name: "Slash command completions" }),
+    ).toBeNull();
   });
 });
 
@@ -1449,6 +1475,73 @@ describe("project file picker", () => {
 
     fireEvent.keyDown(input, { key: "Escape" });
     await waitFor(() => expect(trigger).toHaveFocus());
+    clearLeftovers();
+  });
+
+  it("separates pointer hover from keyboard highlight without closing or blurring on pointer leave", async () => {
+    clearLeftovers();
+    render(<Composer />);
+    fireEvent.click(screen.getByRole("button", { name: "Add project files" }));
+    const input = screen.getByRole("combobox", {
+      name: "Search project files",
+    });
+    fireEvent.change(input, { target: { value: "keyboard" } });
+    const [first, second, third] = await screen.findAllByRole("option", {
+      name: /keyboard-[abc]\.ts/,
+    });
+    expect(first).toHaveClass("picker__row--active");
+    expect(input).toHaveFocus();
+
+    fireEvent.pointerMove(second!, { pointerType: "mouse" });
+    fireEvent.pointerLeave(second!, { pointerType: "mouse" });
+    expect(first).not.toHaveClass("picker__row--active");
+    expect(second).not.toHaveClass("picker__row--active");
+    expect(input).not.toHaveAttribute("aria-activedescendant");
+    expect(input).toHaveFocus();
+    expect(
+      screen.getByRole("dialog", { name: "Add project files" }),
+    ).toBeInTheDocument();
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(third).toHaveClass("picker__row--active");
+    expect(input).toHaveAttribute("aria-activedescendant", third!.id);
+    fireEvent.pointerLeave(
+      screen.getByRole("listbox", { name: "Project files" }),
+    );
+    expect(third).toHaveClass("picker__row--active");
+    fireEvent.keyDown(input, { key: "Escape" });
+    clearLeftovers();
+  });
+
+  it("dismisses on outside pointer/focus and Escape from any picker control", async () => {
+    clearLeftovers();
+    render(<Composer />);
+    const trigger = screen.getByRole("button", { name: "Add project files" });
+    fireEvent.click(trigger);
+    const input = screen.getByLabelText("Search project files");
+    fireEvent.pointerDown(input);
+    expect(input).toBeInTheDocument();
+    fireEvent.pointerDown(document.body);
+    expect(
+      screen.queryByRole("dialog", { name: "Add project files" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    const hiddenToggle = screen.getByRole("button", {
+      name: "Show hidden files",
+    });
+    fireEvent.focus(hiddenToggle);
+    expect(hiddenToggle).toBeInTheDocument();
+    expect(fireEvent.keyDown(hiddenToggle, { key: "Escape" })).toBe(false);
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    fireEvent.click(trigger);
+    const outside = screen.getByRole("button", { name: "Attach files" });
+    act(() => outside.focus());
+    expect(
+      screen.queryByRole("dialog", { name: "Add project files" }),
+    ).not.toBeInTheDocument();
+    expect(outside).toHaveFocus();
     clearLeftovers();
   });
 

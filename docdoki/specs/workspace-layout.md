@@ -4,7 +4,7 @@ covers:
   - src/App.tsx
   - src/store.ts
   - src/controllers/{git,workspace}-controller.ts
-  - src/components/{AppTopbar,SessionActionsMenu,ExtensionDisplays,ContextPane,ContextSplitBody,FilesPane,ChangesPane,WorkspaceBrowser,BranchTree,PaneResizeHandle}.tsx
+  - src/components/{AppTopbar,SessionActionsMenu,ExtensionDisplays,ContextPane,ContextPaneShell,ContextSplitBody,FilesPane,ChangesPane,WorkspaceBrowser,BranchTree,PaneResizeHandle}.tsx
   - src/{git-presentation,use-modal-focus}.ts
   - src/styles/*.css
   - tests/web/{app,workspace-controller,pane-resize,branch-tree,modal-focus}.test.ts*
@@ -42,7 +42,10 @@ independent project shells in [[terminal]].
   as a modal dialog, owns trapped and restorable focus through the central modal stack, and makes
   the center workbench inert; navigation and contextual drawers are mutually exclusive even when a
   file opens from inside navigation. The desktop surfaces retain their navigation and complementary
-  landmarks. Opening a session also closes the drawer.
+  landmarks. Opening a session also closes the drawer. The context pane keeps one shell and focus
+  owner across deferred loading, content and failure; loading the module does not restart its entry
+  animation. The full-width context drawer needs no scrim. Shared motion and overlay roles are in
+  [[design-system]].
 
   Returning to desktop closes transient drawer state without overwriting the desktop collapsed
   preference. Switching the contextual pane between desktop and drawer layouts keeps its reader or
@@ -81,8 +84,11 @@ independent project shells in [[terminal]].
   separate menu button or chevron. Extension text uses the available space at every width, with full statuses
   available by click, tap or keyboard when truncated. No status takes no space. Secondary project and
   Git details yield before the title and primary navigation. Narrow layouts retain Settings in the
-  header; detailed Git status remains in Changes. The session menu and rename input share their
-  leading edge and width. Auxiliary header controls yield while editing on narrow bars.
+  header; detailed Git status remains in Changes. The session menu sits below the title with a
+  compact 216px width, limited by available space rather than title length. The inline rename
+  input shares the title's leading edge, not the menu's width: it starts at 240px, grows with the
+  displayed title up to 560px, and fits the available header space. On narrow bars it fills the
+  remaining width while auxiliary header controls yield.
   Enter, the save control, or moving focus outside the editor saves the name; Escape cancels.
   Blank and unchanged edits exit without a write. Saving after focus leaves does not take focus back.
   Rename editing is owned by the session whose heading opened it; a switch cancels that editor, the
@@ -124,8 +130,8 @@ independent project shells in [[terminal]].
   points remain reachable through progressive loading; bounded responses never define the limit of
   accessible history. The center Transcript remains the active conversation surface.
 
-  The session title opens its action menu. Rename is first and overlaps the title, so repeating a
-  click or tap at the same point enters the inline editor. Clone and Export follow; there is no
+  The session title opens its action menu below the heading, leaving the title visible. Rename
+  is first and initially focused; selecting it enters the inline editor. Clone and Export follow; there is no
   separate menu or Clone button beside the title. The menu supports arrows, Enter and Escape;
   dismissal returns focus to the title. Export opens the shared format-and-download dialog without
   reading or changing the message draft.

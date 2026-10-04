@@ -22,6 +22,8 @@ export interface FloatingMenuConstraints {
   verticalMargin: number;
   maxWidth: number;
   maxHeight: number;
+  /** Use this direction when its full height budget fits; otherwise use more room. */
+  preferredDirection?: "up" | "down";
   /** Align the first row with a topbar trigger instead of placing it below. */
   overlapAnchor?: boolean;
 }
@@ -79,8 +81,14 @@ function placeFloatingMenu(
     0,
     bounds.bottom - constraints.verticalMargin - downTop,
   );
-  const direction =
-    !constraints.overlapAnchor && above >= below ? "up" : "down";
+  const preferred = constraints.preferredDirection;
+  const direction = constraints.overlapAnchor
+    ? "down"
+    : preferred && (preferred === "up" ? above : below) >= constraints.maxHeight
+      ? preferred
+      : above >= below
+        ? "up"
+        : "down";
   const maxHeight = Math.min(
     constraints.maxHeight,
     direction === "up" ? above : below,

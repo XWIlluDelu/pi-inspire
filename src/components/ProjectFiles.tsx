@@ -1,6 +1,20 @@
 import { FolderSearch, X } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  type RefObject,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
 import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
+import {
+  type FloatingMenuConstraints,
+  useFloatingMenuPlacement,
+} from "../use-floating-menu";
+import { useModalPortal } from "../use-modal-focus";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
 import { rankProjectFiles } from "../composer-completion";
 import { ResourcePathLabel } from "./ResourcePathLabel";
@@ -37,7 +51,16 @@ export function ProjectFileChips({
   );
 }
 
+const PICKER_CONSTRAINTS: FloatingMenuConstraints = {
+  gap: 4,
+  horizontalMargin: 16,
+  verticalMargin: 8,
+  maxWidth: 420,
+  maxHeight: 320,
+};
+
 export function ProjectFilePicker({
+  anchorRef,
   scope,
   showHidden,
   onShowHiddenChange,
@@ -47,6 +70,7 @@ export function ProjectFilePicker({
   onAdd,
   onClose,
 }: {
+  anchorRef: RefObject<HTMLButtonElement | null>;
   scope: string;
   showHidden: boolean;
   onShowHiddenChange: (value: boolean) => void;
@@ -63,8 +87,44 @@ export function ProjectFilePicker({
     "loading",
   );
   const [activeIndex, setActiveIndex] = useState(0);
+  const [keyboardActive, setKeyboardActive] = useState(true);
   const listId = useId();
   const listRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const resolveTarget = useCallback(() => {
+    const anchor = anchorRef.current;
+    return anchor
+      ? {
+          context: anchor,
+          anchor: anchor.getBoundingClientRect(),
+          observe: [anchor, ...(anchor.form ? [anchor.form] : [])],
+        }
+      : null;
+  }, [anchorRef]);
+  const placement = useFloatingMenuPlacement(
+    true,
+    resolveTarget,
+    PICKER_CONSTRAINTS,
+  );
+  useModalPortal(Boolean(placement), anchorRef, menuRef);
+
+  useEffect(() => {
+    if (!placement) return;
+    const dismiss = (event: Event) => {
+      const target = event.target as Node;
+      if (
+        !menuRef.current?.contains(target) &&
+        !anchorRef.current?.contains(target)
+      )
+        onClose();
+    };
+    window.addEventListener("pointerdown", dismiss);
+    window.addEventListener("focusin", dismiss);
+    return () => {
+      window.removeEventListener("pointerdown", dismiss);
+      window.removeEventListener("focusin", dismiss);
+    };
+  }, [anchorRef, onClose, placement]);
   const availableIndexes = useMemo(
     () =>
       results.flatMap((file, index) =>
@@ -129,13 +189,36 @@ export function ProjectFilePicker({
   }, [activeIndex, availableIndexes]);
 
   useEffect(() => {
+    if (!keyboardActive) return;
     const option = document.getElementById(`${listId}-option-${activeIndex}`);
     if (option && listRef.current?.contains(option))
       option.scrollIntoView({ block: "nearest" });
-  }, [activeIndex, listId, results]);
+  }, [activeIndex, keyboardActive, listId, results]);
 
-  return (
-    <div className="picker" role="dialog" aria-label="Add project files">
+  if (!placement) return null;
+  return createPortal(
+    <div
+      ref={menuRef}
+      className="picker"
+      role="dialog"
+      aria-label="Add project files"
+      data-placement={placement.direction}
+      data-keyboard-active={keyboardActive}
+      style={{
+        left: placement.left,
+        top: placement.top,
+        bottom: placement.bottom,
+        width: placement.width,
+        maxHeight: placement.maxHeight,
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        anchorRef.current?.focus({ preventScroll: true });
+      }}
+    >
       <div className="file-search-controls">
         <input
           className="picker__input"
@@ -144,12 +227,7 @@ export function ProjectFilePicker({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              event.stopPropagation();
-              onClose();
-              return;
-            }
+            if (event.nativeEvent.isComposing) return;
             if (
               event.key === "Enter" ||
               (event.key === "Tab" && activeOption)
@@ -161,6 +239,7 @@ export function ProjectFilePicker({
             if (availableIndexes.length === 0) return;
             if (event.key === "ArrowDown" || event.key === "ArrowUp") {
               event.preventDefault();
+              setKeyboardActive(true);
               moveActive(event.key === "ArrowDown" ? 1 : -1);
               return;
             }
@@ -171,7 +250,9 @@ export function ProjectFilePicker({
           aria-controls={listId}
           aria-expanded="true"
           aria-activedescendant={
-            activeOption ? `${listId}-option-${activeIndex}` : undefined
+            keyboardActive && activeOption
+              ? `${listId}-option-${activeIndex}`
+              : undefined
           }
           autoFocus
         />
@@ -192,6 +273,9 @@ export function ProjectFilePicker({
         role="listbox"
         aria-label="Project files"
         aria-busy={status === "loading"}
+        onPointerMove={(event) => {
+          if (event.pointerType !== "touch") setKeyboardActive(false);
+        }}
       >
         {results.map((file, index) => {
           const added = selected.includes(file.path);
@@ -206,10 +290,12 @@ export function ProjectFilePicker({
               disabled={unavailable}
               tabIndex={-1}
               key={file.path}
-              className={`picker__row ${added ? "picker__row--added" : ""} ${index === activeIndex && !unavailable ? "picker__row--active" : ""}`}
-              onMouseMove={() => {
-                if (!unavailable) setActiveIndex(index);
+              className={`picker__row ${added ? "picker__row--added" : ""} ${keyboardActive && index === activeIndex && !unavailable ? "picker__row--active" : ""}`}
+              onPointerMove={(event) => {
+                if (event.pointerType !== "touch" && !unavailable)
+                  setActiveIndex(index);
               }}
+              onMouseDown={(event) => event.preventDefault()}
               onClick={() => onAdd(file)}
             >
               <span className="picker__name">{file.name}</span>
@@ -227,6 +313,7 @@ export function ProjectFilePicker({
           </div>
         ) : null}
       </div>
-    </div>
+    </div>,
+    anchorRef.current?.closest(".overlay") ?? document.body,
   );
 }

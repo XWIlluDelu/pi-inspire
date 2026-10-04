@@ -172,26 +172,30 @@ keep their existing behavior. Embedded documents retain their own styles.
   available to assistive technology and the tooltip, and containing controls
   retain that same value for copying and navigation. Ordinary titles and bare
   filenames do not enter this path-specific treatment.
-- Shared text buttons align icons to Plex's visual text center; the correction does not alter button
-  height or spinning-icon animation. Icon-only controls retain geometric centering.
+- Compact Plex labels share a 1px optical adjustment in buttons, segmented controls, dropdown
+  values, section titles, and custom-message attribution. Button height and icon geometry stay
+  unchanged; prose and mixed-font field descriptions retain their normal line boxes. Custom-message
+  icons and Copy center against the attribution group, including when the sender wraps.
+- Searchable menus use the same accent tint for pointer hover and keyboard candidates. Pointer
+  movement and arrow navigation select one highlight mode; leaving a row removes its hover without
+  dismissing the panel or blurring its search field. Checkmarks and `aria-selected` identify committed
+  values independently of that candidate highlight. Settings model search stays neutral until keyboard
+  navigation or an explicit row action.
 - Command Palette, Settings, extension dialogs, pickers, and destructive
   confirmation use the shared overlay grammar: a 6px surface, hairline,
   elevated shadow, restrained scrim with a 2px backdrop blur, and a short
   0.97→1 pop-in. Modal focus/keyboard ownership is behaviorally centralized in
   `useModalFocus`; a visual overlay never leaves shell shortcuts active below
-  it. Settings update checks use the same section/card geometry as preferences:
-  two compact status lanes separate Pi plus Extensions from INSΠRE, keep copy
-  terse, and expose actions without promoting the surface into a dashboard.
+  it. Settings update checks use the same section/card geometry as preferences, with compact rows
+  for Pi, Extensions, and INSΠRE.
 
-- Deferred Settings retains its existing desktop columns or narrow horizontal
-  navigation strip, content cards, and footer while the module loads. Inert,
-  static skeletons use shared neutral tokens; one concise status and small spinner
-  communicate loading without shimmer or invented progress. The same dialog and
-  focus owner stay mounted through loading, ready, and failure. Context and
-  History loading, empty, and unavailable states reuse `ContextPaneState` and its
-  centered icon/copy/action spacing rather than unstyled fallback text. Failure
-  states expose an alert and a styled recovery action; decorative skeletons are
-  hidden from assistive technology and never enter the tab order.
+- Deferred Settings and Context keep one shell and focus owner through loading, ready, and failure.
+  Content loads in the background while the shell remains interactive. Loading visuals appear only
+  after 250ms, without delaying ready content or errors; reduced motion shows them immediately.
+  Settings preserves its columns/navigation strip, card geometry, and footer with inert skeletons.
+  Context and History reuse `ContextPaneState` for centered status and recovery actions. Skeletons
+  stay outside the accessibility tree and tab order; loading has a concise status, and failure an
+  alert and styled recovery action.
 
 ## Responsive, motion, and accessibility
 
@@ -199,6 +203,10 @@ keep their existing behavior. Embedded documents retain their own styles.
   independent modal drawers instead of squeezing both side regions around
   phone-sized conversation content. Fixed narrow surfaces honor all four safe
   insets. Each drawer provides its own close button inside the focus boundary.
+  Narrow drawers slide in from their respective edges as opaque surfaces. Navigation uses the
+  theme's darkening overlay token; the full-width context pane has no redundant scrim. Narrow
+  Settings enters with an opaque 8px rise while only its backdrop fades. Dismissal is immediate,
+  and reduced motion removes entry animation.
 - Motion explains a transient surface, disclosure, or live work. Shared
   durations are 90ms micro, 150ms standard, and 180ms panel; active work may
   spin, and the whole composer carries a quiet 2.8-second theme-colored

@@ -88,6 +88,28 @@ async function openPalette() {
 }
 
 describe("overlay ownership", () => {
+  it("keeps pointer hover separate from keyboard selection without dismissing the palette", async () => {
+    render(<App />);
+    await openPalette();
+    const search = screen.getByRole("combobox", { name: "Filter commands" });
+    await waitFor(() => expect(search).toHaveFocus());
+    const option = screen.getByRole("option", { name: "Find a session" });
+    fireEvent.pointerMove(option, { pointerType: "mouse" });
+    fireEvent.mouseLeave(option);
+    expect(document.querySelector(".palette__row--active")).toBeNull();
+    expect(search).toHaveFocus();
+    expect(search).not.toHaveAttribute("aria-activedescendant");
+
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+    const active = document.getElementById(
+      search.getAttribute("aria-activedescendant")!,
+    )!;
+    expect(active).toHaveClass("palette__row--active");
+    expect(active).toHaveTextContent("Settings");
+    fireEvent.keyDown(search, { key: "Enter" });
+    await screen.findByRole("dialog", { name: "Settings" });
+  });
+
   it("does not open the palette through Settings", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Settings" }));

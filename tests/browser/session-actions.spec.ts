@@ -21,7 +21,7 @@ for (const touch of [false, true]) {
       const response = await page.request.post("/api/sessions/new", {
         data: {
           cwd: browserWorkspace,
-          name: "Calibration notes for this session",
+          name: "Calibration notes for this session with a long title covering model selection, tool execution, and follow-up analysis",
         },
       });
       expect(response.ok()).toBe(true);
@@ -42,30 +42,27 @@ for (const touch of [false, true]) {
       await click();
       const rename = page.getByRole("menuitem", { name: "Rename session" });
       await expect(rename).toBeFocused();
-      const item = (await rename.boundingBox())!;
-      const menuBox = (await page
-        .getByRole("menu", { name: "Session actions" })
-        .boundingBox())!;
-      expect(x).toBeGreaterThanOrEqual(item.x);
-      expect(x).toBeLessThan(item.x + item.width);
-      expect(y).toBeGreaterThanOrEqual(item.y);
-      expect(y).toBeLessThan(item.y + item.height);
+      const menu = page.getByRole("menu", { name: "Session actions" });
+      const menuBox = (await menu.boundingBox())!;
+      expect(Math.abs(menuBox.x - rect.x)).toBeLessThanOrEqual(1);
+      expect(menuBox.y).toBeGreaterThanOrEqual(rect.y + rect.height);
       await page.screenshot({
         path: info.outputPath(`title-${touch ? "320" : "desktop"}-menu.png`),
       });
-      await click();
+      await rename.click();
       const input = page.getByRole("textbox", { name: "Session name" });
       await expect(input).toBeFocused();
       const inputBox = (await input.boundingBox())!;
       expect(Math.abs(inputBox.x - menuBox.x)).toBeLessThanOrEqual(1);
-      expect(Math.abs(inputBox.width - menuBox.width)).toBeLessThanOrEqual(1);
       if (touch) expect(inputBox.width).toBeGreaterThan(160);
+      else expect(inputBox.width).toBeGreaterThan(menuBox.width);
       await input.fill("Reviewed calibration notes");
       await input.press("Enter");
       await expect(title).toContainText("Reviewed calibration notes");
       await expect(composer).toHaveValue("Keep the unfinished comparison");
 
       await title.click();
+      await expect(menu).toHaveCSS("width", `${menuBox.width}px`);
       await rename.click();
       await input.fill("Saved outside the editor");
       const bar = (await page.locator(".topbar").boundingBox())!;

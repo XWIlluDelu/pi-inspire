@@ -796,6 +796,21 @@ describe("Models settings configuration and ownership", () => {
       name: "Search available models",
     });
     search.focus();
+    expect(search).not.toHaveAttribute("aria-activedescendant");
+    expect(document.querySelector(".dropdown__option--active")).toBeNull();
+    fireEvent.change(search, { target: { value: "gpt" } });
+    expect(search).not.toHaveAttribute("aria-activedescendant");
+    expect(document.querySelector(".dropdown__option--active")).toBeNull();
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(fixture.host.saveModelPreferences).not.toHaveBeenCalled();
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+    expect(
+      document.getElementById(search.getAttribute("aria-activedescendant")!),
+    ).toHaveClass("dropdown__option--active");
+    fireEvent.blur(search);
+    expect(search).not.toHaveAttribute("aria-activedescendant");
+    fireEvent.change(search, { target: { value: "" } });
+    search.focus();
     fireEvent.keyDown(search, { key: "End" });
     const active = document.getElementById(
       search.getAttribute("aria-activedescendant")!,

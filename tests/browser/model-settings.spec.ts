@@ -4,7 +4,7 @@ import { modelSettingsScenario, pairAndOpen } from "./fixtures/model-settings";
 
 test.use({ serviceWorkers: "block" });
 
-test("Manage models carries New's prospective project rather than the Host cwd", async ({
+test("Manage models carries New's prospective project only for its Settings visit", async ({
   page,
 }) => {
   const target = "/tmp/inspire-browser-prospective-models";
@@ -39,6 +39,104 @@ test("Manage models carries New's prospective project rather than the Host cwd",
     .click();
   await expect.poll(() => settingsOwner).toEqual({ cwd: target });
   await expect(page.getByText(/This project uses/)).toBeVisible();
+
+  await page
+    .getByRole("dialog", { name: "Settings", exact: true })
+    .press("Escape");
+  await page
+    .getByRole("button", { name: /Review extension event lifecycle/ })
+    .first()
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeVisible();
+  settingsOwner = undefined;
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "Settings", exact: true })
+    .getByRole("button", { name: "Models", exact: true })
+    .click();
+  await expect.poll(() => settingsOwner).toEqual({ sessionId: "mock-history" });
+});
+
+test("model search and refresh preserve defaults and browsing position", async ({
+  page,
+}) => {
+  const scenario = await modelSettingsScenario(page);
+  const models = scenario.snapshot().models;
+  models.push(
+    ...Array.from({ length: 20 }, (_, index) => ({
+      ...models[0]!,
+      id: `catalog-${index}`,
+      name: `Catalog model ${index}`,
+    })),
+  );
+  await pairAndOpen(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const settings = page.getByRole("dialog", {
+    name: "Settings",
+    exact: true,
+  });
+  await settings.getByRole("button", { name: "Models", exact: true }).click();
+  const defaults = settings.locator(".models-results");
+  await expect(defaults).toBeInViewport();
+  await settings
+    .getByRole("button", { name: "Refresh available models" })
+    .click();
+  await expect(settings.getByRole("row").first()).toHaveCSS(
+    "background-color",
+    "rgba(0, 0, 0, 0)",
+  );
+  await expect(settings.getByRole("row", { selected: true })).toHaveCount(0);
+  expect(scenario.snapshot().saved.defaultModel).toBeNull();
+  const search = settings.getByRole("combobox", {
+    name: "Search available models",
+  });
+  await search.click();
+  await expect(settings.getByRole("row").first()).toHaveCSS(
+    "background-color",
+    "rgba(0, 0, 0, 0)",
+  );
+  await expect(search).not.toHaveAttribute("aria-activedescendant");
+  await search.fill("gpt");
+  await expect(settings.getByRole("row").first()).toHaveCSS(
+    "background-color",
+    "rgba(0, 0, 0, 0)",
+  );
+  await search.press("Enter");
+  expect(scenario.snapshot().saved.defaultModel).toBeNull();
+  await search.press("ArrowDown");
+  await expect(settings.getByRole("row").first()).toHaveClass(
+    /dropdown__option--active/,
+  );
+  await search.press("Tab");
+  await expect(search).not.toHaveAttribute("aria-activedescendant");
+  await search.fill("");
+  const grid = settings.getByRole("grid", { name: "Available models" });
+  const position = await grid.evaluate((element) => {
+    element.scrollTop = 120;
+    return element.scrollTop;
+  });
+  expect(position).toBeGreaterThan(0);
+  const refreshed = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/model-settings") &&
+      response.request().method() === "GET",
+  );
+  await settings
+    .getByRole("button", { name: "Refresh available models" })
+    .click();
+  await refreshed;
+  await expect(
+    settings.getByRole("button", { name: "Refresh available models" }),
+  ).toBeEnabled();
+  await expect
+    .poll(() => grid.evaluate((element) => element.scrollTop))
+    .toBe(position);
+  await search.fill("local");
+  await expect
+    .poll(() => grid.evaluate((element) => element.scrollTop))
+    .toBe(0);
 });
 
 test.describe("scalar default rows", () => {
@@ -56,15 +154,6 @@ test.describe("scalar default rows", () => {
     await settings.getByRole("button", { name: "Models", exact: true }).click();
     const defaults = settings.locator(".models-results");
     await expect(defaults).toBeInViewport();
-    await settings
-      .getByRole("button", { name: "Refresh available models" })
-      .click();
-    await expect(settings.getByRole("row").first()).toHaveCSS(
-      "background-color",
-      "rgba(0, 0, 0, 0)",
-    );
-    await expect(settings.getByRole("row", { selected: true })).toHaveCount(0);
-    expect(scenario.snapshot().saved.defaultModel).toBeNull();
     for (const width of [1280, 540, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });
       await defaults.evaluate((element) =>
@@ -269,7 +358,8 @@ for (const touch of [false, true]) {
           name: "Default thinking",
         });
         await thinking.click();
-        await settings
+        await page
+          .getByRole("listbox", { name: "Default thinking", exact: true })
           .getByRole("option", { name: "xhigh", exact: true })
           .click();
         await expect(thinking).toHaveText("xhigh");

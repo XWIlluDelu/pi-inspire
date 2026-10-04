@@ -341,6 +341,21 @@
   text-transform: uppercase;
 }
 
+/* Shared optical correction; field descriptions remain ordinary reading text. */
+.settings__section-title {
+  translate: 0 var(--ui-text-offset);
+}
+
+.host-restart__actions .button {
+  padding-block: calc(var(--space-1) + var(--ui-text-offset))
+    calc(var(--space-1) - var(--ui-text-offset));
+}
+
+.dialog.settings .button {
+  /* These controls already have a fixed height and zero vertical padding. */
+  padding-block: calc(2 * var(--ui-text-offset)) 0;
+}
+
 .settings__section-desc {
   margin: 0;
   color: var(--muted);
@@ -432,25 +447,6 @@
   min-width: var(--set-dropdown-w);
   min-height: var(--set-control-h);
   height: var(--set-control-h);
-}
-
-.settings__field .dropdown__menu {
-  left: auto;
-  right: 0;
-}
-
-.settings__field .dropdown--described .dropdown__menu {
-  width: min(320px, calc(100vw - var(--space-8) * 2));
-}
-
-.settings__field .dropdown__option--described {
-  white-space: normal;
-}
-
-.settings__field .dropdown__option-description {
-  color: var(--muted);
-  font-size: var(--text-xs);
-  line-height: var(--leading-ui);
 }
 
 .settings__field .segmented {
@@ -844,19 +840,14 @@
 }
 
 .palette__row--active {
-  background: var(--bg-control);
+  background: var(--accent-tint);
   color: var(--ink);
 }
 
-.palette__row--active::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 4px;
-  bottom: 4px;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--accent);
+@media (hover: hover) {
+  .palette__list[data-keyboard-active="false"] .palette__row:hover {
+    background: var(--accent-tint);
+  }
 }
 
 .palette__section {

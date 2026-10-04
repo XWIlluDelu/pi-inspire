@@ -6,6 +6,7 @@ const FOCUSABLE = [
   "input:not([disabled])",
   "select:not([disabled])",
   "textarea:not([disabled])",
+  "summary",
   "[contenteditable='true']",
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
@@ -37,7 +38,9 @@ function focusableElements(entry: ModalEntry): HTMLElement[] {
   const elements = (root: HTMLElement) =>
     [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
       (element) =>
-        !element.hidden &&
+        !element.closest(
+          "[hidden], [inert], details:not([open]) > :not(summary)",
+        ) &&
         !element.matches(":disabled") &&
         element.getAttribute("aria-hidden") !== "true" &&
         element.tabIndex >= 0,
@@ -55,6 +58,17 @@ function initialFocus(entry: ModalEntry): HTMLElement {
     elements[0] ??
     entry.dialog
   );
+}
+
+/** Repair focus lost when a deferred header replaces the focused control. */
+export function recoverModalFocus(node: HTMLElement | null): void {
+  const entry = modalStack.at(-1);
+  if (
+    node &&
+    entry?.dialog.contains(node) &&
+    !containsFocus(entry, document.activeElement)
+  )
+    initialFocus(entry).focus();
 }
 
 /** Keep an anchored, portaled control in its owning dialog's focus and tab order. */

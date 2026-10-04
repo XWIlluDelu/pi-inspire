@@ -62,6 +62,7 @@ function CompletionMenu({
   token,
   items,
   active,
+  keyboardActive,
   status,
   truncated,
   showHiddenFiles,
@@ -69,12 +70,14 @@ function CompletionMenu({
   placement,
   onActive,
   onPick,
+  onDismiss,
   anchorRef,
 }: {
   id: string;
   token: CaretCompletion;
   items: CompletionItem[];
   active: number;
+  keyboardActive: boolean;
   status: "loading" | "ready" | "error";
   truncated: boolean;
   showHiddenFiles: boolean;
@@ -82,10 +85,27 @@ function CompletionMenu({
   placement: FloatingMenuPlacement | null;
   onActive: (index: number) => void;
   onPick: (item: CompletionItem) => void;
-  anchorRef: RefObject<HTMLTextAreaElement | null>;
+  onDismiss: () => void;
+  anchorRef: RefObject<HTMLDivElement | null>;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   useModalPortal(true, anchorRef, menuRef);
+  useEffect(() => {
+    const outside = (event: Event) => {
+      const target = event.target as Node;
+      if (
+        !anchorRef.current?.contains(target) &&
+        !menuRef.current?.contains(target)
+      )
+        onDismiss();
+    };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("focusin", outside);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("focusin", outside);
+    };
+  }, [anchorRef, onDismiss]);
   const refs = useRef<Array<HTMLDivElement | null>>([]);
   const listRef = useRef<HTMLDivElement>(null);
   const virtualized = items.length > 50;
@@ -117,9 +137,10 @@ function CompletionMenu({
     },
   });
   useLayoutEffect(() => {
+    if (!keyboardActive) return;
     if (virtualized) virtualizer.scrollToIndex(active, { align: "auto" });
     else refs.current[active]?.scrollIntoView({ block: "nearest" });
-  }, [active, items, virtualized, virtualizer]);
+  }, [active, items, keyboardActive, virtualized, virtualizer]);
   const renderItem = (item: CompletionItem, index: number) => (
     <>
       {hasHeading(index) ? (
@@ -133,12 +154,14 @@ function CompletionMenu({
         }}
         id={`${id}-option-${index}`}
         role="option"
-        aria-selected={index === active}
+        aria-selected={keyboardActive && index === active}
         aria-posinset={index + 1}
         aria-setsize={items.length}
-        className={`completion__option ${index === active ? "completion__option--active" : ""}`}
+        className={`completion__option ${keyboardActive && index === active ? "completion__option--active" : ""}`}
         onMouseDown={(event) => event.preventDefault()}
-        onMouseEnter={() => onActive(index)}
+        onPointerMove={(event) => {
+          if (event.pointerType !== "touch") onActive(index);
+        }}
         onClick={() => onPick(item)}
       >
         <span className="completion__title">{item.title}</span>
@@ -152,6 +175,7 @@ function CompletionMenu({
     <div
       ref={menuRef}
       className="completion"
+      data-keyboard-active={keyboardActive}
       onClick={(event) => event.stopPropagation()}
       data-placement={placement?.direction}
       style={
@@ -314,6 +338,8 @@ export function ComposerInput({
     "loading" | "ready" | "error"
   >("ready");
   const [completionActive, setCompletionActive] = useState(0);
+  const [completionKeyboardActive, setCompletionKeyboardActive] =
+    useState(true);
   const inputWrapRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Let an enclosing modal capture its opener before moving focus.
@@ -343,6 +369,16 @@ export function ComposerInput({
     value: string;
     caret: number;
   } | null>(null);
+  const dismissCompletion = useCallback(() => {
+    const input = textareaRef.current;
+    if (input) {
+      dismissedCompletionRef.current = {
+        value: input.value,
+        caret: input.selectionStart,
+      };
+    }
+    setCompletion(null);
+  }, []);
   const inputValueRef = useRef(value);
   const historyIndexRef = useRef(-1);
   const historyDraftRef = useRef<{
@@ -505,6 +541,7 @@ export function ComposerInput({
     dismissedCompletionRef.current = null;
     const token = parseCaretCompletion(draft, caret);
     setCompletionActive(0);
+    setCompletionKeyboardActive(true);
     setCompletion(
       (token?.kind === "file" && !searchProjectFiles) ||
         (token?.kind === "argument" && !includeNativeCommands)
@@ -738,15 +775,12 @@ export function ComposerInput({
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
-        dismissedCompletionRef.current = {
-          value: event.currentTarget.value,
-          caret: event.currentTarget.selectionStart,
-        };
-        setCompletion(null);
+        dismissCompletion();
         return;
       }
       if (event.key === "ArrowDown" && completionItems.length > 0) {
         event.preventDefault();
+        setCompletionKeyboardActive(true);
         setCompletionActive((index) =>
           Math.min(index + 1, completionItems.length - 1),
         );
@@ -754,6 +788,7 @@ export function ComposerInput({
       }
       if (event.key === "ArrowUp" && completionItems.length > 0) {
         event.preventDefault();
+        setCompletionKeyboardActive(true);
         setCompletionActive((index) => Math.max(0, index - 1));
         return;
       }
@@ -830,7 +865,9 @@ export function ComposerInput({
           aria-autocomplete="list"
           aria-controls={completion ? completionId : undefined}
           aria-activedescendant={
-            completion && completionItems[activeIndex]
+            completion &&
+            completionKeyboardActive &&
+            completionItems[activeIndex]
               ? `${completionId}-option-${activeIndex}`
               : undefined
           }
@@ -920,6 +957,7 @@ export function ComposerInput({
               token={completion}
               items={completionItems}
               active={activeIndex}
+              keyboardActive={completionKeyboardActive}
               status={completion.kind === "file" ? completionStatus : "ready"}
               truncated={completion.kind === "file" && completionTruncated}
               showHiddenFiles={showHiddenFiles}
@@ -932,9 +970,13 @@ export function ComposerInput({
                   : undefined
               }
               placement={completionPlacement}
-              onActive={setCompletionActive}
+              onActive={(index) => {
+                setCompletionKeyboardActive(false);
+                setCompletionActive(index);
+              }}
               onPick={pickCompletion}
-              anchorRef={textareaRef}
+              onDismiss={dismissCompletion}
+              anchorRef={inputWrapRef}
             />,
             completionPortal?.current ?? document.body,
           )

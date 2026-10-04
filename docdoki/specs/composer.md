@@ -76,6 +76,8 @@ covers:
   - tests/web/welcome-new-session.test.tsx
   - tests/browser/workbench.spec.ts
   - tests/browser/model-selection.spec.ts
+  - tests/browser/project-file-picker.spec.ts
+  - tests/browser/pending-input.spec.ts
 ---
 
 # Conversation composer
@@ -163,6 +165,11 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   absolute canonical-workspace paths so changing the directory cannot reinterpret them.
 
   Picker and `@` search expose a default-off Show hidden files control covering dot names and native hidden attributes, not Git ignore rules. Both established and prospective-workspace searches report incomplete scans; Git failure never blocks them.
+
+  The explicit picker anchors to its toolbar button and flips within the viewport when needed.
+  An outside click or focus change dismisses it without taking focus from the destination; Escape
+  closes it and restores the trigger. Completion uses the same outside-dismissal behavior and does
+  not reopen for an unchanged token.
 
   The explicit picker stages deduplicated removable chips. The prompt boundary revalidates their
   canonical regular-file targets against the current workspace, independently of search results,

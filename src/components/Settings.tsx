@@ -382,7 +382,7 @@ export const SettingsContent = memo(function SettingsContent({
               >
                 <Dropdown
                   label="Activity groups"
-                  className="dropdown--field dropdown--described"
+                  className="dropdown--field"
                   value={state.prefs.activityFoldVisibility}
                   options={ACTIVITY_GROUPS}
                   onChange={(value) =>

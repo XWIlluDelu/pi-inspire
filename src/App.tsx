@@ -11,6 +11,7 @@ import {
   memo,
   Suspense,
   useCallback,
+  useDeferredValue,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -25,7 +26,10 @@ import { CommandActivity } from "./components/CommandActivity";
 import { CommandHelp } from "./components/CommandHelp";
 import { CommandPalette } from "./components/CommandPalette";
 import { Composer } from "./components/Composer";
-import { ContextPaneState } from "./components/ContextPaneState";
+import {
+  ContextPaneLoading,
+  ContextPaneShell,
+} from "./components/ContextPaneShell";
 import { CopyAction } from "./components/CopyAction";
 import { ExportDialog } from "./components/ExportDialog";
 import { ExtensionDisplayDock } from "./components/ExtensionDisplays";
@@ -41,7 +45,7 @@ import { BrandLogo, Wordmark } from "./components/Wordmark";
 import type { Notice } from "./events";
 import { shallowEqual, store, useAppState } from "./store";
 import { type AvailableUpdates, availableUpdates } from "./update-availability";
-import { hasActiveModal, useModalFocus } from "./use-modal-focus";
+import { hasActiveModal } from "./use-modal-focus";
 import {
   applyBrowserTheme,
   cacheVisualPreferences,
@@ -60,72 +64,6 @@ function reportDeferredSurfaceError(error: unknown): void {
   console.error("Deferred surface failed to load", error);
 }
 
-function ContextPaneLoading({
-  isModal,
-  onClose,
-  onRetry,
-}: {
-  isModal: boolean;
-  onClose: () => void;
-  onRetry?: () => void;
-}) {
-  const ref = useModalFocus<HTMLDivElement>(isModal, "context-pane", onClose);
-  const content = (
-    <>
-      <div className="ctx__header">
-        <span className="ctx__title">Context</span>
-        <button
-          type="button"
-          className="icon-button ctx__close"
-          title="Close"
-          aria-label="Close context pane"
-          onClick={onClose}
-        >
-          <X size={15} aria-hidden />
-        </button>
-      </div>
-      <ContextPaneState
-        icon={
-          onRetry ? (
-            <AlertTriangle size={17} aria-hidden />
-          ) : (
-            <Loader2 size={17} className="spin" aria-hidden />
-          )
-        }
-        title={onRetry ? "Context could not be opened." : "Loading context"}
-        role={onRetry ? "alert" : "status"}
-      >
-        {onRetry ? (
-          <button
-            type="button"
-            className="button res__state-action"
-            onClick={onRetry}
-          >
-            Reload
-          </button>
-        ) : null}
-      </ContextPaneState>
-    </>
-  );
-  return isModal ? (
-    <div
-      className="ctx res"
-      id="context-pane"
-      ref={ref}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Context panel"
-      tabIndex={-1}
-    >
-      {content}
-    </div>
-  ) : (
-    <aside className="ctx res" id="context-pane" aria-label="Context panel">
-      {content}
-    </aside>
-  );
-}
-
 function DeferredContextPane({
   isModal,
   onClose,
@@ -133,23 +71,28 @@ function DeferredContextPane({
   isModal: boolean;
   onClose: () => void;
 }) {
+  // Commit loading as ordinary content; suspended background work adds no fallback retry delay.
+  const showContent = useDeferredValue(true, false);
   return (
-    <RenderErrorBoundary
-      onError={reportDeferredSurfaceError}
-      fallback={
-        <ContextPaneLoading
-          isModal={isModal}
-          onClose={onClose}
-          onRetry={() => window.location.reload()}
-        />
-      }
-    >
-      <Suspense
-        fallback={<ContextPaneLoading isModal={isModal} onClose={onClose} />}
+    <ContextPaneShell isModal={isModal} onClose={onClose}>
+      <RenderErrorBoundary
+        onError={reportDeferredSurfaceError}
+        fallback={
+          <ContextPaneLoading
+            onClose={onClose}
+            onRetry={() => window.location.reload()}
+          />
+        }
       >
-        <DeferredContextSurface isModal={isModal} onClose={onClose} />
-      </Suspense>
-    </RenderErrorBoundary>
+        <Suspense fallback={<ContextPaneLoading onClose={onClose} />}>
+          {showContent ? (
+            <DeferredContextSurface isModal={isModal} onClose={onClose} />
+          ) : (
+            <ContextPaneLoading onClose={onClose} />
+          )}
+        </Suspense>
+      </RenderErrorBoundary>
+    </ContextPaneShell>
   );
 }
 
@@ -162,6 +105,7 @@ function DeferredSettings({
   modelDestination?: ModelSettingsDestination;
   onClose: () => void;
 }) {
+  const showContent = useDeferredValue(true, false);
   return (
     <SettingsDialog onClose={onClose}>
       <RenderErrorBoundary
@@ -169,10 +113,14 @@ function DeferredSettings({
         fallback={<SettingsLoading onRetry={() => window.location.reload()} />}
       >
         <Suspense fallback={<SettingsLoading />}>
-          <DeferredSettingsSurface
-            initialCategory={initialCategory}
-            modelDestination={modelDestination}
-          />
+          {showContent ? (
+            <DeferredSettingsSurface
+              initialCategory={initialCategory}
+              modelDestination={modelDestination}
+            />
+          ) : (
+            <SettingsLoading />
+          )}
         </Suspense>
       </RenderErrorBoundary>
     </SettingsDialog>
@@ -692,15 +640,23 @@ export function App() {
     setCommandHelp(mode);
   }, []);
   const closeCommandHelp = useCallback(() => setCommandHelp(null), []);
-  const openPaletteSettings = useCallback(() => {
-    setPaletteOpen(false);
-    setSettingsCategory("behavior");
-    setSettingsOpen(true);
-  }, []);
   const [settingsCategory, setSettingsCategory] =
     useState<SettingsCategoryId>("display");
   const [modelDestination, setModelDestination] =
     useState<ModelSettingsDestination>();
+  const openSettings = useCallback(
+    (category: SettingsCategoryId, destination?: ModelSettingsDestination) => {
+      setPaletteOpen(false);
+      setSettingsCategory(category);
+      setModelDestination(destination);
+      setSettingsOpen(true);
+    },
+    [],
+  );
+  const openPaletteSettings = useCallback(
+    () => openSettings("behavior"),
+    [openSettings],
+  );
   const extensionOverlayOpen = state.extensionOverlayOpen;
   const [welcomeInheritance, setWelcomeInheritance] =
     useState<WelcomeInheritance | null>(null);
@@ -821,17 +777,13 @@ export function App() {
       return;
     }
     if (extensionOverlayOpen || hasActiveModal()) return;
-    setPaletteOpen(false);
-    setSettingsCategory("display");
-    setSettingsOpen(true);
-  }, [extensionOverlayOpen, settingsOpen]);
+    openSettings("display");
+  }, [extensionOverlayOpen, settingsOpen, openSettings]);
 
   const openUpdateSettings = useCallback(() => {
     if (extensionOverlayOpen || (hasActiveModal() && !settingsOpen)) return;
-    setPaletteOpen(false);
-    setSettingsCategory("updates");
-    setSettingsOpen(true);
-  }, [extensionOverlayOpen, settingsOpen]);
+    openSettings("updates");
+  }, [extensionOverlayOpen, settingsOpen, openSettings]);
 
   useEffect(() => {
     const request = state.nativeCommandUiRequest;
@@ -843,22 +795,15 @@ export function App() {
     if (request.action === "model" || request.action === "thinking") return;
     if (extensionOverlayOpen) return;
     if (request.action === "models") {
-      setPaletteOpen(false);
-      setSettingsCategory("models");
-      setModelDestination({
+      openSettings("models", {
         query: request.query,
         focus: request.modelSettingsFocus,
         owner: request.modelSettingsOwner,
       });
-      setSettingsOpen(true);
     } else if (request.action === "settings") {
-      setPaletteOpen(false);
-      setSettingsCategory("behavior");
-      setSettingsOpen(true);
+      openSettings("behavior");
     } else if (request.action === "updates") {
-      setPaletteOpen(false);
-      setSettingsCategory("updates");
-      setSettingsOpen(true);
+      openSettings("updates");
     } else if (request.action === "hotkeys" || request.action === "changelog") {
       openCommandHelp(request.action);
     } else if (request.action === "sessions") {
@@ -872,6 +817,7 @@ export function App() {
     newSession,
     openCommandHelp,
     openSessionSearch,
+    openSettings,
     state.nativeCommandUiRequest,
   ]);
 
@@ -1147,14 +1093,7 @@ export function App() {
       </main>
       {state.resourcesOpen ? (
         <>
-          {narrowViewport ? (
-            <button
-              type="button"
-              className="pane-scrim pane-scrim--resources"
-              onClick={() => store.setResourcesOpen(false)}
-              aria-label="Dismiss resources panel"
-            />
-          ) : (
+          {!narrowViewport ? (
             <PaneResizeHandle
               cssVar="--ctx-w"
               storageKey="inspire.ctx-width"
@@ -1166,7 +1105,7 @@ export function App() {
               variant="ctx"
               wheelTargetSelector="#context-pane [data-pane-scroll-active='true']"
             />
-          )}
+          ) : null}
           {resourcesContent}
         </>
       ) : null}

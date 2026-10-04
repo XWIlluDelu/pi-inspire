@@ -136,6 +136,7 @@ export const Welcome = memo(function Welcome({
       : "off",
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const projectPickerButtonRef = useRef<HTMLButtonElement>(null);
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
   const recent = state.sessions.slice(0, 6);
@@ -608,7 +609,9 @@ export const Welcome = memo(function Welcome({
             className={`icon-button ${pickerOpen ? "icon-button--active" : ""}`}
             onClick={() => setPickerOpen((value) => !value)}
             disabled={starting || !effectiveDirectory}
+            ref={projectPickerButtonRef}
             aria-label="Add project files"
+            aria-haspopup="dialog"
             aria-expanded={pickerOpen}
             title="Reference project files"
           >
@@ -679,6 +682,7 @@ export const Welcome = memo(function Welcome({
         ) : null}
         {pickerOpen && effectiveDirectory ? (
           <ProjectFilePicker
+            anchorRef={projectPickerButtonRef}
             scope={effectiveDirectory}
             showHidden={showHiddenFiles}
             onShowHiddenChange={setShowHiddenFiles}

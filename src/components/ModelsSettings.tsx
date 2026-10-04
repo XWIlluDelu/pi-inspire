@@ -8,6 +8,7 @@ import {
   Plus,
   RefreshCw,
   Trash2,
+  X,
 } from "lucide-react";
 import {
   useCallback,
@@ -962,12 +963,13 @@ export function ModelsSettings({
                       ) : null}
                       <button
                         type="button"
-                        className="models-text-button"
+                        className="models-icon-button"
                         aria-label="Clear default model"
+                        title="Clear default model"
                         disabled={busy}
                         onClick={() => void save({ defaultModel: null })}
                       >
-                        Clear
+                        <X size={14} aria-hidden />
                       </button>
                     </div>
                   ) : (
@@ -987,7 +989,7 @@ export function ModelsSettings({
                 >
                   <Dropdown
                     label="Default thinking"
-                    className="dropdown--field dropdown--described"
+                    className="dropdown--field"
                     value={snapshot.saved.defaultThinkingLevel ?? "unset"}
                     display={preferencesUnavailable ? "Unavailable" : undefined}
                     disabled={busy || preferencesUnavailable}

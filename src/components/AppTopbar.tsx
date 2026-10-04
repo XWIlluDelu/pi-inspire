@@ -202,7 +202,7 @@ const SessionIdent = memo(function SessionIdent({
   const [editing, setEditing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [value, setValue] = useState("");
-  const [renameWidth, setRenameWidth] = useState(200);
+  const [renameWidth, setRenameWidth] = useState(240);
   const titleRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const restoreTitleFocus = useRef(false);
@@ -320,8 +320,9 @@ const SessionIdent = memo(function SessionIdent({
             anchorRef={titleRef}
             cloneDisabled={cloneBusy}
             onClose={closeMenu}
-            onRename={(width) => {
-              setRenameWidth(width);
+            onRename={() => {
+              const width = titleRef.current!.getBoundingClientRect().width + 48;
+              setRenameWidth(Math.max(240, Math.min(560, width)));
               closeMenu();
               // The first-prompt heading is a fallback, not Pi's saved name.
               setValue(sessionName);

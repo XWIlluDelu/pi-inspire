@@ -6,12 +6,12 @@ import {
 } from "../use-floating-menu";
 
 const CONSTRAINTS: FloatingMenuConstraints = {
-  gap: 0,
+  gap: 4,
   horizontalMargin: 8,
   verticalMargin: 4,
-  maxWidth: 720,
+  maxWidth: 216,
   maxHeight: 240,
-  overlapAnchor: true,
+  preferredDirection: "down",
 };
 
 export function SessionActionsMenu({
@@ -24,7 +24,7 @@ export function SessionActionsMenu({
 }: {
   anchorRef: RefObject<HTMLButtonElement | null>;
   cloneDisabled: boolean;
-  onRename: (width: number) => void;
+  onRename: () => void;
   onClone: () => void;
   onExport: () => void;
   onClose: () => void;
@@ -37,7 +37,6 @@ export function SessionActionsMenu({
     return {
       context: anchor,
       anchor: rect,
-      preferredWidth: Math.max(200, rect.width),
       observe: [anchor],
     };
   }, [anchorRef]);
@@ -76,6 +75,7 @@ export function SessionActionsMenu({
       style={{
         left: placement.left,
         top: placement.top,
+        bottom: placement.bottom,
         width: placement.width,
         maxHeight: placement.maxHeight,
       }}
@@ -114,11 +114,7 @@ export function SessionActionsMenu({
         }
       }}
     >
-      <button
-        type="button"
-        role="menuitem"
-        onClick={() => onRename(placement.width)}
-      >
+      <button type="button" role="menuitem" onClick={onRename}>
         Rename session
       </button>
       <button

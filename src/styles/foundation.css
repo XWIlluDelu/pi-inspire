@@ -55,6 +55,8 @@
   --text-display: 32px;
   --text-wordmark: 24px;
   --leading-ui: 1.45;
+  /* Compact Plex labels need a small optical correction inside centred UI rows. */
+  --ui-text-offset: 1px;
   --leading-reading: 1.7;
   --leading-mono: 1.6;
   --safe-top: env(safe-area-inset-top, 0px);
@@ -479,6 +481,16 @@ a {
   gap: var(--space-2);
 }
 
+.deferred-loading {
+  animation: deferred-loading-in var(--dur-standard) var(--ease-standard) 250ms backwards;
+}
+
+@keyframes deferred-loading-in {
+  from {
+    opacity: 0;
+  }
+}
+
 .spin {
   animation: spin 0.9s linear infinite;
 }
@@ -527,7 +539,8 @@ a {
   border-radius: var(--radius-sm);
   background: var(--bg-surface);
   color: var(--body);
-  padding: var(--space-2) 14px;
+  padding: calc(var(--space-2) + var(--ui-text-offset)) 14px
+    calc(var(--space-2) - var(--ui-text-offset));
   font-size: var(--text-base);
   font-weight: 500;
   transition:
@@ -536,10 +549,17 @@ a {
     color var(--dur-micro) var(--ease-standard);
 }
 
-/* Plex's text sits slightly above the geometric line-box centre. */
+/* Skew padding without changing its total, then keep icons on the row centre.
+   Independent translate leaves spinning icons' rotation untouched. */
 .button > svg {
   flex-shrink: 0;
-  translate: 0 -1px;
+  translate: 0 calc(-1 * var(--ui-text-offset));
+}
+
+/* Atomic control labels, not prose or mixed-font reading content. */
+.segmented__item > span,
+.dropdown__value {
+  translate: 0 var(--ui-text-offset);
 }
 
 .button:hover {

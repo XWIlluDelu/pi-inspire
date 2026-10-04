@@ -16,8 +16,7 @@ import {
 import { resourceRows as toResourceRows } from "../resources";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
-import { dismissTerminalMenu } from "../terminal-menus";
-import { useModalFocus } from "../use-modal-focus";
+import { recoverModalFocus } from "../use-modal-focus";
 import { BranchTree } from "./BranchTree";
 import { ChangesPane } from "./ChangesPane";
 import { selectContextPaneView } from "./context-pane-view";
@@ -46,30 +45,6 @@ export const ContextPane = memo(function ContextPane({
 } = {}) {
   const state = useAppState(selectContextPaneView, shallowEqual);
   const transportGeneration = state.transportGeneration;
-  const modalPaneRef = useModalFocus<HTMLDivElement>(
-    isModal,
-    "context-pane",
-    (event) => {
-      // This shortcut belongs to the focused terminal's capture listener,
-      // not the drawer or an open terminal menu.
-      if (
-        (event.ctrlKey || event.metaKey) &&
-        event.shiftKey &&
-        event.target instanceof Element &&
-        modalPaneRef.current?.contains(event.target) &&
-        event.target.closest(".terminal-pane--focused")
-      )
-        return false;
-      // Terminal search consumes Escape locally and returns focus to its PTY.
-      if (
-        event.target instanceof Element &&
-        modalPaneRef.current?.contains(event.target) &&
-        event.target.closest(".terminal-search")
-      )
-        return false;
-      if (!dismissTerminalMenu(modalPaneRef.current, event.target)) onClose?.();
-    },
-  );
   const [resourcePage, setResourcePage] = useState<
     (SessionResourceListResponse & { clientTransportGeneration: number }) | null
   >(null);
@@ -249,7 +224,7 @@ export const ContextPane = memo(function ContextPane({
           : false;
   const contents = (
     <>
-      <div className="ctx__header">
+      <div className="ctx__header" ref={recoverModalFocus}>
         <div className="ctx__modes" role="group" aria-label="Context mode">
           {(["files", "changes", "branches", "terminal"] as const).map(
             (mode) => (
@@ -339,27 +314,5 @@ export const ContextPane = memo(function ContextPane({
       )}
     </>
   );
-  // Keep the same host element across layouts so readers and terminals stay mounted.
-  return isModal ? (
-    <div
-      className="ctx res"
-      id="context-pane"
-      ref={modalPaneRef}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Context panel"
-      tabIndex={-1}
-    >
-      {contents}
-    </div>
-  ) : (
-    <div
-      className="ctx res"
-      id="context-pane"
-      role="complementary"
-      aria-label="Context panel"
-    >
-      {contents}
-    </div>
-  );
+  return contents;
 });

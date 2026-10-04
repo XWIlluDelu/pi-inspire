@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import type { ActiveSnapshot } from "../../shared/contracts";
 
@@ -14,6 +15,31 @@ async function pairAndOpen(page: Page) {
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeVisible();
 }
+
+test("model labels and selection retain text contrast across palettes and themes", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await pairAndOpen(page);
+  await page.getByRole("button", { name: "Model", exact: true }).click();
+  await expect(page.getByRole("option", { selected: true })).toBeVisible();
+  for (const palette of ["amber", "teal"]) {
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate(
+        ({ palette, theme }) => {
+          document.documentElement.dataset.palette = palette;
+          document.documentElement.dataset.theme = theme;
+        },
+        { palette, theme },
+      );
+      const result = await new AxeBuilder({ page })
+        .include(".model-picker__menu")
+        .withRules(["color-contrast"])
+        .analyze();
+      expect(result.violations, `${palette}/${theme}`).toEqual([]);
+    }
+  }
+});
 
 test("cached model choices open immediately and background updates preserve selection/search/draft", async ({
   page,

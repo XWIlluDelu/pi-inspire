@@ -135,6 +135,7 @@ export const CommandPalette = memo(function CommandPalette({
   const [preparationSending, setPreparationSending] = useState(false);
   const [delivery, setDelivery] = useState<"steer" | "followUp">("steer");
   const [index, setIndex] = useState(0);
+  const [keyboardActive, setKeyboardActive] = useState(true);
   const [renaming, setRenaming] = useState(false);
   const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -607,9 +608,10 @@ export const CommandPalette = memo(function CommandPalette({
   });
 
   useEffect(() => {
+    if (!keyboardActive) return;
     const active = listRef.current?.querySelector('[aria-selected="true"]');
     active?.scrollIntoView({ block: "nearest" });
-  }, [clamped, searchQuery, filtered.length]);
+  }, [clamped, searchQuery, filtered.length, keyboardActive]);
 
   const runItem = (item: PaletteItem | undefined) => {
     if (!item) return;
@@ -794,19 +796,24 @@ export const CommandPalette = memo(function CommandPalette({
                 aria-expanded={true}
                 aria-controls={listId}
                 aria-activedescendant={
-                  filtered[clamped] ? `${listId}-${clamped}` : undefined
+                  keyboardActive && filtered[clamped]
+                    ? `${listId}-${clamped}`
+                    : undefined
                 }
                 onChange={(event) => {
                   setSearchQuery(event.target.value);
                   setIndex(0);
+                  setKeyboardActive(true);
                 }}
                 onKeyDown={(event) => {
                   if (event.nativeEvent.isComposing) return;
                   if (event.key === "ArrowDown") {
                     event.preventDefault();
+                    setKeyboardActive(true);
                     setIndex(Math.min(clamped + 1, filtered.length - 1));
                   } else if (event.key === "ArrowUp") {
                     event.preventDefault();
+                    setKeyboardActive(true);
                     setIndex(Math.max(clamped - 1, 0));
                   } else if (event.key === "Enter") {
                     event.preventDefault();
@@ -832,6 +839,7 @@ export const CommandPalette = memo(function CommandPalette({
             ) : (
               <div
                 className="palette__list"
+                data-keyboard-active={keyboardActive}
                 ref={listRef}
                 id={listId}
                 role="listbox"
@@ -852,10 +860,18 @@ export const CommandPalette = memo(function CommandPalette({
                         type="button"
                         role="option"
                         id={`${listId}-${itemIndex}`}
-                        aria-selected={itemIndex === clamped}
+                        aria-selected={keyboardActive && itemIndex === clamped}
                         key={item.id}
-                        className={`palette__row ${itemIndex === clamped ? "palette__row--active" : ""}`}
-                        onMouseEnter={() => setIndex(itemIndex)}
+                        className={`palette__row ${keyboardActive && itemIndex === clamped ? "palette__row--active" : ""}`}
+                        onPointerMove={(event) => {
+                          if (event.pointerType === "touch") return;
+                          setKeyboardActive(false);
+                          setIndex(itemIndex);
+                        }}
+                        onFocus={() => {
+                          setKeyboardActive(true);
+                          setIndex(itemIndex);
+                        }}
                         onClick={() => runItem(item)}
                       >
                         <span className="palette__title">{item.title}</span>

@@ -116,10 +116,10 @@ body.srail-dragging {
     inset: 0;
     z-index: 39;
     border: 0;
-    background: color-mix(in srgb, var(--ink) 35%, transparent);
+    background: var(--bg-overlay);
     backdrop-filter: blur(2px);
     -webkit-backdrop-filter: blur(2px);
-    animation: overlay-in var(--dur-standard) var(--ease-standard);
+    animation: overlay-in var(--dur-panel) var(--ease-standard);
   }
 
   .nav {
@@ -176,15 +176,42 @@ body.srail-dragging {
 
   @keyframes nav-drawer-in {
     from {
-      transform: translateX(-12px);
-      opacity: 0;
+      transform: translateX(-100%);
     }
   }
 
   @keyframes resources-drawer-in {
     from {
-      transform: translateX(12px);
-      opacity: 0;
+      transform: translateX(100%);
+    }
+  }
+
+  .overlay.settings-overlay {
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    animation: none;
+  }
+
+  .settings-overlay::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: var(--bg-overlay);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    animation: overlay-in var(--dur-standard) var(--ease-standard);
+  }
+
+  .dialog.settings {
+    animation-name: settings-sheet-in;
+  }
+
+  @keyframes settings-sheet-in {
+    from {
+      transform: translateY(8px);
     }
   }
 

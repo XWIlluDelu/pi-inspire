@@ -184,13 +184,8 @@
 .models-available .model-picker__option-copy { display: flex; flex-direction: column; min-width: 0; flex: 1; overflow: hidden; }
 .models-available .model-picker__id { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Highlight row only when list has focus or on hover */
-.models-available .model-picker__option.dropdown__option--active {
-  background: transparent;
-}
-.models-available:has(input[role=combobox]:focus) .model-picker__option.dropdown__option--active,
-.models-available .model-picker__list:focus-within .model-picker__option.dropdown__option--active,
-.models-available .model-picker__option:hover {
+.models-available .model-picker__option.dropdown__option--active,
+.models-available .model-picker__option:focus-within {
   background: var(--accent-tint);
 }
 
@@ -298,7 +293,7 @@
 @media (pointer: coarse) {
   .models-auth .models-remote__toggle { width: 40px; min-height: 40px; flex-basis: 40px; }
 }
-.model-picker__manage { flex: 0 0 auto; width: 100%; min-height: 40px; padding: var(--space-2) var(--space-3); text-align: left; border: 0; border-top: 1px solid var(--hairline); background: var(--bg-surface); color: var(--accent); font: inherit; font-size: var(--text-sm); cursor: pointer; }
+.model-picker__manage { flex: 0 0 auto; width: 100%; min-height: 40px; padding: var(--space-2) var(--space-3); text-align: left; border: 0; border-top: 1px solid var(--hairline); background: var(--bg-surface); color: var(--accent-deep); font: inherit; font-size: var(--text-sm); cursor: pointer; }
 .model-picker__manage:hover { background: var(--bg-control); }
 .model-picker__manage:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 

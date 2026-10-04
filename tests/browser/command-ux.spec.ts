@@ -160,6 +160,46 @@ async function openPalette(page: Page, query = "") {
   return palette;
 }
 
+test("file completions keep full filenames readable beside or above their paths", async ({
+  page,
+  commandSession,
+}) => {
+  for (const width of [1280, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await commandSession.input.fill("@TerminalSettingsDialog");
+    const option = page.getByRole("option", {
+      name: "TerminalSettingsDialog.tsx src/components/TerminalSettingsDialog.tsx",
+      exact: true,
+    });
+    await expect(option).toBeVisible();
+    await expect(option.locator(".completion__title")).toHaveText(
+      "TerminalSettingsDialog.tsx",
+    );
+    await expect
+      .poll(() =>
+        option.evaluate((element) => {
+          const title = element.querySelector(".completion__title")!;
+          const bounds = title.getBoundingClientRect();
+          const hint = element
+            .querySelector(".completion__hint")!
+            .getBoundingClientRect();
+          const range = document.createRange();
+          range.selectNodeContents(title);
+          return (
+            [...range.getClientRects()].every(
+              (rect) =>
+                rect.left >= bounds.left &&
+                rect.right <= bounds.right &&
+                rect.bottom <= bounds.bottom,
+            ) &&
+            (hint.left >= bounds.right || hint.top >= bounds.bottom)
+          );
+        }),
+      )
+      .toBe(true);
+  }
+});
+
 for (const touch of [false, true]) {
   const size = touch ? "narrow" : "desktop";
   test.describe(`${size} command tasks`, () => {

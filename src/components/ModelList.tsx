@@ -160,6 +160,7 @@ export function ModelList({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState(initialQuery);
+  const [keyboardActive, setKeyboardActive] = useState(!renderActions);
   const currentKey = value ? modelIdentityKey(value) : "";
   const [activeModelKey, setActiveModelKey] = useState<string | null>(
     initialQuery ? null : currentKey,
@@ -290,9 +291,9 @@ export function ModelList({
     if (activeModelKey !== key) setActiveModelKey(key);
   }, [options, active, activeModelKey]);
   useLayoutEffect(() => {
-    if (activeRow !== undefined)
+    if (activeRow !== undefined && (keyboardActive || pendingFocus.current))
       virtualizer.scrollToIndex(activeRow, { align: "auto" });
-  }, [activeRow, rows, virtualizer]);
+  }, [activeRow, keyboardActive, rows, virtualizer]);
   useLayoutEffect(() => {
     const request = pendingFocus.current;
     if (!request) return;
@@ -322,11 +323,17 @@ export function ModelList({
       ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)
     ) {
       event.preventDefault();
+      const start = grid && !keyboardActive;
+      setKeyboardActive(true);
       activate(
         event.key === "ArrowDown"
-          ? active + 1
+          ? start
+            ? 0
+            : active + 1
           : event.key === "ArrowUp"
-            ? active - 1
+            ? start
+              ? options.length - 1
+              : active - 1
             : event.key === "Home"
               ? 0
               : options.length - 1,
@@ -349,15 +356,21 @@ export function ModelList({
           aria-expanded="true"
           aria-controls={`${id}-list`}
           aria-activedescendant={
-            options[active] ? `${id}-option-${active}` : undefined
+            keyboardActive && options[active]
+              ? `${id}-option-${active}`
+              : undefined
           }
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
+            setKeyboardActive(!grid);
             fallbackActiveIndex.current = 0;
             setActiveModelKey(null);
+            virtualizer.scrollToOffset(0);
           }}
           onKeyDown={navigate}
+          onBlur={() => setKeyboardActive(false)}
+          onPointerDown={() => setKeyboardActive(false)}
           placeholder={placeholder ?? "Search provider or model…"}
         />
         {searchAction}
@@ -369,6 +382,7 @@ export function ModelList({
       ) : null}
       <div
         ref={listRef}
+        data-keyboard-active={keyboardActive}
         id={`${id}-list`}
         tabIndex={grid ? undefined : -1}
         {...{
@@ -435,11 +449,16 @@ export function ModelList({
                         })}
                     style={style}
                     title={`${model.name ?? model.id} — ${model.provider}/${model.id}`}
-                    className={`dropdown__option model-picker__option ${grid ? "model-picker__option--actions" : ""} ${index === active ? "dropdown__option--active" : ""}`}
+                    className={`dropdown__option model-picker__option ${grid ? "model-picker__option--actions" : ""} ${index === active && keyboardActive ? "dropdown__option--active" : ""}`}
                     onMouseDown={
                       grid ? undefined : (event) => event.preventDefault()
                     }
-                    onMouseEnter={() => activate(index)}
+                    onPointerMove={(event) => {
+                      if (event.pointerType === "touch") return;
+                      setKeyboardActive(false);
+                      activate(index);
+                    }}
+                    onFocus={grid ? () => activate(index) : undefined}
                     onClick={grid ? undefined : () => onSelect?.(model)}
                   >
                     <span
