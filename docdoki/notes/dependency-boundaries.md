@@ -2,43 +2,21 @@
 
 ## Dependency boundaries
 
-The user's separately installed `pi` is the sole production runtime authority. INSΠRE resolves that executable, imports the public SDK from its package root, and starts RPC workers from the same root. Pi's version is diagnostic metadata, not an INSΠRE admission rule.
+### Runtime and build dependencies
 
-`@earendil-works/pi-coding-agent` remains exactly pinned in `devDependencies` as a reproducible TypeScript and integration-test witness. Updating that witness follows the latest published Pi so CI exercises current public APIs, but the checkout copy is neither packaged nor used as a production fallback. `@earendil-works/pi-tui` remains an exact development dependency for the browser's deliberately imported fuzzy-search implementation.
+The user's installed `pi` supplies both the public SDK and RPC worker. Resolution is in
+`server/pi-installation.ts` and `server/pi-runtime.ts`; Pi version metadata is reported, while
+startup checks the required APIs.
 
-The npm release therefore has two independent checks:
+The exact `@earendil-works/pi-coding-agent` **1.0.0** development pin supplies types and the default
+native-test runtime. Its published dependency ranges currently resolve agent-core, ai and tui to
+**1.0.2** in the lockfile. The separate browser `@earendil-works/pi-tui` pin remains **0.87.0** for
+pure fuzzy search. Neither becomes a production Pi runtime or fallback; external installations
+retain their own dependency trees.
 
-- a production-only install contains no Pi package and has a clean `npm audit --omit=dev` result;
-- release verification supplies one external Pi package explicitly and proves the installed host uses it for both SDK access and a real RPC worker.
-
-Pi's own shrinkwrapped dependency tree belongs to the external Pi installation rather than INSΠRE's production dependency graph. INSΠRE does not override, downgrade, or silently substitute that tree.
-
-### Current baseline: Pi 0.87.0
-
-Both exact Pi development dependencies and the lockfile now use `0.87.0`.
-The external runtime authority and browser fuzzy-search boundary are unchanged.
-The version-specific TUI license override uses the same MIT text, verified against
-the published npm source revision recorded in `scripts/licenses/README.md`.
-
-`tests/server/pi-context-edits.integration.test.ts` uses the installed Pi SDK to
-append omission and string-replacement edits, then verifies that INSΠRE preserves
-raw display messages across live reconciliation and reopening while Pi's model
-context changes. It also covers retain-none compaction followed by new input.
-No runtime adapter or UI behavior change was needed for these cases.
-
-[GitHub Actions validation](https://github.com/XWIlluDelu/pi-inspire/actions/runs/35689791288)
-on Linux / Node 22 passed the three added regressions, `npm run ci`, and
-`npm run release:verify`. The job recorded the resolved SDK/RPC installation as
-Pi `0.87.0` and saved the tested source candidate as
-`7a3d4e1fda3a2309508fe3d494ce43aa4564fec8` before running the checks.
-These results do not claim a new macOS or Windows run or exercise every user extension.
-
-### Sources
-
-- `package.json` and `package-lock.json` for production and development dependency ownership;
-- `server/pi-installation.ts` and `server/pi-runtime.ts` for runtime resolution;
-- `scripts/verify-release-package.mjs` and installed-Pi integration tests for release evidence;
-- `npm audit --omit=dev` for the shipped production tree.
+`scripts/verify-release-package.mjs` installs the packed application with production dependencies,
+checks that Pi is absent, then supplies an external Pi installation and exercises SDK/RPC startup.
+Production dependency auditing is a separate `npm audit --omit=dev` check.
 
 ## Pi capabilities and boundaries
 
