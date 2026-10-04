@@ -1782,7 +1782,7 @@ export function createInspireServer(deps: AppDependencies): {
     );
     app.get("*path", (_request, response) => {
       response.set("Cache-Control", "no-cache");
-      response.sendFile(resolve(distDir, "index.html"));
+      response.sendFile("index.html", { root: distDir });
     });
   }
 

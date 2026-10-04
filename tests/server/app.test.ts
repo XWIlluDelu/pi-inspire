@@ -727,7 +727,7 @@ describe("local host API", () => {
   });
 
   it("serves current and retained hashed assets without using the SPA fallback", async () => {
-    const dist = await mkdtemp(join(tmpdir(), "inspire-dist-"));
+    const dist = await mkdtemp(join(tmpdir(), ".inspire-dist-"));
     const retainedAssets = await mkdtemp(
       join(tmpdir(), "inspire-retained-assets-"),
     );
@@ -792,10 +792,11 @@ describe("local host API", () => {
       expect(theme.headers["cache-control"]).not.toContain("immutable");
       expect(theme.headers["cache-control"]).toContain("max-age=0");
       // The SPA shell is always revalidated so a new bundle hash is picked up.
-      const shell = await request(served.server)
-        .get("/some/deep/route")
-        .expect(200);
-      expect(shell.headers["cache-control"]).toBe("no-cache");
+      for (const path of ["/", "/some/deep/route"]) {
+        const shell = await request(served.server).get(path).expect(200);
+        expect(shell.text).toContain("<title>INSΠRE</title>");
+        expect(shell.headers["cache-control"]).toBe("no-cache");
+      }
 
       const browser = request.agent(served.server);
       const launch = await browser
