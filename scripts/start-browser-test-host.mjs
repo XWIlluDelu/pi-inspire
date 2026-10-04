@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { chmod, cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { browserWorkspace } from "../tests/browser/fixtures/workspace.mjs";
+import { testPiCommand } from "./test-pi-command.mjs";
 
 const [portText] = process.argv.slice(2);
 const port = Number(portText);
@@ -10,7 +11,9 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   process.exit(64);
 }
 
-const output = resolve("output", "playwright");
+const output = resolve(
+  process.env.INSPIRE_BROWSER_TEST_OUTPUT_DIR ?? "output/playwright",
+);
 const preferencesPath = resolve(output, "preferences.json");
 const instanceStatePath = resolve(output, "instance.json");
 const stopRequestPath = resolve(output, "stop-request.json");
@@ -48,11 +51,6 @@ for (const path of [
   await cp(resolve(path), target, { recursive: true });
 }
 
-const piCommand = resolve(
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "pi.cmd" : "pi",
-);
 const child = spawn(
   process.execPath,
   [resolve("node_modules", "tsx", "dist", "cli.mjs"), "server/index.ts"],
@@ -71,7 +69,7 @@ const child = spawn(
       XDG_RUNTIME_DIR: resolve(home, "runtime"),
       INSPIRE_INSTALLATION_ROOT: resolve("."),
       INSPIRE_TOKEN: "inspire-browser-test-token",
-      INSPIRE_PI_COMMAND: piCommand,
+      INSPIRE_PI_COMMAND: testPiCommand,
       INSPIRE_MOCK: "1",
       INSPIRE_MOCK_WORKSPACE: browserWorkspace,
       INSPIRE_MOCK_STREAM_INTERVAL_MS: "250",
