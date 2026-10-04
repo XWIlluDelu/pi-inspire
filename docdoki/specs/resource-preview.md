@@ -187,6 +187,9 @@ sources for the authorized preview.
 
 ## Git Changes
 
+A failed refresh retains the previous result with one visible stale-result notice, including clean
+and non-repository results. Initial failure does not claim a Git result.
+
 Switching to Changes preserves the canonical selected workspace file whether or not it appears in
 Git status. The upper region shows repository identity, staged/working/conflict counts, and grouped
 paths. The lower region shows Source with the selected comparison's inline additions/deletions,
