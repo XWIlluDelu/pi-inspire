@@ -203,12 +203,19 @@ custom messages remain independent readable boundaries in this contract.
 
 - A displayed Pi custom message is extension-authored context, not a tool execution or user-authored
   turn. It uses a quiet, neutral message surface with an information-blue left edge, package glyph,
-  readable type-derived title, and the available `customType`, distinct from user input and Pi
-  assistant authorship. Its body renders through the shared defensive Markdown pipeline, supports
+  and a readable type-derived title, distinct from user input and Pi assistant authorship. Raw
+  `customType` stays available in complete copy and existing Details rather than repeating in the
+  primary header. Its body renders through the shared sanitized Markdown pipeline, supports
   text/image blocks, and stays directly readable regardless of Thinking, tool, or activity-fold
   preferences. Optional non-null `details` gets a separate, initially closed disclosure; absence
-  creates no empty entry, and expanded details mount only on demand. There is no invented execution
-  status or Adaptive lifecycle.
+  creates no empty entry, and expanded details mount only on demand. A configured reading projection
+  may replace the type-derived title with attribution and show a subdued source label, selecting the
+  exact body from structured fields. Title and source share a baseline; title, body, and Details share
+  a reading anchor, while Copy retains its own column at narrow widths. No timestamp presentation is
+  added. Configured messages preserve original type/content/details in lazy Details and complete
+  copy. Missing or incompatible declarations retain the generic message, including images and
+  unknown blocks. [[tool-presentations]] defines the declarative contract. There is no invented
+  execution status or Adaptive lifecycle.
 
   One semantic message keeps one presentation owner as it crosses Pi’s live lifecycle and durable
   `custom_message` entry: because Pi assigns those forms separate timestamps, the host pairs their

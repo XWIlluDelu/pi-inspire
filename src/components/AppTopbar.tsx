@@ -16,11 +16,11 @@ import {
   projectNameFromCwd,
   type RunState,
 } from "../../shared/contracts";
-import { stripTerminalSequences } from "../ansi";
 import { type ChatMessage, messageText } from "../events";
 import { gitChangeCount, gitHeadLabel } from "../git-presentation";
 import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
+import { ExtensionStatus } from "./ExtensionDisplays";
 
 const GENERIC_SESSION_HEADINGS = new Set(["Untitled session", "New session"]);
 
@@ -313,7 +313,6 @@ export const AppTopbar = memo(function AppTopbar({
 }) {
   const state = useAppState(
     (source) => ({
-      statuses: source.statuses,
       sessionId: source.sessionId,
       runState: source.runState,
       projectionConflict: source.projectionConflict,
@@ -323,10 +322,6 @@ export const AppTopbar = memo(function AppTopbar({
     }),
     shallowEqual,
   );
-  const statuses = Object.entries(state.statuses)
-    .map(([key, text]) => [key, stripTerminalSequences(text)] as const)
-    .filter(([, text]) => text.length > 0)
-    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
   return (
     <header className="topbar">
       <button
@@ -345,11 +340,7 @@ export const AppTopbar = memo(function AppTopbar({
           runState={state.runState}
           conflict={state.projectionConflict}
         />
-        {statuses.map(([key, text]) => (
-          <span key={key} className="topbar__extension-status" title={text}>
-            {text}
-          </span>
-        ))}
+        <ExtensionStatus />
         {state.connection !== "open"
           ? (() => {
               const problem = state.connectionProblem;

@@ -236,16 +236,81 @@
 }
 
 .topbar__extension-status {
+  position: relative;
+  display: flex;
+  align-items: center;
   flex: 0 1 auto;
+  min-width: 0;
+  min-height: 30px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+}
+
+.topbar__extension-text {
+  display: block;
   min-width: 0;
   overflow: hidden;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  color: var(--muted);
   text-overflow: ellipsis;
   white-space: nowrap;
-  user-select: none;
 }
+
+.topbar__extension-toggle {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.topbar__extension-status:has(button:hover) { background: var(--bg-inset); }
+.topbar__extension-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.extension-status-popover {
+  position: fixed;
+  z-index: 45;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-3);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-overlay);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-overlay);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-ui);
+}
+
+.extension-status-popover > p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.extension-status-popover > p + p { margin-top: var(--space-2); }
+.extension-status-popover:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+@container (max-width: 360px) {
+  .topbar__workspace-meta { display: none; }
+  .topbar__status:not(:empty) { min-width: 36px; }
+}
+
+@media (max-width: 600px), (pointer: coarse) {
+  .topbar__title-button,
+  .topbar__extension-status,
+  .session-actions-menu > button { min-height: 44px; }
+  .topbar > .icon-button,
+  .topbar__actions > .icon-button { min-width: 44px; height: 44px; }
+}
+
+.topbar > .icon-button { grid-column: 1; }
 
 .topbar__actions {
   flex: 0 0 auto;

@@ -16,7 +16,7 @@ covers:
   - tests/web/rich-text-streaming.test.tsx
   - tests/web/rich-text-worker.test.tsx
   - tests/web/rich-text-parser-client.test.ts
-  - tests/browser/{tool-presentations,filesystem-files}.spec.ts
+  - tests/browser/{tool-presentations,filesystem-files,custom-message}.spec.ts
   - tests/fixtures/rich-text-benchmark.tsx
   - scripts/benchmark-rich-text.mjs
 ---
@@ -32,6 +32,8 @@ thinking, documents, and extension Markdown share one rendering authority with d
 
 - Support CommonMark-style Markdown, GFM tables and task lists, links, images, inline mathematics,
   and display mathematics. Streaming keeps incomplete fences, links, tables, and math readable.
+  Table columns preserve whole-word minimum widths and wrap ordinary prose at word boundaries;
+  wide tables and unbroken cell tokens scroll within the table, not the reading column.
 - Code blocks preserve whitespace, identify their language when available, highlight syntax, and
   copy the original source. Parsed `pre` structure determines block identity: unlabeled, indented,
   and incomplete fences retain block/copy behavior. Only inline code can become a file-reference button.

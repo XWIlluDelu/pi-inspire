@@ -1,11 +1,22 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { toolPresentationConfigurationSchema } from "../../shared/tool-presentation-config";
+import { Transcript } from "../../src/components/Transcript";
 import { ToolCard } from "../../src/components/transcript-cards";
 import { UnpairedToolResultRow } from "../../src/components/transcript-rows";
 import type { ChatMessage, ToolCallContent } from "../../src/events";
+import { store } from "../../src/store";
 import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
+import { toolResultResourcesFixture } from "../fixtures/tool-result-resources.mjs";
 
 function call(name: string, args: Record<string, unknown>): ToolCallContent {
   return { type: "toolCall", id: `${name}-1`, name, arguments: args };
@@ -36,6 +47,103 @@ function card(
     />
   );
 }
+
+describe("saved tool resources", () => {
+  let fixture: Awaited<ReturnType<typeof toolResultResourcesFixture>>;
+  beforeAll(async () => {
+    fixture = await toolResultResourcesFixture();
+  });
+  afterAll(async () => {
+    await fixture?.dispose();
+  });
+
+  it.each(["native", "generic", "unpaired"])(
+    "retrieves a projected %s image by its original part index and opens the preview",
+    async (presentation) => {
+      const messages = structuredClone(fixture.page.messages) as ChatMessage[];
+      const result = messages[2]!;
+      expect((fixture.messages[2] as ChatMessage).content).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "image", data: expect.any(String) }),
+        ]),
+      );
+      expect(result.content).toEqual([
+        expect.objectContaining({ type: "text" }),
+        { type: "image", mimeType: "image/png" },
+      ]);
+      expect(result.__inspireMessageIndex).toBe(2);
+      if (presentation === "generic") {
+        (messages[1]!.content as ToolCallContent[])[0]!.name = "image_tool";
+        result.toolName = "image_tool";
+      } else if (presentation === "unpaired") {
+        messages.splice(1, 1);
+      }
+      const load = vi
+        .spyOn(store, "loadEmbeddedImage")
+        .mockResolvedValue(new Blob(["image"], { type: "image/png" }));
+      const revoke = vi.spyOn(URL, "revokeObjectURL");
+      const create = vi
+        .spyOn(URL, "createObjectURL")
+        .mockReturnValue("blob:saved-tool-image");
+      const { unmount, container } = render(
+        <Transcript
+          sessionId={fixture.record.id}
+          viewId={fixture.page.viewId}
+          projectionIncarnation={fixture.page.incarnation ?? ""}
+          messages={messages}
+          streaming={false}
+          thinkingVisibility="collapsed"
+          toolVisibility="expanded"
+        />,
+      );
+      const alt =
+        presentation === "native" ? "preview.png" : "Tool result image 1";
+      const preview = await screen.findByRole("button", {
+        name: `Preview ${alt}`,
+      });
+      expect(load).toHaveBeenCalledWith(
+        fixture.record.id,
+        fixture.page.viewId,
+        `${fixture.page.viewId}\u0000${fixture.page.incarnation ?? ""}`,
+        "pi-embedded://2/1",
+        expect.any(AbortSignal),
+      );
+      if (presentation === "native")
+        expect(
+          container.querySelector('[data-tool-rule="inspire.pi.read"]'),
+        ).not.toBeNull();
+      expect(screen.queryByText(/Image unavailable/)).not.toBeInTheDocument();
+      fireEvent.click(preview);
+      expect(
+        within(screen.getByRole("dialog", { name: "Image preview" })).getByRole(
+          "img",
+          { name: alt },
+        ),
+      ).toHaveAttribute("src", "blob:saved-tool-image");
+      unmount();
+      expect(load.mock.calls[0]![4].aborted).toBe(true);
+      expect(revoke).toHaveBeenCalledWith("blob:saved-tool-image");
+      expect(create).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["bash", "powershell"])(
+    "opens the recorded native %s full-output target",
+    (name) => {
+      const open = vi.spyOn(store, "openResource").mockResolvedValue(undefined);
+      const output = fixture.page.messages[3] as ChatMessage;
+      render(card({ ...fixture.bashCall, name }, output));
+      const action = screen.getByRole("button", { name: "View full output" });
+      expect(action).toHaveAttribute("data-file-path", fixture.fullOutputPath);
+      fireEvent.click(action);
+      expect(open).toHaveBeenCalledWith(fixture.fullOutputPath);
+      expect(
+        screen.getByRole("group", { name: "Output" }),
+      ).not.toHaveTextContent("Full output:");
+      expect(fixture.fullOutput).toMatch(/^native line 1\n/);
+    },
+  );
+});
 
 describe("native Pi tool cards", () => {
   it.each(["bash", "powershell"])(
@@ -287,7 +395,7 @@ describe("native Pi tool cards", () => {
     expect(within(custom).getByText("custom output")).toBeInTheDocument();
   });
 
-  it("renders native read image content as a lazy card image", () => {
+  it("opens an inline native read image in the existing preview", () => {
     const { container } = render(
       card(call("read", { path: "assets/pixel.png" }), {
         role: "toolResult",
@@ -305,6 +413,12 @@ describe("native Pi tool cards", () => {
       "data-tool-rule",
       "inspire.pi.read",
     );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Preview assets/pixel.png" }),
+    );
+    expect(
+      screen.getByRole("dialog", { name: "Image preview" }),
+    ).toBeInTheDocument();
   });
 
   it("renders a successful edit from Pi's persisted patch", () => {

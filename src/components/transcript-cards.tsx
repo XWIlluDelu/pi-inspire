@@ -51,14 +51,19 @@ import type {
   ToolPresentationSummary,
 } from "../tool-presentations/model";
 import {
-  isToolImageMimeType,
   toolPresentationSummaryText,
+  toolResultImage,
 } from "../tool-presentations/model";
 import {
   thinkingPresentationRegistry,
   toolPresentationRegistry,
 } from "../tool-presentations/registry";
 import { CopyAction } from "./CopyAction";
+import {
+  EmbeddedImageOwnerContext,
+  ImagePreview,
+  PersistedImage,
+} from "./ImagePreview";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 import {
@@ -611,8 +616,13 @@ function RawResultExtras({
   result: ChatMessage;
   hasText: boolean;
 }) {
-  const parts = contentItems(result);
-  const images = parts.filter((part) => part.type === "image");
+  const images = Array.isArray(result.content)
+    ? result.content.flatMap((part, partIndex) =>
+        part && typeof part === "object" && part.type === "image"
+          ? [partIndex]
+          : [],
+      )
+    : [];
   const otherContent = Array.isArray(result.content)
     ? result.content.filter(
         (part) =>
@@ -631,27 +641,16 @@ function RawResultExtras({
   };
   return (
     <>
-      {images.map((part, index) => {
-        const image = part as Record<string, unknown>;
-        const mimeType = image.mimeType;
-        const valid =
-          isToolImageMimeType(mimeType) &&
-          typeof image.data === "string" &&
-          image.data.length > 0 &&
-          image.data.length <= 32_000_000 &&
-          /^[A-Za-z0-9+/\r\n]*={0,2}$/.test(image.data);
-        return valid ? (
-          <ToolPresentationBlockView
-            key={index}
-            block={{
-              type: "image",
-              data: image.data as string,
-              mimeType,
-              alt: `Tool result image ${index + 1}`,
-            }}
-          />
+      {images.map((partIndex, index) => {
+        const image = toolResultImage(
+          result,
+          partIndex,
+          `Tool result image ${index + 1}`,
+        );
+        return image ? (
+          <ToolPresentationBlockView key={partIndex} block={image} />
         ) : (
-          <div className="tool-notice tool-notice--warning" key={index}>
+          <div className="tool-notice tool-notice--warning" key={partIndex}>
             Image unavailable (unsupported or invalid image data)
           </div>
         );
@@ -925,6 +924,39 @@ function ReplacementDiff({
   );
 }
 
+function ToolImage({
+  block,
+}: {
+  block: Extract<ToolPresentationBlock, { type: "image" }>;
+}) {
+  const owner = useContext(EmbeddedImageOwnerContext);
+  return (
+    <figure className="tool-image-block">
+      <ToolBlockHeading label={block.label} />
+      {block.reference ? (
+        owner ? (
+          <PersistedImage
+            {...owner}
+            reference={block.reference}
+            alt={block.alt}
+            className="tool-image-block__image"
+          />
+        ) : (
+          <div className="tool-notice tool-notice--warning">
+            Image unavailable
+          </div>
+        )
+      ) : (
+        <ImagePreview
+          src={`data:${block.mimeType};base64,${block.data}`}
+          alt={block.alt}
+          className="tool-image-block__image"
+        />
+      )}
+    </figure>
+  );
+}
+
 function ToolPresentationBlockView({
   block,
 }: {
@@ -1083,22 +1115,20 @@ function ToolPresentationBlockView({
     case "replacement":
       return <ReplacementDiff block={block} />;
     case "image":
-      return (
-        <figure className="tool-image-block">
-          <ToolBlockHeading label={block.label} />
-          <img
-            className="tool-image-block__image"
-            src={`data:${block.mimeType};base64,${block.data}`}
-            alt={block.alt}
-            loading="lazy"
-            decoding="async"
-          />
-        </figure>
-      );
+      return <ToolImage block={block} />;
     case "notice":
       return (
         <div className={`tool-notice tool-notice--${block.tone ?? "muted"}`}>
           {block.text}
+          {block.action ? (
+            <FileRefButton
+              reference={block.action.reference}
+              accessibleLabel={block.action.label}
+              className="tool-notice__action"
+            >
+              {block.action.label}
+            </FileRefButton>
+          ) : null}
         </div>
       );
     case "markdown":

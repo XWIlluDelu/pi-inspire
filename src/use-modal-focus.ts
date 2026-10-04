@@ -13,6 +13,7 @@ const FOCUSABLE = [
 interface ModalEntry {
   dialog: HTMLElement;
   restore: HTMLElement | null;
+  portals: Map<HTMLElement, HTMLElement>;
   /** Return false only when a host-level recovery key must take precedence. */
   onEscape?: (event: KeyboardEvent) => boolean | void;
 }
@@ -25,13 +26,56 @@ export function hasActiveModal(): boolean {
   return modalStack.some((entry) => entry.dialog.isConnected);
 }
 
-function focusableElements(dialog: HTMLElement): HTMLElement[] {
-  return [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-    (element) =>
-      !element.hidden &&
-      element.getAttribute("aria-hidden") !== "true" &&
-      element.tabIndex >= 0,
+function containsFocus(entry: ModalEntry, node: Node | null): boolean {
+  return (
+    entry.dialog.contains(node) ||
+    [...entry.portals.values()].some((portal) => portal.contains(node))
   );
+}
+
+function focusableElements(entry: ModalEntry): HTMLElement[] {
+  const elements = (root: HTMLElement) =>
+    [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+      (element) =>
+        !element.hidden &&
+        !element.matches(":disabled") &&
+        element.getAttribute("aria-hidden") !== "true" &&
+        element.tabIndex >= 0,
+    );
+  return elements(entry.dialog).flatMap((element) => {
+    const portal = entry.portals.get(element);
+    return [element, ...(portal ? elements(portal) : [])];
+  });
+}
+
+function initialFocus(entry: ModalEntry): HTMLElement {
+  const elements = focusableElements(entry);
+  return (
+    elements.find((element) => element.hasAttribute("data-modal-autofocus")) ??
+    elements[0] ??
+    entry.dialog
+  );
+}
+
+/** Keep an anchored, portaled control in its owning dialog's focus and tab order. */
+export function useModalPortal(
+  active: boolean,
+  anchorRef: RefObject<HTMLElement | null>,
+  portalRef: RefObject<HTMLElement | null>,
+): void {
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    const portal = portalRef.current;
+    if (!active || !anchor || !portal) return;
+    const owner = [...modalStack]
+      .reverse()
+      .find((entry) => containsFocus(entry, anchor));
+    if (!owner || owner.dialog.contains(portal)) return;
+    owner.portals.set(anchor, portal);
+    return () => {
+      if (owner.portals.get(anchor) === portal) owner.portals.delete(anchor);
+    };
+  }, [active, anchorRef, portalRef]);
 }
 
 /** Own keyboard focus while an aria-modal surface is mounted, then restore
@@ -60,22 +104,26 @@ export function useModalFocus<T extends HTMLElement>(
       // StrictMode replays layout effects after focus has entered this same
       // dialog. Preserve its outside opener, not the now-focused close button.
       restore:
-        previous?.dialog === dialog && dialog.contains(focused)
+        previous?.dialog === dialog && containsFocus(previous, focused)
           ? previous.restore
           : focused,
       onEscape: (event) => onEscapeRef.current?.(event),
+      portals: new Map(),
     };
     previousEntryRef.current = entry;
     modalStack.push(entry);
 
-    if (!dialog.contains(document.activeElement)) {
-      (focusableElements(dialog)[0] ?? dialog).focus();
+    if (!containsFocus(entry, document.activeElement)) {
+      initialFocus(entry).focus();
     }
 
     const containFocus = (event: FocusEvent) => {
-      if (modalStack.at(-1) !== entry || dialog.contains(event.target as Node))
+      if (
+        modalStack.at(-1) !== entry ||
+        containsFocus(entry, event.target as Node)
+      )
         return;
-      (focusableElements(dialog)[0] ?? dialog).focus();
+      initialFocus(entry).focus();
     };
 
     const escape = (event: KeyboardEvent) => {
@@ -93,22 +141,39 @@ export function useModalFocus<T extends HTMLElement>(
     };
 
     const trapKeys = (event: KeyboardEvent) => {
-      if (modalStack.at(-1) !== entry || event.key !== "Tab") return;
-      const focusable = focusableElements(dialog);
+      if (
+        event.defaultPrevented ||
+        modalStack.at(-1) !== entry ||
+        event.key !== "Tab"
+      )
+        return;
+      const focusable = focusableElements(entry);
       if (focusable.length === 0) {
         event.preventDefault();
         dialog.focus();
         return;
       }
       const focused = document.activeElement;
+      const index = focusable.indexOf(focused as HTMLElement);
+      if (entry.portals.size > 0 && index >= 0) {
+        event.preventDefault();
+        focusable[
+          (index + (event.shiftKey ? -1 : 1) + focusable.length) %
+            focusable.length
+        ]!.focus();
+        return;
+      }
       const first = focusable[0]!;
       const last = focusable.at(-1)!;
-      if (event.shiftKey && (focused === first || !dialog.contains(focused))) {
+      if (
+        event.shiftKey &&
+        (focused === first || !containsFocus(entry, focused))
+      ) {
         event.preventDefault();
         last.focus();
       } else if (
         !event.shiftKey &&
-        (focused === last || !dialog.contains(focused))
+        (focused === last || !containsFocus(entry, focused))
       ) {
         event.preventDefault();
         first.focus();
@@ -134,14 +199,14 @@ export function useModalFocus<T extends HTMLElement>(
         // restoration target of the still-visible top modal.
         if (
           !remaining.restore?.isConnected ||
-          dialog.contains(remaining.restore)
+          containsFocus(entry, remaining.restore)
         ) {
           remaining.restore = entry.restore?.isConnected ? entry.restore : null;
         }
         const target =
-          entry.restore?.isConnected && remaining.dialog.contains(entry.restore)
+          entry.restore?.isConnected && containsFocus(remaining, entry.restore)
             ? entry.restore
-            : (focusableElements(remaining.dialog)[0] ?? remaining.dialog);
+            : initialFocus(remaining);
         queueMicrotask(() => {
           if (modalStack.at(-1) === remaining && target.isConnected)
             target.focus();
@@ -154,6 +219,21 @@ export function useModalFocus<T extends HTMLElement>(
       }
     };
   }, [active, owner]);
+
+  useLayoutEffect(() => {
+    const entry = previousEntryRef.current;
+    // A modal can mount while all controls are disabled, then become ready on
+    // a later render. Transfer its fallback focus without taking it from a child
+    // or from a newer modal, and keep the original restoration owner intact.
+    if (
+      active &&
+      entry &&
+      modalStack.at(-1) === entry &&
+      document.activeElement === entry.dialog
+    ) {
+      initialFocus(entry).focus();
+    }
+  });
 
   return dialogRef;
 }

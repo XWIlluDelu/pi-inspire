@@ -511,16 +511,6 @@ body.srail-dragging {
     display: none;
   }
 
-  .topbar__extension-status {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
   /* Preserve workspace-change awareness without competing with the session
      title and fixed topbar actions on a phone-sized bar. */
   .topbar__git {

@@ -135,8 +135,10 @@ declaration.
   semantic roles. Activity cards communicate kind and outcome through both
   iconography and their bounded semantic edge. Displayed custom messages instead
   use a neutral message surface with an information-blue edge, a package/type
-  header, directly readable Markdown, and optional separately folded Details;
-  they do not inherit tool status or activity density. PI error retains its
+  header, directly readable Markdown, and separately folded Details when present. Configured messages
+  put attribution first and use a subdued source label on the same baseline; header text, body, and
+  Details share a reading anchor, with Copy in a separate column. They do not inherit tool status or
+  activity density. PI error retains its
   existing red-edge surface.
 - The composer is a single reading-width instrument with attachment/reference
   work above the writing field and a quiet metadata toolbar below. Model,

@@ -165,10 +165,18 @@ leaves them intact because independent extension commands may still await an ans
 requests with their worker. Startup restrictions follow [[session-persistence]] and the
 [adaptation guide](../../docs/extensions.md#startup).
 
-Keyed status text is bounded at Host retention, restored on reconnect, ordered in the desktop topbar,
-and cleared with its worker. String-array widgets preserve their key and above/below-Composer
-placement, replacing or clearing by key. Oversized keys are rejected to avoid identity collisions;
-terminal control sequences are display-cleaned.
+Select dialogs support arrow-key choice and Enter, alongside direct pointer/touch selection.
+Confirmation has two visible choices, No and Yes; Escape cancels. Input and multiline dialogs retain
+Submit and Save. A request with a deadline shows its remaining time without restarting the expiry on
+reopen or reconnect. Pi 1.0 does not signal extension-originated dialog cancellation to RPC clients;
+model settlement or generic command completion cannot substitute for that missing signal.
+
+Keyed status text is bounded at Host retention, restored on reconnect, ordered in a compact topbar
+trigger at every viewport width, and cleared with its worker. Click, tap or keyboard activation opens
+full status text; absent status takes no space. String-array widgets
+preserve their key and above/below-Composer placement, replacing or clearing by key. Their supplied
+text and Copy are primary; internal keys and paths are not manufactured headings. Oversized keys are
+rejected to avoid identity collisions; terminal control sequences are display-cleaned.
 
 TUI component factories stay terminal-only. Malformed, oversized, and unknown one-way displays retain
 bounded attributable raw inspection. Unknown response-bearing methods use the cancellable dialog
@@ -178,7 +186,9 @@ fallback. Persisted generic extension content uses available extension attributi
 
 The public [adaptation guide](../../docs/extensions.md) covers commands, dialogs, text widgets,
 custom cards, lifecycle differences, and source customization. Inspire does not inspect third-party
-package names or provide arbitrary executable frontend plugins.
+package names or provide arbitrary executable frontend plugins. A small working native-UI example
+illustrates the shared primitives. Implementation state for the interaction refinements is in
+[[follow-extension-ui-2026-10-03]].
 
 ## Checks
 

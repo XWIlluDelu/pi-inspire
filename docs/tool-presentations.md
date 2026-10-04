@@ -1,6 +1,6 @@
-# Custom tool presentations
+# Custom presentations
 
-Local JSON rules customize custom tools, overridden native tools, and Thinking cards without changing Inspire or the Pi extension. A rule defines a collapsed summary and typed body blocks; Inspire supplies the card layout, status, disclosure, copy, and resource actions.
+Local JSON declarations customize tool cards, Thinking, and displayed custom messages without changing Inspire or the Pi extension. Tool and Thinking rules define a collapsed summary and typed body blocks; custom-message declarations select a reading title and exact Markdown body. Inspire owns layout, disclosure, copy, and resource actions, plus lifecycle/status for activity cards.
 
 ## Configuration
 
@@ -98,12 +98,14 @@ A missing required value makes the rule incompatible. Set `optional: true` on a 
 | `code` | `source`, optional `label`, `language`, and `lineNumbers` (false hides the gutter). |
 | `diff` | Unified-diff `source`, optional `label` and file `path`. |
 | `replacement` | Required `label`, `oldText`, and `newText`; optional file `path`. |
-| `list` | Array or newline-delimited `source`. `format: "annotated-lines"` recognizes trailing `  [annotation]` and standalone `[notice]` lines. |
+| `list` | Array or newline-delimited `source` rendered as file/directory links; optional `root` supplies their base path. `format: "annotated-lines"` recognizes trailing `  [annotation]` and standalone `[notice]` lines. |
 | `search` | `source` with `format: "grouped-lines"`: file headers followed by ` <line>: <match>` or ` <line>- <context>` rows. Standalone bracketed lines are notices. |
 | `image` | Base64 `data`, `mimeType`, and `alt` values; PNG, JPEG, GIF, and WebP are supported. |
 | `notice` | `source`, optional `tone`: `muted`, `warning`, or `error`. |
 
 `list` and `search` also accept `label`, `emptyValues`, and `emptyText`. Sources and the named value fields use the same literal/selection grammar above. `label` and other declaration options are ordinary JSON values. The full schema is `shared/tool-presentation-config.ts` in a source checkout.
+
+For task or agent-status lists, use text/Markdown or a text widget rather than file-opening `list` blocks.
 
 Bodies have bounded previews and local scrolling. Copy uses the Host-projected arguments and final result; the displayed preview can be shorter. Argument-generation copies are explicitly partial.
 
@@ -126,5 +128,42 @@ The optional top-level `thinking` declaration uses the same summary/block gramma
 ```
 
 A missing or incompatible summary uses the native Thinking card. If only the body fails, the configured summary remains and the body uses native rich text.
+
+## Custom messages
+
+Optional `customMessages` declarations match exact Pi `customType` strings (1–128 characters,
+including spaces and Unicode) independently of outgoing tool mappings. For an extension that supplies structured sender and body fields:
+
+```json
+{
+  "version": 1,
+  "rules": {},
+  "mappings": {},
+  "customMessages": {
+    "review_message": {
+      "source": "Review",
+      "title": ["details.sender.name", "details.sender.id"],
+      "body": "details.body",
+      "requireAbsent": ["details.externalOrigin"]
+    }
+  }
+}
+```
+
+- `source` is a subdued source/type label.
+- `title` lists up to four field paths. The first nonblank string becomes the primary title; missing,
+  null, or blank candidates advance to the next path. A non-string candidate is incompatible.
+- `body` selects an exact string rendered as sanitized Markdown, without rewriting or truncation.
+- Paths select `content` or `details.<key>` with safe dot-separated keys.
+- Optional `requireAbsent` paths must be absent. Any present value, including null or false, restores
+  generic rendering. Use guards when a selected title would omit provenance or trust qualifications.
+
+Only string-content messages use this projection. Missing declarations, incompatible fields, and
+text/image/unknown-block arrays retain the readable generic presentation. Customized Details lazily
+shows the original `customType`, `content`, and `details`; copy always includes that complete original
+content and details. Presentation does not change Pi's message or model context.
+
+Existing version-1 profiles remain valid without `customMessages`. Older Inspire releases reject
+this added field; remove it when sharing a profile with those releases.
 
 Declarations select data; they cannot execute code, inject HTML/CSS, or access the filesystem/network. For commands, widgets, or dedicated GUI controls, see [Extension adaptation](extensions.md).

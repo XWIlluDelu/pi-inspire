@@ -1,10 +1,93 @@
-import { memo, useState } from "react";
-import type { ExtensionUiRequest } from "../../shared/contracts";
+import { memo, useEffect, useRef, useState } from "react";
+import type {
+  ExtensionUiRequest,
+  SupportedExtensionUiRequest,
+} from "../../shared/contracts";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 
 function cancel(request: ExtensionUiRequest): void {
   void store.respondExtensionUi({ id: request.id, cancelled: true });
+}
+
+function RequestTime({ expiresAt }: { expiresAt: number }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const seconds = Math.max(0, Math.ceil((expiresAt - now) / 1_000));
+  const time =
+    seconds < 60
+      ? `${seconds}s`
+      : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  return <p className="dialog__remaining">{time} remaining</p>;
+}
+
+function Selection({
+  request,
+  title,
+  responding,
+}: {
+  request: SupportedExtensionUiRequest;
+  title: string;
+  responding: boolean;
+}) {
+  const [selected, setSelected] = useState(0);
+  const optionsRef = useRef<HTMLDivElement>(null);
+  const options = request.options ?? [];
+  return (
+    <div
+      ref={optionsRef}
+      className="dialog__options"
+      role="listbox"
+      aria-label={title}
+      onKeyDown={(event) => {
+        if (
+          responding ||
+          options.length === 0 ||
+          event.nativeEvent.isComposing ||
+          event.altKey ||
+          event.ctrlKey ||
+          event.metaKey
+        )
+          return;
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          const next =
+            (selected + (event.key === "ArrowDown" ? 1 : -1) + options.length) %
+            options.length;
+          optionsRef.current
+            ?.querySelectorAll<HTMLButtonElement>("[role=option]")
+            [next]?.focus();
+        } else if (event.key === "Enter") {
+          event.preventDefault();
+          void store.respondExtensionUi({
+            id: request.id,
+            value: options[selected],
+          });
+        }
+      }}
+    >
+      {options.map((option, index) => (
+        <button
+          type="button"
+          role="option"
+          aria-selected={selected === index}
+          tabIndex={selected === index ? 0 : -1}
+          key={index}
+          className="picker__row"
+          disabled={responding}
+          onFocus={() => setSelected(index)}
+          onClick={() =>
+            void store.respondExtensionUi({ id: request.id, value: option })
+          }
+        >
+          {option}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function DialogBody({
@@ -59,23 +142,7 @@ function DialogBody({
     return (
       <>
         <h2 className="dialog__title">{title}</h2>
-        <div className="dialog__options" role="listbox" aria-label={title}>
-          {(request.options ?? []).map((option) => (
-            <button
-              type="button"
-              role="option"
-              aria-selected={false}
-              key={option}
-              className="picker__row"
-              disabled={responding}
-              onClick={() =>
-                void store.respondExtensionUi({ id: request.id, value: option })
-              }
-            >
-              {option}
-            </button>
-          ))}
-        </div>
+        <Selection request={request} title={title} responding={responding} />
         <div className="dialog__actions">
           <button
             type="button"
@@ -102,14 +169,6 @@ function DialogBody({
             type="button"
             className="button"
             disabled={responding}
-            onClick={() => cancel(request)}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="button"
-            disabled={responding}
             onClick={() =>
               void store.respondExtensionUi({
                 id: request.id,
@@ -123,6 +182,7 @@ function DialogBody({
             type="button"
             className="button button--primary"
             autoFocus
+            data-modal-autofocus
             disabled={responding}
             onClick={() =>
               void store.respondExtensionUi({ id: request.id, confirmed: true })
@@ -229,6 +289,12 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog() {
           request={request}
           responding={responding}
         />
+        {request.expiresAt !== undefined ? (
+          <RequestTime
+            key={`${request.sessionId}:${request.id}:${request.expiresAt}`}
+            expiresAt={request.expiresAt}
+          />
+        ) : null}
       </div>
     </div>
   );

@@ -184,6 +184,13 @@ describe("local host API", () => {
           },
         },
         mappings: { example: "user.example.tool" },
+        customMessages: {
+          review_message: {
+            source: "Review",
+            title: ["details.sender"],
+            body: "details.body",
+          },
+        },
         thinking: {
           summary: [{ value: { path: "thinking.text", format: "first-line" } }],
           blocks: [{ type: "markdown", source: { path: "thinking.text" } }],
@@ -198,6 +205,13 @@ describe("local host API", () => {
     expect(response.body.toolPresentations.thinking).toMatchObject({
       summary: [{ value: { path: "thinking.text", format: "first-line" } }],
       blocks: [{ type: "markdown" }],
+    });
+    expect(response.body.toolPresentations.customMessages).toEqual({
+      review_message: {
+        source: "Review",
+        title: ["details.sender"],
+        body: "details.body",
+      },
     });
     expect(response.body.toolPresentationsWarning).toBeUndefined();
   });

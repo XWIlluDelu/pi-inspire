@@ -1,7 +1,6 @@
 import { stripTerminalSequences } from "../ansi";
 import { parseUnifiedDiff } from "../diff";
 import { toolResultText } from "../events";
-import { isToolImageMimeType, mergeSearchContext } from "./model";
 import type {
   ToolImageMimeType,
   ToolListItem,
@@ -13,6 +12,7 @@ import type {
   ToolProperty,
   ToolSearchGroup,
 } from "./model";
+import { mergeSearchContext, toolResultImage } from "./model";
 
 const PI_RULE_PREFIX = "inspire.pi";
 
@@ -116,27 +116,17 @@ function readOutputLineCount(text: string): number {
   return lines;
 }
 
-interface NativeImageResult {
-  data: string;
-  mimeType: ToolImageMimeType;
-}
-
 /** undefined means no image part; null means an image-shaped part that this
  * rule cannot safely interpret. */
 function nativeImageResult(
   input: ToolPresentationInput,
-): NativeImageResult | null | undefined {
+  alt: string,
+): Extract<ToolPresentationBlock, { type: "image" }> | null | undefined {
   if (!Array.isArray(input.result?.content)) return undefined;
-  const candidate = input.result.content.find(
+  const index = input.result.content.findIndex(
     (part) => record(part)?.type === "image",
   );
-  if (candidate === undefined) return undefined;
-  const image = record(candidate);
-  const data = image ? stringValue(image, "data") : null;
-  const mimeType = image ? stringValue(image, "mimeType") : null;
-  if (data === null || data.length === 0 || !isToolImageMimeType(mimeType))
-    return null;
-  return { data, mimeType };
+  return index < 0 ? undefined : toolResultImage(input.result, index, alt);
 }
 
 function imageTypeLabel(mimeType: ToolImageMimeType): string {
@@ -158,11 +148,7 @@ function truncationNotice(
       ? truncation.totalLines.toLocaleString()
       : null;
   const count = shown && total ? ` · ${shown} of ${total} lines shown` : "";
-  const saved =
-    typeof details?.fullOutputPath === "string"
-      ? " · full output saved by Pi"
-      : "";
-  return `${subject} truncated${count}${saved}`;
+  return `${subject} truncated${count}`;
 }
 
 function resultTextBlock(
@@ -195,7 +181,7 @@ function readRule(): ToolPresentationRule {
         limitValue !== null && limitValue > 0 ? Math.floor(limitValue) : null;
       const image = input.result?.isError
         ? undefined
-        : nativeImageResult(input);
+        : nativeImageResult(input, path);
       if (image === null) return null;
       const resultText = input.result ? toolResultText(input.result) : "";
       const imageNote = /^Read image file \[[^\]]+\]/.test(resultText);
@@ -264,13 +250,7 @@ function readRule(): ToolPresentationRule {
             return blocks;
           }
           if (image) {
-            blocks.push({
-              type: "image",
-              label: "Preview",
-              data: image.data,
-              mimeType: image.mimeType,
-              alt: path,
-            });
+            blocks.push({ ...image, label: "Preview" });
             if (
               resultText &&
               !/^Read image file \[[^\]]+\]$/.test(resultText.trim())
@@ -528,8 +508,22 @@ function shellRule(name: "bash" | "powershell"): ToolPresentationRule {
             error: Boolean(input.result.isError),
           });
           const notice = truncationNotice(details, "Output");
+          const fullOutputPath =
+            details && stringValue(details, "fullOutputPath");
           if (notice)
-            blocks.push({ type: "notice", text: notice, tone: "warning" });
+            blocks.push({
+              type: "notice",
+              text: notice,
+              tone: "warning",
+              ...(fullOutputPath
+                ? {
+                    action: {
+                      label: "View full output",
+                      reference: fullOutputPath,
+                    },
+                  }
+                : {}),
+            });
           return blocks;
         },
       );

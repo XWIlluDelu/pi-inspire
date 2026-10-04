@@ -1,6 +1,10 @@
 import { Package } from "lucide-react";
-import { memo, useId, useState } from "react";
+import { memo, useId, useState, useSyncExternalStore } from "react";
 import { type ChatMessage, messageText } from "../events";
+import {
+  getCustomMessagePresentationRegistry,
+  subscribeCustomMessagePresentations,
+} from "../tool-presentations/registry";
 import { CopyAction } from "./CopyAction";
 import { ImagePreview, PersistedImage } from "./ImagePreview";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
@@ -29,22 +33,31 @@ export const CustomMessage = memo(function CustomMessage({
     (typeof message.customType === "string" &&
       message.customType.trim().slice(0, 80)) ||
     "custom";
+  const registry = useSyncExternalStore(
+    subscribeCustomMessagePresentations,
+    getCustomMessagePresentationRegistry,
+  );
+  const presentation = registry.resolve(message);
   const title =
-    type === "custom"
+    presentation?.title ??
+    (type === "custom"
       ? "Extension message"
       : type
           .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
           .replace(/[-_:]+/g, " ")
-          .replace(/^./, (character) => character.toUpperCase());
+          .replace(/^./, (character) => character.toUpperCase()));
   const hasDetails = message.details !== undefined && message.details !== null;
   const text = messageText(message);
-  const copyText = [
-    title,
-    `Type: ${type}`,
-    "Content",
-    inspect(message.content ?? []),
-  ];
-  if (hasDetails) copyText.push("Details", inspect(message.details));
+  const copyText = async () => {
+    const parts = [
+      title,
+      `Type: ${message.customType ?? type}`,
+      "Content",
+      inspect(message.content ?? []),
+    ];
+    if (hasDetails) parts.push("Details", inspect(message.details));
+    return parts.join("\n\n");
+  };
 
   if (message.display === false) return null;
   return (
@@ -52,22 +65,33 @@ export const CustomMessage = memo(function CustomMessage({
       <div className="custom-message">
         <div className="custom-message__head">
           <Package size={14} aria-hidden />
-          <span id={titleId} className="custom-message__title">
-            {title}
-          </span>
-          <code className="custom-message__type">{type}</code>
+          <div className="custom-message__identity">
+            <span id={titleId} className="custom-message__title">
+              {title}
+            </span>
+            {presentation ? (
+              <span className="custom-message__source">
+                {presentation.source}
+              </span>
+            ) : null}
+          </div>
           <CopyAction
-            text={copyText.join("\n\n")}
+            getText={copyText}
             label={`${title} block`}
             className="custom-message__copy"
           />
         </div>
         <div className="custom-message__body">
           {typeof message.content === "string" ? (
-            <RichText text={text} variant="user" />
+            <RichText text={presentation?.body ?? text} variant="user" />
           ) : Array.isArray(message.content) ? (
             message.content.map((part: unknown, index: number) => {
-              if (!part || typeof part !== "object") return null;
+              if (!part || typeof part !== "object")
+                return (
+                  <pre key={index} className="custom-message__raw">
+                    {inspect(part)}
+                  </pre>
+                );
               const item = part as Record<string, unknown>;
               if (item.type === "text" && typeof item.text === "string") {
                 return <RichText key={index} text={item.text} variant="user" />;
@@ -114,7 +138,7 @@ export const CustomMessage = memo(function CustomMessage({
             </pre>
           ) : null}
         </div>
-        {hasDetails ? (
+        {hasDetails || presentation ? (
           <details className="custom-message__details" open={detailsOpen}>
             <summary
               onClick={(event) => {
@@ -126,7 +150,18 @@ export const CustomMessage = memo(function CustomMessage({
             </summary>
             {detailsOpen ? (
               <pre className="custom-message__raw">
-                {inspect(message.details)}
+                {inspect(
+                  presentation
+                    ? {
+                        customType: message.customType,
+                        content: message.content,
+                        details: message.details,
+                      }
+                    : {
+                        customType: message.customType,
+                        details: message.details,
+                      },
+                )}
               </pre>
             ) : null}
           </details>

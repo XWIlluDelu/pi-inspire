@@ -233,6 +233,7 @@ async function verifyInstalledFonts(installedRoot, expectedFonts) {
   const installedDigests = new Set();
   let css = "";
   for (const filename of await readdir(assets)) {
+    if (!/\.(?:woff2|css)$/u.test(filename)) continue;
     const value = await readFile(join(assets, filename));
     if (filename.endsWith(".woff2")) installedDigests.add(sha256(value));
     if (filename.endsWith(".css")) css += value.toString("utf8");
@@ -418,6 +419,7 @@ try {
     "deploy/systemd/control.mjs",
     "deploy/systemd/inspire-host.service.in",
     "docs/ssh-reverse.md",
+    "docs/examples/native-ui.ts",
     "dist/index.html",
     "dist/THIRD_PARTY_NOTICES.txt",
     "inspire",
@@ -440,7 +442,8 @@ try {
     (path) =>
       path.startsWith("tests/") ||
       path.startsWith("server/") ||
-      /\.(?:[cm]?ts|tsx)$/u.test(path),
+      (/\.(?:[cm]?ts|tsx)$/u.test(path) &&
+        path !== "docs/examples/native-ui.ts"),
   );
   if (forbidden.length > 0)
     throw new Error(

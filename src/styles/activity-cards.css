@@ -828,13 +828,20 @@ span.card__file-arg {
 }
 
 .tool-image-block__image {
-  display: block;
+  display: flex;
+  min-width: 44px;
+  min-height: 44px;
   max-width: 100%;
-  max-height: min(520px, 65vh);
   margin: 0 auto;
   border: 1px solid var(--line);
   border-radius: var(--radius-xs);
-  background: var(--bg-inset);
+}
+
+.tool-image-block__image img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: min(520px, 65vh);
   object-fit: contain;
 }
 
@@ -1027,6 +1034,21 @@ span.card__file-arg {
   font-size: var(--text-reading-small);
 }
 
+.tool-notice__action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin-left: var(--space-2);
+  padding: 0 var(--space-1);
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
 .tool-notice--warning {
   border-left-color: var(--warning);
   color: var(--warning);
@@ -1108,7 +1130,8 @@ span.card__file-arg {
   font-size: var(--text-reading-small);
   /* Numeric columns compare down the row rule; proportional figures wobble. */
   font-variant-numeric: tabular-nums;
-  /* Wide tables scroll inside the column instead of breaking it. */
+  /* Preserve word-sized column minima; the table owns wide-content scrolling. */
+  overflow-wrap: normal;
   display: block;
   max-width: 100%;
   overflow-x: auto;

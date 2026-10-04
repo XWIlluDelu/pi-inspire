@@ -1,7 +1,17 @@
+import type { AddressInfo } from "node:net";
+import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, type WebSocketRoute, test } from "@playwright/test";
+import { expect, type Page, test, type WebSocketRoute } from "@playwright/test";
+import { createInspireServer } from "../../server/app";
+import { AttachmentStore } from "../../server/attachments";
+import { GitInspectionService } from "../../server/git-inspection";
+import { MockCatalog, MockRuntime } from "../../server/mock";
+import { PreferencesStore } from "../../server/preferences";
+import { ResourceStore } from "../../server/resources";
+import { ToolPresentationConfigStore } from "../../server/tool-presentation-config";
 import type { ToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import type { ToolCallContent } from "../../src/events";
+import { toolResultResourcesFixture } from "../fixtures/tool-result-resources.mjs";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 
 test.use({ serviceWorkers: "block" });
@@ -89,7 +99,7 @@ async function openReview(
   sessionId = null;
   await page.reload();
   await expect(
-    page.getByRole("button", { name: "Rename session", exact: true }),
+    page.getByRole("button", { name: /^Session actions:/ }),
   ).toHaveText("Tool presentation review");
   await expect.poll(() => sessionId).not.toBeNull();
   return (...events: Record<string, unknown>[]) => {
@@ -549,3 +559,184 @@ for (const palette of ["amber", "teal"]) {
     });
   }
 }
+
+// Native read/bash produce the recorded artifacts offline. The mock Runtime
+// supplies shell/catalog state only; transcript paging and resource authority
+// use SessionProjection and the real Host HTTP resource endpoints.
+test("saved tool images and full logs reopen through the authorized viewers on desktop and narrow screens", async ({
+  page,
+}, testInfo) => {
+  const fixture = await toolResultResourcesFixture();
+  const runtime = new MockRuntime();
+  const snapshot = await runtime.openSession(fixture.record.id);
+  Object.assign(snapshot.active!, {
+    cwd: fixture.record.cwd,
+    sessionName: fixture.record.name,
+    transcriptPage: fixture.page,
+  });
+  runtime.resourceContext = async (sessionId) => {
+    expect(sessionId).toBe(fixture.record.id);
+    return {
+      sessionId,
+      cwd: fixture.record.cwd!,
+      viewId: fixture.page.viewId,
+      revision: fixture.page.revision,
+      messages: fixture.messages,
+    };
+  };
+  const preferences = new PreferencesStore(
+    join(fixture.root, "preferences.json"),
+  );
+  await preferences.patch({
+    theme: "light",
+    toolVisibility: "expanded",
+    activityFoldVisibility: "expanded",
+  });
+  const host = createInspireServer({
+    token: "tool-resources-test-token",
+    runtime,
+    catalog: new MockCatalog(),
+    attachments: new AttachmentStore(join(fixture.root, "uploads")),
+    preferences,
+    toolPresentations: new ToolPresentationConfigStore(
+      join(fixture.root, "presentations.json"),
+    ),
+    resources: new ResourceStore(),
+    git: new GitInspectionService(),
+    mock: true,
+    version: "tool-resources-test",
+    piVersion: fixture.piVersion,
+  });
+  await new Promise<void>((resolve) =>
+    host.server.listen(0, "127.0.0.1", resolve),
+  );
+  const url = `http://127.0.0.1:${(host.server.address() as AddressInfo).port}`;
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  try {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto(url);
+    await page.getByLabel("Access token").fill("tool-resources-test-token");
+    await page.getByRole("button", { name: "Pair", exact: true }).click();
+    await expect(page.getByRole("main")).toBeVisible();
+    for (const presentation of ["native", "generic"] as const) {
+      if (presentation === "generic") {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.route("**/api/bootstrap", async (route) => {
+          const response = await route.fetch();
+          const body = await response.json();
+          body.toolPresentations = {
+            version: 1,
+            rules: {},
+            mappings: { read: "test.raw" },
+          };
+          await route.fulfill({ response, json: body });
+        });
+      }
+      await page.reload();
+      const read = toolCard(page, "read");
+      const thumbnail = read.locator(".tool-image-block__image");
+      await expect(thumbnail).toBeEnabled();
+      await page.locator(".transcript").hover();
+      await page.mouse.wheel(0, -5000);
+      await thumbnail.scrollIntoViewIfNeeded();
+      await expect(thumbnail).toBeInViewport({ ratio: 1 });
+      await expect
+        .poll(() =>
+          thumbnail
+            .locator("img")
+            .evaluate(
+              (image: HTMLImageElement) =>
+                image.complete && image.naturalWidth > 0,
+            ),
+        )
+        .toBe(true);
+      if (presentation === "native")
+        await expect(
+          read.locator('[data-tool-rule="inspire.pi.read"]'),
+        ).toBeVisible();
+      else await expect(read).toContainText("Arguments");
+      const cardScreenshot = testInfo.outputPath(
+        `${presentation}-saved-image.png`,
+      );
+      await read.screenshot({ path: cardScreenshot });
+      await testInfo.attach(`${presentation} saved image`, {
+        path: cardScreenshot,
+        contentType: "image/png",
+      });
+      await thumbnail.focus();
+      await thumbnail.press("Enter");
+      const preview = page.getByRole("dialog", { name: "Image preview" });
+      await expect(preview).toBeVisible();
+      await expect(preview.locator("img")).toHaveAttribute(
+        "src",
+        (await thumbnail.locator("img").getAttribute("src")) ?? "",
+      );
+      const imageScreenshot = testInfo.outputPath(
+        `${presentation}-image-preview.png`,
+      );
+      await page.screenshot({ path: imageScreenshot });
+      await testInfo.attach(`${presentation} image preview`, {
+        path: imageScreenshot,
+        contentType: "image/png",
+      });
+      await preview.getByRole("button", { name: "Zoom image" }).click();
+      await expect(
+        preview.getByRole("button", { name: "Fit image to window" }),
+      ).toHaveAttribute("aria-pressed", "true");
+      await page.keyboard.press("Escape");
+      await expect(preview).toHaveCount(0);
+      await expect(thumbnail).toBeFocused();
+
+      const bash = toolCard(page, "bash");
+      const action = bash.getByRole("button", { name: "View full output" });
+      await action.scrollIntoViewIfNeeded();
+      await expect(action).toHaveAttribute(
+        "data-file-path",
+        fixture.fullOutputPath,
+      );
+      const actionBox = await action.boundingBox();
+      expect(actionBox!.height).toBeGreaterThanOrEqual(44);
+      expect(actionBox!.x + actionBox!.width).toBeLessThanOrEqual(
+        (await page.viewportSize())!.width,
+      );
+      const resolved = page.waitForResponse(
+        (response) =>
+          response.url().includes("/api/resources/resolve") &&
+          response.request().postDataJSON()?.reference ===
+            fixture.fullOutputPath,
+      );
+      await action.focus();
+      await action.press("Enter");
+      const descriptor = await (await resolved).json();
+      expect(descriptor.reference).toBe(fixture.fullOutputPath);
+      expect(descriptor.sessionId).toBe(fixture.record.id);
+      expect(descriptor.viewId).toBe(fixture.page.viewId);
+      await expect(
+        page.getByRole("region", { name: "File source", exact: true }),
+      ).toContainText("native line 1");
+      await expect(
+        page.getByRole("region", { name: "File source", exact: true }),
+      ).toContainText("native line 2500");
+      const content = await page.request.get(
+        `${url}/api/resources/${descriptor.id}/content?sessionId=${fixture.record.id}`,
+      );
+      expect(content.ok()).toBe(true);
+      expect(await content.text()).toBe(fixture.fullOutput);
+      const logScreenshot = testInfo.outputPath(
+        `${presentation}-full-output.png`,
+      );
+      await page.screenshot({ path: logScreenshot });
+      await testInfo.attach(`${presentation} full output`, {
+        path: logScreenshot,
+        contentType: "image/png",
+      });
+    }
+    expect(errors).toEqual([]);
+  } finally {
+    await page.goto("about:blank");
+    await host.close();
+    await fixture.dispose();
+  }
+});

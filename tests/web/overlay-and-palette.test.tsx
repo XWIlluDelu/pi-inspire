@@ -7,8 +7,10 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../src/App";
+import { ExtensionStatus } from "../../src/components/ExtensionDisplays";
+import { ExtensionUiDialog } from "../../src/components/ExtensionUiDialog";
 import { store } from "../../src/store";
 import {
   activeSnapshot,
@@ -23,10 +25,12 @@ import {
 const sessions = [sessionSummary({ title: "Test session" })];
 let renameBodies: Record<string, unknown>[] = [];
 let renameGate: Promise<void> | null = null;
+let extensionGate: Promise<void> | null = null;
 
 beforeEach(async () => {
   renameBodies = [];
   renameGate = null;
+  extensionGate = null;
   installFakeWebSocket();
   installFetch((url, init) => {
     if (url.startsWith("/api/bootstrap")) {
@@ -52,12 +56,19 @@ beforeEach(async () => {
         body: { sessions, total: sessions.length, offset: 0, limit: 40 },
       };
     }
-    if (url.startsWith("/api/extension-ui")) return { body: { ok: true } };
+    if (url.startsWith("/api/extension-ui"))
+      return (extensionGate ?? Promise.resolve()).then(() => ({
+        body: { ok: true },
+      }));
     if (url.startsWith("/api/preferences")) return { body: jsonBody(init) };
     if (url.startsWith("/api/git/status")) {
       return { body: { kind: "not-repository" } };
     }
-    if (url.startsWith("/api/control/abort")) return { body: { ok: true } };
+    if (
+      url.startsWith("/api/control/abort") ||
+      url.startsWith("/api/pending/recover")
+    )
+      return { body: { steering: [], followUp: [] } };
     return undefined;
   });
   await act(async () => store.init("token"));
@@ -65,7 +76,11 @@ beforeEach(async () => {
   await waitFor(() => expect(store.getState().sessionId).toBe("s1"));
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 async function openPalette() {
   fireEvent.keyDown(window, { key: "k", ctrlKey: true });
@@ -128,6 +143,289 @@ describe("overlay ownership", () => {
         screen.queryByRole("dialog", { name: "Command palette" }),
       ).toBeNull(),
     );
+  });
+});
+
+describe("shared extension interaction", () => {
+  function request(fields: Record<string, unknown>) {
+    act(() =>
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "extension_ui_request",
+        sessionId: "s1",
+        ...fields,
+      }),
+    );
+  }
+
+  it("moves a visible selection with arrows, chooses with Enter or pointer, and restores modal focus", async () => {
+    const respond = vi
+      .spyOn(store, "respondExtensionUi")
+      .mockResolvedValue(undefined);
+    render(
+      <>
+        <button type="button">Opener</button>
+        <ExtensionUiDialog />
+      </>,
+    );
+    screen.getByRole("button", { name: "Opener" }).focus();
+    request({
+      id: "select",
+      method: "select",
+      title: "Choose",
+      options: ["First", "Second", "Third"],
+    });
+    const first = screen.getByRole("option", { name: "First" });
+    const second = screen.getByRole("option", { name: "Second" });
+    expect(first).toHaveFocus();
+    expect(first).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    expect(second).toHaveFocus();
+    expect(second).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(second, { key: "ArrowUp" });
+    expect(first).toHaveFocus();
+    fireEvent.keyDown(first, { key: "ArrowUp" });
+    const third = screen.getByRole("option", { name: "Third" });
+    expect(third).toHaveFocus();
+    fireEvent.keyDown(third, { key: "Enter" });
+    expect(respond).toHaveBeenLastCalledWith({ id: "select", value: "Third" });
+    fireEvent.click(second);
+    expect(respond).toHaveBeenLastCalledWith({ id: "select", value: "Second" });
+    act(() =>
+      FakeWebSocket.instances
+        .at(-1)!
+        .emit({ type: "extension_ui_clear", reason: "stopped" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Opener" })).toHaveFocus(),
+    );
+  });
+
+  it("focuses the next question when the previous response finishes after it arrives", async () => {
+    let release!: () => void;
+    extensionGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    render(<ExtensionUiDialog />);
+    request({
+      id: "previous",
+      method: "select",
+      title: "Previous",
+      options: ["Continue"],
+    });
+    fireEvent.click(screen.getByRole("option", { name: "Continue" }));
+    expect(store.getState().extensionUiRespondingId).toBe("previous");
+    request({
+      id: "next",
+      method: "select",
+      title: "Next",
+      options: ["First", "Second"],
+    });
+    act(() =>
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "extension_ui_remove",
+        sessionId: "s1",
+        id: "previous",
+        reason: "answered",
+      }),
+    );
+    const next = screen.getByRole("dialog", { name: "Next" });
+    expect(next).toHaveAttribute("aria-busy", "true");
+    expect(next).toHaveFocus();
+    await act(async () => {
+      release();
+    });
+    await waitFor(() => expect(next).toHaveAttribute("aria-busy", "false"));
+    const first = screen.getByRole("option", { name: "First" });
+    expect(first).toHaveFocus();
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    expect(screen.getByRole("option", { name: "Second" })).toHaveFocus();
+  });
+
+  it.each([false, true])(
+    "keeps confirmation's Yes focus across response handoff (delayed=%s)",
+    async (delayed) => {
+      let release!: () => void;
+      extensionGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      render(<ExtensionUiDialog />);
+      request({
+        id: "previous",
+        method: "select",
+        title: "Previous",
+        options: ["Continue"],
+      });
+      fireEvent.click(screen.getByRole("option", { name: "Continue" }));
+      if (!delayed)
+        await act(async () => {
+          release();
+        });
+      request({
+        id: "next",
+        method: "confirm",
+        title: "Next",
+        message: "Continue?",
+      });
+      act(() =>
+        FakeWebSocket.instances.at(-1)!.emit({
+          type: "extension_ui_remove",
+          sessionId: "s1",
+          id: "previous",
+          reason: "answered",
+        }),
+      );
+      if (delayed)
+        await act(async () => {
+          release();
+        });
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Yes" })).toHaveFocus(),
+      );
+      const no = screen.getByRole("button", { name: "No" });
+      no.focus();
+      request({
+        id: "next",
+        method: "confirm",
+        title: "Updated question",
+        message: "Continue?",
+      });
+      expect(no).toHaveFocus();
+    },
+  );
+
+  it("keeps confirmation to No/Yes and preserves input submission and multiline Save", () => {
+    const respond = vi
+      .spyOn(store, "respondExtensionUi")
+      .mockResolvedValue(undefined);
+    render(<ExtensionUiDialog />);
+    request({ id: "confirm", method: "confirm", title: "Continue?" });
+    expect(
+      screen.getAllByRole("button").map((button) => button.textContent),
+    ).toEqual(["No", "Yes"]);
+    fireEvent.click(screen.getByRole("button", { name: "No" }));
+    expect(respond).toHaveBeenLastCalledWith({
+      id: "confirm",
+      confirmed: false,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Yes" }));
+    expect(respond).toHaveBeenLastCalledWith({
+      id: "confirm",
+      confirmed: true,
+    });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(respond).toHaveBeenLastCalledWith({
+      id: "confirm",
+      cancelled: true,
+    });
+    act(() =>
+      FakeWebSocket.instances
+        .at(-1)!
+        .emit({ type: "extension_ui_clear", reason: "stopped" }),
+    );
+    request({ id: "input", method: "input", title: "Name" });
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "A name" },
+    });
+    fireEvent.submit(screen.getByRole("textbox").closest("form")!);
+    expect(respond).toHaveBeenLastCalledWith({ id: "input", value: "A name" });
+    act(() =>
+      FakeWebSocket.instances
+        .at(-1)!
+        .emit({ type: "extension_ui_clear", reason: "stopped" }),
+    );
+    request({
+      id: "editor",
+      method: "editor",
+      title: "Notes",
+      prefill: "one\ntwo",
+    });
+    const editor = screen.getByRole("textbox");
+    expect(editor).toHaveValue("one\ntwo");
+    const calls = respond.mock.calls.length;
+    fireEvent.keyDown(editor, { key: "Enter" });
+    expect(respond).toHaveBeenCalledTimes(calls);
+    fireEvent.change(editor, { target: { value: "one\ntwo\nthree" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(respond).toHaveBeenLastCalledWith({
+      id: "editor",
+      value: "one\ntwo\nthree",
+    });
+  });
+
+  it("shows only actual remaining time and preserves the deadline when remounted", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
+    request({
+      id: "timed",
+      method: "input",
+      title: "Timed",
+      timeout: 10_000,
+      expiresAt: Date.now() + 10_000,
+    });
+    const view = render(<ExtensionUiDialog />);
+    expect(screen.getByText("10s remaining")).toBeVisible();
+    act(() => vi.advanceTimersByTime(3_000));
+    expect(screen.getByText("7s remaining")).toBeVisible();
+    view.unmount();
+    act(() => vi.advanceTimersByTime(2_000));
+    render(<ExtensionUiDialog />);
+    expect(screen.getByText("5s remaining")).toBeVisible();
+    act(() =>
+      FakeWebSocket.instances
+        .at(-1)!
+        .emit({ type: "extension_ui_clear", reason: "stopped" }),
+    );
+    request({ id: "untimed", method: "input", title: "Untimed" });
+    expect(screen.queryByText(/remaining/)).toBeNull();
+  });
+
+  it("reads complete ordered status on demand, updates it, clears it and resets disclosure across sessions", () => {
+    const view = render(<ExtensionStatus />);
+    expect(view.container).toBeEmptyDOMElement();
+    request({
+      id: "status-b",
+      method: "setStatus",
+      statusKey: "b",
+      statusText: "second",
+    });
+    request({
+      id: "status-a",
+      method: "setStatus",
+      statusKey: "a",
+      statusText: "\u001b[32mfirst\u001b[0m",
+    });
+    expect(view.container).toHaveTextContent("first · second");
+    expect(
+      screen.queryByRole("button", { name: "Extension status" }),
+    ).toBeNull();
+    request({
+      id: "updated",
+      method: "setStatus",
+      statusKey: "a",
+      statusText: "complete\nmultiline status",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Extension status" }));
+    const detail = screen.getByRole("dialog", { name: "Extension status" });
+    expect(detail.textContent).toBe("complete\nmultiline statussecond");
+    act(() =>
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: {
+          ...activeSnapshot({ sessionId: "s2" }),
+          extensionStatuses: { a: "another session" },
+        },
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "Extension status" }),
+    ).toBeNull();
+    request({
+      id: "clear",
+      sessionId: "s2",
+      method: "setStatus",
+      statusKey: "a",
+    });
+    expect(view.container).toBeEmptyDOMElement();
   });
 });
 

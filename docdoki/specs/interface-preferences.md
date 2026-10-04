@@ -45,7 +45,8 @@ legible and visually distinct from selected, available controls.
 ## Modal focus
 
 - The active modal traps Tab, suppresses background shell shortcuts, and restores its exact opener
-  on close. Nested modals retain this ownership even when they close out of order.
+  on close. Nested modals retain this ownership even when they close out of order. Anchored portaled
+  controls belong to their containing modal's stacking, focus and logical tab order.
 - A nested menu consumes Escape before its containing modal. Otherwise, Escape belongs to the
   topmost modal; an attributed extension request yields it only for projection-conflict recovery.
 - Settings and Command Palette are mutually exclusive. A pending extension request dismisses either

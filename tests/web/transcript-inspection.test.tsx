@@ -1884,7 +1884,12 @@ describe("transient conversation projections", () => {
     expect(screen.getByText("owned once")).toBeVisible();
   });
 
-  it("renders placed text widgets and an attributable raw fallback", () => {
+  it("foregrounds placed widget text, copies it fully and retains attributable raw fallback", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
     const displays = [
       {
         id: "setWidget:plan",
@@ -1931,22 +1936,19 @@ describe("transient conversation projections", () => {
     const below = screen.getByRole("region", {
       name: "Extension content below composer",
     });
-    expect(within(above).getByText("plan")).toBeInTheDocument();
-    expect(within(above).getByText("extensions/plan.ts")).toBeInTheDocument();
+    expect(within(above).queryByText("plan")).toBeNull();
+    expect(within(above).queryByText("extensions/plan.ts")).toBeNull();
     expect(
-      within(above).getByRole("region", {
-        name: "plan widget from extensions/plan.ts",
-      }),
+      within(above).getByRole("group", { name: "Extension widget" }),
     ).toBeInTheDocument();
-    expect(
-      within(above).getByRole("button", {
-        name: "Copy plan widget from extensions/plan.ts",
-      }),
-    ).toBeInTheDocument();
+    fireEvent.click(
+      within(above).getByRole("button", { name: "Copy extension widget" }),
+    );
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("one\ntwo"));
     const widgetText = above.querySelector(".extension-display__text");
     expect(widgetText).toHaveTextContent("one two");
     expect(widgetText?.textContent).not.toContain("\u001b[32m");
-    expect(within(below).getByText("usage")).toBeInTheDocument();
+    expect(within(below).queryByText("usage")).toBeNull();
     expect(within(below).getByText("5h 37%")).toBeInTheDocument();
     const fallback = screen.getByRole("region", {
       name: "Extension display content",

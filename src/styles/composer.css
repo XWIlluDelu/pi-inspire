@@ -206,6 +206,9 @@
 }
 
 .extension-display {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   flex: 0 0 auto;
   min-width: 0;
   overflow: hidden;
@@ -214,50 +217,8 @@
   background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
 }
 
-.extension-display__head {
-  min-height: 30px;
-  padding: 3px var(--space-2) 3px var(--space-3);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  color: var(--muted);
-  font-size: var(--text-xs);
-  line-height: var(--leading-ui);
-}
-
-.extension-display__lead {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.extension-display__lead > svg {
-  flex: 0 0 auto;
-  color: var(--activity-tool);
-}
-
-.extension-display__title,
-.extension-display__detail {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.extension-display__title {
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.extension-display__detail {
-  color: var(--faint);
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
 .extension-display__copy.icon-button {
-  flex: 0 0 auto;
+  margin: var(--space-1);
   width: 24px;
   height: 24px;
   color: var(--muted);
@@ -272,8 +233,6 @@
 .extension-display__text {
   margin: 0;
   padding: var(--space-2) var(--space-3);
-  border-top: 1px solid var(--hairline);
-  background: var(--bg-inset);
   color: var(--ink);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
@@ -283,10 +242,6 @@
 }
 
 @media (hover: none) and (pointer: coarse) {
-  .extension-display__head {
-    min-height: 44px;
-  }
-
   .extension-display__copy.icon-button {
     width: 44px;
     height: 44px;
