@@ -58,6 +58,8 @@ interface DeliveryRecord {
   attachments: PendingAttachment[];
   projectFiles: string[];
   historyDraft: ComposerArtifactDraft | null;
+  /** Palette preparation owns its text; it never transfers the Composer draft. */
+  independent?: boolean;
 }
 
 export interface ComposerPartition {
@@ -141,7 +143,7 @@ export class ComposerController {
           record.delivery.signature,
           record.delivery,
         );
-        composer.failedDeliveries.push(record);
+        if (!record.independent) composer.failedDeliveries.push(record);
       }
       composer.deliveries.clear();
       composer.sending = false;
@@ -374,6 +376,7 @@ export class ComposerController {
     message: string,
     behavior?: "steer" | "followUp",
     onHandoff?: () => void,
+    independent = false,
   ): Promise<PromptAcceptedResponse | false> {
     const sessionId = this.host.state().sessionId;
     const api = this.host.api();
@@ -390,15 +393,21 @@ export class ComposerController {
     const composer = this.forSession(sessionId);
     // A matching in-flight request is a duplicate click, not a new message.
     // Different input may proceed while a previous Pi receipt is pending.
-    if (composer.attachments.some((item) => item.status === "uploading")) {
+    if (
+      !independent &&
+      composer.attachments.some((item) => item.status === "uploading")
+    ) {
       this.host.notify("warning", "Attachments are still uploading");
       return false;
     }
-    if (composer.attachments.some((item) => item.status === "error")) {
+    if (
+      !independent &&
+      composer.attachments.some((item) => item.status === "error")
+    ) {
       this.host.notify("warning", "Remove failed attachments before sending");
       return false;
     }
-    const included = composer.attachments;
+    const included = independent ? [] : composer.attachments;
     if (
       message.trim().startsWith("!") &&
       (included.length > 0 || composer.projectFiles.length > 0)
@@ -446,7 +455,7 @@ export class ComposerController {
       );
       return false;
     }
-    const projectFiles = composer.projectFiles;
+    const projectFiles = independent ? [] : composer.projectFiles;
     const recalledProjectCount = recalled.filter(
       (item) =>
         item.recalledArtifact.type === "file" &&
@@ -523,15 +532,18 @@ export class ComposerController {
       message,
       attachments: included,
       projectFiles,
-      historyDraft: composer.historyDraft,
+      historyDraft: independent ? null : composer.historyDraft,
+      independent,
     };
     composer.failedDeliveries = composer.failedDeliveries.filter(
       (item) => item.delivery !== retained,
     );
     composer.deliveries.set(delivery.request.operationId, record);
-    composer.attachments = [];
-    composer.projectFiles = [];
-    composer.historyDraft = null;
+    if (!independent) {
+      composer.attachments = [];
+      composer.projectFiles = [];
+      composer.historyDraft = null;
+    }
     composer.sending = true;
     onHandoff?.();
     this.publish(sessionId);
@@ -609,8 +621,10 @@ export class ComposerController {
             : item,
         );
       }
-      composer.failedDeliveries.push(record);
-      this.restoreFailedIfEmpty(sessionId, composer);
+      if (!independent) {
+        composer.failedDeliveries.push(record);
+        this.restoreFailedIfEmpty(sessionId, composer);
+      }
       if (error instanceof ApiError && error.code === "PROMPT_ABORTED")
         return false;
       if (error instanceof ApiError && error.status === 401) {
@@ -619,7 +633,10 @@ export class ComposerController {
         this.publish(sessionId);
         this.host.handleAuthFailure();
       } else
-        this.host.failVisible(
+        (independent
+          ? (_sessionId: string, text: string) =>
+              this.host.notify("warning", text)
+          : this.host.failVisible)(
           sessionId,
           acceptanceUnknown
             ? "INSΠRE could not confirm whether Pi accepted this message. Retry sends the same delivery safely while this Host remains running."

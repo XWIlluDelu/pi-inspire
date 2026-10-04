@@ -456,15 +456,14 @@ body.srail-dragging {
   }
 
   .topbar {
-    gap: var(--space-1);
     padding-inline: max(var(--space-2), var(--safe-left))
       max(var(--space-2), var(--safe-right));
   }
 
   .topbar .icon-button {
-    flex: 0 0 36px;
-    width: 36px;
-    height: 36px;
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
   }
 
   .token-gate {
@@ -493,11 +492,6 @@ body.srail-dragging {
 
   .token-gate__actions {
     flex-wrap: wrap;
-  }
-
-  .topbar__ident {
-    max-width: none;
-    min-width: 0;
   }
 
   .topbar__title-button {
@@ -530,11 +524,6 @@ body.srail-dragging {
     display: none;
   }
 
-  .topbar__status {
-    gap: var(--space-1);
-    max-width: none;
-  }
-
   .topbar__status .chip {
     padding-inline: var(--space-1);
   }
@@ -550,7 +539,7 @@ body.srail-dragging {
   }
 
   .topbar__actions {
-    gap: 2px;
+    gap: 0;
   }
 
   .transcript {

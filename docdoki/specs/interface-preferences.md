@@ -68,8 +68,9 @@ remain separate from loaded-extension membership.
   controls belong to their containing modal's stacking, focus and logical tab order.
 - A nested menu consumes Escape before its containing modal. Otherwise, Escape belongs to the
   topmost modal; an attributed extension request yields it only for projection-conflict recovery.
-- Settings and Command Palette are mutually exclusive. A pending extension request dismisses either
-  app-level overlay before taking focus.
+- Settings and Command Palette are mutually exclusive. An extension request takes modal ownership;
+  Settings closes, while an open Palette stays mounted but hidden and inactive. Its preparation text
+  and rejection remain available when the extension dialog closes.
 
 ## Preference persistence
 

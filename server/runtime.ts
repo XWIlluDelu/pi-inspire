@@ -19,6 +19,7 @@ import {
   nativeNavigationLeaf,
 } from "../shared/branch-node-actions.js";
 import {
+  exportArgumentPath,
   nativeCommand,
   parseCommandInvocation,
   parseNativeCommand,
@@ -101,6 +102,12 @@ import {
   type ValidateSessionRecord,
   validateSessionFile,
 } from "./session-delete.js";
+import {
+  assertExportDestination,
+  resolveExportPath,
+  serializeBranchExport,
+  writeBranchExport,
+} from "./session-export.js";
 import {
   discardStagedSessionFork,
   publishStagedSessionFork,
@@ -3935,17 +3942,18 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       }
 
       if (request.command === "export") {
-        if (argument?.toLocaleLowerCase().endsWith(".jsonl")) {
-          throw requestError(
-            "JSONL export is not available in the browser yet. Use /export in Pi's terminal for a branch-only JSONL file.",
-            409,
-          );
-        }
+        const output = exportArgumentPath(argument);
+        const outputPath = output
+          ? resolveExportPath(output, slot.cwd)
+          : undefined;
+        if (outputPath)
+          await assertExportDestination(outputPath, slot.sessionPath);
+        const format = output?.endsWith(".jsonl") ? "jsonl" : "html";
         const direct = this.readyForDelivery(slot);
         const worker = slot.process;
         const viewId = slot.viewId;
         const incarnationId = slot.incarnationId;
-        const exportHtml = async () => {
+        const exportSession = async () => {
           if (
             direct &&
             (slot.process !== worker ||
@@ -3957,25 +3965,49 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           const ready = direct
             ? slot
             : await this.ensureFreshWriterInsideGate(slot);
+          if (format === "jsonl") {
+            await this.reconcileSlot(slot, false);
+            this.throwIfConflicted(slot);
+            const entries = slot.projection!.entriesAfter(null);
+            const tail = entries.at(-1)?.id;
+            // The verified prefix is already local. Ask Pi only for unpersisted
+            // entries and its effective leaf, not the entire retained session.
+            const branch = await ready.process!.request<{
+              entries: SessionEntry[];
+              leafId: string | null;
+            }>({ type: "get_entries", ...(tail ? { since: tail } : {}) });
+            const content = serializeBranchExport(slot.id, slot.cwd, {
+              entries: [...entries, ...branch.entries],
+              leafId: branch.leafId,
+            });
+            await assertExportDestination(outputPath!, slot.sessionPath);
+            await writeBranchExport(outputPath!, content);
+            return { path: outputPath! };
+          }
           return ready.process!.request<{ path?: unknown }>(
             {
               type: "export_html",
-              ...(argument ? { outputPath: argument } : {}),
+              ...(outputPath ? { outputPath } : {}),
             },
             null,
           );
         };
         const result = await (direct
-          ? this.deliverySlot(slot, exportHtml)
-          : this.mutateSlot(slot, exportHtml));
+          ? this.deliverySlot(slot, exportSession)
+          : this.mutateSlot(slot, exportSession));
         if (!result || typeof result.path !== "string" || !result.path) {
           throw new Error("Pi did not report the exported file path");
         }
+        const exportedPath = resolveExportPath(result.path, slot.cwd);
         return {
           command: "export",
           outcome: "completed",
-          message: "Session exported to HTML.",
-          details: [{ label: "File", value: result.path }],
+          message:
+            format === "jsonl"
+              ? "Current branch exported to Pi JSONL."
+              : "Session tree exported to HTML.",
+          details: [{ label: "File", value: exportedPath }],
+          export: { path: exportedPath, format },
         };
       }
 

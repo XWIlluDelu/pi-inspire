@@ -6,6 +6,7 @@ import {
   decodeTerminalServerDataFrame,
 } from "../../shared/terminal-contracts";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
+import { openCommandPalette } from "./support/navigation";
 
 const token = "inspire-browser-test-token";
 const mockWorkspaceName = basename(browserWorkspace);
@@ -24,6 +25,390 @@ async function openMockSession(
   await page.locator(".nav__row-main").filter({ hasText: title }).click();
   await expect(page.locator(".topbar__title-button")).toHaveText(title);
 }
+
+for (const narrow of [false, true]) {
+  test(`session search keyboard selection preserves drafts and navigation on ${narrow ? "narrow" : "desktop"}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(
+      narrow ? { width: 390, height: 844 } : { width: 1280, height: 900 },
+    );
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await pairedPage(page);
+    if (narrow)
+      await page
+        .getByRole("button", { name: "Toggle navigation", exact: true })
+        .click();
+    await openMockSession(page, /Review extension event lifecycle/);
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await input.fill("SESSION_SEARCH_ACTIVE_DRAFT");
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "search-draft.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("retain draft artifact"),
+    });
+    await expect(page.locator(".attachment--ready")).toBeVisible();
+    if (narrow)
+      await page
+        .getByRole("button", { name: "Toggle navigation", exact: true })
+        .click();
+    await page
+      .getByRole("button", { name: "New session", exact: true })
+      .click();
+    const first = page.getByRole("textbox", { name: "First message" });
+    await first.fill("SESSION_SEARCH_START_DRAFT");
+    const response = await page.request.get(
+      "/api/sessions?q=&offset=0&limit=40",
+    );
+    const catalog = (await response.json()).sessions as Array<{ id: string }>;
+    const find = (id: string) => catalog.find((session) => session.id === id)!;
+    // UI-only catalog pages: deliberately no title contains the query. Native content
+    // matching is checked with real isolated Pi JSONL in session-catalog.test.ts.
+    await page.route("**/api/sessions?**", async (route) => {
+      const params = new URL(route.request().url()).searchParams;
+      if (params.get("q") !== "bodyneedle") return route.continue();
+      const offset = Number(params.get("offset") ?? 0);
+      await route.fulfill({
+        json: {
+          sessions:
+            offset === 0
+              ? [find("mock-active"), find("mock-history")]
+              : [find("mock-errors")],
+          total: 3,
+          offset,
+          limit: 2,
+        },
+      });
+    });
+    const findSession = async () => {
+      const palette = await openCommandPalette(page);
+      await palette.getByLabel("Filter commands").fill("/resume");
+      await palette.getByRole("option", { name: /Find a session/ }).click();
+      const search = page.getByRole("searchbox", { name: "Search sessions" });
+      await expect(search).toBeFocused();
+      return search;
+    };
+    let search = await findSession();
+    await search.fill("bodyneedle");
+    await expect(page.locator(".nav__row-name")).toHaveCount(2);
+    await expect(first).toHaveValue("SESSION_SEARCH_START_DRAFT");
+    await search.press("ArrowDown");
+    const highlighted = page.locator(".nav__row--highlighted .nav__row-name");
+    await expect(highlighted).toHaveText("Review extension event lifecycle");
+    await expect(search).toBeFocused();
+    await page
+      .getByRole("button", { name: "Load older sessions", exact: true })
+      .click();
+    await expect(page.locator(".nav__row-name")).toHaveCount(3);
+    await search.focus();
+    await expect(highlighted).toHaveText("Review extension event lifecycle");
+    await expect(
+      page.getByRole("button", { name: "Load older sessions", exact: true }),
+    ).toHaveCount(0);
+    const a11y = await new AxeBuilder({ page }).include(".nav").analyze();
+    expect(a11y.violations).toEqual([]);
+    await page.screenshot({
+      path: `output/playwright/session-search-${narrow ? "narrow" : "desktop"}.png`,
+      animations: "disabled",
+    });
+    await search.press("Enter");
+    await expect(input).toHaveValue("SESSION_SEARCH_ACTIVE_DRAFT");
+    await expect(page.locator(".attachment")).toContainText("search-draft.txt");
+    if (narrow)
+      await expect(
+        page.getByRole("dialog", { name: "Sessions", exact: true }),
+      ).toHaveCount(0);
+    search = await findSession();
+    await search.fill("");
+    await search.fill("bodyneedle");
+    await expect(page.locator(".nav__row-name")).toHaveCount(2);
+    await search.press("ArrowUp");
+    await expect(highlighted).toHaveText(
+      "Formula rendering and spectral analysis",
+    );
+    await search.dispatchEvent("compositionstart");
+    await search.dispatchEvent("keydown", {
+      key: "Enter",
+      isComposing: true,
+      bubbles: true,
+    });
+    await search.dispatchEvent("keydown", {
+      key: "Escape",
+      isComposing: true,
+      bubbles: true,
+    });
+    await expect(search).toHaveValue("bodyneedle");
+    await expect(page.locator(".topbar__title-button")).toHaveText(
+      "Review extension event lifecycle",
+    );
+    await search.dispatchEvent("compositionend");
+    await search.press("Enter");
+    await expect(page.locator(".topbar__title-button")).toHaveText(
+      "Formula rendering and spectral analysis",
+    );
+    await expect(input).toHaveValue("");
+    if (narrow)
+      await page
+        .getByRole("button", { name: "Toggle navigation", exact: true })
+        .click();
+    const curate = async (action: string) => {
+      const button = page.getByRole("button", {
+        name: `${action} "Review extension event lifecycle"`,
+        exact: true,
+      });
+      await page.locator(".nav__row").filter({ has: button }).hover();
+      await button.click();
+    };
+    await curate("Hide");
+    await expect(page.locator(".nav__group--hidden")).toContainText(
+      "Review extension event lifecycle",
+    );
+    await curate("Restore");
+    await expect(page.locator(".nav__group--hidden")).toHaveCount(0);
+    await curate("Pin");
+    await expect(page.locator(".nav__group--pinned")).toContainText(
+      "Review extension event lifecycle",
+    );
+    await curate("Unpin");
+    await search.fill("");
+    await page
+      .getByRole("button", { name: "New session", exact: true })
+      .click();
+    await expect(first).toHaveValue("SESSION_SEARCH_START_DRAFT");
+  });
+}
+
+test("composer text drafts survive reload and stay partitioned through switching, history, sending and clearing", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  const draft = "UNSENT_REFRESH_SAFE\n保留 exact draft";
+  await input.fill(draft);
+  await page.reload();
+  await expect(input).toHaveValue(draft);
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+  await expect(input).toHaveValue("");
+  await input.fill("other session draft");
+  await openMockSession(page, /Review extension event lifecycle/);
+  await expect(input).toHaveValue(draft);
+  // Merely browsing history must not overwrite the saved pre-browse draft.
+  await input.evaluate((element: HTMLTextAreaElement) =>
+    element.setSelectionRange(0, 0),
+  );
+  await input.press("ArrowUp");
+  await expect(input).not.toHaveValue(draft);
+  await page.reload();
+  await expect(input).toHaveValue(draft);
+  await input.fill("send and do not resurrect");
+  const accepted = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/prompt") && response.status() === 202,
+  );
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await accepted;
+  await expect(input).toHaveValue("");
+  await page.reload();
+  await expect(input).toHaveValue("");
+  await input.fill("explicitly removed");
+  await input.fill("");
+  await page.reload();
+  await expect(input).toHaveValue("");
+  await page.getByRole("button", { name: "New session", exact: true }).click();
+  const first = page.getByRole("textbox", { name: "First message" });
+  await first.fill("separate start-surface draft");
+  await page.reload();
+  await expect(first).toHaveValue("separate start-surface draft");
+  await first.fill("");
+});
+
+test("composer expansion follows real wrapping and preserves the same editor, artifacts and completion", async ({
+  page,
+  browser,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  const expand = page.getByRole("button", {
+    name: "Expand editor",
+    exact: true,
+  });
+  const collapse = page.getByRole("button", {
+    name: "Collapse editor",
+    exact: true,
+  });
+  await input.fill("short input");
+  await expect(expand).toHaveCount(0);
+  const padding = await input.evaluate((element) => ({
+    left: getComputedStyle(element).paddingLeft,
+    right: getComputedStyle(element).paddingRight,
+  }));
+  expect(padding.right).toBe(padding.left);
+  const wrapped = "wrapped layout text ".repeat(55);
+  await input.fill(wrapped);
+  await expect(expand).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(expand).toBeVisible();
+  await expect
+    .poll(() =>
+      input.evaluate(
+        (element) => element.scrollHeight > element.clientHeight + 1,
+      ),
+    )
+    .toBe(true);
+  expect(
+    await input.evaluate((element) =>
+      Number.parseFloat(getComputedStyle(element).paddingRight),
+    ),
+  ).toBeGreaterThan(Number.parseFloat(padding.right));
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await expect(expand).toHaveCount(0);
+  await page.locator(".composer__file-input").setInputFiles({
+    name: "expanded.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("attachment retained"),
+  });
+  await expect(page.getByText("expanded.txt", { exact: true })).toBeVisible();
+  const long = Array.from(
+    { length: 60 },
+    (_, index) =>
+      `Long-form editing line ${index}: preserve the same input and selection.`,
+  ).join("\n");
+  await input.fill(long);
+  await expect(expand).toBeVisible();
+  const compactHeight = await input.evaluate((element) => element.clientHeight);
+  await input.evaluate((element: HTMLTextAreaElement) => {
+    element.dataset.sameEditor = "yes";
+    element.focus();
+    element.setSelectionRange(4, 17, "backward");
+  });
+  await expand.click();
+  await expect(collapse).toBeVisible();
+  await expect(input).toBeFocused();
+  expect(
+    await input.evaluate((element: HTMLTextAreaElement) => [
+      element.dataset.sameEditor,
+      element.selectionStart,
+      element.selectionEnd,
+      element.selectionDirection,
+    ]),
+  ).toEqual(["yes", 4, 17, "backward"]);
+  expect(
+    await input.evaluate((element) => element.clientHeight),
+  ).toBeGreaterThan(compactHeight + 100);
+  await expect(input).toHaveValue(long);
+  await expect(page.getByText("expanded.txt", { exact: true })).toBeVisible();
+  await collapse.focus();
+  await collapse.press("Enter");
+  await expect(input).toBeFocused();
+  await expect(expand).toBeVisible();
+  await expand.click();
+  await input.fill("@TerminalSettingsDialog");
+  const option = page.getByRole("option", {
+    name: "TerminalSettingsDialog.tsx src/components/TerminalSettingsDialog.tsx",
+    exact: true,
+  });
+  await expect(option).toBeVisible();
+  await input.press("Tab");
+  await expect(input).toHaveValue(
+    '@"src/components/TerminalSettingsDialog.tsx" ',
+  );
+  await expect(collapse).toBeVisible();
+  await input.fill("/model");
+  await expect(
+    page.getByRole("listbox", { name: "Slash command completions" }),
+  ).toBeVisible();
+  await input.press("Escape");
+  await expect(
+    page.getByRole("listbox", { name: "Slash command completions" }),
+  ).toHaveCount(0);
+  await expect(collapse).toBeVisible();
+  await input.fill("short again");
+  await expect(collapse).toBeVisible();
+  await collapse.click();
+  await expect(expand).toHaveCount(0);
+  await expect(collapse).toHaveCount(0);
+  await expect(input).toHaveValue("short again");
+  await expect(page.getByText("expanded.txt", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "New session", exact: true }).click();
+  const first = page.getByRole("textbox", { name: "First message" });
+  await expect(expand).toHaveCount(0);
+  await first.fill(long);
+  await expect(expand).toBeVisible();
+  const firstCompact = await first.evaluate((element) => element.clientHeight);
+  await expand.click();
+  expect(
+    await first.evaluate((element) => element.clientHeight),
+  ).toBeGreaterThan(firstCompact);
+  await first.fill("short first message");
+  await expect(collapse).toBeVisible();
+  await collapse.click();
+  await expect(expand).toHaveCount(0);
+  await first.fill("");
+
+  const touchContext = await browser.newContext({
+    baseURL: new URL(page.url()).origin,
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  try {
+    const touch = await touchContext.newPage();
+    await pairedPage(touch);
+    await touch.getByRole("button", { name: "Toggle navigation" }).click();
+    await openMockSession(touch, /Formula rendering and spectral analysis/);
+    const touchInput = touch.getByRole("textbox", {
+      name: "Message",
+      exact: true,
+    });
+    await touchInput.fill("short touch input");
+    expect(
+      await touchInput.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return style.paddingLeft === style.paddingRight;
+      }),
+    ).toBe(true);
+    await touchInput.fill(long);
+    const touchExpand = touch.getByRole("button", {
+      name: "Expand editor",
+      exact: true,
+    });
+    await expect(touchExpand).toBeVisible();
+    const bounds = await touchExpand.boundingBox();
+    expect(bounds!.width).toBeGreaterThanOrEqual(44);
+    expect(bounds!.height).toBeGreaterThanOrEqual(44);
+    expect(
+      await touchInput.evaluate(
+        (element) => getComputedStyle(element).paddingRight,
+      ),
+    ).toBe("48px");
+    await touchExpand.tap();
+    await expect(
+      touch.getByRole("button", { name: "Collapse editor", exact: true }),
+    ).toBeVisible();
+    await expect(touchInput).toBeFocused();
+    await touchInput.fill("touch multiline");
+    await touchInput.press("Enter");
+    await expect(touchInput).toHaveValue("touch multiline\n");
+    await touch
+      .getByRole("button", { name: "Collapse editor", exact: true })
+      .tap();
+    await expect(
+      touch.getByRole("button", { name: "Expand editor", exact: true }),
+    ).toHaveCount(0);
+    expect(
+      await touchInput.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return style.paddingLeft === style.paddingRight;
+      }),
+    ).toBe(true);
+  } finally {
+    await touchContext.close();
+  }
+});
 
 test("Settings activity menus remain clickable beyond their card and persist the choice", async ({
   page,
@@ -181,7 +566,8 @@ test("project terminals survive browser detach and keep multiple tabs", async ({
   ).toBeVisible();
   await focusedPage.keyboard.press("Control+k");
   await focusedPage
-    .getByPlaceholder("Type a command or search…")
+    .getByRole("dialog", { name: "Command palette" })
+    .getByLabel("Filter commands")
     .fill("take control");
   await focusedPage
     .getByRole("option", { name: /Take control of terminal/ })

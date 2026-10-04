@@ -515,7 +515,6 @@ export const Welcome = memo(function Welcome({
           searchProjectFiles={
             effectiveDirectory ? searchProjectFiles : undefined
           }
-          onPickProjectFile={addProjectFile}
           rows={3}
           maxHeightRatio={0.45}
           placeholder="What do you want to work on?"

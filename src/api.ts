@@ -35,6 +35,8 @@ import type {
   ResourceDescriptor,
   ResourceProbeResponse,
   SessionDeleteResponse,
+  SessionExportRequest,
+  SessionExportResponse,
   SessionListResponse,
   ThinkingLevel,
   TranscriptActivityPage,
@@ -894,6 +896,36 @@ export function createApi(token: string | null = null) {
         body,
         { signal },
         { timeoutMs: null },
+      ),
+    piChangelog: () =>
+      request<{ version: string; markdown: string }>(
+        token,
+        "/api/pi/changelog",
+      ),
+    exportSession: (body: SessionExportRequest) =>
+      post<SessionExportResponse>(
+        token,
+        "/api/sessions/export",
+        body,
+        undefined,
+        { timeoutMs: null },
+      ),
+    exportDownload: (sessionId: string, id: string) =>
+      observeRequest(
+        undefined,
+        { mutation: false, timeoutMs: LONG_HTTP_OBSERVATION_TIMEOUT_MS },
+        async (signal) => {
+          const response = await applicationFetch(
+            `/api/sessions/${encodeURIComponent(sessionId)}/exports/${encodeURIComponent(id)}`,
+            {
+              signal,
+              credentials: "same-origin",
+              headers: authorizationHeader(token),
+            },
+          );
+          await ensureOk(response);
+          return response.blob();
+        },
       ),
     abort: (sessionId: string) =>
       post<PendingRecovery>(

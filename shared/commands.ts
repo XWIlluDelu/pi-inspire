@@ -47,8 +47,8 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "export",
-    description: "Export the current session to HTML",
-    argumentHint: "[output.html]",
+    description: "Export session HTML or current-branch JSONL",
+    argumentHint: "[path.html|path.jsonl]",
     execution: "host",
   },
   {
@@ -86,7 +86,7 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "changelog",
-    description: "Open installed Pi version and update details",
+    description: "Read the installed Pi version's release notes",
     execution: "surface",
   },
   {
@@ -158,6 +158,18 @@ interface CommandInvocation {
   name: string;
   argument: string;
   raw: string;
+}
+
+/** Pi's export path is one token, optionally enclosed in quotes. */
+export function exportArgumentPath(argument?: string): string | undefined {
+  const text = argument?.trim();
+  if (!text) return undefined;
+  if (text[0] === '"' || text[0] === "'") {
+    const end = text.indexOf(text[0], 1);
+    if (end < 0) return undefined;
+    return text.slice(1, end) || undefined;
+  }
+  return text.split(/\s/u)[0] || undefined;
 }
 
 /** Parse one command-shaped line without deciding who owns the command. */

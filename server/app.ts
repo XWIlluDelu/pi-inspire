@@ -36,6 +36,7 @@ import {
 } from "../shared/resource-references.js";
 import { emptyToolPresentationConfiguration } from "../shared/tool-presentation-config.js";
 import type { AttachmentStore } from "./attachments.js";
+import { GeneratedExportStore } from "./generated-exports.js";
 import type { GitInspectionLike } from "./git-inspection.js";
 import { listHostDirectories, listHostRoots } from "./host-dirs.js";
 import type {
@@ -44,6 +45,7 @@ import type {
 } from "./maintenance-restart.js";
 import { modelSwitchThinkingLevel } from "./model-catalog.js";
 import { resolveProjectDirectory } from "./paths.js";
+import { installedPiChangelog } from "./pi-changelog.js";
 import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
 import type { PreferencesStore } from "./preferences.js";
 import {
@@ -644,6 +646,7 @@ export function createInspireServer(deps: AppDependencies): {
   close: () => Promise<void>;
 } {
   const app = express();
+  const generatedExports = new GeneratedExportStore();
   // HTTP production behavior belongs to this application, not NODE_ENV:
   // changing the process environment also changes Pi and every tool it spawns.
   app.set("env", "production");
@@ -1292,11 +1295,80 @@ export function createInspireServer(deps: AppDependencies): {
       .status(202)
       .json(await observePrompt(operationId, operation, response));
   });
-  app.post("/api/control/native-command", async (request, response) => {
+  app.get("/api/pi/changelog", async (_request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json(await installedPiChangelog());
+  });
+  app.post("/api/sessions/export", async (request, response) => {
+    const { sessionId, format } = z
+      .object({
+        sessionId: sessionIdField,
+        format: z.enum(["html", "jsonl"]),
+      })
+      .parse(request.body);
     response.setHeader("Cache-Control", "no-store");
     response.json(
-      await deps.runtime.nativeCommand(nativeCommandSchema.parse(request.body)),
+      await generatedExports.create(sessionId, format, (path) =>
+        deps.runtime.nativeCommand({
+          sessionId,
+          command: "export",
+          argument: `"${path}"`,
+        }),
+      ),
     );
+  });
+  app.get(
+    "/api/sessions/:sessionId/exports/:exportId",
+    async (request, response, next) => {
+      const file = await generatedExports.get(
+        sessionIdField.parse(request.params.sessionId),
+        z.string().uuid().parse(request.params.exportId),
+      );
+      response.download(
+        file.path,
+        file.fileName,
+        {
+          headers: {
+            "Cache-Control": "no-store",
+            "Content-Type": "application/octet-stream",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox",
+          },
+        },
+        (error) => {
+          if (error) next(error);
+        },
+      );
+    },
+  );
+  app.post("/api/control/native-command", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    const command = nativeCommandSchema.parse(request.body);
+    const result = await deps.runtime.nativeCommand(command);
+    if (result.export) {
+      try {
+        Object.assign(
+          result.export,
+          await generatedExports.add(
+            command.sessionId,
+            result.export.path,
+            result.export.format,
+          ),
+        );
+      } catch (error) {
+        result.details = [
+          ...(result.details ?? []),
+          {
+            label: "Download unavailable",
+            value:
+              error instanceof Error
+                ? error.message
+                : "Export again to download",
+          },
+        ];
+      }
+    }
+    response.json(result);
   });
   app.post("/api/control/abort", async (request, response) => {
     const { sessionId } = abortSchema.parse(request.body);
@@ -1805,6 +1877,10 @@ export function createInspireServer(deps: AppDependencies): {
         () => ({ status: "fulfilled" as const }),
         (reason: unknown) => ({ status: "rejected" as const, reason }),
       );
+      const exportResult = await generatedExports.close().then(
+        () => ({ status: "fulfilled" as const }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
       const attachmentResult = await deps.attachments.close().then(
         () => ({ status: "fulfilled" as const }),
         (reason: unknown) => ({ status: "rejected" as const, reason }),
@@ -1818,6 +1894,7 @@ export function createInspireServer(deps: AppDependencies): {
         drainedResult,
         terminalResult,
         resourceResult,
+        exportResult,
         attachmentResult,
         updateResult,
       ]

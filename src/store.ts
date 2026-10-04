@@ -159,6 +159,15 @@ function terminalCommandGuidance(command: string): string {
   }
 }
 
+function downloadExportBlob(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
 export class AppStore {
   private state: AppState = createInitialAppState();
   private listeners = new Set<() => void>();
@@ -1285,6 +1294,56 @@ export class AppStore {
     }
   };
 
+  installedPiChangelog = () =>
+    this.api?.piChangelog() ??
+    Promise.reject(new Error("The Host is unavailable"));
+
+  exportSession = async (
+    sessionId: string,
+    format: "html" | "jsonl",
+  ): Promise<void> => {
+    const api = this.api;
+    const generation = this.transportGeneration;
+    if (!api) throw new Error("The Host is unavailable");
+    try {
+      const exported = await api.exportSession({ sessionId, format });
+      const blob = await api.exportDownload(sessionId, exported.downloadId);
+      if (this.api !== api || this.transportGeneration !== generation)
+        throw new Error("The Host connection changed during export");
+      downloadExportBlob(blob, exported.fileName);
+    } catch (error) {
+      if (this.api === api && error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      throw error;
+    }
+  };
+
+  downloadCommandExport = async (
+    sessionId: string,
+    id: number,
+  ): Promise<void> => {
+    const download = this.state.commandActivities[sessionId]?.find(
+      (activity) => activity.id === id,
+    )?.download;
+    const api = this.api;
+    const generation = this.transportGeneration;
+    if (!download || !api) return;
+    try {
+      const blob = await api.exportDownload(sessionId, download.id);
+      if (this.api !== api || this.transportGeneration !== generation) return;
+      downloadExportBlob(blob, download.fileName);
+    } catch (error) {
+      if (this.api !== api || this.transportGeneration !== generation) return;
+      if (error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      else
+        this.notify(
+          "warning",
+          error instanceof Error ? error.message : "Export download failed",
+        );
+    }
+  };
+
   private launchHostNativeCommand(
     sessionId: string,
     input: string,
@@ -1328,6 +1387,14 @@ export class AppStore {
           status: result.outcome === "cancelled" ? "cancelled" : "success",
           message: result.message,
           details: result.details,
+          ...(result.export?.downloadId && result.export.fileName
+            ? {
+                download: {
+                  id: result.export.downloadId,
+                  fileName: result.export.fileName,
+                },
+              }
+            : {}),
           ...(command === "export" && result.details?.[0]?.value
             ? {
                 action: {
@@ -1440,6 +1507,34 @@ export class AppStore {
     return command ? this.executeNativeCommand(input, command, false) : false;
   };
 
+  sendPreparedCommand = async (
+    input: string,
+    behavior?: "steer" | "followUp",
+  ): Promise<PromptAcceptedResponse | false> => {
+    const invocation = parseCommandInvocation(input);
+    if (!invocation) {
+      this.notify("warning", "Enter a slash command to prepare");
+      return false;
+    }
+    if (parseNativeCommand(input)) return this.runPaletteNativeCommand(input);
+    const command = resolveCommandInventory(this.state.commands).find(
+      (item) => item.name === invocation.name,
+    );
+    if (!command || command.source === "builtin") {
+      this.notify(
+        "warning",
+        "This command is no longer available in the selected session",
+      );
+      return false;
+    }
+    return this.composer.send(
+      `/${invocation.name}${invocation.argument ? ` ${invocation.argument}` : ""}`,
+      command.source === "extension" ? undefined : behavior,
+      undefined,
+      true,
+    );
+  };
+
   private executeNativeCommand(
     input: string,
     command: NonNullable<ReturnType<typeof parseNativeCommand>>,
@@ -1467,28 +1562,6 @@ export class AppStore {
         command.name,
         "error",
         `/${command.name} does not accept arguments.`,
-      );
-      return ACCEPTED_NATIVE_COMMAND;
-    }
-
-    if (
-      command.name === "export" &&
-      command.argument.toLocaleLowerCase().endsWith(".jsonl")
-    ) {
-      this.presentCommandActivity(
-        sessionId,
-        input,
-        command.name,
-        "warning",
-        "Branch-only JSONL export is available in Pi's terminal flow. Browser export currently produces the complete HTML transcript.",
-        {
-          details: [{ label: "Run in Pi", value: input }],
-          action: {
-            kind: "open-terminal",
-            label: "Open terminal & copy command",
-            value: input,
-          },
-        },
       );
       return ACCEPTED_NATIVE_COMMAND;
     }
@@ -1547,7 +1620,7 @@ export class AppStore {
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "changelog") {
-      this.requestNativeCommandUi(sessionId, "updates");
+      this.requestNativeCommandUi(sessionId, "changelog");
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "clone") {
@@ -1789,28 +1862,7 @@ export class AppStore {
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "hotkeys") {
-      this.presentCommandActivity(
-        sessionId,
-        input,
-        command.name,
-        "info",
-        "INSΠRE uses browser-native shortcuts for the Pi workspace.",
-        {
-          details: [
-            { label: "Command palette", value: "Ctrl/⌘ K" },
-            { label: "Navigation", value: "Ctrl/⌘ B" },
-            { label: "Files / History / Terminal", value: "Ctrl/⌘ ." },
-            { label: "Stop active work", value: "Esc" },
-            {
-              label: "Send / newline",
-              value:
-                this.state.prefs.desktopSendKey === "mod-enter"
-                  ? "Ctrl/⌘ Enter / Enter"
-                  : "Enter / Shift+Enter",
-            },
-          ],
-        },
-      );
+      this.requestNativeCommandUi(sessionId, "hotkeys");
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "quit") {

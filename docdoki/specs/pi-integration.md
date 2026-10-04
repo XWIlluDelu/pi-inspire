@@ -4,10 +4,13 @@ covers:
   - server/pi-*.ts
   - server/runtime*.ts
   - server/session-projection.ts
+  - server/pending-image-evidence.ts
+  - server/{session-export,generated-exports,pi-changelog}.ts
+  - tests/server/{session-export.integration,generated-exports}.test.ts
   - server/extensions/**
   - shared/{contracts,commands}.ts
   - src/{api,store,events}.ts
-  - src/components/{AppTopbar,ExtensionDisplays,ExtensionUiDialog}.tsx
+  - src/components/{AppTopbar,ExportDialog,ExtensionDisplays,ExtensionUiDialog}.tsx
   - tests/server/pi-*.test.ts
   - tests/server/runtime*.test.ts
   - tests/web/{app,transcript-inspection}.test.tsx
@@ -75,7 +78,7 @@ Implementation and isolated native evidence: [[follow-model-settings-auth-2026-1
 Pi RPC enumerates extension, prompt, and skill commands but not interactive built-ins.
 `shared/commands.ts` reserves built-in names before resource dispatch, matching Pi's interactive
 client. Namespaced extension commands remain available. Browser commands reuse existing surfaces;
-Host commands perform compaction, HTML export, and resource reload. Terminal-only commands expose
+Host commands perform compaction, native HTML/current-branch JSONL export, and resource reload. Terminal-only commands expose
 copy/open guidance. `/bug` does not upload a report or submit its description as a model prompt.
 The public command inventory is [Pi commands](../../docs/pi-commands.md).
 
@@ -105,6 +108,49 @@ registries nor imports an unrelated Host model list into an active worker. Ordin
 still go through native RPC. [[composer]] specifies cached-first browser ownership and start-surface
 read-only thinking transitions; [[follow-model-selection-2026-10-02]] records verification. Export and reload share writer admission; [[composer]] specifies their
 availability and user feedback.
+
+Graphical Export uses an independent format-and-download dialog shared by the title menu and
+command palette. Its Host endpoint writes a temporary native export, captures the managed download,
+and removes the temporary source on success or failure; it does not leave export files in the project.
+Typed `/export` preserves Pi's native path-token parsing, HTML default and whole-tree content. A `.jsonl`
+destination serializes the worker's current branch ancestry without opening or switching a
+SessionManager, retaining original entry identities, content, embedded images, and extension
+metadata with a native session header and linear parents. It reuses the verified local entry prefix
+and asks Pi only for entries after that prefix plus the effective leaf, avoiding whole-history RPC
+transport. Unmaterialized sessions retain their worker-owned native entries. The canonical source, including its
+symlink/hardlink aliases, is not an export destination. Authenticated session-owned opaque download
+IDs expose only privately retained copies of generated exports; they never resolve caller-provided
+Host paths. Changing the output file cannot retarget a download. Copies expire after 24 hours, retain
+at most 16 recent downloads per Host, and are removed on normal shutdown; receipts do not promise
+survival across Host restart. A transient private-directory creation failure releases that failed
+allocation for retry without acquiring a source handle; source copying and cleanup share one owned
+handle lifetime.
+
+`/changelog` reads the installed package's matching version section, not a dependency fallback or
+remote latest-release feed. Public extension command enumeration has no argument-completion hooks;
+Inspire does not infer callbacks or patch Pi internals to manufacture them. [[composer]] owns native
+argument assistance and explicit resource preparation. Evidence: [[follow-command-ux-2026-10-02]].
+
+## Direct shell execution
+
+`!` and `!!` use the selected worker's native `bash` RPC with `excludeFromContext`, preserving Pi's
+cwd, `user_bash` hooks, extension-provided results/custom Bash operations, and native execution
+policy. No model tool, prompt, extension rewrite, or second shell runner implements this path.
+Id-tagged `bash_execution_update` deltas belong only to their matching request; the live preview is
+bounded, while the final native result preserves exit status, cancellation, truncation, and any
+full-output path.
+
+Pi owns the durable `BashExecutionMessage` and context inclusion. Results produced during agent
+streaming may remain live until Pi flushes them at `agent_end`; the Host reconciles live and durable
+ownership without duplicate presentation or replacing Pi's timestamps. Excluded results remain
+visible in the branch and input history after reopening.
+
+Shell activity is separate from model/compaction state. Shell-only Stop calls `abort_bash` without
+recovering/dequeuing Pending or aborting the agent. Model/compaction Stop retains first ownership
+when both run. An extension hook may block before Pi installs its Bash abort controller; dialogs
+remain answerable, and explicit Stop retires only the owning worker if native cancellation cannot
+finish. An unacknowledged retired request reports unknown acceptance rather than inviting an
+automatic retry. Evidence: [[follow-shell-input-2026-10-02]].
 
 ## RPC transport and observations
 

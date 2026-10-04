@@ -22,10 +22,12 @@ import { ApiError, pairHost } from "./api";
 import { ActivityBar } from "./components/ActivityBar";
 import { AppTopbar } from "./components/AppTopbar";
 import { CommandActivity } from "./components/CommandActivity";
+import { CommandHelp } from "./components/CommandHelp";
 import { CommandPalette } from "./components/CommandPalette";
 import { Composer } from "./components/Composer";
 import { ContextPaneState } from "./components/ContextPaneState";
 import { CopyAction } from "./components/CopyAction";
+import { ExportDialog } from "./components/ExportDialog";
 import { ExtensionDisplayDock } from "./components/ExtensionDisplays";
 import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
 import { Nav } from "./components/Nav";
@@ -679,7 +681,22 @@ export function App() {
   const navSearchRef = useRef<HTMLInputElement>(null);
   const narrowViewport = useMediaQuery("(max-width: 900px)");
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [exportSessionId, setExportSessionId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [commandHelp, setCommandHelp] = useState<
+    "hotkeys" | "changelog" | null
+  >(null);
+  const openCommandHelp = useCallback((mode: "hotkeys" | "changelog") => {
+    setPaletteOpen(false);
+    setSettingsOpen(false);
+    setCommandHelp(mode);
+  }, []);
+  const closeCommandHelp = useCallback(() => setCommandHelp(null), []);
+  const openPaletteSettings = useCallback(() => {
+    setPaletteOpen(false);
+    setSettingsCategory("behavior");
+    setSettingsOpen(true);
+  }, []);
   const [settingsCategory, setSettingsCategory] =
     useState<SettingsCategoryId>("display");
   const [modelDestination, setModelDestination] =
@@ -719,6 +736,7 @@ export function App() {
 
   useEffect(() => {
     if (state.sessionId) setWelcomeInheritance(null);
+    setExportSessionId(null);
   }, [state.sessionId]);
 
   const closeMobileNavigation = useCallback(() => {
@@ -732,6 +750,7 @@ export function App() {
   const openSessionSearch = useCallback(() => {
     setPaletteOpen(false);
     setSettingsOpen(false);
+    setCommandHelp(null);
     if (narrowViewport) {
       store.setResourcesOpen(false);
       setMobileNavOpen(true);
@@ -768,13 +787,12 @@ export function App() {
       setMobileNavOpen(false);
   }, [mobileNavOpen, narrowViewport, state.resourcesOpen]);
 
-  // An extension dialog is an attributed operation boundary, not background
-  // chrome. It supersedes the two app-level overlays instead of competing for
-  // focus or Escape ownership.
+  // Native dialogs temporarily own focus. Keep the palette mounted but inactive
+  // so unsubmitted preparation (and a pending rejection) retains its own draft.
   useEffect(() => {
     if (!extensionOverlayOpen) return;
-    setPaletteOpen(false);
     setSettingsOpen(false);
+    setCommandHelp(null);
   }, [extensionOverlayOpen]);
 
   const showCommandPalette = useCallback(() => {
@@ -786,6 +804,17 @@ export function App() {
     if (extensionOverlayOpen || hasActiveModal()) return;
     showCommandPalette();
   }, [extensionOverlayOpen, showCommandPalette]);
+  const openExport = useCallback(() => {
+    const sessionId = store.getState().sessionId;
+    setPaletteOpen(false);
+    // Let the invoking menu/palette restore focus before taking modal ownership.
+    requestAnimationFrame(() => {
+      if (store.getState().sessionId === sessionId)
+        setExportSessionId(sessionId);
+    });
+  }, []);
+  const closeExport = useCallback(() => setExportSessionId(null), []);
+
   const toggleSettings = useCallback(() => {
     if (settingsOpen) {
       setSettingsOpen(false);
@@ -830,6 +859,8 @@ export function App() {
       setPaletteOpen(false);
       setSettingsCategory("updates");
       setSettingsOpen(true);
+    } else if (request.action === "hotkeys" || request.action === "changelog") {
+      openCommandHelp(request.action);
     } else if (request.action === "sessions") {
       openSessionSearch();
     } else if (request.action === "new") {
@@ -839,6 +870,7 @@ export function App() {
   }, [
     extensionOverlayOpen,
     newSession,
+    openCommandHelp,
     openSessionSearch,
     state.nativeCommandUiRequest,
   ]);
@@ -1049,6 +1081,7 @@ export function App() {
           settingsOpen={settingsOpen}
           onToggleNavigation={toggleNavigation}
           onOpenCommandPalette={openCommandPalette}
+          onExportSession={openExport}
           onToggleSettings={toggleSettings}
           onToggleResources={toggleResources}
         />
@@ -1137,14 +1170,33 @@ export function App() {
           {resourcesContent}
         </>
       ) : null}
-      {paletteOpen && !extensionOverlayOpen ? (
+      {exportSessionId && exportSessionId === state.sessionId ? (
+        <ExportDialog
+          key={exportSessionId}
+          sessionId={exportSessionId}
+          active={!extensionOverlayOpen}
+          onClose={closeExport}
+        />
+      ) : null}
+      {paletteOpen ? (
         <CommandPalette
+          onExportSession={openExport}
+          active={!extensionOverlayOpen}
           onClose={closeCommandPalette}
           onToggleNav={toggleNavigation}
           onToggleCtx={toggleResources}
           onNewSession={newSession}
           onOpenSession={openSession}
           onFindSession={openSessionSearch}
+          onOpenSettings={openPaletteSettings}
+          onOpenHelp={openCommandHelp}
+        />
+      ) : null}
+      {commandHelp && !extensionOverlayOpen ? (
+        <CommandHelp
+          key={commandHelp}
+          mode={commandHelp}
+          onClose={closeCommandHelp}
         />
       ) : null}
       <ExtensionUiDialog />

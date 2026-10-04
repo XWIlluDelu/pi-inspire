@@ -4,7 +4,7 @@ covers:
   - src/App.tsx
   - src/store.ts
   - src/controllers/{git,workspace}-controller.ts
-  - src/components/{AppTopbar,ContextPane,ContextSplitBody,FilesPane,ChangesPane,WorkspaceBrowser,BranchTree,PaneResizeHandle}.tsx
+  - src/components/{AppTopbar,SessionActionsMenu,ExtensionDisplays,ContextPane,ContextSplitBody,FilesPane,ChangesPane,WorkspaceBrowser,BranchTree,PaneResizeHandle}.tsx
   - src/{git-presentation,use-modal-focus}.ts
   - src/styles/*.css
   - tests/web/{app,workspace-controller,pane-resize,branch-tree,modal-focus}.test.ts*
@@ -76,9 +76,15 @@ independent project shells in [[terminal]].
   with explicit state-owned retry/compaction text in the adjacent activity surface rather than
   command-owned progress copy.
 
-  Actions stay fixed at the right: long status text ellipsizes with its full value available on
-  hover, identity yields first, and the clusters remain separate. Narrow layouts keep the Git change
-  count visible; the full branch identity remains in its tooltip.
+  Session title, project, Git and extension status form one left-aligned cluster with consistent
+  spacing; global controls remain on the right. The title itself opens session actions, without a
+  separate menu button or chevron. Extension text uses the available space at every width, with full statuses
+  available by click, tap or keyboard when truncated. No status takes no space. Secondary project and
+  Git details yield before the title and primary navigation. Narrow layouts retain Settings in the
+  header; detailed Git status remains in Changes. The session menu and rename input share their
+  leading edge and width. Auxiliary header controls yield while editing on narrow bars.
+  Enter, the save control, or moving focus outside the editor saves the name; Escape cancels.
+  Blank and unchanged edits exit without a write. Saving after focus leaves does not take focus back.
   Rename editing is owned by the session whose heading opened it; a switch cancels that editor, the
   submit carries the explicit session id rather than reading a newer visible selection, and a
   rejected rename leaves the current identity intact while emitting a non-blocking warning notice.

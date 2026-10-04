@@ -39,6 +39,8 @@ covers:
   - src/components/Welcome.tsx
   - src/components/DirectoryPicker.tsx
   - src/components/CommandPalette.tsx
+  - src/components/CommandHelp.tsx
+  - src/palette-search.ts
   - src/components/Composer.tsx
   - src/components/ExtensionUiDialog.tsx
   - src/components/ImagePreview.tsx
@@ -94,6 +96,8 @@ covers:
   - tests/web/update-controller.test.ts
   - tests/web/modal-focus.test.tsx
   - tests/web/overlay-and-palette.test.tsx
+  - tests/web/command-ux.test.tsx
+  - tests/browser/command-ux.spec.ts
   - tests/web/theme-init.test.ts
   - tests/web/nav.test.ts
   - tests/web/nav-render.test.tsx
@@ -226,7 +230,7 @@ Give daily Pi work a coherent graphical home that starts focused and can expand 
   navigation and start surfaces without replacing a transcript integrity error.
 
 - The project directory can be typed or chosen through a host-side directory picker: the host
-  process lists its own filesystem (`GET /api/host/dirs`, bearer-token guarded,
+  process lists its own filesystem (`GET /api/host/dirs`, authenticated,
   session-independent), so over SSH forwards or remote deployments the browsed tree is always the
   machine sessions run on, and entry paths arrive joined with the host's own separators. Root
   discovery is host-owned too: POSIX exposes `/`, while Windows exposes every currently readable
@@ -256,28 +260,46 @@ Give daily Pi work a coherent graphical home that starts focused and can expand 
   popovers, and completions — before the new owner paints.
 
 - Visible controls make core operations discoverable while keyboard shortcuts and a command
-  interface accelerate the same operations instead of replacing them. The command palette groups
-  existing Files, Changes, History, Terminal, terminal creation/control, and return-to-latest-branch
-  actions alongside navigation, lifecycle, and preference controls; it does not create a second
-  queue-inspection surface for immutable Pi-owned queued input. Its command filter and session
+  interface accelerate the same operations instead of replacing them. The optional command palette
+  opens from the topbar or Ctrl/Command+K at every width, without a duplicate sidebar entry. It
+  starts with a compact set of useful actions and recent sessions, not the full preference/command
+  inventory. Search reaches existing Files, Changes, History, Terminal, terminal creation/control,
+  return-to-latest-branch, navigation, lifecycle, and preference actions. Exact titles and aliases
+  rank before prefixes and fuzzy matches across categories; descriptions add relevance without
+  overwhelming command-name matches. Aliases share one destination, including built-in navigation
+  names, and terminal-only entries identify their limitation before selection. Session-bound actions
+  require a selected session rather than implying first-message support.
+
+  Find a session and `/resume` focus the existing full Host catalog search in navigation, not the
+  palette's already-loaded session subset. The destination expands desktop navigation or opens its
+  narrow drawer, works from the start surface, and preserves both active and start drafts. Recent
+  session shortcuts remain direct palette actions.
+
+  Existing graphical actions open their own controls. Commands needing prompt review or arguments
+  use the transient preparation boundary in [[composer]], not a second persistent editor or queue.
+  The palette does not create a second queue-inspection surface for immutable Pi-owned queued input.
+  Its command filter and session
   rename value are independent: entering rename pre-fills the current presentation title, Escape
   returns to the original filter, and an unedited Enter never promotes a fallback title into Pi
   metadata. Renames are latest-request-wins per session, and an older completion cannot close a
   subsequently reopened rename editor.
 
-  These action entries invoke existing store facades directly; a registry is warranted only when
+  These actions reuse existing UI owners and narrow store facades; a registry is warranted only when
   distinct visible, keyboard, and palette surfaces begin to duplicate one operation's capability or
   eligibility logic.
 
-## Implementation evidence
+- Keyboard shortcuts open one focus-contained, scrollable browser help dialog. It reflects the
+  chosen desktop send chord, touch-first Return and IME boundaries, completion/history, palette and
+  picker keys, conversation search, and scoped project-terminal shortcuts. `/changelog` opens that
+  help surface in release-note mode, showing the installed Pi version's shipped changelog entry
+  with loading, failure, and retry states. It is not an update/settings destination and performs no
+  network lookup. Markdown follows the existing deferred safe renderer; documentation links are
+  explicitly current upstream links, not arbitrary Host-file navigation.
 
-[[hidden-project-directories]] records the hidden-folder rule, native inspection boundary, API/picker regressions, and platform verification limits.
+## Verification
 
-[[portable-file-lock-races]] records the cross-Host locking boundary used by preference patches, launcher lifecycle, and web-build publication.
-
-`tests/browser/loading-states.spec.ts` holds the actual deferred Settings/Context chunks and History request to verify styled loading, stable desktop/narrow Settings shell and sidebar geometry, decorative-only placeholders, reduced motion, accessibility, dismissal, focus restoration, and failed-import reload recovery. Network fault injection blocks the service worker in that spec only so its cache cannot bypass the test routes. The loading-state repair passed Node 22 `npm run check` and all 29 production-build Chromium checks; desktop-light and narrow-dark screenshots were also inspected. Files/Changes previews and terminal loading already had owned state styles and were left intact.
-
-## Non-goals
-
-- The first release does not need to populate every future workbench surface.
-- The interface does not reproduce a terminal layout or an existing reference application pixel for pixel.
+`tests/browser/loading-states.spec.ts` delays Settings/Context imports and History responses to
+check stable loading geometry, focus, dismissal, reduced motion, and import-failure recovery on
+desktop and narrow layouts. [[performance-evidence]] records the first-open transition repair.
+[[hidden-project-directories]] covers native directory visibility; [[portable-file-lock-races]]
+covers cross-Host preference, launcher, and build locking.

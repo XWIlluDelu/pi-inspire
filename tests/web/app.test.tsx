@@ -31,6 +31,13 @@ let deselectCalls = 0;
 let modelFailureGate: Promise<void> | null = null;
 let renameGate: Promise<void> | null = null;
 
+async function openTitleRename() {
+  fireEvent.click(
+    await screen.findByRole("button", { name: /^Session actions:/ }),
+  );
+  fireEvent.click(screen.getByRole("menuitem", { name: "Rename session" }));
+}
+
 beforeAll(async () => {
   renamedTo = null;
   abortCalls = 0;
@@ -351,11 +358,14 @@ describe("welcome flow", () => {
     }
   });
 
-  it("renames the session through the topbar control", async () => {
+  it("renames from the first title action", async () => {
     render(<App />);
     fireEvent.click(
-      await screen.findByRole("button", { name: "Rename session" }),
+      await screen.findByRole("button", { name: /^Session actions:/ }),
     );
+    const rename = screen.getByRole("menuitem", { name: "Rename session" });
+    expect(rename).toHaveFocus();
+    fireEvent.click(rename);
     const input = screen.getByLabelText("Session name");
     fireEvent.change(input, { target: { value: "Spectral analysis" } });
     fireEvent.click(screen.getByRole("button", { name: "Save session name" }));
@@ -365,22 +375,66 @@ describe("welcome flow", () => {
     expect(renamedTo).toBe("Spectral analysis");
   });
 
+  it("saves a rename when focus leaves the editor, without taking focus back", async () => {
+    const rename = vi.spyOn(store, "renameSession");
+    try {
+      render(<App />);
+      await openTitleRename();
+      const input = screen.getByLabelText("Session name");
+      fireEvent.change(input, { target: { value: "  Focus commit  " } });
+      fireEvent.blur(input, {
+        relatedTarget: screen.getByRole("button", {
+          name: "Save session name",
+        }),
+      });
+      expect(rename).not.toHaveBeenCalled();
+
+      const composer = screen.getByLabelText("Message");
+      act(() => composer.focus());
+      await screen.findByRole("heading", { name: "Focus commit" });
+      expect(rename).toHaveBeenCalledExactlyOnceWith("s1", "Focus commit");
+      expect(composer).toHaveFocus();
+    } finally {
+      rename.mockRestore();
+    }
+  });
+
+  it("leaves the saved name unchanged for untouched, blank, and cancelled edits", async () => {
+    const rename = vi.spyOn(store, "renameSession");
+    try {
+      render(<App />);
+      for (const value of [store.getState().sessionName, "   "]) {
+        await openTitleRename();
+        const input = screen.getByLabelText("Session name");
+        fireEvent.change(input, { target: { value } });
+        fireEvent.blur(input, { relatedTarget: null });
+        expect(screen.queryByLabelText("Session name")).not.toBeInTheDocument();
+      }
+      await openTitleRename();
+      const input = screen.getByLabelText("Session name");
+      fireEvent.change(input, { target: { value: "Cancelled rename" } });
+      fireEvent.keyDown(input, { key: "Escape" });
+      expect(screen.queryByLabelText("Session name")).not.toBeInTheDocument();
+      expect(rename).not.toHaveBeenCalled();
+    } finally {
+      rename.mockRestore();
+    }
+  });
+
   it("does not let an old rename completion close a reopened editor", async () => {
     let releaseRename!: () => void;
     renameGate = new Promise<void>((resolve) => {
       releaseRename = resolve;
     });
     render(<App />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Rename session" }),
-    );
+    await openTitleRename();
     const firstEditor = screen.getByLabelText("Session name");
     fireEvent.change(firstEditor, { target: { value: "Old request" } });
     fireEvent.click(screen.getByRole("button", { name: "Save session name" }));
     await waitFor(() => expect(renamedTo).toBe("Old request"));
 
     fireEvent.keyDown(firstEditor, { key: "Escape" });
-    fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
+    await openTitleRename();
     const reopened = screen.getByLabelText("Session name");
     releaseRename();
     await waitFor(() =>
@@ -394,9 +448,7 @@ describe("welcome flow", () => {
 
   it("cancels a topbar rename editor when the visible session changes", async () => {
     render(<App />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Rename session" }),
-    );
+    await openTitleRename();
     expect(screen.getByLabelText("Session name")).toBeInTheDocument();
 
     act(() => {
@@ -592,15 +644,18 @@ describe("welcome flow", () => {
       name: "Command palette",
     });
     expect(palette).toBeInTheDocument();
-    // Compact is deliberately not an action: users type /compact themselves.
+    // Preparing compaction is explicit, not part of the initial action list.
     expect(
       screen.queryByRole("option", { name: /Compact context/ }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("option", { name: /Theme: Dark/ }),
+      screen.getByRole("option", { name: /Find a session/ }),
     ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Filter commands"), {
+      target: { value: "Theme" },
+    });
     expect(
-      screen.getByRole("option", { name: /Previous work/ }),
+      screen.getByRole("option", { name: /Theme: Dark/ }),
     ).toBeInTheDocument();
     // focus lands in the filter input, so Escape is pressed there
     fireEvent.keyDown(screen.getByLabelText("Filter commands"), {
@@ -1060,19 +1115,29 @@ describe("folder grouping and settings page", () => {
     expect(
       await screen.findByRole("dialog", { name: "Command palette" }),
     ).toBeInTheDocument();
+    const filter = screen.getByLabelText("Filter commands");
+    fireEvent.change(filter, { target: { value: "Activity" } });
     expect(
       screen.getByRole("option", { name: /Activity groups: Adaptive/ }),
     ).toBeInTheDocument();
     expect(
+      screen.queryByRole("option", { name: /Activity folds/ }),
+    ).not.toBeInTheDocument();
+    fireEvent.change(filter, { target: { value: "Assistant" } });
+    expect(
       screen.getByRole("option", { name: /Assistant turn details: On/ }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("option", { name: /Activity folds|Assistant rounds/ }),
+      screen.queryByRole("option", { name: /Assistant rounds/ }),
     ).not.toBeInTheDocument();
+    fireEvent.change(filter, { target: { value: "Theme" } });
     fireEvent.click(screen.getByRole("option", { name: /Theme: Dark/ }));
     expect(store.getState().prefs.theme).toBe("dark");
     expect(themeColor.content).toBe("#14171A");
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    fireEvent.change(await screen.findByLabelText("Filter commands"), {
+      target: { value: "Theme" },
+    });
     fireEvent.click(
       await screen.findByRole("option", { name: /Theme: System/ }),
     );

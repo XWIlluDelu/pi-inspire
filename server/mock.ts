@@ -1,9 +1,10 @@
 import { EventEmitter } from "node:events";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { nativeNavigationLeaf } from "../shared/branch-node-actions.js";
-import { parseNativeCommand } from "../shared/commands.js";
+import { exportArgumentPath, parseNativeCommand } from "../shared/commands.js";
 import type {
   ActiveSnapshot,
   BranchCloneRequest,
@@ -593,6 +594,7 @@ export class MockCatalog implements SessionCatalogLike {
 
 export class MockRuntime extends EventEmitter implements RuntimeLike {
   private readonly streamIntervalMs: number;
+  private exportDirectory: Promise<string> | null = null;
   private state: ActiveSnapshot = {
     active: null,
     runState: "idle",
@@ -1137,22 +1139,35 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       };
     }
     if (request.command === "export") {
-      if (request.argument?.toLocaleLowerCase().endsWith(".jsonl")) {
-        throw requestError(
-          "JSONL export is not available in the browser yet. Use /export in Pi's terminal for a branch-only JSONL file.",
-          409,
-        );
-      }
+      this.exportDirectory ??= mkdtemp(join(tmpdir(), "inspire-mock-exports-"));
+      const argument = exportArgumentPath(request.argument);
+      const format = argument?.endsWith(".jsonl") ? "jsonl" : "html";
+      const path =
+        argument && isAbsolute(argument)
+          ? argument
+          : join(
+              await this.exportDirectory,
+              argument ? basename(argument) : `${request.sessionId}.html`,
+            );
+      const session = this.requireSession(request.sessionId);
+      const messages = session.transcriptPage.messages;
+      const data = JSON.stringify(messages);
+      await writeFile(
+        path,
+        format === "html"
+          ? `<!doctype html><title>Mock Pi session</title><pre>${data.replaceAll("&", "&amp;").replaceAll("<", "&lt;")}</pre>`
+          : `${JSON.stringify({ type: "session", version: 3, id: request.sessionId, cwd: session.cwd, timestamp: new Date().toISOString() })}\n${messages.map((message, index) => JSON.stringify({ type: "message", id: `mock-${index}`, parentId: index ? `mock-${index - 1}` : null, timestamp: new Date().toISOString(), message })).join("\n")}\n`,
+        { mode: 0o600 },
+      );
       return {
         command: "export",
         outcome: "completed",
-        message: "Session exported to HTML.",
-        details: [
-          {
-            label: "File",
-            value: request.argument || `/mock/${request.sessionId}.html`,
-          },
-        ],
+        message:
+          format === "html"
+            ? "Session tree exported to HTML."
+            : "Current branch exported to Pi JSONL.",
+        details: [{ label: "File", value: path }],
+        export: { path, format },
       };
     }
     if (request.argument) {
@@ -1561,5 +1576,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   async close(): Promise<void> {
     for (const timer of this.timers.values()) clearInterval(timer);
     this.timers.clear();
+    if (this.exportDirectory)
+      await rm(await this.exportDirectory, { recursive: true, force: true });
   }
 }

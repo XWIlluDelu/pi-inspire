@@ -8,7 +8,14 @@ import {
   PanelRight,
   Settings as SettingsIcon,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   MAX_SESSION_DISPLAY_TITLE_CHARS,
   type ProjectionConflict,
@@ -21,6 +28,7 @@ import { gitChangeCount, gitHeadLabel } from "../git-presentation";
 import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
 import { ExtensionStatus } from "./ExtensionDisplays";
+import { SessionActionsMenu } from "./SessionActionsMenu";
 
 const GENERIC_SESSION_HEADINGS = new Set(["Untitled session", "New session"]);
 
@@ -146,50 +154,102 @@ function GitSummary({ sessionId }: { sessionId: string }) {
       <GitBranch size={13} className="topbar__git-icon" aria-hidden />
       <span className="topbar__git-branch">{branch}</span>
       {changes > 0 ? (
-        <span className="topbar__git-count">{changeLabel}</span>
+        <span className="topbar__git-count">
+          {changes}
+          <span className="topbar__git-count-word">
+            {changes === 1 ? " change" : " changes"}
+          </span>
+        </span>
       ) : null}
     </button>
   );
 }
 
-const SessionIdent = memo(function SessionIdent({ show }: { show: boolean }) {
-  const { sessionId, sessionName, heading, cwd, project, projectDisplay } =
-    useAppState((state) => {
-      const catalogTitle = state.sessions.find(
-        (session) => session.id === state.sessionId,
-      )?.title;
-      return {
-        sessionId: state.sessionId,
-        sessionName: state.sessionName,
-        heading: sessionHeading(
-          state.sessionName,
-          catalogTitle,
-          state.messages,
-          !state.hasOlderMessages,
-        ),
-        cwd: state.cwd,
-        project: state.cwd ? projectNameFromCwd(state.cwd) : null,
-        projectDisplay: state.prefs.projectDisplay,
-      };
-    }, shallowEqual);
-  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+const SessionIdent = memo(function SessionIdent({
+  show,
+  onExport,
+}: {
+  show: boolean;
+  onExport: () => void;
+}) {
+  const {
+    sessionId,
+    sessionName,
+    heading,
+    cwd,
+    project,
+    projectDisplay,
+    cloneBusy,
+  } = useAppState((state) => {
+    const catalogTitle = state.sessions.find(
+      (session) => session.id === state.sessionId,
+    )?.title;
+    return {
+      sessionId: state.sessionId,
+      sessionName: state.sessionName,
+      heading: sessionHeading(
+        state.sessionName,
+        catalogTitle,
+        state.messages,
+        !state.hasOlderMessages,
+      ),
+      cwd: state.cwd,
+      project: state.cwd ? projectNameFromCwd(state.cwd) : null,
+      projectDisplay: state.prefs.projectDisplay,
+      cloneBusy: state.branchActionId !== null || state.branchTreeLoading,
+    };
+  }, shallowEqual);
+  const [editing, setEditing] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [value, setValue] = useState("");
+  const [renameWidth, setRenameWidth] = useState(200);
+  const titleRef = useRef<HTMLButtonElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const restoreTitleFocus = useRef(false);
   const editIncarnationRef = useRef(0);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
   const closeEditor = useCallback(() => {
+    restoreTitleFocus.current = Boolean(
+      inputRef.current?.form?.contains(document.activeElement),
+    );
     editIncarnationRef.current += 1;
-    setEditingSessionId(null);
+    setEditing(false);
   }, []);
   const { copied, copy } = useCopied();
-  const editing = editingSessionId !== null && editingSessionId === sessionId;
 
-  useEffect(() => {
-    // The editor belongs to the session whose heading opened it. Switching
-    // sessions cancels that local editor before a submit can retarget it.
-    if (editingSessionId !== null && editingSessionId !== sessionId) {
-      closeEditor();
-      setValue("");
+  useLayoutEffect(() => {
+    if (editing) inputRef.current?.select();
+    else if (restoreTitleFocus.current) {
+      restoreTitleFocus.current = false;
+      titleRef.current?.focus({ preventScroll: true });
     }
-  }, [closeEditor, editingSessionId, sessionId]);
+  }, [editing]);
+
+  const saveRename = () => {
+    const name = value.trim();
+    const owner = sessionId;
+    if (
+      !name ||
+      name === sessionName.trim() ||
+      !owner ||
+      store.getState().sessionId !== owner
+    ) {
+      closeEditor();
+      return;
+    }
+    const incarnation = editIncarnationRef.current;
+    void store.renameSession(owner, name).then((ok) => {
+      if (
+        ok &&
+        editIncarnationRef.current === incarnation &&
+        store.getState().sessionId === owner
+      ) {
+        closeEditor();
+      }
+    });
+  };
+
+  if (!show || !sessionId) return null;
 
   if (editing) {
     return (
@@ -197,27 +257,20 @@ const SessionIdent = memo(function SessionIdent({ show }: { show: boolean }) {
         className="topbar__rename"
         onSubmit={(event) => {
           event.preventDefault();
-          const owner = editingSessionId;
-          if (!owner || store.getState().sessionId !== owner) {
-            closeEditor();
-            return;
-          }
-          const incarnation = editIncarnationRef.current;
-          void store.renameSession(owner, value).then((ok) => {
-            if (
-              ok &&
-              editIncarnationRef.current === incarnation &&
-              editingSessionId === owner &&
-              store.getState().sessionId === owner
-            ) {
-              closeEditor();
-            }
-          });
+          saveRename();
+        }}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) saveRename();
         }}
       >
         <input
+          ref={inputRef}
+          style={{ width: renameWidth }}
           value={value}
-          onChange={(event) => setValue(event.target.value)}
+          onChange={(event) => {
+            editIncarnationRef.current += 1;
+            setValue(event.target.value);
+          }}
           aria-label="Session name"
           autoFocus
           onKeyDown={(event) => {
@@ -239,32 +292,55 @@ const SessionIdent = memo(function SessionIdent({ show }: { show: boolean }) {
     );
   }
 
-  // The rail already carries the product icon. The topbar belongs to the
-  // visible session; the welcome surface needs no duplicate wordmark.
-  if (!show || !sessionId) return null;
-
-  // The heading itself is the rename affordance: an absent Pi name is
-  // presented as the first prompt without turning that prompt into a name.
-  // The project location sits beside it and copies the absolute path.
   return (
     <div className="topbar__ident">
-      <h1 className="topbar__title">
-        <button
-          type="button"
-          className="topbar__title-button"
-          aria-label="Rename session"
-          title={`${heading} — click to rename`}
-          onClick={() => {
-            // The first-prompt heading is presentation only; rename starts
-            // empty unless Pi already owns an explicit session name.
-            setValue(sessionName);
-            editIncarnationRef.current += 1;
-            setEditingSessionId(sessionId);
-          }}
-        >
-          {heading}
-        </button>
-      </h1>
+      <div className="topbar__heading">
+        <h1 className="topbar__title" aria-label={heading}>
+          <button
+            ref={titleRef}
+            type="button"
+            className="topbar__title-button"
+            aria-label={`Session actions: ${heading}`}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            title={heading}
+            onClick={() => setMenuOpen((open) => !open)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown" && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                setMenuOpen(true);
+              }
+            }}
+          >
+            <span>{heading}</span>
+          </button>
+        </h1>
+        {menuOpen ? (
+          <SessionActionsMenu
+            anchorRef={titleRef}
+            cloneDisabled={cloneBusy}
+            onClose={closeMenu}
+            onRename={(width) => {
+              setRenameWidth(width);
+              closeMenu();
+              // The first-prompt heading is a fallback, not Pi's saved name.
+              setValue(sessionName);
+              editIncarnationRef.current += 1;
+              setEditing(true);
+            }}
+            onClone={() => {
+              closeMenu();
+              titleRef.current?.focus({ preventScroll: true });
+              void store.cloneCurrentBranch();
+            }}
+            onExport={() => {
+              closeMenu();
+              titleRef.current?.focus({ preventScroll: true });
+              onExport();
+            }}
+          />
+        ) : null}
+      </div>
       <div className="topbar__workspace-meta">
         {cwd ? (
           <button
@@ -300,6 +376,7 @@ export const AppTopbar = memo(function AppTopbar({
   settingsOpen,
   onToggleNavigation,
   onOpenCommandPalette,
+  onExportSession,
   onToggleSettings,
   onToggleResources,
 }: {
@@ -308,6 +385,7 @@ export const AppTopbar = memo(function AppTopbar({
   settingsOpen: boolean;
   onToggleNavigation: () => void;
   onOpenCommandPalette: () => void;
+  onExportSession: () => void;
   onToggleSettings: () => void;
   onToggleResources: () => void;
 }) {
@@ -334,7 +412,11 @@ export const AppTopbar = memo(function AppTopbar({
       >
         <PanelLeft size={15} aria-hidden />
       </button>
-      <SessionIdent show={Boolean(state.sessionId)} />
+      <SessionIdent
+        key={state.sessionId}
+        show={Boolean(state.sessionId)}
+        onExport={onExportSession}
+      />
       <div className="topbar__status" aria-live="polite">
         <StateChip
           runState={state.runState}
@@ -376,8 +458,8 @@ export const AppTopbar = memo(function AppTopbar({
       <div className="topbar__actions">
         <button
           type="button"
-          className="icon-button"
-          onClick={onOpenCommandPalette}
+          className="icon-button topbar__palette"
+          onClick={() => onOpenCommandPalette()}
           aria-label="Open command palette"
           title="Command palette (Ctrl+K)"
         >

@@ -58,6 +58,7 @@ export interface NativeCommandActivity {
   message: string;
   createdAt?: number;
   details?: Array<{ label: string; value: string }>;
+  download?: { id: string; fileName: string };
   action?:
     | { kind: "open-terminal"; label: string; value?: string }
     | { kind: "copy"; label: string; value: string };
@@ -74,6 +75,7 @@ export interface NativeCommandUiRequest {
     | "updates"
     | "sessions"
     | "new"
+    | "hotkeys"
     | "changelog";
   query?: string;
   modelSettingsFocus?: "credentials" | "common";

@@ -13,7 +13,7 @@ import type { ComposerHistoryEntry } from "../../shared/contracts";
 import { clipboardFiles } from "../../src/clipboard-files";
 import { ActivityBar } from "../../src/components/ActivityBar";
 import { Composer } from "../../src/components/Composer";
-import { deleteSessionDraft } from "../../src/session-drafts";
+import { deleteSessionDraft, sessionDraft } from "../../src/session-drafts";
 import { store } from "../../src/store";
 import {
   activeSnapshot,
@@ -989,7 +989,7 @@ describe("composer meta row", () => {
 });
 
 describe("caret completion", () => {
-  it("selects an @ file at the caret, preserves surrounding text, and deduplicates the canonical chip", async () => {
+  it("keeps selected @ files inline without creating or deduplicating chips", async () => {
     clearLeftovers();
     render(<Composer />);
     const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
@@ -1017,18 +1017,60 @@ describe("caret completion", () => {
       screen.getByRole("option", { name: /index\.ts/ }),
     ).toBeInTheDocument();
     fireEvent.keyDown(textarea, { key: "Enter" });
-    expect(textarea).toHaveValue("before  after");
-    await waitFor(() => expect(textarea.selectionStart).toBe(7));
-    expect(screen.getAllByLabelText("Remove src/index.ts")).toHaveLength(1);
+    expect(textarea).toHaveValue('before @"src/index.ts" after');
+    await waitFor(() => expect(textarea.selectionStart).toBe(23));
+    await userEvent.type(textarea, "please ", { skipClick: true });
+    expect(textarea).toHaveValue('before @"src/index.ts" please after');
+    expect(
+      screen.queryByRole("listbox", { name: "Project file completions" }),
+    ).toBeNull();
+    expect(
+      screen.queryByLabelText("Remove src/index.ts"),
+    ).not.toBeInTheDocument();
 
-    typeDraft("@ind");
-    textarea.setSelectionRange(4, 4);
+    typeDraft("before @src/index.ts after @ind");
+    textarea.setSelectionRange(30, 30);
     fireEvent.select(textarea);
     const duplicateOption = await screen.findByRole("option", {
       name: /index\.ts/,
     });
     fireEvent.click(duplicateOption);
-    expect(screen.getAllByLabelText("Remove src/index.ts")).toHaveLength(1);
+    expect(textarea).toHaveValue('before @src/index.ts after @"src/index.ts" ');
+    expect(
+      screen.queryByLabelText("Remove src/index.ts"),
+    ).not.toBeInTheDocument();
+    clearLeftovers();
+  });
+
+  it("reconstructs selected file references in a remounted composer and allows editing in place", async () => {
+    clearLeftovers();
+    const first = render(<Composer />);
+    const original = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    original.focus();
+    typeDraft("Compare @ind");
+    const option = await screen.findByRole("option", { name: /index\.ts/ });
+    fireEvent.click(option);
+    expect(original).toHaveValue('Compare @"src/index.ts" ');
+    await waitFor(() => expect(sessionDraft("s1")).toBe(original.value));
+    first.unmount();
+    // Replace the synthetic editor nonce left by clearLeftovers with the
+    // saved draft, just as a fresh page has no stale editor delivery.
+    act(() => store.replaceComposerText(sessionDraft("s1")));
+    render(<Composer />);
+    const restored = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    restored.focus();
+    expect(restored).toHaveValue('Compare @"src/index.ts" ');
+    restored.setSelectionRange(restored.value.length, restored.value.length);
+    await userEvent.type(restored, "with something else", { skipClick: true });
+    expect(
+      screen.queryByRole("listbox", { name: "Project file completions" }),
+    ).toBeNull();
+    const caret = restored.value.indexOf("index");
+    restored.setSelectionRange(caret, caret);
+    fireEvent.select(restored);
+    await screen.findByRole("option", { name: /index\.ts/ });
+    fireEvent.keyDown(restored, { key: "Enter" });
+    expect(restored).toHaveValue('Compare @"src/index.ts" with something else');
     clearLeftovers();
   });
 
@@ -1301,6 +1343,14 @@ describe("caret completion", () => {
     expect(
       screen.queryByRole("listbox", { name: "Slash command completions" }),
     ).not.toBeInTheDocument();
+    // Native browsers may report selection after an unchanged layout/focus update.
+    fireEvent.select(textarea);
+    expect(
+      screen.queryByRole("listbox", { name: "Slash command completions" }),
+    ).not.toBeInTheDocument();
+    textarea.setSelectionRange(3, 3);
+    fireEvent.select(textarea);
+    await screen.findByRole("listbox", { name: "Slash command completions" });
   });
 });
 

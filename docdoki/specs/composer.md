@@ -158,18 +158,23 @@ Cover the input modes needed to replace the primary terminal conversation loop.
 - Project files can be found through bounded filesystem search, either in the explicit picker or from the
   textarea’s active caret token. An established composer addresses the immutable workspace owned by
   its session; the start surface uses the typed path (or inherited current path) as a read-only
-  prospective workspace and binds selected results to its canonical root. Changing that path clears
-  staged references, and creation uses the bound canonical root so a symlink retarget cannot
-  reinterpret a selected relative file.
+  prospective workspace. Explicit picker selections bind to its canonical root: changing the path
+  clears those chips, and creation uses the bound root. Inline selections on the start surface use
+  absolute canonical-workspace paths so changing the directory cannot reinterpret them.
 
   Picker and `@` search expose a default-off Show hidden files control covering dot names and native hidden attributes, not Git ignore rules. Both established and prospective-workspace searches report incomplete scans; Git failure never blocks them.
 
-  Neither search path authorizes prompt access: the prompt boundary revalidates every staged path
-  as a regular file contained by the created session’s current canonical workspace, independently of
-  search results, hidden visibility, tracking or ignore rules. Selected canonical targets are checked
-  again before delivery; a symlink retarget cannot reinterpret a selected reference. `@` completion never treats other mentions as file authority:
-  choosing a returned canonical path removes only the active token, preserves the surrounding draft
-  and caret, and stages one deduplicated removable file-reference chip.
+  The explicit picker stages deduplicated removable chips. The prompt boundary revalidates their
+  canonical regular-file targets against the current workspace, independently of search results,
+  hidden visibility, tracking, and ignore rules, including a second check before delivery.
+
+  `@` completion replaces only the active token with an inline path, preserving its sentence
+  position, other references, and repeated references. Selected references remain committed while the
+  user continues prose, including after restoring a text draft; editing the reference itself reopens
+  its search. Unfinished and quoted path
+  queries can still contain spaces. Paths with spaces are quoted. It does not
+  create chips or append a separate reference trailer. The entered text goes to Pi unchanged;
+  completion is text insertion, not filesystem authority or automatic file-content injection.
 
 - Leading `/` completion is offered only while the caret remains inside the command token Pi would
   parse. Once the user types a query, Pi TUI’s public `fuzzyFilter` ranks command names globally
@@ -186,7 +191,15 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   Choosing a result inserts the exact command, adds a trailing space only when it accepts an
   argument, and never executes it implicitly.
 
-- Both completion lists expose loading, empty, and failure states, support pointer and
+- Native argument completion begins after the leading command token: `/model` uses Pi-provided
+  provider/model identities and `/thinking` uses the active model's supported levels. Selection
+  replaces only the argument token, preserves surrounding text, and never submits. Free-text
+  native arguments show concise usage hints; extension arguments are not invented from command
+  names or descriptions. Existing inline `@` search remains available in prompt arguments, but
+  export destinations are not suggested from existing project files. The first-message surface
+  keeps its existing native-command limits.
+
+- Completion surfaces expose loading, empty, and failure states, support pointer and
   arrow/Enter/Tab/Escape interaction with combobox/listbox semantics, suppress stale session
   results, and defer to IME composition, multiline input, steering, and follow-up behavior. The
   multiline textbox keeps DOM focus and owns `aria-controls`, `aria-activedescendant`, and
@@ -366,15 +379,37 @@ Cover the input modes needed to replace the primary terminal conversation loop.
 
 - A shared Pi-native registry covers the installed interactive command vocabulary even though Pi RPC
   does not enumerate built-ins. Browser-owned commands open or invoke existing model, thinking,
-  settings, session, branch, copy, naming, new-session, and update surfaces; bounded Host operations
-  own compact, HTML export, and runtime-resource reload; terminal-only commands such as scoped-model
-  configuration, sharing, trust, login/logout, clone, and import return precise persistent-terminal
-  guidance plus a copyable command. Unknown slash commands and `!` shell syntax never silently
-  consume a model turn. Native commands reject attachments and project-file references.
+  settings, session, branch, copy, naming, new-session, and update surfaces. `/scoped-models`, `/login`
+  and `/logout` open the corresponding Models settings controls under [[model-settings]]. Bounded Host
+  operations own compact, native HTML/current-branch JSONL export, and runtime-resource reload.
+  `/clone` opens an independent endpoint-inclusive copy through the same action as the session-title
+  menu and palette, without submitting or consuming the source draft (see [[session-branches]]);
+  terminal-only commands such as sharing, trust, and import return precise persistent-terminal
+  guidance plus a copyable command. Unknown slash commands are rejected rather than consuming a
+  model turn. Typed native commands reject attachments and project-file references. Palette-native
+  actions invoke the same controls without borrowing or rejecting an unfinished message's artifacts.
+  Resource commands use one transient preparation step in the palette, reusing `ComposerInput`:
+  review/edit and explicit submission never replace or consume the message partition. A newly seeded
+  invocation places the initial caret after `/command ` without resetting later selections. Its command
+  text determines current semantics: extension handlers run immediately even during streaming;
+  template/skill prompts expose Steer/Queue only while that queue behavior applies. Failed prepared
+  submissions retain their input in the still-open preparation step, never restore it into the message
+  draft. Extension dialogs temporarily hide and deactivate the palette without discarding preparation;
+  completion belongs to its modal's focus and stacking layer. Escape returns to palette search before
+  dismissing the palette; IME and touch-first input retain the ordinary submission boundaries.
 
-  Host operations acknowledge immediately and run outside prompt confirmation timeouts. An active
+  Graphical Export opens the same standalone format-and-download dialog from the title menu or
+  command palette. It has no command editor and does not read or alter the Composer draft. HTML
+  covers the whole session; JSONL covers the current branch. Failure leaves the chosen format available
+  for retry. Extension questions retain foreground ownership without discarding the export state.
+
+  Typed Host commands acknowledge immediately and run outside prompt confirmation timeouts. An active
   export reads the Pi content available at invocation, not a promised future complete answer; it
-  does not lock subsequent input. Reload and explicitly starting another compact still refuse while
+  does not lock subsequent input. HTML retains Pi's whole-tree content; JSONL retains only current
+  branch ancestry in native entry format, including images and metadata. Export cannot overwrite its
+  canonical source session or switch its worker. A typed `/export` receipt exposes the generated snapshot's
+  authenticated Download action alongside Copy path, never arbitrary Host-file access.
+  Reload and explicitly starting another compact still refuse while
   Pi work is active. Local/read-only commands remain available regardless of prompt delivery phase.
   Command
   receipts describe that browser's request/results, not Pi's current phase. `/compact` retains its
@@ -383,7 +418,7 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   Receipt headings show command and outcome, not local request time; receipt metadata retains
   `createdAt` without redundant header timestamps. A successful compact receipt is retired when
   subsequent agent work or compaction begins in that session, while its durable checkpoint remains
-  in history. Export and reload retain their named operation receipts. Successful `/copy`, `/name`
+  in history. Typed `/export` and `/reload` retain their named operation receipts. Successful `/copy`, `/name`
   with a new name, `/model` with an exact match, and `/thinking` with a valid level give a brief
   confirmation instead of occupying the receipt dock after settlement; failures retain the
   command's actual diagnostic without a duplicate generic notice. Ordinary controls still give

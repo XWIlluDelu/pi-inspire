@@ -497,13 +497,14 @@ export const Composer = memo(function Composer() {
         onHistoryCancel={cancelHistoryPreview}
         history={history}
         commands={state.commands}
+        models={state.availableModels}
+        activeModel={activeModel}
         completionDisabled={sessionOpening}
         disabled={sessionOpening}
         completionScope={historyKey}
         showHiddenFiles={state.workspaceShowHidden}
         onShowHiddenFilesChange={store.setWorkspaceShowHidden}
         searchProjectFiles={store.searchProjectFiles}
-        onPickProjectFile={(file) => store.addProjectFile(file.path)}
         placeholder={
           deliveryBusy
             ? deliveryBehavior === "steer"

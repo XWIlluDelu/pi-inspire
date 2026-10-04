@@ -335,6 +335,14 @@
   pointer-events: none;
 }
 
+.composer__usage {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  padding: var(--space-1) var(--space-3);
+  overflow-wrap: anywhere;
+}
+
 .composer__input-wrap {
   position: relative;
   display: flex;
@@ -1007,6 +1015,13 @@
 
 .completion__empty--error {
   color: var(--error);
+}
+
+@media (max-width: 600px) {
+  .completion .completion__option {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+  }
 }
 
 /* Searchable model picker. Provider headings are structural and never enter

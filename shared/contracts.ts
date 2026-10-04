@@ -1274,6 +1274,16 @@ export interface PromptRequest {
   behavior?: "steer" | "followUp";
 }
 
+export interface SessionExportRequest {
+  sessionId: string;
+  format: "html" | "jsonl";
+}
+
+export interface SessionExportResponse {
+  downloadId: string;
+  fileName: string;
+}
+
 export type HostNativeCommandName = "compact" | "export" | "reload";
 
 export interface HostNativeCommandRequest {
@@ -1293,6 +1303,13 @@ export interface HostNativeCommandResponse {
   outcome: "completed" | "cancelled";
   message: string;
   details?: HostNativeCommandDetail[];
+  /** Only generated exports receive a process-lifetime download handle. */
+  export?: {
+    path: string;
+    format: "html" | "jsonl";
+    downloadId?: string;
+    fileName?: string;
+  };
 }
 
 export interface PromptDeliveryRequest extends PromptRequest {
