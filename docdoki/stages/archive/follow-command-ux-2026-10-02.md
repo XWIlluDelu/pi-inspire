@@ -72,23 +72,8 @@ one focus owner.
 - Typecheck and scoped lint passed at acceptance. Screenshots remain under
   `output/playwright/command-ux-*`; their version label reflects the browser fixture's Pi installation.
 
-## Unassigned refinements
-
-The following presentation proposals remain undecided:
-
-- Preparation currently adds a confirmation to every resource command, even extensions that need
-  no arguments, and to plain compact. Narrow preparation to operations needing editing or choice.
-- Low-frequency actions lack a visible, understandable browse route. Typing `/` already reveals
-  the full palette inventory, and Composer `/` lists commands. Evaluate a visible lightweight browse
-  route without restoring the crowded default list.
-- The prepared editor uses fixed Ctrl/⌘+Enter while ordinary Enter inserts a newline, unlike the
-  default Composer. Make that interaction evident and consistent where appropriate.
+## Continuation
 
 The palette searches actions/sessions; `/model openai` is not an executable palette invocation.
-
-## Remaining scope
-
-Generic extension argument completion needs a native interface or explicit adapter. Settings and
-statistics have been reviewed; their remaining gaps are in
-[[follow-pi-native-capability-review-2026-10-02]]. `/import`, `/share`, `/bug` and `/trust` remain
-guidance-only. Login/logout, Clone and common models have graphical routes.
+Undecided preparation/browsing/submission refinements and remaining native command/argument gaps
+continue in [[follow-pi-native-capability-review-2026-10-02]].

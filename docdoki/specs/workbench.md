@@ -110,7 +110,7 @@ covers:
 
 ## Goal
 
-Give daily Pi work a coherent graphical home that starts focused and can expand toward a scientific workbench.
+Give daily Pi work a conversation-centered interface with accessible session, file, and terminal controls.
 
 ## Contract map
 

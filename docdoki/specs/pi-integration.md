@@ -34,11 +34,10 @@ Use Pi as the agent runtime and keep privileged local operations in the Host.
 
 ## Runtime and agent ownership
 
-Pi and user configuration own model tools, prompts, extensions, and execution policy. Inspire adds
-GUI projections and explicit user controls, not LLM tools, system prompts, or delegation policy.
-Its internal extension registers non-model commands for GUI branch navigation, worker-local
-model-catalog refresh, effective retry-state reads, pending-image evidence and provider authentication.
-Explicit attachments and selected prompt resources remain user input.
+Pi and user configuration own model tools, prompts, extensions and execution policy. Inspire provides
+GUI projections and user controls. Its internal extension registers non-model commands for branch
+navigation, worker-local model-catalog refresh, effective retry reads, pending-image evidence and
+provider authentication. Attachments and selected prompt resources remain user input.
 
 The Host resolves the external `pi` executable, imports its public SDK, and starts RPC workers from
 that same package root. Startup checks the APIs it calls; version metadata is diagnostic. The
@@ -46,14 +45,10 @@ checkout's pinned development dependency is not a production fallback. Pi's norm
 project directory, settings, credentials, models, extensions, skills, prompts, and sessions remain
 authoritative. Workers inherit the user environment defined by [[host-lifecycle]].
 
-Direct RPC pipes are the default. [[herdr-enhancement]] can change worker placement through a private
-byte transport while preserving native command execution and the same session authority. It adds no
-separate session list, collaboration scheduler, or message-routing service; direct mode remains
-independent of Herdr.
-
-Project terminals belong to the separate [[terminal]] daemon. They are human shells, outside Pi's
-runtime and history; a Pi prompt or extension receives no implicit terminal-control authority.
-Session-bound file previews follow [[resource-preview]].
+Direct RPC pipes are the default. Optional [[herdr-enhancement]] changes worker placement through a
+private byte transport while preserving native execution and session authority. Direct mode remains
+independent of Herdr. Project terminals belong to the separate [[terminal]] daemon, outside Pi's
+runtime and history. Session-bound file previews follow [[resource-preview]].
 
 ## Settings and native commands
 
@@ -65,15 +60,13 @@ Retry reads use the owning worker's public `getSettings()` through the hidden br
 project-trust and override decisions. A native setter acknowledgment is followed by an effective read;
 that confirmation does not establish successful persistence.
 
-[[model-settings]] owns saved model/thinking defaults, native common scope, graphical declarations
-and credential controls. Their files and precedence remain Pi-owned; configuration is independent
-of login and does not switch an open session. Current worker provider definitions own authentication
-methods. Public `ModelRuntime.login/logout` runs in a separate auth operation owner sharing native
-storage, not a cached replacement registry or a second account platform. The internal bridge carries
-native interactions outside model input; cancelled/superseded credentials and retired worker owners
-respect native cancellation and actual stop fences. Only established cross-device methods receive
-Remote login help. Browser inventories/status and errors omit stored or resolved keys/tokens.
-Implementation and isolated native evidence: [[follow-model-settings-auth-2026-10-02]].
+[[model-settings]] owns saved defaults, common scope, declarations and credential controls. Native
+files and precedence remain authoritative; configuration is independent of login and current-session
+selection. Authentication uses the current worker's provider definitions and public
+`ModelRuntime.login/logout` in a separately owned operation sharing native storage. The bridge carries
+interactions outside model input and retains native cancellation/worker stop fences. Browser payloads
+and errors omit stored or resolved keys/tokens. Native evidence:
+[[follow-model-settings-auth-2026-10-02]].
 
 Pi RPC enumerates extension, prompt, and skill commands but not interactive built-ins.
 `shared/commands.ts` reserves built-in names before resource dispatch, matching Pi's interactive
@@ -102,29 +95,23 @@ public `ExtensionCommandContext.modelRegistry.refresh({ signal })`, followed by 
 `get_available_models`; native `set_model` reads that same available snapshot. The narrow internal
 command/status pair is worker/session/nonce-owned, hidden from user command/status inventories,
 coalesced per worker, and independent of the persistence/branch mutation lane. A 15-second abort
-budget bounds catalog discovery without stopping Pi. Pi retains extension-registered providers,
-credentials, offline/network policy, and usable cached catalogs; Inspire neither patches private
-registries nor imports an unrelated Host model list into an active worker. Ordinary model changes
-still go through native RPC. [[composer]] specifies cached-first browser ownership and start-surface
-read-only thinking transitions; [[follow-model-selection-2026-10-02]] records verification. Export and reload share writer admission; [[composer]] specifies their
-availability and user feedback.
+budget bounds catalog discovery without stopping Pi. Pi retains extension registrations, credentials,
+offline/network policy and usable cached catalogs.
+The active worker supplies its own model list, and model changes use native RPC. [[composer]] owns
+cached-first browser behavior, start-surface thinking transitions and command feedback;
+[[follow-model-selection-2026-10-02]] records verification. Export and reload share writer admission.
 
 Graphical Export uses an independent format-and-download dialog shared by the title menu and
 command palette. Its Host endpoint writes a temporary native export, captures the managed download,
 and removes the temporary source on success or failure; it does not leave export files in the project.
-Typed `/export` preserves Pi's native path-token parsing, HTML default and whole-tree content. A `.jsonl`
-destination serializes the worker's current branch ancestry without opening or switching a
-SessionManager, retaining original entry identities, content, embedded images, and extension
-metadata with a native session header and linear parents. It reuses the verified local entry prefix
-and asks Pi only for entries after that prefix plus the effective leaf, avoiding whole-history RPC
-transport. Unmaterialized sessions retain their worker-owned native entries. The canonical source, including its
-symlink/hardlink aliases, is not an export destination. Authenticated session-owned opaque download
-IDs expose only privately retained copies of generated exports; they never resolve caller-provided
-Host paths. Changing the output file cannot retarget a download. Copies expire after 24 hours, retain
-at most 16 recent downloads per Host, and are removed on normal shutdown; receipts do not promise
-survival across Host restart. A transient private-directory creation failure releases that failed
-allocation for retry without acquiring a source handle; source copying and cleanup share one owned
-handle lifetime.
+Typed export preserves Pi's path parsing and whole-tree HTML default. JSONL serializes the active ancestry with
+original entries/images/metadata, a native header and linear parents, without switching SessionManager.
+It reuses the verified local prefix and reads only the native suffix/effective leaf; unmaterialized
+sessions use their worker-owned entries. Export refuses the source and its symlink/hardlink aliases.
+Authenticated, session-owned opaque IDs serve private snapshots rather than caller-selected Host
+paths. Later output-file changes cannot retarget them. Keep at most 16 downloads for 24 hours and
+remove them on shutdown; Host restart requires re-export. Failed storage allocation remains retryable,
+and each acquired source handle closes. [[composer]] owns the export controls and receipts.
 
 `/changelog` reads the installed package's matching version section, not a dependency fallback or
 remote latest-release feed. Public extension command enumeration has no argument-completion hooks;
@@ -134,11 +121,9 @@ argument assistance and explicit resource preparation. Evidence: [[follow-comman
 ## Direct shell execution
 
 `!` and `!!` use the selected worker's native `bash` RPC with `excludeFromContext`, preserving Pi's
-cwd, `user_bash` hooks, extension-provided results/custom Bash operations, and native execution
-policy. No model tool, prompt, extension rewrite, or second shell runner implements this path.
-Id-tagged `bash_execution_update` deltas belong only to their matching request; the live preview is
-bounded, while the final native result preserves exit status, cancellation, truncation, and any
-full-output path.
+cwd, `user_bash` hooks, extension results/custom operations and execution policy. Id-tagged
+`bash_execution_update` deltas belong to their matching request. The live preview is bounded; the
+final result preserves exit status, cancellation, truncation and full-output path.
 
 Pi owns the durable `BashExecutionMessage` and context inclusion. Results produced during agent
 streaming may remain live until Pi flushes them at `agent_end`; the Host reconciles live and durable
@@ -179,17 +164,14 @@ staged originals rather than deleting them. A Stop epoch is rechecked after asyn
 and at the prompt write boundary, so completed Stop cannot admit an older preparation. A genuinely
 new post-Stop send remains available.
 
-Pi's dequeue supplies text, not image bytes. Worker-bound image ownership combines observed queue
-admission, original submitted content, raw user-message consumption, and the dequeue response fence.
-Preparation records a native append cursor through the internal bridge, not a full message read.
-Only ambiguous clearing requests subsequent persisted user-message identity/content hashes and image
-counts, emitted as individual bounded records without image bodies. Raw `message_start` events still
-own consumption before persistence; the bridge cannot reveal a message suspended before that event.
-Exact original Inspire admissions return as staged image handles; known text-only input remains quiet. Extension-added/replaced bytes
-are not reconstructed. Evidence of unresolved image ownership reports a warning instead of guessing
-bytes. Returned handles leave worker cleanup ownership; discard, consumption, and retirement release
-only retained copies still owned by that worker. [[composer]] specifies complete copying and recovery
-merging; [[follow-pending-input-recovery-2026-10-02]] records checks and the API boundary.
+Pi dequeues text, not image bytes. Image ownership combines observed queue admission, original
+submitted content, raw `message_start` consumption and the dequeue-response fence. Preparation records
+a native append cursor. Ambiguous clearing reads subsequent persisted identity/content hashes and
+image counts as bounded records without image bodies. Raw events take precedence; persisted evidence
+cannot resolve a message suspended before its event. Recovery transfers owned original images to
+staged handles; discard, consumption and retirement release only worker-owned copies. [[composer]]
+owns recovery merging, copying and unresolved-image feedback;
+[[follow-pending-input-recovery-2026-10-02]] records native evidence.
 An input hook can also accept a prompt without agent lifecycle events: an idle/empty Pi observation
 may clear that queued admission only while the same worker and sole pending prompt still own it.
 Failure of this observation does not reject an accepted prompt.
@@ -246,9 +228,8 @@ fallback. Persisted generic extension content uses available extension attributi
 [[conversation]]. Extension failures retain their originating lifecycle/operation diagnostic.
 
 The public [adaptation guide](../../docs/extensions.md) covers commands, dialogs, text widgets,
-custom cards, lifecycle differences, and source customization. Inspire does not inspect third-party
-package names or provide arbitrary executable frontend plugins. A small working native-UI example
-illustrates the shared primitives. Implementation state for the interaction refinements is in
+custom cards, lifecycle differences, and source customization. Dedicated frontend controls require
+source changes; the runnable native-UI example illustrates shared primitives. Implementation evidence is in
 [[follow-extension-ui-2026-10-03]].
 
 ## Checks

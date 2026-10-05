@@ -75,7 +75,7 @@ requests require receipt support.
 
 The in-process development owner follows the same mutation contract. An incompatible listening daemon
 requires an explicit terminal-service upgrade; ordinary Host launch leaves its PTYs running and reports
-Settings → Updates → Restart all or `inspire restart --all`. Receipt discovery preserves that diagnosis.
+Settings → System → Restart all or `inspire restart --all`. Receipt discovery preserves that diagnosis.
 
 Catalog loads, polling, and mutations belong to one pane project/reload generation. Switching projects,
 reloading, or unmounting retires old response/error/loading/selection/rollback writebacks, while completed

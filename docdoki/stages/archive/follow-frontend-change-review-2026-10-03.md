@@ -39,7 +39,7 @@ contracts hold detailed behavior. Known quality findings remain in
 Component paths are under `src/components/`, controllers under `src/controllers/`, and styles under
 `src/styles/`. Contracts: [[workspace-layout]], [[interface-preferences]], [[model-settings]],
 [[composer]], [[session-branches]], [[pi-integration]] and [[design-system]].
-Usage: [Pi commands](../../docs/pi-commands.md).
+Usage: [Pi commands](../../../docs/pi-commands.md).
 
 ## Recorded verification
 

@@ -36,6 +36,8 @@
     "docs/screenshots/welcome-dark.png",
     "docs/extensions.md",
     "docs/examples/native-ui.ts",
+    "docs/host.md",
+    "docs/pi-commands.md",
     "docs/ssh-reverse.md",
     "docs/tool-presentations.md",
     "inspire",

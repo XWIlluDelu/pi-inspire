@@ -20,9 +20,9 @@ retained deadlines, topbar status disclosure at every width, text widgets and re
 Contracts: [[pi-integration]], [[workspace-layout]] and [[conversation]]. Pi and extensions retain
 permission, question, task and execution policy; these controls present it.
 
-The [portable example](../../docs/examples/native-ui.ts) demonstrates select/confirm/input/editor,
+The [portable example](../../../docs/examples/native-ui.ts) demonstrates select/confirm/input/editor,
 timeout, status/widget update and clear, and a recorded custom message. It ships in the package and
-is included in TypeScript checks. The [adaptation guide](../../docs/extensions.md) describes the
+is included in TypeScript checks. The [adaptation guide](../../../docs/extensions.md) describes the
 supported RPC primitives and terminal alternatives.
 
 **Unresolved:** Pi 1.0 resolves extension-owned AbortSignal cancellation without publishing a

@@ -43,8 +43,9 @@ making deployment machinery a second Pi runtime. Typed runtime integration is sp
   versions may remain incidentally usable but are neither tested nor supported, and no compatibility
   branch is added solely for them. Optional capabilities beyond the current public protocol remain
   inactive unless explicitly negotiated; absence follows current public behavior rather than version
-  guessing. The production dependency tree resolves with zero `npm audit --omit=dev` advisories; no
-  root override or downgrade is used to manufacture that result.
+  guessing. Production releases require zero `npm audit --omit=dev` advisories, without root
+  overrides or downgrades that conceal the affected dependency. [[dependency-boundaries]] records
+  current audit results and known gaps.
 
 - The npm release is a standalone cross-platform CLI/application package, not a Pi resource package:
   it intentionally declares no `pi` manifest or `pi-package` keyword and contains no Pi runtime
@@ -215,7 +216,7 @@ adopting a virtual environment from another terminal tab. Rationale and verifica
   units. It ends terminal processes and restarts both in one transaction, with Host ordered after
   terminal readiness. Unsupported or foreign services are refused before stopping anything;
   connection services are outside the scope, and a failed full restart cannot fall back to Host-only.
-- Page controls live in Settings → Updates, with concise confirmation for each scope. Full restart
+- Page controls live in Settings → System, with concise confirmation for each scope. Full restart
   names the terminal-process impact. Page control requires the exact running systemd invocation.
   Restart stays out of the command palette and always-visible controls.
 

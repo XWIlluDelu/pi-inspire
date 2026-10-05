@@ -4,6 +4,27 @@ purpose: Historical long-session measurements and reproducibility, plus scoped e
 
 # Performance evidence
 
+## Pi 1.0 source and catalog profiles (2026-10-05)
+
+Local production Chromium at 1440×900 reproduced synchronous source highlighting cost. A
+1,500-line / 193,500-character TypeScript source generated 21,000 spans; two repeated opens
+produced highlighting/layout task pairs of 66+195 ms and 59+191 ms. After lowering the per-leaf
+highlight budget to 64 Ki characters, repeated opens produced no task above 50 ms. The actual
+105,793-character `src/store.ts` changed from a 105 ms task to none above 50 ms; a 64,500-character
+source still highlighted. Larger leaves remain plain text with copying, not omitted content.
+Source: `src/syntax-highlighting.ts`; integrated outcome: [[challenge-pi-1-quality-2026-10-05]].
+
+The desktop/390px native catalog fixture held 1,537 catalog / 1,080 available models, mounted at
+most 12 picker/grid rows, and passed distant navigation, search and overflow checks. This is a
+bounded mounting/interaction witness, not a model-query latency measurement.
+
+Host probes retained the existing unchanged-read reuse design: a 16,795,320-byte fixture took
+median 7.248 ms forced versus 0.022 ms version-checked. A separate 20,000-entry / approximately
+41 MiB History fixture returned 100-node / approximately 77 KiB pages; outline work took
+6.7–13.8 ms and full-text search 20.3–25.7 ms over five runs. These are local synthetic projection
+measurements, not remote end-to-end timings. Current boundaries: [[projection-reconciliation-ownership]]
+and [[session-scale]]. No additional Host/remote optimization followed from these profiles.
+
 ## Settings first-open flash (2026-09-06)
 
 A Chromium production-build probe reproduced two distinct Settings dialog nodes

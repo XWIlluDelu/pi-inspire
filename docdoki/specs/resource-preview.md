@@ -131,7 +131,9 @@ The selected-file header stays above scrolling content. Its path copies the path
 through the authenticated attachment route, and the reciprocal view action keeps a fixed trailing
 slot, disabled when unavailable. Source uses highlighting and line numbers; `:line` and `#Lline`
 open Source at that position, including for files that normally open in Preview. Files does not
-duplicate Changes with a Diff mode or add file-editing controls.
+duplicate Changes with a Diff mode or add file-editing controls. Source, Markdown code blocks and
+Notebook cells highlight recognized languages up to 64 Ki characters per leaf; larger leaves retain
+text and copying without highlighting.
 
 Host-owned Preview, Source, and Changes use a luminosity-aware neutral canvas across Amber and Jade.
 Authored backgrounds and semantic source/diff colors remain intact. Images use a neutral checkerboard

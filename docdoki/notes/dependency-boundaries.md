@@ -16,6 +16,10 @@ native-test runtime. Its published dependency ranges currently resolve agent-cor
 pure fuzzy search. Neither becomes a production Pi runtime or fallback; external installations
 retain their own dependency trees.
 
+`scripts/test-pi-command.mjs` selects the pinned development CLI or `INSPIRE_TEST_PI_COMMAND` for
+Vitest, Playwright collection/workers and the browser-test Host. Native catalog-scale checks run
+with that selection by default.
+
 `scripts/verify-release-package.mjs` installs the packed application with production dependencies,
 checks that Pi is absent, then supplies an external Pi installation and exercises SDK/RPC startup.
 Production dependency auditing is a separate `npm audit --omit=dev` check.
