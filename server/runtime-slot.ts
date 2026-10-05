@@ -186,6 +186,10 @@ export interface RuntimeSlot {
   inputStopEpoch: number;
   extensionDisplays: ExtensionDisplay[];
   extensionStatuses: Record<string, string>;
+  toolActivity: Record<
+    string,
+    import("../shared/tool-activity.js").ActivityTool
+  >;
   availableModels: unknown[] | null;
   commands: unknown[] | null;
   lastUsed: number;
@@ -277,6 +281,7 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     inputStopEpoch: 0,
     extensionDisplays: [],
     extensionStatuses: {},
+    toolActivity: {},
     availableModels: null,
     commands: null,
     lastUsed: 0,

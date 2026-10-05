@@ -2,17 +2,21 @@
 purpose: Declarative presentations project tool and Thinking activity and select custom-message reading content while retaining generic inspection.
 covers:
   - shared/tool-presentation-config.ts
+  - shared/tool-activity.ts
   - server/tool-presentation-config.ts
+  - server/{runtime-events,session-projection}.ts
   - src/tool-presentations/**
   - src/custom-message-presentations.ts
   - src/components/CustomMessage.tsx
-  - src/components/{Transcript,transcript-cards,ImagePreview}.tsx
+  - src/components/{Transcript,transcript-cards,ChildCalls,ImagePreview}.tsx
   - src/components/ResourcePathLabel.tsx
   - src/styles/activity-cards.css
   - tests/browser/{tool-presentations,custom-message}.spec.ts
   - tests/server/app.test.ts
   - tests/server/tool-presentation-config.test.ts
-  - tests/web/{tool-cards,tool-card-fallbacks,streaming-edit-cards}.test.tsx
+  - tests/web/{tool-cards,tool-card-fallbacks,streaming-edit-cards,child-calls}.test.tsx
+  - tests/server/pi-child-calls.integration.test.ts
+  - tests/fixtures/pi-child-calls-extension.ts
   - tests/fixtures/tool-result-resources.{mjs,d.mts}
   - tests/web/thinking-presentations.test.tsx
   - tests/web/tool-presentations.test.ts
@@ -59,14 +63,15 @@ expanded body. [[conversation]] owns independently readable custom messages.
 
 ## Native presentations
 
-| Tool | Content |
-| --- | --- |
-| `read` | File/range summary and source or image preview, without repeating that metadata above the body. |
-| `write` | Requested file content. |
-| `edit` | Requested replacements while pending/failed; Pi's persisted `details.patch` after success. |
-| `bash`, `powershell` | Command and terminal output. |
-| `grep` | Grouped matches and context. |
-| `find`, `ls` | File/directory lists. |
+| Tool                 | Content                                                                                         |
+| -------------------- | ----------------------------------------------------------------------------------------------- |
+| `read`               | File/range summary and source or image preview, without repeating that metadata above the body. |
+| `write`              | Requested file content.                                                                         |
+| `edit`               | Requested replacements while pending/failed; Pi's persisted `details.patch` after success.      |
+| `bash`, `powershell` | Command and terminal output.                                                                    |
+| `grep`               | Grouped matches and context.                                                                    |
+| `find`, `ls`         | File/directory lists.                                                                           |
+| `codemode`           | Native child-call progress and final result, with script inspection as a secondary disclosure.  |
 
 Search context with the same line number and text is merged while retaining match flags. Match and
 diff row tints span the complete shared horizontal scroll width. Unified-diff recognition requires
@@ -79,6 +84,29 @@ discarding earlier typed replacements. Missing old/new sides render no rows; an 
 is a received side. Field order does not determine compatibility. Complete calls and wrong field
 types remain strict. A successful edit requires the authoritative patch; the browser does not reread
 the workspace or calculate an applied diff.
+
+## Codemode and nested calls
+
+Codemode and ordinary nested tools share a compact child-call view inside the parent card. Existing
+card/activity preferences still choose initial disclosure; no separate density setting is added.
+
+- Open running cards emphasize current calls without reserving an empty result area. Open settled
+  cards put the actual result first, with Calls and Script as secondary disclosures. Manual choices,
+  focus and reading position survive settlement.
+- Rows show native status, tool/model identity and a useful path/query/parameter summary. Available
+  arguments, errors and useful duration details open through keyboard/touch-capable disclosure.
+  Parameter previews are not labelled complete. Keep order and row identity stable and long lists bounded.
+- Select native sources rather than merging unrelated schemas: Codemode `details.calls` for its tool
+  and model calls; parented execution events for generic live calls; top-level result-message
+  `nestedCalls` for generic history. A parent has one displayed call list.
+- Keep parent and child outcomes distinct. Do not infer that a failed child was intentionally handled
+  merely because the parent completed successfully. Missing child results do not hide parent output.
+- Keep output in its tool presentation, reusing existing text, image, authorized file and full-output
+  readers. Classification-specific presentation requires an actual structured data contract.
+- No dedicated cost display, completion percentage, local stop/retry control or arbitrary-JSON-to-table
+  conversion is added. Native content and existing raw inspection remain available.
+
+Decided on 2026-10-05; implementation evidence: [[follow-codemode-mcp-adaptation-2026-10-05]].
 
 ## Generic results
 

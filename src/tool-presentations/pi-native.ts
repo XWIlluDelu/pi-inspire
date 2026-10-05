@@ -801,6 +801,51 @@ function lsRule(): ToolPresentationRule {
   };
 }
 
+function codemodeRule(): ToolPresentationRule {
+  return {
+    id: `${PI_RULE_PREFIX}.codemode`,
+    present(input) {
+      const args = record(input.call.arguments);
+      if (!args || typeof args.code !== "string") return null;
+      return presentation(
+        summary([{ kind: "text", text: "JavaScript" }]),
+        () => {
+          if (!input.result) return [];
+          const blocks: ToolPresentationBlock[] = [];
+          const output = resultTextBlock(input);
+          if (output) blocks.push(output);
+          if (Array.isArray(input.result.content)) {
+            input.result.content.forEach((part, index) => {
+              if (record(part)?.type !== "image") return;
+              const image = toolResultImage(
+                input.result!,
+                index,
+                "Script result image",
+              );
+              blocks.push(
+                image ?? {
+                  type: "notice",
+                  text: "Image unavailable (unsupported or invalid image data)",
+                  tone: "warning",
+                },
+              );
+            });
+          }
+          const fullOutputPath = detailsOf(input)?.fullOutputPath;
+          if (typeof fullOutputPath === "string" && fullOutputPath)
+            blocks.push({
+              type: "notice",
+              text: "Output truncated",
+              tone: "warning",
+              action: { label: "View full output", reference: fullOutputPath },
+            });
+          return blocks;
+        },
+      );
+    },
+  };
+}
+
 export const PI_NATIVE_TOOL_PRESENTATION_RULES: readonly ToolPresentationRule[] =
   [
     readRule(),
@@ -811,6 +856,7 @@ export const PI_NATIVE_TOOL_PRESENTATION_RULES: readonly ToolPresentationRule[] 
     grepRule(),
     findRule(),
     lsRule(),
+    codemodeRule(),
   ];
 
 export const PI_NATIVE_TOOL_PRESENTATION_MAPPINGS = {
@@ -822,4 +868,5 @@ export const PI_NATIVE_TOOL_PRESENTATION_MAPPINGS = {
   grep: `${PI_RULE_PREFIX}.grep`,
   find: `${PI_RULE_PREFIX}.find`,
   ls: `${PI_RULE_PREFIX}.ls`,
+  codemode: `${PI_RULE_PREFIX}.codemode`,
 } as const;

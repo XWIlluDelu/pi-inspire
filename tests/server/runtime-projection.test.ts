@@ -416,6 +416,165 @@ afterEach(async () => {
   );
 });
 
+describe("RuntimeController live child activity", () => {
+  it("bounds Codemode's own snapshot before transport without duplicating generic receipts", async () => {
+    const { runtime, workers } = await setup();
+    const events: Array<Record<string, unknown>> = [];
+    runtime.on("event", (event) => events.push(event));
+    try {
+      workers[0]!.emit("event", {
+        type: "tool_execution_start",
+        toolCallId: "script",
+        toolName: "codemode",
+        args: { code: "text('fixture')" },
+      });
+      workers[0]!.emit("event", {
+        type: "tool_execution_update",
+        toolCallId: "script",
+        toolName: "codemode",
+        partialResult: {
+          content: [],
+          details: {
+            calls: Array.from({ length: 300 }, () => ({
+              id: "script/?",
+              name: "read",
+              status: "running",
+              args: '{"path":"a.txt"}',
+              cost: 10,
+            })),
+          },
+        },
+      });
+      workers[0]!.emit("event", {
+        type: "tool_execution_start",
+        parentToolCallId: "script",
+        toolCallId: "script/1",
+        toolName: "read",
+        args: { path: "a.txt" },
+      });
+      const event = events.findLast(
+        (event) => event.type === "tool_execution_update",
+      )!;
+      expect(event).toMatchObject({
+        childCalls: { source: "codemode", complete: false },
+        partialResult: { details: {} },
+      });
+      expect((event.childCalls as { calls: unknown[] }).calls).toHaveLength(
+        256,
+      );
+      expect(JSON.stringify(event)).not.toContain('"cost"');
+      const tool = (await runtime.snapshot()).active?.toolActivity?.script;
+      expect(tool?.calls?.calls).toHaveLength(256);
+      expect(tool?.calls?.calls[0]?.key).toBe("codemode:0");
+      expect(
+        Object.keys((await runtime.snapshot()).active?.toolActivity ?? {}),
+      ).toEqual(["script"]);
+    } finally {
+      await runtime.close();
+    }
+  });
+  it("restores bounded parented receipts on reconnect without retaining child results", async () => {
+    const { runtime, workers } = await setup();
+    const events: Array<Record<string, unknown>> = [];
+    runtime.on("event", (event) => events.push(event));
+    const emit = (event: Record<string, unknown>) =>
+      workers[0]!.emit("event", event);
+    try {
+      emit({ type: "agent_start" });
+      emit({
+        type: "tool_execution_start",
+        toolCallId: "parent",
+        toolName: "orchestrator",
+        args: {},
+      });
+      emit({
+        type: "tool_execution_start",
+        parentToolCallId: "parent",
+        toolCallId: "parent/1",
+        toolName: "read",
+        args: { path: "a.txt", token: "secret" },
+      });
+      emit({
+        type: "tool_execution_start",
+        parentToolCallId: "parent/1",
+        toolCallId: "parent/1/1",
+        toolName: "read",
+        args: { path: "deep.txt" },
+      });
+      emit({
+        type: "tool_execution_update",
+        parentToolCallId: "parent",
+        toolCallId: "parent/1",
+        toolName: "read",
+        partialResult: {
+          content: [{ type: "text", text: "PRIVATE_CHILD_OUTPUT" }],
+          details: { rawResult: true },
+        },
+      });
+      emit({
+        type: "tool_execution_end",
+        parentToolCallId: "parent",
+        toolCallId: "parent/1",
+        toolName: "read",
+        isError: true,
+        result: {
+          content: [{ type: "text", text: "Child failed" }],
+          details: { rawResult: true },
+        },
+      });
+      const tools = (await runtime.snapshot()).active?.toolActivity;
+      expect(Object.keys(tools!)).toEqual(["parent"]);
+      expect(tools?.parent).toMatchObject({
+        phase: "running",
+        calls: {
+          source: "nested",
+          calls: [
+            {
+              key: "parent/1",
+              status: "error",
+              arguments: { path: "a.txt", token: "[redacted]" },
+              error: "Child failed",
+            },
+            {
+              key: "parent/1/1",
+              status: "running",
+              arguments: { path: "deep.txt" },
+            },
+          ],
+        },
+      });
+      expect(JSON.stringify(events)).not.toContain("PRIVATE_CHILD_OUTPUT");
+      expect(JSON.stringify(events)).not.toContain("rawResult");
+      expect(JSON.stringify(tools)).not.toContain("secret");
+      emit({
+        type: "tool_execution_end",
+        toolCallId: "parent",
+        toolName: "orchestrator",
+        result: { content: [{ type: "text", text: "Parent succeeded" }] },
+        isError: false,
+      });
+      expect(
+        (await runtime.snapshot()).active?.toolActivity?.parent?.phase,
+      ).toBe("done");
+      emit({
+        type: "tool_execution_update",
+        parentToolCallId: "parent",
+        toolCallId: "parent/1",
+        toolName: "read",
+        partialResult: {},
+      });
+      expect(
+        (await runtime.snapshot()).active?.toolActivity?.parent?.calls?.calls[0]
+          ?.status,
+      ).toBe("error");
+      emit({ type: "agent_start" });
+      expect((await runtime.snapshot()).active?.toolActivity).toEqual({});
+    } finally {
+      await runtime.close();
+    }
+  });
+});
+
 describe("RuntimeController complete assistant copy", () => {
   it("reads unbounded settled text from the real JSONL branch and rejects stale views", async () => {
     const text = `${"x".repeat(70_000)}THE_END_42\n`;

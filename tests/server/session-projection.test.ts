@@ -85,6 +85,29 @@ afterEach(async () => {
 });
 
 describe("SessionProjection framing and last-good state", () => {
+  it("does not turn an unknown parent outcome into success when projecting failed child receipts", () => {
+    const result = {
+      role: "toolResult",
+      toolName: "codemode",
+      content: "Parent output",
+      details: {
+        calls: [
+          {
+            id: "script/1",
+            name: "read",
+            args: '{"path":"a.txt"}',
+            status: "error",
+          },
+        ],
+      },
+    };
+    expect(boundedTranscriptValue(result)).not.toHaveProperty("isError");
+    for (const isError of [true, false])
+      expect(boundedTranscriptValue({ ...result, isError })).toMatchObject({
+        isError,
+        __inspireCalls: { calls: [{ status: "error" }] },
+      });
+  });
   it("returns images separately in History detail without removing literal image-description text", async () => {
     const text = "Keep the literal [Image: image/png] text.";
     const { projection } = await fixture([

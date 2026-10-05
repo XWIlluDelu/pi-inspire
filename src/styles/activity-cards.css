@@ -777,6 +777,121 @@
   cursor: pointer;
 }
 
+.tool-call-layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.tool-call-result:empty {
+  display: none;
+}
+
+.tool-call-disclosure__button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.tool-call-disclosure__count {
+  font-variant-numeric: tabular-nums;
+}
+
+.child-calls {
+  max-height: min(20rem, 45vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  margin-top: var(--space-1);
+}
+
+.child-call__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding: 3px var(--space-1);
+  list-style: none;
+  font-size: var(--text-xs);
+}
+
+summary.child-call__row {
+  cursor: pointer;
+}
+
+.child-call__row::-webkit-details-marker {
+  display: none;
+}
+
+.child-call__status,
+.child-call__chevron {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.child-call__status {
+  display: inline-flex;
+}
+
+.child-call__status--ok {
+  color: var(--success);
+}
+
+.child-call__status--error {
+  color: var(--error);
+}
+
+.child-call__name {
+  flex: 0 1 auto;
+  max-width: 55%;
+  font-family: var(--font-mono);
+}
+
+.child-call__name,
+.child-call__summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.child-call__summary {
+  flex: 1;
+  color: var(--muted);
+}
+
+.child-call__chevron {
+  margin-left: auto;
+}
+
+.child-call[open] .child-call__chevron {
+  transform: rotate(90deg);
+}
+
+.child-call__detail {
+  padding: var(--space-1) var(--space-2) var(--space-2) 24px;
+}
+
+.child-call__duration {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+@media (pointer: coarse) {
+  .child-call__row,
+  .tool-call-disclosure__button,
+  .tool-call-script > details > summary {
+    min-height: 44px;
+  }
+}
+
 .tool-result-details .card__mono {
   margin-top: 8px;
   padding: 8px;

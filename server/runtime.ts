@@ -1752,6 +1752,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             slot,
             page.messages,
           ),
+        toolActivity: slot.toolActivity,
         isCompacting: slot.runState === "compacting",
       },
       runState: slot.runState,
@@ -1909,6 +1910,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         };
         current.extensionDisplays = [];
         current.extensionStatuses = {};
+        current.toolActivity = {};
         this.projectionCoordinator.clearWriterBaseline(current);
         current.overlay = [];
         current.overlayItemBytes = [];
@@ -3657,6 +3659,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           this.refreshPendingQueues(slot);
           slot.extensionDisplays = [];
           slot.extensionStatuses = {};
+          slot.toolActivity = {};
           for (const expectation of slot.persistenceExpectations)
             expectation.settle(null);
           slot.persistenceExpectations = [];
@@ -4442,6 +4445,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               slot,
               page.messages,
             ),
+          toolActivity: slot.toolActivity,
           isCompacting: Boolean(state.isCompacting),
           transcriptPage: page,
           projectionHealth: slot.projection.health,

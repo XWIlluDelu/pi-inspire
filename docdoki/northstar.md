@@ -19,3 +19,5 @@
 
 - Pi and the user's configuration own agent behavior, tools, prompts, and extensions. Inspire
   provides graphical presentation and user controls, not a separate agent platform.
+- Adapt Pi features through its supported public interfaces. When a required interface is missing,
+  defer that graphical capability rather than modifying Pi or requiring a patched runtime.

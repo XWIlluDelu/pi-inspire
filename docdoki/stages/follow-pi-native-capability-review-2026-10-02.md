@@ -161,17 +161,18 @@ Remaining interfaces:
   the request. Timeout and Host Stop cleanup work. Generic command completion/model idleness cannot
   safely substitute for the missing signal.
 
-Deferred tool work:
+Tool adaptation evidence is in [[follow-codemode-mcp-adaptation-2026-10-05]]:
 
-- **Codemode:** Pi exposes child-call state, summaries, duration and model cost through `details.calls`.
-  Inspire renders outer script arguments/final output; live updates consume text, and completed child
-  records are only inspectable as Result-details JSON. Child-call and image/classifier presentation
-  await Codemode adaptation. Sources: `src/events.ts`, generic tool cards and native
-  `extensions/codemode/{execute,renderer}.js`; a reducer/component probe confirmed the gap.
-- **Nested execution:** general `ctx.executeTool()` presentation has no separate acceptance evidence
-  and remains parked with downstream tool presentation.
-- **MCP:** dedicated configuration/connection management and related presentation are deferred.
-  Configured MCP calls already execute through Pi; [[dependency-boundaries]] records compatibility.
+- **Codemode:** native `details.calls` feeds compact live/final child rows, including model identity.
+  Available parameters, errors and duration open on demand; script inspection stays secondary to the
+  result. Existing text/image/authorized-file readers are reused. No cost UI is added.
+- **Nested execution:** general `ctx.executeTool()` live parented events and persisted `nestedCalls`
+  feed the shared child-call view. Native fixtures and desktop/mobile Adaptive disclosure checks pass;
+  the implementation is merged into mainline.
+- **MCP:** configured calls already execute through Pi. Complete graphical configuration/connection
+  management is deferred: Pi 1.0.0 does not expose its runtime manager through a public structured
+  interface. The user explicitly rejected modifying Pi or requiring a patched runtime to fill this
+  gap. [[mcp]] retains the conditional GUI design; [[dependency-boundaries]] records compatibility.
 
 The saved-image/full-log failures are repaired separately. Native offline fixtures reproduced the
 pre-repair loss of image coordinates and a 2,500-line Bash log link; current paging/resource/browser

@@ -119,6 +119,7 @@ export class RuntimeWorkerLifecycle {
     this.host.clearPendingExtensionUi(slot, "stopped");
     slot.extensionDisplays = [];
     slot.extensionStatuses = {};
+    slot.toolActivity = {};
     this.host.emitSlotEvent(slot, {
       type: "extension_runtime_stopped",
       extensionDisplays: [],
@@ -230,6 +231,7 @@ export class RuntimeWorkerLifecycle {
     };
     slot.extensionDisplays = [];
     slot.extensionStatuses = {};
+    slot.toolActivity = {};
     slot.availableModels = null;
     slot.commands = null;
     try {

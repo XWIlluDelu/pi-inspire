@@ -25,7 +25,7 @@ through the same RPC and GUI, preserving ordinary send, stop, restart, and termi
 | Area | Contract | Implemented surface |
 | --- | --- | --- |
 | Workbench | [[workbench]], [[workspace-layout]] | Curated session/project navigation, central conversation, contextual Files/Changes/Terminal. |
-| Settings | [[interface-preferences]], [[model-settings]] | Interface/runtime preferences; model defaults, common scope/cycling, graphical configuration, and native provider login/removal. |
+| Settings | [[interface-preferences]], [[model-settings]], [[mcp]] | Interface/runtime preferences; model defaults, common scope/cycling, graphical configuration, and native provider login/removal. |
 | Visual system | [[visual-language]], [[design-system]] | Light/dark Amber and Jade, IBM Plex Sans SC for reading/UI, Flux Mono SC for code. |
 | Conversation | [[conversation]], [[activity-presentation]] | Typed text/activity flow, adjustable detail, compaction checkpoints, and reply errors. |
 | Rich content | [[rich-rendering]], [[tool-presentations]] | Shared streaming Markdown/math rendering and typed native/custom tool cards. |
@@ -57,8 +57,10 @@ native-capability backlog:
 - **Settings/resources:** native save-error feedback, loading/trust-omission diagnostics, complete loaded
   extensions, usage reading and further graphical setting coverage remain open.
 - **Extensions:** richer reusable UI, draft access, argument completion and extension-owned dialog
-  dismissal remain open. Dedicated panels require source changes. Codemode, nested-tool presentation
-  and dedicated MCP management are deferred.
+  dismissal remain open. Dedicated panels require extension source changes. Codemode and nested-call
+  presentation is implemented; [[follow-codemode-mcp-adaptation-2026-10-05]] records native and UI checks.
+  Complete MCP Settings management is deferred because Pi 1.0 lacks a public current-worker management
+  interface; Inspire does not modify Pi to fill that gap.
 - **Commands/History:** `/import`, `/share`, `/bug` and `/trust` remain guidance-only. Labels, secondary
   filters, fuller tree keyboard navigation and copy-selected-entry remain gaps; palette preparation,
   browsing and submission refinements are undecided proposals.

@@ -1128,6 +1128,8 @@ export interface ActiveSnapshot {
      * executing, including its tool batch. Null before the next LLM call and
      * after agent settlement. */
     activeAssistantMessageKey?: string | null;
+    /** Current native tool receipts, including bounded child activity, for reconnect. */
+    toolActivity?: Record<string, import("./tool-activity.js").ActivityTool>;
     isCompacting: boolean;
     transcriptPage: TranscriptPage;
     projectionHealth: ProjectionHealth;

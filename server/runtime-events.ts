@@ -35,6 +35,12 @@ import {
 import type { RuntimeSlot } from "./runtime-slot.js";
 import type { ReducedAssistantDelta } from "./runtime-stream-budget.js";
 import { ToolArgumentStream } from "./tool-argument-stream.js";
+import {
+  childCallFromEvent,
+  codemodeCalls,
+  toolOutputPreview,
+  updateChildActivity,
+} from "../shared/tool-activity.js";
 
 const STREAM_REVISION_FIELD = "__inspireStreamRevision";
 const MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES = 128 * 1024;
@@ -414,6 +420,75 @@ export class RuntimeEventController {
       }
     }
     switch (record.type) {
+      case "tool_execution_start":
+      case "tool_execution_update":
+      case "tool_execution_end": {
+        const safe = this.host.safeProjection(record) as Record<
+          string,
+          unknown
+        >;
+        if (typeof record.parentToolCallId === "string") {
+          // Child results belong only to the calling tool. Retain/send summaries,
+          // not its result content, images, structuredContent or private details.
+          forwardedEvent = {
+            type: record.type,
+            toolCallId: record.toolCallId,
+            toolName: record.toolName,
+            parentToolCallId: record.parentToolCallId,
+            childCall: childCallFromEvent(safe),
+          };
+          slot.toolActivity = updateChildActivity(
+            slot.toolActivity,
+            forwardedEvent as Record<string, unknown>,
+          );
+        } else if (
+          typeof record.toolCallId === "string" &&
+          typeof record.toolName === "string"
+        ) {
+          const existing = slot.toolActivity[record.toolCallId];
+          const ended = record.type === "tool_execution_end";
+          if (
+            !ended &&
+            (existing?.phase === "done" || existing?.phase === "error")
+          )
+            break;
+          const result = (ended ? safe.result : safe.partialResult) as
+            | { details?: unknown }
+            | undefined;
+          const calls =
+            record.toolName === "codemode"
+              ? codemodeCalls(result?.details)
+              : undefined;
+          if (
+            calls &&
+            result &&
+            typeof result.details === "object" &&
+            result.details !== null
+          ) {
+            const { calls: _nativeCalls, ...details } =
+              result.details as Record<string, unknown>;
+            // One bounded presentation DTO crosses live transport, just as in history.
+            forwardedEvent = {
+              ...safe,
+              childCalls: calls,
+              [ended ? "result" : "partialResult"]: { ...result, details },
+            };
+          }
+          slot.toolActivity = {
+            ...slot.toolActivity,
+            [record.toolCallId]: {
+              id: record.toolCallId,
+              name: record.toolName,
+              phase: ended ? (record.isError ? "error" : "done") : "running",
+              calls: calls ?? existing?.calls,
+              ...(!ended
+                ? { outputPreview: toolOutputPreview(safe.partialResult) }
+                : {}),
+            },
+          };
+        }
+        break;
+      }
       case "bash_execution_update":
         // Only the matching id-tagged native request owns these deltas. Do not
         // expose raw unbounded chunks from unrelated extension executions.
@@ -479,6 +554,7 @@ export class RuntimeEventController {
         slot.summarizationRetry = null;
         break;
       case "agent_start":
+        slot.toolActivity = {};
         slot.summarizationRetry = null;
         slot.runState = "running";
         slot.compactionReturnState = null;
@@ -537,6 +613,7 @@ export class RuntimeEventController {
         break;
       }
       case "agent_settled": {
+        slot.toolActivity = {};
         slot.summarizationRetry = null;
         const outcome =
           slot.runState === "failed" || slot.runState === "conflict"

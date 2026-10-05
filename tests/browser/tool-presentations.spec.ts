@@ -66,7 +66,7 @@ async function openReview(
     const server = client.connectToServer();
     server.onMessage((data) => {
       const event = JSON.parse(String(data));
-      if (event.type === "snapshot")
+      if (socket === client && event.type === "snapshot")
         sessionId =
           event.detailSessionId ?? event.data?.active?.sessionId ?? null;
       client.send(data);
@@ -97,6 +97,7 @@ async function openReview(
   });
   expect(created.ok()).toBe(true);
   sessionId = null;
+  socket = undefined;
   await page.reload();
   await expect(
     page.getByRole("button", { name: /^Session actions:/ }),
@@ -106,6 +107,264 @@ async function openReview(
     for (const event of events)
       socket!.send(JSON.stringify({ ...event, sessionId }));
   };
+}
+
+for (const mobile of [false, true]) {
+  test.describe(mobile ? "mobile child calls" : "desktop child calls", () => {
+    test.use(
+      mobile
+        ? {
+            viewport: { width: 390, height: 844 },
+            isMobile: true,
+            hasTouch: true,
+          }
+        : { viewport: { width: 1365, height: 950 } },
+    );
+    test("keeps a reading position through live settlement and reopens result-first", async ({
+      page,
+    }) => {
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      const send = await openReview(page, {
+        toolVisibility: "dynamic",
+        activityFoldVisibility: "dynamic",
+      });
+      const script =
+        "const data = await tools.read({path: 'report.txt'}); text(data);";
+      const calls = Array.from({ length: 80 }, (_, index) => ({
+        id: "script/?",
+        name: index === 0 ? "models.classify" : "read",
+        args:
+          index === 0
+            ? "fixture/classifier"
+            : JSON.stringify({ path: `src/report-${index}.txt`, limit: 30 }),
+        status: "running",
+      }));
+      const assistantMessage = {
+        role: "assistant",
+        __inspireMessageId: "child-call-review",
+        content: [
+          {
+            type: "toolCall",
+            id: "script",
+            name: "codemode",
+            arguments: { code: script },
+          },
+          {
+            type: "toolCall",
+            id: "parent",
+            name: "orchestrator",
+            arguments: {},
+          },
+        ],
+      };
+      send(
+        { type: "agent_start" },
+        { type: "message_start", message: assistantMessage },
+        {
+          type: "tool_execution_start",
+          toolCallId: "script",
+          toolName: "codemode",
+          args: { code: script },
+        },
+        {
+          type: "tool_execution_update",
+          toolCallId: "script",
+          toolName: "codemode",
+          partialResult: { content: [], details: { calls } },
+        },
+        {
+          type: "tool_execution_start",
+          toolCallId: "parent",
+          toolName: "orchestrator",
+          args: {},
+        },
+        {
+          type: "tool_execution_start",
+          parentToolCallId: "parent",
+          toolCallId: "parent/1",
+          toolName: "read",
+          args: { path: "independent.txt" },
+        },
+      );
+      const scriptCard = toolCard(page, "codemode");
+      const parentCard = toolCard(page, "orchestrator");
+      const list = scriptCard.getByRole("group", { name: "Child calls" });
+      await expect(list.locator(".child-call")).toHaveCount(80);
+      expect(
+        await list.evaluate((element) => element.clientHeight),
+      ).toBeLessThanOrEqual(320);
+      const row = list.locator(".child-call > summary").nth(6);
+      await row.scrollIntoViewIfNeeded();
+      if (mobile) await row.tap();
+      else {
+        await row.focus();
+        await row.press("Enter");
+      }
+      await expect(row.locator("..")).toHaveAttribute("open", "");
+      await expect(
+        row.locator("..").getByRole("group", { name: "Arguments preview" }),
+      ).toContainText("report-7.txt");
+      const position = await list.evaluate((element) => element.scrollTop);
+      await page.screenshot({
+        path: `output/playwright/child-calls/${mobile ? "mobile" : "desktop"}-running.png`,
+        animations: "disabled",
+      });
+      const finalCalls = calls.map((call, index) => ({
+        ...call,
+        id: `script/${index + 1}`,
+        status: index === 7 ? "error" : "ok",
+        durationMs: index === 7 ? 1600 : 10,
+        ...(index === 7 ? { error: "Report is unavailable" } : {}),
+      }));
+      const scriptResult = {
+        role: "toolResult",
+        toolCallId: "script",
+        toolName: "codemode",
+        isError: false,
+        __inspireMessageId: "script-result",
+        content: [
+          { type: "text", text: "Actual script result: 79 reports collected" },
+        ],
+        details: { calls: finalCalls },
+      };
+      const parentResult = {
+        role: "toolResult",
+        toolCallId: "parent",
+        toolName: "orchestrator",
+        isError: false,
+        __inspireMessageId: "parent-result",
+        content: [{ type: "text", text: "Independent parent completed" }],
+        nestedCalls: {
+          complete: true,
+          calls: [
+            {
+              id: "parent/1",
+              name: "read",
+              arguments: { path: "independent.txt" },
+              status: "error",
+              error: "Child failed",
+            },
+          ],
+        },
+      };
+      send(
+        {
+          type: "tool_execution_end",
+          parentToolCallId: "parent",
+          toolCallId: "parent/1",
+          toolName: "read",
+          isError: true,
+          result: { content: [{ type: "text", text: "Child failed" }] },
+        },
+        {
+          type: "tool_execution_end",
+          toolCallId: "script",
+          toolName: "codemode",
+          isError: false,
+          result: scriptResult,
+        },
+        { type: "message_end", message: scriptResult },
+        {
+          type: "tool_execution_end",
+          toolCallId: "parent",
+          toolName: "orchestrator",
+          isError: false,
+          result: parentResult,
+        },
+        { type: "message_end", message: parentResult },
+      );
+      await expect(
+        row.locator("..").getByRole("group", { name: "Call error" }),
+      ).toContainText("Report is unavailable");
+      await expect(row.locator("..")).toHaveAttribute("open", "");
+      if (!mobile) await expect(row).toBeFocused();
+      expect(await list.evaluate((element) => element.scrollTop)).toBe(
+        position,
+      );
+      await expect(
+        parentCard.getByText("Independent parent completed"),
+      ).toBeVisible();
+      await expect(
+        parentCard.getByRole("button", { name: "Calls 1" }),
+      ).toHaveAttribute("aria-expanded", "false");
+      await expect(page.locator(".card--failed")).toHaveCount(0);
+      send({
+        type: "message_start",
+        message: {
+          role: "assistant",
+          __inspireMessageId: "child-call-next",
+          content: [{ type: "text", text: "Continuing the fixture" }],
+        },
+      });
+      // Cross Adaptive card and band close delays after the next native boundary.
+      await page.waitForTimeout(3_200);
+      await expect(
+        scriptCard.getByRole("button", { name: "Collapse codemode tool" }),
+      ).toBeVisible();
+      await expect(row.locator("..")).toHaveAttribute("open", "");
+      if (!mobile) await expect(row).toBeFocused();
+      expect(await list.evaluate((element) => element.scrollTop)).toBe(
+        position,
+      );
+      await page.screenshot({
+        path: `output/playwright/child-calls/${mobile ? "mobile" : "desktop"}-settled-reading.png`,
+        animations: "disabled",
+      });
+      await page.route("**/api/bootstrap**", async (route) => {
+        const response = await route.fetch();
+        const body = await response.json();
+        body.preferences = {
+          ...body.preferences,
+          theme: "light",
+          toolVisibility: "expanded",
+          activityFoldVisibility: "expanded",
+        };
+        body.snapshot.active.transcriptPage.messages = [
+          assistantMessage,
+          scriptResult,
+          parentResult,
+        ];
+        await route.fulfill({ response, json: body });
+      });
+      await page.reload();
+      await expect(
+        page.getByText("Actual script result: 79 reports collected"),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Calls 80" }),
+      ).toHaveAttribute("aria-expanded", "false");
+      await expect(
+        page.getByRole("group", { name: "Child calls" }),
+      ).toHaveCount(0);
+      await expect(page.getByText("Script", { exact: true })).toBeVisible();
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: `output/playwright/child-calls/${mobile ? "mobile" : "desktop"}-reopened.png`,
+        animations: "disabled",
+      });
+      await page.getByRole("button", { name: "Calls 80" }).click();
+      const order = await toolCard(page, "codemode").evaluate((card) => {
+        const result = card
+          .querySelector(".tool-call-result")!
+          .getBoundingClientRect();
+        const calls = card
+          .querySelector(".tool-call-disclosure")!
+          .getBoundingClientRect();
+        return calls.top - result.bottom;
+      });
+      expect(order).toBeGreaterThanOrEqual(0);
+      const accessibility = await new AxeBuilder({ page })
+        .include(".card--tool")
+        .analyze();
+      expect(accessibility.violations).toEqual([]);
+      expect(errors).toEqual([]);
+    });
+  });
 }
 
 test("large Markdown stays readable through a stream burst without losing the composer draft", async ({

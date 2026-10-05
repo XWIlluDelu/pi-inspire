@@ -365,6 +365,47 @@ describe("declarative Thinking presentation", () => {
 });
 
 describe("shipped Pi tool rules", () => {
+  it("keeps Codemode's native script, result image and full-output reader on the selected lazy rule", () => {
+    const presentation = toolPresentationRegistry.resolve({
+      call: call("codemode", {
+        code: "image(await models.generateImages(model, request));",
+      }),
+      result: {
+        role: "toolResult",
+        content: [
+          { type: "text", text: "Script output" },
+          { type: "image", data: "cG5n", mimeType: "image/png" },
+        ],
+        isError: false,
+        details: { fullOutputPath: "/fixture/script-output.txt", calls: [] },
+      },
+    });
+    expect(presentation?.ruleId).toBe("inspire.pi.codemode");
+    expect(presentation?.blocks()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "image",
+          data: "cG5n",
+          mimeType: "image/png",
+          alt: "Script result image",
+        }),
+        {
+          type: "notice",
+          text: "Output truncated",
+          tone: "warning",
+          action: {
+            label: "View full output",
+            reference: "/fixture/script-output.txt",
+          },
+        },
+      ]),
+    );
+    expect(
+      toolPresentationRegistry.resolve({
+        call: call("codemode", { input: "raw script in the wrong property" }),
+      }),
+    ).toBeNull();
+  });
   it("keeps read resolution cheap and produces numbered content only on expansion", () => {
     const presentation = toolPresentationRegistry.resolve({
       call: call("read", { path: "src/app.ts", offset: 41, limit: 20 }),

@@ -4,12 +4,12 @@ Local JSON declarations customize tool cards, Thinking, and displayed custom mes
 
 ## Configuration
 
-| Installation | Default file |
-| --- | --- |
+| Installation    | Default file                                                              |
+| --------------- | ------------------------------------------------------------------------- |
 | Source checkout | `<checkout>/.inspire/tool-presentations.json` (`.inspire/` is gitignored) |
-| Linux package | `${XDG_CONFIG_HOME:-~/.config}/inspire/tool-presentations.json` |
-| macOS package | `~/Library/Application Support/Inspire/tool-presentations.json` |
-| Windows package | `%APPDATA%\Inspire\tool-presentations.json` |
+| Linux package   | `${XDG_CONFIG_HOME:-~/.config}/inspire/tool-presentations.json`           |
+| macOS package   | `~/Library/Application Support/Inspire/tool-presentations.json`           |
+| Windows package | `%APPDATA%\Inspire\tool-presentations.json`                               |
 
 `INSPIRE_TOOL_PRESENTATIONS_PATH=/absolute/path/to/file.json` overrides the default. Set it in the environment that starts the Host, then restart. Editing the selected file needs only a browser refresh: every authenticated bootstrap reads and validates it. Invalid input produces a warning and uses the shipped presentations.
 
@@ -71,17 +71,27 @@ For each exact RPC tool name, Inspire chooses the user mapping, otherwise the sh
 
 User rule IDs must be namespaced, such as `user.example.search`. Shipped `inspire.*` IDs are reserved. A user mapping may reference a shipped rule without redefining it.
 
+## Native Codemode and nested calls
+
+Codemode and nested tools show child calls inside the parent card. Expanded running cards show the
+call process; settled cards lead with the result and keep Calls and Script as secondary disclosures.
+Open a call to inspect available parameters, errors and duration. Codemode parameter summaries remain
+labelled previews. Inspecting Calls or Script keeps the card open through completion.
+
+Results use the existing text, image and authorized file viewers. The shared call view does not require
+a custom presentation profile and preserves the configured tool/activity display preferences.
+
 ## Values and summaries
 
 A value is a literal, such as `{ "literal": "Matches" }`, or a field selection, such as `{ "path": "args.root", "fallback": ".", "format": "basename" }`.
 
-| Selectable field | Content |
-| --- | --- |
-| `args.<key>` | Tool-call arguments; dots select nested keys and numeric array indexes. |
-| `result.text` | Normalized textual result. |
-| `result.error` | Whether the result is an error. |
-| `result.details` or `result.details.<key>` | Structured result details. |
-| `tool.name` | Exact RPC tool name. |
+| Selectable field                           | Content                                                                 |
+| ------------------------------------------ | ----------------------------------------------------------------------- |
+| `args.<key>`                               | Tool-call arguments; dots select nested keys and numeric array indexes. |
+| `result.text`                              | Normalized textual result.                                              |
+| `result.error`                             | Whether the result is an error.                                         |
+| `result.details` or `result.details.<key>` | Structured result details.                                              |
+| `tool.name`                                | Exact RPC tool name.                                                    |
 
 Field selections accept `fallback`, `prefix`, `suffix`, and `format`. Formats are `text` (default), `json`, `first-line`, `basename`, and `count`. Summary values cannot select `result.text` or use JSON formatting.
 
@@ -91,17 +101,17 @@ A missing required value makes the rule incompatible. Set `optional: true` on a 
 
 ## Body blocks
 
-| Type | Fields and behavior |
-| --- | --- |
-| `properties` | `items`: labeled values with optional `resource` references. |
-| `text`, `markdown`, `terminal` | `source` and optional `label`. Markdown uses the shared sanitized renderer. |
-| `code` | `source`, optional `label`, `language`, and `lineNumbers` (false hides the gutter). |
-| `diff` | Unified-diff `source`, optional `label` and file `path`. |
-| `replacement` | Required `label`, `oldText`, and `newText`; optional file `path`. |
-| `list` | Array or newline-delimited `source` rendered as file/directory links; optional `root` supplies their base path. `format: "annotated-lines"` recognizes trailing `  [annotation]` and standalone `[notice]` lines. |
-| `search` | `source` with `format: "grouped-lines"`: file headers followed by ` <line>: <match>` or ` <line>- <context>` rows. Standalone bracketed lines are notices. |
-| `image` | Base64 `data`, `mimeType`, and `alt` values; PNG, JPEG, GIF, and WebP are supported. |
-| `notice` | `source`, optional `tone`: `muted`, `warning`, or `error`. |
+| Type                           | Fields and behavior                                                                                                                                                                                               |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `properties`                   | `items`: labeled values with optional `resource` references.                                                                                                                                                      |
+| `text`, `markdown`, `terminal` | `source` and optional `label`. Markdown uses the shared sanitized renderer.                                                                                                                                       |
+| `code`                         | `source`, optional `label`, `language`, and `lineNumbers` (false hides the gutter).                                                                                                                               |
+| `diff`                         | Unified-diff `source`, optional `label` and file `path`.                                                                                                                                                          |
+| `replacement`                  | Required `label`, `oldText`, and `newText`; optional file `path`.                                                                                                                                                 |
+| `list`                         | Array or newline-delimited `source` rendered as file/directory links; optional `root` supplies their base path. `format: "annotated-lines"` recognizes trailing `  [annotation]` and standalone `[notice]` lines. |
+| `search`                       | `source` with `format: "grouped-lines"`: file headers followed by ` <line>: <match>` or ` <line>- <context>` rows. Standalone bracketed lines are notices.                                                        |
+| `image`                        | Base64 `data`, `mimeType`, and `alt` values; PNG, JPEG, GIF, and WebP are supported.                                                                                                                              |
+| `notice`                       | `source`, optional `tone`: `muted`, `warning`, or `error`.                                                                                                                                                        |
 
 `list` and `search` also accept `label`, `emptyValues`, and `emptyText`. Sources and the named value fields use the same literal/selection grammar above. `label` and other declaration options are ordinary JSON values. The full schema is `shared/tool-presentation-config.ts` in a source checkout.
 

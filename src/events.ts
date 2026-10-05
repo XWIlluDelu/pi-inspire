@@ -28,6 +28,14 @@ import {
 import { structuralMessageIdentity } from "../shared/message-identity";
 
 import type { ToolCallPreview } from "../shared/tool-argument-updates";
+import {
+  codemodeCalls,
+  toolOutputPreview,
+  updateChildActivity,
+  type ActivityTool,
+  type ChildCallList,
+} from "../shared/tool-activity";
+export type { ActivityTool } from "../shared/tool-activity";
 
 // --- Chat message model (structural typing over Pi session messages) ---
 
@@ -87,6 +95,9 @@ export interface ChatMessage {
   customType?: string;
   display?: boolean;
   details?: unknown;
+  /** Bounded native child-call summaries, selected and redacted by the Host. */
+  __inspireCalls?: ChildCallList;
+  nestedCalls?: unknown;
   /** Pi-authored context checkpoint messages. */
   summary?: string;
   tokensBefore?: number;
@@ -148,52 +159,6 @@ export interface WireEvent {
   message?: unknown;
   data?: unknown;
   [key: string]: unknown;
-}
-
-export interface ActivityTool {
-  id: string;
-  name: string;
-  phase: "queued" | "running" | "done" | "error";
-  detail?: string;
-  /** Cumulative execution output, never an authoritative tool result. */
-  outputPreview?: { text: string; truncated: boolean };
-}
-
-const TOOL_OUTPUT_PREVIEW_CHARS = 16_000;
-const TOOL_OUTPUT_PREVIEW_LINES = 400;
-
-/** Pi updates replace the previous partial result; they are not text deltas.
- * Keep a bounded tail so long-running commands continue to show recent work. */
-function toolOutputPreview(value: unknown): ActivityTool["outputPreview"] {
-  const content =
-    value && typeof value === "object"
-      ? (value as Record<string, unknown>).content
-      : value;
-  const parts = typeof content === "string" ? [content] : content;
-  if (!Array.isArray(parts)) return undefined;
-  let text = "";
-  let truncated = false;
-  for (const part of parts) {
-    const next =
-      typeof part === "string"
-        ? part
-        : part?.type === "text" && typeof part.text === "string"
-          ? part.text
-          : "";
-    if (!next) continue;
-    const separator = text ? "\n" : "";
-    truncated ||=
-      text.length + separator.length + next.length > TOOL_OUTPUT_PREVIEW_CHARS;
-    text = `${text}${separator}${next.slice(-TOOL_OUTPUT_PREVIEW_CHARS)}`.slice(
-      -TOOL_OUTPUT_PREVIEW_CHARS,
-    );
-  }
-  const lines = text.split("\n");
-  if (lines.length > TOOL_OUTPUT_PREVIEW_LINES) {
-    text = lines.slice(-TOOL_OUTPUT_PREVIEW_LINES).join("\n");
-    truncated = true;
-  }
-  return text ? { text, truncated } : undefined;
 }
 
 export interface Notice {
@@ -698,15 +663,16 @@ export function reduceEvent(
     }
     case "tool_execution_start":
     case "tool_execution_update": {
+      if (typeof event.parentToolCallId === "string") {
+        slice.tools = updateChildActivity(current.tools, event);
+        changed = slice.tools !== current.tools;
+        break;
+      }
       const id = typeof event.toolCallId === "string" ? event.toolCallId : "";
       if (!id) break;
       const existing = current.tools[id];
       // A delayed update must not resurrect a completed execution.
-      if (
-        event.type === "tool_execution_update" &&
-        (existing?.phase === "done" || existing?.phase === "error")
-      )
-        break;
+      if (existing?.phase === "done" || existing?.phase === "error") break;
       const detail =
         event.type === "tool_execution_update"
           ? (summarize(event.partialResult) ?? existing?.detail)
@@ -724,12 +690,26 @@ export function reduceEvent(
           ...(event.type === "tool_execution_update"
             ? { outputPreview: toolOutputPreview(event.partialResult) }
             : {}),
+          calls:
+            typeof event.toolName === "string" && event.toolName === "codemode"
+              ? ((event.childCalls as ChildCallList | undefined) ??
+                codemodeCalls(
+                  (event.partialResult as { details?: unknown } | undefined)
+                    ?.details,
+                ) ??
+                existing?.calls)
+              : existing?.calls,
         },
       };
       changed = true;
       break;
     }
     case "tool_execution_end": {
+      if (typeof event.parentToolCallId === "string") {
+        slice.tools = updateChildActivity(current.tools, event);
+        changed = slice.tools !== current.tools;
+        break;
+      }
       const id = typeof event.toolCallId === "string" ? event.toolCallId : "";
       if (!id) break;
       const existing = current.tools[id];
@@ -743,6 +723,14 @@ export function reduceEvent(
               : (existing?.name ?? "tool"),
           phase: event.isError ? "error" : "done",
           detail: existing?.detail ?? summarize(event.result),
+          calls:
+            typeof event.toolName === "string" && event.toolName === "codemode"
+              ? ((event.childCalls as ChildCallList | undefined) ??
+                codemodeCalls(
+                  (event.result as { details?: unknown } | undefined)?.details,
+                ) ??
+                existing?.calls)
+              : existing?.calls,
         },
       };
       changed = true;

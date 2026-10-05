@@ -59,6 +59,11 @@ import {
   toolPresentationRegistry,
 } from "../tool-presentations/registry";
 import { CopyAction } from "./CopyAction";
+import { ChildCalls } from "./ChildCalls";
+import {
+  resultChildCalls,
+  type ChildCallList,
+} from "../../shared/tool-activity";
 import {
   EmbeddedImageOwnerContext,
   ImagePreview,
@@ -158,6 +163,10 @@ function CardHeader({
     </div>
   );
 }
+
+const CardInspectionContext = createContext<(() => void) | undefined>(
+  undefined,
+);
 
 interface CardProps {
   defaultVisibility: StaticVisibility;
@@ -263,7 +272,18 @@ function CollapsibleCard({
           inert={!bodyOpen}
         >
           <div className="card__reveal-inner">
-            <div className="card__body">{children}</div>
+            <div className="card__body">
+              <CardInspectionContext
+                value={() => {
+                  if (override !== "open") {
+                    setOverride("open");
+                    onManualOpenChange?.(true);
+                  }
+                }}
+              >
+                {children}
+              </CardInspectionContext>
+            </div>
           </div>
         </div>
       ) : null}
@@ -637,6 +657,9 @@ function RawResultExtras({
       : result.content;
   const data = {
     ...(hasResultData(result.details) ? { details: result.details } : {}),
+    ...(hasResultData(result.nestedCalls)
+      ? { nestedCalls: result.nestedCalls }
+      : {}),
     ...(hasResultData(otherContent) ? { content: otherContent } : {}),
   };
   return (
@@ -663,15 +686,7 @@ function RawResultExtras({
   );
 }
 
-function RawToolDetails({
-  call,
-  result,
-  status,
-}: {
-  call: ToolCallContent;
-  result: ChatMessage | undefined;
-  status: ToolStatus;
-}) {
+function RawArguments({ call }: { call: ToolCallContent }) {
   const argumentsText = useMemo(
     () => JSON.stringify(call.arguments ?? {}, null, 2),
     [call.arguments],
@@ -680,17 +695,8 @@ function RawToolDetails({
     argumentsText,
     call.__inspireToolCall?.phase === "streaming",
   );
-  if (
-    !result &&
-    call.__inspireToolCall &&
-    Object.keys(call.arguments ?? {}).length === 0
-  )
-    return <PendingToolResult status={status} />;
   return (
     <>
-      <div className="card__section-label">
-        {call.__inspireToolCall ? "Arguments (partial)" : "Arguments"}
-      </div>
       {toolFileArguments(call).map((arg) => (
         <FileRefButton
           key={`${arg.key}:${arg.value}`}
@@ -711,6 +717,31 @@ function RawToolDetails({
       >
         {argumentsText}
       </pre>
+    </>
+  );
+}
+
+function RawToolDetails({
+  call,
+  result,
+  status,
+}: {
+  call: ToolCallContent;
+  result: ChatMessage | undefined;
+  status: ToolStatus;
+}) {
+  if (
+    !result &&
+    call.__inspireToolCall &&
+    Object.keys(call.arguments ?? {}).length === 0
+  )
+    return <PendingToolResult status={status} />;
+  return (
+    <>
+      <div className="card__section-label">
+        {call.__inspireToolCall ? "Arguments (partial)" : "Arguments"}
+      </div>
+      <RawArguments call={call} />
       {result ? (
         <>
           <div className="card__section-label">Result</div>
@@ -766,6 +797,7 @@ export function ToolResultCard({
   visibility: StaticVisibility;
 }) {
   const name = typeof result.toolName === "string" ? result.toolName : "Tool";
+  const calls = result.__inspireCalls ?? resultChildCalls(result);
   return (
     <CollapsibleCard
       defaultVisibility={visibility}
@@ -777,7 +809,13 @@ export function ToolResultCard({
       copyText={() => JSON.stringify(result, null, 2)}
       copyLabel={`${name} result`}
     >
-      <RawToolResult result={result} />
+      {calls ? (
+        <PhaseToolDetails calls={calls} running={false} settled>
+          <RawToolResult result={result} />
+        </PhaseToolDetails>
+      ) : (
+        <RawToolResult result={result} />
+      )}
     </CollapsibleCard>
   );
 }
@@ -1251,6 +1289,119 @@ function LiveToolOutput({
   );
 }
 
+function PhaseToolDetails({
+  calls,
+  running,
+  settled,
+  children,
+  script,
+}: {
+  calls?: ChildCallList;
+  running: boolean;
+  settled: boolean;
+  children: React.ReactNode;
+  script?: React.ReactNode;
+}) {
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+  const [readingCalls, setReadingCalls] = useState(false);
+  const callsId = useId();
+  const inspect = useContext(CardInspectionContext);
+  const open = manualOpen ?? (!settled || readingCalls);
+  const resultBody = (
+    <div key="result" className="tool-call-result">
+      {children}
+    </div>
+  );
+  const callsBody =
+    calls && (calls.calls.length > 0 || !calls.complete) ? (
+      <div key="calls" className="tool-call-disclosure">
+        <button
+          type="button"
+          className="tool-call-disclosure__button"
+          aria-expanded={open}
+          aria-controls={open ? callsId : undefined}
+          onClick={() => {
+            setManualOpen(!open);
+            if (!settled) setReadingCalls(true);
+          }}
+        >
+          <ChevronRight
+            size={12}
+            className={`chev ${open ? "chev--open" : ""}`}
+            aria-hidden
+          />
+          Calls{" "}
+          <span className="tool-call-disclosure__count">
+            {calls.calls.length}
+          </span>
+        </button>
+        {open ? (
+          <div id={callsId}>
+            <ChildCalls
+              list={calls}
+              running={running}
+              onRead={() => {
+                inspect?.();
+                if (!settled) setReadingCalls(true);
+              }}
+            />
+          </div>
+        ) : null}
+      </div>
+    ) : null;
+  return (
+    <div
+      className="tool-call-layout"
+      onFocusCapture={inspect}
+      onClickCapture={inspect}
+      onPointerDownCapture={inspect}
+    >
+      {!settled || readingCalls
+        ? [callsBody, resultBody]
+        : [resultBody, callsBody]}
+      {script ? <div className="tool-call-script">{script}</div> : null}
+    </div>
+  );
+}
+
+function ToolArguments({ call }: { call: ToolCallContent }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className="tool-result-details"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>
+        {call.__inspireToolCall ? "Arguments (partial)" : "Arguments"}
+      </summary>
+      {open ? <RawArguments call={call} /> : null}
+    </details>
+  );
+}
+
+function ToolScript({ call }: { call: ToolCallContent }) {
+  const [open, setOpen] = useState(false);
+  const args = call.arguments as { code: string };
+  return (
+    <details
+      className="tool-result-details"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>Script{call.__inspireToolCall ? " (partial)" : ""}</summary>
+      {open ? (
+        <ToolPresentationBlockView
+          block={{
+            type: "code",
+            text: args.code,
+            language: "javascript",
+            label: "JavaScript",
+          }}
+        />
+      ) : null}
+    </details>
+  );
+}
+
 function ToolDetails({
   call,
   result,
@@ -1266,6 +1417,50 @@ function ToolDetails({
 }) {
   const preview =
     !result && status === "running" ? activity?.outputPreview : undefined;
+  const calls = result
+    ? (result.__inspireCalls ?? resultChildCalls(result))
+    : activity?.calls;
+  const codemode = presentation?.ruleId === "inspire.pi.codemode";
+  if (codemode || calls)
+    return (
+      <>
+        {call.__inspireToolCall?.truncated ? (
+          <div className="card__pending">Argument preview truncated</div>
+        ) : null}
+        <PhaseToolDetails
+          calls={calls}
+          running={status === "running"}
+          settled={Boolean(result)}
+          script={codemode ? <ToolScript call={call} /> : undefined}
+        >
+          {presentation ? (
+            <ToolDetailsContent
+              call={call}
+              result={result}
+              status={status}
+              presentation={presentation}
+              showPending={!calls?.calls.length}
+            />
+          ) : result ? (
+            <RawToolResult result={result} />
+          ) : !calls?.calls.length ? (
+            <PendingToolResult status={status} />
+          ) : null}
+          {codemode && result && hasResultData(result.details) ? (
+            <RawResultData
+              value={{
+                details: result.details,
+                ...(result.nestedCalls
+                  ? { nestedCalls: result.nestedCalls }
+                  : {}),
+              }}
+            />
+          ) : null}
+          {preview ? <LiveToolOutput preview={preview} /> : null}
+          {!presentation ? <ToolArguments call={call} /> : null}
+        </PhaseToolDetails>
+      </>
+    );
   return (
     <>
       {call.__inspireToolCall?.truncated ? (
@@ -1287,11 +1482,13 @@ function ToolDetailsContent({
   result,
   status,
   presentation,
+  showPending = true,
 }: {
   call: ToolCallContent;
   result: ChatMessage | undefined;
   status: ToolStatus;
   presentation: ResolvedToolPresentation | null;
+  showPending?: boolean;
 }) {
   if (!presentation)
     return <RawToolDetails call={call} result={result} status={status} />;
@@ -1306,7 +1503,7 @@ function ToolDetailsContent({
           key={`${block.type}:${index}`}
         />
       ))}
-      {!result ? <PendingToolResult status={status} /> : null}
+      {!result && showPending ? <PendingToolResult status={status} /> : null}
     </div>
   );
 }

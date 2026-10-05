@@ -30,6 +30,7 @@ import {
   type UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import { messageFallbackCorrelation } from "../shared/message-identity.js";
+import { resultChildCalls } from "../shared/tool-activity.js";
 import { userTurnSummary } from "../shared/user-turns.js";
 import {
   type ComposerHistoryFileNameResolver,
@@ -565,6 +566,15 @@ function boundedTranscriptItem(
     value && typeof value === "object" && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : null;
+  const calls =
+    sourceRecord?.role === "toolResult"
+      ? projectSafeValue(resultChildCalls(sourceRecord), {
+          depth: 12,
+          stringChars: 8_192,
+          arrayItems: 256,
+          objectEntries: 256,
+        })
+      : undefined;
   const identityMetadata = sourceRecord
     ? {
         ...(typeof sourceRecord.__inspireMessageId === "string"
@@ -600,6 +610,11 @@ function boundedTranscriptItem(
       ? {
           ...(projected as Record<string, unknown>),
           ...identityMetadata,
+          ...(calls ? { __inspireCalls: calls } : {}),
+          ...(sourceRecord?.role === "toolResult" &&
+          typeof sourceRecord.isError === "boolean"
+            ? { isError: sourceRecord.isError }
+            : {}),
           // Reduced item projections are replacements, not valid bases for
           // replaying the original un-clipped argument patch on a browser.
           ...(stringChars === 2_000

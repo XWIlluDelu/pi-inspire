@@ -321,7 +321,8 @@ const SessionIdent = memo(function SessionIdent({
             cloneDisabled={cloneBusy}
             onClose={closeMenu}
             onRename={() => {
-              const width = titleRef.current!.getBoundingClientRect().width + 48;
+              const width =
+                titleRef.current!.getBoundingClientRect().width + 48;
               setRenameWidth(Math.max(240, Math.min(560, width)));
               closeMenu();
               // The first-prompt heading is a fallback, not Pi's saved name.

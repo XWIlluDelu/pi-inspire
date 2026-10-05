@@ -978,7 +978,7 @@ export class AppStore {
       // Settled activity is rebuilt from the selected worker. Background
       // extension dialogs are restored in Pi request order when their owning
       // session is viewed.
-      tools: {},
+      tools: active?.toolActivity ?? {},
       retry:
         snapshot.runState === "retrying"
           ? parseRetryInfo(snapshot.retry)
