@@ -157,14 +157,10 @@ for (const viewport of [
     await verify();
 
     const input = page.getByLabel("Message", { exact: true });
-    for (const command of ["clone", "bug"]) {
-      await input.fill(`/${command}`);
-      await expect(
-        page.getByRole("option", {
-          name: new RegExp(`/${command}.*Terminal only`),
-        }),
-      ).toBeVisible();
-    }
+    await input.fill("/bug");
+    await expect(
+      page.getByRole("option", { name: /\/bug.*Terminal only/ }),
+    ).toBeVisible();
     await input.fill("");
     await page.screenshot({
       path: `output/playwright/compaction-checkpoint-${viewport.name}.png`,

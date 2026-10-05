@@ -1,29 +1,398 @@
 import { basename } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
-import {
-  decodeTerminalInputFrame,
-  decodeTerminalServerDataFrame,
-} from "../../shared/terminal-contracts";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
-
-const token = "inspire-browser-test-token";
+import {
+  browserTestToken as token,
+  openCommandPalette,
+  openMockSession,
+  pairedPage,
+} from "./support/navigation";
 const mockWorkspaceName = basename(browserWorkspace);
 
-async function pairedPage(page: import("@playwright/test").Page) {
-  await page.goto("/");
-  await page.getByLabel("Access token").fill(token);
-  await page.getByRole("button", { name: "Pair" }).click();
-  await expect(page.getByRole("main")).toBeVisible();
+for (const narrow of [false, true]) {
+  test(`session search keyboard selection preserves drafts and navigation on ${narrow ? "narrow" : "desktop"}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(
+      narrow ? { width: 390, height: 844 } : { width: 1280, height: 900 },
+    );
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await pairedPage(page);
+    if (narrow)
+      await page
+        .getByRole("button", { name: "Toggle navigation", exact: true })
+        .click();
+    await openMockSession(page, /Review extension event lifecycle/);
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await input.fill("SESSION_SEARCH_ACTIVE_DRAFT");
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "search-draft.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("retain draft artifact"),
+    });
+    await expect(page.locator(".attachment--ready")).toBeVisible();
+    if (narrow)
+      await page
+        .getByRole("button", { name: "Toggle navigation", exact: true })
+        .click();
+    await page
+      .getByRole("button", { name: "New session", exact: true })
+      .click();
+    const first = page.getByRole("textbox", { name: "First message" });
+    await first.fill("SESSION_SEARCH_START_DRAFT");
+    const response = await page.request.get(
+      "/api/sessions?q=&offset=0&limit=40",
+    );
+    const catalog = (await response.json()).sessions as Array<{ id: string }>;
+    const find = (id: string) => catalog.find((session) => session.id === id)!;
+    // UI-only catalog pages: deliberately no title contains the query. Native content
+    // matching is checked with real isolated Pi JSONL in session-catalog.test.ts.
+    await page.route("**/api/sessions?**", async (route) => {
+      const params = new URL(route.request().url()).searchParams;
+      if (params.get("q") !== "bodyneedle") return route.continue();
+      const offset = Number(params.get("offset") ?? 0);
+      await route.fulfill({
+        json: {
+          sessions:
+            offset === 0
+              ? [find("mock-active"), find("mock-history")]
+              : [find("mock-errors")],
+          total: 3,
+          offset,
+          limit: 2,
+        },
+      });
+    });
+    const findSession = async () => {
+      const palette = await openCommandPalette(page);
+      await palette.getByLabel("Filter commands").fill("/resume");
+      await palette.getByRole("option", { name: /Find a session/ }).click();
+      const search = page.getByRole("searchbox", { name: "Search sessions" });
+      await expect(search).toBeFocused();
+      return search;
+    };
+    let search = await findSession();
+    await search.fill("bodyneedle");
+    await expect(page.locator(".nav__row-name")).toHaveCount(2);
+    await expect(first).toHaveValue("SESSION_SEARCH_START_DRAFT");
+    await search.press("ArrowDown");
+    const highlighted = page.locator(".nav__row--highlighted .nav__row-name");
+    await expect(highlighted).toHaveText("Review extension event lifecycle");
+    await expect(search).toBeFocused();
+    await page
+      .getByRole("button", { name: "Load older sessions", exact: true })
+      .click();
+    await expect(page.locator(".nav__row-name")).toHaveCount(3);
+    await search.focus();
+    await expect(highlighted).toHaveText("Review extension event lifecycle");
+    await expect(
+      page.getByRole("button", { name: "Load older sessions", exact: true }),
+    ).toHaveCount(0);
+    const a11y = await new AxeBuilder({ page }).include(".nav").analyze();
+    expect(a11y.violations).toEqual([]);
+    await page.screenshot({
+      path: `output/playwright/session-search-${narrow ? "narrow" : "desktop"}.png`,
+      animations: "disabled",
+    });
+    await search.press("Enter");
+    await expect(input).toHaveValue("SESSION_SEARCH_ACTIVE_DRAFT");
+    await expect(page.locator(".attachment")).toContainText("search-draft.txt");
+    if (narrow)
+      await expect(
+        page.getByRole("dialog", { name: "Sessions", exact: true }),
+      ).toHaveCount(0);
+    search = await findSession();
+    await search.fill("");
+    await search.fill("bodyneedle");
+    await expect(page.locator(".nav__row-name")).toHaveCount(2);
+    await search.press("ArrowUp");
+    await expect(highlighted).toHaveText(
+      "Formula rendering and spectral analysis",
+    );
+    await search.dispatchEvent("compositionstart");
+    await search.dispatchEvent("keydown", {
+      key: "Enter",
+      isComposing: true,
+      bubbles: true,
+    });
+    await search.dispatchEvent("keydown", {
+      key: "Escape",
+      isComposing: true,
+      bubbles: true,
+    });
+    await expect(search).toHaveValue("bodyneedle");
+    await expect(page.locator(".topbar__title-button")).toHaveText(
+      "Review extension event lifecycle",
+    );
+    await search.dispatchEvent("compositionend");
+    await search.press("Enter");
+    await expect(page.locator(".topbar__title-button")).toHaveText(
+      "Formula rendering and spectral analysis",
+    );
+    await expect(input).toHaveValue("");
+    if (narrow)
+      await page
+        .getByRole("button", { name: "Toggle navigation", exact: true })
+        .click();
+    const curate = async (action: string) => {
+      const button = page.getByRole("button", {
+        name: `${action} "Review extension event lifecycle"`,
+        exact: true,
+      });
+      await page.locator(".nav__row").filter({ has: button }).hover();
+      await button.click();
+    };
+    await curate("Hide");
+    await expect(page.locator(".nav__group--hidden")).toContainText(
+      "Review extension event lifecycle",
+    );
+    await curate("Restore");
+    await expect(page.locator(".nav__group--hidden")).toHaveCount(0);
+    await curate("Pin");
+    await expect(page.locator(".nav__group--pinned")).toContainText(
+      "Review extension event lifecycle",
+    );
+    await curate("Unpin");
+    await search.fill("");
+    await page
+      .getByRole("button", { name: "New session", exact: true })
+      .click();
+    await expect(first).toHaveValue("SESSION_SEARCH_START_DRAFT");
+  });
 }
 
-async function openMockSession(
-  page: import("@playwright/test").Page,
-  title: RegExp,
-) {
-  await page.locator(".nav__row-main").filter({ hasText: title }).click();
-  await expect(page.locator(".topbar__title-button")).toHaveText(title);
-}
+test("composer text drafts survive reload and stay partitioned through switching, history, sending and clearing", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  const draft = "UNSENT_REFRESH_SAFE\n保留 exact draft";
+  await input.fill(draft);
+  await page.reload();
+  await expect(input).toHaveValue(draft);
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+  await expect(input).toHaveValue("");
+  await input.fill("other session draft");
+  await openMockSession(page, /Review extension event lifecycle/);
+  await expect(input).toHaveValue(draft);
+  // Merely browsing history must not overwrite the saved pre-browse draft.
+  await input.evaluate((element: HTMLTextAreaElement) =>
+    element.setSelectionRange(0, 0),
+  );
+  await input.press("ArrowUp");
+  await expect(input).not.toHaveValue(draft);
+  await page.reload();
+  await expect(input).toHaveValue(draft);
+  await input.fill("send and do not resurrect");
+  const accepted = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/prompt") && response.status() === 202,
+  );
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await accepted;
+  await expect(input).toHaveValue("");
+  await page.reload();
+  await expect(input).toHaveValue("");
+  await input.fill("explicitly removed");
+  await input.fill("");
+  await page.reload();
+  await expect(input).toHaveValue("");
+  await page.getByRole("button", { name: "New session", exact: true }).click();
+  const first = page.getByRole("textbox", { name: "First message" });
+  await first.fill("separate start-surface draft");
+  await page.reload();
+  await expect(first).toHaveValue("separate start-surface draft");
+  await first.fill("");
+});
+
+test("composer expansion follows real wrapping and preserves the same editor, artifacts and completion", async ({
+  page,
+  browser,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  const expand = page.getByRole("button", {
+    name: "Expand editor",
+    exact: true,
+  });
+  const collapse = page.getByRole("button", {
+    name: "Collapse editor",
+    exact: true,
+  });
+  await input.fill("short input");
+  await expect(expand).toHaveCount(0);
+  const padding = await input.evaluate((element) => ({
+    left: getComputedStyle(element).paddingLeft,
+    right: getComputedStyle(element).paddingRight,
+  }));
+  expect(padding.right).toBe(padding.left);
+  const wrapped = "wrapped layout text ".repeat(55);
+  await input.fill(wrapped);
+  await expect(expand).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(expand).toBeVisible();
+  await expect
+    .poll(() =>
+      input.evaluate(
+        (element) => element.scrollHeight > element.clientHeight + 1,
+      ),
+    )
+    .toBe(true);
+  expect(
+    await input.evaluate((element) =>
+      Number.parseFloat(getComputedStyle(element).paddingRight),
+    ),
+  ).toBeGreaterThan(Number.parseFloat(padding.right));
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await expect(expand).toHaveCount(0);
+  await page.locator(".composer__file-input").setInputFiles({
+    name: "expanded.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("attachment retained"),
+  });
+  await expect(page.getByText("expanded.txt", { exact: true })).toBeVisible();
+  const long = Array.from(
+    { length: 60 },
+    (_, index) =>
+      `Long-form editing line ${index}: preserve the same input and selection.`,
+  ).join("\n");
+  await input.fill(long);
+  await expect(expand).toBeVisible();
+  const compactHeight = await input.evaluate((element) => element.clientHeight);
+  await input.evaluate((element: HTMLTextAreaElement) => {
+    element.dataset.sameEditor = "yes";
+    element.focus();
+    element.setSelectionRange(4, 17, "backward");
+  });
+  await expand.click();
+  await expect(collapse).toBeVisible();
+  await expect(input).toBeFocused();
+  expect(
+    await input.evaluate((element: HTMLTextAreaElement) => [
+      element.dataset.sameEditor,
+      element.selectionStart,
+      element.selectionEnd,
+      element.selectionDirection,
+    ]),
+  ).toEqual(["yes", 4, 17, "backward"]);
+  expect(
+    await input.evaluate((element) => element.clientHeight),
+  ).toBeGreaterThan(compactHeight + 100);
+  await expect(input).toHaveValue(long);
+  await expect(page.getByText("expanded.txt", { exact: true })).toBeVisible();
+  await collapse.focus();
+  await collapse.press("Enter");
+  await expect(input).toBeFocused();
+  await expect(expand).toBeVisible();
+  await expand.click();
+  await input.fill("@TerminalSettingsDialog");
+  const option = page.getByRole("option", {
+    name: "TerminalSettingsDialog.tsx src/components/TerminalSettingsDialog.tsx",
+    exact: true,
+  });
+  await expect(option).toBeVisible();
+  await input.press("Tab");
+  await expect(input).toHaveValue(
+    '@"src/components/TerminalSettingsDialog.tsx" ',
+  );
+  await expect(collapse).toBeVisible();
+  await input.fill("/model");
+  await expect(
+    page.getByRole("listbox", { name: "Slash command completions" }),
+  ).toBeVisible();
+  await input.press("Escape");
+  await expect(
+    page.getByRole("listbox", { name: "Slash command completions" }),
+  ).toHaveCount(0);
+  await expect(collapse).toBeVisible();
+  await input.fill("short again");
+  await expect(collapse).toBeVisible();
+  await collapse.click();
+  await expect(expand).toHaveCount(0);
+  await expect(collapse).toHaveCount(0);
+  await expect(input).toHaveValue("short again");
+  await expect(page.getByText("expanded.txt", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "New session", exact: true }).click();
+  const first = page.getByRole("textbox", { name: "First message" });
+  await expect(expand).toHaveCount(0);
+  await first.fill(long);
+  await expect(expand).toBeVisible();
+  const firstCompact = await first.evaluate((element) => element.clientHeight);
+  await expand.click();
+  expect(
+    await first.evaluate((element) => element.clientHeight),
+  ).toBeGreaterThan(firstCompact);
+  await first.fill("short first message");
+  await expect(collapse).toBeVisible();
+  await collapse.click();
+  await expect(expand).toHaveCount(0);
+  await first.fill("");
+
+  const touchContext = await browser.newContext({
+    baseURL: new URL(page.url()).origin,
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  try {
+    const touch = await touchContext.newPage();
+    await pairedPage(touch);
+    await touch.getByRole("button", { name: "Toggle navigation" }).click();
+    await openMockSession(touch, /Formula rendering and spectral analysis/);
+    const touchInput = touch.getByRole("textbox", {
+      name: "Message",
+      exact: true,
+    });
+    await touchInput.fill("short touch input");
+    expect(
+      await touchInput.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return style.paddingLeft === style.paddingRight;
+      }),
+    ).toBe(true);
+    await touchInput.fill(long);
+    const touchExpand = touch.getByRole("button", {
+      name: "Expand editor",
+      exact: true,
+    });
+    await expect(touchExpand).toBeVisible();
+    const bounds = await touchExpand.boundingBox();
+    expect(bounds!.width).toBeGreaterThanOrEqual(44);
+    expect(bounds!.height).toBeGreaterThanOrEqual(44);
+    expect(
+      await touchInput.evaluate(
+        (element) => getComputedStyle(element).paddingRight,
+      ),
+    ).toBe("48px");
+    await touchExpand.tap();
+    await expect(
+      touch.getByRole("button", { name: "Collapse editor", exact: true }),
+    ).toBeVisible();
+    await expect(touchInput).toBeFocused();
+    await touchInput.fill("touch multiline");
+    await touchInput.press("Enter");
+    await expect(touchInput).toHaveValue("touch multiline\n");
+    await touch
+      .getByRole("button", { name: "Collapse editor", exact: true })
+      .tap();
+    await expect(
+      touch.getByRole("button", { name: "Expand editor", exact: true }),
+    ).toHaveCount(0);
+    expect(
+      await touchInput.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return style.paddingLeft === style.paddingRight;
+      }),
+    ).toBe(true);
+  } finally {
+    await touchContext.close();
+  }
+});
 
 test("Settings activity menus remain clickable beyond their card and persist the choice", async ({
   page,
@@ -36,12 +405,13 @@ test("Settings activity menus remain clickable beyond their card and persist the
     await page.setViewportSize(viewport);
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
-    await dialog.getByRole("button", { name: "Restore defaults" }).click();
+    await dialog.getByRole("button", { name: "Reset preferences" }).click();
     await dialog
       .getByRole("button", { name: "Conversation", exact: true })
       .click();
     await dialog.getByRole("combobox", { name: "Activity groups" }).click();
-    await dialog
+    await page
+      .getByRole("listbox", { name: "Activity groups", exact: true })
       .getByRole("option", { name: "Collapsed", exact: false })
       .click();
     await expect(
@@ -66,7 +436,7 @@ test("Settings activity menus remain clickable beyond their card and persist the
         response.url().endsWith("/api/preferences") &&
         response.request().method() === "PATCH",
     );
-    await dialog.getByRole("button", { name: "Restore defaults" }).click();
+    await dialog.getByRole("button", { name: "Reset preferences" }).click();
     await restored;
     const activity = dialog.getByRole("combobox", { name: "Activity groups" });
     await activity.click();
@@ -76,825 +446,6 @@ test("Settings activity menus remain clickable beyond their card and persist the
     await expect(activity).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
-  }
-});
-
-test("project terminals survive browser detach and keep multiple tabs", async ({
-  context,
-  page,
-}) => {
-  await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
-  await page.evaluate(() => {
-    window.localStorage.setItem(
-      "inspire:terminal-ui-settings:v1",
-      JSON.stringify({ screenReaderMode: true }),
-    );
-  });
-  await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("button", { name: "Terminal", exact: true }).click();
-
-  const emptyTerminal = page.locator(".terminal-empty");
-  await emptyTerminal.getByRole("button", { name: "New terminal" }).click();
-  const readTerminals = async () => {
-    const response = await page.request.get(
-      `/api/terminals?cwd=${encodeURIComponent(browserWorkspace)}`,
-    );
-    expect(response.ok()).toBe(true);
-    return response.json() as Promise<{
-      terminals: Array<{ id: string; nextOutputOffset: number }>;
-    }>;
-  };
-  const terminalInput = page.locator(".xterm-helper-textarea");
-  await expect(terminalInput).toBeVisible();
-  const firstCatalog = await readTerminals();
-  const firstTerminal = firstCatalog.terminals[0]!;
-  await terminalInput.pressSequentially("printf 'INSPIRE_TERMINAL_E2E\\n'");
-  await terminalInput.press("Enter");
-  await expect
-    .poll(async () => (await readTerminals()).terminals[0]!.nextOutputOffset)
-    .toBeGreaterThan(firstTerminal.nextOutputOffset);
-  const visibleTerminalOutput = page.locator(
-    ".terminal-views__item:not([hidden]) .xterm-accessibility-tree",
-  );
-  await context.grantPermissions(["clipboard-read", "clipboard-write"], {
-    origin: new URL(page.url()).origin,
-  });
-  await page.evaluate(async () => {
-    await navigator.clipboard.writeText("printf '终端✓\\n'");
-  });
-  await page.getByLabel("Terminal actions", { exact: true }).click();
-  await page.getByRole("button", { name: "Paste into terminal" }).click();
-  await expect(
-    page.locator(".terminal-pane details[data-terminal-menu][open]"),
-  ).toHaveCount(0);
-  await expect(terminalInput).toBeFocused();
-  await terminalInput.press("Enter");
-  await expect(visibleTerminalOutput).toContainText("终端✓");
-  await terminalInput.pressSequentially(
-    "printf '\\033[?1049hINSPIRE_ALT_SCREEN'",
-  );
-  await terminalInput.press("Enter");
-  await expect(visibleTerminalOutput).toContainText("INSPIRE_ALT_SCREEN");
-
-  await page.getByRole("button", { name: "New terminal" }).click();
-  await expect(page.locator(".terminal-tab__select")).toHaveCount(2);
-  const terminalIds = (await readTerminals()).terminals.map(({ id }) => id);
-  const terminalAccessibility = await new AxeBuilder({ page })
-    .include(".terminal-pane")
-    .analyze();
-  expect(terminalAccessibility.violations).toEqual([]);
-
-  await page.reload();
-  await expect(page.getByRole("main")).toBeVisible();
-  await openMockSession(page, /Review extension event lifecycle/);
-  await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("button", { name: "Terminal", exact: true }).click();
-  await expect(page.locator(".terminal-tab__select")).toHaveCount(2);
-  expect((await readTerminals()).terminals.map(({ id }) => id)).toEqual(
-    terminalIds,
-  );
-
-  await page.locator(`#terminal-tab-${terminalIds[0]}`).click();
-  await expect(
-    page.getByRole("status", { name: "Controlling", exact: true }),
-  ).toBeVisible();
-  const restoredInput = page.locator(
-    ".terminal-views__item:not([hidden]) .xterm-helper-textarea",
-  );
-  await expect(
-    page.locator(
-      ".terminal-views__item:not([hidden]) .xterm-accessibility-tree",
-    ),
-  ).toContainText("INSPIRE_ALT_SCREEN");
-  await restoredInput.pressSequentially("printf '\\033[?1049l'");
-  await restoredInput.press("Enter");
-
-  const focusedPage = await context.newPage();
-  const focusedUrl = new URL(page.url());
-  focusedUrl.searchParams.set("terminal", terminalIds[0]!);
-  focusedUrl.searchParams.set("terminalFocus", "1");
-  await focusedPage.goto(focusedUrl.href);
-  await expect(focusedPage.locator(".terminal-pane--focused")).toBeVisible();
-  await expect(
-    focusedPage.getByRole("status", { name: "View only", exact: true }),
-  ).toBeVisible();
-  await focusedPage.keyboard.press("Control+k");
-  await focusedPage
-    .getByPlaceholder("Type a command or search…")
-    .fill("take control");
-  await focusedPage
-    .getByRole("option", { name: /Take control of terminal/ })
-    .click();
-  await expect(
-    focusedPage.getByRole("status", { name: "Controlling", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("status", { name: "View only", exact: true }),
-  ).toBeVisible();
-  await openMockSession(page, /Formula rendering and spectral analysis/);
-  await expect(focusedPage.locator(".terminal-pane--focused")).toBeVisible();
-  await expect(
-    focusedPage.locator(`#terminal-tab-${terminalIds[0]}`),
-  ).toHaveAttribute("aria-pressed", "true");
-  await focusedPage.close();
-
-  for (const terminalId of terminalIds) {
-    const response = await page.request.delete(
-      `/api/terminals/${encodeURIComponent(terminalId)}?force=1`,
-    );
-    expect(response.ok()).toBe(true);
-  }
-  await expect.poll(async () => (await readTerminals()).terminals).toEqual([]);
-});
-
-test("terminal menus share alignment, mutual exclusion, and nested Escape ownership", async ({
-  page,
-}) => {
-  await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
-  const created = await page.request.post("/api/terminals", {
-    data: { cwd: browserWorkspace },
-  });
-  expect(created.ok()).toBe(true);
-  const terminal = (await created.json()) as { id: string };
-  try {
-    for (const width of [1280, 390]) {
-      await page.setViewportSize({ width, height: 900 });
-      if (!(await page.locator(".ctx").count()))
-        await page
-          .getByRole("button", { name: "Toggle resources panel" })
-          .click();
-      await page.getByRole("button", { name: "Terminal", exact: true }).click();
-      await expect(
-        page.locator(".xterm-helper-textarea").first(),
-      ).toBeVisible();
-
-      const centers = await page
-        .locator(
-          ".terminal-tabs__new > .icon-button, .terminal-tabs-shell .terminal-menu > summary, .terminal-view-controls > .icon-button, .terminal-tabs__focus",
-        )
-        .evaluateAll((controls) =>
-          controls.map((control) => {
-            const icon = control.querySelector("svg")!.getBoundingClientRect();
-            return icon.top + icon.height / 2;
-          }),
-        );
-      expect(centers.length).toBeGreaterThanOrEqual(4);
-      expect(Math.max(...centers) - Math.min(...centers)).toBeLessThanOrEqual(
-        0.5,
-      );
-      await page.locator(".terminal-tabs-shell").screenshot({
-        path: `output/playwright/terminal-toolbar-${width}.png`,
-      });
-
-      const actions = page.getByLabel("Terminal actions", { exact: true });
-      const profiles = page.getByLabel("Choose terminal profile", {
-        exact: true,
-      });
-      const openMenus = page.locator(
-        ".terminal-pane details[data-terminal-menu][open]",
-      );
-      await actions.focus();
-      await actions.press("Enter");
-      await expect(openMenus).toHaveCount(1);
-      // Profile discovery is platform-specific; exercise mutual exclusion when
-      // this Host exposes more than one profile, without inventing a shell.
-      if (await profiles.count()) {
-        await profiles.focus();
-        await profiles.press("Enter");
-        await expect(openMenus).toHaveCount(1);
-        await expect(profiles.locator("..")).toHaveAttribute("open", "");
-        await actions.focus();
-        await actions.press("Enter");
-      }
-      await expect(
-        page.getByRole("button", { name: "Duplicate", exact: true }),
-      ).toHaveCount(0);
-      await expect(
-        page.getByLabel("Terminal command history", { exact: true }),
-      ).toHaveCount(0);
-      await expect(
-        page.getByRole("button", {
-          name: "Run last command again",
-          exact: true,
-        }),
-      ).toHaveCount(0);
-      await expect(
-        page.getByRole("button", {
-          name: "Copy terminal selection",
-          exact: true,
-        }),
-      ).toHaveCount(0);
-      await expect(page.locator(".terminal-view__toolbar")).toHaveCount(0);
-
-      const projects = page.getByLabel("Terminals in all projects", {
-        exact: true,
-      });
-      await projects.click();
-      const filter = page.getByRole("textbox", {
-        name: "Find terminal or project",
-      });
-      await filter.fill("NO_SUCH_TERMINAL");
-      await expect(
-        page.getByText("No matching terminals", { exact: true }),
-      ).toBeVisible();
-      await filter.press("Escape");
-      await expect(projects.locator("..")).not.toHaveAttribute("open");
-      await expect(projects).toBeFocused();
-      await expect(openMenus).toHaveCount(1);
-      await projects.press("Escape");
-      await expect(openMenus).toHaveCount(0);
-      await expect(actions).toBeFocused();
-      await expect(page.locator(".ctx")).toBeVisible();
-
-      await actions.press("Enter");
-      await page.getByRole("button", { name: "Rename", exact: true }).focus();
-      await page.keyboard.press("Escape");
-      await expect(openMenus).toHaveCount(0);
-      await expect(actions).toBeFocused();
-
-      for (const shortcut of ["Control+Shift+Escape", "Meta+Shift+Escape"]) {
-        await page
-          .getByRole("button", { name: "Focus terminal", exact: true })
-          .click();
-        await expect(page.locator(".terminal-pane--focused")).toBeVisible();
-        await page.locator(".xterm-helper-textarea").first().focus();
-        await page.keyboard.press(shortcut);
-        await expect(page.locator(".terminal-pane--focused")).toHaveCount(0);
-        await expect(page.locator(".ctx")).toBeVisible();
-      }
-      if (width === 390) {
-        await actions.focus();
-        await actions.press("Escape");
-        await expect(page.locator(".ctx")).toHaveCount(0);
-      }
-    }
-  } finally {
-    await page.request.delete(
-      `/api/terminals/${encodeURIComponent(terminal.id)}?force=1`,
-    );
-  }
-});
-
-test("compact terminal controls keep selection, search, and output scoped to the active view", async ({
-  context,
-  page,
-}) => {
-  await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
-  await page.evaluate(() =>
-    localStorage.setItem(
-      "inspire:terminal-ui-settings:v1",
-      JSON.stringify({ screenReaderMode: true }),
-    ),
-  );
-  const ids: string[] = [];
-  const prompts: string[] = [];
-  page.on("request", (request) => {
-    if (
-      request.method() === "POST" &&
-      new URL(request.url()).pathname === "/api/prompt"
-    )
-      prompts.push(request.url());
-  });
-  try {
-    for (let index = 0; index < 2; index += 1) {
-      const response = await page.request.post("/api/terminals", {
-        data: { cwd: browserWorkspace },
-      });
-      expect(response.ok()).toBe(true);
-      ids.push(((await response.json()) as { id: string }).id);
-    }
-    await page.getByRole("button", { name: "Toggle resources panel" }).click();
-    await page.getByRole("button", { name: "Terminal", exact: true }).click();
-    await page.locator(`#terminal-tab-${ids[0]}`).click();
-    await expect(
-      page.getByRole("status", { name: "Controlling", exact: true }),
-    ).toBeVisible();
-    const activeView = page.locator(".terminal-views__item:not([hidden])");
-    const input = activeView.locator(".xterm-helper-textarea");
-    // The mock Host intentionally skips user shell integration. Exercise its
-    // real PTY stream with explicit advisory command/output boundaries.
-    await input.pressSequentially(
-      "printf '\\033]6973;C1;fixture\\007TERMINAL_REDESIGN_A\\n\\033]6973;D;0\\007'",
-    );
-    await input.press("Enter");
-    await expect(activeView.locator(".xterm-accessibility-tree")).toContainText(
-      "TERMINAL_REDESIGN_A",
-    );
-    await input.evaluate((element) =>
-      element.setAttribute("data-continuity", "retained"),
-    );
-    const dimensions = async () => {
-      const response = await page.request.get(
-        `/api/terminals?cwd=${encodeURIComponent(browserWorkspace)}`,
-      );
-      const catalog = (await response.json()) as {
-        terminals: Array<{ id: string; cols: number; rows: number }>;
-      };
-      const terminal = catalog.terminals.find(({ id }) => id === ids[0])!;
-      return { cols: terminal.cols, rows: terminal.rows };
-    };
-    const beforeSearch = await dimensions();
-    const searchButton = page.getByRole("button", {
-      name: "Search terminal output",
-      exact: true,
-    });
-    await expect(searchButton).toHaveCount(1);
-    await searchButton.click();
-    const searchInput = page.getByRole("textbox", {
-      name: "Search terminal output",
-      exact: true,
-    });
-    await expect(searchInput).toBeFocused();
-    await searchInput.fill("TERMINAL_REDESIGN_A");
-    await expect(page.locator(".terminal-search__count")).not.toHaveText("0/0");
-    expect(await dimensions()).toEqual(beforeSearch);
-    await page.locator(`#terminal-tab-${ids[1]}`).click();
-    await expect(searchButton).toHaveCount(1);
-    await expect(searchButton).toHaveAttribute("aria-expanded", "false");
-    await searchButton.click();
-    await expect(searchInput).toHaveValue("");
-    await searchInput.fill("SECOND_VIEW_QUERY");
-    await page.getByLabel("Terminal actions", { exact: true }).click();
-    await expect(
-      page.getByRole("button", { name: "Copy last output", exact: true }),
-    ).toBeDisabled();
-    await page.locator(`#terminal-tab-${ids[0]}`).click();
-    await expect(searchInput).toHaveValue("TERMINAL_REDESIGN_A");
-    await expect(input).toHaveAttribute("data-continuity", "retained");
-    await page.getByRole("button", { name: "Close terminal search" }).click();
-
-    await context.grantPermissions(["clipboard-read", "clipboard-write"], {
-      origin: new URL(page.url()).origin,
-    });
-    const more = page.getByLabel("Terminal actions", { exact: true });
-    await more.click();
-    const copyOutput = page.getByRole("button", {
-      name: "Copy last output",
-      exact: true,
-    });
-    await expect(copyOutput).toBeEnabled();
-    await copyOutput.click();
-    await expect
-      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toBe("TERMINAL_REDESIGN_A");
-    await more.click();
-    await page.getByRole("button", { name: "Copy all", exact: true }).click();
-    await expect
-      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toContain("TERMINAL_REDESIGN_A");
-    await more.click();
-    await page
-      .getByRole("button", { name: "Select text", exact: true })
-      .click();
-    const textDialog = page.getByRole("dialog", {
-      name: "Select terminal text",
-    });
-    const textOutput = textDialog.getByRole("textbox", {
-      name: "Terminal output",
-    });
-    await expect(page.locator("details[data-terminal-menu][open]")).toHaveCount(
-      0,
-    );
-    await expect(textOutput).toBeFocused();
-    await expect(textOutput).toHaveAttribute("readonly", "");
-    expect(await dimensions()).toEqual(beforeSearch);
-    await textOutput.press("Control+a");
-    await textDialog
-      .getByRole("button", { name: "Copy selection", exact: true })
-      .click();
-    await expect
-      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toContain("TERMINAL_REDESIGN_A");
-    await page
-      .getByRole("button", {
-        name: "Send terminal selection to composer",
-        exact: true,
-      })
-      .click();
-    await expect(
-      page.getByRole("textbox", { name: "Message", exact: true }),
-    ).toHaveValue(/```text[\s\S]*TERMINAL_REDESIGN_A/);
-    expect(prompts).toEqual([]);
-
-    // A delayed permission/read result belongs to its original activation,
-    // including an A → B → A round trip. A fresh paste still reaches the PTY.
-    await page.evaluate(() => {
-      document.documentElement.dataset.testPasteSends = "";
-      const send = WebSocket.prototype.send;
-      WebSocket.prototype.send = function (data) {
-        const text =
-          typeof data === "string"
-            ? data
-            : data instanceof Blob
-              ? ""
-              : new TextDecoder().decode(data);
-        if (text.includes("TERMINAL_CLIPBOARD_"))
-          document.documentElement.dataset.testPasteSends += text;
-        return send.call(this, data);
-      };
-      Object.defineProperty(navigator.clipboard, "readText", {
-        configurable: true,
-        value: () =>
-          new Promise<string>((resolve) => {
-            document.addEventListener(
-              "test-terminal-paste",
-              (event) => resolve((event as CustomEvent<string>).detail),
-              { once: true },
-            );
-          }),
-      });
-    });
-    const deliverPaste = (value: string) =>
-      page.evaluate(async (text) => {
-        document.dispatchEvent(
-          new CustomEvent("test-terminal-paste", { detail: text }),
-        );
-        await new Promise<void>((resolve) =>
-          requestAnimationFrame(() => resolve()),
-        );
-      }, value);
-    await more.click();
-    await page
-      .getByRole("button", { name: "Paste into terminal", exact: true })
-      .click();
-    await page.locator(`#terminal-tab-${ids[1]}`).click();
-    await page.locator(`#terminal-tab-${ids[0]}`).click();
-    await deliverPaste("TERMINAL_CLIPBOARD_STALE");
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-test-paste-sends",
-      "",
-    );
-    await more.click();
-    await page
-      .getByRole("button", { name: "Paste into terminal", exact: true })
-      .click();
-    await deliverPaste("TERMINAL_CLIPBOARD_FRESH");
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-test-paste-sends",
-      /TERMINAL_CLIPBOARD_FRESH/,
-    );
-    await expect(input).toBeFocused();
-    await input.press("Control+u");
-    await page.evaluate(() =>
-      Reflect.deleteProperty(navigator.clipboard, "readText"),
-    );
-
-    const accessibility = await new AxeBuilder({ page })
-      .include(".terminal-pane")
-      .analyze();
-    expect(accessibility.violations).toEqual([]);
-    // Height-only changes preserve output; a short panel also scrolls its menu.
-    await page
-      .locator(".terminal-pane")
-      .evaluate((element) => (element.style.flex = "0 0 280px"));
-    await more.click();
-    await expect(copyOutput).toBeEnabled();
-    await copyOutput.click();
-    await expect
-      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toBe("TERMINAL_REDESIGN_A");
-    await more.click();
-    await page
-      .locator(".terminal-pane")
-      .getByRole("button", { name: "Settings", exact: true })
-      .scrollIntoViewIfNeeded();
-    const paneBounds = await page.locator(".terminal-pane").boundingBox();
-    const menuBounds = await page
-      .locator(".terminal-menu--more > .terminal-menu__popover")
-      .boundingBox();
-    expect(menuBounds!.y + menuBounds!.height).toBeLessThanOrEqual(
-      paneBounds!.y + paneBounds!.height,
-    );
-    await page
-      .locator(".terminal-pane")
-      .screenshot({ path: "output/playwright/terminal-compact-menu.png" });
-    await more.click();
-    await page
-      .locator(".terminal-pane")
-      .evaluate((element) => element.style.removeProperty("flex"));
-
-    for (const width of [1280, 390, 320]) {
-      await page.setViewportSize({ width, height: 900 });
-      if (!(await page.locator(".ctx").count()))
-        await page
-          .getByRole("button", { name: "Toggle resources panel" })
-          .click();
-      await page.getByRole("button", { name: "Terminal", exact: true }).click();
-      const visibleInput = page.locator(
-        ".terminal-views__item:not([hidden]) .xterm-helper-textarea",
-      );
-      await searchButton.click();
-      await expect(searchInput).toBeFocused();
-      await searchInput.fill("TERMINAL_REDESIGN_A");
-      await searchInput.press("Escape");
-      await expect(searchInput).toHaveCount(0);
-      await expect(page.locator(".ctx")).toBeVisible();
-      await expect(visibleInput).toBeFocused();
-      for (const theme of ["light", "dark"]) {
-        await page.evaluate(
-          (value) => (document.documentElement.dataset.theme = value),
-          theme,
-        );
-        await page.locator(".terminal-pane").screenshot({
-          path: `output/playwright/terminal-compact-${width}-${theme}.png`,
-        });
-        const themedAccessibility = await new AxeBuilder({ page })
-          .include(".terminal-pane")
-          .analyze();
-        expect(themedAccessibility.violations).toEqual([]);
-      }
-      const overflow = await page
-        .locator(".terminal-tabs-shell")
-        .evaluate((element) => element.scrollWidth - element.clientWidth);
-      expect(overflow).toBeLessThanOrEqual(1);
-    }
-  } finally {
-    for (const id of ids)
-      await page.request.delete(
-        `/api/terminals/${encodeURIComponent(id)}?force=1`,
-      );
-  }
-});
-
-test.describe("touch terminal", () => {
-  test.use({
-    hasTouch: true,
-    isMobile: true,
-    viewport: { width: 390, height: 844 },
-  });
-
-  test("keeps touch keys in the input flow and offers stable native text selection", async ({
-    context,
-    page,
-  }) => {
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    const inputs: string[] = [];
-    let output = "";
-    page.on("websocket", (socket) => {
-      if (new URL(socket.url()).pathname !== "/terminal") return;
-      socket.on("framesent", ({ payload }) => {
-        if (typeof payload !== "string")
-          inputs.push(
-            new TextDecoder().decode(decodeTerminalInputFrame(payload).data),
-          );
-      });
-      const decoder = new TextDecoder();
-      socket.on("framereceived", ({ payload }) => {
-        if (typeof payload !== "string")
-          output += decoder.decode(
-            decodeTerminalServerDataFrame(payload).data,
-            { stream: true },
-          );
-      });
-    });
-    await pairedPage(page);
-    await page.getByRole("button", { name: "Toggle navigation" }).tap();
-    await openMockSession(page, /Review extension event lifecycle/);
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    const response = await page.request.post("/api/terminals", {
-      data: { cwd: browserWorkspace },
-    });
-    expect(response.ok()).toBe(true);
-    const terminal = (await response.json()) as { id: string };
-    try {
-      await page.getByRole("button", { name: "Toggle resources panel" }).tap();
-      await page.getByRole("button", { name: "Terminal", exact: true }).tap();
-      await expect(
-        page.getByRole("status", { name: "Controlling", exact: true }),
-      ).toBeVisible();
-      const input = page.locator(
-        ".terminal-view--active .xterm-helper-textarea",
-      );
-      const keys = page.getByRole("group", {
-        name: "Terminal keys",
-        exact: true,
-      });
-      const ctrl = keys.getByRole("button", { name: "Ctrl", exact: true });
-      await page.getByRole("button", { name: "Focus terminal input" }).tap();
-      await expect(input).toBeFocused();
-      await ctrl.tap();
-      await expect(ctrl).toHaveAttribute("aria-pressed", "true");
-      await expect(input).toBeFocused();
-      await page.keyboard.insertText("a");
-      await expect.poll(() => inputs.at(-1)).toBe("\u0001");
-      await expect(ctrl).toHaveAttribute("aria-pressed", "false");
-
-      // A native paste is literal even if a touch modifier was waiting.
-      await page.evaluate(() => navigator.clipboard.writeText("c"));
-      await ctrl.tap();
-      await page.keyboard.press("Control+v");
-      await expect
-        .poll(() => inputs.at(-1))
-        .toMatch(/^(?:\u001b\[200~)?c(?:\u001b\[201~)?$/u);
-      await expect(ctrl).toHaveAttribute("aria-pressed", "false");
-      await input.press("Control+u");
-      await ctrl.tap();
-      await keys.getByRole("button", { name: "Arrow up", exact: true }).tap();
-      await expect.poll(() => inputs.at(-1)).toBe("\u001b[1;5A");
-      await expect(input).toBeFocused();
-      await expect(ctrl).toHaveAttribute("aria-pressed", "false");
-
-      await input.evaluate((element) => element.blur());
-      await keys.getByRole("button", { name: "Ctrl+C", exact: true }).tap();
-      await expect.poll(() => inputs.at(-1)).toBe("\u0003");
-      await expect(input).not.toBeFocused();
-      await keys.getByRole("button", { name: "Arrow down", exact: true }).tap();
-      await expect(input).not.toBeFocused();
-      await ctrl.tap();
-      await page.getByRole("button", { name: "Focus terminal input" }).tap();
-      await expect(ctrl).toHaveAttribute("aria-pressed", "true");
-      await page.keyboard.insertText("u");
-      await expect.poll(() => inputs.at(-1)).toBe("\u0015");
-
-      await page.keyboard.insertText("printf 'TOUCH\\137COPY_中文\\n'");
-      await input.press("Enter");
-      await expect.poll(() => output).toContain("TOUCH_COPY_中文");
-      const more = page.getByLabel("Terminal actions", { exact: true });
-      await more.tap();
-      await expect(
-        page.getByRole("button", { name: "Copy last output", exact: true }),
-      ).toBeDisabled();
-      await page.getByRole("button", { name: "Copy all", exact: true }).tap();
-      await expect
-        .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-        .toContain("TOUCH_COPY_中文");
-      await more.tap();
-      await page
-        .getByRole("button", { name: "Select text", exact: true })
-        .tap();
-      const dialog = page.getByRole("dialog", { name: "Select terminal text" });
-      const text = dialog.getByRole("textbox", {
-        name: "Terminal output",
-        exact: true,
-      });
-      await expect(text).toBeFocused();
-      await expect(text).toHaveAttribute("readonly", "");
-      await expect(text).toHaveAttribute("inputmode", "none");
-      const snapshot = await text.inputValue();
-      await text.evaluate((element: HTMLTextAreaElement) => {
-        const start = element.value.lastIndexOf("TOUCH_COPY_中文");
-        element.setSelectionRange(start, start + "TOUCH_COPY_中文".length);
-      });
-      const copySelection = dialog.getByRole("button", {
-        name: "Copy selection",
-        exact: true,
-      });
-      await expect(copySelection).toBeVisible();
-      // The native selection survives the height change that clears xterm's
-      // canvas selection. Incoming reflow does not replace the captured text.
-      await page.setViewportSize({ width: 390, height: 500 });
-      await expect(text).toHaveValue(snapshot);
-      await copySelection.tap();
-      await expect
-        .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-        .toBe("TOUCH_COPY_中文");
-      await dialog
-        .getByRole("button", { name: "Select all", exact: true })
-        .tap();
-      await expect
-        .poll(() =>
-          text.evaluate(
-            (element: HTMLTextAreaElement) =>
-              element.selectionEnd - element.selectionStart,
-          ),
-        )
-        .toBe(snapshot.length);
-
-      for (const [width, height] of [
-        [320, 740],
-        [700, 390],
-      ]) {
-        await page.setViewportSize({ width, height });
-        const safeInset = width > height ? 36 : 0;
-        await page.evaluate((value) => {
-          document.documentElement.style.setProperty(
-            "--safe-left",
-            `${value}px`,
-          );
-          document.documentElement.style.setProperty(
-            "--safe-right",
-            `${value}px`,
-          );
-        }, safeInset);
-        for (const theme of ["light", "dark"]) {
-          await page.evaluate((value) => {
-            document.documentElement.dataset.theme = value;
-            document.documentElement.dataset.palette =
-              value === "dark" ? "teal" : "amber";
-          }, theme);
-          await expect(dialog).toBeVisible();
-          const bounds = await dialog.boundingBox();
-          expect(bounds!.x).toBeGreaterThanOrEqual(safeInset);
-          expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(
-            width - safeInset,
-          );
-          expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(height);
-          expect(
-            await dialog.evaluate(
-              (element) => element.scrollWidth - element.clientWidth,
-            ),
-          ).toBeLessThanOrEqual(1);
-          await page.screenshot({
-            path: `output/playwright/terminal-text-${width}-${theme}.png`,
-          });
-          const accessibility = await new AxeBuilder({ page })
-            .include(".terminal-text-dialog")
-            .analyze();
-          expect(accessibility.violations).toEqual([]);
-        }
-      }
-      await page.evaluate(() =>
-        Object.defineProperty(navigator.clipboard, "writeText", {
-          configurable: true,
-          value: () => Promise.reject(new Error("Clipboard permission denied")),
-        }),
-      );
-      await dialog.getByRole("button", { name: /^Cop/ }).tap();
-      await expect(dialog.getByRole("alert")).toContainText(
-        "Clipboard permission denied",
-      );
-      await expect(text).toBeFocused();
-      expect(
-        await text.evaluate(
-          (element: HTMLTextAreaElement) =>
-            element.selectionEnd - element.selectionStart,
-        ),
-      ).toBe(snapshot.length);
-      await page.keyboard.press("Escape");
-      await expect(dialog).toHaveCount(0);
-      await expect(page.locator(".ctx")).toBeVisible();
-      await expect(input).not.toBeFocused();
-    } finally {
-      await page.request.delete(
-        `/api/terminals/${encodeURIComponent(terminal.id)}?force=1`,
-      );
-    }
-  });
-});
-
-test("completion titles wrap within their column without hiding long filenames", async ({
-  page,
-}) => {
-  await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
-  const input = page.getByRole("textbox", { name: "Message", exact: true });
-  for (const width of [1280, 390, 320]) {
-    await page.setViewportSize({ width, height: 900 });
-    await input.fill("@TerminalSettingsDialog");
-    const option = page.getByRole("option", {
-      name: "TerminalSettingsDialog.tsx src/components/TerminalSettingsDialog.tsx",
-      exact: true,
-    });
-    await expect(option).toBeVisible();
-    await expect(option.locator(".completion__title")).toHaveText(
-      "TerminalSettingsDialog.tsx",
-    );
-    await expect
-      .poll(async () =>
-        option.evaluate((element) => {
-          const title = element.querySelector(".completion__title")!;
-          const hint = element
-            .querySelector(".completion__hint")!
-            .getBoundingClientRect();
-          const range = document.createRange();
-          range.selectNodeContents(title);
-          return [...range.getClientRects()].every(
-            (rect) =>
-              rect.right <= hint.left &&
-              rect.left >= title.getBoundingClientRect().left,
-          );
-        }),
-      )
-      .toBe(true);
-  }
-});
-
-test("model labels and badges retain text contrast across both palettes and themes", async ({
-  page,
-}) => {
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
-  await page.getByRole("button", { name: "Model", exact: true }).click();
-  await expect(page.locator(".model-picker__badge--active")).toBeVisible();
-  for (const palette of ["amber", "teal"]) {
-    for (const theme of ["light", "dark"]) {
-      await page.evaluate(
-        ({ palette, theme }) => {
-          document.documentElement.dataset.palette = palette;
-          document.documentElement.dataset.theme = theme;
-        },
-        { palette, theme },
-      );
-      const result = await new AxeBuilder({ page })
-        .include(".model-picker__menu")
-        .withRules(["color-contrast"])
-        .analyze();
-      expect(result.violations, `${palette}/${theme}`).toEqual([]);
-    }
   }
 });
 
@@ -1095,44 +646,6 @@ test("activity dots swap theme colors without layout motion and respect reduced 
       ),
     ),
   ).toEqual(["none", "none", "none"]);
-});
-
-test("Pending stays read-only until an explicit Clear all confirmation", async ({
-  page,
-}) => {
-  await pairedPage(page);
-  await openMockSession(page, /Formula rendering and spectral analysis/);
-
-  const composer = page.getByRole("form", { name: "Message composer" });
-  const input = composer.getByRole("textbox", { name: "Message" });
-  await input.fill(`long running prompt ${"x".repeat(260)}`);
-  await composer.getByRole("button", { name: "Send message" }).click();
-  await expect(
-    composer.getByRole("button", { name: "Abort running task" }),
-  ).toBeVisible();
-
-  await input.fill("first pending instruction");
-  await composer.getByRole("button", { name: "Send as steer" }).click();
-  const pending = page.getByRole("region", { name: "Pending input" });
-  await expect(pending).toContainText("first pending instruction");
-  await expect(
-    pending.getByRole("button", { name: /pause|resume|delete|move/i }),
-  ).toHaveCount(0);
-  await composer.getByRole("button", { name: "Queue" }).click();
-  await input.fill("second pending instruction");
-  await composer
-    .getByRole("button", { name: "Queue after current task" })
-    .click();
-  await expect(pending).toContainText("second pending instruction");
-  await pending
-    .getByRole("button", { name: "Clear all Pending input" })
-    .click();
-  await expect(pending).toContainText(
-    "whatever remains queued when Pi handles this request",
-  );
-  await expect(pending.getByRole("listitem")).toHaveCount(2);
-  await pending.getByRole("button", { name: "Clear all" }).click();
-  await expect(pending).toHaveCount(0);
 });
 
 test("new-session completion opens below its caret line inside the viewport", async ({
@@ -1635,7 +1148,7 @@ test("running composer exposes steer, queue, and abort controls", async ({
   ).toBeHidden();
 });
 
-test("narrow workbench keeps model controls, Git status, and drawer dismissal reachable", async ({
+test("narrow workbench preserves primary controls and drawer dismissal", async ({
   page,
 }) => {
   await pairedPage(page);
@@ -1665,9 +1178,17 @@ test("narrow workbench keeps model controls, Git status, and drawer dismissal re
       .locator(".dropdown__value")
       .evaluate((label) => label.scrollWidth <= label.clientWidth + 1);
     expect(labelFits).toBe(true);
-    const meta = await page.locator(".topbar__workspace-meta").boundingBox();
-    const git = await page.locator(".topbar__git").boundingBox();
-    expect(git!.x + git!.width).toBeLessThanOrEqual(meta!.x + meta!.width + 1);
+    const metadata = page.locator(".topbar__workspace-meta");
+    if (width === 390) {
+      const meta = await metadata.boundingBox();
+      const git = await page.locator(".topbar__git").boundingBox();
+      expect(git!.x + git!.width).toBeLessThanOrEqual(
+        meta!.x + meta!.width + 1,
+      );
+    } else {
+      // The 320px bar yields secondary workspace details to primary controls.
+      await expect(metadata).toBeHidden();
+    }
     const toggle = page.getByRole("button", { name: "Toggle navigation" });
     await toggle.click();
     const navigation = page.getByRole("dialog", {

@@ -131,7 +131,9 @@ The selected-file header stays above scrolling content. Its path copies the path
 through the authenticated attachment route, and the reciprocal view action keeps a fixed trailing
 slot, disabled when unavailable. Source uses highlighting and line numbers; `:line` and `#Lline`
 open Source at that position, including for files that normally open in Preview. Files does not
-duplicate Changes with a Diff mode or add file-editing controls.
+duplicate Changes with a Diff mode or add file-editing controls. Source, Markdown code blocks and
+Notebook cells highlight recognized languages up to 64 Ki characters per leaf; larger leaves retain
+text and copying without highlighting.
 
 Host-owned Preview, Source, and Changes use a luminosity-aware neutral canvas across Amber and Jade.
 Authored backgrounds and semantic source/diff colors remain intact. Images use a neutral checkerboard
@@ -186,6 +188,9 @@ Audio and video use native playback controls. The page media policy allows same-
 sources for the authorized preview.
 
 ## Git Changes
+
+A failed refresh retains the previous result with one visible stale-result notice, including clean
+and non-repository results. Initial failure does not claim a Git result.
 
 Switching to Changes preserves the canonical selected workspace file whether or not it appears in
 Git status. The upper region shows repository identity, staged/working/conflict counts, and grouped

@@ -1,10 +1,10 @@
-import { requestError } from "./request-error.js";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
   isBusyRunState,
   type ProjectionConflict,
 } from "../shared/contracts.js";
 import type { DiagnosticLogger } from "./diagnostics.js";
+import { requestError } from "./request-error.js";
 import { describeSessionEntry } from "./runtime-entry-descriptor.js";
 import type {
   OwnershipDecision,
@@ -157,6 +157,7 @@ export class RuntimeProjectionCoordinator {
   writerOwnershipActive(slot: RuntimeSlot): boolean {
     return (
       isBusyRunState(slot.runState) ||
+      Boolean(slot.nativeBash) ||
       slot.pendingExtensionUiRequests.size > 0 ||
       slot.persistenceExpectations.length > 0 ||
       Boolean(slot.pendingPartialPersistence) ||

@@ -1,10 +1,14 @@
 import type {
   ActiveSnapshot,
   BootstrapResponse,
+  BranchCloneRequest,
+  BranchEntryRequest,
+  BranchEntryResponse,
   BranchForkRequest,
   BranchForkResponse,
   BranchNavigateRequest,
   BranchNavigateResponse,
+  BranchTreeQuery,
   BranchTreeResponse,
   ComposerHistoryPage,
   GitDiffResponse,
@@ -18,8 +22,9 @@ import type {
   HostUpdateStatus,
   InspirePreferences,
   InspireUpdateCheckResult,
-  NewSessionDefaults,
   NewSessionOptions,
+  PendingReadRequest,
+  PendingRecovery,
   PiMessageDeliveryMode,
   PiUpdateCheckResult,
   ProjectDirEntry,
@@ -29,7 +34,10 @@ import type {
   ResourceDescriptor,
   ResourceProbeResponse,
   SessionDeleteResponse,
+  SessionExportRequest,
+  SessionExportResponse,
   SessionListResponse,
+  ThinkingLevel,
   TranscriptActivityPage,
   TranscriptPage,
   UploadedAttachment,
@@ -42,6 +50,17 @@ import type {
   HostRestartRequest,
   HostRestartStatus,
 } from "../shared/host-restart";
+import type {
+  ModelCatalogResponse,
+  ModelConfigEdit,
+  ModelPreferencesPatch,
+  ModelSettingsSnapshot,
+  ModelSettingsWriteResult,
+} from "../shared/model-settings";
+import type {
+  ProviderAuthOperation,
+  ProviderAuthResult,
+} from "../shared/provider-auth-bridge";
 import type { SessionResourceListResponse } from "../shared/resource-references";
 import type {
   TerminalAttachTicketResponse,
@@ -605,10 +624,56 @@ export function createApi(token: string | null = null) {
         token,
         `/api/composer/history?sessionId=${encodeURIComponent(sessionId)}&start=${start}`,
       ),
-    branchTree: (sessionId: string) =>
+    branchTree: (
+      sessionId: string,
+      query: BranchTreeQuery = {},
+      signal?: AbortSignal,
+    ) =>
       request<BranchTreeResponse>(
         token,
-        `/api/branches/tree?sessionId=${encodeURIComponent(sessionId)}`,
+        `/api/branches/tree?${new URLSearchParams({ sessionId, ...query }).toString()}`,
+        { signal },
+      ),
+    branchEntry: (body: BranchEntryRequest, signal?: AbortSignal) =>
+      request<BranchEntryResponse>(
+        token,
+        `/api/branches/entry?${new URLSearchParams({
+          sessionId: body.sessionId,
+          viewId: body.viewId,
+          targetId: body.targetId,
+          offset: String(body.offset ?? 0),
+        }).toString()}`,
+        { signal },
+      ),
+    branchImage: (
+      body: BranchEntryRequest,
+      index: number,
+      signal?: AbortSignal,
+    ) =>
+      observeRequest(signal, { mutation: false }, async (signal) => {
+        const response = await applicationFetch(
+          `/api/branches/image?${new URLSearchParams({
+            sessionId: body.sessionId,
+            viewId: body.viewId,
+            targetId: body.targetId,
+            index: String(index),
+          }).toString()}`,
+          {
+            signal,
+            credentials: "same-origin",
+            headers: authorizationHeader(token),
+          },
+        );
+        await ensureOk(response);
+        return response.blob();
+      }),
+    cloneBranch: (body: BranchCloneRequest) =>
+      post<BranchForkResponse>(
+        token,
+        "/api/branches/clone",
+        body,
+        {},
+        { timeoutMs: LONG_HTTP_OBSERVATION_TIMEOUT_MS },
       ),
     navigateBranch: (body: BranchNavigateRequest, signal?: AbortSignal) =>
       post<BranchNavigateResponse>(
@@ -628,10 +693,11 @@ export function createApi(token: string | null = null) {
           timeoutMs: LONG_HTTP_OBSERVATION_TIMEOUT_MS,
         },
       ),
-    sessions: (query: string, offset = 0, limit = 40) =>
+    sessions: (query: string, offset = 0, limit = 40, signal?: AbortSignal) =>
       request<SessionListResponse>(
         token,
         `/api/sessions?q=${encodeURIComponent(query)}&offset=${offset}&limit=${limit}`,
+        { signal },
       ),
     refreshSessions: () =>
       post<{ ok: boolean }>(token, "/api/sessions/refresh"),
@@ -671,10 +737,66 @@ export function createApi(token: string | null = null) {
           timeoutMs: LONG_HTTP_OBSERVATION_TIMEOUT_MS,
         },
       ),
-    newSessionDefaults: (cwd: string) =>
-      request<NewSessionDefaults>(
+    refreshModels: (sessionId?: string, cwd?: string, inherit = false) =>
+      request<ModelCatalogResponse>(
         token,
-        `/api/new-session/defaults?cwd=${encodeURIComponent(cwd)}`,
+        `/api/models?${new URLSearchParams({
+          ...(sessionId ? { sessionId } : {}),
+          ...(cwd ? { cwd } : {}),
+          ...(inherit ? { inherit: "1" } : {}),
+        })}`,
+      ),
+    modelSettings: (owner: { sessionId?: string; cwd?: string }) =>
+      request<ModelSettingsSnapshot>(
+        token,
+        `/api/model-settings?${new URLSearchParams(owner)}`,
+      ),
+    saveModelPreferences: (
+      owner: { sessionId?: string; cwd?: string },
+      revision: string,
+      patch: ModelPreferencesPatch,
+    ) =>
+      request<ModelSettingsWriteResult>(
+        token,
+        `/api/model-settings?${new URLSearchParams(owner)}`,
+        { method: "PATCH", body: JSON.stringify({ revision, patch }) },
+        { mutation: true },
+      ),
+    editModelConfig: (
+      owner: { sessionId?: string; cwd?: string },
+      revision: string,
+      edit: ModelConfigEdit,
+    ) =>
+      request<ModelSettingsWriteResult>(
+        token,
+        `/api/model-settings/config?${new URLSearchParams(owner)}`,
+        { method: "PATCH", body: JSON.stringify({ revision, edit }) },
+        { mutation: true },
+      ),
+    providerAuth: (
+      owner: { sessionId?: string; cwd?: string },
+      operation: ProviderAuthOperation,
+    ) =>
+      post<{ result: ProviderAuthResult }>(
+        token,
+        `/api/provider-auth?${new URLSearchParams(owner)}`,
+        operation,
+        {},
+        {
+          mutation:
+            operation.operation !== "providers" &&
+            operation.operation !== "status",
+        },
+      ),
+    newSessionThinking: (
+      cwd: string,
+      provider: string,
+      modelId: string,
+      current: ThinkingLevel,
+    ) =>
+      request<{ level: ThinkingLevel }>(
+        token,
+        `/api/new-session/thinking?${new URLSearchParams({ cwd, provider, modelId, current })}`,
       ),
     searchNewSessionFiles: (
       cwd: string,
@@ -770,8 +892,60 @@ export function createApi(token: string | null = null) {
         { signal },
         { timeoutMs: null },
       ),
+    piChangelog: () =>
+      request<{ version: string; markdown: string }>(
+        token,
+        "/api/pi/changelog",
+      ),
+    exportSession: (body: SessionExportRequest) =>
+      post<SessionExportResponse>(
+        token,
+        "/api/sessions/export",
+        body,
+        undefined,
+        { timeoutMs: null },
+      ),
+    exportDownload: (sessionId: string, id: string) =>
+      observeRequest(
+        undefined,
+        { mutation: false, timeoutMs: LONG_HTTP_OBSERVATION_TIMEOUT_MS },
+        async (signal) => {
+          const response = await applicationFetch(
+            `/api/sessions/${encodeURIComponent(sessionId)}/exports/${encodeURIComponent(id)}`,
+            {
+              signal,
+              credentials: "same-origin",
+              headers: authorizationHeader(token),
+            },
+          );
+          await ensureOk(response);
+          return response.blob();
+        },
+      ),
     abort: (sessionId: string) =>
-      post<{ ok: boolean }>(token, "/api/control/abort", { sessionId }),
+      post<PendingRecovery>(
+        token,
+        "/api/control/abort",
+        { sessionId },
+        {},
+        { timeoutMs: null },
+      ),
+    recoverPending: (sessionId: string) =>
+      post<PendingRecovery>(
+        token,
+        "/api/pending/recover",
+        { sessionId },
+        {},
+        { timeoutMs: null },
+      ),
+    pendingText: (body: PendingReadRequest) =>
+      post<{ text: string }>(
+        token,
+        "/api/pending/text",
+        body,
+        {},
+        { mutation: false },
+      ),
     clearPending: (sessionId: string) =>
       post<{ ok: boolean }>(token, "/api/pending/clear", { sessionId }),
     setModel: (sessionId: string, provider: string, modelId: string) =>
@@ -807,6 +981,19 @@ export function createApi(token: string | null = null) {
       }),
     uploadAttachments: (files: File[], signal?: AbortSignal) =>
       uploadFiles(token, files, signal),
+    attachmentPreview: (id: string, signal?: AbortSignal) =>
+      observeRequest(signal, { mutation: false }, async (signal) => {
+        const response = await applicationFetch(
+          `/api/attachments/${encodeURIComponent(id)}/image`,
+          {
+            signal,
+            credentials: "same-origin",
+            headers: authorizationHeader(token),
+          },
+        );
+        await ensureOk(response);
+        return response.blob();
+      }),
     deleteAttachment: (id: string) =>
       request<{ ok: boolean }>(
         token,

@@ -1,11 +1,5 @@
 // @vitest-environment jsdom
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsContent } from "../../src/components/Settings";
 import { SettingsDialog } from "../../src/components/SettingsDialog";
@@ -26,27 +20,31 @@ beforeEach(() => {
 });
 
 describe("Settings component UX and navigation", () => {
-  it("uses four purpose-level categories without a redundant search surface", () => {
+  it("uses five purpose-level categories without a redundant search surface", () => {
     render(<Settings onClose={() => undefined} />);
     const navigation = screen.getByRole("navigation", {
       name: "Settings categories",
     });
 
-    for (const name of ["Display", "Conversation", "Behavior", "Updates"])
+    for (const name of [
+      "Display",
+      "Conversation",
+      "Behavior",
+      "Models",
+      "System",
+    ])
       expect(
         within(navigation).getByRole("button", { name }),
       ).toBeInTheDocument();
+    fireEvent.click(within(navigation).getByRole("button", { name: "System" }));
     expect(
-      screen.getByRole("button", { name: "Check Pi and extension updates" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Check INSΠRE updates" }),
+      screen.getByRole("button", { name: "Check for updates" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
   });
 
-  it("marks and scrolls to the selected category", async () => {
+  it("marks and scrolls to the selected category", () => {
     render(<Settings onClose={() => undefined} />);
     const navigation = screen.getByRole("navigation", {
       name: "Settings categories",
@@ -57,26 +55,24 @@ describe("Settings component UX and navigation", () => {
 
     fireEvent.click(conversation);
     const section = screen.getByRole("region", { name: "Conversation" });
-    await waitFor(() => expect(section.scrollIntoView).toHaveBeenCalled());
-    expect(conversation).toHaveAttribute("aria-current", "true");
+    expect(section).toBeVisible();
+    expect(conversation).toHaveAttribute("aria-current", "location");
+    expect(section.scrollIntoView).toHaveBeenCalledWith({
+      block: "start",
+      behavior: "instant",
+    });
   });
 
-  it("navigates without smooth scrolling when reduced motion is requested", () => {
-    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const matchMedia = vi.spyOn(window, "matchMedia").mockReturnValue({
-      ...media,
-      matches: true,
-    });
+  it("keeps all categories in one continuous settings document", () => {
     render(<Settings onClose={() => undefined} />);
-    fireEvent.click(
-      within(
-        screen.getByRole("navigation", { name: "Settings categories" }),
-      ).getByRole("button", { name: "Updates" }),
-    );
-    expect(
-      screen.getByRole("region", { name: "Updates" }).scrollIntoView,
-    ).toHaveBeenCalledWith({ behavior: "instant", block: "start" });
-    matchMedia.mockRestore();
+    const navigation = screen.getByRole("navigation", {
+      name: "Settings categories",
+    });
+    const system = within(navigation).getByRole("button", { name: "System" });
+    fireEvent.click(system);
+    expect(system).toHaveAttribute("aria-current", "location");
+    expect(screen.getByRole("region", { name: "Versions" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Conversation" })).toBeVisible();
   });
 
   it("presents the complete settings contract in its owning groups", () => {
@@ -92,7 +88,7 @@ describe("Settings component UX and navigation", () => {
       "Tool activity",
       "Activity groups",
       "Assistant turn details",
-      "Desktop send key",
+      "Send key",
       "On launch",
       "Completion alerts",
       "Steering delivery",
@@ -101,16 +97,15 @@ describe("Settings component UX and navigation", () => {
       "Automatic retry",
     ])
       expect(screen.getAllByText(name).length).toBeGreaterThan(0);
-
-    expect(
-      screen.getByText(
-        "Set how grouped activity is loaded and shown by default.",
-      ),
-    ).toBeInTheDocument();
   });
 
   it("explains every Activity groups density in the selector", () => {
     render(<Settings onClose={() => undefined} />);
+    fireEvent.click(
+      within(
+        screen.getByRole("navigation", { name: "Settings categories" }),
+      ).getByRole("button", { name: "Conversation" }),
+    );
     fireEvent.click(screen.getByRole("combobox", { name: "Activity groups" }));
 
     for (const description of [
@@ -122,17 +117,23 @@ describe("Settings component UX and navigation", () => {
       expect(screen.getByText(description)).toBeInTheDocument();
   });
 
-  it("keeps About and reset actions in the utility footer", () => {
+  it("provides Pi references in System and keeps reset in the utility footer", () => {
     render(<Settings onClose={() => undefined} />);
-    expect(
-      screen.getByRole("link", { name: "Pi Coding Agent" }),
-    ).toHaveAttribute("href", "https://github.com/earendil-works/pi");
-    expect(screen.getByRole("link", { name: "Pi changelog" })).toHaveAttribute(
+    fireEvent.click(
+      within(
+        screen.getByRole("navigation", { name: "Settings categories" }),
+      ).getByRole("button", { name: "System" }),
+    );
+    expect(screen.getByRole("link", { name: "Pi docs" })).toHaveAttribute(
+      "href",
+      "https://github.com/earendil-works/pi",
+    );
+    expect(screen.getByRole("link", { name: "Changelog" })).toHaveAttribute(
       "href",
       "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/CHANGELOG.md",
     );
     expect(
-      screen.getByRole("button", { name: "Restore defaults" }),
+      screen.getByRole("button", { name: "Reset preferences" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "About" })).toBeNull();
   });

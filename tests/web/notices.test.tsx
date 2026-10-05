@@ -200,11 +200,13 @@ describe("right-corner notices", () => {
     expect(
       await screen.findByRole("dialog", { name: "Settings" }),
     ).toBeVisible();
+    const nav = await screen.findByRole("navigation", {
+      name: "Settings categories",
+    });
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Updates" })).toHaveAttribute(
-        "aria-current",
-        "true",
-      ),
+      expect(
+        within(nav).getByRole("button", { name: "System" }),
+      ).toHaveAttribute("aria-current", "location"),
     );
   });
 

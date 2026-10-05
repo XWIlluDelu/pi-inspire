@@ -19,8 +19,9 @@ export interface SessionForkWorkerRequest {
   sourceCommittedBytes: number;
   sourceFingerprint: string;
   stagingDir: string;
-  targetId: string;
+  targetId: string | null;
   targetParentId: string | null;
+  mode?: "fork" | "clone";
 }
 
 export interface SessionForkWorkerResult {
@@ -29,6 +30,7 @@ export interface SessionForkWorkerResult {
   cwd: string;
   parentSessionPath: string;
   sessionName?: string;
+  destinationLeafId: string | null;
 }
 
 interface ForkDestination {
@@ -38,6 +40,7 @@ interface ForkDestination {
   getEntry(id: string): SessionEntry | undefined;
   getEntries(): SessionEntry[];
   getCwd(): string;
+  getLeafId(): string | null;
 }
 
 class WorkerInputError extends Error {
@@ -64,13 +67,20 @@ function parseRequest(value: unknown): SessionForkWorkerRequest {
     "sourceSessionId",
     "sourceFingerprint",
     "stagingDir",
-    "targetId",
   ] as const;
   for (const field of stringFields) {
     if (typeof record[field] !== "string" || record[field].length === 0) {
       throw new WorkerInputError("INVALID_REQUEST", `Invalid ${field}`);
     }
   }
+  if (
+    (record.targetId !== null &&
+      (typeof record.targetId !== "string" || !record.targetId)) ||
+    (record.mode !== undefined &&
+      record.mode !== "fork" &&
+      record.mode !== "clone")
+  )
+    throw new WorkerInputError("INVALID_REQUEST", "Invalid copy target");
   if (
     !Number.isSafeInteger(record.sourceCommittedBytes) ||
     Number(record.sourceCommittedBytes) <= 0
@@ -280,14 +290,21 @@ async function runSessionForkWorker(
       "Pi opened another source",
     );
   }
-  const target = manager.getEntry(request.targetId);
-  if (!isUserMessage(target) || target.parentId !== request.targetParentId) {
+  const target =
+    request.targetId === null ? undefined : manager.getEntry(request.targetId);
+  if (
+    (request.targetId !== null &&
+      (!target || target.parentId !== request.targetParentId)) ||
+    (request.mode !== "clone" && !isUserMessage(target))
+  ) {
     throw new WorkerInputError("TARGET_INVALID", "Fork target changed");
   }
 
-  // A user message with no structural parent is the only path Pi cannot branch
-  // before. Create an empty canonical Session with the same parent provenance.
-  if (request.targetParentId === null) {
+  const endpoint =
+    request.mode === "clone" ? request.targetId : request.targetParentId;
+  // Pi's branch-copy API addresses an entry, so the before-root/null path is
+  // represented by a native empty Session with the same parent provenance.
+  if (endpoint === null) {
     const empty = SessionManager.create(manager.getCwd(), stagingDir);
     empty.newSession({ parentSession: sourcePath });
     const emptyPath = empty.getSessionFile();
@@ -300,13 +317,26 @@ async function runSessionForkWorker(
     await materializeCanonicalDestination(emptyPath, empty, sourcePath);
     return finishResult(request, sourcePath, before, empty, emptyPath);
   }
-  const destinationPath = manager.createBranchedSession(request.targetParentId);
+  const expectedIds = manager
+    .getBranch(endpoint)
+    .filter((entry) => entry.type !== "label")
+    .map((entry) => entry.id);
+  const destinationPath = manager.createBranchedSession(endpoint);
   if (!destinationPath) {
     throw new WorkerInputError(
       "DESTINATION_INVALID",
       "Pi supplied no destination path",
     );
   }
+  const copiedIds = manager
+    .getEntries()
+    .filter((entry) => entry.type !== "label")
+    .map((entry) => entry.id);
+  if (JSON.stringify(copiedIds) !== JSON.stringify(expectedIds))
+    throw new WorkerInputError(
+      "DESTINATION_INVALID",
+      "Pi copied a different ancestor path",
+    );
   await materializeCanonicalDestination(destinationPath, manager, sourcePath);
   return finishResult(request, sourcePath, before, manager, destinationPath);
 }
@@ -341,7 +371,9 @@ async function finishResult(
     persistedHeader.id !== destination.getSessionId() ||
     resolve(persistedHeader.parentSession ?? "") !== sourcePath ||
     resolve(dirname(resolvedDestination)) !== resolve(request.stagingDir) ||
-    destination.getEntry(request.targetId)
+    (request.mode !== "clone" &&
+      request.targetId !== null &&
+      Boolean(destination.getEntry(request.targetId)))
   ) {
     throw new WorkerInputError(
       "DESTINATION_INVALID",
@@ -354,6 +386,7 @@ async function finishResult(
     cwd: destination.getCwd(),
     parentSessionPath: sourcePath,
     sessionName: destination.getSessionName(),
+    destinationLeafId: destination.getLeafId(),
   };
 }
 

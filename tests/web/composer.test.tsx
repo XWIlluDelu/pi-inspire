@@ -13,7 +13,7 @@ import type { ComposerHistoryEntry } from "../../shared/contracts";
 import { clipboardFiles } from "../../src/clipboard-files";
 import { ActivityBar } from "../../src/components/ActivityBar";
 import { Composer } from "../../src/components/Composer";
-import { deleteSessionDraft } from "../../src/session-drafts";
+import { deleteSessionDraft, sessionDraft } from "../../src/session-drafts";
 import { store } from "../../src/store";
 import {
   activeSnapshot,
@@ -26,7 +26,6 @@ import {
   type RouteResponse,
   TEST_HOST_AUTHORITY,
 } from "./helpers";
-import { pendingQueues } from "./pending-fixtures";
 
 let promptBodies: Record<string, unknown>[];
 let abortBodies: Record<string, unknown>[];
@@ -113,9 +112,13 @@ beforeAll(async () => {
       }
       return { body: { files: [{ path: "src/index.ts", name: "index.ts" }] } };
     }
+    if (url.startsWith("/api/pending/recover"))
+      return {
+        body: { steering: ["recovered steer"], followUp: ["recovered follow"] },
+      };
     if (url.startsWith("/api/control/abort")) {
       abortBodies.push(jsonBody(init));
-      return { body: { ok: true } };
+      return { body: { steering: [], followUp: [] } };
     }
     if (url.startsWith("/api/prompt")) {
       const body = jsonBody(init);
@@ -612,6 +615,40 @@ describe("composer keyboard submission", () => {
 });
 
 describe("composer-adjacent status and queued controls", () => {
+  it("keeps ordinary Send alongside shell-only Stop without model queue controls", async () => {
+    clearLeftovers();
+    const socket = FakeWebSocket.instances.at(-1)!;
+    act(() =>
+      socket.emit({
+        type: "snapshot",
+        data: { ...activeSnapshot(), bashRunning: true },
+      }),
+    );
+    render(<Composer />);
+    expect(
+      screen.getByRole("button", { name: "Abort running task" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Send as steer" }),
+    ).not.toBeInTheDocument();
+    const input = screen.getByRole("textbox", { name: "Message" });
+    fireEvent.change(input, { target: { value: "!pwd" } });
+    expect(
+      screen.getByRole("button", { name: "Run shell command" }),
+    ).toBeEnabled();
+    fireEvent.change(input, {
+      target: { value: "Explicit model input during shell." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(input).toHaveValue(""));
+    expect(promptBodies.at(-1)).toMatchObject({
+      message: "Explicit model input during shell.",
+    });
+    expect(promptBodies.at(-1)?.behavior).toBeUndefined();
+    act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
+  });
+
   it("keeps retry status without duplicating live or failed tools", () => {
     clearLeftovers();
     const socket = FakeWebSocket.instances.at(-1)!;
@@ -654,23 +691,6 @@ describe("composer-adjacent status and queued controls", () => {
     expect(
       screen.getByRole("status", { name: "Retry status" }),
     ).toHaveTextContent("Retry 2/3 — rate limited");
-
-    act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
-  });
-
-  it("shows a concise pending count outside the live region", () => {
-    clearLeftovers();
-    const socket = FakeWebSocket.instances.at(-1)!;
-    const queued = activeSnapshot();
-    queued.pendingQueues = pendingQueues(
-      ["clarify the constraints"],
-      ["then summarize"],
-    );
-    act(() => socket.emit({ type: "snapshot", data: queued }));
-
-    render(<ActivityBar />);
-    expect(screen.getByText("2 Pending")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Pending input")).not.toBeInTheDocument();
 
     act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
   });
@@ -809,11 +829,11 @@ describe("composer-adjacent status and queued controls", () => {
       screen.getByRole("button", { name: "Cancel context compaction" }),
     ).toBeInTheDocument();
     const meter = screen.getByRole("meter");
-    expect(meter).toHaveAttribute(
-      "title",
-      expect.stringContaining("context compaction in progress"),
+    fireEvent.pointerEnter(meter);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "12,640 / 131,072 tokens",
     );
-    expect(meter.getAttribute("title")).not.toContain("type /compact");
+    expect(screen.getByRole("tooltip")).not.toHaveTextContent("/compact");
 
     typeDraft("steer during the checkpoint");
     fireEvent.keyDown(textarea, { key: "Enter" });
@@ -829,16 +849,110 @@ describe("composer-adjacent status and queued controls", () => {
 });
 
 describe("composer meta row", () => {
-  it("shows the context gauge from session stats with the exact tokens on hover", () => {
+  it("reveals read-only model/context details on hover, focus and tap without moving focus", () => {
     clearLeftovers();
     render(<Composer />);
     const meter = screen.getByLabelText("Context 10 percent full");
     expect(meter).toHaveTextContent("10%");
-    expect(meter).toHaveAttribute(
-      "title",
-      expect.stringContaining("12,640 / 131,072 tokens"),
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    fireEvent.pointerEnter(meter);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("kimi-k3");
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "12,640 / 131,072 tokens",
     );
-    expect(meter.getAttribute("title")).toContain("/compact");
+    expect(screen.getByRole("tooltip")).not.toHaveTextContent("/compact");
+    fireEvent.pointerLeave(meter);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    fireEvent.pointerEnter(meter);
+    act(() => screen.getByLabelText("Message").focus());
+    expect(
+      fireEvent.keyDown(document.activeElement!, {
+        key: "Escape",
+        isComposing: true,
+      }),
+    ).toBe(true);
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+    expect(fireEvent.keyDown(document.activeElement!, { key: "Escape" })).toBe(
+      false,
+    );
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    act(() => meter.focus());
+    expect(meter).toHaveFocus();
+    expect(meter).toHaveAttribute(
+      "aria-describedby",
+      screen.getByRole("tooltip").id,
+    );
+    fireEvent.keyDown(meter, { key: "Escape" });
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    expect(meter).toHaveFocus();
+    act(() => meter.blur());
+    fireEvent.click(meter);
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByLabelText("Message"));
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("reports Pi occupancy above 100 percent while bounding only the ring and meter value", () => {
+    clearLeftovers();
+    act(() =>
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          stats: {
+            contextUsage: {
+              tokens: 196_608,
+              contextWindow: 131_072,
+              percent: 150,
+            },
+          },
+        }),
+      }),
+    );
+    render(<Composer />);
+    const meter = screen.getByRole("meter", {
+      name: "Context 150 percent full",
+    });
+    expect(meter).toHaveTextContent("150%");
+    expect(meter).toHaveAttribute("aria-valuenow", "100");
+    expect(meter).toHaveAttribute("aria-valuetext", "150%");
+    const [fill, circumference] = meter
+      .querySelector(".meter__ring-fill")!
+      .getAttribute("stroke-dasharray")!
+      .split(" ")
+      .map(Number);
+    expect(fill).toBe(circumference);
+    fireEvent.pointerEnter(meter);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "150% · 196,608 / 131,072 tokens",
+    );
+  });
+
+  it("retains unknown occupancy and known capacity after compaction, then restores Pi's next count", () => {
+    clearLeftovers();
+    const socket = FakeWebSocket.instances.at(-1)!;
+    const unknown = activeSnapshot({
+      stats: {
+        contextUsage: { tokens: null, contextWindow: 131_072, percent: null },
+      },
+    });
+    act(() => socket.emit({ type: "snapshot", data: unknown }));
+    render(<Composer />);
+    const meter = screen.getByLabelText("Context usage unknown");
+    expect(meter).toHaveTextContent("—");
+    expect(meter).not.toHaveAttribute("aria-valuenow");
+    fireEvent.click(meter);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("— / 131,072 tokens");
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "Updates after the next reply",
+    );
+    act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
+    expect(screen.getByRole("meter")).toHaveTextContent("10%");
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "12,640 / 131,072 tokens",
+    );
+    expect(screen.getByRole("tooltip")).not.toHaveTextContent(
+      "Updates after the next reply",
+    );
   });
 
   it("opens the thinking picker with keyboard focus for /thinking", async () => {
@@ -875,7 +989,7 @@ describe("composer meta row", () => {
 });
 
 describe("caret completion", () => {
-  it("selects an @ file at the caret, preserves surrounding text, and deduplicates the canonical chip", async () => {
+  it("keeps selected @ files inline without creating or deduplicating chips", async () => {
     clearLeftovers();
     render(<Composer />);
     const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
@@ -903,18 +1017,60 @@ describe("caret completion", () => {
       screen.getByRole("option", { name: /index\.ts/ }),
     ).toBeInTheDocument();
     fireEvent.keyDown(textarea, { key: "Enter" });
-    expect(textarea).toHaveValue("before  after");
-    await waitFor(() => expect(textarea.selectionStart).toBe(7));
-    expect(screen.getAllByLabelText("Remove src/index.ts")).toHaveLength(1);
+    expect(textarea).toHaveValue('before @"src/index.ts" after');
+    await waitFor(() => expect(textarea.selectionStart).toBe(23));
+    await userEvent.type(textarea, "please ", { skipClick: true });
+    expect(textarea).toHaveValue('before @"src/index.ts" please after');
+    expect(
+      screen.queryByRole("listbox", { name: "Project file completions" }),
+    ).toBeNull();
+    expect(
+      screen.queryByLabelText("Remove src/index.ts"),
+    ).not.toBeInTheDocument();
 
-    typeDraft("@ind");
-    textarea.setSelectionRange(4, 4);
+    typeDraft("before @src/index.ts after @ind");
+    textarea.setSelectionRange(30, 30);
     fireEvent.select(textarea);
     const duplicateOption = await screen.findByRole("option", {
       name: /index\.ts/,
     });
     fireEvent.click(duplicateOption);
-    expect(screen.getAllByLabelText("Remove src/index.ts")).toHaveLength(1);
+    expect(textarea).toHaveValue('before @src/index.ts after @"src/index.ts" ');
+    expect(
+      screen.queryByLabelText("Remove src/index.ts"),
+    ).not.toBeInTheDocument();
+    clearLeftovers();
+  });
+
+  it("reconstructs selected file references in a remounted composer and allows editing in place", async () => {
+    clearLeftovers();
+    const first = render(<Composer />);
+    const original = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    original.focus();
+    typeDraft("Compare @ind");
+    const option = await screen.findByRole("option", { name: /index\.ts/ });
+    fireEvent.click(option);
+    expect(original).toHaveValue('Compare @"src/index.ts" ');
+    await waitFor(() => expect(sessionDraft("s1")).toBe(original.value));
+    first.unmount();
+    // Replace the synthetic editor nonce left by clearLeftovers with the
+    // saved draft, just as a fresh page has no stale editor delivery.
+    act(() => store.replaceComposerText(sessionDraft("s1")));
+    render(<Composer />);
+    const restored = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    restored.focus();
+    expect(restored).toHaveValue('Compare @"src/index.ts" ');
+    restored.setSelectionRange(restored.value.length, restored.value.length);
+    await userEvent.type(restored, "with something else", { skipClick: true });
+    expect(
+      screen.queryByRole("listbox", { name: "Project file completions" }),
+    ).toBeNull();
+    const caret = restored.value.indexOf("index");
+    restored.setSelectionRange(caret, caret);
+    fireEvent.select(restored);
+    await screen.findByRole("option", { name: /index\.ts/ });
+    fireEvent.keyDown(restored, { key: "Enter" });
+    expect(restored).toHaveValue('Compare @"src/index.ts" with something else');
     clearLeftovers();
   });
 
@@ -1079,7 +1235,7 @@ describe("caret completion", () => {
       within(list).queryByText(/settings collision/),
     ).not.toBeInTheDocument();
     expect(
-      within(list).getByRole("option", { name: /\/clone.*Terminal only/ }),
+      within(list).getByRole("option", { name: /\/import.*Terminal only/ }),
     ).toBeInTheDocument();
   });
 
@@ -1175,7 +1331,7 @@ describe("caret completion", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("closes completion on Escape without reaching the global shortcut", async () => {
+  it("dismisses completion without reopening at an unchanged caret and keeps keyboard focus through hover", async () => {
     clearLeftovers();
     render(<Composer />);
     const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
@@ -1187,6 +1343,40 @@ describe("caret completion", () => {
     expect(
       screen.queryByRole("listbox", { name: "Slash command completions" }),
     ).not.toBeInTheDocument();
+    // Native browsers may report selection after an unchanged layout/focus update.
+    fireEvent.select(textarea);
+    expect(
+      screen.queryByRole("listbox", { name: "Slash command completions" }),
+    ).not.toBeInTheDocument();
+    textarea.setSelectionRange(3, 3);
+    fireEvent.select(textarea);
+    const list = await screen.findByRole("listbox", {
+      name: "Slash command completions",
+    });
+    fireEvent.pointerMove(within(list).getAllByRole("option")[0]!, {
+      pointerType: "mouse",
+    });
+    fireEvent.mouseLeave(list);
+    expect(document.querySelector(".completion__option--active")).toBeNull();
+    expect(textarea).not.toHaveAttribute("aria-activedescendant");
+    fireEvent.keyDown(textarea, { key: "ArrowDown" });
+    expect(
+      document.querySelector(".completion__option--active"),
+    ).not.toBeNull();
+
+    fireEvent.pointerDown(document.body);
+    expect(list).not.toBeInTheDocument();
+    fireEvent.select(textarea);
+    expect(
+      screen.queryByRole("listbox", { name: "Slash command completions" }),
+    ).toBeNull();
+    textarea.setSelectionRange(2, 2);
+    fireEvent.select(textarea);
+    await screen.findByRole("listbox", { name: "Slash command completions" });
+    fireEvent.focusIn(document.body);
+    expect(
+      screen.queryByRole("listbox", { name: "Slash command completions" }),
+    ).toBeNull();
   });
 });
 
@@ -1285,6 +1475,73 @@ describe("project file picker", () => {
 
     fireEvent.keyDown(input, { key: "Escape" });
     await waitFor(() => expect(trigger).toHaveFocus());
+    clearLeftovers();
+  });
+
+  it("separates pointer hover from keyboard highlight without closing or blurring on pointer leave", async () => {
+    clearLeftovers();
+    render(<Composer />);
+    fireEvent.click(screen.getByRole("button", { name: "Add project files" }));
+    const input = screen.getByRole("combobox", {
+      name: "Search project files",
+    });
+    fireEvent.change(input, { target: { value: "keyboard" } });
+    const [first, second, third] = await screen.findAllByRole("option", {
+      name: /keyboard-[abc]\.ts/,
+    });
+    expect(first).toHaveClass("picker__row--active");
+    expect(input).toHaveFocus();
+
+    fireEvent.pointerMove(second!, { pointerType: "mouse" });
+    fireEvent.pointerLeave(second!, { pointerType: "mouse" });
+    expect(first).not.toHaveClass("picker__row--active");
+    expect(second).not.toHaveClass("picker__row--active");
+    expect(input).not.toHaveAttribute("aria-activedescendant");
+    expect(input).toHaveFocus();
+    expect(
+      screen.getByRole("dialog", { name: "Add project files" }),
+    ).toBeInTheDocument();
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(third).toHaveClass("picker__row--active");
+    expect(input).toHaveAttribute("aria-activedescendant", third!.id);
+    fireEvent.pointerLeave(
+      screen.getByRole("listbox", { name: "Project files" }),
+    );
+    expect(third).toHaveClass("picker__row--active");
+    fireEvent.keyDown(input, { key: "Escape" });
+    clearLeftovers();
+  });
+
+  it("dismisses on outside pointer/focus and Escape from any picker control", async () => {
+    clearLeftovers();
+    render(<Composer />);
+    const trigger = screen.getByRole("button", { name: "Add project files" });
+    fireEvent.click(trigger);
+    const input = screen.getByLabelText("Search project files");
+    fireEvent.pointerDown(input);
+    expect(input).toBeInTheDocument();
+    fireEvent.pointerDown(document.body);
+    expect(
+      screen.queryByRole("dialog", { name: "Add project files" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    const hiddenToggle = screen.getByRole("button", {
+      name: "Show hidden files",
+    });
+    fireEvent.focus(hiddenToggle);
+    expect(hiddenToggle).toBeInTheDocument();
+    expect(fireEvent.keyDown(hiddenToggle, { key: "Escape" })).toBe(false);
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    fireEvent.click(trigger);
+    const outside = screen.getByRole("button", { name: "Attach files" });
+    act(() => outside.focus());
+    expect(
+      screen.queryByRole("dialog", { name: "Add project files" }),
+    ).not.toBeInTheDocument();
+    expect(outside).toHaveFocus();
     clearLeftovers();
   });
 

@@ -1,6 +1,6 @@
-import { requestError } from "./request-error.js";
 import { createHash } from "node:crypto";
 import { basename, relative, resolve } from "node:path";
+import { composerArtifactReference } from "../shared/composer-artifact-references.js";
 import {
   type ComposerHistoryEntry,
   type ComposerHistoryFile,
@@ -11,6 +11,7 @@ import {
 } from "../shared/contracts.js";
 import { parseAttachmentContext } from "./attachments.js";
 import { escapesBase } from "./paths.js";
+import { requestError } from "./request-error.js";
 
 interface ComposerHistoryCandidate {
   entry: ComposerHistoryEntry;
@@ -24,20 +25,19 @@ export type ComposerHistoryFileNameResolver = (
 
 function historyFile(
   path: string,
-  persistedIndex: number,
-  referenceIndex: number,
+  reference: string,
   cwd?: string,
   fileNameForPath?: ComposerHistoryFileNameResolver,
 ): ComposerHistoryFile {
   const absolutePath = resolve(path);
-  const project = cwd
-    ? !escapesBase(relative(resolve(cwd), absolutePath))
-    : false;
+  const attachmentName = fileNameForPath?.(absolutePath);
+  const project =
+    !attachmentName && cwd
+      ? !escapesBase(relative(resolve(cwd), absolutePath))
+      : false;
   return {
-    reference: `pi-file://${persistedIndex}/${referenceIndex}`,
-    fileName:
-      (!project ? fileNameForPath?.(absolutePath) : null) ??
-      (basename(path) || "file"),
+    reference,
+    fileName: attachmentName ?? (basename(path) || "file"),
     kind: project ? "project" : "attachment",
   };
 }
@@ -50,11 +50,19 @@ function userMessageEntry(
 ): ComposerHistoryCandidate | null {
   if (!value || typeof value !== "object") return null;
   const message = value as Record<string, unknown>;
+  if (message.role === "bashExecution" && typeof message.command === "string") {
+    return {
+      entry: {
+        text: `${message.excludeFromContext === true ? "!!" : "!"}${message.command}`,
+        images: [],
+        files: [],
+      },
+      imageData: [],
+      filePaths: [],
+    };
+  }
   if (message.role !== "user") return null;
 
-  const persistedIndex = Number.isSafeInteger(message.__inspireMessageIndex)
-    ? Number(message.__inspireMessageIndex)
-    : messageIndex;
   let content = "";
   const images: ComposerHistoryImage[] = [];
   const imageData: string[] = [];
@@ -74,7 +82,12 @@ function userMessageEntry(
         typeof item.mimeType === "string"
       ) {
         images.push({
-          reference: `pi-embedded://${persistedIndex}/${partIndex}`,
+          reference: composerArtifactReference(
+            "image",
+            message,
+            messageIndex,
+            partIndex,
+          ),
           mimeType: item.mimeType,
           size: Buffer.byteLength(item.data, "base64"),
         });
@@ -86,7 +99,12 @@ function userMessageEntry(
   const parsed = parseAttachmentContext(content);
   const text = parsed.text.trim();
   const files = parsed.references.map((path, referenceIndex) =>
-    historyFile(path, persistedIndex, referenceIndex, cwd, fileNameForPath),
+    historyFile(
+      path,
+      composerArtifactReference("file", message, messageIndex, referenceIndex),
+      cwd,
+      fileNameForPath,
+    ),
   );
   return text || images.length > 0 || files.length > 0
     ? {

@@ -82,6 +82,38 @@ export function isToolImageMimeType(
   return TOOL_IMAGE_MIME_TYPES.some((mimeType) => mimeType === value);
 }
 
+type ToolImageSource =
+  | { data: string; reference?: never }
+  | { reference: string; data?: never };
+
+/** Keep the original content index: filtering image parts would retarget
+ * persisted references when text or other blocks precede the image. */
+export function toolResultImage(
+  result: ChatMessage,
+  partIndex: number,
+  alt: string,
+): Extract<ToolPresentationBlock, { type: "image" }> | null {
+  const part = Array.isArray(result.content) ? result.content[partIndex] : null;
+  if (!part || typeof part !== "object") return null;
+  const image = part as Record<string, unknown>;
+  if (image.type !== "image" || !isToolImageMimeType(image.mimeType))
+    return null;
+  const metadata = { type: "image" as const, mimeType: image.mimeType, alt };
+  if (Number.isSafeInteger(result.__inspireMessageIndex))
+    return {
+      ...metadata,
+      reference: `pi-embedded://${result.__inspireMessageIndex}/${partIndex}`,
+    };
+  if (
+    typeof image.data !== "string" ||
+    image.data.length === 0 ||
+    image.data.length > 32_000_000 ||
+    !/^[A-Za-z0-9+/\r\n]*={0,2}$/.test(image.data)
+  )
+    return null;
+  return { ...metadata, data: image.data };
+}
+
 export type ToolPresentationBlock =
   | {
       type: "properties";
@@ -130,17 +162,17 @@ export type ToolPresentationBlock =
       oldText?: string;
       newText?: string;
     }
-  | {
+  | ({
       type: "image";
       label?: string;
-      data: string;
       mimeType: ToolImageMimeType;
       alt: string;
-    }
+    } & ToolImageSource)
   | {
       type: "notice";
       text: string;
       tone?: "muted" | "warning" | "error";
+      action?: { label: string; reference: string };
     }
   | {
       type: "markdown";

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { chmod, link, lstat, mkdtemp, rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,8 +19,9 @@ export interface StageSessionForkRequest {
   sourceSessionId: string;
   sourceCommittedBytes: number;
   sourceFingerprint: string;
-  targetId: string;
+  targetId: string | null;
   targetParentId: string | null;
+  mode?: "fork" | "clone";
 }
 
 export interface StagedSessionFork {
@@ -31,6 +32,7 @@ export interface StagedSessionFork {
   cwd: string;
   parentSessionPath: string;
   sessionName?: string;
+  destinationLeafId: string | null;
 }
 
 export type StageSessionFork = (
@@ -209,6 +211,8 @@ async function invokeWorker(
     typeof result.stagedPath !== "string" ||
     typeof result.cwd !== "string" ||
     typeof result.parentSessionPath !== "string" ||
+    (result.destinationLeafId !== null &&
+      typeof result.destinationLeafId !== "string") ||
     (result.sessionName !== undefined && typeof result.sessionName !== "string")
   ) {
     throw new SessionForkError(
@@ -266,6 +270,7 @@ export const stageSessionFork: StageSessionFork = async (
       cwd: result.cwd,
       parentSessionPath: sourcePath,
       sessionName: result.sessionName,
+      destinationLeafId: result.destinationLeafId,
     };
   } catch (error) {
     await rm(stagingDir, { recursive: true, force: true }).catch(

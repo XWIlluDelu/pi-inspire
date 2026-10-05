@@ -4,7 +4,7 @@ covers:
   - src/App.tsx
   - src/store.ts
   - src/controllers/{git,workspace}-controller.ts
-  - src/components/{AppTopbar,ContextPane,ContextSplitBody,FilesPane,ChangesPane,WorkspaceBrowser,BranchTree,PaneResizeHandle}.tsx
+  - src/components/{AppTopbar,SessionActionsMenu,ExtensionDisplays,ContextPane,ContextPaneShell,ContextSplitBody,FilesPane,ChangesPane,WorkspaceBrowser,BranchTree,PaneResizeHandle}.tsx
   - src/{git-presentation,use-modal-focus}.ts
   - src/styles/*.css
   - tests/web/{app,workspace-controller,pane-resize,branch-tree,modal-focus}.test.ts*
@@ -40,7 +40,10 @@ independent project shells in [[terminal]].
   as a modal dialog, owns trapped and restorable focus through the central modal stack, and makes
   the center workbench inert; navigation and contextual drawers are mutually exclusive even when a
   file opens from inside navigation. The desktop surfaces retain their navigation and complementary
-  landmarks. Opening a session also closes the drawer.
+  landmarks. Opening a session also closes the drawer. The context pane keeps one shell and focus
+  owner across deferred loading, content and failure; loading the module does not restart its entry
+  animation. The full-width context drawer needs no scrim. Shared motion and overlay roles are in
+  [[design-system]].
 
   Returning to desktop closes transient drawer state without overwriting the desktop collapsed
   preference. Switching the contextual pane between desktop and drawer layouts keeps its reader or
@@ -74,9 +77,18 @@ independent project shells in [[terminal]].
   with explicit state-owned retry/compaction text in the adjacent activity surface rather than
   command-owned progress copy.
 
-  Actions stay fixed at the right: long status text ellipsizes with its full value available on
-  hover, identity yields first, and the clusters remain separate. Narrow layouts keep the Git change
-  count visible; the full branch identity remains in its tooltip.
+  Session title, project, Git and extension status form one left-aligned cluster with consistent
+  spacing; global controls remain on the right. The title itself opens session actions, without a
+  separate menu button or chevron. Extension text uses the available space at every width, with full statuses
+  available by click, tap or keyboard when truncated. No status takes no space. Secondary project and
+  Git details yield before the title and primary navigation. Narrow layouts retain Settings in the
+  header; detailed Git status remains in Changes. The session menu sits below the title with a
+  compact 216px width, limited by available space rather than title length. The inline rename
+  input shares the title's leading edge, not the menu's width: it starts at 240px, grows with the
+  displayed title up to 560px, and fits the available header space. On narrow bars it fills the
+  remaining width while auxiliary header controls yield.
+  Enter, the save control, or moving focus outside the editor saves the name; Escape cancels.
+  Blank and unchanged edits exit without a write. Saving after focus leaves does not take focus back.
   Rename editing is owned by the session whose heading opened it; a switch cancels that editor, the
   submit carries the explicit session id rather than reading a newer visible selection, and a
   rejected rename leaves the current identity intact while emitting a non-blocking warning notice.
@@ -102,14 +114,31 @@ independent project shells in [[terminal]].
   navigation. The same vertical hierarchy fills the contextual drawer on narrow screens rather than
   becoming a second component arrangement.
 
-  History is an operational Pi branch/time-travel surface, not Git branch selection, a duplicate
-  Transcript, or an audit-only raw log. It groups the bounded loaded entry tree by user turn, keeps
-  a linear conversation on one rail, spends horizontal lanes only on actual alternate turn paths,
-  and marks current, latest, and alternate state explicitly. Response activity is progressively
-  disclosed beneath its prompt, with loaded-history search and global folding for inspection; exact
-  actionable entries remain available for switching, while prompts retain Pi-authorized edit and
-  fork actions. The center Transcript remains the authority for reading and searching full
-  conversation content.
+  History is a conversation outline for inspecting and deliberately continuing Pi history, not a
+  graph editor, duplicate Transcript, or raw audit log. User prompts lead its compact default view;
+  reply/event detail and alternate routes are disclosed where relevant. Other starts also exposes
+  branch points in a hidden metadata-only prefix, keeping first-input alternatives reachable.
+  Merely selecting a point
+  previews its complete content inside History without changing Pi's active context or the Composer.
+  Returning to the outline preserves search, loaded history, scroll and focus. Opening an alternate
+  route reveals its chosen/latest point, not its shared oldest ancestor; returning to Current
+  conversation only restores the active conversation's outline. Exact node actions explicitly distinguish
+  editing/continuing in this session from creating an independent Fork or Clone, without an action
+  toolbar on every outline row. Search reaches complete retained history across branches, and older
+  points remain reachable through progressive loading; bounded responses never define the limit of
+  accessible history. The center Transcript remains the active conversation surface.
+
+  The session title opens its action menu below the heading, leaving the title visible. Rename
+  is first and initially focused; selecting it enters the inline editor. Clone and Export follow; there is no
+  separate menu or Clone button beside the title. The menu supports arrows, Enter and Escape;
+  dismissal returns focus to the title. Export opens the shared format-and-download dialog without
+  reading or changing the message draft.
+  `/clone` and the command palette invoke the same Clone action. It opens an independent copy of the recorded active branch without
+  sending a model prompt or changing the source's work, pending input, or draft. The earlier-branch
+  notice offers `Clone from here` for the same endpoint-inclusive meaning. [[session-branches]]
+  defines native navigation, Fork/Clone boundaries, and optional branch summaries. On a narrow screen,
+  a successful context-changing action closes the modal contextual drawer to reveal the resulting
+  conversation/draft; read-only preview and Back keep it open.
 
   Terminal presents the current project's ordered shell tabs without splits; hiding the pane
   detaches its views without ending PTYs, and focus mode or an independent same-origin window can

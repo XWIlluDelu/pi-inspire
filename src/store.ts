@@ -4,6 +4,8 @@ import {
   type ActiveSnapshot,
   type ActivityFoldVisibilityPreference,
   type AssistantRoundDisplayPreference,
+  type BranchNavigateRequest,
+  type BranchTreeQuery,
   type CompletionAttentionPreference,
   type ComposerHistoryEntry,
   type ContentTextSizePreference,
@@ -19,9 +21,10 @@ import {
   isBusyRunState,
   type LaunchPreference,
   type ModelOption,
-  type NewSessionDefaults,
+  modelIdentityKey,
   type NewSessionOptions,
   type PalettePreference,
+  type PendingRecovery,
   type PiMessageDeliveryMode,
   type PiRuntimeSettings,
   type ProjectDisplayPreference,
@@ -33,10 +36,18 @@ import {
   type ReadingWidthPreference,
   type SessionDeleteDisposition,
   type ThemePreference,
+  type ThinkingLevel,
   type ToolVisibilityPreference,
   type UserTurnAnchor,
   type VisibilityPreference,
 } from "../shared/contracts";
+import type {
+  ModelCatalogResponse,
+  ModelConfigEdit,
+  ModelPreferencesPatch,
+  ModelSettingsSnapshot,
+} from "../shared/model-settings";
+import type { ProviderAuthOperation } from "../shared/provider-auth-bridge";
 import {
   type Api,
   ApiError,
@@ -74,7 +85,11 @@ import { UpdateController } from "./controllers/update-controller";
 import { WorkspaceController } from "./controllers/workspace-controller";
 import { type Notice, parseExtensionDisplays } from "./events";
 import { supportedThinkingLevels } from "./model-options";
-import { sessionDraft, setSessionDraft } from "./session-drafts";
+import {
+  sessionDraft,
+  sessionDraftRevision,
+  setSessionDraft,
+} from "./session-drafts";
 import {
   deriveSnapshotTransition,
   type SnapshotMode,
@@ -132,22 +147,24 @@ function boundedCommandActivities(
 
 function terminalCommandGuidance(command: string): string {
   switch (command) {
-    case "login":
-    case "logout":
-      return "Provider credentials stay in Pi's trusted terminal flow so secrets and browser redirects are never projected through the chat UI.";
     case "share":
       return "Sharing publishes conversation data and requires Pi's interactive confirmation, so it remains in the trusted terminal flow.";
     case "trust":
       return "Project trust is managed by Pi. Use /trust in Pi's terminal to change a saved decision, then /reload here to start a fresh worker.";
     case "import":
       return "Session import can replace the active Pi runtime. Run it in Pi's terminal flow, where the source path and replacement confirmation stay visible.";
-    case "clone":
-      return "Browser cloning is not implemented. /clone requires Pi's terminal in the intended session; opening the project terminal does not resume this session. Never open its JSONL in a second Pi process while INSΠRE owns the worker.";
-    case "scoped-models":
-      return "INSΠRE's model picker searches every available model. Pi's Ctrl+P model-cycle scope is terminal-specific and remains configurable there.";
     default:
       return "This command currently requires Pi's trusted terminal interface.";
   }
+}
+
+function downloadExportBlob(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 export class AppStore {
@@ -205,16 +222,27 @@ export class AppStore {
     beginForkSelection: () => ++this.selectionRequest,
     transportGeneration: () => this.transportGeneration,
     handleAuthFailure: () => this.handleAuthFailure(),
-    applyNavigation: (response) => {
+    draftRevision: () => sessionDraftRevision(this.state.sessionId!),
+    applyNavigation: (response, draftRevision) => {
+      const sessionId = this.state.sessionId!;
+      const ownsDraft = sessionDraftRevision(sessionId) === draftRevision;
       this.applySnapshot(response.snapshot);
-      if (response.editorText !== undefined) {
-        this.set({
-          editorText: {
-            text: response.editorText,
-            nonce: (this.state.editorText?.nonce ?? 0) + 1,
-          },
-        });
+      if (response.editorText === undefined) return;
+      if (!ownsDraft) {
+        this.notify(
+          "warning",
+          "Conversation changed; your newer draft was kept.",
+        );
+        return;
       }
+      setSessionDraft(sessionId, response.editorText);
+      this.set({
+        editorText: {
+          text: response.editorText,
+          nonce: (this.state.editorText?.nonce ?? 0) + 1,
+          draftRevision: sessionDraftRevision(sessionId),
+        },
+      });
     },
     applyFork: (response) => {
       this.applySnapshot(response.snapshot);
@@ -865,10 +893,13 @@ export class AppStore {
       runtimeSettings: active?.runtimeSettings ?? null,
       cwd,
       model: (active?.model as AppState["model"]) ?? null,
+      modelDiscovery: active?.modelDiscovery ?? null,
       thinkingLevel:
         typeof active?.thinkingLevel === "string"
           ? active.thinkingLevel
           : this.state.thinkingLevel,
+      commonModels:
+        active?.commonModels ?? (sessionChanged ? [] : this.state.commonModels),
       availableModels:
         active &&
         Array.isArray(active.availableModels) &&
@@ -934,6 +965,7 @@ export class AppStore {
           ? { error: null, errorSeverity: "error" }
           : {}),
       streaming: Boolean(active?.isStreaming),
+      bashRunning: snapshot.bashRunning === true,
       activeAssistantMessageKey:
         typeof active?.activeAssistantMessageKey === "string"
           ? active.activeAssistantMessageKey
@@ -946,7 +978,7 @@ export class AppStore {
       // Settled activity is rebuilt from the selected worker. Background
       // extension dialogs are restored in Pi request order when their owning
       // session is viewed.
-      tools: {},
+      tools: active?.toolActivity ?? {},
       retry:
         snapshot.runState === "retrying"
           ? parseRetryInfo(snapshot.retry)
@@ -1262,6 +1294,56 @@ export class AppStore {
     }
   };
 
+  installedPiChangelog = () =>
+    this.api?.piChangelog() ??
+    Promise.reject(new Error("The Host is unavailable"));
+
+  exportSession = async (
+    sessionId: string,
+    format: "html" | "jsonl",
+  ): Promise<void> => {
+    const api = this.api;
+    const generation = this.transportGeneration;
+    if (!api) throw new Error("The Host is unavailable");
+    try {
+      const exported = await api.exportSession({ sessionId, format });
+      const blob = await api.exportDownload(sessionId, exported.downloadId);
+      if (this.api !== api || this.transportGeneration !== generation)
+        throw new Error("The Host connection changed during export");
+      downloadExportBlob(blob, exported.fileName);
+    } catch (error) {
+      if (this.api === api && error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      throw error;
+    }
+  };
+
+  downloadCommandExport = async (
+    sessionId: string,
+    id: number,
+  ): Promise<void> => {
+    const download = this.state.commandActivities[sessionId]?.find(
+      (activity) => activity.id === id,
+    )?.download;
+    const api = this.api;
+    const generation = this.transportGeneration;
+    if (!download || !api) return;
+    try {
+      const blob = await api.exportDownload(sessionId, download.id);
+      if (this.api !== api || this.transportGeneration !== generation) return;
+      downloadExportBlob(blob, download.fileName);
+    } catch (error) {
+      if (this.api !== api || this.transportGeneration !== generation) return;
+      if (error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      else
+        this.notify(
+          "warning",
+          error instanceof Error ? error.message : "Export download failed",
+        );
+    }
+  };
+
   private launchHostNativeCommand(
     sessionId: string,
     input: string,
@@ -1305,6 +1387,14 @@ export class AppStore {
           status: result.outcome === "cancelled" ? "cancelled" : "success",
           message: result.message,
           details: result.details,
+          ...(result.export?.downloadId && result.export.fileName
+            ? {
+                download: {
+                  id: result.export.downloadId,
+                  fileName: result.export.fileName,
+                },
+              }
+            : {}),
           ...(command === "export" && result.details?.[0]?.value
             ? {
                 action: {
@@ -1411,15 +1501,50 @@ export class AppStore {
     return native.name === "compact" || owner?.source === "builtin";
   };
 
+  /** Palette actions never borrow an unfinished message's artifacts. */
+  runPaletteNativeCommand = (input: string): PromptAcceptedResponse | false => {
+    const command = parseNativeCommand(input);
+    return command ? this.executeNativeCommand(input, command, false) : false;
+  };
+
+  sendPreparedCommand = async (
+    input: string,
+    behavior?: "steer" | "followUp",
+  ): Promise<PromptAcceptedResponse | false> => {
+    const invocation = parseCommandInvocation(input);
+    if (!invocation) {
+      this.notify("warning", "Enter a slash command to prepare");
+      return false;
+    }
+    if (parseNativeCommand(input)) return this.runPaletteNativeCommand(input);
+    const command = resolveCommandInventory(this.state.commands).find(
+      (item) => item.name === invocation.name,
+    );
+    if (!command || command.source === "builtin") {
+      this.notify(
+        "warning",
+        "This command is no longer available in the selected session",
+      );
+      return false;
+    }
+    return this.composer.send(
+      `/${invocation.name}${invocation.argument ? ` ${invocation.argument}` : ""}`,
+      command.source === "extension" ? undefined : behavior,
+      undefined,
+      true,
+    );
+  };
+
   private executeNativeCommand(
     input: string,
     command: NonNullable<ReturnType<typeof parseNativeCommand>>,
+    includeDraftArtifacts = true,
   ): PromptAcceptedResponse | false {
     const sessionId = this.state.sessionId;
     if (!sessionId || !command) return false;
     if (
-      this.state.attachments.length > 0 ||
-      this.state.projectFiles.length > 0
+      includeDraftArtifacts &&
+      (this.state.attachments.length > 0 || this.state.projectFiles.length > 0)
     ) {
       this.presentCommandActivity(
         sessionId,
@@ -1437,28 +1562,6 @@ export class AppStore {
         command.name,
         "error",
         `/${command.name} does not accept arguments.`,
-      );
-      return ACCEPTED_NATIVE_COMMAND;
-    }
-
-    if (
-      command.name === "export" &&
-      command.argument.toLocaleLowerCase().endsWith(".jsonl")
-    ) {
-      this.presentCommandActivity(
-        sessionId,
-        input,
-        command.name,
-        "warning",
-        "Branch-only JSONL export is available in Pi's terminal flow. Browser export currently produces the complete HTML transcript.",
-        {
-          details: [{ label: "Run in Pi", value: input }],
-          action: {
-            kind: "open-terminal",
-            label: "Open terminal & copy command",
-            value: input,
-          },
-        },
       );
       return ACCEPTED_NATIVE_COMMAND;
     }
@@ -1505,12 +1608,23 @@ export class AppStore {
       return ACCEPTED_NATIVE_COMMAND;
     }
 
+    if (["login", "logout", "scoped-models"].includes(command.name)) {
+      this.openModelSettings(
+        command.argument,
+        command.name === "scoped-models" ? "common" : "credentials",
+      );
+      return ACCEPTED_NATIVE_COMMAND;
+    }
     if (command.name === "settings") {
       this.requestNativeCommandUi(sessionId, "settings");
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "changelog") {
-      this.requestNativeCommandUi(sessionId, "updates");
+      this.requestNativeCommandUi(sessionId, "changelog");
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (command.name === "clone") {
+      void this.cloneCurrentBranch();
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "tree" || command.name === "fork") {
@@ -1748,28 +1862,7 @@ export class AppStore {
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "hotkeys") {
-      this.presentCommandActivity(
-        sessionId,
-        input,
-        command.name,
-        "info",
-        "INSΠRE uses browser-native shortcuts for the Pi workspace.",
-        {
-          details: [
-            { label: "Command palette", value: "Ctrl/⌘ K" },
-            { label: "Navigation", value: "Ctrl/⌘ B" },
-            { label: "Files / History / Terminal", value: "Ctrl/⌘ ." },
-            { label: "Stop active work", value: "Esc" },
-            {
-              label: "Send / newline",
-              value:
-                this.state.prefs.desktopSendKey === "mod-enter"
-                  ? "Ctrl/⌘ Enter / Enter"
-                  : "Enter / Shift+Enter",
-            },
-          ],
-        },
-      );
+      this.requestNativeCommandUi(sessionId, "hotkeys");
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "quit") {
@@ -1809,6 +1902,8 @@ export class AppStore {
     if (native && this.isNativeCommand(message))
       return this.executeNativeCommand(message, native);
 
+    if (message.trim().startsWith("!"))
+      return this.composer.send(message.trim(), undefined, onHandoff);
     const invocation = parseCommandInvocation(message);
     if (invocation) {
       const dynamic = resolveCommandInventory(this.state.commands).find(
@@ -1836,18 +1931,6 @@ export class AppStore {
         behavior,
         onHandoff,
       );
-    } else if (message.trim().startsWith("!")) {
-      const sessionId = this.state.sessionId;
-      if (sessionId)
-        this.presentCommandActivity(
-          sessionId,
-          message,
-          "bash",
-          "warning",
-          "Pi's ! shell mode is not projected into chat yet. Run the command in the persistent project terminal instead.",
-          { action: { kind: "open-terminal", label: "Open project terminal" } },
-        );
-      return false;
     }
     return this.composer.send(message, behavior, onHandoff);
   };
@@ -1864,10 +1947,44 @@ export class AppStore {
     );
     if (compacting)
       this.updateCommandActivity(sessionId, compacting.id, {
-        message: "Cancelling compaction and restarting the Pi worker…",
+        message: "Cancelling compaction…",
       });
     try {
-      await api.abort(sessionId);
+      if (
+        !this.state.projectionConflict &&
+        !(this.state.bashRunning && !isBusyRunState(this.state.runState))
+      ) {
+        try {
+          const pending = await api.recoverPending(sessionId);
+          if (
+            this.api === api &&
+            this.transportGeneration === transportGeneration
+          )
+            this.restorePendingInput(sessionId, pending);
+        } catch (error) {
+          if (
+            this.api !== api ||
+            this.transportGeneration !== transportGeneration
+          )
+            return;
+          if (error instanceof ApiError && error.status === 401) {
+            this.handleAuthFailure();
+            return;
+          }
+          if (this.state.sessionId === sessionId)
+            this.notify(
+              "warning",
+              `Pending recovery failed: ${error instanceof Error ? error.message : "request failed"}`,
+            );
+          // Stop remains owned even if its preliminary recovery failed. The
+          // Host will clear again or retire the worker rather than resume input.
+        }
+      }
+      // The editor receives the first dequeue before Stop is sent. Host abort
+      // clears again at its own boundary, including input arriving meanwhile.
+      const recovered = await api.abort(sessionId);
+      if (this.api === api && this.transportGeneration === transportGeneration)
+        this.restorePendingInput(sessionId, recovered);
     } catch (error) {
       if (this.api !== api || this.transportGeneration !== transportGeneration)
         return;
@@ -1886,6 +2003,118 @@ export class AppStore {
         )
           this.fail(message);
       }
+    }
+  };
+
+  private restorePendingInput(
+    sessionId: string,
+    recovered: PendingRecovery,
+  ): boolean {
+    const text = [...recovered.steering, ...recovered.followUp].join("\n\n");
+    const hasImages = Boolean(recovered.attachments?.length);
+    if (text.trim() || hasImages)
+      this.composer.restorePendingArtifacts(
+        sessionId,
+        recovered.attachments ?? [],
+        recovered.authorityId ?? this.hostAuthorityId,
+      );
+    if (text.trim()) {
+      const draft = [text, sessionDraft(sessionId)]
+        .filter((part) => part.trim())
+        .join("\n\n");
+      setSessionDraft(sessionId, draft);
+      if (this.state.sessionId === sessionId) this.replaceComposerText(draft);
+    } else if (hasImages && this.state.sessionId === sessionId) {
+      // Exit a temporary history preview even without recovered text, keeping
+      // the saved draft rather than committing the browsed history caption.
+      this.replaceComposerText(sessionDraft(sessionId));
+    }
+    if (this.state.sessionId === sessionId) {
+      if (recovered.warning) this.notify("warning", recovered.warning);
+      if (recovered.error)
+        this.notify("warning", `Pending recovery failed: ${recovered.error}`);
+    }
+    return !recovered.error;
+  }
+
+  recoverPending = async (): Promise<boolean> => {
+    const sessionId = this.state.sessionId;
+    const api = this.api;
+    const transportGeneration = this.transportGeneration;
+    if (!api || !sessionId || this.state.pendingAction) return false;
+    const request = ++this.pendingActionRequest;
+    this.set({ pendingAction: "recover" });
+    try {
+      const recovered = await api.recoverPending(sessionId);
+      if (this.api !== api || this.transportGeneration !== transportGeneration)
+        return false;
+      // A selection change must not lose input already removed on the Host.
+      // Merge into the originating partition's latest draft, not the invocation draft.
+      return this.restorePendingInput(sessionId, recovered);
+    } catch (error) {
+      if (this.api !== api || this.transportGeneration !== transportGeneration)
+        return false;
+      if (error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      else if (this.state.sessionId === sessionId)
+        this.notify(
+          "warning",
+          error instanceof Error
+            ? error.message
+            : "Failed to recover Pending input",
+        );
+      return false;
+    } finally {
+      if (
+        this.api === api &&
+        this.transportGeneration === transportGeneration &&
+        request === this.pendingActionRequest
+      )
+        this.set({ pendingAction: null });
+    }
+  };
+
+  pendingText = async (
+    revision: number,
+    itemId?: string,
+  ): Promise<string | null> => {
+    const sessionId = this.state.sessionId;
+    const viewId = this.state.transcriptViewId;
+    const generation = this.selectionGeneration;
+    const api = this.api;
+    const transportGeneration = this.transportGeneration;
+    if (!api || !sessionId || !viewId) {
+      this.notify("warning", "Complete pending text is unavailable");
+      return null;
+    }
+    const owns = () =>
+      this.api === api &&
+      this.transportGeneration === transportGeneration &&
+      this.state.sessionId === sessionId &&
+      this.selectionGeneration === generation;
+    try {
+      const result = await api.pendingText({
+        sessionId,
+        viewId,
+        revision,
+        ...(itemId === undefined ? {} : { itemId }),
+      });
+      if (!owns()) return null;
+      if (typeof result.text !== "string")
+        throw new Error("Complete pending text is unavailable");
+      return result.text;
+    } catch (error) {
+      if (!owns()) return null;
+      if (error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      else
+        this.notify(
+          "warning",
+          error instanceof Error
+            ? error.message
+            : "Failed to copy Pending input",
+        );
+      return null;
     }
   };
 
@@ -2152,11 +2381,234 @@ export class AppStore {
   setWorkspaceShowHidden = (value: boolean): void =>
     this.workspace.setShowHidden(value);
 
-  resolveNewSessionDefaults = async (
+  private modelCycleQueue: {
+    sessionId: string;
+    selection: number;
+    transport: number;
+    pending: Promise<void>;
+  } | null = null;
+
+  private queueModelCycle = (
+    run: (owns: () => boolean) => Promise<void>,
+  ): Promise<void> => {
+    const sessionId = this.state.sessionId;
+    if (!sessionId) return Promise.resolve();
+    const selection = this.selectionGeneration;
+    const transport = this.transportGeneration;
+    const owns = () =>
+      this.state.sessionId === sessionId &&
+      this.selectionGeneration === selection &&
+      this.transportGeneration === transport;
+    if (
+      this.modelCycleQueue?.sessionId !== sessionId ||
+      this.modelCycleQueue.selection !== selection ||
+      this.modelCycleQueue.transport !== transport
+    )
+      this.modelCycleQueue = {
+        sessionId,
+        selection,
+        transport,
+        pending: Promise.resolve(),
+      };
+    const guarded = () => (owns() ? run(owns) : Promise.resolve());
+    const result = this.modelCycleQueue.pending.then(guarded, guarded);
+    this.modelCycleQueue.pending = result;
+    return result;
+  };
+
+  openModelSettings = (
+    query?: string,
+    modelSettingsFocus?: "credentials" | "common",
+    modelSettingsOwner?: import("../shared/model-settings").ModelSettingsOwner,
+  ): void => {
+    const id = this.state.nextNativeCommandId;
+    this.set({
+      nextNativeCommandId: id + 1,
+      nativeCommandUiRequest: {
+        id,
+        sessionId: this.state.sessionId ?? "",
+        action: "models",
+        ...(query ? { query } : {}),
+        ...(modelSettingsFocus ? { modelSettingsFocus } : {}),
+        ...(modelSettingsOwner ? { modelSettingsOwner } : {}),
+      },
+    });
+  };
+
+  cycleModel = (direction: 1 | -1): Promise<void> =>
+    this.queueModelCycle(async (owns) => {
+      const available = this.state.availableModels;
+      const byKey = new Map(
+        available.map((model) => [modelIdentityKey(model), model]),
+      );
+      const common = this.state.commonModels.flatMap((model) => {
+        const match = byKey.get(modelIdentityKey(model));
+        return match ? [match] : [];
+      });
+      const models = common.length ? common : available;
+      if (models.length <= 1) return;
+      const index = Math.max(
+        0,
+        models.findIndex(
+          (model) =>
+            model.provider === this.state.model?.provider &&
+            model.id === this.state.model?.id,
+        ),
+      );
+      const next = models[(index + direction + models.length) % models.length]!;
+      const scoped = this.state.commonModels.find(
+        (model) => modelIdentityKey(model) === modelIdentityKey(next),
+      );
+      if (await this.setModel(next.provider, next.id)) {
+        if (scoped?.thinkingLevel && owns())
+          await this.setThinkingLevel(scoped.thinkingLevel);
+      }
+    });
+
+  cycleThinking = (): Promise<void> =>
+    this.queueModelCycle(async () => {
+      if (!this.state.model) return;
+      const levels = supportedThinkingLevels(this.state.model);
+      const index = levels.indexOf(this.state.thinkingLevel as ThinkingLevel);
+      await this.setThinkingLevel(levels[(index + 1) % levels.length]!);
+    });
+
+  private modelSettingsApi = (): Api => {
+    if (!this.api) throw new Error("The Host is unavailable");
+    return this.api;
+  };
+
+  private ownsModelSettings = (owner: {
+    sessionId?: string;
+    cwd?: string;
+  }): boolean =>
+    owner.sessionId
+      ? owner.sessionId === this.state.sessionId
+      : !this.state.sessionId && (!owner.cwd || owner.cwd === this.state.cwd);
+
+  readModelSettings = async (owner: {
+    sessionId?: string;
+    cwd?: string;
+  }): Promise<ModelSettingsSnapshot> => {
+    const api = this.modelSettingsApi();
+    const transport = this.transportGeneration;
+    const selection = this.selectionGeneration;
+    const snapshot = await api.modelSettings(owner);
+    if (
+      api === this.api &&
+      transport === this.transportGeneration &&
+      selection === this.selectionGeneration &&
+      this.ownsModelSettings(owner)
+    )
+      this.set({ commonModels: snapshot.commonModels });
+    return snapshot;
+  };
+
+  saveModelPreferences = async (
+    owner: { sessionId?: string; cwd?: string },
+    revision: string,
+    patch: ModelPreferencesPatch,
+  ) => {
+    const api = this.modelSettingsApi();
+    const transport = this.transportGeneration;
+    const selection = this.selectionGeneration;
+    const result = await api.saveModelPreferences(owner, revision, patch);
+    if (
+      result.snapshot &&
+      api === this.api &&
+      transport === this.transportGeneration &&
+      selection === this.selectionGeneration &&
+      this.ownsModelSettings(owner)
+    )
+      this.set({ commonModels: result.snapshot.commonModels });
+    return result;
+  };
+
+  editModelConfig = async (
+    owner: { sessionId?: string; cwd?: string },
+    revision: string,
+    edit: ModelConfigEdit,
+  ) => {
+    const api = this.modelSettingsApi();
+    const transport = this.transportGeneration;
+    const selection = this.selectionGeneration;
+    const result = await api.editModelConfig(owner, revision, edit);
+    if (
+      result.snapshot &&
+      api === this.api &&
+      transport === this.transportGeneration &&
+      selection === this.selectionGeneration &&
+      this.ownsModelSettings(owner)
+    )
+      this.set({
+        availableModels: result.snapshot.models,
+        commonModels: result.snapshot.commonModels,
+      });
+    return result;
+  };
+
+  providerAuth = (
+    owner: { sessionId?: string; cwd?: string },
+    operation: ProviderAuthOperation,
+  ) =>
+    this.modelSettingsApi()
+      .providerAuth(owner, operation)
+      .then((response) => response.result);
+
+  refreshModels = async (owner?: {
+    sessionId?: string;
+    cwd?: string;
+  }): Promise<string | undefined> => {
+    const api = this.api;
+    const transport = this.transportGeneration;
+    const selection = this.selectionGeneration;
+    const requested = owner ?? { sessionId: this.state.sessionId ?? undefined };
+    if (!api) throw new Error("The Host is unavailable");
+    const result = await api.refreshModels(requested.sessionId, requested.cwd);
+    if (
+      this.api === api &&
+      this.transportGeneration === transport &&
+      this.selectionGeneration === selection &&
+      this.ownsModelSettings(requested)
+    )
+      this.set({
+        availableModels: result.models,
+        commonModels: result.commonModels ?? [],
+      });
+    return result.warning;
+  };
+
+  readNewSessionModels = async (
+    sessionId?: string,
+    cwd?: string,
+    inherit = false,
+  ): Promise<ModelCatalogResponse> => {
+    const api = this.api;
+    const transport = this.transportGeneration;
+    if (!api) throw new Error("The Host is unavailable");
+    const result = await api.refreshModels(sessionId, cwd, inherit);
+    if (this.api !== api || this.transportGeneration !== transport)
+      throw new Error("The Host connection changed");
+    return result;
+  };
+
+  resolveNewSessionThinking = async (
     cwd: string,
-  ): Promise<NewSessionDefaults> => {
-    if (!this.api) throw new Error("Not connected to the Inspire host");
-    return this.api.newSessionDefaults(cwd);
+    model: ModelOption,
+    current: ThinkingLevel,
+  ): Promise<ThinkingLevel> => {
+    const api = this.api;
+    const transport = this.transportGeneration;
+    if (!api) throw new Error("The Host is unavailable");
+    const result = await api.newSessionThinking(
+      cwd,
+      model.provider,
+      model.id,
+      current,
+    );
+    if (this.api !== api || this.transportGeneration !== transport)
+      throw new Error("The Host connection changed");
+    return result.level;
   };
 
   searchNewSessionProjectFiles = async (
@@ -2367,10 +2819,21 @@ export class AppStore {
 
   loadBranchTree = (): Promise<void> => this.branches.loadTree();
 
+  readBranchTree = (query: BranchTreeQuery, signal?: AbortSignal) =>
+    this.branches.readTree(query, signal);
+  readBranchEntry = (targetId: string, offset = 0, signal?: AbortSignal) =>
+    this.branches.readEntry(targetId, offset, signal);
+  readBranchImage = (targetId: string, index: number, signal?: AbortSignal) =>
+    this.branches.readImage(targetId, index, signal);
+
   navigateBranch = (
     targetId: string,
     mode: "switch" | "edit",
-  ): Promise<boolean> => this.branches.navigate(targetId, mode);
+    options: Pick<
+      BranchNavigateRequest,
+      "summarize" | "customInstructions"
+    > = {},
+  ): Promise<boolean> => this.branches.navigate(targetId, mode, options);
 
   forkFromEntry = (targetId: string): Promise<boolean> =>
     this.branches.forkFromEntry(targetId);
@@ -2380,7 +2843,9 @@ export class AppStore {
 
   returnToLatestBranch = (): Promise<boolean> => this.branches.returnToLatest();
 
-  forkCurrentBranch = (): Promise<boolean> => this.branches.forkCurrent();
+  cloneBranch = (targetId: string): Promise<boolean> =>
+    this.branches.clone(targetId);
+  cloneCurrentBranch = (): Promise<boolean> => this.branches.clone();
 
   setGitSurfaceVisible = (surface: string, visible: boolean): void => {
     this.git.setSurfaceVisible(surface, visible);
@@ -2421,6 +2886,11 @@ export class AppStore {
     signal: AbortSignal,
   ): Promise<Blob> =>
     this.resources.loadDocumentImage(documentId, reference, signal);
+
+  loadAttachmentImage = (id: string, signal: AbortSignal): Promise<Blob> => {
+    if (!this.api) return Promise.reject(new Error("The Host is unavailable"));
+    return this.api.attachmentPreview(id, signal);
+  };
 
   loadEmbeddedImage = (
     sessionId: string,

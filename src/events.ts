@@ -10,8 +10,8 @@ import {
   type ExtensionDisplay,
   type ExtensionUiRequest,
   emptyPendingQueues,
-  isSessionRuntimeStatus,
   isBusyRunState,
+  isSessionRuntimeStatus,
   MAX_EXTENSION_DISPLAYS,
   MAX_EXTENSION_KEY_CHARS,
   MAX_EXTENSION_STATUSES,
@@ -28,6 +28,14 @@ import {
 import { structuralMessageIdentity } from "../shared/message-identity";
 
 import type { ToolCallPreview } from "../shared/tool-argument-updates";
+import {
+  codemodeCalls,
+  toolOutputPreview,
+  updateChildActivity,
+  type ActivityTool,
+  type ChildCallList,
+} from "../shared/tool-activity";
+export type { ActivityTool } from "../shared/tool-activity";
 
 // --- Chat message model (structural typing over Pi session messages) ---
 
@@ -87,10 +95,25 @@ export interface ChatMessage {
   customType?: string;
   display?: boolean;
   details?: unknown;
+  /** Bounded native child-call summaries, selected and redacted by the Host. */
+  __inspireCalls?: ChildCallList;
+  nestedCalls?: unknown;
   /** Pi-authored context checkpoint messages. */
   summary?: string;
   tokensBefore?: number;
   fromId?: string;
+  /** Native direct Bash, independent of assistant tool calls. */
+  command?: string;
+  output?: string;
+  exitCode?: number;
+  cancelled?: boolean;
+  truncated?: boolean;
+  fullOutputPath?: string;
+  excludeFromContext?: boolean;
+  __inspireBashRunning?: boolean;
+  __inspireBashPreviewTruncated?: boolean;
+  __inspireBashError?: string;
+  __inspireBashInterrupted?: boolean;
 }
 
 export function asMessage(value: unknown): ChatMessage {
@@ -138,52 +161,6 @@ export interface WireEvent {
   [key: string]: unknown;
 }
 
-export interface ActivityTool {
-  id: string;
-  name: string;
-  phase: "queued" | "running" | "done" | "error";
-  detail?: string;
-  /** Cumulative execution output, never an authoritative tool result. */
-  outputPreview?: { text: string; truncated: boolean };
-}
-
-const TOOL_OUTPUT_PREVIEW_CHARS = 16_000;
-const TOOL_OUTPUT_PREVIEW_LINES = 400;
-
-/** Pi updates replace the previous partial result; they are not text deltas.
- * Keep a bounded tail so long-running commands continue to show recent work. */
-function toolOutputPreview(value: unknown): ActivityTool["outputPreview"] {
-  const content =
-    value && typeof value === "object"
-      ? (value as Record<string, unknown>).content
-      : value;
-  const parts = typeof content === "string" ? [content] : content;
-  if (!Array.isArray(parts)) return undefined;
-  let text = "";
-  let truncated = false;
-  for (const part of parts) {
-    const next =
-      typeof part === "string"
-        ? part
-        : part?.type === "text" && typeof part.text === "string"
-          ? part.text
-          : "";
-    if (!next) continue;
-    const separator = text ? "\n" : "";
-    truncated ||=
-      text.length + separator.length + next.length > TOOL_OUTPUT_PREVIEW_CHARS;
-    text = `${text}${separator}${next.slice(-TOOL_OUTPUT_PREVIEW_CHARS)}`.slice(
-      -TOOL_OUTPUT_PREVIEW_CHARS,
-    );
-  }
-  const lines = text.split("\n");
-  if (lines.length > TOOL_OUTPUT_PREVIEW_LINES) {
-    text = lines.slice(-TOOL_OUTPUT_PREVIEW_LINES).join("\n");
-    truncated = true;
-  }
-  return text ? { text, truncated } : undefined;
-}
-
 export interface Notice {
   id: number;
   kind: "info" | "warning" | "error";
@@ -194,6 +171,7 @@ export interface Notice {
 export interface EventSlice {
   messages: ChatMessage[];
   streaming: boolean;
+  bashRunning: boolean;
   /** Stable key of the assistant message that owns the current Pi turn. It
    * survives that message's end event through tool execution and is replaced
    * only when the next LLM call starts. */
@@ -208,7 +186,7 @@ export interface EventSlice {
   extensionDisplays: ExtensionDisplay[];
   notices: Notice[];
   statuses: Record<string, string>;
-  editorText: { text: string; nonce: number } | null;
+  editorText: { text: string; nonce: number; draftRevision?: number } | null;
   windowTitle: string | null;
   nextNoticeId: number;
 }
@@ -217,6 +195,7 @@ export function emptyEventSlice(): EventSlice {
   return {
     messages: [],
     streaming: false,
+    bashRunning: false,
     activeAssistantMessageKey: null,
     runState: "idle",
     tools: {},
@@ -270,6 +249,10 @@ function upsert(
   const next = [...messages];
   const key = messageKey(incoming);
   let index = key ? indexOfKey(next, key) : -1;
+  if (index === -1 && incoming.__inspireLiveId)
+    index = next.findIndex(
+      (message) => message.__inspireLiveId === incoming.__inspireLiveId,
+    );
   if (index === -1 && !key && incoming.role === "assistant") {
     for (let i = next.length - 1; i >= 0; i -= 1) {
       const candidate = next[i]!;
@@ -411,6 +394,13 @@ export function reduceEvent(
   const settle: string[] = [];
   let resync = false;
   let changed = false;
+  if (
+    typeof event.bashRunning === "boolean" &&
+    event.bashRunning !== current.bashRunning
+  ) {
+    slice.bashRunning = event.bashRunning;
+    changed = true;
+  }
   const displays = extensionDisplaysFromEvent(current.extensionDisplays, event);
   if (displays !== current.extensionDisplays) {
     slice.extensionDisplays = displays;
@@ -435,6 +425,13 @@ export function reduceEvent(
       }
       break;
     }
+    case "prompt_finished":
+    case "bash_finished":
+      // Handled extension commands can reload resources without an agent run.
+      // Refresh the snapshot (including commands) when their prompt settles.
+      changed = true;
+      resync = true;
+      break;
     case "message_update":
     case "message_update_batch": {
       const supplied =
@@ -613,7 +610,6 @@ export function reduceEvent(
         slice.runState = "idle";
       slice.tools = {};
       slice.retry = null;
-      slice.queue = emptyPendingQueues();
       changed = true;
       resync = true;
       break;
@@ -667,15 +663,16 @@ export function reduceEvent(
     }
     case "tool_execution_start":
     case "tool_execution_update": {
+      if (typeof event.parentToolCallId === "string") {
+        slice.tools = updateChildActivity(current.tools, event);
+        changed = slice.tools !== current.tools;
+        break;
+      }
       const id = typeof event.toolCallId === "string" ? event.toolCallId : "";
       if (!id) break;
       const existing = current.tools[id];
       // A delayed update must not resurrect a completed execution.
-      if (
-        event.type === "tool_execution_update" &&
-        (existing?.phase === "done" || existing?.phase === "error")
-      )
-        break;
+      if (existing?.phase === "done" || existing?.phase === "error") break;
       const detail =
         event.type === "tool_execution_update"
           ? (summarize(event.partialResult) ?? existing?.detail)
@@ -693,12 +690,26 @@ export function reduceEvent(
           ...(event.type === "tool_execution_update"
             ? { outputPreview: toolOutputPreview(event.partialResult) }
             : {}),
+          calls:
+            typeof event.toolName === "string" && event.toolName === "codemode"
+              ? ((event.childCalls as ChildCallList | undefined) ??
+                codemodeCalls(
+                  (event.partialResult as { details?: unknown } | undefined)
+                    ?.details,
+                ) ??
+                existing?.calls)
+              : existing?.calls,
         },
       };
       changed = true;
       break;
     }
     case "tool_execution_end": {
+      if (typeof event.parentToolCallId === "string") {
+        slice.tools = updateChildActivity(current.tools, event);
+        changed = slice.tools !== current.tools;
+        break;
+      }
       const id = typeof event.toolCallId === "string" ? event.toolCallId : "";
       if (!id) break;
       const existing = current.tools[id];
@@ -712,6 +723,14 @@ export function reduceEvent(
               : (existing?.name ?? "tool"),
           phase: event.isError ? "error" : "done",
           detail: existing?.detail ?? summarize(event.result),
+          calls:
+            typeof event.toolName === "string" && event.toolName === "codemode"
+              ? ((event.childCalls as ChildCallList | undefined) ??
+                codemodeCalls(
+                  (event.result as { details?: unknown } | undefined)?.details,
+                ) ??
+                existing?.calls)
+              : existing?.calls,
         },
       };
       changed = true;

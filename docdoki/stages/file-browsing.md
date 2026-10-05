@@ -10,6 +10,7 @@ scope:
   - src/components/ContextSplitBody.tsx
   - src/components/FilesPane.tsx
   - src/components/FilePreview.tsx
+  - src/components/NotebookPreview.tsx
   - src/components/ChangesPane.tsx
   - src/components/WorkspaceBrowser.tsx
   - src/components/PaneResizeHandle.tsx
@@ -45,6 +46,12 @@ The document-context repair is also complete: Markdown/Notebook images, document
 - Recent refreshes run only while Browse is visible and retain the previous page and standing until current results arrive. Preview stays mounted through compatible transcript appends, preserving its reader scroll. Git polling likewise retains the selected diff and scroll while that exact facet remains present.
 - Resource probe and resolve generations prevent stale standing from overwriting a successful preview. Downloads stream through the authenticated resource route, text detection covers common source/configuration names, truncated rendered previews are explicit, and every iframe uses the same empty sandbox capability set.
 - On narrow layouts, opening a resource from navigation closes that drawer before the contextual drawer appears. Directory, search, probe, preview, Git, session, view, and transport transitions reject stale asynchronous results.
+
+## Reader conformance follow-up
+
+Notebook kernel-name inference in [[resource-preview]] is not implemented. `NotebookPreview.tsx`
+reads `language_info.name` and `kernelspec.language`, then defaults to Python; it ignores
+`kernelspec.name`. Implement the decided common-name inference without changing the preview flow.
 
 ## Next actions
 

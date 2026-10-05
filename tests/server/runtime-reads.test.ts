@@ -7,7 +7,11 @@ function fixture() {
     id: "a",
     cwd: "/A",
     viewId: "view-a",
-    projection: { revision: 1, viewMessages: () => ["message-a"] },
+    projection: {
+      revision: 1,
+      viewMessages: () => ["message-a"],
+      composerHistoryMessages: () => [],
+    },
   } as unknown as RuntimeSlot;
   let registered = slot;
   const host = {

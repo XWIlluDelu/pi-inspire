@@ -19,14 +19,16 @@ import type {
 } from "../../server/pi-rpc.js";
 import { RuntimeController } from "../../server/runtime.js";
 import type {
-  StageSessionFork,
-  StagedSessionFork,
-} from "../../server/session-fork.js";
-import { SessionProjection } from "../../server/session-projection.js";
-import type {
   SessionCatalogLike,
   SessionRecord,
 } from "../../server/session-catalog.js";
+import type {
+  StagedSessionFork,
+  StageSessionFork,
+} from "../../server/session-fork.js";
+import { SessionProjection } from "../../server/session-projection.js";
+import { nativeNavigationLeaf } from "../../shared/branch-node-actions.js";
+import { RETRY_STATE_SUFFIX } from "../../shared/branch-bridge-protocol.js";
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const FORK_SESSION_ID = "22222222-2222-4222-8222-222222222222";
@@ -124,7 +126,17 @@ class BranchRpc extends EventEmitter {
     const beforeLeaf = this.leafId;
     if (this.treeDialog) await this.waitForDialog("tree-hook", "confirm");
     const cancelled = this.resultMode === "cancel";
-    if (!cancelled) this.leafId = String(request.targetId);
+    if (!cancelled) {
+      const target = (await readFile(this.path, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .find((candidate) => candidate.id === request.targetId);
+      this.leafId = nativeNavigationLeaf(
+        { ...target, role: target.message?.role },
+        beforeLeaf,
+      );
+    }
     const result = {
       v: 1,
       nonce:
@@ -168,6 +180,28 @@ class BranchRpc extends EventEmitter {
     _timeoutMs?: number,
     _responseFence?: PiRpcResponseFence,
   ): Promise<T> {
+    if (
+      command.type === "prompt" &&
+      String(command.message).startsWith(
+        `/${this.bridgeCommand}${RETRY_STATE_SUFFIX} `,
+      )
+    ) {
+      const request = JSON.parse(
+        Buffer.from(
+          String(command.message).split(" ")[1]!,
+          "base64url",
+        ).toString("utf8"),
+      ) as object;
+      this.emit("event", {
+        type: "extension_ui_request",
+        method: "setStatus",
+        statusKey: `${this.statusKey}${RETRY_STATE_SUFFIX}`,
+        statusText: Buffer.from(
+          JSON.stringify({ ...request, autoRetryEnabled: true }),
+        ).toString("base64url"),
+      });
+      return { disposition: "handled" } as T;
+    }
     this.commands.push(command);
     let value: unknown = {};
     if (command.type === "get_state") {
@@ -247,6 +281,10 @@ function fakeStageFork(directory: string): StageSessionFork {
       destinationId: FORK_SESSION_ID,
       cwd: directory,
       parentSessionPath: request.sourcePath,
+      destinationLeafId:
+        typeof destination.at(-1)?.id === "string" && destination.length > 1
+          ? (destination.at(-1)!.id as string)
+          : null,
     };
   };
 }
@@ -351,6 +389,60 @@ afterEach(async () => {
 });
 
 describe("stock RPC branch bridge", () => {
+  it("keeps retained text and images readable through append, but rejects a replaced view", async () => {
+    const { runtime, worker, path } = await setup();
+    try {
+      const text = "Retained content. ".repeat(4000);
+      const saved = {
+        ...entry("resources", "a2", "user", text, 40),
+        message: {
+          role: "user",
+          content: [
+            { type: "text", text },
+            { type: "image", mimeType: "image/png", data: "aW1hZ2U=" },
+          ],
+          timestamp: 40,
+        },
+      };
+      await appendFile(path, `${JSON.stringify(saved)}\n`);
+      worker.leafId = saved.id;
+      worker.emit("event", { type: "message_end", message: saved.message });
+      const snapshot = await runtime.snapshot();
+      const request = {
+        sessionId: SESSION_ID,
+        viewId: snapshot.active!.transcriptPage.viewId,
+        targetId: saved.id,
+      };
+      const first = await runtime.branchEntry(request);
+      expect(first.nextOffset).toBe(32_000);
+      await runtime.prompt({ sessionId: SESSION_ID, message: "New input" });
+      worker.emit("event", { type: "agent_settled" });
+      const next = await runtime.branchEntry({
+        ...request,
+        offset: first.nextOffset!,
+      });
+      expect(next.text).toBe(text.slice(32_000, 64_000));
+      expect((await runtime.branchImage(request, 1)).data.toString()).toBe(
+        "image",
+      );
+      const tree = await runtime.branchTree(SESSION_ID);
+      await runtime.navigateBranch({
+        sessionId: SESSION_ID,
+        revision: tree.revision,
+        targetId: "a1",
+        mode: "switch",
+      });
+      await expect(runtime.branchEntry(request)).rejects.toMatchObject({
+        status: 409,
+      });
+      await expect(runtime.branchImage(request, 1)).rejects.toMatchObject({
+        status: 409,
+      });
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("keeps normal discovered extensions enabled in production argv while adding the explicit hidden bridge", async () => {
     const { runtime, worker } = await setup();
     try {
@@ -451,7 +543,7 @@ describe("stock RPC branch bridge", () => {
     }
   });
 
-  it("returns original edit text, navigates to the parent, and refuses the irreducible root case", async () => {
+  it("returns original edit text and supports native before-input navigation including the null root", async () => {
     const { runtime } = await setup();
     try {
       const tree = await runtime.branchTree(SESSION_ID);
@@ -463,14 +555,16 @@ describe("stock RPC branch bridge", () => {
       });
       expect(edited.editorText).toBe("second question");
       expect(edited.snapshot.active?.effectiveLeafId).toBe("a1");
-      await expect(
-        runtime.navigateBranch({
-          sessionId: SESSION_ID,
-          revision: tree.revision,
-          targetId: "u1",
-          mode: "edit",
-        }),
-      ).rejects.toMatchObject({ status: 409 });
+      const current = await runtime.branchTree(SESSION_ID);
+      const root = await runtime.navigateBranch({
+        sessionId: SESSION_ID,
+        revision: current.revision,
+        targetId: "u1",
+        mode: "edit",
+      });
+      expect(root.editorText).toBe("root");
+      expect(root.snapshot.active?.effectiveLeafId).toBeNull();
+      expect(root.snapshot.active?.transcriptPage.messages).toEqual([]);
     } finally {
       await runtime.close();
     }
@@ -642,6 +736,7 @@ describe("stock RPC branch bridge", () => {
     const stageFork = vi.fn<StageSessionFork>();
     const fixture = await setup(15_000, undefined, stageFork);
     const { runtime, path, directory } = fixture;
+    stageFork.mockImplementation(fakeStageFork(directory));
     try {
       const tree = await runtime.branchTree(SESSION_ID);
       await openOtherSession(fixture);
@@ -658,7 +753,7 @@ describe("stock RPC branch bridge", () => {
       ).rejects.toThrow(/stale/);
       await expect(
         runtime.forkBranch({ ...request, targetId: "a1" }),
-      ).rejects.toThrow("Fork requires a user message on the active branch");
+      ).rejects.toThrow("Fork requires a retained user message");
       await runtime.navigateBranch({
         ...request,
         targetId: "a1",
@@ -667,7 +762,11 @@ describe("stock RPC branch bridge", () => {
       const earlierTree = await runtime.branchTree(SESSION_ID);
       await expect(
         runtime.forkBranch({ ...request, revision: earlierTree.revision }),
-      ).rejects.toThrow("Fork requires a user message on the active branch");
+      ).resolves.toMatchObject({
+        sessionId: FORK_SESSION_ID,
+        editorText: "second question",
+      });
+      await runtime.openSession(OTHER_SESSION_ID);
       await appendFile(
         path,
         `${JSON.stringify(entry("external", "a2", "assistant", "external divergence", 60))}\n`,
@@ -679,10 +778,10 @@ describe("stock RPC branch bridge", () => {
           targetId: "u1",
         }),
       ).rejects.toThrow(/could not verify ownership/);
-      expect(stageFork).not.toHaveBeenCalled();
-      await expect(
-        readFile(join(directory, `${FORK_SESSION_ID}.jsonl`)),
-      ).rejects.toMatchObject({ code: "ENOENT" });
+      expect(stageFork).toHaveBeenCalledTimes(1);
+      expect(
+        await readFile(join(directory, `${FORK_SESSION_ID}.jsonl`), "utf8"),
+      ).toContain("first answer");
       expect(runtime.activeSessionId).toBe(OTHER_SESSION_ID);
     } finally {
       await runtime.close();
@@ -833,7 +932,10 @@ describe("stock RPC branch bridge", () => {
           targetId: "a1",
           mode: "switch",
         }),
-      ).rejects.toMatchObject({ status: 409 });
+      ).resolves.toMatchObject({
+        cancelled: true,
+        snapshot: { active: { effectiveLeafId: "a2" } },
+      });
       expect(worker.leafId).toBe("a2");
       expect(worker.stops).toBe(0);
     } finally {

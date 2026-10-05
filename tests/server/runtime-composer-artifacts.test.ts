@@ -8,7 +8,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   addAttachmentContext,
   resolveProjectFiles,
@@ -29,6 +29,35 @@ afterEach(async () => {
 });
 
 describe("composer-history artifacts", () => {
+  it("keeps an explicit root navigation separate from the durable leaf", async () => {
+    const composerHistoryMessages = vi.fn(() => []);
+    const slot = {
+      viewId: "root-view",
+      navigationLease: { effectiveLeafId: null },
+      projection: {
+        incarnation: "source-a",
+        leafId: "durable-leaf",
+        composerHistoryMessages,
+      },
+    } as unknown as RuntimeSlot;
+    await resolveComposerHistoryArtifacts(
+      slot,
+      {
+        sessionId: "session-a",
+        message: "",
+        historyArtifacts: {
+          viewId: "root-view",
+          incarnation: "source-a",
+          effectiveLeafId: null,
+          imageReferences: [],
+          fileReferences: [],
+        },
+      },
+      { ready: async () => {}, ownsPromptFile: () => false },
+    );
+    expect(composerHistoryMessages).toHaveBeenCalledWith(null);
+  });
+
   it("rejects non-canonical or empty prompt image data before budgeting it", () => {
     for (const data of ["T Q==", ""]) {
       expect(() => assertPromptArtifactBudget(1, 0, [{ data }])).toThrow(
@@ -56,7 +85,7 @@ describe("composer-history artifacts", () => {
       projection: {
         incarnation: "incarnation-a",
         leafId: null,
-        viewMessages: () => [
+        composerHistoryMessages: () => [
           {
             role: "user",
             content: prompt,
@@ -80,7 +109,10 @@ describe("composer-history artifacts", () => {
             fileReferences: ["pi-file://0/0"],
           },
         },
-        { ownsPromptFile: (path) => path === attachment },
+        {
+          ready: async () => {},
+          ownsPromptFile: (path) => path === attachment,
+        },
       ),
     ).resolves.toMatchObject({
       files: [{ kind: "file", path: attachment }],
@@ -112,7 +144,7 @@ describe("prompt project-file revalidation", () => {
       projection: {
         incarnation: "incarnation-a",
         leafId: null,
-        viewMessages: () => [
+        composerHistoryMessages: () => [
           {
             role: "user",
             content: addAttachmentContext("Use", [], expected),
@@ -135,7 +167,7 @@ describe("prompt project-file revalidation", () => {
             fileReferences: ["pi-file://0/0"],
           },
         },
-        { ownsPromptFile: () => false },
+        { ready: async () => {}, ownsPromptFile: () => false },
       ),
     ).resolves.toMatchObject({ projectFiles: expected });
   });

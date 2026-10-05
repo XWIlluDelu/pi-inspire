@@ -40,6 +40,48 @@
   color: var(--activity-error);
 }
 
+/* User-issued native shell commands remain readable independently of tools. */
+.shell-execution__header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.shell-execution__status { color: var(--ink); }
+.shell-execution__context { margin-left: auto; }
+.shell-execution__copy { flex-shrink: 0; }
+
+.shell-execution__command,
+.shell-execution__output {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.shell-execution__command { border-top: 1px solid var(--line); }
+.shell-execution__output {
+  max-height: 24rem;
+  overflow: auto;
+  background: var(--bg-inset);
+}
+
+.shell-execution__note,
+.shell-execution__error {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+.shell-execution__note { color: var(--muted); }
+.shell-execution__error { color: var(--activity-error); }
+
 @keyframes card-in {
   from {
     opacity: 0;
@@ -735,6 +777,121 @@
   cursor: pointer;
 }
 
+.tool-call-layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.tool-call-result:empty {
+  display: none;
+}
+
+.tool-call-disclosure__button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.tool-call-disclosure__count {
+  font-variant-numeric: tabular-nums;
+}
+
+.child-calls {
+  max-height: min(20rem, 45vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  margin-top: var(--space-1);
+}
+
+.child-call__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding: 3px var(--space-1);
+  list-style: none;
+  font-size: var(--text-xs);
+}
+
+summary.child-call__row {
+  cursor: pointer;
+}
+
+.child-call__row::-webkit-details-marker {
+  display: none;
+}
+
+.child-call__status,
+.child-call__chevron {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.child-call__status {
+  display: inline-flex;
+}
+
+.child-call__status--ok {
+  color: var(--success);
+}
+
+.child-call__status--error {
+  color: var(--error);
+}
+
+.child-call__name {
+  flex: 0 1 auto;
+  max-width: 55%;
+  font-family: var(--font-mono);
+}
+
+.child-call__name,
+.child-call__summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.child-call__summary {
+  flex: 1;
+  color: var(--muted);
+}
+
+.child-call__chevron {
+  margin-left: auto;
+}
+
+.child-call[open] .child-call__chevron {
+  transform: rotate(90deg);
+}
+
+.child-call__detail {
+  padding: var(--space-1) var(--space-2) var(--space-2) 24px;
+}
+
+.child-call__duration {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+@media (pointer: coarse) {
+  .child-call__row,
+  .tool-call-disclosure__button,
+  .tool-call-script > details > summary {
+    min-height: 44px;
+  }
+}
+
 .tool-result-details .card__mono {
   margin-top: 8px;
   padding: 8px;
@@ -786,13 +943,20 @@ span.card__file-arg {
 }
 
 .tool-image-block__image {
-  display: block;
+  display: flex;
+  min-width: 44px;
+  min-height: 44px;
   max-width: 100%;
-  max-height: min(520px, 65vh);
   margin: 0 auto;
   border: 1px solid var(--line);
   border-radius: var(--radius-xs);
-  background: var(--bg-inset);
+}
+
+.tool-image-block__image img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: min(520px, 65vh);
   object-fit: contain;
 }
 
@@ -985,6 +1149,21 @@ span.card__file-arg {
   font-size: var(--text-reading-small);
 }
 
+.tool-notice__action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin-left: var(--space-2);
+  padding: 0 var(--space-1);
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
 .tool-notice--warning {
   border-left-color: var(--warning);
   color: var(--warning);
@@ -1066,7 +1245,8 @@ span.card__file-arg {
   font-size: var(--text-reading-small);
   /* Numeric columns compare down the row rule; proportional figures wobble. */
   font-variant-numeric: tabular-nums;
-  /* Wide tables scroll inside the column instead of breaking it. */
+  /* Preserve word-sized column minima; the table owns wide-content scrolling. */
+  overflow-wrap: normal;
   display: block;
   max-width: 100%;
   overflow-x: auto;

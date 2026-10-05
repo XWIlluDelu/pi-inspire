@@ -87,8 +87,8 @@ describe("session pagination control", () => {
       />,
     );
     const nav = screen.getByRole("navigation", { name: "Sessions" });
-    const status = within(nav).getByRole("status");
-    expect(status).toHaveTextContent("Showing 1 of 3");
+    const status = within(nav).getByText("Showing 1 of 3");
+    expect(status).toHaveAttribute("role", "status");
 
     within(nav).getByRole("button", { name: "Load older sessions" }).focus();
     await user.keyboard("{Enter}");
@@ -110,9 +110,7 @@ describe("session pagination control", () => {
 
     within(nav).getByRole("button", { name: "Load older sessions" }).focus();
     await user.keyboard(" ");
-    await waitFor(() =>
-      expect(within(nav).queryByRole("status")).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(status).not.toBeInTheDocument());
     expect(screen.getByText("Oldest")).toBeInTheDocument();
 
     const results = await axe.run(container, {

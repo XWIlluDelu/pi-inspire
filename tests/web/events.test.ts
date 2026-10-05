@@ -625,7 +625,19 @@ describe("message reconciliation", () => {
     ]);
   });
 
-  it("requests an authoritative resync on settle and clears transient queued input", () => {
+  it("refreshes the snapshot after a handled prompt without inventing an agent settlement", () => {
+    const slice = emptyEventSlice();
+    slice.runState = "running";
+    slice.streaming = true;
+    slice.activeAssistantMessageKey = "live:retained";
+    slice.queue = pendingQueues(["steer"], ["later"]);
+    const result = reduce(slice, new Set(), { type: "prompt_finished" });
+    expect(result.resync).toBe(true);
+    expect(result.slice).toEqual(slice);
+    expect(result.settle).toEqual([]);
+  });
+
+  it("resyncs on settle without discarding the Host's pending-input projection", () => {
     const slice = emptyEventSlice();
     slice.activeAssistantMessageKey = "live:active-assistant";
     slice.tools = { t1: { id: "t1", name: "bash", phase: "running" } };
@@ -641,18 +653,7 @@ describe("message reconciliation", () => {
     expect(next.activeAssistantMessageKey).toBeNull();
     expect(next.tools).toEqual({});
     expect(next.retry).toBeNull();
-    expect(next.queue.totalCount).toBe(0);
-    expect(next.queue.steering).toEqual([]);
-  });
-
-  it("clears the lossy public queue projection on settlement", () => {
-    const slice = emptyEventSlice();
-    slice.queue = pendingQueues(["legacy"], []);
-    const { slice: next } = reduce(slice, new Set(), {
-      type: "agent_settled",
-    });
-    expect(next.queue.steering).toEqual([]);
-    expect(next.queue.totalCount).toBe(0);
+    expect(next.queue).toEqual(slice.queue);
   });
 });
 

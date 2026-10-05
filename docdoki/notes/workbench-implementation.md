@@ -4,7 +4,7 @@
 
 ### Decision
 
-The user approved a neutral, information-blue message surface for displayed Pi custom messages while explicitly retaining the existing PI error surface. The current contract is in [[conversation]] and [[design-system]]. A custom message supplies extension-authored context, without the call/result lifecycle of a tool. Its optional `details` is separate from its Markdown `content`; no details entry is synthesized when that field is absent or null.
+The user approved a neutral, information-blue message surface for displayed Pi custom messages while explicitly retaining the existing PI error surface. The current contract is in [[conversation]] and [[design-system]]. A custom message supplies extension-authored context, without the call/result lifecycle of a tool. The generic presentation keeps optional `details` separate from Markdown `content`; it creates no empty Details entry when that field is absent or null.
 
 The previous tool-style card, custom activity tiles, and automatic tool-density lifecycle were removed. Tool calls and Thinking keep their existing presentation. Custom messages stay outside activity folds even when tool visibility is Hidden. The change does not alter Pi delivery or model-context conversion.
 
@@ -14,6 +14,18 @@ The previous tool-style card, custom activity tiles, and automatic tool-density 
 - `transcript-row-projection.tsx` places custom messages in chronological independent rows. Host-paired entry identities retain the row across live-to-durable timestamp adoption and history prepends; host reconciliation remains unchanged.
 - `server/session-projection.ts` treats displayed custom messages as visible boundaries in older-history and user-turn navigation. Merely changing the browser renderer would otherwise leave older custom content hidden in deferred activity ranges. Hidden context-only messages remain invisible.
 - Settled custom content participates in All search, but not User or Model scopes. Source/type labels do not claim user or Pi authorship.
+
+### Structured reading projections
+
+[[tool-presentations]] defines a small field-selection contract for sender-led custom messages.
+The Intercom adaptation selects structured body text rather than parsing its generated Markdown
+wrapper. Its absent-provenance guard leaves cross-machine messages in Pi's original presentation,
+so attribution cannot silently drop the unverified-origin warning.
+
+The narrow fixture exposed a shared table issue: inheriting prose's `overflow-wrap: anywhere`
+reduced table column minima to character widths. `.rich-text table` in
+`src/styles/activity-cards.css` now restores normal word minima while retaining local horizontal
+scrolling. Long-token wrapping outside tables is unchanged.
 
 ## Document-relative previews
 

@@ -1,24 +1,30 @@
+import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
+import { Maximize2, Minimize2 } from "lucide-react";
 import {
   type ClipboardEventHandler,
   type KeyboardEventHandler,
+  type RefObject,
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import type { ComposerHistoryEntry } from "../../shared/contracts";
+import type { ComposerHistoryEntry, ModelOption } from "../../shared/contracts";
 import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
-import { HiddenFilesToggle } from "./HiddenFilesToggle";
 import {
   type CaretCompletion,
+  commandArgumentCandidates,
+  commandUsageHint,
   type PiCommand,
   parseCaretCompletion,
   rankCommands,
   rankProjectFiles,
   replaceCompletionToken,
+  replaceFileCompletion,
   resolveCommandInventory,
 } from "../composer-completion";
 import {
@@ -30,6 +36,8 @@ import {
   type FloatingMenuPlacement,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
+import { useModalPortal } from "../use-modal-focus";
+import { HiddenFilesToggle } from "./HiddenFilesToggle";
 
 const COMPLETION_MENU_CONSTRAINTS: FloatingMenuConstraints = {
   gap: 8,
@@ -46,6 +54,7 @@ interface CompletionItem {
   group: string;
   file?: ProjectFileResult;
   command?: PiCommand;
+  argument?: string;
 }
 
 function CompletionMenu({
@@ -53,6 +62,7 @@ function CompletionMenu({
   token,
   items,
   active,
+  keyboardActive,
   status,
   truncated,
   showHiddenFiles,
@@ -60,11 +70,14 @@ function CompletionMenu({
   placement,
   onActive,
   onPick,
+  onDismiss,
+  anchorRef,
 }: {
   id: string;
   token: CaretCompletion;
   items: CompletionItem[];
   active: number;
+  keyboardActive: boolean;
   status: "loading" | "ready" | "error";
   truncated: boolean;
   showHiddenFiles: boolean;
@@ -72,15 +85,98 @@ function CompletionMenu({
   placement: FloatingMenuPlacement | null;
   onActive: (index: number) => void;
   onPick: (item: CompletionItem) => void;
+  onDismiss: () => void;
+  anchorRef: RefObject<HTMLDivElement | null>;
 }) {
-  const refs = useRef<Array<HTMLDivElement | null>>([]);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useModalPortal(true, anchorRef, menuRef);
   useEffect(() => {
-    refs.current[active]?.scrollIntoView({ block: "nearest" });
-  }, [active]);
-  let previousGroup = "";
+    const outside = (event: Event) => {
+      const target = event.target as Node;
+      if (
+        !anchorRef.current?.contains(target) &&
+        !menuRef.current?.contains(target)
+      )
+        onDismiss();
+    };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("focusin", outside);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("focusin", outside);
+    };
+  }, [anchorRef, onDismiss]);
+  const refs = useRef<Array<HTMLDivElement | null>>([]);
+  const listRef = useRef<HTMLDivElement>(null);
+  const virtualized = items.length > 50;
+  const fileControls =
+    token.kind === "file" && Boolean(onShowHiddenFilesChange);
+  const hasHeading = useCallback(
+    (index: number) =>
+      items[index]?.group !== items[index - 1]?.group && !fileControls,
+    [items, fileControls],
+  );
+  const getItemKey = useCallback((index: number) => items[index]!.key, [items]);
+  const estimateSize = useCallback(
+    (index: number) => 48 + (hasHeading(index) ? 28 : 0),
+    [hasHeading],
+  );
+  const virtualizer = useVirtualizer({
+    enabled: virtualized,
+    count: items.length,
+    getScrollElement: () => menuRef.current,
+    getItemKey,
+    estimateSize,
+    scrollMargin: listRef.current?.offsetTop ?? 0,
+    overscan: 4,
+    rangeExtractor: (range) => {
+      const indexes = defaultRangeExtractor(range);
+      // Keyboard navigation keeps its active descendant mounted offscreen.
+      if (!indexes.includes(active)) indexes.push(active);
+      return indexes.sort((left, right) => left - right);
+    },
+  });
+  useLayoutEffect(() => {
+    if (!keyboardActive) return;
+    if (virtualized) virtualizer.scrollToIndex(active, { align: "auto" });
+    else refs.current[active]?.scrollIntoView({ block: "nearest" });
+  }, [active, items, keyboardActive, virtualized, virtualizer]);
+  const renderItem = (item: CompletionItem, index: number) => (
+    <>
+      {hasHeading(index) ? (
+        <div className="completion__heading" aria-hidden>
+          {item.group}
+        </div>
+      ) : null}
+      <div
+        ref={(element) => {
+          refs.current[index] = element;
+        }}
+        id={`${id}-option-${index}`}
+        role="option"
+        aria-selected={keyboardActive && index === active}
+        aria-posinset={index + 1}
+        aria-setsize={items.length}
+        className={`completion__option ${keyboardActive && index === active ? "completion__option--active" : ""}`}
+        onMouseDown={(event) => event.preventDefault()}
+        onPointerMove={(event) => {
+          if (event.pointerType !== "touch") onActive(index);
+        }}
+        onClick={() => onPick(item)}
+      >
+        <span className="completion__title">{item.title}</span>
+        {item.hint ? (
+          <span className="completion__hint">{item.hint}</span>
+        ) : null}
+      </div>
+    </>
+  );
   return (
     <div
+      ref={menuRef}
       className="completion"
+      data-keyboard-active={keyboardActive}
+      onClick={(event) => event.stopPropagation()}
       data-placement={placement?.direction}
       style={
         placement
@@ -107,47 +203,43 @@ function CompletionMenu({
         </div>
       ) : null}
       <div
+        ref={listRef}
         id={id}
         role="listbox"
         aria-label={
           token.kind === "file"
             ? "Project file completions"
-            : "Slash command completions"
+            : token.kind === "argument"
+              ? `${token.name === "model" ? "Model" : "Thinking level"} argument completions`
+              : "Slash command completions"
         }
         aria-busy={status === "loading"}
       >
-        {items.map((item, index) => {
-          const heading =
-            item.group !== previousGroup &&
-            !(token.kind === "file" && onShowHiddenFilesChange);
-          previousGroup = item.group;
-          return (
-            <div key={item.key}>
-              {heading ? (
-                <div className="completion__heading" aria-hidden>
-                  {item.group}
-                </div>
-              ) : null}
+        {virtualized ? (
+          <div
+            style={{ height: virtualizer.getTotalSize(), position: "relative" }}
+          >
+            {virtualizer.getVirtualItems().map((row) => (
               <div
-                ref={(element) => {
-                  refs.current[index] = element;
+                key={row.key}
+                data-index={row.index}
+                ref={virtualizer.measureElement}
+                style={{
+                  position: "absolute",
+                  top: row.start - virtualizer.options.scrollMargin,
+                  left: 0,
+                  width: "100%",
                 }}
-                id={`${id}-option-${index}`}
-                role="option"
-                aria-selected={index === active}
-                className={`completion__option ${index === active ? "completion__option--active" : ""}`}
-                onMouseDown={(event) => event.preventDefault()}
-                onMouseEnter={() => onActive(index)}
-                onClick={() => onPick(item)}
               >
-                <span className="completion__title">{item.title}</span>
-                {item.hint ? (
-                  <span className="completion__hint">{item.hint}</span>
-                ) : null}
+                {renderItem(items[row.index]!, row.index)}
               </div>
-            </div>
-          );
-        })}
+            ))}
+          </div>
+        ) : (
+          items.map((item, index) => (
+            <div key={item.key}>{renderItem(item, index)}</div>
+          ))
+        )}
         {truncated ? (
           <div className="completion__empty" role="status">
             Partial search results
@@ -164,7 +256,9 @@ function CompletionMenu({
                 ? "Project file search failed"
                 : token.kind === "file"
                   ? "No matching project files"
-                  : "No matching commands"}
+                  : token.kind === "argument"
+                    ? "No available candidates"
+                    : "No matching commands"}
           </div>
         ) : null}
       </div>
@@ -180,20 +274,23 @@ export function ComposerInput({
   onHistoryCancel,
   history = [],
   commands,
+  models = [],
+  activeModel = null,
   includeNativeCommands = true,
   completionDisabled = false,
   disabled = false,
   completionScope,
+  completionPortal,
   searchProjectFiles,
   showHiddenFiles = false,
   onShowHiddenFilesChange,
-  onPickProjectFile,
   rows = 1,
   maxHeightRatio = 0.4,
   placeholder,
   label,
   completionLabel = "Message completion",
   autoFocus = false,
+  initialCaretAtEnd = false,
   onPaste,
   onKeyDown,
 }: {
@@ -207,12 +304,15 @@ export function ComposerInput({
   onHistoryCancel?: () => void;
   history?: readonly ComposerHistoryEntry[];
   commands: readonly PiCommand[];
+  models?: readonly ModelOption[];
+  activeModel?: ModelOption | null;
   includeNativeCommands?: boolean;
   completionDisabled?: boolean;
   disabled?: boolean;
   completionScope?: string | null;
+  /** Mount within the active overlay, not above unrelated dialogs. */
+  completionPortal?: RefObject<HTMLElement | null>;
   searchProjectFiles?: (query: string) => Promise<ProjectFileSearchResult>;
-  onPickProjectFile?: (file: ProjectFileResult) => void;
   showHiddenFiles?: boolean;
   onShowHiddenFilesChange?: (value: boolean) => void;
   rows?: number;
@@ -221,10 +321,14 @@ export function ComposerInput({
   label: string;
   completionLabel?: string;
   autoFocus?: boolean;
+  initialCaretAtEnd?: boolean;
   onPaste?: ClipboardEventHandler<HTMLTextAreaElement>;
   onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
 }) {
   const completionId = useId();
+  const editorId = useId();
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
   const [completionTruncated, setCompletionTruncated] = useState(false);
   const [completion, setCompletion] = useState<CaretCompletion | null>(null);
   const [completionFiles, setCompletionFiles] = useState<ProjectFileResult[]>(
@@ -234,9 +338,47 @@ export function ComposerInput({
     "loading" | "ready" | "error"
   >("ready");
   const [completionActive, setCompletionActive] = useState(0);
+  const [completionKeyboardActive, setCompletionKeyboardActive] =
+    useState(true);
   const inputWrapRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Let an enclosing modal capture its opener before moving focus.
+  useEffect(() => {
+    if (autoFocus) textareaRef.current?.focus({ preventScroll: true });
+  }, [autoFocus]);
   const composingRef = useRef(false);
+  const completionSelectionRef = useRef<{
+    value: string;
+    caret: number;
+  } | null>(null);
+  useLayoutEffect(() => {
+    const selection = completionSelectionRef.current;
+    const input = textareaRef.current;
+    if (!selection || !input || selection.value !== value) return;
+    completionSelectionRef.current = null;
+    input.focus();
+    input.setSelectionRange(selection.caret, selection.caret);
+  });
+  const initialCaretRef = useRef(initialCaretAtEnd);
+  useLayoutEffect(() => {
+    const input = textareaRef.current;
+    if (input && initialCaretRef.current)
+      input.setSelectionRange(input.value.length, input.value.length);
+  }, []);
+  const dismissedCompletionRef = useRef<{
+    value: string;
+    caret: number;
+  } | null>(null);
+  const dismissCompletion = useCallback(() => {
+    const input = textareaRef.current;
+    if (input) {
+      dismissedCompletionRef.current = {
+        value: input.value,
+        caret: input.selectionStart,
+      };
+    }
+    setCompletion(null);
+  }, []);
   const inputValueRef = useRef(value);
   const historyIndexRef = useRef(-1);
   const historyDraftRef = useRef<{
@@ -280,12 +422,77 @@ export function ComposerInput({
     historyPreviewValueRef.current = null;
   }, []);
 
-  useEffect(() => {
+  const resizeEditor = useCallback(() => {
     const element = textareaRef.current;
-    if (!element) return;
+    const wrap = inputWrapRef.current;
+    if (!element || !wrap) return;
+    const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+    const main = wrap.closest("main");
+    const composer = wrap.closest(".composer");
+    const dock = wrap.closest(".composer-dock");
+    const chrome = composer
+      ? composer.getBoundingClientRect().height -
+        element.getBoundingClientRect().height
+      : 0;
+    const dockChrome =
+      dock && composer
+        ? dock.getBoundingClientRect().height -
+          composer.getBoundingClientRect().height
+        : 0;
+    const available = Math.max(
+      48,
+      Math.min(
+        viewportHeight * 0.8,
+        Math.min(
+          main?.getBoundingClientRect().height || viewportHeight,
+          viewportHeight,
+        ) -
+          chrome -
+          dockChrome -
+          64,
+      ),
+    );
+    const limit = expanded
+      ? available
+      : Math.min(viewportHeight * maxHeightRatio, available);
+    const scrollTop = element.scrollTop;
+    element.style.maxHeight = `${limit}px`;
     element.style.height = "auto";
-    element.style.height = `${Math.min(element.scrollHeight, Math.round(window.innerHeight * maxHeightRatio))}px`;
-  }, [maxHeightRatio, value]);
+    element.style.height = `${expanded ? limit : Math.min(element.scrollHeight, limit)}px`;
+    element.scrollTop = scrollTop;
+    setOverflowing(element.scrollHeight > element.clientHeight + 1);
+  }, [expanded, maxHeightRatio]);
+
+  useLayoutEffect(() => {
+    resizeEditor();
+  }, [resizeEditor, value]);
+
+  useEffect(() => {
+    let frame = 0;
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(resizeEditor);
+    };
+    const wrap = inputWrapRef.current;
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(schedule);
+    if (wrap) {
+      observer?.observe(wrap);
+      const main = wrap.closest("main");
+      if (main) observer?.observe(main);
+    }
+    window.addEventListener("resize", schedule);
+    window.visualViewport?.addEventListener("resize", schedule);
+    void document.fonts?.ready.then(schedule);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", schedule);
+      window.visualViewport?.removeEventListener("resize", schedule);
+    };
+  }, [resizeEditor]);
 
   useEffect(() => {
     if (
@@ -295,7 +502,9 @@ export function ComposerInput({
       onHistoryCancel?.();
       exitHistoryBrowsing();
     }
-    if (value !== inputValueRef.current) setCompletion(null);
+    if (value !== inputValueRef.current) {
+      setCompletion(null);
+    }
     inputValueRef.current = value;
   }, [value, exitHistoryBrowsing, onHistoryCancel]);
 
@@ -320,9 +529,25 @@ export function ComposerInput({
       setCompletion(null);
       return;
     }
+    // Browsers can emit a delayed selection event after layout/focus changes.
+    // It must not reopen an explicitly dismissed menu at the unchanged caret.
+    if (
+      dismissedCompletionRef.current?.value === draft &&
+      dismissedCompletionRef.current.caret === caret
+    ) {
+      setCompletion(null);
+      return;
+    }
+    dismissedCompletionRef.current = null;
     const token = parseCaretCompletion(draft, caret);
     setCompletionActive(0);
-    setCompletion(token?.kind === "file" && !searchProjectFiles ? null : token);
+    setCompletionKeyboardActive(true);
+    setCompletion(
+      (token?.kind === "file" && !searchProjectFiles) ||
+        (token?.kind === "argument" && !includeNativeCommands)
+        ? null
+        : token,
+    );
   };
 
   const commandInventory = useMemo(
@@ -373,6 +598,20 @@ export function ComposerInput({
         file,
       }));
     }
+    if (completion.kind === "argument") {
+      return commandArgumentCandidates(completion, models, activeModel).map(
+        (candidate) => ({
+          key: candidate.value,
+          title: candidate.value,
+          hint: candidate.hint,
+          group:
+            completion.name === "model"
+              ? "Available models"
+              : "Supported thinking levels",
+          argument: candidate.value,
+        }),
+      );
+    }
     const ranked = rankCommands(commandInventory, completion.query);
     if (!completion.query.trim()) {
       const sourceOrder = new Map(
@@ -402,7 +641,7 @@ export function ComposerInput({
             : "Command",
       command,
     }));
-  }, [commandInventory, completion, completionFiles]);
+  }, [commandInventory, completion, completionFiles, models, activeModel]);
 
   useEffect(
     () => setCompletionActive(0),
@@ -415,7 +654,6 @@ export function ComposerInput({
 
   const pickCompletion = (item: CompletionItem | undefined) => {
     if (!item || !completion || completionDisabled) return;
-    if (item.file) onPickProjectFile?.(item.file);
     const existingDelimiter = value[completion.end];
     const reusesInlineDelimiter = Boolean(
       item.command && existingDelimiter && /[ \t]/.test(existingDelimiter),
@@ -426,19 +664,26 @@ export function ComposerInput({
     );
     const replacement = item.command
       ? `/${item.command.name}${reusesInlineDelimiter || !addsArgumentDelimiter ? "" : " "}`
-      : "";
-    const inserted = replaceCompletionToken(value, completion, replacement);
+      : (item.argument ?? "");
+    const inserted = item.file
+      ? replaceFileCompletion(value, completion, item.file)
+      : replaceCompletionToken(value, completion, replacement);
     const next = reusesInlineDelimiter
       ? { ...inserted, caret: inserted.caret + 1 }
       : inserted;
     exitHistoryBrowsing();
     inputValueRef.current = next.value;
+    const nextArgument =
+      item.command?.source === "builtin" &&
+      ["model", "thinking"].includes(item.command.name)
+        ? parseCaretCompletion(next.value, next.caret)
+        : null;
+    dismissedCompletionRef.current = nextArgument
+      ? null
+      : { value: next.value, caret: next.caret };
+    completionSelectionRef.current = next;
     onChange(next.value);
-    setCompletion(null);
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(next.caret, next.caret);
-    });
+    setCompletion(nextArgument);
   };
 
   const previewHistory = (
@@ -530,11 +775,12 @@ export function ComposerInput({
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
-        setCompletion(null);
+        dismissCompletion();
         return;
       }
       if (event.key === "ArrowDown" && completionItems.length > 0) {
         event.preventDefault();
+        setCompletionKeyboardActive(true);
         setCompletionActive((index) =>
           Math.min(index + 1, completionItems.length - 1),
         );
@@ -542,6 +788,7 @@ export function ComposerInput({
       }
       if (event.key === "ArrowUp" && completionItems.length > 0) {
         event.preventDefault();
+        setCompletionKeyboardActive(true);
         setCompletionActive((index) => Math.max(0, index - 1));
         return;
       }
@@ -604,7 +851,7 @@ export function ComposerInput({
     <>
       <div
         ref={inputWrapRef}
-        className="composer__input-wrap"
+        className={`composer__input-wrap${expanded ? " composer__input-wrap--expanded" : ""}`}
         role="combobox"
         aria-label={completionLabel}
         aria-haspopup="listbox"
@@ -613,11 +860,14 @@ export function ComposerInput({
       >
         <textarea
           ref={textareaRef}
+          id={editorId}
           className="composer__input"
           aria-autocomplete="list"
           aria-controls={completion ? completionId : undefined}
           aria-activedescendant={
-            completion && completionItems[activeIndex]
+            completion &&
+            completionKeyboardActive &&
+            completionItems[activeIndex]
               ? `${completionId}-option-${activeIndex}`
               : undefined
           }
@@ -626,6 +876,8 @@ export function ComposerInput({
           placeholder={placeholder}
           disabled={disabled}
           onChange={(event) => {
+            completionSelectionRef.current = null;
+            pendingSelectionRef.current++;
             if (historyIndexRef.current >= 0) onHistoryCommit?.();
             exitHistoryBrowsing();
             inputValueRef.current = event.target.value;
@@ -664,9 +916,40 @@ export function ComposerInput({
           aria-label={label}
           spellCheck={false}
           autoCorrect="off"
-          autoFocus={autoFocus}
+          data-modal-autofocus={autoFocus || undefined}
         />
+        {expanded || overflowing ? (
+          <button
+            type="button"
+            className="composer__expand icon-button"
+            aria-label={expanded ? "Collapse editor" : "Expand editor"}
+            title={expanded ? "Collapse editor" : "Expand editor"}
+            aria-expanded={expanded}
+            aria-controls={editorId}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              const element = textareaRef.current;
+              const start = element?.selectionStart ?? 0;
+              const end = element?.selectionEnd ?? start;
+              const direction = element?.selectionDirection ?? "none";
+              setExpanded((current) => !current);
+              element?.focus({ preventScroll: true });
+              element?.setSelectionRange(start, end, direction);
+            }}
+          >
+            {expanded ? (
+              <Minimize2 size={16} aria-hidden />
+            ) : (
+              <Maximize2 size={16} aria-hidden />
+            )}
+          </button>
+        ) : null}
       </div>
+      {commandUsageHint(value, includeNativeCommands) ? (
+        <div className="composer__usage" role="note">
+          {commandUsageHint(value, includeNativeCommands)}
+        </div>
+      ) : null}
       {completion
         ? createPortal(
             <CompletionMenu
@@ -674,6 +957,7 @@ export function ComposerInput({
               token={completion}
               items={completionItems}
               active={activeIndex}
+              keyboardActive={completionKeyboardActive}
               status={completion.kind === "file" ? completionStatus : "ready"}
               truncated={completion.kind === "file" && completionTruncated}
               showHiddenFiles={showHiddenFiles}
@@ -686,10 +970,15 @@ export function ComposerInput({
                   : undefined
               }
               placement={completionPlacement}
-              onActive={setCompletionActive}
+              onActive={(index) => {
+                setCompletionKeyboardActive(false);
+                setCompletionActive(index);
+              }}
               onPick={pickCompletion}
+              onDismiss={dismissCompletion}
+              anchorRef={inputWrapRef}
             />,
-            document.body,
+            completionPortal?.current ?? document.body,
           )
         : null}
     </>

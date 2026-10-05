@@ -335,11 +335,6 @@ function ChangesIndex({ state }: { state: ContextPaneView }) {
   const staged = status.files.filter((file) => !file.conflict && file.staged);
   return (
     <>
-      {state.gitStatusError ? (
-        <p className="changes__projection-note">
-          Refresh failed; showing the last known status.
-        </p>
-      ) : null}
       {status.truncated ? (
         <p className="changes__projection-note">
           Showing first {status.files.length} of {status.total} changed paths.
@@ -572,7 +567,16 @@ export function ChangesPane({ state }: { state: ContextPaneView }) {
     <ContextSplitBody
       mode="changes"
       header={<ChangesIndexHeader state={state} />}
-      index={<ChangesIndex state={state} />}
+      index={
+        <>
+          {state.gitStatus && state.gitStatusError ? (
+            <p className="changes__projection-note" role="status">
+              Refresh failed; showing the last known status.
+            </p>
+          ) : null}
+          <ChangesIndex state={state} />
+        </>
+      }
       detail={<ChangesDetail state={state} />}
     />
   );

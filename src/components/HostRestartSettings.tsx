@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import type { HostRestartScope } from "../../shared/host-restart";
 import { hostRestartClient } from "../controllers/host-restart-controller";
 import { useModalFocus } from "../use-modal-focus";
+import { SettingField } from "./SettingsControls";
 
 function RestartConfirmation({
   scope,
@@ -53,7 +54,7 @@ function RestartConfirmation({
           </button>
           <button
             type="button"
-            className={`button ${scope === "all" || interruptWork ? "button--danger" : "button--primary"}`}
+            className="button button--danger"
             onClick={onConfirm}
           >
             {interruptWork
@@ -123,84 +124,129 @@ export function HostRestartSettings() {
         ? "Restart requested."
         : state.notice);
   return (
-    <div
-      id="settings-host-restart"
-      className="settings__update-entry host-restart"
-    >
-      <div className="settings__update-entry-header">
-        <span className="settings__field-label">Restart</span>
-      </div>
-      <div className="host-restart__actions">
-        {(["host", "all"] as const).map((scope) => (
-          <button
-            key={scope}
-            type="button"
-            className="button"
-            disabled={disabled}
-            onClick={() =>
-              setConfirmation({
-                scope,
-                hostId: state.status!.hostId,
-                interruptWork: false,
-              })
-            }
-          >
-            <RefreshCw size={14} aria-hidden />
-            {scope === "all" ? "Restart all" : "Restart Host"}
-          </button>
-        ))}
-      </div>
-      {canStopAndRestart ? (
-        <div className="host-restart__actions">
+    <div id="settings-host-restart" className="host-restart">
+      <SettingField
+        label="Restart Host"
+        description="Restart Inspire and its Pi sessions; keep terminals running."
+      >
+        {canStopAndRestart && operation?.scope === "host" ? (
           <button
             type="button"
             className="button button--danger"
             onClick={() =>
               setConfirmation({
-                scope: operation.scope,
+                scope: "host",
                 hostId: state.status!.hostId,
                 interruptWork: true,
               })
             }
           >
-            Stop work and restart {operation.scope === "all" ? "all" : "Host"}
+            Stop work and restart Host
           </button>
-        </div>
-      ) : null}
-      {!state.status ? (
-        <p className="settings__field-help">Checking availability…</p>
-      ) : !state.status.available ? (
-        <p className="settings__field-help">{state.status.reason}</p>
-      ) : null}
-      {message ? (
-        <p
-          className="host-restart__status"
-          role={state.error || operation?.error ? "alert" : "status"}
-        >
-          {message}
-        </p>
-      ) : null}
-      {unobserved ? (
-        <p className="settings__field-help">Restart request not confirmed.</p>
-      ) : null}
-      {state.error || state.pending || active ? (
-        <div className="host-restart__actions">
+        ) : (
           <button
             type="button"
-            className="button"
-            onClick={() => void hostRestartClient.refresh()}
+            className="button button--danger-outline"
+            aria-label="Restart Host"
+            disabled={disabled}
+            onClick={() =>
+              setConfirmation({
+                scope: "host",
+                hostId: state.status!.hostId,
+                interruptWork: false,
+              })
+            }
           >
-            Recheck status
+            <RefreshCw size={13} aria-hidden />
+            Restart
           </button>
-          {unobserved ? (
-            <button
-              type="button"
-              className="button"
-              disabled={state.sending || state.blocked || !!active}
-              onClick={() => void hostRestartClient.retry()}
-            >
-              Retry same request
-            </button>
+        )}
+      </SettingField>
+      <SettingField
+        label="Restart all"
+        description="Restart Inspire and Pi, and close all project terminals."
+      >
+        {canStopAndRestart && operation?.scope === "all" ? (
+          <button
+            type="button"
+            className="button button--danger"
+            onClick={() =>
+              setConfirmation({
+                scope: "all",
+                hostId: state.status!.hostId,
+                interruptWork: true,
+              })
+            }
+          >
+            Stop work and restart all
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="button button--danger-outline"
+            aria-label="Restart all"
+            disabled={disabled}
+            onClick={() =>
+              setConfirmation({
+                scope: "all",
+                hostId: state.status!.hostId,
+                interruptWork: false,
+              })
+            }
+          >
+            <RefreshCw size={13} aria-hidden />
+            Restart all
+          </button>
+        )}
+      </SettingField>
+      {!state.status ||
+      !state.status.available ||
+      message ||
+      unobserved ||
+      state.error ||
+      state.pending ||
+      active ? (
+        <div className="host-restart__status-row">
+          <div className="host-restart__status-copy">
+            {!state.status ? (
+              <p className="settings__field-help">Checking availability…</p>
+            ) : !state.status.available ? (
+              <p className="settings__field-help">{state.status.reason}</p>
+            ) : null}
+            {message ? (
+              <p
+                className="host-restart__status"
+                role={state.error || operation?.error ? "alert" : "status"}
+              >
+                {message}
+              </p>
+            ) : null}
+            {unobserved ? (
+              <p className="settings__field-help">
+                Restart request not confirmed.
+              </p>
+            ) : null}
+          </div>
+          {state.error || state.pending || active ? (
+            <div className="host-restart__status-actions">
+              <button
+                type="button"
+                className="button button--text"
+                onClick={() => void hostRestartClient.refresh()}
+              >
+                Recheck status
+              </button>
+              {unobserved ? (
+                <button
+                  type="button"
+                  className="button button--text"
+                  disabled={state.sending || state.blocked || !!active}
+                  onClick={() => void hostRestartClient.retry()}
+                >
+                  Retry same request
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}

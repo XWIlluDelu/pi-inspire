@@ -3,6 +3,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -19,8 +20,13 @@ import {
 } from "../composer-history";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import { supportedThinkingLevels } from "../model-options";
-import { sessionDraft, setSessionDraft } from "../session-drafts";
+import {
+  sessionDraft,
+  sessionDraftRevision,
+  setSessionDraft,
+} from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
+import { hasActiveModal } from "../use-modal-focus";
 import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
 import { Dropdown } from "./Dropdown";
@@ -31,38 +37,114 @@ const RING_RADIUS = 5;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
 const ContextMeter = memo(function ContextMeter() {
-  const usage = useAppState((state) => state.contextUsage);
-  const compacting = useAppState((state) => state.runState === "compacting");
-  if (!usage || usage.percent === null) return null;
-  const percent = Math.max(0, Math.min(100, usage.percent));
+  const { usage, model, sessionId } = useAppState(
+    (state) => ({
+      usage: state.contextUsage,
+      model: state.model,
+      sessionId: state.sessionId,
+    }),
+    shallowEqual,
+  );
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const hintId = useId();
+  useEffect(() => setOpen(false), [sessionId]);
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const dismissKey = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        hasActiveModal()
+      )
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+    };
+    window.addEventListener("pointerdown", dismiss);
+    // Focused controls dismiss first; the hint precedes window-level Stop.
+    document.addEventListener("keydown", dismissKey);
+    return () => {
+      window.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", dismissKey);
+    };
+  }, [open]);
+  if (!usage) return null;
+  const percent = usage.percent;
+  const fillPercent = Math.max(0, Math.min(100, percent ?? 0));
   const tone =
-    percent >= 85 ? "meter--error" : percent >= 60 ? "meter--warning" : "";
-  const tokens =
-    usage.tokens !== null
-      ? `${usage.tokens.toLocaleString()} / ${usage.contextWindow.toLocaleString()} tokens`
-      : `${usage.contextWindow.toLocaleString()}-token window`;
+    percent !== null && percent >= 85
+      ? "meter--error"
+      : percent !== null && percent >= 60
+        ? "meter--warning"
+        : "";
+  const tokens = `${usage.tokens?.toLocaleString() ?? "—"} / ${usage.contextWindow.toLocaleString()} tokens`;
   return (
     <div
-      className={`meter ${tone}`}
-      role="meter"
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={Math.round(percent)}
-      title={`Context ${Math.round(percent)}% full (${tokens}) — ${compacting ? "context compaction in progress" : "type /compact to summarize"}`}
-      aria-label={`Context ${Math.round(percent)} percent full`}
+      className="meter-anchor"
+      ref={rootRef}
+      onPointerEnter={(event) => {
+        if (event.pointerType !== "touch") setOpen(true);
+      }}
+      onPointerLeave={(event) => {
+        if (
+          event.pointerType !== "touch" &&
+          !rootRef.current?.contains(document.activeElement)
+        )
+          setOpen(false);
+      }}
     >
-      <svg className="meter__ring" viewBox="0 0 14 14" aria-hidden>
-        <circle className="meter__ring-track" cx="7" cy="7" r={RING_RADIUS} />
-        <circle
-          className="meter__ring-fill"
-          cx="7"
-          cy="7"
-          r={RING_RADIUS}
-          strokeDasharray={`${(percent / 100) * RING_CIRCUMFERENCE} ${RING_CIRCUMFERENCE}`}
-          transform="rotate(-90 7 7)"
-        />
-      </svg>
-      <span aria-hidden>{Math.round(percent)}%</span>
+      <div
+        className={`meter ${tone}`}
+        {...(percent === null
+          ? { role: "img", "aria-label": "Context usage unknown" }
+          : {
+              role: "meter",
+              "aria-label": `Context ${Math.round(percent)} percent full`,
+              "aria-valuemin": 0,
+              "aria-valuemax": 100,
+              "aria-valuenow": Math.round(fillPercent),
+              "aria-valuetext": `${Math.round(percent)}%`,
+            })}
+        tabIndex={0}
+        aria-describedby={open ? hintId : undefined}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onClick={() => setOpen(true)}
+      >
+        <svg className="meter__ring" viewBox="0 0 14 14" aria-hidden>
+          <circle className="meter__ring-track" cx="7" cy="7" r={RING_RADIUS} />
+          {percent !== null && (
+            <circle
+              className="meter__ring-fill"
+              cx="7"
+              cy="7"
+              r={RING_RADIUS}
+              strokeDasharray={`${(fillPercent / 100) * RING_CIRCUMFERENCE} ${RING_CIRCUMFERENCE}`}
+              transform="rotate(-90 7 7)"
+            />
+          )}
+        </svg>
+        <span aria-hidden>
+          {percent === null ? "—" : `${Math.round(percent)}%`}
+        </span>
+      </div>
+      {open && (
+        <div className="meter__hint" id={hintId} role="tooltip">
+          {model && (
+            <span className="meter__model">{model.name ?? model.id}</span>
+          )}
+          <span>
+            {percent === null ? tokens : `${Math.round(percent)}% · ${tokens}`}
+          </span>
+          {usage.tokens === null && <span>Updates after the next reply</span>}
+        </div>
+      )}
     </div>
   );
 });
@@ -76,6 +158,7 @@ export const Composer = memo(function Composer() {
       transcriptEffectiveLeafId: source.transcriptEffectiveLeafId,
       composerHistoryVersion: source.composerHistoryVersion,
       runState: source.runState,
+      bashRunning: source.bashRunning,
       sessionSelectionPending: source.sessionSelectionPending,
       editorText: source.editorText,
       attachments: source.attachments,
@@ -84,6 +167,7 @@ export const Composer = memo(function Composer() {
       workspaceShowHidden: source.workspaceShowHidden,
       model: source.model,
       availableModels: source.availableModels,
+      commonModels: source.commonModels,
       commands: source.commands,
       thinkingLevel: source.thinkingLevel,
       desktopSendKey: source.prefs.desktopSendKey,
@@ -162,12 +246,13 @@ export const Composer = memo(function Composer() {
   const busy = isBusyRunState(state.runState);
   const sessionOpening = state.sessionSelectionPending;
 
-  const abortable = isAbortableRunState(state.runState);
+  const abortable = isAbortableRunState(state.runState) || state.bashRunning;
   const isRunning = state.runState === "running";
   const isRetrying = state.runState === "retrying";
   const isCompacting = state.runState === "compacting";
   const isFailed = state.runState === "failed";
   const deliveryBusy = busy;
+  const shellInput = draft.trim().startsWith("!");
 
   const runStateClass = isRunning
     ? "composer--running"
@@ -261,8 +346,15 @@ export const Composer = memo(function Composer() {
 
   const editorNonce = state.editorText?.nonce;
   // biome-ignore lint/correctness/useExhaustiveDependencies: Pi's nonce is the editor-delivery revision; same-nonce payload changes must not replace a draft.
-  useEffect(() => {
-    if (state.editorText) updateDraft(state.editorText.text);
+  useLayoutEffect(() => {
+    const delivery = state.editorText;
+    if (
+      delivery &&
+      (delivery.draftRevision === undefined ||
+        (sessionId &&
+          sessionDraftRevision(sessionId) === delivery.draftRevision))
+    )
+      updateDraft(delivery.text);
   }, [editorNonce]);
 
   const canSend = Boolean(
@@ -405,13 +497,14 @@ export const Composer = memo(function Composer() {
         onHistoryCancel={cancelHistoryPreview}
         history={history}
         commands={state.commands}
+        models={state.availableModels}
+        activeModel={activeModel}
         completionDisabled={sessionOpening}
         disabled={sessionOpening}
         completionScope={historyKey}
         showHiddenFiles={state.workspaceShowHidden}
         onShowHiddenFilesChange={store.setWorkspaceShowHidden}
         searchProjectFiles={store.searchProjectFiles}
-        onPickProjectFile={(file) => store.addProjectFile(file.path)}
         placeholder={
           deliveryBusy
             ? deliveryBehavior === "steer"
@@ -431,7 +524,7 @@ export const Composer = memo(function Composer() {
               aria-pressed={deliveryBehavior === "steer"}
               disabled={sessionOpening}
               onClick={() => setDeliveryBehavior("steer")}
-              title="Influence the task that is running now"
+              title="Influence the running task"
             >
               Steer
             </button>
@@ -440,7 +533,7 @@ export const Composer = memo(function Composer() {
               aria-pressed={deliveryBehavior === "followUp"}
               disabled={sessionOpening}
               onClick={() => setDeliveryBehavior("followUp")}
-              title="Queue this message after the current task"
+              title="Send after the current task"
             >
               Queue
             </button>
@@ -454,6 +547,8 @@ export const Composer = memo(function Composer() {
             value={activeModel}
             models={state.availableModels}
             recent={state.recentModelIds}
+            common={state.commonModels}
+            onManageModels={store.openModelSettings}
             disabled={sessionOpening}
             openRequest={
               state.nativeCommandUiRequest?.sessionId === state.sessionId &&
@@ -462,6 +557,7 @@ export const Composer = memo(function Composer() {
                 : undefined
             }
             onOpenRequestHandled={store.consumeNativeCommandUiRequest}
+            refreshModels={store.refreshModels}
             onChange={(provider, id) => void store.setModel(provider, id)}
           />
           <Dropdown
@@ -497,6 +593,7 @@ export const Composer = memo(function Composer() {
           disabled={sessionOpening}
           onClick={() => setPickerOpen((value) => !value)}
           aria-label="Add project files"
+          aria-haspopup="dialog"
           aria-expanded={pickerOpen}
           title="Reference project files"
         >
@@ -514,20 +611,28 @@ export const Composer = memo(function Composer() {
         </button>
         <span className="composer__spacer" />
         <ContextMeter />
-        {deliveryBusy ? (
+        {deliveryBusy || state.bashRunning ? (
           <button
             type="submit"
             className="composer__send"
             disabled={!canSend}
             aria-label={
-              deliveryBehavior === "steer"
-                ? "Send as steer"
-                : "Queue after current task"
+              shellInput
+                ? "Run shell command"
+                : !deliveryBusy
+                  ? "Send message"
+                  : deliveryBehavior === "steer"
+                    ? "Send as steer"
+                    : "Queue after current task"
             }
             title={
-              deliveryBehavior === "steer"
-                ? "Send as steer"
-                : "Queue after current task"
+              shellInput
+                ? "Run shell command"
+                : !deliveryBusy
+                  ? "Send"
+                  : deliveryBehavior === "steer"
+                    ? "Send as steer"
+                    : "Queue after current task"
             }
           >
             <Send size={14} aria-hidden />
@@ -551,7 +656,7 @@ export const Composer = memo(function Composer() {
                 ? "Recover session"
                 : isCompacting
                   ? "Cancel compaction"
-                  : "Abort"
+                  : "Stop"
             }
           >
             <Square size={14} aria-hidden />
@@ -561,8 +666,8 @@ export const Composer = memo(function Composer() {
             type="submit"
             className="composer__send"
             disabled={!canSend}
-            aria-label="Send message"
-            title="Send"
+            aria-label={shellInput ? "Run shell command" : "Send message"}
+            title={shellInput ? "Run shell command" : "Send"}
           >
             <Send size={14} aria-hidden />
           </button>
@@ -570,6 +675,7 @@ export const Composer = memo(function Composer() {
       </div>
       {pickerOpen && sessionId ? (
         <ProjectFilePicker
+          anchorRef={projectPickerButtonRef}
           scope={sessionId}
           showHidden={state.workspaceShowHidden}
           onShowHiddenChange={store.setWorkspaceShowHidden}
@@ -577,12 +683,7 @@ export const Composer = memo(function Composer() {
           disabled={sessionOpening}
           search={store.searchProjectFiles}
           onAdd={(file) => store.addProjectFile(file.path)}
-          onClose={() => {
-            setPickerOpen(false);
-            requestAnimationFrame(() =>
-              projectPickerButtonRef.current?.focus(),
-            );
-          }}
+          onClose={() => setPickerOpen(false)}
         />
       ) : null}
     </form>

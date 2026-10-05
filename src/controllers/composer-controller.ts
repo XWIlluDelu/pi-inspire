@@ -4,6 +4,7 @@ import {
   MAX_PROJECT_FILES,
   type PromptAcceptedResponse,
   type PromptDeliveryRequest,
+  type UploadedAttachment,
 } from "../../shared/contracts";
 import { type Api, ApiError, ApiTransportError } from "../api";
 import { selectAttachmentFiles } from "../attachment-selection";
@@ -12,7 +13,7 @@ import {
   composerHistoryScopeKey,
   discardComposerHistory,
 } from "../composer-history";
-import { deleteSessionDraft } from "../session-drafts";
+import { deleteSessionDraft, touchSessionDraft } from "../session-drafts";
 
 interface RecalledHistoryArtifact {
   type: "image" | "file";
@@ -32,6 +33,7 @@ export interface PendingAttachment {
   size: number;
   kind: "image" | "file";
   previewUrl?: string;
+  previewLoading?: boolean;
   status: "uploading" | "ready" | "error";
   uploadedId?: string;
   uploadedAuthorityId?: string;
@@ -56,6 +58,8 @@ interface DeliveryRecord {
   attachments: PendingAttachment[];
   projectFiles: string[];
   historyDraft: ComposerArtifactDraft | null;
+  /** Palette preparation owns its text; it never transfers the Composer draft. */
+  independent?: boolean;
 }
 
 export interface ComposerPartition {
@@ -139,7 +143,7 @@ export class ComposerController {
           record.delivery.signature,
           record.delivery,
         );
-        composer.failedDeliveries.push(record);
+        if (!record.independent) composer.failedDeliveries.push(record);
       }
       composer.deliveries.clear();
       composer.sending = false;
@@ -212,6 +216,128 @@ export class ComposerController {
     if (changed && sessionId) this.publish(sessionId);
   }
 
+  /** The receipt transfers handles, not a browser queue. Preserve every image
+   * and the existing draft even when their combined count exceeds send limits. */
+  restorePendingArtifacts(
+    sessionId: string,
+    attachments: UploadedAttachment[],
+    authorityId: string | null,
+  ): void {
+    const composer = this.forSession(sessionId);
+    // Recovery merges into the newest saved draft, not a temporary history
+    // preview. Exiting that preview must not discard returned upload handles.
+    this.restoreHistoryDraft(composer);
+    const api = this.host.api();
+    const currentAuthority = this.host.authorityId();
+    const pending: PendingAttachment[] = attachments.map((item) => ({
+      localId: globalThis.crypto.randomUUID(),
+      fileName: item.fileName,
+      mimeType: item.mimeType,
+      size: item.size,
+      kind: item.kind,
+      uploadedId: item.id,
+      uploadedAuthorityId: authorityId ?? undefined,
+      previewLoading: item.kind === "image",
+      status: authorityId === currentAuthority ? "ready" : "error",
+      ...(authorityId === currentAuthority
+        ? {}
+        : {
+            error: "The Host changed; remove this attachment and add it again",
+          }),
+    }));
+    if (pending.length) touchSessionDraft(sessionId);
+    composer.attachments = [...pending, ...composer.attachments];
+    this.publish(sessionId);
+    if (!api || authorityId !== currentAuthority) return;
+    for (const item of pending)
+      if (item.kind === "image") {
+        void api
+          .attachmentPreview(item.uploadedId!)
+          .then((blob) => {
+            if (
+              this.composers.get(sessionId) !== composer ||
+              this.host.authorityId() !== authorityId
+            )
+              return;
+            const lists = [
+              composer.attachments,
+              ...(composer.historyDraft
+                ? [composer.historyDraft.attachments]
+                : []),
+              ...[
+                ...composer.deliveries.values(),
+                ...composer.failedDeliveries,
+              ].flatMap((record) => [
+                record.attachments,
+                ...(record.historyDraft
+                  ? [record.historyDraft.attachments]
+                  : []),
+              ]),
+            ];
+            if (
+              !lists.some((items) =>
+                items.some((value) => value.localId === item.localId),
+              )
+            )
+              return;
+            const previewUrl = URL.createObjectURL(blob);
+            this.patchRecoveredPreview(composer, item.localId, {
+              previewUrl,
+              previewLoading: false,
+            });
+            this.publish(sessionId);
+          })
+          .catch((error) => {
+            if (
+              this.composers.get(sessionId) !== composer ||
+              this.host.authorityId() !== authorityId
+            )
+              return;
+            if (
+              this.patchRecoveredPreview(composer, item.localId, {
+                previewLoading: false,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Image preview failed",
+              })
+            )
+              this.publish(sessionId);
+          });
+      }
+  }
+
+  private patchRecoveredPreview(
+    composer: ComposerPartition,
+    localId: string,
+    patch: Partial<PendingAttachment>,
+  ): boolean {
+    let found = false;
+    const apply = (items: PendingAttachment[]) => {
+      if (!items.some((item) => item.localId === localId)) return items;
+      found = true;
+      return items.map((item) =>
+        item.localId === localId ? { ...item, ...patch } : item,
+      );
+    };
+    composer.attachments = apply(composer.attachments);
+    if (composer.historyDraft)
+      composer.historyDraft.attachments = apply(
+        composer.historyDraft.attachments,
+      );
+    for (const record of [
+      ...composer.deliveries.values(),
+      ...composer.failedDeliveries,
+    ]) {
+      record.attachments = apply(record.attachments);
+      if (record.historyDraft)
+        record.historyDraft.attachments = apply(
+          record.historyDraft.attachments,
+        );
+    }
+    return found;
+  }
+
   discard(sessionId: string): void {
     for (const confirmation of this.confirmations.get(sessionId)?.values() ??
       [])
@@ -250,6 +376,7 @@ export class ComposerController {
     message: string,
     behavior?: "steer" | "followUp",
     onHandoff?: () => void,
+    independent = false,
   ): Promise<PromptAcceptedResponse | false> {
     const sessionId = this.host.state().sessionId;
     const api = this.host.api();
@@ -266,15 +393,31 @@ export class ComposerController {
     const composer = this.forSession(sessionId);
     // A matching in-flight request is a duplicate click, not a new message.
     // Different input may proceed while a previous Pi receipt is pending.
-    if (composer.attachments.some((item) => item.status === "uploading")) {
+    if (
+      !independent &&
+      composer.attachments.some((item) => item.status === "uploading")
+    ) {
       this.host.notify("warning", "Attachments are still uploading");
       return false;
     }
-    if (composer.attachments.some((item) => item.status === "error")) {
+    if (
+      !independent &&
+      composer.attachments.some((item) => item.status === "error")
+    ) {
       this.host.notify("warning", "Remove failed attachments before sending");
       return false;
     }
-    const included = composer.attachments;
+    const included = independent ? [] : composer.attachments;
+    if (
+      message.trim().startsWith("!") &&
+      (included.length > 0 || composer.projectFiles.length > 0)
+    ) {
+      this.host.notify(
+        "warning",
+        "Shell commands cannot include attachments or project-file references",
+      );
+      return false;
+    }
     const attachmentCount = included.filter(
       (item) =>
         !(
@@ -312,7 +455,7 @@ export class ComposerController {
       );
       return false;
     }
-    const projectFiles = composer.projectFiles;
+    const projectFiles = independent ? [] : composer.projectFiles;
     const recalledProjectCount = recalled.filter(
       (item) =>
         item.recalledArtifact.type === "file" &&
@@ -389,15 +532,18 @@ export class ComposerController {
       message,
       attachments: included,
       projectFiles,
-      historyDraft: composer.historyDraft,
+      historyDraft: independent ? null : composer.historyDraft,
+      independent,
     };
     composer.failedDeliveries = composer.failedDeliveries.filter(
       (item) => item.delivery !== retained,
     );
     composer.deliveries.set(delivery.request.operationId, record);
-    composer.attachments = [];
-    composer.projectFiles = [];
-    composer.historyDraft = null;
+    if (!independent) {
+      composer.attachments = [];
+      composer.projectFiles = [];
+      composer.historyDraft = null;
+    }
     composer.sending = true;
     onHandoff?.();
     this.publish(sessionId);
@@ -430,6 +576,30 @@ export class ComposerController {
       if (acceptanceUnknown)
         composer.unknownDeliveries.set(signature, delivery);
       else composer.unknownDeliveries.delete(signature);
+      if (error instanceof ApiError && error.code === "PROMPT_RECOVERED") {
+        // The recovery receipt owns text merging. Keep Host-held artifacts
+        // with that same session instead of restoring the message twice.
+        composer.attachments = [
+          ...record.attachments.map((item) =>
+            item.recalledArtifact?.preview
+              ? {
+                  ...item,
+                  recalledArtifact: {
+                    ...item.recalledArtifact,
+                    preview: false,
+                  },
+                }
+              : item,
+          ),
+          ...composer.attachments,
+        ];
+        composer.projectFiles = [
+          ...new Set([...record.projectFiles, ...composer.projectFiles]),
+        ];
+        if (record.historyDraft)
+          this.releaseAttachments(record.historyDraft.attachments);
+        return false;
+      }
       if (error instanceof ApiError && error.code === "PROMPT_CLEARED") {
         this.releaseAttachments(record.attachments);
         if (record.historyDraft)
@@ -451,8 +621,10 @@ export class ComposerController {
             : item,
         );
       }
-      composer.failedDeliveries.push(record);
-      this.restoreFailedIfEmpty(sessionId, composer);
+      if (!independent) {
+        composer.failedDeliveries.push(record);
+        this.restoreFailedIfEmpty(sessionId, composer);
+      }
       if (error instanceof ApiError && error.code === "PROMPT_ABORTED")
         return false;
       if (error instanceof ApiError && error.status === 401) {
@@ -461,7 +633,10 @@ export class ComposerController {
         this.publish(sessionId);
         this.host.handleAuthFailure();
       } else
-        this.host.failVisible(
+        (independent
+          ? (_sessionId: string, text: string) =>
+              this.host.notify("warning", text)
+          : this.host.failVisible)(
           sessionId,
           acceptanceUnknown
             ? "INSΠRE could not confirm whether Pi accepted this message. Retry sends the same delivery safely while this Host remains running."
@@ -531,6 +706,7 @@ export class ComposerController {
   ): void {
     if (this.host.state().sessionId !== scope.sessionId) return;
     const composer = this.forSession(scope.sessionId);
+    if (entry || composer.historyDraft) touchSessionDraft(scope.sessionId);
     if (!entry) {
       this.restoreHistoryDraft(composer);
       this.prune(scope.sessionId, composer);
@@ -596,6 +772,7 @@ export class ComposerController {
     if (!composer) return;
     const scopeKey = composerHistoryScopeKey(scope);
     if (composer.historyDraft?.scopeKey !== scopeKey) return;
+    touchSessionDraft(scope.sessionId);
     this.commitHistoryDraft(composer);
     this.publish(scope.sessionId);
   }
@@ -603,6 +780,7 @@ export class ComposerController {
   cancelHistoryPreview(sessionId: string): void {
     const composer = this.composers.get(sessionId);
     if (!composer) return;
+    if (composer.historyDraft) touchSessionDraft(sessionId);
     this.restoreHistoryDraft(composer);
     this.prune(sessionId, composer);
     this.publish(sessionId);
@@ -645,6 +823,7 @@ export class ComposerController {
         status: "uploading",
       };
     });
+    touchSessionDraft(sessionId);
     composer.attachments = [...composer.attachments, ...pending];
     const upload = new AbortController();
     for (const item of pending) this.uploads.set(item.localId, upload);
@@ -757,7 +936,10 @@ export class ComposerController {
     const target = composer.attachments.find(
       (item) => item.localId === localId,
     );
-    if (target) this.withdrawUpload(target.localId);
+    if (target) {
+      touchSessionDraft(sessionId);
+      this.withdrawUpload(target.localId);
+    }
     if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
     composer.attachments = composer.attachments.filter(
       (item) => item.localId !== localId,
@@ -793,6 +975,7 @@ export class ComposerController {
       );
       return;
     }
+    touchSessionDraft(sessionId);
     composer.projectFiles = [...composer.projectFiles, path];
     this.publish(sessionId);
   }
@@ -802,6 +985,7 @@ export class ComposerController {
     if (!sessionId) return;
     const composer = this.composers.get(sessionId);
     if (!composer) return;
+    if (composer.projectFiles.includes(path)) touchSessionDraft(sessionId);
     composer.projectFiles = composer.projectFiles.filter(
       (item) => item !== path,
     );

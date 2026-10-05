@@ -29,6 +29,7 @@ import type {
   TranscriptActivityRangeState,
 } from "../store";
 import { AssistantError } from "./AssistantError";
+import { BashExecution } from "./BashExecution";
 import { CustomMessage } from "./CustomMessage";
 import { ActivitySegmentBoundary } from "./transcript-activity-visibility";
 import {
@@ -486,6 +487,22 @@ export function useTranscriptRows({
       const settled =
         typeof message.__inspireLiveId !== "string" ||
         message.__inspireSettled === true;
+      if (message.role === "bashExecution") {
+        flushActivity(true);
+        built.push({
+          key,
+          node: <BashExecution message={message} />,
+          searchText: settled
+            ? `${message.command ?? ""}\n${message.output ?? ""}`
+            : "",
+          searchScope: null,
+          turnOrdinal: currentTurnOrdinal,
+          turnId: currentTurnId,
+          turnStart: false,
+        });
+        index += 1;
+        continue;
+      }
       if (message.role === "user") {
         flushActivity(true);
         built.push({

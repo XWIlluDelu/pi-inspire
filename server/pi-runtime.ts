@@ -8,6 +8,8 @@ export const {
   DefaultPackageManager,
   DefaultResourceLoader,
   getAgentDir,
+  hasTrustRequiringProjectResources,
+  ProjectTrustStore,
   SessionManager,
   SettingsManager,
   buildContextEntries,

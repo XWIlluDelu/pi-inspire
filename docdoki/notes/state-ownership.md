@@ -41,7 +41,7 @@ queued Fork and retained source validation.
 `RuntimeController.snapshot` reconstructs an absent or reclaimed slot through the catalog and
 `prepareSlot`, without selecting it or starting a worker. Inspecting only the lower-level read
 delegate once suggested a nonexistent reconnect gap. No additional browser reopen fallback was
-needed.
+needed. The distinction also applies to model discovery: [[state-ownership]].
 
 ## Operation lifecycle ownership
 
@@ -73,6 +73,18 @@ Runtime keeps preflight input queued until Pi lifecycle evidence or an owned idl
 it, including hooks that finish without starting an agent. Stop can bypass the persistence FIFO to
 retire a worker blocked in preflight; the interrupted prompt remains acceptance-unknown. The private
 branch handler's RPC completion fences its matching result, so a missing result fails at completion.
+
+Standalone manual compact retains a worker-owned raw-command settlement promise and Pi's terminal
+`compaction_end.aborted` evidence. Stop recovers Pending before generic `abort`, then allows three
+seconds for cooperative settlement; the grace bounds explicit cancellation, not normal execution.
+A cancellation event can accompany a rejected compact RPC with an arbitrary hook diagnostic, so
+classification uses the event rather than error-message matching. Unresponsive hooks fall back to
+confirmed retirement, and neither a pending nor rejected stop releases the writer fence or permits a
+cancelled receipt. Persisted completion racing Stop remains completed even if a post-compact hook
+appends native custom state before suspending. `SessionProjection.entriesAfter` identifies new durable
+entries beyond the admitted tail; ancestry is validated separately against the admitted effective
+leaf. This distinction matters after earlier-branch navigation: the old durable branch can already
+contain a checkpoint, and a new one need not descend from its final tail.
 
 ### Worker retirement
 
@@ -251,6 +263,41 @@ blanket wording that every same-byte rewrite must be rejected was too broad for 
 [[session-persistence]] now explicitly distinguishes it from content changes, object replacement,
 and incomplete-tail rewriting. Startup retains its stricter source-version comparison, and the
 pre-existing bounded new-file materialization handling is not broadened into a partial-tail lease.
+
+## Model discovery ownership
+
+### One response owns a preview
+
+Model choices and native startup defaults describe the same prospective workspace. Independent
+requests can finish in a different order: a late default response can overwrite a newer refreshed
+model and thinking level even when neither request is individually malformed.
+
+`Welcome` consumes both from one catalog response and uses one request generation to retire older
+responses. Query identity follows the target cwd and catalog source, not every live snapshot's model
+object or manual thinking change. Explicit choice, source inheritance and manual effort retain their
+own selection authority; discovery does not overwrite them.
+
+`tests/web/welcome-new-session.test.tsx` covers a delayed initial read followed by refresh, repeated
+same-model snapshots, manual effort and pending-source inheritance. [[model-settings]] and
+[[composer]] hold the current contracts.
+
+### Save invalidation precedes readback
+
+A successful configuration save changes the inputs to workspace discovery. Waiting for the active
+worker's readback before invalidation leaves older cached or in-flight reads able to publish obsolete
+inventory. Invalidate at the successful save boundary; the catalog generation prevents an older
+completion from repopulating the cache. Readback still observes the active worker's registrations.
+
+Implementation: `server/model-settings-routes.ts` and `server/model-metadata.ts`. The in-flight/save
+regression is in `tests/server/model-settings.test.ts`.
+
+### Inventory readiness is not transcript readiness
+
+Extension discovery can be slow or fail while a session file remains readable. Initial transcript
+opening and bootstrap do not await it. Resolve only the addressed source in the background, and keep
+unresolved selection distinct from an empty virtual registry: physical reply identity cannot stand
+in for a selected Router. New waits for pending source selection rather than substituting workspace
+defaults.
 
 ## Resource and terminal addressing
 

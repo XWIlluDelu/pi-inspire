@@ -16,6 +16,7 @@ import {
   type UpdateCheckResponse,
   type UserTurnAnchor,
 } from "../shared/contracts";
+import type { ModelSettingsOwner } from "../shared/model-settings";
 import type { PiCommand } from "./composer-completion";
 import type { PendingAttachment } from "./controllers/composer-controller";
 import type {
@@ -57,6 +58,7 @@ export interface NativeCommandActivity {
   message: string;
   createdAt?: number;
   details?: Array<{ label: string; value: string }>;
+  download?: { id: string; fileName: string };
   action?:
     | { kind: "open-terminal"; label: string; value?: string }
     | { kind: "copy"; label: string; value: string };
@@ -65,8 +67,19 @@ export interface NativeCommandActivity {
 export interface NativeCommandUiRequest {
   id: number;
   sessionId: string;
-  action: "model" | "thinking" | "settings" | "updates" | "sessions" | "new";
+  action:
+    | "model"
+    | "thinking"
+    | "models"
+    | "settings"
+    | "updates"
+    | "sessions"
+    | "new"
+    | "hotkeys"
+    | "changelog";
   query?: string;
+  modelSettingsFocus?: "credentials" | "common";
+  modelSettingsOwner?: ModelSettingsOwner;
 }
 
 export interface TranscriptActivityRangeState extends TranscriptActivityRange {
@@ -142,8 +155,10 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   runtimeSettings: PiRuntimeSettings | null;
   cwd: string | null;
   model: ModelOption | null;
+  modelDiscovery: "loading" | "unavailable" | null;
   thinkingLevel: string;
   availableModels: ModelOption[];
+  commonModels: import("../shared/model-settings").CommonModelOption[];
   commands: PiCommand[];
   contextUsage: ContextUsage | null;
   /** Ephemeral command lifecycle receipts are partitioned by session. */
@@ -227,7 +242,7 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   /** Failed inputs retained for explicit restoration without replacing a draft. */
   failedDeliveryCount: number;
   /** Pending queue mutation currently awaiting the Host. */
-  pendingAction: "clear" | null;
+  pendingAction: "clear" | "recover" | null;
   /** Files/resources pane visibility (Ctrl+.). */
   resourcesOpen: boolean;
   contextMode: "files" | "changes" | "branches" | "terminal";
@@ -310,8 +325,10 @@ export function createInitialAppState(): AppState {
     runtimeSettings: null,
     cwd: null,
     model: null,
+    modelDiscovery: null,
     thinkingLevel: "medium",
     availableModels: [],
+    commonModels: [],
     commands: [],
     contextUsage: null,
     commandActivities: {},

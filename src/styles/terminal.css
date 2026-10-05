@@ -320,7 +320,6 @@
   max-height: calc(100cqh - 46px);
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -743,11 +742,20 @@
   height: 100%;
 }
 
-.terminal-pane .terminal-view__xterm .xterm-viewport {
-  background: var(--terminal-bg);
-  scrollbar-color: color-mix(in srgb, var(--terminal-fg) 20%, transparent)
-    transparent;
-  scrollbar-width: thin;
+/* xterm owns its scrolling; match its slider without changing the drag target. */
+.terminal-pane .terminal-view__xterm .xterm .xterm-scrollable-element > .scrollbar > .slider {
+  border-inline: 4px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+.terminal-pane .terminal-view__xterm .xterm .xterm-scrollable-element > .scrollbar > .slider:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+.terminal-pane .terminal-view__xterm .xterm .xterm-scrollable-element > .scrollbar > .slider.active {
+  background-color: var(--scrollbar-thumb-active);
 }
 
 .terminal-view__new-output {
@@ -1025,162 +1033,74 @@
   overflow: hidden;
 }
 
-.terminal-settings__header {
-  flex-shrink: 0;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 20px 22px 16px;
-  border-bottom: 1px solid var(--hairline);
-}
-
-.terminal-settings__header h2 {
-  margin: 0;
-  color: var(--ink);
-  font: 600 var(--text-lg) / 1.2 var(--font-sans);
-}
-
-.terminal-settings__header p {
-  margin: 5px 0 0;
-  color: var(--muted);
-  font: 400 var(--text-sm) / 1.45 var(--font-sans);
-}
-
 .terminal-settings__body {
   min-height: 0;
   overflow-y: auto;
-  padding: 18px 22px 24px;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
 }
 
-.terminal-settings__body section + section {
-  margin-top: 22px;
-}
-
-.terminal-settings__body h3 {
-  margin: 0 0 8px;
-  color: var(--muted);
-  font: 600 var(--text-xs) / 1.2 var(--font-sans);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.terminal-settings__card {
-  overflow: hidden;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  background: var(--bg-surface);
-}
-
-.terminal-settings__field {
-  min-height: 66px;
-  display: grid;
+.terminal-settings .settings__field.terminal-settings__font {
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 24px;
-  padding: 12px 14px;
 }
 
-.terminal-settings__field + .terminal-settings__field {
-  border-top: 1px solid var(--hairline);
-}
-
-.terminal-settings__field strong {
-  color: var(--ink);
-  font: 500 var(--text-sm) / 1.35 var(--font-sans);
-}
-
-.terminal-settings__field p {
-  max-width: 410px;
-  margin: 3px 0 0;
-  color: var(--muted);
-  font: 400 var(--text-xs) / 1.45 var(--font-sans);
-}
-
-.terminal-settings__control {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-}
-
-.terminal-settings__control select {
-  appearance: none;
-  -webkit-appearance: none;
-  min-width: 136px;
-  height: 32px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  padding: 0 28px 0 9px;
-  color: var(--ink);
-  background: var(--bg-raised)
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
-    no-repeat right 9px center;
-  font: 500 var(--text-xs) / 1 var(--font-sans);
-  cursor: pointer;
-  transition:
-    border-color var(--dur-micro) var(--ease-standard),
-    background-color var(--dur-micro) var(--ease-standard);
-}
-
-.terminal-settings__control select:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-
-.terminal-settings__control select:focus-visible {
-  border-color: var(--accent);
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.terminal-settings__control select:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.terminal-settings__range {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  color: var(--muted);
-  font: 500 var(--text-xs) / 1 var(--font-mono);
-}
-
-.terminal-settings__range input {
-  width: 112px;
-  accent-color: var(--accent);
-}
-
-.terminal-settings__range input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.terminal-settings .settings__field.terminal-settings__font > .settings__field-control {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  width: auto;
+  margin-top: 0;
 }
 
 .terminal-settings__loading {
-  margin: 0;
-  padding: 18px;
+  padding: var(--space-3);
   color: var(--muted);
-  font: 400 var(--text-sm) / 1.45 var(--font-sans);
+  font: 400 var(--text-sm) / var(--leading-ui) var(--font-sans);
+}
+
+.terminal-settings__loading p {
+  margin: 0 0 var(--space-2);
+}
+
+.terminal-settings__loading [role=alert] {
+  color: var(--error);
 }
 
 .terminal-settings__footer {
   flex-shrink: 0;
   min-height: 52px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 9px 22px;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--hairline);
   color: var(--error);
   font: 400 var(--text-xs) / 1.35 var(--font-sans);
 }
 
+.terminal-settings__scope {
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+}
+
+.terminal-settings__footer [role=alert] {
+  flex-basis: 100%;
+}
+
 .terminal-settings__footer .button {
   margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .terminal-settings__footer .button,
-.terminal-settings__control .button {
+.terminal-settings .settings__field .button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1234,38 +1154,13 @@
     padding-left: 14px;
   }
 
-  .terminal-settings__field {
-    grid-template-columns: 1fr;
-    gap: 10px;
-    padding: 14px;
-  }
-
-  .terminal-settings__control {
-    justify-content: flex-start;
-  }
-
-  .terminal-settings__control select {
-    min-width: min(240px, 100%);
-    min-height: 44px;
-  }
-
-  .terminal-settings__footer {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
   .terminal-settings__footer .button {
     min-height: 44px;
-    margin-left: 0;
   }
 
-  .terminal-settings .icon-button,
+  .terminal-settings__font-stepper .icon-button,
   .terminal-settings .settings-switch {
     min-width: 44px;
-    min-height: 44px;
-  }
-
-  .terminal-settings__range input {
     min-height: 44px;
   }
 

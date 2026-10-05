@@ -164,7 +164,7 @@ describe("attachment consumption lifecycle", () => {
     await store.remove(second.id);
   });
 
-  it("removes dead-process upload roots before accepting a new upload", async () => {
+  it("never removes unregistered dead-process directories or unrelated files", async () => {
     const parent = join(root, "managed");
     let deadPid = 999_999;
     while (true) {
@@ -179,9 +179,10 @@ describe("attachment consumption lifecycle", () => {
     const stale = join(parent, `${deadPid}-${Date.now() - 60_000}`);
     const current = join(parent, `${process.pid}-${Date.now()}-current`);
     await mkdir(stale, { recursive: true });
+    await writeFile(join(stale, "unrelated.txt"), "keep me");
     const managed = new AttachmentStore(current, parent);
     await managed.uploadDirectory();
-    await expect(access(stale)).rejects.toThrow();
+    await expect(access(join(stale, "unrelated.txt"))).resolves.toBeUndefined();
     await expect(access(current)).resolves.toBeUndefined();
     await managed.close();
   });

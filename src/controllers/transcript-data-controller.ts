@@ -1,10 +1,14 @@
 import {
+  COMPOSER_HISTORY_FILE_REFERENCE,
+  COMPOSER_HISTORY_IMAGE_REFERENCE,
+} from "../../shared/composer-artifact-references";
+import {
   type ComposerHistoryEntry,
   MAX_COMPOSER_HISTORY_ENTRIES,
   type UserTurnAnchor,
   type UserTurnTranscriptPage,
 } from "../../shared/contracts";
-import { ApiError, type Api } from "../api";
+import { type Api, ApiError } from "../api";
 import {
   type ActivityMaterializationMode,
   type AppState,
@@ -320,7 +324,7 @@ export class TranscriptDataController {
                   (image) =>
                     !image ||
                     typeof image !== "object" ||
-                    !/^pi-embedded:\/\/\d+\/\d+$/.test(image.reference) ||
+                    !COMPOSER_HISTORY_IMAGE_REFERENCE.test(image.reference) ||
                     typeof image.mimeType !== "string" ||
                     !Number.isSafeInteger(image.size) ||
                     image.size < 0,
@@ -330,7 +334,7 @@ export class TranscriptDataController {
                   (file) =>
                     !file ||
                     typeof file !== "object" ||
-                    !/^pi-file:\/\/\d+\/\d+$/.test(file.reference) ||
+                    !COMPOSER_HISTORY_FILE_REFERENCE.test(file.reference) ||
                     typeof file.fileName !== "string" ||
                     file.fileName.length === 0 ||
                     (file.kind !== "attachment" && file.kind !== "project"),

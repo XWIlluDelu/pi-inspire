@@ -3,10 +3,14 @@ import {
   assistantStreamTextLength,
 } from "../shared/assistant-stream.js";
 import {
+  MODEL_REFRESH_SUFFIX,
+  RETRY_STATE_SUFFIX,
+  PENDING_IMAGE_SUFFIX,
+} from "../shared/branch-bridge-protocol.js";
+import {
   boundedExtensionStatus,
   type ExtensionDisplay,
   type ExtensionUiRequest,
-  emptyPendingQueues,
   isBusyRunState,
   MAX_EXTENSION_DISPLAYS,
   MAX_EXTENSION_KEY_CHARS,
@@ -20,13 +24,23 @@ import {
   messageFallbackCorrelation,
   structuralMessageIdentity,
 } from "../shared/message-identity.js";
+import { PROVIDER_AUTH_SUFFIX } from "../shared/provider-auth-bridge.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
 import { parseBridgeResult } from "./runtime-branch-bridge.js";
-import { pendingQueuesFromTexts } from "./runtime-pending.js";
+import {
+  exactPendingInput,
+  pendingQueuesFromTexts,
+} from "./runtime-pending.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 import type { ReducedAssistantDelta } from "./runtime-stream-budget.js";
 import { ToolArgumentStream } from "./tool-argument-stream.js";
+import {
+  childCallFromEvent,
+  codemodeCalls,
+  toolOutputPreview,
+  updateChildActivity,
+} from "../shared/tool-activity.js";
 
 const STREAM_REVISION_FIELD = "__inspireStreamRevision";
 const MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES = 128 * 1024;
@@ -57,6 +71,7 @@ export const PI_STARTUP_RESPONSE_UI_ERROR =
   "Pi startup cannot accept a response-bearing extension UI request before RPC startup completes";
 
 interface RuntimeEventControllerHost {
+  updateBash(slot: RuntimeSlot, event: Record<string, unknown>): boolean;
   selectedSessionId(): string | null;
   recordPersistenceEvent(
     slot: RuntimeSlot,
@@ -237,7 +252,15 @@ export class RuntimeEventController {
     slot: RuntimeSlot,
     event: unknown,
     rpc: PiRpcProcess,
+    pendingContentChanged = false,
   ): void {
+    if (pendingContentChanged) {
+      this.host.refreshPendingQueues(slot);
+      this.host.emitSlotEvent(slot, {
+        type: "queue_update",
+        pendingQueues: slot.pendingQueues,
+      });
+    }
     let record =
       event && typeof event === "object"
         ? (event as Record<string, unknown>)
@@ -397,6 +420,80 @@ export class RuntimeEventController {
       }
     }
     switch (record.type) {
+      case "tool_execution_start":
+      case "tool_execution_update":
+      case "tool_execution_end": {
+        const safe = this.host.safeProjection(record) as Record<
+          string,
+          unknown
+        >;
+        if (typeof record.parentToolCallId === "string") {
+          // Child results belong only to the calling tool. Retain/send summaries,
+          // not its result content, images, structuredContent or private details.
+          forwardedEvent = {
+            type: record.type,
+            toolCallId: record.toolCallId,
+            toolName: record.toolName,
+            parentToolCallId: record.parentToolCallId,
+            childCall: childCallFromEvent(safe),
+          };
+          slot.toolActivity = updateChildActivity(
+            slot.toolActivity,
+            forwardedEvent as Record<string, unknown>,
+          );
+        } else if (
+          typeof record.toolCallId === "string" &&
+          typeof record.toolName === "string"
+        ) {
+          const existing = slot.toolActivity[record.toolCallId];
+          const ended = record.type === "tool_execution_end";
+          if (
+            !ended &&
+            (existing?.phase === "done" || existing?.phase === "error")
+          )
+            break;
+          const result = (ended ? safe.result : safe.partialResult) as
+            | { details?: unknown }
+            | undefined;
+          const calls =
+            record.toolName === "codemode"
+              ? codemodeCalls(result?.details)
+              : undefined;
+          if (
+            calls &&
+            result &&
+            typeof result.details === "object" &&
+            result.details !== null
+          ) {
+            const { calls: _nativeCalls, ...details } =
+              result.details as Record<string, unknown>;
+            // One bounded presentation DTO crosses live transport, just as in history.
+            forwardedEvent = {
+              ...safe,
+              childCalls: calls,
+              [ended ? "result" : "partialResult"]: { ...result, details },
+            };
+          }
+          slot.toolActivity = {
+            ...slot.toolActivity,
+            [record.toolCallId]: {
+              id: record.toolCallId,
+              name: record.toolName,
+              phase: ended ? (record.isError ? "error" : "done") : "running",
+              calls: calls ?? existing?.calls,
+              ...(!ended
+                ? { outputPreview: toolOutputPreview(safe.partialResult) }
+                : {}),
+            },
+          };
+        }
+        break;
+      }
+      case "bash_execution_update":
+        // Only the matching id-tagged native request owns these deltas. Do not
+        // expose raw unbounded chunks from unrelated extension executions.
+        this.host.updateBash(slot, record);
+        return;
       case "extension_ui_request": {
         const owned = { ...record, sessionId: slot.id };
         const pending = this.host.addPendingExtensionUi(slot, owned, rpc);
@@ -425,11 +522,13 @@ export class RuntimeEventController {
         break;
       }
       case "queue_update":
-        slot.piPendingQueues = pendingQueuesFromTexts(
-          record.steering,
-          record.followUp,
-          slot.piPendingQueues.revision,
-        );
+        slot.piPendingInput = exactPendingInput(record);
+        if (!slot.piPendingInput)
+          slot.piPendingQueues = pendingQueuesFromTexts(
+            record.steering,
+            record.followUp,
+            slot.piPendingQueues.revision,
+          );
         this.host.refreshPendingQueues(slot);
         // Public Pi emits full-text arrays on queue updates. The browser
         // receives only the bounded Host projection.
@@ -455,6 +554,7 @@ export class RuntimeEventController {
         slot.summarizationRetry = null;
         break;
       case "agent_start":
+        slot.toolActivity = {};
         slot.summarizationRetry = null;
         slot.runState = "running";
         slot.compactionReturnState = null;
@@ -513,6 +613,7 @@ export class RuntimeEventController {
         break;
       }
       case "agent_settled": {
+        slot.toolActivity = {};
         slot.summarizationRetry = null;
         const outcome =
           slot.runState === "failed" || slot.runState === "conflict"
@@ -537,11 +638,10 @@ export class RuntimeEventController {
         slot.absorbedPersistenceEntries.clear();
         slot.customActivities.pendingEntries = [];
         slot.customActivities.pendingMessageActivityIds = [];
-        // Public Pi's text projection can leave image-only rows stale until settlement.
-        slot.piPendingQueues = emptyPendingQueues();
-        if (slot.deferredPrompts.length === 0)
-          slot.pendingQueues = emptyPendingQueues();
-        else this.host.refreshPendingQueues(slot);
+        // Native display captions can outlive consumption and settlement.
+        // Keep worker-bound row evidence until Pi removes them or the worker retires.
+        slot.pendingImages?.settled();
+        this.host.refreshPendingQueues(slot);
         this.host.invalidateCatalog();
         this.host.scheduleIdleWorkerEviction();
         break;
@@ -627,6 +727,21 @@ export class RuntimeEventController {
     event: unknown,
     record: Record<string, unknown>,
   ): void {
+    // Artifact identity uses the exact wire boundary, before async projection
+    // ordering or response fences can advance.
+    let pendingContentChanged = false;
+    if (record.type === "queue_update") {
+      const input = exactPendingInput(record);
+      if (input) slot.pendingImages?.observeQueue(input);
+    } else if (record.type === "message_start")
+      pendingContentChanged =
+        slot.pendingImages?.observeMessage(record.message) ?? false;
+    if (
+      record.type === "compaction_end" &&
+      record.reason === "manual" &&
+      slot.manualCompaction?.worker === rpc
+    )
+      slot.manualCompaction.aborted = record.aborted === true;
     this.host.recordPersistenceEvent(slot, record);
     // `entry_appended` is host provenance, not transcript content. Its raw
     // extension payload must never cross the browser boundary.
@@ -667,7 +782,7 @@ export class RuntimeEventController {
           }
           if (slot.process !== rpc && (slot.process !== null || !slot.conflict))
             return;
-          this.handleEvent(slot, event, rpc);
+          this.handleEvent(slot, event, rpc, pendingContentChanged);
           // A terminal lifecycle event may settle the agent, but it cannot
           // repair a reconciliation conflict. Keep the worker stopped and leave
           // the explicit abort/recovery boundary as the sole conflict clearer.
@@ -679,12 +794,13 @@ export class RuntimeEventController {
       this.enqueueOrderedEvent(
         slot,
         () => {
-          if (slot.process === rpc) this.handleEvent(slot, event, rpc);
+          if (slot.process === rpc)
+            this.handleEvent(slot, event, rpc, pendingContentChanged);
         },
         "ordered_event_failed",
       );
     } else {
-      this.handleEvent(slot, event, rpc);
+      this.handleEvent(slot, event, rpc, pendingContentChanged);
     }
   }
 
@@ -695,6 +811,18 @@ export class RuntimeEventController {
       event && typeof event === "object"
         ? (event as Record<string, unknown>)
         : {};
+    if (
+      slot.bridge &&
+      record.type === "extension_ui_request" &&
+      record.method === "setStatus" &&
+      [
+        `${slot.bridge.statusKey}${MODEL_REFRESH_SUFFIX}`,
+        `${slot.bridge.statusKey}${PROVIDER_AUTH_SUFFIX}`,
+        `${slot.bridge.statusKey}${RETRY_STATE_SUFFIX}`,
+        `${slot.bridge.statusKey}${PENDING_IMAGE_SUFFIX}`,
+      ].includes(record.statusKey as string)
+    )
+      return;
     if (this.interceptBranchStatus(slot, rpc, record)) return;
     if (this.rejectUnsupportedStartupUi(slot, rpc, record)) return;
     this.dispatchOwnedProcessEvent(slot, rpc, event, record);

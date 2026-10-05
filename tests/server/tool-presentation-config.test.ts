@@ -27,6 +27,43 @@ afterEach(async () => {
 });
 
 describe("ToolPresentationConfigStore", () => {
+  it("reloads custom-message declarations and fails invalid profiles back to the empty user layer", async () => {
+    const { path, store } = await fixture();
+    const configuration = {
+      version: 1,
+      rules: {},
+      mappings: {},
+      customMessages: {
+        extension_message: {
+          source: "Review",
+          title: ["details.sender"],
+          body: "details.body",
+          requireAbsent: ["details.origin"],
+        },
+      },
+    };
+    await writeFile(path, JSON.stringify(configuration));
+    expect(await store.inspect()).toEqual({ configuration });
+    configuration.customMessages.extension_message.source = "Updated";
+    await writeFile(path, JSON.stringify(configuration));
+    expect(
+      (await store.inspect()).configuration.customMessages?.extension_message
+        ?.source,
+    ).toBe("Updated");
+    configuration.customMessages.extension_message.body =
+      "details.__proto__.body";
+    await writeFile(path, JSON.stringify(configuration));
+    const invalid = await store.inspect();
+    expect(invalid.configuration).toEqual({
+      version: 1,
+      rules: {},
+      mappings: {},
+    });
+    expect(invalid.warning).toMatch(
+      /Custom tool presentations were not loaded/,
+    );
+  });
+
   it("treats a missing private file as an empty user layer", async () => {
     const { store } = await fixture();
     await expect(store.inspect()).resolves.toEqual({

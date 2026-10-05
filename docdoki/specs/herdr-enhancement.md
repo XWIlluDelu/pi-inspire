@@ -41,6 +41,9 @@ Extensions keep their Pi RPC compatibility requirements.
 
 - `herdrEnabled` defaults off and takes effect on Host restart. Settings distinguishes the saved
   choice, effective state, and availability; live workers keep their current backend.
+- Availability reports explicit enabling readiness from the existing prerequisite and recovery checks.
+  Known blocked status prevents enabling, remains recheckable, and never prevents disabling a saved
+  choice. An installed server that can start on demand need not already be running.
 - Enhanced workers require Linux, `/proc` process-birth evidence, a systemd user manager, and writable
   cgroup v2 scopes with `cgroup.kill`. Missing prerequisites produce a concrete error rather than a
   direct-backend fallback. Other platforms use direct mode.

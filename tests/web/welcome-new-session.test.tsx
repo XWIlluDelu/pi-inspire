@@ -7,11 +7,24 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { Composer } from "../../src/components/Composer";
 import { Welcome } from "../../src/components/Welcome";
-import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
+import {
+  sessionDraft,
+  setSessionDraft,
+  setStartDraft,
+} from "../../src/session-drafts";
 import { store, useAppState } from "../../src/store";
+import { mockModelMenuLayout } from "./fixtures/model-menu-layout";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -66,21 +79,28 @@ beforeAll(async () => {
           ],
         }),
       };
-    if (url.startsWith("/api/new-session/defaults")) {
+    if (url.startsWith("/api/new-session/thinking")) {
+      const query = new URL(url, "http://local").searchParams;
+      return { body: { level: query.get("current") ?? "high" } };
+    }
+    if (url.startsWith("/api/models")) {
       const parsed = new URL(url, "http://local");
       defaultModelCwd = parsed.searchParams.get("cwd");
       return {
         body: {
-          cwd: defaultModelCwd,
-          model: defaultModelAvailable
-            ? {
-                provider: "anthropic",
-                id: "claude-sonnet-4",
-                name: "Claude Sonnet 4",
-                reasoning: true,
-              }
-            : null,
-          thinkingLevel: "high",
+          models: store.getState().availableModels,
+          defaults: {
+            cwd: defaultModelCwd,
+            model: defaultModelAvailable
+              ? {
+                  provider: "anthropic",
+                  id: "claude-sonnet-4",
+                  name: "Claude Sonnet 4",
+                  reasoning: true,
+                }
+              : null,
+            thinkingLevel: "high",
+          },
         },
       };
     }
@@ -151,9 +171,12 @@ beforeAll(async () => {
   FakeWebSocket.instances.at(-1)?.open();
 });
 
+beforeEach(mockModelMenuLayout);
+
 afterEach(() => {
   defaultModelAvailable = true;
   promptGate = null;
+  setStartDraft("");
 });
 
 describe("new-session start surface", () => {
@@ -209,6 +232,11 @@ describe("new-session start surface", () => {
     fireEvent.change(screen.getByLabelText("Project directory"), {
       target: { value: "/proj" },
     });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Start session" }),
+      ).toBeEnabled(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Start session" }));
 
     await waitFor(() =>
@@ -468,11 +496,7 @@ describe("new-session start surface", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Start session" }));
     await waitFor(() =>
-      expect(newSessionBody).toEqual({
-        cwd: canonicalProjectCwd,
-        model: { provider: "anthropic", id: "claude-sonnet-4" },
-        thinkingLevel: "high",
-      }),
+      expect(newSessionBody).toEqual({ cwd: canonicalProjectCwd }),
     );
     await waitFor(() =>
       expect(promptBody).toMatchObject({

@@ -45,12 +45,17 @@ describe("generic tool result content", () => {
     const images = screen.getAllByRole("img");
     expect(images).toHaveLength(2);
     expect(images[0]).toHaveAttribute("src", "data:image/png;base64,cG5n");
-    expect(images[0]).toHaveAttribute("loading", "lazy");
-    expect(images[0]).toHaveClass("tool-image-block__image");
+    expect(images[0]!.closest("button")).toHaveClass("tool-image-block__image");
     expect(images[1]).toHaveAttribute("src", "data:image/jpeg;base64,cG5n");
     if (text.length)
       expect(screen.getByText("Generated preview")).toBeInTheDocument();
     expect(screen.queryByText("No output")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Preview Tool result image 1" }),
+    );
+    expect(
+      screen.getByRole("dialog", { name: "Image preview" }),
+    ).toBeInTheDocument();
   });
 
   it.each([

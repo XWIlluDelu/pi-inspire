@@ -23,6 +23,9 @@ async function harness(enabled = false, mock = false) {
   });
   const restore = vi.spyOn(client, "restoreOwnedPane");
   const closePane = vi.spyOn(client, "closePane").mockResolvedValue();
+  const checkScopes = vi
+    .spyOn(workerScopes, "assertHerdrWorkerScopesAvailable")
+    .mockResolvedValue();
   const enhancement = new HerdrEnhancement({ enabled, mock, registry, client });
   enhancements.push(enhancement);
   const lease = async () => {
@@ -45,6 +48,7 @@ async function harness(enabled = false, mock = false) {
     probe,
     restore,
     closePane,
+    checkScopes,
     enhancement,
     lease,
   };
@@ -65,34 +69,39 @@ describe.skipIf(process.platform !== "linux")(
   "Herdr enhancement admission",
   () => {
     it("keeps the disabled path free of Herdr calls; explicit status inspection is read-only", async () => {
-      const { enhancement, root, probe, restore, closePane } = await harness();
+      const { enhancement, root, probe, restore, closePane, checkScopes } =
+        await harness();
       await enhancement.initialize();
       expect(enhancement.createProcess({ cwd: root }).pid).toBeNull();
       expect(probe).not.toHaveBeenCalled();
       expect(restore).not.toHaveBeenCalled();
       expect(closePane).not.toHaveBeenCalled();
+      expect(checkScopes).not.toHaveBeenCalled();
       expect(await enhancement.status()).toMatchObject({
         enabled: false,
+        ready: true,
         supported: true,
         installed: true,
       });
       expect(probe).toHaveBeenCalledOnce();
+      expect(checkScopes).toHaveBeenCalledOnce();
     });
 
     it("reports unavailable scopes, retries failures, and reuses a successful check for workers", async () => {
-      const { enhancement, root, client } = await harness(true);
-      const check = vi
-        .spyOn(workerScopes, "assertHerdrWorkerScopesAvailable")
-        .mockRejectedValueOnce(new Error("Scope manager unavailable"))
-        .mockResolvedValue();
+      const { enhancement, root, client, checkScopes } = await harness(true);
+      checkScopes.mockRejectedValueOnce(new Error("Scope manager unavailable"));
       vi.spyOn(client, "createWorkerPane").mockRejectedValue(
         new Error("Test stops at pane allocation"),
       );
       try {
         await enhancement.initialize();
         expect(await enhancement.status()).toMatchObject({
+          ready: false,
           issue: "Scope manager unavailable",
         });
+        const recovered = await enhancement.status();
+        expect(recovered.ready).toBe(true);
+        expect(recovered.issue).toBeUndefined();
         for (let i = 0; i < 2; i++) {
           const worker = enhancement.createProcess({ cwd: root });
           await expect(worker.start()).rejects.toThrow(
@@ -100,16 +109,55 @@ describe.skipIf(process.platform !== "linux")(
           );
           await worker.stop();
         }
-        expect(check).toHaveBeenCalledTimes(2);
-        check.mockRejectedValue(new Error("Scope manager stopped"));
+        expect(checkScopes).toHaveBeenCalledTimes(2);
+        checkScopes.mockRejectedValue(new Error("Scope manager stopped"));
         expect(await enhancement.status()).toMatchObject({
+          ready: false,
           issue: "Scope manager stopped",
         });
-        expect(check).toHaveBeenCalledTimes(3);
+        expect(checkScopes).toHaveBeenCalledTimes(3);
       } finally {
-        check.mockRestore();
+        checkScopes.mockRestore();
       }
     });
+
+    it("is ready when the installed server can start on demand", async () => {
+      const { enhancement, probe, checkScopes } = await harness();
+      probe.mockResolvedValue({
+        installed: true,
+        running: false,
+        compatible: null,
+        version: null,
+      });
+      await enhancement.initialize();
+      expect(await enhancement.status()).toMatchObject({
+        ready: true,
+        running: false,
+        compatible: null,
+      });
+      expect(checkScopes).toHaveBeenCalledOnce();
+    });
+
+    it.each([
+      { installed: false, running: false, compatible: null, version: null },
+      { installed: true, running: true, compatible: false, version: "old" },
+      {
+        installed: true,
+        running: false,
+        compatible: null,
+        version: null,
+        issue: "Herdr server status could not be read",
+      },
+    ])(
+      "does not report readiness for an unavailable probe: %j",
+      async (status) => {
+        const { enhancement, probe, checkScopes } = await harness();
+        probe.mockResolvedValue(status);
+        await enhancement.initialize();
+        expect((await enhancement.status()).ready).toBe(false);
+        expect(checkScopes).not.toHaveBeenCalled();
+      },
+    );
 
     it("projects only its own live worker and disposes projection on retirement", async () => {
       const { enhancement, root } = await harness(true);
@@ -194,6 +242,7 @@ describe.skipIf(process.platform !== "linux")(
         "Previous-version Herdr workers have no retained tool scope",
       );
       expect(await enhancement.status()).toMatchObject({
+        ready: false,
         issue: expect.stringContaining("reboot this machine"),
       });
       expect(closePane).not.toHaveBeenCalled();
@@ -211,6 +260,7 @@ describe.skipIf(process.platform !== "linux")(
       expect(closePane).not.toHaveBeenCalled();
       expect(await enhancement.status()).toMatchObject({
         enabled: false,
+        ready: false,
         issue: expect.stringContaining("could not be verified"),
       });
     });
@@ -223,6 +273,7 @@ describe.skipIf(process.platform !== "linux")(
       await enhancement.initialize();
       expect(await enhancement.status()).toMatchObject({
         enabled: false,
+        ready: false,
         supported: false,
       });
       expect(enhancement.createProcess({ cwd: root }).pid).toBeNull();

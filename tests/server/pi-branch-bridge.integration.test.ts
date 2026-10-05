@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
 import { RuntimeController } from "../../server/runtime.js";
@@ -69,7 +69,15 @@ function textOf(entry: Record<string, unknown>): string {
   return "";
 }
 
+beforeEach(async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "inspire-branch-host-config-"));
+  directories.push(agentDir);
+  vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
+  vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", join(agentDir, "sessions"));
+});
+
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(
     directories
       .splice(0)

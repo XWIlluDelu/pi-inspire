@@ -1,12 +1,12 @@
 import {
+  type InspirePreferences,
   MAX_SESSION_CWD_HYDRATION_CWDS,
   MAX_SESSION_ID_HYDRATION_IDS,
   MAX_SESSION_LIST_PAGE_SIZE,
-  type InspirePreferences,
   type SessionRuntimeStatus,
   type SessionSummary,
 } from "../../shared/contracts";
-import { ApiError, type Api } from "../api";
+import { type Api, ApiError } from "../api";
 
 const SESSION_PAGE_SIZE = 40;
 
@@ -100,6 +100,7 @@ export class SessionCatalogController {
   private basePages: SessionSummary[] = [];
   private hydration = new Map<string, SessionSummary>();
   private loadTicket = 0;
+  private listAbort = new AbortController();
   private curationTicket = 0;
   private curationRequestKey: string | null = null;
   private curationPending = false;
@@ -113,7 +114,13 @@ export class SessionCatalogController {
 
   constructor(private readonly host: SessionCatalogControllerHost) {}
 
+  private retireListRequest(): void {
+    this.listAbort.abort();
+    this.listAbort = new AbortController();
+  }
+
   private beginListGeneration(): number {
+    this.retireListRequest();
     this.cancelCurationRequest();
     this.curationPending = false;
     this.olderPromise = null;
@@ -125,6 +132,7 @@ export class SessionCatalogController {
    * Confirmed rows stay visible, but a former transport cannot publish over the
    * current generation or turn a later successful pairing into a 401. */
   invalidate(): void {
+    this.retireListRequest();
     this.loadTicket += 1;
     this.clearSearchTimer();
     this.cancelCurationRequest();
@@ -240,7 +248,9 @@ export class SessionCatalogController {
     const query = retry?.query ?? state.sessionQuery;
     this.cancelCurationRequest();
     this.curationPending = false;
+    this.retireListRequest();
     const ticket = ++this.loadTicket;
+    const signal = this.listAbort.signal;
     this.retry = null;
     this.host.patch({
       sessionListLoadingOlder: true,
@@ -250,7 +260,12 @@ export class SessionCatalogController {
     });
     const request = (async () => {
       try {
-        const page = await api.sessions(query, offset, SESSION_PAGE_SIZE);
+        const page = await api.sessions(
+          query,
+          offset,
+          SESSION_PAGE_SIZE,
+          signal,
+        );
         if (!this.owns(ticket, query, api)) return;
         if (
           page.offset !== offset ||
@@ -415,6 +430,7 @@ export class SessionCatalogController {
   ): Promise<void> {
     const api = this.host.api();
     if (!api) return;
+    const signal = this.listAbort.signal;
     try {
       const rows: SessionSummary[] = [];
       let page = await api.sessions(
@@ -423,6 +439,7 @@ export class SessionCatalogController {
         preserveOffset > 0
           ? Math.min(MAX_SESSION_LIST_PAGE_SIZE, Math.max(1, preserveOffset))
           : SESSION_PAGE_SIZE,
+        signal,
       );
       if (page.offset !== 0 || (page.sessions.length === 0 && page.total > 0)) {
         throw new Error(
@@ -451,6 +468,7 @@ export class SessionCatalogController {
           query,
           nextOffset,
           Math.min(MAX_SESSION_LIST_PAGE_SIZE, targetOffset - nextOffset),
+          signal,
         );
         if (!this.owns(ticket, query, api)) return;
         if (page.offset !== priorOffset) {
@@ -633,6 +651,7 @@ export class SessionCatalogController {
       // A newly curated off-page owner must become reachable immediately. The
       // already confirmed base extent remains valid while the old append is
       // invalidated and discarded when it eventually leaves the wire.
+      this.retireListRequest();
       this.loadTicket += 1;
       this.olderPromise = null;
       this.host.patch({

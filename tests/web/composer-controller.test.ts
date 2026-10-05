@@ -102,6 +102,53 @@ describe("ComposerController", () => {
     expect(harness.slice().projectFiles).toEqual(["/workspace/first.ts"]);
   });
 
+  it("restages recovered Host-held artifacts in the originating partition without duplicating text recovery", async () => {
+    const response = deferred<PromptAcceptedResponse>();
+    const harness = createHarness();
+    harness.prompt.mockReturnValue(response.promise);
+    harness.uploadAttachments.mockResolvedValue({
+      attachments: [
+        {
+          id: "image",
+          fileName: "image.png",
+          kind: "image",
+          mimeType: "image/png",
+          size: 4,
+        },
+      ],
+    });
+    await harness.controller.addFiles([
+      new File(["data"], "image.png", { type: "image/png" }),
+    ]);
+    harness.controller.addProjectFile("/workspace/recovered.ts");
+    const sending = harness.controller.send("recover this", "steer");
+    harness.controller.addProjectFile("/workspace/new-draft.ts");
+    harness.activate("session-b");
+    response.reject(
+      new ApiError(
+        409,
+        "Pending input returned to the composer",
+        undefined,
+        "PROMPT_RECOVERED",
+      ),
+    );
+    await expect(sending).resolves.toBe(false);
+    expect(harness.slice("session-a").projectFiles).toEqual([
+      "/workspace/recovered.ts",
+      "/workspace/new-draft.ts",
+    ]);
+    expect(harness.slice("session-a").attachments).toEqual([
+      expect.objectContaining({
+        uploadedId: "image",
+        status: "ready",
+      }),
+    ]);
+    expect(harness.slice("session-b").attachments).toEqual([]);
+    expect(harness.controller.failedPrompt("session-a")).toBeNull();
+    expect(harness.restoreDraftIfEmpty).not.toHaveBeenCalled();
+    expect(harness.deleteAttachment).not.toHaveBeenCalled();
+  });
+
   it("releases a definitively cleared Host Pending delivery without restoring it as a failed draft", async () => {
     const response = deferred<PromptAcceptedResponse>();
     const harness = createHarness();

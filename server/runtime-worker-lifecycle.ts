@@ -48,6 +48,7 @@ interface RuntimeWorkerLifecycleHost {
   renewView(slot: RuntimeSlot): void;
   emitSlotEvent(slot: RuntimeSlot, event: unknown): void;
   rejectDeferredPrompts(slot: RuntimeSlot, worker: PiRpcProcess): void;
+  retireBash(slot: RuntimeSlot, worker: PiRpcProcess): void;
   scheduleIdleWorkerEviction(): void;
   logRuntimeError(sessionId: string, error: unknown, event?: string): void;
 }
@@ -60,7 +61,6 @@ export class RuntimeWorkerLifecycle {
   ) {}
 
   async stop(slot: RuntimeSlot, cancelledCommand?: string): Promise<void> {
-    slot.autoRetryEnabled = null;
     const rpc = slot.process;
     if (!rpc) {
       if (slot.stopping) await slot.stopping;
@@ -91,9 +91,13 @@ export class RuntimeWorkerLifecycle {
       }
     }
     this.host.rejectDeferredPrompts(slot, rpc);
+    this.host.retireBash(slot, rpc);
+    void slot.pendingImages?.dispose();
+    slot.pendingImages = null;
     slot.process = null;
     slot.pendingPrompt = null;
     slot.pendingPromptCount = 0;
+    slot.nativeBash = null;
     slot.ready = false;
     slot.compactionReturnState = null;
     this.host.clearWriterBaseline(slot);
@@ -115,10 +119,12 @@ export class RuntimeWorkerLifecycle {
     this.host.clearPendingExtensionUi(slot, "stopped");
     slot.extensionDisplays = [];
     slot.extensionStatuses = {};
+    slot.toolActivity = {};
     this.host.emitSlotEvent(slot, {
       type: "extension_runtime_stopped",
       extensionDisplays: [],
       extensionStatuses: {},
+      bashRunning: false,
     });
     try {
       await stopping;
@@ -216,12 +222,18 @@ export class RuntimeWorkerLifecycle {
     slot.ready = false;
     this.host.clearPendingExtensionUi(slot, "replaced");
     slot.piPendingQueues = emptyPendingQueues();
-    slot.pendingQueues = emptyPendingQueues();
+    slot.piPendingInput = { steering: [], followUp: [] };
+    await slot.pendingImages?.dispose();
+    slot.pendingImages = null;
+    slot.pendingQueues = {
+      ...emptyPendingQueues(),
+      revision: slot.pendingQueues.revision + 1,
+    };
     slot.extensionDisplays = [];
     slot.extensionStatuses = {};
+    slot.toolActivity = {};
     slot.availableModels = null;
     slot.commands = null;
-    slot.autoRetryEnabled = null;
     try {
       this.host.attachProcess(slot, rpc);
       await this.startupAttestor.requireUnchangedPreStartBaseline(

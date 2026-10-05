@@ -30,14 +30,15 @@ import {
 import { userTurnSummary } from "../../shared/user-turns";
 import { type ActivityTool, type ChatMessage, messageKey } from "../events";
 import { resourceReferenceFromEventTarget } from "../resources";
-import { transcriptProjectionKey } from "../transcript-projection-key";
 import {
   type ActivityMaterializationMode,
   store,
   type TranscriptActivityRangeState,
 } from "../store";
+import { transcriptProjectionKey } from "../transcript-projection-key";
 import { Dropdown } from "./Dropdown";
 import { EarlierBranchBanner } from "./EarlierBranchBanner";
+import { EmbeddedImageOwnerContext } from "./ImagePreview";
 import { PromptMap } from "./PromptMap";
 import { handleRichTextCopy } from "./rich-text-copy";
 import { ScrollRail } from "./ScrollRail";
@@ -85,7 +86,6 @@ export const Transcript = memo(function Transcript({
   projectionIncarnation = "",
   queue = emptyPendingQueues(),
   pendingAction = null,
-  onClearPending = store.clearPending,
   extensionDisplays = [],
   viewingEarlierBranch = false,
 }: {
@@ -120,8 +120,7 @@ export const Transcript = memo(function Transcript({
   viewId?: string;
   projectionIncarnation?: string;
   queue?: PendingQueues;
-  pendingAction?: "clear" | null;
-  onClearPending?: () => Promise<boolean>;
+  pendingAction?: "clear" | "recover" | null;
   extensionDisplays?: ExtensionDisplay[];
   viewingEarlierBranch?: boolean;
 }) {
@@ -137,6 +136,10 @@ export const Transcript = memo(function Transcript({
   const projectionViewKey = transcriptProjectionKey(
     viewId,
     projectionIncarnation,
+  );
+  const imageOwner = useMemo(
+    () => ({ sessionId, viewId, projectionKey: projectionViewKey }),
+    [sessionId, viewId, projectionViewKey],
   );
   const preserveActivityAnchorRef = useRef<
     (element: HTMLElement, alignment: "start" | "center" | "end") => void
@@ -640,60 +643,64 @@ export const Transcript = memo(function Transcript({
               ) : null}
             </div>
           ) : null}
-          {rows.length === 0 ? (
-            <div className="transcript__column">
-              <div className="empty-state">
-                <p className="empty-state__title">Empty session</p>
-                <p className="empty-state__hint">
-                  Send a message below to start working with Pi.
-                </p>
+          <EmbeddedImageOwnerContext value={imageOwner}>
+            {rows.length === 0 ? (
+              <div className="transcript__column">
+                <div className="empty-state">
+                  <p className="empty-state__title">Empty session</p>
+                  <p className="empty-state__hint">
+                    Send a message below to start working with Pi.
+                  </p>
+                </div>
               </div>
-            </div>
-          ) : viewport.virtualize ? (
-            <div
-              className="transcript__column transcript__column--virtual"
-              style={{ height: viewport.virtualizer.getTotalSize() }}
-            >
-              {viewport.virtualizer.getVirtualItems().map((item) => (
-                <div
-                  key={rows[item.index]!.key}
-                  data-index={item.index}
-                  data-transcript-row={item.index}
-                  data-transcript-key={rows[item.index]!.key}
-                  data-user-turn-index={
-                    rows[item.index]!.turnOrdinal ?? undefined
-                  }
-                  data-user-turn-id={rows[item.index]!.turnId ?? undefined}
-                  ref={viewport.virtualizer.measureElement}
-                  className="transcript__virtual-row"
-                  style={{ transform: `translateY(${item.start}px)` }}
-                >
-                  {rows[item.index]!.node}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="transcript__column">
-              {rows.map((row, index) => (
-                <div
-                  key={row.key}
-                  data-transcript-row={index}
-                  data-transcript-key={row.key}
-                  data-user-turn-index={row.turnOrdinal ?? undefined}
-                  data-user-turn-id={row.turnId ?? undefined}
-                >
-                  {row.node}
-                </div>
-              ))}
-            </div>
-          )}
+            ) : viewport.virtualize ? (
+              <div
+                className="transcript__column transcript__column--virtual"
+                style={{ height: viewport.virtualizer.getTotalSize() }}
+              >
+                {viewport.virtualizer.getVirtualItems().map((item) => (
+                  <div
+                    key={rows[item.index]!.key}
+                    data-index={item.index}
+                    data-transcript-row={item.index}
+                    data-transcript-key={rows[item.index]!.key}
+                    data-user-turn-index={
+                      rows[item.index]!.turnOrdinal ?? undefined
+                    }
+                    data-user-turn-id={rows[item.index]!.turnId ?? undefined}
+                    ref={viewport.virtualizer.measureElement}
+                    className="transcript__virtual-row"
+                    style={{ transform: `translateY(${item.start}px)` }}
+                  >
+                    {rows[item.index]!.node}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="transcript__column">
+                {rows.map((row, index) => (
+                  <div
+                    key={row.key}
+                    data-transcript-row={index}
+                    data-transcript-key={row.key}
+                    data-user-turn-index={row.turnOrdinal ?? undefined}
+                    data-user-turn-id={row.turnId ?? undefined}
+                  >
+                    {row.node}
+                  </div>
+                ))}
+              </div>
+            )}
+          </EmbeddedImageOwnerContext>
           {queue.totalCount > 0 || genericExtensionDisplays.length > 0 ? (
             <div className="transcript__column transcript__pending">
               <PendingQueueGroups
                 key={sessionId}
                 queue={queue}
                 pendingAction={pendingAction}
-                onClear={onClearPending}
+                onClear={store.clearPending}
+                onRecover={store.recoverPending}
+                getText={store.pendingText}
               />
               <ExtensionDisplaySurface displays={genericExtensionDisplays} />
             </div>

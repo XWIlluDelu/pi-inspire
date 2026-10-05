@@ -6,7 +6,9 @@ import { ContextPaneState } from "./ContextPaneState";
 /** Static, inert placeholders keep the deferred body's columns and footer stable. */
 export function SettingsLoading({ onRetry }: { onRetry?: () => void }) {
   return (
-    <div className="settings__layout settings__loading">
+    <div
+      className={`settings__layout settings__loading${onRetry ? "" : " deferred-loading"}`}
+    >
       {!onRetry ? (
         <div className="settings__sidebar" aria-hidden="true">
           <div className="settings__nav-list">
@@ -74,7 +76,11 @@ export function SettingsDialog({
 }) {
   const ref = useModalFocus<HTMLDivElement>(true, "settings", onClose);
   return (
-    <div className="overlay" role="presentation" onClick={onClose}>
+    <div
+      className="overlay settings-overlay"
+      role="presentation"
+      onClick={onClose}
+    >
       <div
         ref={ref}
         className="dialog settings"

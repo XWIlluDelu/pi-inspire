@@ -3,6 +3,9 @@
  * preference awaiting a restart. */
 export interface HerdrEnhancementStatus {
   enabled: boolean;
+  /** Required availability checks passed. The server may start on demand;
+   * `running` alone does not determine readiness. */
+  ready: boolean;
   supported: boolean;
   installed: boolean;
   running: boolean;

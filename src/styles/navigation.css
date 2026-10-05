@@ -243,6 +243,12 @@
   background: var(--bg-inset);
 }
 
+.nav__row--highlighted .nav__row-main {
+  background: var(--accent-tint);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
 .nav__row-actions {
   position: absolute;
   right: 4px;
