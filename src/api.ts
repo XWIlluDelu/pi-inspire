@@ -22,7 +22,6 @@ import type {
   HostUpdateStatus,
   InspirePreferences,
   InspireUpdateCheckResult,
-  NewSessionDefaults,
   NewSessionOptions,
   PendingReadRequest,
   PendingRecovery,
@@ -738,12 +737,13 @@ export function createApi(token: string | null = null) {
           timeoutMs: LONG_HTTP_OBSERVATION_TIMEOUT_MS,
         },
       ),
-    refreshModels: (sessionId?: string, cwd?: string) =>
+    refreshModels: (sessionId?: string, cwd?: string, inherit = false) =>
       request<ModelCatalogResponse>(
         token,
         `/api/models?${new URLSearchParams({
           ...(sessionId ? { sessionId } : {}),
           ...(cwd ? { cwd } : {}),
+          ...(inherit ? { inherit: "1" } : {}),
         })}`,
       ),
     modelSettings: (owner: { sessionId?: string; cwd?: string }) =>
@@ -797,11 +797,6 @@ export function createApi(token: string | null = null) {
       request<{ level: ThinkingLevel }>(
         token,
         `/api/new-session/thinking?${new URLSearchParams({ cwd, provider, modelId, current })}`,
-      ),
-    newSessionDefaults: (cwd: string) =>
-      request<NewSessionDefaults>(
-        token,
-        `/api/new-session/defaults?cwd=${encodeURIComponent(cwd)}`,
       ),
     searchNewSessionFiles: (
       cwd: string,

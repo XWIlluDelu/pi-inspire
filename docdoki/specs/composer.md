@@ -550,7 +550,8 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   a local picker status; partial native refreshes retain Pi's usable available snapshot. Delayed
   results cannot replace another browser selection or transport. The first-message surface obtains
   fresh choices too, using the inherited worker only while its workspace still owns the surface,
-  otherwise the read-only Host model runtime; no worker is created merely to inspect choices.
+  otherwise bounded native metadata for the prospective directory; no agent worker is created
+  merely to inspect choices.
 
   Unavailable MRU identities stay harmless preference history and are omitted from the current
   projection. A rejected model change never updates active truth or recency; a rejected
@@ -582,10 +583,12 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   visible choice when one exists, including a model that arrives after the surface mounts.
 
   Without an inheritable session model, the host performs a read-only in-memory resolution through
-  Pi’s public SDK for the prospective workspace, and the picker displays that real model rather than
-  treating an omitted startup argument as an unexplained `Select model` state. The resolved or
-  explicitly selected provider/id and supported thinking level are always passed to the creating Pi
-  worker before the first prompt; no synthetic `Pi default` option or silent model omission exists.
+  Pi’s public SDK for the prospective workspace, and the picker displays that preview rather than
+  an unexplained `Select model` state. Explicit and inherited choices pass their provider/id and
+  effective thinking level. Workspace-default startup omits the model and untouched thinking
+  arguments so Pi resolves them; a manually adjusted thinking level is retained. There is no
+  synthetic `Pi default` menu option. Pending source selection must resolve before New treats an
+  inherited session as a workspace-default start.
   A model that does not support reasoning disables thinking instead of inventing a value.
   Explicit start-surface model switches follow Pi's per-model thinking default, then its global
   default, then the current effort, with native capability clamping (upward first, then downward).
@@ -595,9 +598,9 @@ Cover the input modes needed to replace the primary terminal conversation loop.
   and refreshing metadata alone never reapplies switching defaults. These reads do not write user
   settings or create a persistent session. Automatic catalog/default reads wait for a pause in
   directory typing; opening the picker still refreshes immediately. The Host validates a prospective
-  directory before catalog work. Evidence: [[follow-model-selection-2026-10-02]].
-  Current virtual-identity and cold-start extension-model gaps are retained in
-  [[follow-pi-native-capability-review-2026-10-02]].
+  directory before catalog work. Evidence: [[follow-model-selection-2026-10-02]] and
+  [[follow-native-model-workflow-2026-10-05]]; [[model-settings]] defines selected/response identity
+  and trust-aware extension discovery.
 
 ## Non-goals
 

@@ -22,22 +22,22 @@ through the same RPC and GUI, preserving ordinary send, stop, restart, and termi
 
 ## Design map
 
-| Area | Contract | Implemented surface |
-| --- | --- | --- |
-| Workbench | [[workbench]], [[workspace-layout]] | Curated session/project navigation, central conversation, contextual Files/Changes/Terminal. |
-| Settings | [[interface-preferences]], [[model-settings]], [[mcp]] | Interface/runtime preferences; model defaults, common scope/cycling, graphical configuration, and native provider login/removal. |
-| Visual system | [[visual-language]], [[design-system]] | Light/dark Amber and Jade, IBM Plex Sans SC for reading/UI, Flux Mono SC for code. |
-| Conversation | [[conversation]], [[activity-presentation]] | Typed text/activity flow, adjustable detail, compaction checkpoints, and reply errors. |
-| Rich content | [[rich-rendering]], [[tool-presentations]] | Shared streaming Markdown/math rendering and typed native/custom tool cards. |
-| Sessions | [[session-continuity]], [[session-persistence]] | Native Pi records, concurrent background workers, complete paged History, and verified persistence. |
-| Session operations | [[session-transport]], [[session-branches]], [[session-deletion]] | Addressed reconnect, inspect-before-continue History, optional branch summaries, independent Fork/Clone, and desktop Trash. |
-| Input | [[composer]] | Text, references, images/files, Steer/Queue, pending-input recovery, complete copying, and independent draft handoff. |
-| Pi integration | [[pi-integration]] | Installed Pi configuration, adapted native commands, extension dialogs/status/text widgets. |
-| Host | [[host-lifecycle]] | Pairing, installation, user environment, diagnostics, build publication, and explicit restart. |
-| Herdr | [[herdr-enhancement]] | Default-off Linux worker placement, scoped cleanup, recovery, and Runtime-derived status. |
-| Project terminal | [[terminal]] | Independent PTY daemon, ordered tabs, explicit input owner, touch keys, and native text selection/copy. |
-| Files and Changes | [[resource-preview]] | Filesystem browsing/search, session-authorized previews, document-relative resources, and Git diffs. |
-| Connections | [[connection-modules]] | Optional ingress to the same paired Host, including the separate terminal data plane. |
+| Area               | Contract                                                          | Implemented surface                                                                                                                     |
+| ------------------ | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Workbench          | [[workbench]], [[workspace-layout]]                               | Curated session/project navigation, central conversation, contextual Files/Changes/Terminal.                                            |
+| Settings           | [[interface-preferences]], [[model-settings]], [[mcp]]            | Interface/runtime preferences; model defaults/common scope, configuration/login, native Router selection and extension-model discovery. |
+| Visual system      | [[visual-language]], [[design-system]]                            | Light/dark Amber and Jade, IBM Plex Sans SC for reading/UI, Flux Mono SC for code.                                                      |
+| Conversation       | [[conversation]], [[activity-presentation]]                       | Typed text/activity flow, adjustable detail, compaction checkpoints, and reply errors.                                                  |
+| Rich content       | [[rich-rendering]], [[tool-presentations]]                        | Shared streaming Markdown/math rendering and typed native/custom tool cards.                                                            |
+| Sessions           | [[session-continuity]], [[session-persistence]]                   | Native Pi records, concurrent background workers, complete paged History, and verified persistence.                                     |
+| Session operations | [[session-transport]], [[session-branches]], [[session-deletion]] | Addressed reconnect, inspect-before-continue History, optional branch summaries, independent Fork/Clone, and desktop Trash.             |
+| Input              | [[composer]]                                                      | Text, references, images/files, Steer/Queue, pending-input recovery, complete copying, and independent draft handoff.                   |
+| Pi integration     | [[pi-integration]]                                                | Installed Pi configuration, adapted native commands, extension dialogs/status/text widgets.                                             |
+| Host               | [[host-lifecycle]]                                                | Pairing, installation, user environment, diagnostics, build publication, and explicit restart.                                          |
+| Herdr              | [[herdr-enhancement]]                                             | Default-off Linux worker placement, scoped cleanup, recovery, and Runtime-derived status.                                               |
+| Project terminal   | [[terminal]]                                                      | Independent PTY daemon, ordered tabs, explicit input owner, touch keys, and native text selection/copy.                                 |
+| Files and Changes  | [[resource-preview]]                                              | Filesystem browsing/search, session-authorized previews, document-relative resources, and Git diffs.                                    |
+| Connections        | [[connection-modules]]                                            | Optional ingress to the same paired Host, including the separate terminal data plane.                                                   |
 
 ## Current state and open work
 
@@ -52,8 +52,6 @@ Settings controls, title-owned actions, topbar status and visible Pending keep t
 Completed task records are archived; [[follow-pi-native-capability-review-2026-10-02]] owns the remaining
 native-capability backlog:
 
-- **Confirmed model defects:** selected virtual identity becomes the physical responder in the GUI,
-  affecting thinking choices and New inheritance; cold-start catalogs omit extension-registered models.
 - **Settings/resources:** native save-error feedback, loading/trust-omission diagnostics, complete loaded
   extensions, usage reading and further graphical setting coverage remain open.
 - **Extensions:** richer reusable UI, draft access, argument completion and extension-owned dialog
@@ -74,7 +72,8 @@ Two earlier presentation questions remain separate: compact-success receipts in
 - **Runtime and delivery:** [[operation-lifecycle-ownership]], [[explicit-restart-controls]], and
   [[native-command-compatibility]] explain observation, retirement, restart admission, and command
   dispatch. [[projection-reconciliation-ownership]] and [[async-ownership-review]] cover persistence
-  and asynchronous selection ownership.
+  and asynchronous selection ownership; [[model-discovery-ownership]] explains catalog/default previews
+  and save-time invalidation.
 - **Herdr:** [[follow-herdr-enhancement-2026-09-25]] records initial transport/environment checks;
   [[follow-deep-review-repairs-2026-09-26]] records the later systemd-scope and real Pi/Bash crash checks.
 - **Terminal:** [[terminal-controls-redesign]] covers the compact controls, touch input, text
@@ -86,14 +85,16 @@ Two earlier presentation questions remain separate: compact-success receipts in
 
 ## Review evidence
 
-| Scope | Record |
-| --- | --- |
+| Scope                                                                     | Record                                            |
+| ------------------------------------------------------------------------- | ------------------------------------------------- |
 | Pi 1.0 quality, maintainability and measured rendering corrections        | [[challenge-pi-1-quality-2026-10-05]]                      |
-| Extension dialogs, uploads, background Markdown parsing | [[follow-core-review-repairs-2026-09-30]] |
-| Layouts, settings, document/media readers, terminal interaction | [[follow-interface-review-2026-09-29]] |
-| Native and extension tool cards | [[follow-tool-display-review-2026-09-29]] |
-| Session discovery, HTTP observations, projection and generated-leaf reuse | [[follow-review-repairs-2026-09-29]] |
-| Native input, History, commands and integration corrections | [[follow-native-workflow-quality-2026-10-03]] |
-| Models/login and bounded large catalogs | [[follow-model-settings-auth-2026-10-02]] |
-| Final native-workflow interface and browser checks | [[follow-frontend-change-review-2026-10-03]] |
-| Host/remote, Herdr, Files/Changes and terminal review | [[follow-existing-enhancement-review-2026-10-03]] |
+| Native model/child-call maintainability and semantic history               | [[challenge-native-capability-quality-2026-10-05]]    |
+| Extension dialogs, uploads, background Markdown parsing                   | [[follow-core-review-repairs-2026-09-30]]         |
+| Layouts, settings, document/media readers, terminal interaction           | [[follow-interface-review-2026-09-29]]            |
+| Native and extension tool cards                                           | [[follow-tool-display-review-2026-09-29]]         |
+| Session discovery, HTTP observations, projection and generated-leaf reuse | [[follow-review-repairs-2026-09-29]]              |
+| Native input, History, commands and integration corrections               | [[follow-native-workflow-quality-2026-10-03]]     |
+| Models/login and bounded large catalogs                                   | [[follow-model-settings-auth-2026-10-02]]         |
+| Native model identity, New inheritance/defaults and extension discovery   | [[follow-native-model-workflow-2026-10-05]]       |
+| Final native-workflow interface and browser checks                        | [[follow-frontend-change-review-2026-10-03]]      |
+| Host/remote, Herdr, Files/Changes and terminal review                     | [[follow-existing-enhancement-review-2026-10-03]] |

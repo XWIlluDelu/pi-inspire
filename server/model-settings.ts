@@ -26,6 +26,7 @@ import {
   resolveModelScopeWithDiagnostics,
   SettingsManager,
 } from "./pi-runtime.js";
+import { modelSettings } from "./model-catalog.js";
 import { requestError } from "./request-error.js";
 
 type JsonObject = Record<string, unknown>;
@@ -299,7 +300,7 @@ export class ModelSettingsService {
     } catch {
       configError = "models.json is invalid. Repair the file before saving.";
     }
-    const settings = SettingsManager.create(cwd, this.agentDir);
+    const settings = modelSettings(cwd, this.agentDir);
     const project = settings.getProjectSettings();
     const effective = preferences({
       defaultProvider: settings.getDefaultProvider(),

@@ -45,6 +45,7 @@ import {
   MAX_PROJECT_FILES,
   MAX_SESSION_ID_CHARS,
   type ModelOption,
+  type NewSessionDefaults,
   type NewSessionOptions,
   type PendingReadRequest,
   type PendingRecovery,
@@ -75,6 +76,7 @@ import {
   type PiRpcResponseFence,
 } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
+import type { ModelCatalogResponse } from "../shared/model-settings.js";
 import { RuntimeBashController } from "./runtime-bash.js";
 import { newBridgeIdentity } from "./runtime-branch-bridge.js";
 import {
@@ -126,7 +128,8 @@ import {
   type ProviderAuthOperation,
   type ProviderAuthResult,
 } from "../shared/provider-auth-bridge.js";
-import { modelOption } from "./model-catalog.js";
+import { modelOption, modelSettings } from "./model-catalog.js";
+import type { ModelMetadata, ModelMetadataCatalog } from "./model-metadata.js";
 import { refreshWorkerCatalog } from "./model-catalog-refresh.js";
 import { commonModelOptions } from "./model-settings.js";
 import { getAgentDir, SettingsManager } from "./pi-runtime.js";
@@ -307,7 +310,8 @@ export interface RuntimeLike {
   ): Promise<unknown>;
   refreshModels(
     sessionId: string,
-  ): Promise<{ models: ModelOption[]; warning?: string }>;
+    inherit?: boolean,
+  ): Promise<ModelCatalogResponse>;
   providerAuth?(
     sessionId: string,
     operation: ProviderAuthOperation,
@@ -408,6 +412,21 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     Set<string>
   >();
   private selectedSessionId: string | null = null;
+  private modelMetadata?: ModelMetadataCatalog;
+  // Null means discovery failed, not that no virtual definitions exist.
+  private readonly previewModels = new WeakMap<
+    RuntimeSlot,
+    { revision: number; data: ModelMetadata | null }
+  >();
+  private readonly previewModelReads = new WeakMap<
+    RuntimeSlot,
+    Promise<void>
+  >();
+
+  setModelMetadataCatalog(catalog: ModelMetadataCatalog): this {
+    this.modelMetadata = catalog;
+    return this;
+  }
   /** Monotonic selection age: a slower, earlier open/new completion must not
    * steal the selection back from a newer one. */
   private selectionSequence = 0;
@@ -1690,7 +1709,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         : rpc
             .request<{ models: unknown[] }>({ type: "get_available_models" })
             .then(
-              (result) => (slot.availableModels = result.models),
+              (result) =>
+                (slot.availableModels = result.models.map((model) =>
+                  modelOption(model as ModelOption),
+                )),
               (error) =>
                 this.runtimeCapabilityUnavailable(
                   slot,
@@ -1711,13 +1733,60 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot: RuntimeSlot,
     runtimeThinkingLevel?: unknown,
   ): string {
+    // A live observation belongs to the validated worker/effective branch,
+    // including a navigation lease not yet committed to JSONL.
+    if (typeof runtimeThinkingLevel === "string") return runtimeThinkingLevel;
     if (slot.projection?.hasActiveEntryType("thinking_level_change"))
       return slot.projection.thinkingLevel;
     if (slot.startupThinkingLevel) return slot.startupThinkingLevel;
-    if (typeof runtimeThinkingLevel === "string") return runtimeThinkingLevel;
     return (
       slot.preview?.thinkingLevel ?? slot.projection?.thinkingLevel ?? "off"
     );
+  }
+
+  private readPreviewModels(slot: RuntimeSlot): Promise<void> {
+    const catalog = this.modelMetadata;
+    if (!catalog || this.closing) return Promise.resolve();
+    if (this.previewModels.get(slot)?.revision === catalog.revision)
+      return Promise.resolve();
+    const cached = catalog.peek(slot.cwd);
+    if (cached) {
+      this.previewModels.set(slot, {
+        revision: catalog.revision,
+        data: cached,
+      });
+      return Promise.resolve();
+    }
+    const pending = this.previewModelReads.get(slot);
+    if (pending) return pending;
+    const revision = catalog.revision;
+    const publish = (data: ModelMetadata | null) => {
+      if (this.closing || revision !== catalog.revision) return;
+      this.previewModels.set(slot, { revision, data });
+      if (!slot.ready)
+        this.emitSlotEvent(slot, { type: "model_metadata_changed" });
+    };
+    const operation = catalog
+      .read(slot.cwd)
+      .then(publish, (error) => {
+        this.diagnostics.record("warning", "model_metadata_unavailable", {
+          sessionId: slot.id,
+          errorType: error instanceof Error ? error.name : typeof error,
+        });
+        publish(null);
+      })
+      .finally(() => {
+        this.previewModelReads.delete(slot);
+        if (
+          !this.closing &&
+          this.slots.get(slot.id) === slot &&
+          !slot.ready &&
+          revision !== catalog.revision
+        )
+          void this.readPreviewModels(slot);
+      });
+    this.previewModelReads.set(slot, operation);
+    return operation;
   }
 
   private previewSnapshot(
@@ -1735,11 +1804,34 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       effectiveLeafId,
       slot.viewId,
     );
+    const live = Boolean(slot.process && slot.ready);
+    const known = this.previewModels.get(slot);
+    const metadata =
+      !live && known?.revision === this.modelMetadata?.revision
+        ? known?.data
+        : undefined;
+    const unresolved = !live && this.modelMetadata && metadata === undefined;
     return safeProjection({
       active: {
         ...slot.preview,
-        model: slot.projection.model ?? slot.preview.model,
-        thinkingLevel: this.effectiveThinkingLevel(slot),
+        model: live
+          ? slot.preview.model
+          : metadata === null || unresolved
+            ? null
+            : (slot.projection.selectedModel(metadata?.virtualModels ?? []) ??
+              slot.preview.model),
+        ...(metadata !== undefined
+          ? { availableModels: metadata?.models ?? [] }
+          : {}),
+        modelDiscovery: unresolved
+          ? "loading"
+          : metadata === null
+            ? "unavailable"
+            : undefined,
+        thinkingLevel: this.effectiveThinkingLevel(
+          slot,
+          live ? slot.preview.thinkingLevel : undefined,
+        ),
         transcriptPage: page,
         projectionHealth: slot.projection.health,
         projectionConflict: slot.conflict,
@@ -1992,9 +2084,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     try {
       const slot = await this.prepareCatalogSlot(id);
       const ready = Boolean(slot.process && slot.ready);
-      const snapshot = ready
-        ? await this.snapshotSlot(slot)
-        : this.previewSnapshot(slot);
+      const snapshot = await this.snapshotSlot(slot);
       if (selection === this.selectionSequence) {
         const previousSessionId = this.selectedSessionId;
         this.selectedSessionId = slot.id;
@@ -2211,7 +2301,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         ...(slot.sessionPath ? { sessionFile: slot.sessionPath } : {}),
         sessionName: name,
         cwd,
-        model: projection.model ?? state.model,
+        model: state.model ? modelOption(state.model as ModelOption) : null,
         thinkingLevel: this.effectiveThinkingLevel(slot, state.thinkingLevel),
         isStreaming: false,
         isCompacting: false,
@@ -3475,10 +3565,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         const selectedSessionId = selected
           ? destinationId
           : this.selectedSessionId;
-        const snapshot = this.previewSnapshot(destination, {
+        const snapshot = await this.snapshotSlot(destination);
+        snapshot.sessionStatuses = {
           ...this.sessionStatuses(selectedSessionId),
           [destinationId]: this.statusFor(destination, selectedSessionId),
-        });
+        };
         this.catalog.invalidate();
         reservation.release();
         reservation = null;
@@ -4206,18 +4297,61 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
-  refreshModels(
+  async refreshModels(
     sessionId: string,
-  ): Promise<{ models: ModelOption[]; warning?: string }> {
+    inherit = false,
+  ): Promise<ModelCatalogResponse> {
     this.assertMaintenanceAvailable();
-    const slot = this.requireSlot(sessionId);
+    const retained = this.slots.get(sessionId);
+    const slot =
+      retained && (retained.projection || retained.process)
+        ? retained
+        : await this.prepareCatalogSlot(sessionId);
     return this.useSlot(slot, async () => {
+      // An already-warming Pi owns the source's actual startup selection.
+      const warming = inherit ? this.opening.get(slot.id) : undefined;
+      if (warming) await warming.catch(() => undefined);
+      const selected = async (): Promise<{
+        selection?: NewSessionDefaults;
+      }> => {
+        if (!inherit) return {};
+        const active = (await this.snapshotSlot(slot)).active!;
+        if (active.modelDiscovery)
+          throw requestError("The source model is unavailable", 503);
+        return {
+          selection: {
+            cwd: slot.cwd,
+            model: active.model
+              ? modelOption(active.model as ModelOption)
+              : null,
+            thinkingLevel:
+              active.thinkingLevel as NewSessionDefaults["thinkingLevel"],
+          },
+        };
+      };
       const rpc = slot.process;
       const bridge = slot.bridge;
-      if (!rpc || !bridge || !slot.ready)
-        throw requestError("No active Pi model catalog", 409);
+      if (!rpc || !bridge || !slot.ready) {
+        if (!this.modelMetadata)
+          throw requestError("No active Pi model catalog", 409);
+        const read = this.modelMetadata.read(slot.cwd, true);
+        const revision = this.modelMetadata.revision;
+        const metadata = await read;
+        if (revision !== this.modelMetadata.revision)
+          throw requestError(
+            "Model configuration changed during discovery",
+            409,
+          );
+        this.previewModels.set(slot, { revision, data: metadata });
+        return {
+          models: metadata.models,
+          defaults: metadata.defaults,
+          ...(metadata.warning ? { warning: metadata.warning } : {}),
+          ...(await selected()),
+        };
+      }
       const existing = this.modelRefreshes.get(rpc);
-      if (existing) return existing;
+      if (existing) return { ...(await existing), ...(await selected()) };
       const owns = () =>
         slot.process === rpc && slot.bridge === bridge && slot.ready;
       const operation = (async () => {
@@ -4234,7 +4368,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         return { models, ...(warning ? { warning } : {}) };
       })().finally(() => this.modelRefreshes.delete(rpc));
       this.modelRefreshes.set(rpc, operation);
-      return operation;
+      return { ...(await operation), ...(await selected()) };
     });
   }
 
@@ -4386,7 +4520,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return this.useSlot(slot, async () => {
       await this.reconcileSlot(slot, false);
       const rpc = slot.process;
-      if (!rpc || !slot.ready) return this.previewSnapshot(slot);
+      if (!rpc || !slot.ready) {
+        void this.readPreviewModels(slot);
+        return this.previewSnapshot(slot);
+      }
       const [state, extras, autoRetryEnabled] = await Promise.all([
         rpc.request<Record<string, unknown>>({ type: "get_state" }),
         this.readRuntimeExtras(slot, rpc),
@@ -4437,7 +4574,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               ? state.sessionName
               : undefined,
           cwd: slot.cwd,
-          model: slot.projection.model ?? state.model,
+          model: state.model ? modelOption(state.model as ModelOption) : null,
           thinkingLevel: this.effectiveThinkingLevel(slot, state.thinkingLevel),
           isStreaming: Boolean(state.isStreaming),
           activeAssistantMessageKey:
@@ -4473,10 +4610,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           },
           availableModels: slot.availableModels ?? models,
           commonModels: await commonModelOptions(
-            SettingsManager.create(
-              slot.cwd,
-              getAgentDir(),
-            ).getEnabledModels() ?? [],
+            modelSettings(slot.cwd).getEnabledModels() ?? [],
             (slot.availableModels ?? models) as ModelOption[],
           ),
           commands,

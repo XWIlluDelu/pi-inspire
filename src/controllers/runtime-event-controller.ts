@@ -433,7 +433,10 @@ export class RuntimeEventController {
     // An unopened session is shown from its read-only Pi-file preview while
     // extensions initialize off the critical path. Replace that preview with
     // the worker's live state as soon as its own runtime becomes ready.
-    if (event.type === "runtime_ready") {
+    if (
+      event.type === "runtime_ready" ||
+      event.type === "model_metadata_changed"
+    ) {
       if (sessionStatuses) this.host.patch({ sessionStatuses });
       void this.host.resync(eventSessionId, this.host.selectionGeneration());
       return;

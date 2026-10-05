@@ -20,6 +20,7 @@ import {
   type BranchTreeResponse,
   type ComposerHistoryPage,
   MAX_SESSION_ID_CHARS,
+  type ModelOption,
   type ProjectionHealth,
   type TranscriptActivityKind,
   type TranscriptActivityPage,
@@ -48,6 +49,12 @@ import { requestError } from "./request-error.js";
 import { projectSafeValue } from "./safe-projection.js";
 import type { SessionRecord } from "./session-catalog.js";
 import { JsonlObjectDecoder } from "./session-jsonl.js";
+import {
+  appendModelSelection,
+  branchModelSelection,
+  type BranchModelSelection,
+  selectedBranchModel,
+} from "./session-model-selection.js";
 import {
   BRANCH_CONTENT_PAGE_CHARS,
   BRANCH_TREE_MAX_BYTES,
@@ -97,7 +104,7 @@ interface Candidate {
   entries: SessionEntry[];
   entriesById: Map<string, SessionEntry>;
   messages: unknown[];
-  model: unknown;
+  modelSelection: BranchModelSelection;
   thinkingLevel: string;
   leafId: string | null;
 }
@@ -162,6 +169,7 @@ export interface SessionProjectionView {
   readonly health: ProjectionHealth;
   readonly messages: readonly unknown[];
   readonly model: unknown;
+  selectedModel(virtualModels: readonly ModelOption[]): unknown;
   readonly thinkingLevel: string;
   readonly leafId: string | null;
   readonly tailEntryId: string | null;
@@ -442,26 +450,16 @@ function appendContextMessages(
   return [...previous, ...appended];
 }
 
-function appendedContextSettings(
-  currentModel: unknown,
+function appendedThinkingLevel(
   currentThinkingLevel: string,
   entries: readonly SessionEntry[],
-): { model: unknown; thinkingLevel: string } {
-  let model = currentModel;
+): string {
   let thinkingLevel = currentThinkingLevel;
   for (const entry of entries) {
-    if (entry.type === "thinking_level_change") {
+    if (entry.type === "thinking_level_change")
       thinkingLevel = entry.thinkingLevel;
-    } else if (entry.type === "model_change") {
-      model = { provider: entry.provider, id: entry.modelId };
-    } else if (entry.type === "message" && entry.message.role === "assistant") {
-      model = {
-        provider: entry.message.provider,
-        id: entry.message.model,
-      };
-    }
   }
-  return { model, thinkingLevel };
+  return thinkingLevel;
 }
 
 function isLinearAppend(
@@ -942,7 +940,10 @@ export class SessionProjection
   private currentFailureStatus: number | null = null;
   private currentFailureCode: string | undefined;
   private currentMessages: unknown[] = [];
-  private currentModel: unknown = null;
+  private currentModelSelection: BranchModelSelection = {
+    change: null,
+    fallback: null,
+  };
   private currentThinkingLevel = "off";
   private currentLeafId: string | null = null;
   private currentEntries: SessionEntry[] = [];
@@ -1057,7 +1058,10 @@ export class SessionProjection
     return this.currentMessages;
   }
   get model(): unknown {
-    return this.currentModel;
+    return this.currentModelSelection.fallback;
+  }
+  selectedModel(virtualModels: readonly ModelOption[]): unknown {
+    return selectedBranchModel(this.currentModelSelection, virtualModels);
   }
   get thinkingLevel(): string {
     return this.currentThinkingLevel;
@@ -1595,8 +1599,8 @@ export class SessionProjection
             candidate.leafId,
           );
         }
+        this.currentModelSelection = candidate.modelSelection;
         this.currentMessages = candidate.messages;
-        this.currentModel = candidate.model;
         this.currentThinkingLevel = candidate.thinkingLevel;
         this.currentLeafId = candidate.leafId;
         this.currentEntries = candidate.entries;
@@ -1798,7 +1802,7 @@ export class SessionProjection
       const entries = [...this.currentEntries, ...appendedEntries];
       const leafId = entries.at(-1)?.id ?? null;
       let messages = this.currentMessages;
-      let model = this.currentModel;
+      let modelSelection = this.currentModelSelection;
       let thinkingLevel = this.currentThinkingLevel;
       if (appendedEntries.length > 0) {
         if (isLinearAppend(this.currentLeafId, appendedEntries)) {
@@ -1806,17 +1810,18 @@ export class SessionProjection
             this.currentMessages,
             appendedEntries,
           );
-          ({ model, thinkingLevel } = appendedContextSettings(
-            this.currentModel,
+          modelSelection = appendModelSelection(
+            this.currentModelSelection,
+            appendedEntries,
+          );
+          thinkingLevel = appendedThinkingLevel(
             this.currentThinkingLevel,
             appendedEntries,
-          ));
+          );
         } else {
           const context = buildSessionContext(entries, leafId, entriesById);
           messages = contextMessages(entries, leafId, entriesById);
-          model = context.model
-            ? { provider: context.model.provider, id: context.model.modelId }
-            : null;
+          modelSelection = branchModelSelection(entriesById, leafId);
           thinkingLevel = context.thinkingLevel;
         }
       }
@@ -1843,7 +1848,7 @@ export class SessionProjection
         entries,
         entriesById,
         messages,
-        model,
+        modelSelection,
         thinkingLevel,
         leafId,
       };
@@ -1954,7 +1959,7 @@ export class SessionProjection
             entries: [],
             entriesById: new Map(),
             messages: [],
-            model: null,
+            modelSelection: { change: null, fallback: null },
             thinkingLevel: "off",
             leafId: null,
           };
@@ -2021,9 +2026,7 @@ export class SessionProjection
           entries,
           entriesById: byId,
           messages: contextMessages(entries, leafId, byId),
-          model: context.model
-            ? { provider: context.model.provider, id: context.model.modelId }
-            : null,
+          modelSelection: branchModelSelection(byId, leafId),
           thinkingLevel: context.thinkingLevel,
           leafId,
         };

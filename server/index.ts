@@ -37,10 +37,7 @@ import {
   MockGitInspection,
   MockRuntime,
 } from "./mock.js";
-import {
-  availableModelOptions,
-  resolveNewSessionDefaults,
-} from "./model-catalog.js";
+import { ModelMetadataCatalog } from "./model-metadata.js";
 import { ModelSettingsService } from "./model-settings.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
 import {
@@ -56,7 +53,6 @@ import {
   nativeOAuthDescriptors,
   ProviderAuthService,
 } from "./provider-auth.js";
-import { requestError } from "./request-error.js";
 import { ResourceStore } from "./resources.js";
 import {
   RuntimeController,
@@ -201,6 +197,7 @@ void herdr.initialize();
 const attachments = new AttachmentStore();
 let catalog: SessionCatalogLike;
 let runtime: RuntimeLike;
+const modelMetadata = new ModelMetadataCatalog();
 if (mock) {
   catalog = new MockCatalog();
   runtime = new MockRuntime({ streamIntervalMs: mockStreamIntervalMs });
@@ -215,9 +212,11 @@ if (mock) {
     undefined,
     undefined,
     diagnostics,
-  ).on("worker_status", (rpc: PiRpcProcess, status: RuntimeWorkerStatus) => {
-    herdr.updateWorkerStatus(rpc, status);
-  });
+  )
+    .setModelMetadataCatalog(modelMetadata)
+    .on("worker_status", (rpc: PiRpcProcess, status: RuntimeWorkerStatus) => {
+      herdr.updateWorkerStatus(rpc, status);
+    });
 }
 const toolPresentations = new ToolPresentationConfigStore(
   process.env.INSPIRE_TOOL_PRESENTATIONS_PATH ||
@@ -253,50 +252,9 @@ const modelRuntime = mock
       );
       return null;
     });
-let refreshingModels: Promise<void> | undefined;
-const refreshHostModels = () => {
-  if (!modelRuntime) return Promise.resolve();
-  refreshingModels ??= modelRuntime
-    .refresh({ signal: AbortSignal.timeout(15_000) })
-    .then((result) => {
-      const error = modelRuntime.getError();
-      if (error || result.aborted || result.errors.size)
-        throw new Error(
-          error ?? "Model refresh failed; showing cached choices",
-        );
-    })
-    .finally(() => {
-      refreshingModels = undefined;
-    });
-  return refreshingModels;
-};
-const readAvailableModels = async (refresh = false) => {
+const readAvailableModels = async (refresh = false, cwd = process.cwd()) => {
   if (mock) return structuredClone(MOCK_AVAILABLE_MODELS);
-  if (!modelRuntime) return [];
-  try {
-    if (refresh) await refreshHostModels();
-    return await availableModelOptions(modelRuntime);
-  } catch (error) {
-    if (refresh) throw error;
-    console.error(
-      "Unable to refresh Pi's available models:",
-      error instanceof Error ? error.message : String(error),
-    );
-    return [];
-  }
-};
-const readNewSessionDefaults = async (cwd: string) => {
-  if (mock) {
-    return {
-      cwd,
-      model: structuredClone(MOCK_AVAILABLE_MODELS[0] ?? null),
-      thinkingLevel: "medium" as const,
-    };
-  }
-  if (!modelRuntime)
-    throw requestError("Pi's model catalog is unavailable", 503);
-  await refreshHostModels();
-  return resolveNewSessionDefaults(modelRuntime, cwd);
+  return (await modelMetadata.read(cwd, refresh)).models;
 };
 const maintenanceRestart = mock
   ? undefined
@@ -357,7 +315,24 @@ const application = createInspireServer({
     systemdRestartBackend(root, !mock && host === "127.0.0.1" && port === 4587),
   ),
   updateCoordinator,
+  bootstrapModels: () =>
+    mock
+      ? structuredClone(MOCK_AVAILABLE_MODELS)
+      : (modelMetadata.peek(process.cwd())?.models ?? []),
   availableModels: readAvailableModels,
+  invalidateModels: () => modelMetadata.invalidate(),
+  modelMetadata: async (cwd: string, refresh?: boolean) =>
+    mock
+      ? {
+          models: structuredClone(MOCK_AVAILABLE_MODELS),
+          virtualModels: [],
+          defaults: {
+            cwd,
+            model: structuredClone(MOCK_AVAILABLE_MODELS[0] ?? null),
+            thinkingLevel: "medium" as const,
+          },
+        }
+      : modelMetadata.read(cwd, refresh),
   modelSettings: mock ? undefined : new ModelSettingsService(),
   providerAuth: modelRuntime
     ? new ProviderAuthService(
@@ -377,7 +352,6 @@ const application = createInspireServer({
         await nativeOAuthDescriptors(piInstallation.sdkEntryPath),
       )
     : undefined,
-  newSessionDefaults: readNewSessionDefaults,
   distDir,
   staticAssetCacheDirs,
   shutdown: () => shutdown("authenticated host shutdown"),

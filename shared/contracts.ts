@@ -84,6 +84,7 @@ export interface ModelIdentity {
 export interface ModelOption extends ModelIdentity {
   name?: string;
   reasoning?: boolean;
+  virtual?: boolean;
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
 }
 
@@ -99,6 +100,7 @@ export interface NewSessionDefaults {
   cwd: string;
   model: ModelOption | null;
   thinkingLevel: ThinkingLevel;
+  warning?: string;
 }
 
 export function modelIdentityKey(
@@ -1122,6 +1124,8 @@ export interface ActiveSnapshot {
     sessionName?: string;
     cwd: string;
     model: unknown;
+    /** Read-only selection waits for native registration metadata. */
+    modelDiscovery?: "loading" | "unavailable";
     thinkingLevel: string;
     isStreaming: boolean;
     /** Stable identity of the assistant message whose Pi turn is currently
@@ -1182,8 +1186,9 @@ export interface BootstrapResponse {
   toolPresentations: ToolPresentationConfiguration;
   /** Invalid user declarations never replace shipped rules or block startup. */
   toolPresentationsWarning?: string;
-  /** Configured models are available before any session owns a Pi worker. */
+  /** Already-known choices; addressed model queries discover missing inventory. */
   availableModels: ModelOption[];
+  /** Failed discovery does not prevent opening retained transcripts. */
   snapshot: ActiveSnapshot;
 }
 

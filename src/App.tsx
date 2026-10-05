@@ -680,6 +680,7 @@ export function App() {
         sessionId: current.sessionId,
         cwd: current.cwd,
         model: current.model,
+        modelDiscovery: current.modelDiscovery,
         thinkingLevel: current.thinkingLevel,
         commands: [...current.commands],
       });

@@ -219,6 +219,31 @@ describe("model picker interaction", () => {
       expect(change).toHaveBeenCalledWith("fixture", "b");
     },
   );
+  it("shows an unavailable selection and refresh failure without claiming cached choices when discovery failed", async () => {
+    render(
+      <ModelSelector
+        value={null}
+        models={[]}
+        recent={[]}
+        onChange={vi.fn()}
+        refreshModels={async () => {
+          throw new Error("broken startup extension");
+        }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
+      "Model unavailable",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Model" }));
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Could not refresh models",
+      ),
+    );
+    expect(screen.getByRole("status")).not.toHaveTextContent("cached choices");
+    expect(screen.queryAllByRole("option")).toEqual([]);
+  });
+
   it("opens cached choices immediately, updates the same menu, and keeps cache usable after refresh failure", async () => {
     let complete!: () => void;
     const pending = new Promise<void>((resolve) => {

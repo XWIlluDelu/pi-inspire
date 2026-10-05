@@ -79,27 +79,28 @@ beforeAll(async () => {
           ],
         }),
       };
-    if (url.startsWith("/api/models"))
-      return { body: { models: store.getState().availableModels } };
     if (url.startsWith("/api/new-session/thinking")) {
       const query = new URL(url, "http://local").searchParams;
       return { body: { level: query.get("current") ?? "high" } };
     }
-    if (url.startsWith("/api/new-session/defaults")) {
+    if (url.startsWith("/api/models")) {
       const parsed = new URL(url, "http://local");
       defaultModelCwd = parsed.searchParams.get("cwd");
       return {
         body: {
-          cwd: defaultModelCwd,
-          model: defaultModelAvailable
-            ? {
-                provider: "anthropic",
-                id: "claude-sonnet-4",
-                name: "Claude Sonnet 4",
-                reasoning: true,
-              }
-            : null,
-          thinkingLevel: "high",
+          models: store.getState().availableModels,
+          defaults: {
+            cwd: defaultModelCwd,
+            model: defaultModelAvailable
+              ? {
+                  provider: "anthropic",
+                  id: "claude-sonnet-4",
+                  name: "Claude Sonnet 4",
+                  reasoning: true,
+                }
+              : null,
+            thinkingLevel: "high",
+          },
         },
       };
     }
@@ -495,11 +496,7 @@ describe("new-session start surface", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Start session" }));
     await waitFor(() =>
-      expect(newSessionBody).toEqual({
-        cwd: canonicalProjectCwd,
-        model: { provider: "anthropic", id: "claude-sonnet-4" },
-        thinkingLevel: "high",
-      }),
+      expect(newSessionBody).toEqual({ cwd: canonicalProjectCwd }),
     );
     await waitFor(() =>
       expect(promptBody).toMatchObject({

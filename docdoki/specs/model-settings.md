@@ -1,17 +1,17 @@
 ---
 purpose: Lightweight model configuration and provider authentication using Pi's native settings, models, and credential storage.
 covers:
-  - server/{model-settings*,model-catalog*,provider-auth*,app,index,runtime,runtime-worker-lifecycle}.ts
+  - server/{model-settings*,model-catalog*,model-metadata*,session-model-selection,session-projection,provider-auth*,app,index,runtime,runtime-worker-lifecycle}.ts
   - server/extensions/{inspire-branch-bridge,provider-auth-bridge}.ts
   - shared/{contracts,commands,model-settings,provider-auth-bridge}.ts
   - src/{App,api,app-state,store,model-options,use-modal-focus}.ts*
   - src/components/{Settings,SettingsControls,SettingsSection,ModelsSettings,ModelDeclarationForms,ProviderAuthentication,ModelSelector,ModelList,Composer,Welcome,CommandPalette,CommandHelp}.tsx
   - src/styles/model-settings.css
-  - tests/server/{model-settings,provider-auth,provider-auth-bridge.integration}.test.ts
+  - tests/server/{model-settings,model-catalog,model-metadata.integration,model-workflow.integration,session-model-selection,provider-auth,provider-auth-bridge.integration}.test.ts
   - tests/web/{model-settings,model-store,model-selector,modal-focus}.test.ts*
-  - tests/browser/model-settings*.spec.ts
+  - tests/browser/{model-settings*,model-workflow}.spec.ts
   - tests/browser/fixtures/model-scale.ts
-progress: done
+progress: in-progress
 ---
 
 # Model settings and authentication
@@ -87,6 +87,31 @@ The Models category contains three sections in this order:
   earlier work cannot delay or mutate a new owner. Do not add permanent arrow buttons or a new
   management page for cycling. Browser shortcuts must respect focused editors, menus, modals, and IME.
 
+## Native identity and startup discovery
+
+- Pi's selected model and the physical responder are different authorities. Picker selection,
+  thinking choices and New inheritance use the selected identity. Reply headers and Pi context/usage
+  retain the actual response semantics. A virtual routing entry remains selected after a physical
+  response; show a compact Router marker in model choices, not a second selector or route editor.
+- Live snapshots use the corresponding owned worker's selection, including after real branch
+  navigation whose effective leaf has not yet become the persisted tail. Without a worker, resolve
+  selection from the viewed branch using Pi's recovery rules and current registration metadata.
+  Pending or failed model discovery does not delay file-backed transcript opening; unresolved
+  selection is not inferred from the physical responder.
+- New distinguishes explicit choice, session inheritance and workspace default. Explicit/inherited
+  models retain the controls' effective thinking value, with manual changes taking precedence.
+  Workspace-default startup omits the model argument and, unless adjusted, thinking; Pi resolves
+  both. Do not make an incomplete preview override native defaults.
+- A single catalog query returns choices and startup defaults for the prospective project directory;
+  refreshes supersede older previews without replacing explicit or inherited selection. Include global and already-trusted project extension registrations as well as static
+  declarations. Use stored/inherited decisions and Pi's global default trust rule; fresh extension
+  trust decisions remain with normal Pi startup. Listing models does not approve a project.
+  Distinguish skipped project resources and failed discovery from an empty available list.
+- Discovery completes native registration before final default resolution. It does not create
+  persistent session records, emit session-start events or initiate an agent/model request. It uses
+  bounded native metadata initialization, not a permanently running discovery worker or an Inspire
+  model registry. Existing refresh and configuration/authentication changes refresh these results.
+
 ## Provider and model configuration
 
 - Provide graphical add/edit/remove for provider and model declarations in the installed Pi's
@@ -158,5 +183,7 @@ and draft preservation.
 The approved direction keeps configuration independent of login, routine choices compact, and
 remote-login guidance specific to methods with established support.
 [[follow-model-settings-auth-2026-10-02]] records implementation, verification and supported boundaries;
-[[follow-model-selection-2026-10-02]] records thinking transitions and non-interrupting catalog refresh. Related contracts:
+[[follow-model-selection-2026-10-02]] records thinking transitions and non-interrupting catalog refresh.
+[[follow-native-model-workflow-2026-10-05]] records selected-model recovery, startup discovery,
+nonblocking transcript access and New inheritance verification. Related contracts:
 [[interface-preferences]], [[composer]], and [[pi-integration]].

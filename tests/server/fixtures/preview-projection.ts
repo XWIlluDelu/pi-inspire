@@ -64,6 +64,10 @@ export class PreviewProjection
     return this.preview.model;
   }
 
+  selectedModel(): unknown {
+    return this.preview.model;
+  }
+
   get thinkingLevel(): string {
     return this.preview.thinkingLevel;
   }

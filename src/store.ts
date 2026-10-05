@@ -22,7 +22,6 @@ import {
   type LaunchPreference,
   type ModelOption,
   modelIdentityKey,
-  type NewSessionDefaults,
   type NewSessionOptions,
   type PalettePreference,
   type PendingRecovery,
@@ -894,6 +893,7 @@ export class AppStore {
       runtimeSettings: active?.runtimeSettings ?? null,
       cwd,
       model: (active?.model as AppState["model"]) ?? null,
+      modelDiscovery: active?.modelDiscovery ?? null,
       thinkingLevel:
         typeof active?.thinkingLevel === "string"
           ? active.thinkingLevel
@@ -2581,11 +2581,12 @@ export class AppStore {
   readNewSessionModels = async (
     sessionId?: string,
     cwd?: string,
+    inherit = false,
   ): Promise<ModelCatalogResponse> => {
     const api = this.api;
     const transport = this.transportGeneration;
     if (!api) throw new Error("The Host is unavailable");
-    const result = await api.refreshModels(sessionId, cwd);
+    const result = await api.refreshModels(sessionId, cwd, inherit);
     if (this.api !== api || this.transportGeneration !== transport)
       throw new Error("The Host connection changed");
     return result;
@@ -2608,13 +2609,6 @@ export class AppStore {
     if (this.api !== api || this.transportGeneration !== transport)
       throw new Error("The Host connection changed");
     return result.level;
-  };
-
-  resolveNewSessionDefaults = async (
-    cwd: string,
-  ): Promise<NewSessionDefaults> => {
-    if (!this.api) throw new Error("Not connected to the Inspire host");
-    return this.api.newSessionDefaults(cwd);
   };
 
   searchNewSessionProjectFiles = async (

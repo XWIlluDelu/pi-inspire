@@ -26,13 +26,14 @@ export function ModelSelector({
   models,
   recent,
   onChange,
-  emptyLabel = "No session model",
+  emptyLabel = "Model unavailable",
   disabled = false,
   openRequest,
   onOpenRequestHandled,
   refreshModels,
   common = EMPTY_IDENTITIES,
   onManageModels,
+  selectCurrent = false,
 }: {
   value: ModelOption | null;
   models: ModelOption[];
@@ -45,6 +46,7 @@ export function ModelSelector({
   refreshModels?: () => Promise<string | undefined>;
   common?: readonly ModelIdentity[];
   onManageModels?: () => void;
+  selectCurrent?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -95,7 +97,7 @@ export function ModelSelector({
       },
       () => {
         if (refreshGeneration.current === generation)
-          setRefreshStatus("Could not refresh models; showing cached choices");
+          setRefreshStatus("Could not refresh models");
       },
     );
     return () => {
@@ -126,7 +128,11 @@ export function ModelSelector({
   const pick = (model: ModelOption) => {
     setOpen(false);
     restoreTriggerFocus();
-    if (!value || modelIdentityKey(model) !== modelIdentityKey(value)) {
+    if (
+      selectCurrent ||
+      !value ||
+      modelIdentityKey(model) !== modelIdentityKey(value)
+    ) {
       const trigger = triggerRef.current;
       const selection = onChange(model.provider, model.id);
       const settled = () =>

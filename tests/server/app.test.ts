@@ -45,6 +45,12 @@ type DetailFrame = Record<string, unknown> & {
 
 const token = "test-local-token";
 const mockWorkspace = resolve("/home/demo/research");
+const fixtureModel = {
+  provider: "anthropic",
+  id: "claude-sonnet-4",
+  name: "Claude Sonnet 4",
+  reasoning: true,
+};
 
 describe("local host API", () => {
   let temporary: string;
@@ -128,23 +134,12 @@ describe("local host API", () => {
           },
         }),
       },
-      availableModels: async () => [
-        {
-          provider: "anthropic",
-          id: "claude-sonnet-4",
-          name: "Claude Sonnet 4",
-          reasoning: true,
-        },
-      ],
-      newSessionDefaults: async (cwd) => ({
-        cwd,
-        model: {
-          provider: "anthropic",
-          id: "claude-sonnet-4",
-          name: "Claude Sonnet 4",
-          reasoning: true,
-        },
-        thinkingLevel: "high",
+      bootstrapModels: () => [fixtureModel],
+      availableModels: async () => [fixtureModel],
+      modelMetadata: async (cwd) => ({
+        models: [fixtureModel],
+        virtualModels: [],
+        defaults: { cwd, model: fixtureModel, thinkingLevel: "high" },
       }),
       distDir: join(temporary, "missing-dist"),
       shutdown,
@@ -443,11 +438,11 @@ describe("local host API", () => {
     await writeFile(join(temporary, "app.ts"), "export {};\n");
 
     const defaults = await request(application.server)
-      .get("/api/new-session/defaults")
+      .get("/api/models")
       .query({ cwd: join(temporary, ".") })
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
-    expect(defaults.body).toEqual({
+    expect(defaults.body.defaults).toEqual({
       cwd: temporary,
       model: {
         provider: "anthropic",
@@ -470,7 +465,7 @@ describe("local host API", () => {
     });
 
     await request(application.server)
-      .get("/api/new-session/defaults")
+      .get("/api/models")
       .query({ cwd: join(temporary, "missing") })
       .set("Authorization", `Bearer ${token}`)
       .expect(400, { error: "Project path does not exist" });

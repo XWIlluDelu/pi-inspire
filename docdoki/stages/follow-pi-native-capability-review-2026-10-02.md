@@ -26,20 +26,20 @@ repairs and integration evidence.
 
 ## Implemented surfaces and evidence
 
-| Area | Current surface | Evidence |
-| --- | --- | --- |
-| Input and Pending | Send/Steer/Queue; complete text copying; Return/Stop recovery of original submitted images and text. | [[follow-pending-input-recovery-2026-10-02]] |
-| Files and images | Inline references preserve sentence position; ordinary uploaded copies have durable reference-based retention. | [[follow-file-input-lifecycle-2026-10-02]] |
-| Editing | Retained branch prompt history, tab-local text drafts and same-textarea overflow expansion. | [[follow-composer-editing-2026-10-02]] |
-| Commands | Ranked palette, draft-independent preparation, native argument assistance, export/download and help. The palette opens from the topbar or Ctrl/Command+K at every width. | [[follow-command-ux-2026-10-02]] |
-| Native shell | `!`/`!!` through Pi, independent shell activity, cancellation, retained output and full-log access. | [[follow-shell-input-2026-10-02]] |
-| Models and thinking | Native thinking transitions, non-interrupting catalog refresh, defaults/common scope, graphical declarations and provider credentials. Models, Login & API keys and Custom providers are separate Settings sections. | [[follow-model-selection-2026-10-02]], [[follow-model-settings-auth-2026-10-02]] |
-| Session discovery | Full retained user/assistant-text and ID search with Pi matching and keyboard result selection. | [[follow-session-search-2026-10-02]] |
-| History and copies | Inspect-first paging/search, explicit same-session continuation, optional native summaries and independent Fork/Clone. | [[follow-history-cloning-2026-10-02]] |
-| Compaction | Cooperative native cancellation, confirmed retirement for unresponsive cancellation, and read-only context detail. | [[follow-compaction-cancellation-2026-10-02]] |
-| Tool results | Persisted tool images and native full shell-output links use the shared authorized viewers. | [[follow-tool-result-resources-2026-10-03]] |
-| Extension interaction | Standard dialogs, retained deadlines, topbar status at every width, text widgets, custom-message projections and a runnable native-UI example. | [[follow-extension-ui-2026-10-03]], [[follow-intercom-message-card-2026-10-02]] |
-| Supporting tools | Existing Host/remote, optional Herdr, Files/Changes and project-terminal workflows; stale Git feedback and unavailable-Herdr enablement are corrected. | [[follow-existing-enhancement-review-2026-10-03]] |
+| Area                  | Current surface                                                                                                                                                                                                      | Evidence                                                                         |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Input and Pending     | Send/Steer/Queue; complete text copying; Return/Stop recovery of original submitted images and text.                                                                                                                 | [[follow-pending-input-recovery-2026-10-02]]                                     |
+| Files and images      | Inline references preserve sentence position; ordinary uploaded copies have durable reference-based retention.                                                                                                       | [[follow-file-input-lifecycle-2026-10-02]]                                       |
+| Editing               | Retained branch prompt history, tab-local text drafts and same-textarea overflow expansion.                                                                                                                          | [[follow-composer-editing-2026-10-02]]                                           |
+| Commands              | Ranked palette, draft-independent preparation, native argument assistance, export/download and help. The palette opens from the topbar or Ctrl/Command+K at every width.                                             | [[follow-command-ux-2026-10-02]]                                                 |
+| Native shell          | `!`/`!!` through Pi, independent shell activity, cancellation, retained output and full-log access.                                                                                                                  | [[follow-shell-input-2026-10-02]]                                                |
+| Models and thinking   | Native thinking transitions, non-interrupting catalog refresh, defaults/common scope, graphical declarations and provider credentials. Models, Login & API keys and Custom providers are separate Settings sections. | [[follow-model-selection-2026-10-02]], [[follow-model-settings-auth-2026-10-02]] |
+| Session discovery     | Full retained user/assistant-text and ID search with Pi matching and keyboard result selection.                                                                                                                      | [[follow-session-search-2026-10-02]]                                             |
+| History and copies    | Inspect-first paging/search, explicit same-session continuation, optional native summaries and independent Fork/Clone.                                                                                               | [[follow-history-cloning-2026-10-02]]                                            |
+| Compaction            | Cooperative native cancellation, confirmed retirement for unresponsive cancellation, and read-only context detail.                                                                                                   | [[follow-compaction-cancellation-2026-10-02]]                                    |
+| Tool results          | Persisted tool images and native full shell-output links use the shared authorized viewers.                                                                                                                          | [[follow-tool-result-resources-2026-10-03]]                                      |
+| Extension interaction | Standard dialogs, retained deadlines, topbar status at every width, text widgets, custom-message projections and a runnable native-UI example.                                                                       | [[follow-extension-ui-2026-10-03]], [[follow-intercom-message-card-2026-10-02]]  |
+| Supporting tools      | Existing Host/remote, optional Herdr, Files/Changes and project-terminal workflows; stale Git feedback and unavailable-Herdr enablement are corrected.                                                               | [[follow-existing-enhancement-review-2026-10-03]]                                |
 
 Contracts own the detailed behavior. [[follow-frontend-change-review-2026-10-03]] maps the current
 interface and browser evidence; the [command guide](../../docs/pi-commands.md) describes usage.
@@ -117,7 +117,15 @@ physical response: 1,010 / 16,000 tokens, then 2,010 / 64,000. Response costs su
 than the virtual catalog entry's zero price. Browser `/session` showed $0.043 after the reopened
 session's third response.
 
-### Confirmed adaptation defects — unrepaired
+### GUI adaptation — repaired 2026-10-05
+
+[[follow-native-model-workflow-2026-10-05]] repairs both findings below. Owned-worker selection now
+supplies picker/thinking/New; readonly recovery uses native branch semantics and registered virtual
+definitions. Startup discovery includes global and already-trusted project registrations through the
+released public SDK. Default startup lets Pi resolve its model; explicit/inherited choices remain
+explicit. Optional metadata does not block initial transcript/bootstrap delivery.
+
+### Pre-repair findings
 
 - **Selected identity becomes response identity.** After a reply the selector and `/session` identify
   the physical responder although Pi still selects the virtual model. Thinking choices then use the
@@ -133,11 +141,12 @@ session's third response.
 Repair direction: separate Pi's selected identity from the last physical response in snapshots,
 read-only projection and New inheritance. Use selection for picker/thinking and response data for
 context/usage. Startup discovery must account for the prospective project's registrations. No routing
-editor or second permanent selector is proposed. These defects remain backlog, separate from Codemode.
+editor or second permanent selector is added. This repair is independent of Codemode.
 
 Evidence: installed-Pi deterministic routing, native `get_state`/thinking levels versus Host snapshots,
-retained router entries, and Chromium cold-start/reopen/New/usage flows. `session-projection.ts` derives
-model identity from assistant responses; `runtime.ts::snapshotSlot` prefers that projection.
+retained router entries, and Chromium cold-start/reopen/New/usage flows. Before repair,
+`session-projection.ts` derived identity from assistant responses and `runtime.ts::snapshotSlot`
+preferred that projection.
 `model-catalog.ts` owns startup discovery; `Welcome.tsx` and `Composer.tsx` use the resulting identity.
 Per-model cost breakdown remains the optional disclosure above, not an incorrect-total finding.
 

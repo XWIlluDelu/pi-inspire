@@ -92,7 +92,11 @@ export function registerModelSettingsRoutes(
     runtime: RuntimeLike;
     modelSettings?: ModelSettingsService;
     providerAuth?: ProviderAuthService;
-    availableModels?: (refresh?: boolean) => Promise<ModelOption[]>;
+    invalidateModels?: () => void;
+    availableModels?: (
+      refresh?: boolean,
+      cwd?: string,
+    ) => Promise<ModelOption[]>;
   },
 ): void {
   async function context(query: unknown) {
@@ -114,7 +118,7 @@ export function registerModelSettingsRoutes(
       ? (
           (await deps.runtime.snapshot(sessionId)).active?.availableModels ?? []
         ).map((model) => modelOption(model as ModelOption))
-      : ((await deps.availableModels?.()) ?? []);
+      : ((await deps.availableModels?.(false, cwd)) ?? []);
     return deps.modelSettings.read(cwd, available);
   }
   app.get("/api/model-settings", async (request, response) => {
@@ -131,6 +135,7 @@ export function registerModelSettingsRoutes(
     const owner = await context(request.query);
     const before = await snapshot(request.query);
     await deps.modelSettings.savePreferences(body.revision, body.patch);
+    deps.invalidateModels?.();
     response.json(await savedSnapshot(owner.cwd, before.models));
   });
   app.patch("/api/model-settings/config", async (request, response) => {
@@ -146,6 +151,7 @@ export function registerModelSettingsRoutes(
       body.revision,
       body.edit as ModelConfigEdit,
     );
+    deps.invalidateModels?.();
     // Same worker, same extension overlays. A refresh failure does not undo a
     // successful file save or invite the browser to replay it.
     let warning: string | undefined;
@@ -153,7 +159,7 @@ export function registerModelSettingsRoutes(
     try {
       // Refresh the Host runtime too, so prospective-workspace reads see the
       // saved file. Session choices still belong to that session's live worker.
-      const hostModels = await deps.availableModels?.(true);
+      const hostModels = await deps.availableModels?.(true, owner.cwd);
       models = owner.sessionId
         ? (await deps.runtime.refreshModels(owner.sessionId)).models
         : (hostModels ?? []);
@@ -258,6 +264,7 @@ export function registerModelSettingsRoutes(
     if (attempt.state.status !== "pending" && attempt.endpoint === null) return;
     attempt.state = value as OwnedAttempt["state"];
     if (attempt.state.status !== "pending") {
+      if (attempt.state.status === "completed") deps.invalidateModels?.();
       attempt.endpoint = null;
       if (authOwners.get(attempt.state.provider) === attempt)
         authOwners.delete(attempt.state.provider);
@@ -341,6 +348,7 @@ export function registerModelSettingsRoutes(
             id: previous.state.id,
           });
         const result = await selected.request(operation);
+        if (operation.operation === "logout") deps.invalidateModels?.();
         if (operation.operation === "start") {
           const attempt = {
             state: result as OwnedAttempt["state"],

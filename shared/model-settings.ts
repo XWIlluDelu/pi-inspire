@@ -1,4 +1,9 @@
-import type { ModelIdentity, ModelOption, ThinkingLevel } from "./contracts.js";
+import type {
+  ModelIdentity,
+  ModelOption,
+  NewSessionDefaults,
+  ThinkingLevel,
+} from "./contracts.js";
 
 export interface ModelSettingsOwner {
   sessionId?: string;
@@ -15,6 +20,9 @@ export interface CommonModelOption extends ModelIdentity {
 }
 export interface ModelCatalogResponse {
   models: ModelOption[];
+  defaults?: NewSessionDefaults;
+  /** Addressed source selection, requested only for pending New inheritance. */
+  selection?: NewSessionDefaults;
   commonModels?: CommonModelOption[];
   warning?: string;
 }

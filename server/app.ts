@@ -25,7 +25,6 @@ import {
   MAX_SESSION_ID_CHARS,
   MAX_SESSION_ID_HYDRATION_IDS,
   MAX_SESSION_LIST_PAGE_SIZE,
-  type NewSessionDefaults,
   THINKING_LEVELS,
 } from "../shared/contracts.js";
 import type { HerdrEnhancementStatus } from "../shared/herdr.js";
@@ -215,9 +214,6 @@ const fileQuerySchema = z.object({
   sessionId: sessionIdField,
   q: z.string().max(200).default(""),
   limit: z.coerce.number().int().min(1).max(100).default(50),
-});
-const newSessionDefaultsQuerySchema = z.object({
-  cwd: z.string().min(1).max(4_096),
 });
 const newSessionFileQuerySchema = z.object({
   showHidden: showHiddenField,
@@ -430,11 +426,18 @@ interface AppDependencies {
   hostRestart?: import("./host-restart.js").HostRestartController;
   /** Effective-at-startup Herdr state; omitted when this Host has no enhancement integration. */
   getHerdrStatus?: () => Promise<HerdrEnhancementStatus>;
-  /** Browser-safe configured model metadata, available without a live worker. */
+  /** Already-known picker metadata; bootstrap never starts model discovery. */
+  bootstrapModels?: () => BootstrapResponse["availableModels"];
   availableModels?: (
     refresh?: boolean,
+    cwd?: string,
   ) => Promise<BootstrapResponse["availableModels"]>;
+  modelMetadata?: (
+    cwd: string,
+    refresh?: boolean,
+  ) => Promise<import("./model-metadata.js").ModelMetadata>;
   modelSettings?: ModelSettingsService;
+  invalidateModels?: () => void;
   providerAuth?: ProviderAuthService;
   /** Cached public-release observation; failures never block local work. */
   updateChecker?: UpdateCheckerLike;
@@ -443,8 +446,6 @@ interface AppDependencies {
   /** Shared update-state owner. Production supplies the persistent deployment
    * instance; internal hosts may use the in-memory checker fallback. */
   updateCoordinator?: UpdateCoordinatorLike;
-  /** Read-only Pi startup resolution for a canonical prospective workspace. */
-  newSessionDefaults?: (cwd: string) => Promise<NewSessionDefaults>;
   distDir?: string;
   /** Complete prior asset generations retained for already-open clients. */
   staticAssetCacheDirs?: readonly string[];
@@ -952,23 +953,17 @@ export function createInspireServer(deps: AppDependencies): {
 
   app.get("/api/bootstrap", async (request, response) => {
     const startedAt = performance.now();
-    const [
-      preferenceState,
-      toolPresentationState,
-      availableModels,
-      updateStatus,
-      snapshot,
-    ] = await Promise.all([
-      deps.preferences.inspect(),
-      deps.toolPresentations
-        ? deps.toolPresentations.inspect()
-        : Promise.resolve<ToolPresentationConfigurationState>({
-            configuration: emptyToolPresentationConfiguration(),
-          }),
-      deps.availableModels ? deps.availableModels() : Promise.resolve([]),
-      updateCoordinator.status(),
-      deps.runtime.snapshot(requestedDetail(request.query.detail)),
-    ]);
+    const [preferenceState, toolPresentationState, updateStatus, snapshot] =
+      await Promise.all([
+        deps.preferences.inspect(),
+        deps.toolPresentations
+          ? deps.toolPresentations.inspect()
+          : Promise.resolve<ToolPresentationConfigurationState>({
+              configuration: emptyToolPresentationConfiguration(),
+            }),
+        updateCoordinator.status(),
+        deps.runtime.snapshot(requestedDetail(request.query.detail)),
+      ]);
     const encodedSnapshot = JSON.stringify(snapshot);
     const body: BootstrapResponse = {
       appName: "inspire",
@@ -988,7 +983,7 @@ export function createInspireServer(deps: AppDependencies): {
       ...(toolPresentationState.warning
         ? { toolPresentationsWarning: toolPresentationState.warning }
         : {}),
-      availableModels,
+      availableModels: deps.bootstrapModels?.() ?? [],
       snapshot,
     };
     response.set(
@@ -1042,26 +1037,18 @@ export function createInspireServer(deps: AppDependencies): {
       await deps.runtime.newSession(cwd, { name, model, thinkingLevel }),
     );
   });
-  // These endpoints are read-only previews for the start surface. They neither
-  // create a session nor authorize later file reads; the resulting session
-  // worker and prompt boundary re-resolve the workspace and file references.
-  app.get("/api/new-session/defaults", async (request, response) => {
-    const { cwd } = newSessionDefaultsQuerySchema.parse(request.query);
-    const root = await resolveProjectDirectory(cwd);
-    if (!deps.newSessionDefaults) {
-      return response
-        .status(503)
-        .json({ error: "New-session model resolution is unavailable" });
-    }
-    response.json({ ...(await deps.newSessionDefaults(root)), cwd: root });
-  });
   registerModelSettingsRoutes(app, deps);
   app.get("/api/models", async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
-    const { sessionId, cwd: requestedCwd } = z
+    const {
+      sessionId,
+      cwd: requestedCwd,
+      inherit,
+    } = z
       .object({
         sessionId: sessionIdField.optional(),
         cwd: z.string().min(1).max(4_096).optional(),
+        inherit: z.literal("1").optional(),
       })
       .parse(request.query);
     const cwd = sessionId
@@ -1070,13 +1057,25 @@ export function createInspireServer(deps: AppDependencies): {
         ? await resolveProjectDirectory(requestedCwd)
         : process.cwd();
     const result = sessionId
-      ? await deps.runtime.refreshModels(sessionId)
-      : { models: (await deps.availableModels?.(true)) ?? [] };
+      ? await deps.runtime.refreshModels(sessionId, inherit === "1")
+      : deps.modelMetadata
+        ? await deps.modelMetadata(cwd!, true)
+        : { models: (await deps.availableModels?.(true, cwd!)) ?? [] };
+    const catalogCwd = sessionId ? deps.runtime.sessionCwd(sessionId) : cwd;
     const commonModels =
-      deps.modelSettings && cwd
-        ? (await deps.modelSettings.read(cwd, result.models)).commonModels
+      deps.modelSettings && catalogCwd
+        ? (await deps.modelSettings.read(catalogCwd, result.models))
+            .commonModels
         : [];
-    response.json({ ...result, commonModels });
+    response.json({
+      models: result.models,
+      ...("defaults" in result ? { defaults: result.defaults } : {}),
+      ...("selection" in result ? { selection: result.selection } : {}),
+      ...("warning" in result && result.warning
+        ? { warning: result.warning }
+        : {}),
+      commonModels,
+    });
   });
   app.get("/api/new-session/thinking", async (request, response) => {
     response.setHeader("Cache-Control", "no-store");

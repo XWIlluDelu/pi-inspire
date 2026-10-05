@@ -44,4 +44,4 @@ queued Fork and retained source validation. Delivery evidence: [[follow-addresse
 `RuntimeController.snapshot` reconstructs an absent or reclaimed slot through the catalog and
 `prepareSlot`, without selecting it or starting a worker. Inspecting only the lower-level read
 delegate once suggested a nonexistent reconnect gap. No additional browser reopen fallback was
-needed.
+needed. The distinction also applies to model discovery: [[model-discovery-ownership]].

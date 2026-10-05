@@ -16,7 +16,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { modelOption } from "../../server/model-catalog.js";
 import { ModelSettingsService } from "../../server/model-settings.js";
 import { registerModelSettingsRoutes } from "../../server/model-settings-routes.js";
-import { ModelRuntime } from "../../server/pi-runtime.js";
+import { ModelRuntime, ProjectTrustStore } from "../../server/pi-runtime.js";
+import {
+  ModelMetadataCatalog,
+  type ModelMetadata,
+} from "../../server/model-metadata.js";
 import type { RuntimeLike } from "../../server/runtime.js";
 
 let root: string;
@@ -198,7 +202,53 @@ describe("native model settings and declarations", () => {
         .enabledModels,
     ).toEqual(initialSettings.enabledModels);
   });
+  it("invalidates an in-flight workspace catalog after saving configuration through a session", async () => {
+    const metadata = (items: typeof models): ModelMetadata => ({
+      models: items,
+      virtualModels: [],
+      defaults: { cwd, model: items[0]!, thinkingLevel: "high" },
+    });
+    let release!: (value: ModelMetadata) => void;
+    const old = new Promise<ModelMetadata>((resolve) => {
+      release = resolve;
+    });
+    const query = vi
+      .fn()
+      .mockReturnValueOnce(old)
+      .mockResolvedValue(metadata([models[1]!]));
+    const catalog = new ModelMetadataCatalog(query);
+    const inFlight = catalog.read(cwd);
+    const runtime = {
+      sessionCwd: () => cwd,
+      snapshot: async () => ({ active: { availableModels: models } }),
+      refreshModels: async () => ({ models }),
+    } as unknown as RuntimeLike;
+    const app = express();
+    app.use(express.json());
+    registerModelSettingsRoutes(app, {
+      runtime,
+      modelSettings: service,
+      availableModels: async (refresh, target) =>
+        (await catalog.read(target!, refresh)).models,
+      invalidateModels: () => catalog.invalidate(),
+    });
+    const before = await service.read(cwd, models);
+    const saved = request(app)
+      .patch("/api/model-settings/config?sessionId=fixture")
+      .send({
+        revision: before.configRevision,
+        edit: { kind: "provider", id: "fixture", values: { apiKey: null } },
+      });
+    const response = saved.then((value) => value);
+    await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2));
+    expect((await response).status).toBe(200);
+    expect(catalog.peek(cwd)?.defaults.model?.id).toBe("first");
+    release(metadata(models));
+    await inFlight;
+    expect((await catalog.read(cwd)).defaults.model?.id).toBe("first");
+  });
   it("keeps saved defaults distinct from project precedence, per-model thinking and ordered native patterns", async () => {
+    new ProjectTrustStore(agent).set(cwd, true);
     await writeFile(
       join(cwd, ".pi", "settings.json"),
       JSON.stringify({

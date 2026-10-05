@@ -10,6 +10,7 @@ import {
   createAgentSession,
   DefaultResourceLoader,
   ModelRuntime,
+  ProjectTrustStore,
   SessionManager,
   SettingsManager,
 } from "../../server/pi-runtime.js";
@@ -31,6 +32,7 @@ it("matches native setModel configured precedence and capability clamping withou
   vi.stubEnv("PI_OFFLINE", "1");
   const cwd = join(root, "workspace");
   await mkdir(join(cwd, ".pi"), { recursive: true });
+  new ProjectTrustStore(root).set(cwd, true);
   const models = [
     {
       id: "extended",

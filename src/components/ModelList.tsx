@@ -469,6 +469,11 @@ export function ModelList({
                         <span className="model-picker__name-text">
                           {model.name ?? model.id}
                         </span>
+                        {model.virtual ? (
+                          <span className="model-picker__badge model-picker__badge--neutral">
+                            Router
+                          </span>
+                        ) : null}
                         {renderNameAction?.(model, index === active)}
                       </span>
                       <span className="model-picker__id">

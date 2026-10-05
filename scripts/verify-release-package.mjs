@@ -807,14 +807,14 @@ try {
   await waitForInstanceState(realEnvironment.INSPIRE_STATE_PATH);
   const headers = { Authorization: `Bearer ${token}` };
   const defaultsResponse = await fetch(
-    `${realOrigin}/api/new-session/defaults?cwd=${encodeURIComponent(canonicalWorkspace)}`,
+    `${realOrigin}/api/models?cwd=${encodeURIComponent(canonicalWorkspace)}`,
     { headers },
   );
   if (!defaultsResponse.ok)
     throw new Error(
       `Packaged model-default lookup failed with ${defaultsResponse.status}`,
     );
-  const defaults = await defaultsResponse.json();
+  const { defaults } = await defaultsResponse.json();
   if (!defaults.model?.provider || !defaults.model?.id)
     throw new Error("Packaged model-default lookup returned no model");
   const createResponse = await fetch(`${realOrigin}/api/sessions/new`, {

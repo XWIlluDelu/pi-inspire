@@ -155,6 +155,7 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   runtimeSettings: PiRuntimeSettings | null;
   cwd: string | null;
   model: ModelOption | null;
+  modelDiscovery: "loading" | "unavailable" | null;
   thinkingLevel: string;
   availableModels: ModelOption[];
   commonModels: import("../shared/model-settings").CommonModelOption[];
@@ -324,6 +325,7 @@ export function createInitialAppState(): AppState {
     runtimeSettings: null,
     cwd: null,
     model: null,
+    modelDiscovery: null,
     thinkingLevel: "medium",
     availableModels: [],
     commonModels: [],
