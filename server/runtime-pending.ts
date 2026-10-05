@@ -1,10 +1,34 @@
 import {
   MAX_PENDING_MESSAGES,
-  MAX_PENDING_PREVIEW_CHARS,
-  type PromptRequest,
+  type PendingInput,
   type PendingMessageSummary,
   type PendingQueues,
+  type PromptRequest,
 } from "../shared/contracts.js";
+import { pendingTextSummary } from "../shared/pending-preview.js";
+
+export interface PendingContentRow {
+  text: string;
+  imageCount?: number;
+  imageAttachmentIds?: string[];
+}
+export interface PendingContent {
+  steering: PendingContentRow[];
+  followUp: PendingContentRow[];
+}
+
+export function exactPendingInput(value: unknown): PendingInput | null {
+  if (!value || typeof value !== "object") return null;
+  const { steering, followUp } = value as Record<string, unknown>;
+  if (
+    !Array.isArray(steering) ||
+    !Array.isArray(followUp) ||
+    !steering.every((text) => typeof text === "string") ||
+    !followUp.every((text) => typeof text === "string")
+  )
+    return null;
+  return { steering: [...steering], followUp: [...followUp] };
+}
 
 export function mergePendingQueues(
   pi: PendingQueues,
@@ -16,9 +40,7 @@ export function mergePendingQueues(
       .filter((item) => item.behavior === mode)
       .map((item, index) => ({
         id: `host-${mode}-${index}`,
-        textPreview: item.message.slice(0, MAX_PENDING_PREVIEW_CHARS),
-        textLength: item.message.length,
-        textTruncated: item.message.length > MAX_PENDING_PREVIEW_CHARS,
+        ...pendingTextSummary(item.message),
       }));
   const steering = [...pi.steering, ...summarize("steer")];
   const followUp = [...pi.followUp, ...summarize("followUp")];
@@ -31,32 +53,56 @@ export function mergePendingQueues(
   };
 }
 
+export function pendingContentFromTexts(
+  steeringTexts: unknown,
+  followUpTexts: unknown,
+): PendingContent {
+  const rows = (values: unknown): PendingContentRow[] =>
+    Array.isArray(values)
+      ? values
+          .filter((text): text is string => typeof text === "string")
+          .map((text) => ({ text }))
+      : [];
+  return { steering: rows(steeringTexts), followUp: rows(followUpTexts) };
+}
+
+export function pendingQueuesFromContent(
+  content: PendingContent,
+  previousRevision: number,
+): PendingQueues {
+  let remaining = MAX_PENDING_MESSAGES;
+  const project = (rows: PendingContentRow[], kind: string) => {
+    const summaries: PendingMessageSummary[] = [];
+    for (const { text, imageCount, imageAttachmentIds } of rows) {
+      if (remaining === 0) break;
+      remaining -= 1;
+      summaries.push({
+        // Coordinates in the unconsumed view, not native Pi item identities.
+        id: `text-${kind}-${summaries.length}`,
+        ...pendingTextSummary(text),
+        ...(imageCount === undefined ? {} : { imageCount }),
+        ...(imageAttachmentIds === undefined ? {} : { imageAttachmentIds }),
+      });
+    }
+    return summaries;
+  };
+  const steering = project(content.steering, "steer");
+  const followUp = project(content.followUp, "followUp");
+  return {
+    revision: previousRevision + 1,
+    totalCount: content.steering.length + content.followUp.length,
+    steering,
+    followUp,
+  };
+}
+
 export function pendingQueuesFromTexts(
   steeringTexts: unknown,
   followUpTexts: unknown,
   previousRevision: number,
 ): PendingQueues {
-  let totalCount = 0;
-  let remaining = MAX_PENDING_MESSAGES;
-  const project = (values: unknown, kind: string) => {
-    const summaries: PendingMessageSummary[] = [];
-    if (!Array.isArray(values)) return summaries;
-    for (const text of values) {
-      if (typeof text !== "string") continue;
-      totalCount += 1;
-      if (remaining === 0) continue;
-      remaining -= 1;
-      summaries.push({
-        // Presentation coordinates only: public Pi supplies no item identity.
-        id: `text-${kind}-${summaries.length}`,
-        textPreview: text.slice(0, MAX_PENDING_PREVIEW_CHARS),
-        textLength: text.length,
-        textTruncated: text.length > MAX_PENDING_PREVIEW_CHARS,
-      });
-    }
-    return summaries;
-  };
-  const steering = project(steeringTexts, "steer");
-  const followUp = project(followUpTexts, "followUp");
-  return { revision: previousRevision + 1, totalCount, steering, followUp };
+  return pendingQueuesFromContent(
+    pendingContentFromTexts(steeringTexts, followUpTexts),
+    previousRevision,
+  );
 }

@@ -5,7 +5,7 @@ import { StrictMode, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { SettingsContent } from "../../src/components/Settings";
 import { SettingsDialog } from "../../src/components/SettingsDialog";
-import { useModalFocus } from "../../src/use-modal-focus";
+import { recoverModalFocus, useModalFocus } from "../../src/use-modal-focus";
 
 describe("modal focus ownership", () => {
   it("cycles Tab within a modal and restores its opener", async () => {
@@ -21,7 +21,7 @@ describe("modal focus ownership", () => {
     );
     const dialog = screen.getByRole("dialog", { name: "Settings" });
     const first = screen.getByRole("button", { name: "Close settings" });
-    const last = screen.getByRole("button", { name: "Restore defaults" });
+    const last = screen.getByRole("button", { name: "Reset preferences" });
     expect(document.activeElement).toBe(first);
 
     last.focus();
@@ -46,7 +46,7 @@ describe("modal focus ownership", () => {
     const user = userEvent.setup();
     render(
       <SettingsDialog onClose={onClose}>
-        <SettingsContent />
+        <SettingsContent initialCategory="conversation" />
       </SettingsDialog>,
     );
     const trigger = screen.getByRole("combobox", { name: "Activity groups" });
@@ -198,6 +198,63 @@ describe("modal focus ownership", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close inner" }));
     await Promise.resolve();
     expect(document.activeElement).toBe(opener);
+  });
+
+  it("recovers replaced controls without stealing focus from a newer modal", async () => {
+    function DeferredDialogs({
+      ready,
+      topOpen,
+    }: {
+      ready: boolean;
+      topOpen: boolean;
+    }) {
+      const outerRef = useModalFocus<HTMLDivElement>(true, "deferred");
+      const topRef = useModalFocus<HTMLDivElement>(topOpen, "newer");
+      return (
+        <>
+          <div
+            ref={outerRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Deferred"
+            tabIndex={-1}
+          >
+            <div key={ready ? "ready" : "loading"} ref={recoverModalFocus}>
+              <button type="button">{ready ? "Files" : "Close loading"}</button>
+            </div>
+          </div>
+          {topOpen ? (
+            <div
+              ref={topRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Newer"
+              tabIndex={-1}
+            >
+              <button type="button">Close newer</button>
+            </div>
+          ) : null}
+        </>
+      );
+    }
+
+    const opener = document.createElement("button");
+    document.body.append(opener);
+    opener.focus();
+    const view = render(<DeferredDialogs ready={false} topOpen={false} />);
+    expect(screen.getByRole("button", { name: "Close loading" })).toHaveFocus();
+    view.rerender(<DeferredDialogs ready topOpen={false} />);
+    expect(screen.getByRole("button", { name: "Files" })).toHaveFocus();
+    view.rerender(<DeferredDialogs ready topOpen />);
+    view.rerender(<DeferredDialogs ready={false} topOpen />);
+    expect(screen.getByRole("button", { name: "Close newer" })).toHaveFocus();
+    view.rerender(<DeferredDialogs ready={false} topOpen={false} />);
+    await Promise.resolve();
+    expect(screen.getByRole("button", { name: "Close loading" })).toHaveFocus();
+    view.unmount();
+    await Promise.resolve();
+    expect(opener).toHaveFocus();
+    opener.remove();
   });
 
   it("activates when a permanently mounted dialog appears later", () => {

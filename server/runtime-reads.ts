@@ -1,5 +1,3 @@
-import { requestError } from "./request-error.js";
-import { lastAssistantText } from "./assistant-text.js";
 import type {
   ActiveSnapshot,
   ComposerHistoryPage,
@@ -9,6 +7,8 @@ import type {
   UserTurnIndexPage,
   UserTurnTranscriptPage,
 } from "../shared/contracts.js";
+import { lastAssistantText } from "./assistant-text.js";
+import { requestError } from "./request-error.js";
 import type { ResourceContext } from "./resources.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 import type { SessionProjectionView } from "./session-projection.js";
@@ -193,7 +193,21 @@ export class RuntimeReadController {
       this.visibleProjection(slot, viewId, revision);
       await this.host.reconcileSlot(slot, false);
       const projection = this.visibleProjection(slot, viewId, revision);
-      return [...projection.viewMessages(this.host.effectiveLeaf(slot))];
+      const leaf = this.host.effectiveLeaf(slot);
+      // Context coordinates remain unchanged. History adds separately named,
+      // entry-bound images from retained USER prompts on this same branch.
+      return [
+        ...projection.viewMessages(leaf),
+        ...projection
+          .composerHistoryMessages(leaf)
+          .filter(
+            (message) =>
+              message &&
+              typeof message === "object" &&
+              typeof (message as Record<string, unknown>)
+                .__inspireHistoryEntryId === "string",
+          ),
+      ];
     });
   }
 

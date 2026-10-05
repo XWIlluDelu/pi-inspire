@@ -42,7 +42,7 @@ export function AttachmentList({
                 <ImagePreview
                   src={item.previewUrl}
                   className="image-preview--attachment"
-                  loading={item.status === "uploading"}
+                  loading={item.status === "uploading" || item.previewLoading}
                   error={item.error ?? null}
                 />
               )

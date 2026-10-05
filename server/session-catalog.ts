@@ -15,6 +15,8 @@ import {
   type SessionRecord,
 } from "./session-metadata.js";
 
+import { searchSessionRecords } from "./session-search.js";
+
 export type { SessionRecord } from "./session-metadata.js";
 
 const CACHE_MS = 5_000;
@@ -73,12 +75,15 @@ export interface SessionCatalogLike {
     query?: string;
     offset?: number;
     limit?: number;
+    signal?: AbortSignal;
   }): Promise<SessionListResponse>;
   listByIds(ids: readonly string[]): Promise<SessionSummary[]>;
   listByCwds(cwds: readonly string[]): Promise<SessionSummary[]>;
   invalidate(): void;
   /** Persist before Pi can create a session; mocks need no discovery index. */
   rememberProjectCwds?(cwds: readonly string[]): Promise<void>;
+  /** Complete configured storage roots, independent of curation/pagination. */
+  sessionDirectories?(): Promise<readonly (string | undefined)[]>;
 }
 
 export class SessionCatalog implements SessionCatalogLike {
@@ -136,6 +141,13 @@ export class SessionCatalog implements SessionCatalogLike {
     }
   }
 
+  async sessionDirectories(): Promise<readonly (string | undefined)[]> {
+    const seeds = [this.startupCwd, ...(await this.projectCwds())];
+    await this.projects?.remember(seeds);
+    const cwds = new Set([...seeds, ...((await this.projects?.read()) ?? [])]);
+    return [...new Set([...cwds].map(resolvePiSessionDirectory))];
+  }
+
   private loadGeneration(generation: number): Promise<void> {
     if (this.loading?.generation === generation) return this.loading.promise;
 
@@ -146,16 +158,8 @@ export class SessionCatalog implements SessionCatalogLike {
       if (predecessor) await predecessor.catch(() => undefined);
       if (generation !== this.generation) return;
 
-      const seeds = [this.startupCwd, ...(await this.projectCwds())];
-      await this.projects?.remember(seeds);
-      const cwds = new Set([
-        ...seeds,
-        ...((await this.projects?.read()) ?? []),
-      ]);
+      const directories = await this.sessionDirectories();
       if (generation !== this.generation) return;
-      const directories = [
-        ...new Set([...cwds].map(resolvePiSessionDirectory)),
-      ];
       const sessions = await this.metadata.list(directories);
       if (generation !== this.generation) return;
 
@@ -210,12 +214,17 @@ export class SessionCatalog implements SessionCatalogLike {
   }
 
   async list(
-    options: { query?: string; offset?: number; limit?: number } = {},
+    options: {
+      query?: string;
+      offset?: number;
+      limit?: number;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<SessionListResponse> {
     const sessions = (await this.refresh()).filter(
       (session) => !this.ambiguousIds.has(session.id),
     );
-    const query = options.query?.trim().toLowerCase().slice(0, 200) ?? "";
+    const query = options.query?.trim().slice(0, 200) ?? "";
     const requestedOffset = Number.isFinite(options.offset)
       ? Math.floor(options.offset!)
       : 0;
@@ -231,7 +240,7 @@ export class SessionCatalog implements SessionCatalogLike {
       Math.max(1, requestedLimit),
     );
     const filtered = query
-      ? sessions.filter((session) => session.searchText.includes(query))
+      ? await searchSessionRecords(sessions, query, options.signal)
       : sessions;
 
     return {

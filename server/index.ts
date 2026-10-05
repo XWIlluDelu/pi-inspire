@@ -37,10 +37,8 @@ import {
   MockGitInspection,
   MockRuntime,
 } from "./mock.js";
-import {
-  availableModelOptions,
-  resolveNewSessionDefaults,
-} from "./model-catalog.js";
+import { ModelMetadataCatalog } from "./model-metadata.js";
+import { ModelSettingsService } from "./model-settings.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
 import {
   DefaultPackageManager,
@@ -51,7 +49,10 @@ import {
 } from "./pi-runtime.js";
 import { PiUpdateChecker } from "./pi-update-checker.js";
 import { PreferencesStore } from "./preferences.js";
-import { requestError } from "./request-error.js";
+import {
+  nativeOAuthDescriptors,
+  ProviderAuthService,
+} from "./provider-auth.js";
 import { ResourceStore } from "./resources.js";
 import {
   RuntimeController,
@@ -196,6 +197,7 @@ void herdr.initialize();
 const attachments = new AttachmentStore();
 let catalog: SessionCatalogLike;
 let runtime: RuntimeLike;
+const modelMetadata = new ModelMetadataCatalog();
 if (mock) {
   catalog = new MockCatalog();
   runtime = new MockRuntime({ streamIntervalMs: mockStreamIntervalMs });
@@ -210,9 +212,11 @@ if (mock) {
     undefined,
     undefined,
     diagnostics,
-  ).on("worker_status", (rpc: PiRpcProcess, status: RuntimeWorkerStatus) => {
-    herdr.updateWorkerStatus(rpc, status);
-  });
+  )
+    .setModelMetadataCatalog(modelMetadata)
+    .on("worker_status", (rpc: PiRpcProcess, status: RuntimeWorkerStatus) => {
+      herdr.updateWorkerStatus(rpc, status);
+    });
 }
 const toolPresentations = new ToolPresentationConfigStore(
   process.env.INSPIRE_TOOL_PRESENTATIONS_PATH ||
@@ -248,30 +252,9 @@ const modelRuntime = mock
       );
       return null;
     });
-const readAvailableModels = async () => {
+const readAvailableModels = async (refresh = false, cwd = process.cwd()) => {
   if (mock) return structuredClone(MOCK_AVAILABLE_MODELS);
-  if (!modelRuntime) return [];
-  try {
-    return await availableModelOptions(modelRuntime);
-  } catch (error) {
-    console.error(
-      "Unable to refresh Pi's available models:",
-      error instanceof Error ? error.message : String(error),
-    );
-    return [];
-  }
-};
-const readNewSessionDefaults = async (cwd: string) => {
-  if (mock) {
-    return {
-      cwd,
-      model: structuredClone(MOCK_AVAILABLE_MODELS[0] ?? null),
-      thinkingLevel: "medium" as const,
-    };
-  }
-  if (!modelRuntime)
-    throw requestError("Pi's model catalog is unavailable", 503);
-  return resolveNewSessionDefaults(modelRuntime, cwd);
+  return (await modelMetadata.read(cwd, refresh)).models;
 };
 const maintenanceRestart = mock
   ? undefined
@@ -332,8 +315,43 @@ const application = createInspireServer({
     systemdRestartBackend(root, !mock && host === "127.0.0.1" && port === 4587),
   ),
   updateCoordinator,
+  bootstrapModels: () =>
+    mock
+      ? structuredClone(MOCK_AVAILABLE_MODELS)
+      : (modelMetadata.peek(process.cwd())?.models ?? []),
   availableModels: readAvailableModels,
-  newSessionDefaults: readNewSessionDefaults,
+  invalidateModels: () => modelMetadata.invalidate(),
+  modelMetadata: async (cwd: string, refresh?: boolean) =>
+    mock
+      ? {
+          models: structuredClone(MOCK_AVAILABLE_MODELS),
+          virtualModels: [],
+          defaults: {
+            cwd,
+            model: structuredClone(MOCK_AVAILABLE_MODELS[0] ?? null),
+            thinkingLevel: "medium" as const,
+          },
+        }
+      : modelMetadata.read(cwd, refresh),
+  modelSettings: mock ? undefined : new ModelSettingsService(),
+  providerAuth: modelRuntime
+    ? new ProviderAuthService(
+        modelRuntime,
+        () => {
+          const settings = SettingsManager.create(
+            root,
+            getAgentDir(),
+          ) as ReturnType<typeof SettingsManager.create> & {
+            getOrCreateDeviceId?: () => string;
+          };
+          if (!settings.getOrCreateDeviceId)
+            throw new Error("This Pi version does not require a device ID");
+          return settings.getOrCreateDeviceId();
+        },
+        undefined,
+        await nativeOAuthDescriptors(piInstallation.sdkEntryPath),
+      )
+    : undefined,
   distDir,
   staticAssetCacheDirs,
   shutdown: () => shutdown("authenticated host shutdown"),

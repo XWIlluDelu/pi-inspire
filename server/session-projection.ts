@@ -13,10 +13,14 @@ import type {
   SessionEntry,
   SessionHeader,
 } from "@earendil-works/pi-coding-agent";
+import { interruptAssistantToolCalls } from "../shared/assistant-stream.js";
 import {
+  type BranchEntryResponse,
+  type BranchTreeQuery,
   type BranchTreeResponse,
   type ComposerHistoryPage,
   MAX_SESSION_ID_CHARS,
+  type ModelOption,
   type ProjectionHealth,
   type TranscriptActivityKind,
   type TranscriptActivityPage,
@@ -27,8 +31,8 @@ import {
   type UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import { messageFallbackCorrelation } from "../shared/message-identity.js";
+import { resultChildCalls } from "../shared/tool-activity.js";
 import { userTurnSummary } from "../shared/user-turns.js";
-import { interruptAssistantToolCalls } from "../shared/assistant-stream.js";
 import {
   type ComposerHistoryFileNameResolver,
   projectComposerHistoryPage,
@@ -46,8 +50,19 @@ import { projectSafeValue } from "./safe-projection.js";
 import type { SessionRecord } from "./session-catalog.js";
 import { JsonlObjectDecoder } from "./session-jsonl.js";
 import {
+  appendModelSelection,
+  branchModelSelection,
+  type BranchModelSelection,
+  selectedBranchModel,
+} from "./session-model-selection.js";
+import {
+  BRANCH_CONTENT_PAGE_CHARS,
   BRANCH_TREE_MAX_BYTES,
+  boundedEditableText,
   boundedUserText,
+  branchEntryContent,
+  branchEntryText,
+  branchNode,
   projectSessionTree,
 } from "./session-tree.js";
 
@@ -89,7 +104,7 @@ interface Candidate {
   entries: SessionEntry[];
   entriesById: Map<string, SessionEntry>;
   messages: unknown[];
-  model: unknown;
+  modelSelection: BranchModelSelection;
   thinkingLevel: string;
   leafId: string | null;
 }
@@ -154,6 +169,7 @@ export interface SessionProjectionView {
   readonly health: ProjectionHealth;
   readonly messages: readonly unknown[];
   readonly model: unknown;
+  selectedModel(virtualModels: readonly ModelOption[]): unknown;
   readonly thinkingLevel: string;
   readonly leafId: string | null;
   readonly tailEntryId: string | null;
@@ -213,11 +229,25 @@ export interface SessionProjectionView {
     cwd?: string,
     fileNameForPath?: ComposerHistoryFileNameResolver,
   ): ComposerHistoryPage;
-  branchTree(effectiveLeafId?: string | null): BranchTreeResponse;
+  branchTree(
+    effectiveLeafId?: string | null,
+    query?: BranchTreeQuery,
+  ): BranchTreeResponse;
+  branchEntry(
+    id: string,
+    offset: number,
+    effectiveLeafId: string | null,
+  ): BranchEntryResponse;
+  branchImage(id: string, index: number): { data: Buffer; mimeType: string };
+  editableText(id: string, maxChars: number): string;
   entry(id: string): ProjectionEntryTarget | null;
+  /** Committed append suffix after an operation's admitted durable tail. */
+  entriesAfter(tailEntryId: string | null): readonly SessionEntry[];
   persistedEntryMatches(entry: SessionEntry): boolean;
   userText(id: string, maxChars: number): string;
   viewMessages(effectiveLeafId?: string | null): readonly unknown[];
+  /** Retained USER entries on this branch, independent of model compaction. */
+  composerHistoryMessages(effectiveLeafId?: string | null): readonly unknown[];
   reconcile(force?: boolean): Promise<ProjectionReconcileResult>;
   /** Host startup attestation only: reconcile while ordinary readers are suspended. */
   reconcileSuspended(force?: boolean): Promise<ProjectionReconcileResult>;
@@ -420,26 +450,16 @@ function appendContextMessages(
   return [...previous, ...appended];
 }
 
-function appendedContextSettings(
-  currentModel: unknown,
+function appendedThinkingLevel(
   currentThinkingLevel: string,
   entries: readonly SessionEntry[],
-): { model: unknown; thinkingLevel: string } {
-  let model = currentModel;
+): string {
   let thinkingLevel = currentThinkingLevel;
   for (const entry of entries) {
-    if (entry.type === "thinking_level_change") {
+    if (entry.type === "thinking_level_change")
       thinkingLevel = entry.thinkingLevel;
-    } else if (entry.type === "model_change") {
-      model = { provider: entry.provider, id: entry.modelId };
-    } else if (entry.type === "message" && entry.message.role === "assistant") {
-      model = {
-        provider: entry.message.provider,
-        id: entry.message.model,
-      };
-    }
   }
-  return { model, thinkingLevel };
+  return thinkingLevel;
 }
 
 function isLinearAppend(
@@ -456,9 +476,8 @@ function isLinearAppend(
 
 function changesComposerHistory(entry: SessionEntry): boolean {
   return (
-    (entry.type === "message" && entry.message.role === "user") ||
-    entry.type === "compaction" ||
-    entry.type === "branch_summary"
+    entry.type === "message" &&
+    (entry.message.role === "user" || entry.message.role === "bashExecution")
   );
 }
 
@@ -545,6 +564,15 @@ function boundedTranscriptItem(
     value && typeof value === "object" && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : null;
+  const calls =
+    sourceRecord?.role === "toolResult"
+      ? projectSafeValue(resultChildCalls(sourceRecord), {
+          depth: 12,
+          stringChars: 8_192,
+          arrayItems: 256,
+          objectEntries: 256,
+        })
+      : undefined;
   const identityMetadata = sourceRecord
     ? {
         ...(typeof sourceRecord.__inspireMessageId === "string"
@@ -580,6 +608,11 @@ function boundedTranscriptItem(
       ? {
           ...(projected as Record<string, unknown>),
           ...identityMetadata,
+          ...(calls ? { __inspireCalls: calls } : {}),
+          ...(sourceRecord?.role === "toolResult" &&
+          typeof sourceRecord.isError === "boolean"
+            ? { isError: sourceRecord.isError }
+            : {}),
           // Reduced item projections are replacements, not valid bases for
           // replaying the original un-clipped argument patch on a browser.
           ...(stringChars === 2_000
@@ -683,7 +716,7 @@ export function boundedTranscriptValue(value: unknown): unknown {
 function isVisibleTranscriptBoundary(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  if (record.role === "user") return true;
+  if (record.role === "user" || record.role === "bashExecution") return true;
   // Visible extension messages are context content, not lazily hidden tools.
   if (record.role === "custom") return record.display !== false;
   if (record.role !== "assistant") return false;
@@ -907,7 +940,10 @@ export class SessionProjection
   private currentFailureStatus: number | null = null;
   private currentFailureCode: string | undefined;
   private currentMessages: unknown[] = [];
-  private currentModel: unknown = null;
+  private currentModelSelection: BranchModelSelection = {
+    change: null,
+    fallback: null,
+  };
   private currentThinkingLevel = "off";
   private currentLeafId: string | null = null;
   private currentEntries: SessionEntry[] = [];
@@ -1022,7 +1058,10 @@ export class SessionProjection
     return this.currentMessages;
   }
   get model(): unknown {
-    return this.currentModel;
+    return this.currentModelSelection.fallback;
+  }
+  selectedModel(virtualModels: readonly ModelOption[]): unknown {
+    return selectedBranchModel(this.currentModelSelection, virtualModels);
   }
   get thinkingLevel(): string {
     return this.currentThinkingLevel;
@@ -1142,6 +1181,18 @@ export class SessionProjection
     };
   }
 
+  entriesAfter(tailEntryId: string | null): readonly SessionEntry[] {
+    const index =
+      tailEntryId === null
+        ? -1
+        : this.currentEntries.findLastIndex(
+            (entry) => entry.id === tailEntryId,
+          );
+    if (tailEntryId !== null && index < 0)
+      throw requestError("Session persistence boundary no longer exists", 409);
+    return this.currentEntries.slice(index + 1);
+  }
+
   persistedEntryMatches(entry: SessionEntry): boolean {
     const found = this.currentEntriesById.get(entry.id);
     return found !== undefined && samePersistedJson(found, entry);
@@ -1153,8 +1204,55 @@ export class SessionProjection
     return boundedUserText(entry, maxChars);
   }
 
+  editableText(id: string, maxChars: number): string {
+    const entry = this.currentEntriesById.get(id);
+    if (!entry) throw requestError("Branch target does not exist", 404);
+    return boundedEditableText(entry, maxChars);
+  }
+
+  branchEntry(
+    id: string,
+    offset: number,
+    effectiveLeafId: string | null,
+  ): BranchEntryResponse {
+    const entry = this.currentEntriesById.get(id);
+    if (!entry) throw requestError("History point no longer exists", 404);
+    const text = branchEntryText(entry, "separate");
+    if (offset > text.length)
+      throw requestError("History content offset is invalid", 400);
+    const end = Math.min(text.length, offset + BRANCH_CONTENT_PAGE_CHARS);
+    const content = branchEntryContent(entry);
+    const images = Array.isArray(content)
+      ? content.flatMap((block, index) =>
+          block.type === "image" ? [{ index, mimeType: block.mimeType }] : [],
+        )
+      : [];
+    return {
+      sessionId: this.sessionId,
+      revision: this.revision,
+      node: branchNode(entry, false, id === effectiveLeafId),
+      text: text.slice(offset, end),
+      totalChars: text.length,
+      nextOffset: end < text.length ? end : null,
+      images,
+    };
+  }
+
+  branchImage(id: string, index: number): { data: Buffer; mimeType: string } {
+    const entry = this.currentEntriesById.get(id);
+    const content = entry ? branchEntryContent(entry) : undefined;
+    const block = Array.isArray(content) ? content[index] : undefined;
+    if (block?.type !== "image")
+      throw requestError("History image no longer exists", 404);
+    return {
+      data: Buffer.from(block.data, "base64"),
+      mimeType: block.mimeType,
+    };
+  }
+
   branchTree(
     effectiveLeafId: string | null = this.currentLeafId,
+    query: BranchTreeQuery = {},
   ): BranchTreeResponse {
     if (
       effectiveLeafId !== null &&
@@ -1162,7 +1260,11 @@ export class SessionProjection
     ) {
       throw requestError("Effective branch leaf does not exist", 409);
     }
-    const tree = projectSessionTree(this.currentEntries, effectiveLeafId);
+    const tree = projectSessionTree(
+      this.currentEntries,
+      effectiveLeafId,
+      query,
+    );
     const response: BranchTreeResponse = {
       sessionId: this.sessionId,
       revision: this.revision,
@@ -1171,7 +1273,11 @@ export class SessionProjection
       effectiveLeafId,
       activePath: tree.activePath,
       nodes: tree.nodes,
+      ...(tree.leadingPrompt ? { leadingPrompt: tree.leadingPrompt } : {}),
       truncated: tree.truncated,
+      nextBefore: tree.nextBefore,
+      routeLeafId: tree.routeLeafId,
+      rootCount: tree.rootCount,
       health: this.health,
     };
     if (Buffer.byteLength(JSON.stringify(response)) > BRANCH_TREE_MAX_BYTES) {
@@ -1198,6 +1304,33 @@ export class SessionProjection
       effectiveLeafId,
       this.currentEntriesById,
     );
+  }
+
+  composerHistoryMessages(
+    effectiveLeafId: string | null = this.currentLeafId,
+  ): readonly unknown[] {
+    if (
+      effectiveLeafId !== null &&
+      !this.currentEntriesById.has(effectiveLeafId)
+    )
+      throw requestError("Effective branch leaf does not exist", 409);
+    const messages: unknown[] = [];
+    let id = effectiveLeafId;
+    while (id !== null) {
+      const entry = this.currentEntriesById.get(id)!;
+      if (
+        entry.type === "message" &&
+        (entry.message.role === "user" ||
+          entry.message.role === "bashExecution")
+      ) {
+        messages.push({
+          ...entry.message,
+          __inspireHistoryEntryId: entry.id,
+        });
+      }
+      id = entry.parentId;
+    }
+    return messages.reverse();
   }
 
   private resultObservation(): Pick<
@@ -1466,8 +1599,8 @@ export class SessionProjection
             candidate.leafId,
           );
         }
+        this.currentModelSelection = candidate.modelSelection;
         this.currentMessages = candidate.messages;
-        this.currentModel = candidate.model;
         this.currentThinkingLevel = candidate.thinkingLevel;
         this.currentLeafId = candidate.leafId;
         this.currentEntries = candidate.entries;
@@ -1669,7 +1802,7 @@ export class SessionProjection
       const entries = [...this.currentEntries, ...appendedEntries];
       const leafId = entries.at(-1)?.id ?? null;
       let messages = this.currentMessages;
-      let model = this.currentModel;
+      let modelSelection = this.currentModelSelection;
       let thinkingLevel = this.currentThinkingLevel;
       if (appendedEntries.length > 0) {
         if (isLinearAppend(this.currentLeafId, appendedEntries)) {
@@ -1677,17 +1810,18 @@ export class SessionProjection
             this.currentMessages,
             appendedEntries,
           );
-          ({ model, thinkingLevel } = appendedContextSettings(
-            this.currentModel,
+          modelSelection = appendModelSelection(
+            this.currentModelSelection,
+            appendedEntries,
+          );
+          thinkingLevel = appendedThinkingLevel(
             this.currentThinkingLevel,
             appendedEntries,
-          ));
+          );
         } else {
           const context = buildSessionContext(entries, leafId, entriesById);
           messages = contextMessages(entries, leafId, entriesById);
-          model = context.model
-            ? { provider: context.model.provider, id: context.model.modelId }
-            : null;
+          modelSelection = branchModelSelection(entriesById, leafId);
           thinkingLevel = context.thinkingLevel;
         }
       }
@@ -1714,7 +1848,7 @@ export class SessionProjection
         entries,
         entriesById,
         messages,
-        model,
+        modelSelection,
         thinkingLevel,
         leafId,
       };
@@ -1825,7 +1959,7 @@ export class SessionProjection
             entries: [],
             entriesById: new Map(),
             messages: [],
-            model: null,
+            modelSelection: { change: null, fallback: null },
             thinkingLevel: "off",
             leafId: null,
           };
@@ -1892,9 +2026,7 @@ export class SessionProjection
           entries,
           entriesById: byId,
           messages: contextMessages(entries, leafId, byId),
-          model: context.model
-            ? { provider: context.model.provider, id: context.model.modelId }
-            : null,
+          modelSelection: branchModelSelection(byId, leafId),
           thinkingLevel: context.thinkingLevel,
           leafId,
         };
@@ -2152,7 +2284,7 @@ export class SessionProjection
     fileNameForPath?: ComposerHistoryFileNameResolver,
   ): ComposerHistoryPage {
     return projectComposerHistoryPage(
-      this.viewMessages(effectiveLeafId),
+      this.composerHistoryMessages(effectiveLeafId),
       {
         sessionId: this.sessionId,
         revision: this.revision,

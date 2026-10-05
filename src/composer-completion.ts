@@ -1,9 +1,12 @@
 import { fuzzyFilter } from "@earendil-works/pi-tui";
 import {
+  nativeCommand,
   PI_NATIVE_COMMANDS,
   type PiNativeCommandExecution,
 } from "../shared/commands";
+import type { ModelOption } from "../shared/contracts";
 import type { ProjectFileResult } from "./api";
+import { supportedThinkingLevels } from "./model-options";
 
 export interface PiCommand {
   name: string;
@@ -26,7 +29,26 @@ const INSPIRE_COMMANDS: PiCommand[] = PI_NATIVE_COMMANDS.map((command) => ({
 
 export type CaretCompletion =
   | { kind: "file"; start: number; end: number; query: string }
-  | { kind: "command"; start: 0; end: number; query: string };
+  | { kind: "command"; start: 0; end: number; query: string }
+  | {
+      kind: "argument";
+      name: "model" | "thinking";
+      start: number;
+      end: number;
+      query: string;
+    };
+
+function referenceClosingQuote(value: string, start: number): number {
+  for (
+    let index = start;
+    index < value.length && value[index] !== "\n";
+    index++
+  ) {
+    if (value[index] === "\\") index++;
+    else if (value[index] === '"') return index;
+  }
+  return -1;
+}
 
 /** Parse only the token that owns the caret. File references begin at an `@`
  * preceded by whitespace (or the draft boundary) on the same line. Their
@@ -49,19 +71,53 @@ export function parseCaretCompletion(
         query: value.slice(1, point),
       };
     }
+    const argument = /^\/(model|thinking)[ \t]+/u.exec(value);
+    if (
+      argument &&
+      point >= argument[0].length &&
+      !/\s/u.test(value.slice(argument[0].length, point))
+    ) {
+      const start = argument[0].length;
+      let end = start;
+      while (end < value.length && !/\s/u.test(value[end]!)) end += 1;
+      if (point <= end)
+        return {
+          kind: "argument",
+          name: argument[1] as "model" | "thinking",
+          start,
+          end,
+          query: value.slice(start, point),
+        };
+    }
   }
 
   const lineStart = point === 0 ? 0 : value.lastIndexOf("\n", point - 1) + 1;
   let trigger = -1;
   for (let index = lineStart; index < point; index += 1) {
     if (value[index] !== "@") continue;
-    if (index === 0 || /\s/.test(value[index - 1]!)) trigger = index;
+    if (index !== 0 && !/\s/.test(value[index - 1]!)) continue;
+    if (value[index + 1] === '"') {
+      const close = referenceClosingQuote(value, index + 2);
+      if (close >= 0 && point > close) {
+        trigger = -1;
+        index = close;
+        continue;
+      }
+      trigger = index;
+      break;
+    }
+    trigger = index;
   }
   if (trigger < 0) return null;
-  const query = value.slice(trigger + 1, point);
+  const quoted = value[trigger + 1] === '"';
+  const queryStart = trigger + (quoted ? 2 : 1);
+  const closingQuote = quoted ? referenceClosingQuote(value, queryStart) : -1;
+  if (closingQuote >= 0 && point > closingQuote) return null;
+  const query = value.slice(queryStart, point);
   if (query.length > 200 || query.includes("\n")) return null;
   let end = point;
-  while (end < value.length && !/\s/.test(value[end]!)) end += 1;
+  if (quoted && closingQuote >= 0) end = closingQuote + 1;
+  else while (end < value.length && !/\s/.test(value[end]!)) end += 1;
   return { kind: "file", start: trigger, end, query };
 }
 
@@ -74,7 +130,87 @@ export function replaceCompletionToken(
   return { value: next, caret: token.start + replacement.length };
 }
 
-function fuzzyScore(haystackValue: string, needleValue: string): number | null {
+/** Keep a selected reference in the sentence rather than moving it to a chip.
+ * Quoted paths match Pi's @ completion; JSON escaping also keeps unusual names
+ * from introducing another line/token. Prospective-workspace paths are absolute
+ * so changing the start directory cannot reinterpret the inserted reference. */
+export function replaceFileCompletion(
+  value: string,
+  token: Pick<CaretCompletion, "start" | "end">,
+  file: ProjectFileResult,
+): { value: string; caret: number } {
+  const path = file.workspaceCwd
+    ? `${file.workspaceCwd.replace(/[\\/]+$/, "")}/${file.path}`
+    : file.path;
+  // The closing quote is a durable completion boundary, including after a
+  // draft reload. Moving the caret inside it still opens path editing.
+  const reference = `@${JSON.stringify(path)}`;
+  const delimiter = value[token.end];
+  const next = replaceCompletionToken(
+    value,
+    token,
+    `${reference}${delimiter && /\s/u.test(delimiter) ? "" : " "}`,
+  );
+  return delimiter && /[ \t]/u.test(delimiter)
+    ? { ...next, caret: next.caret + 1 }
+    : next;
+}
+
+interface CommandArgumentCandidate {
+  value: string;
+  hint?: string;
+}
+
+export function commandArgumentCandidates(
+  token: Extract<CaretCompletion, { kind: "argument" }>,
+  models: readonly ModelOption[],
+  activeModel: ModelOption | null,
+): CommandArgumentCandidate[] {
+  if (token.name === "thinking") {
+    if (activeModel?.reasoning === false) return [];
+    return fuzzyFilter(
+      supportedThinkingLevels(activeModel),
+      token.query,
+      (level) => level,
+    ).map((value) => ({ value }));
+  }
+  return fuzzyFilter(
+    [...models],
+    token.query,
+    (model) => `${model.provider}/${model.id} ${model.name ?? ""}`,
+  ).map((model) => ({
+    value: `${model.provider}/${model.id}`,
+    hint: model.name,
+  }));
+}
+
+export function commandUsageHint(
+  value: string,
+  includeNativeCommands = true,
+): string | null {
+  const match = /^\/([A-Za-z][A-Za-z0-9:_-]*)\s/u.exec(value);
+  if (!match) return null;
+  const command = nativeCommand(match[1]!);
+  if (
+    !command?.argumentHint ||
+    (!includeNativeCommands && command.name !== "compact")
+  )
+    return null;
+  const usage: Record<string, string> = {
+    model: "Choose a candidate or enter an exact provider/model.",
+    thinking: "Choose a level supported by the active model.",
+    name: "Enter a session name; omit it to show the current name.",
+    compact: "Optional instructions for the compaction summary.",
+    export:
+      "Omit the path for HTML. A .jsonl path exports only the current branch. Quote paths containing spaces.",
+  };
+  return `/${command.name} ${command.argumentHint} — ${usage[command.name] ?? command.description}${command.execution === "terminal" ? " (Terminal only)" : ""}`;
+}
+
+export function fuzzyScore(
+  haystackValue: string,
+  needleValue: string,
+): number | null {
   const haystack = haystackValue.toLocaleLowerCase();
   const needle = needleValue.trim().toLocaleLowerCase();
   if (!needle) return 0;

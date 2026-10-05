@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   CircleStop,
   CircleX,
+  Download,
   Info,
   Loader2,
   TerminalSquare,
@@ -86,6 +87,20 @@ export const CommandActivity = memo(function CommandActivity() {
                   </div>
                 ))}
               </dl>
+            ) : null}
+            {activity.download ? (
+              <button
+                type="button"
+                className="command-activity__action"
+                onClick={() =>
+                  void store.downloadCommandExport(
+                    activity.sessionId,
+                    activity.id,
+                  )
+                }
+              >
+                <Download size={13} aria-hidden /> Download
+              </button>
             ) : null}
             {activity.action ? (
               <button

@@ -36,6 +36,46 @@ function installDeferredBootstrapRoutes(...tokens: string[]) {
 }
 
 describe("websocket lifecycle", () => {
+  it("restores the owning Host's live child activity from an addressed snapshot", async () => {
+    installFetch(baseRoutes);
+    const { store, socket } = await initStore();
+    const toolActivity = {
+      parent: {
+        id: "parent",
+        name: "orchestrator",
+        phase: "running" as const,
+        calls: {
+          source: "nested" as const,
+          complete: true,
+          calls: [
+            {
+              key: "parent/1",
+              name: "read",
+              status: "running" as const,
+              arguments: { path: "a.txt" },
+            },
+          ],
+        },
+      },
+    };
+    socket.emit({
+      type: "snapshot",
+      detailSessionId: "s1",
+      detailRevision: 0,
+      data: activeSnapshot({
+        toolActivity,
+        isStreaming: true,
+      }),
+    });
+    expect(store.getState().tools).toEqual(toolActivity);
+    socket.emit({
+      type: "snapshot",
+      detailSessionId: "s1",
+      detailRevision: 0,
+      data: activeSnapshot(),
+    });
+    expect(store.getState().tools).toEqual({});
+  });
   it("commits selection interest on the existing socket and addresses resync and fallback bootstrap", async () => {
     const reads: string[] = [];
     installFetch((url, init) => {

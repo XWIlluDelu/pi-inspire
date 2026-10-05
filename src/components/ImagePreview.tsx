@@ -1,5 +1,6 @@
 import { AlertTriangle, Loader2, X } from "lucide-react";
 import {
+  createContext,
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
@@ -9,6 +10,12 @@ import {
 import { createPortal } from "react-dom";
 import { store } from "../store";
 import { useModalFocus } from "../use-modal-focus";
+
+export const EmbeddedImageOwnerContext = createContext<{
+  sessionId: string;
+  viewId: string;
+  projectionKey: string;
+} | null>(null);
 
 const IMAGE_ZOOM = 2;
 const PAN_THRESHOLD_PX = 6;
@@ -252,12 +259,14 @@ export function PersistedImage({
   viewId,
   projectionKey,
   reference,
+  alt = "Attached image",
   className = "image-preview--message",
 }: {
   sessionId: string;
   viewId: string;
   projectionKey: string;
   reference: string;
+  alt?: string;
   className?: string;
 }) {
   const [src, setSrc] = useState<string>();
@@ -298,6 +307,7 @@ export function PersistedImage({
   return (
     <ImagePreview
       src={src}
+      alt={alt}
       className={className}
       loading={!src && !error}
       error={error}

@@ -204,6 +204,7 @@ export class HerdrEnhancement {
     if (this.options.mock) {
       return {
         enabled,
+        ready: false,
         supported,
         installed: false,
         running: false,
@@ -214,6 +215,7 @@ export class HerdrEnhancement {
     }
     const probe = await this.client.probe();
     let scopeIssue: string | undefined;
+    let scopesAvailable = false;
     if (
       supported &&
       probe.installed &&
@@ -224,6 +226,7 @@ export class HerdrEnhancement {
         // Explicit availability inspection is current; worker starts reuse its
         // successful result, but still verify their own scope before grant.
         await this.checkWorkerScopes(true);
+        scopesAvailable = true;
       } catch (error) {
         scopeIssue =
           error instanceof Error
@@ -243,6 +246,7 @@ export class HerdrEnhancement {
       scopeIssue;
     return {
       enabled,
+      ready: this.initialized && !this.recoveryIssue && scopesAvailable,
       supported,
       installed: probe.installed,
       running: probe.running,

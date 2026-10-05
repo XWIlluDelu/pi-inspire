@@ -1,8 +1,41 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MockRuntime } from "../../server/mock.js";
+import { HISTORY_FIXTURE_SESSION_ID } from "../../server/mock-history.js";
+import { BRANCH_CONTENT_PAGE_CHARS } from "../../server/session-tree.js";
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("MockRuntime History reads", () => {
+  it("uses native content-block image coordinates and the shared detail page bound", async () => {
+    const runtime = new MockRuntime();
+    try {
+      const snapshot = await runtime.openSession(HISTORY_FIXTURE_SESSION_ID);
+      const request = {
+        sessionId: HISTORY_FIXTURE_SESSION_ID,
+        viewId: snapshot.active!.transcriptPage.viewId,
+        targetId: "history-u-0",
+      };
+      const detail = await runtime.branchEntry(request);
+      expect(detail.text).toBe(
+        "Compare the calibration strategies and retain the full measurement record.",
+      );
+      expect(detail.images).toEqual([{ index: 1, mimeType: "image/gif" }]);
+      expect(
+        (await runtime.branchImage(request, 1)).data.length,
+      ).toBeGreaterThan(0);
+      await expect(runtime.branchImage(request, 0)).rejects.toThrow("No image");
+      const response = await runtime.branchEntry({
+        ...request,
+        targetId: "history-a-0",
+      });
+      expect(response.text).toHaveLength(BRANCH_CONTENT_PAGE_CHARS);
+      expect(response.nextOffset).toBe(BRANCH_CONTENT_PAGE_CHARS);
+    } finally {
+      await runtime.close();
+    }
+  });
 });
 
 describe("MockRuntime concurrent sessions", () => {

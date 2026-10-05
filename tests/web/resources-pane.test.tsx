@@ -1160,7 +1160,9 @@ describe("Files pane", () => {
     const pane = await screen.findByRole("complementary", {
       name: "Context panel",
     });
-    expect(within(pane).getByRole("button", { name: "Source" })).toBeEnabled();
+    expect(
+      await within(pane).findByRole("button", { name: "Source" }),
+    ).toBeEnabled();
     expect(within(pane).getByAltText("diagram.svg")).toBeInTheDocument();
     fireEvent.click(within(pane).getByRole("button", { name: "Source" }));
     expect(

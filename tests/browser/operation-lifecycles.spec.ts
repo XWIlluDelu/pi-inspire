@@ -13,8 +13,7 @@ async function openTerminal(page: Page, pair: boolean) {
   }
   await expect(page.getByRole("main")).toBeVisible();
   const sessionTitle = page.getByRole("button", {
-    name: "Rename session",
-    exact: true,
+    name: /^Session actions:/,
   });
   if (
     !(await sessionTitle.isVisible()) ||

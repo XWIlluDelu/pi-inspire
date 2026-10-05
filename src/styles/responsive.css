@@ -116,10 +116,10 @@ body.srail-dragging {
     inset: 0;
     z-index: 39;
     border: 0;
-    background: color-mix(in srgb, var(--ink) 35%, transparent);
+    background: var(--bg-overlay);
     backdrop-filter: blur(2px);
     -webkit-backdrop-filter: blur(2px);
-    animation: overlay-in var(--dur-standard) var(--ease-standard);
+    animation: overlay-in var(--dur-panel) var(--ease-standard);
   }
 
   .nav {
@@ -176,15 +176,42 @@ body.srail-dragging {
 
   @keyframes nav-drawer-in {
     from {
-      transform: translateX(-12px);
-      opacity: 0;
+      transform: translateX(-100%);
     }
   }
 
   @keyframes resources-drawer-in {
     from {
-      transform: translateX(12px);
-      opacity: 0;
+      transform: translateX(100%);
+    }
+  }
+
+  .overlay.settings-overlay {
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    animation: none;
+  }
+
+  .settings-overlay::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: var(--bg-overlay);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    animation: overlay-in var(--dur-standard) var(--ease-standard);
+  }
+
+  .dialog.settings {
+    animation-name: settings-sheet-in;
+  }
+
+  @keyframes settings-sheet-in {
+    from {
+      transform: translateY(8px);
     }
   }
 
@@ -456,15 +483,14 @@ body.srail-dragging {
   }
 
   .topbar {
-    gap: var(--space-1);
     padding-inline: max(var(--space-2), var(--safe-left))
       max(var(--space-2), var(--safe-right));
   }
 
   .topbar .icon-button {
-    flex: 0 0 36px;
-    width: 36px;
-    height: 36px;
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
   }
 
   .token-gate {
@@ -495,11 +521,6 @@ body.srail-dragging {
     flex-wrap: wrap;
   }
 
-  .topbar__ident {
-    max-width: none;
-    min-width: 0;
-  }
-
   .topbar__title-button {
     max-width: 100%;
     overflow: hidden;
@@ -509,16 +530,6 @@ body.srail-dragging {
 
   .topbar__project {
     display: none;
-  }
-
-  .topbar__extension-status {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
   }
 
   /* Preserve workspace-change awareness without competing with the session
@@ -540,11 +551,6 @@ body.srail-dragging {
     display: none;
   }
 
-  .topbar__status {
-    gap: var(--space-1);
-    max-width: none;
-  }
-
   .topbar__status .chip {
     padding-inline: var(--space-1);
   }
@@ -560,7 +566,7 @@ body.srail-dragging {
   }
 
   .topbar__actions {
-    gap: 2px;
+    gap: 0;
   }
 
   .transcript {
@@ -746,10 +752,13 @@ body.srail-dragging {
     flex: 0 0 auto;
     border-right: 0;
     border-bottom: 1px solid var(--hairline);
-    padding: var(--space-2) 4px;
+    padding: var(--space-2) 12px;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
+    scroll-snap-type: x proximity;
+    mask-image: linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent);
+    -webkit-mask-image: linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent);
   }
 
   .settings__sidebar::-webkit-scrollbar {
@@ -766,11 +775,11 @@ body.srail-dragging {
   .settings__nav-item {
     width: auto;
     flex: 0 0 auto;
-    min-height: 36px;
     gap: 4px;
     padding: var(--space-1) var(--space-2);
     font-size: var(--text-xs);
     white-space: nowrap;
+    scroll-snap-align: nearest;
   }
 
   .settings__nav-item--active::before {
@@ -784,92 +793,38 @@ body.srail-dragging {
   }
 
   .settings__content {
-    padding: var(--space-3) var(--space-3) min(220px, 34vh);
-    gap: var(--space-4);
-  }
-
-  .settings__field,
-  .settings__field--stacked {
-    min-height: 0;
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-2);
-  }
-
-  .settings__field-control {
-    justify-content: flex-start;
-    width: 100%;
-  }
-
-  .settings__field--stacked .dropdown--field,
-  .settings__field--stacked .dropdown__trigger,
-  .settings__field-control .dropdown--field,
-  .settings__field-control .dropdown__trigger {
-    width: 100%;
-    flex-basis: auto;
-  }
-
-  .settings .dropdown--described .dropdown__menu {
-    left: 0;
-    right: auto;
-    width: 100%;
-    min-width: 100%;
+    padding: var(--space-3) var(--space-3) var(--space-5);
+    gap: var(--space-5);
   }
 
   .settings__field-help {
     max-width: none;
   }
 
-  .settings__update-entry {
-    padding: var(--space-3);
-  }
-
-  .settings__update-check {
-    min-height: 36px;
-  }
-
-  .settings__update-status-row {
-    grid-template-columns: 76px minmax(0, 1fr);
-    gap: var(--space-2);
-  }
-
-  .segmented {
-    width: 100%;
-    flex-wrap: wrap;
-    min-height: 38px;
-  }
-
-  .segmented__item,
-  .segmented button {
-    flex: 1 1 0;
-    justify-content: center;
-    min-height: 36px;
-  }
-
   .settings__footer {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 2px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
   }
 
   .settings__footer-status {
-    min-height: 24px;
-  }
-
-  .settings__footer-actions {
-    justify-content: flex-end;
-    flex-wrap: wrap;
+    min-height: 20px;
+    display: inline-flex;
+    align-items: center;
     gap: var(--space-2);
   }
 
-  .settings__footer-actions .button,
-  .settings__footer-actions button {
-    min-height: 36px;
+  .settings__install {
+    margin-left: auto;
   }
 
-  .settings__utility {
-    min-height: 36px;
+  .settings__footer-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
   }
 
   .palette {
@@ -899,6 +854,10 @@ body.srail-dragging {
 }
 
 @media (max-width: 420px) {
+  .settings__nav-icon {
+    display: none;
+  }
+
   .welcome__row-project {
     display: none;
   }

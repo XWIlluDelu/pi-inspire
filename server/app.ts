@@ -10,6 +10,10 @@ import express, {
 import multer from "multer";
 import { ZodError, z } from "zod";
 import {
+  COMPOSER_HISTORY_FILE_REFERENCE,
+  COMPOSER_HISTORY_IMAGE_REFERENCE,
+} from "../shared/composer-artifact-references.js";
+import {
   type BootstrapResponse,
   type GitDiffSide,
   MAX_ATTACHMENT_FILE_BYTES,
@@ -21,7 +25,6 @@ import {
   MAX_SESSION_ID_CHARS,
   MAX_SESSION_ID_HYDRATION_IDS,
   MAX_SESSION_LIST_PAGE_SIZE,
-  type NewSessionDefaults,
   THINKING_LEVELS,
 } from "../shared/contracts.js";
 import type { HerdrEnhancementStatus } from "../shared/herdr.js";
@@ -32,13 +35,16 @@ import {
 } from "../shared/resource-references.js";
 import { emptyToolPresentationConfiguration } from "../shared/tool-presentation-config.js";
 import type { AttachmentStore } from "./attachments.js";
+import { GeneratedExportStore } from "./generated-exports.js";
 import type { GitInspectionLike } from "./git-inspection.js";
 import { listHostDirectories, listHostRoots } from "./host-dirs.js";
 import type {
   MaintenanceRestartOutcome,
   MaintenanceRestartTransition,
 } from "./maintenance-restart.js";
+import { modelSwitchThinkingLevel } from "./model-catalog.js";
 import { resolveProjectDirectory } from "./paths.js";
+import { installedPiChangelog } from "./pi-changelog.js";
 import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
 import type { PreferencesStore } from "./preferences.js";
 import {
@@ -114,20 +120,10 @@ const promptSchema = z
         incarnation: z.string().min(1).max(240).nullable(),
         effectiveLeafId: z.string().min(1).max(240).nullable(),
         imageReferences: z
-          .array(
-            z
-              .string()
-              .max(80)
-              .regex(/^pi-embedded:\/\/\d+\/\d+$/),
-          )
+          .array(z.string().max(800).regex(COMPOSER_HISTORY_IMAGE_REFERENCE))
           .max(MAX_ATTACHMENTS),
         fileReferences: z
-          .array(
-            z
-              .string()
-              .max(80)
-              .regex(/^pi-file:\/\/\d+\/\d+$/),
-          )
+          .array(z.string().max(800).regex(COMPOSER_HISTORY_FILE_REFERENCE))
           .max(MAX_ATTACHMENTS + MAX_PROJECT_FILES),
       })
       .strict()
@@ -167,6 +163,14 @@ const runtimeDeliveryModeSchema = z
   })
   .strict();
 const clearPendingSchema = z.object({ sessionId: sessionIdField }).strict();
+const pendingReadSchema = z
+  .object({
+    sessionId: sessionIdField,
+    viewId: z.string().min(1).max(256),
+    revision: z.number().int().nonnegative(),
+    itemId: z.string().min(1).max(128).optional(),
+  })
+  .strict();
 const renameSchema = z.object({
   sessionId: sessionIdField,
   name: z.string().max(160),
@@ -210,9 +214,6 @@ const fileQuerySchema = z.object({
   sessionId: sessionIdField,
   q: z.string().max(200).default(""),
   limit: z.coerce.number().int().min(1).max(100).default(50),
-});
-const newSessionDefaultsQuerySchema = z.object({
-  cwd: z.string().min(1).max(4_096),
 });
 const newSessionFileQuerySchema = z.object({
   showHidden: showHiddenField,
@@ -329,13 +330,31 @@ const composerHistorySchema = z
       .optional(),
   })
   .strict();
-const branchTreeSchema = z.object({ sessionId: sessionIdField });
+const branchTreeSchema = z
+  .object({
+    sessionId: sessionIdField,
+    before: z.string().min(1).max(200).optional(),
+    query: z.string().max(2000).optional(),
+    leafId: z.string().min(1).max(200).optional(),
+    parentId: z.string().max(200).optional(),
+  })
+  .strict();
+const branchEntrySchema = z
+  .object({
+    sessionId: sessionIdField,
+    viewId: z.string().min(1).max(200),
+    targetId: z.string().min(1).max(200),
+    offset: z.coerce.number().int().min(0).optional(),
+  })
+  .strict();
 const branchNavigateSchema = z
   .object({
     sessionId: sessionIdField,
     revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
     targetId: z.string().min(1).max(200),
     mode: z.enum(["switch", "edit"]),
+    summarize: z.boolean().optional(),
+    customInstructions: z.string().max(2000).optional(),
   })
   .strict();
 const branchForkSchema = z
@@ -345,6 +364,9 @@ const branchForkSchema = z
     targetId: z.string().min(1).max(200),
   })
   .strict();
+const branchCloneSchema = branchForkSchema.extend({
+  targetId: z.string().min(1).max(200).optional(),
+});
 const gitStatusSchema = z.object({ sessionId: sessionIdField });
 const gitDiffSchema = z.object({
   sessionId: sessionIdField,
@@ -380,6 +402,10 @@ interface MaintenanceRestartLike {
   release(leaseId: string): MaintenanceRestartTransition;
 }
 
+import type { ModelSettingsService } from "./model-settings.js";
+import { registerModelSettingsRoutes } from "./model-settings-routes.js";
+import type { ProviderAuthService } from "./provider-auth.js";
+
 interface AppDependencies {
   /** An HTTP observation window, never a Pi operation deadline. */
   promptObservationWindowMs?: number;
@@ -400,8 +426,19 @@ interface AppDependencies {
   hostRestart?: import("./host-restart.js").HostRestartController;
   /** Effective-at-startup Herdr state; omitted when this Host has no enhancement integration. */
   getHerdrStatus?: () => Promise<HerdrEnhancementStatus>;
-  /** Browser-safe configured model metadata, available without a live worker. */
-  availableModels?: () => Promise<BootstrapResponse["availableModels"]>;
+  /** Already-known picker metadata; bootstrap never starts model discovery. */
+  bootstrapModels?: () => BootstrapResponse["availableModels"];
+  availableModels?: (
+    refresh?: boolean,
+    cwd?: string,
+  ) => Promise<BootstrapResponse["availableModels"]>;
+  modelMetadata?: (
+    cwd: string,
+    refresh?: boolean,
+  ) => Promise<import("./model-metadata.js").ModelMetadata>;
+  modelSettings?: ModelSettingsService;
+  invalidateModels?: () => void;
+  providerAuth?: ProviderAuthService;
   /** Cached public-release observation; failures never block local work. */
   updateChecker?: UpdateCheckerLike;
   /** Read-only Pi and configured-package update observation. */
@@ -409,8 +446,6 @@ interface AppDependencies {
   /** Shared update-state owner. Production supplies the persistent deployment
    * instance; internal hosts may use the in-memory checker fallback. */
   updateCoordinator?: UpdateCoordinatorLike;
-  /** Read-only Pi startup resolution for a canonical prospective workspace. */
-  newSessionDefaults?: (cwd: string) => Promise<NewSessionDefaults>;
   distDir?: string;
   /** Complete prior asset generations retained for already-open clients. */
   staticAssetCacheDirs?: readonly string[];
@@ -612,6 +647,7 @@ export function createInspireServer(deps: AppDependencies): {
   close: () => Promise<void>;
 } {
   const app = express();
+  const generatedExports = new GeneratedExportStore();
   // HTTP production behavior belongs to this application, not NODE_ENV:
   // changing the process environment also changes Pi and every tool it spawns.
   app.set("env", "production");
@@ -917,23 +953,17 @@ export function createInspireServer(deps: AppDependencies): {
 
   app.get("/api/bootstrap", async (request, response) => {
     const startedAt = performance.now();
-    const [
-      preferenceState,
-      toolPresentationState,
-      availableModels,
-      updateStatus,
-      snapshot,
-    ] = await Promise.all([
-      deps.preferences.inspect(),
-      deps.toolPresentations
-        ? deps.toolPresentations.inspect()
-        : Promise.resolve<ToolPresentationConfigurationState>({
-            configuration: emptyToolPresentationConfiguration(),
-          }),
-      deps.availableModels ? deps.availableModels() : Promise.resolve([]),
-      updateCoordinator.status(),
-      deps.runtime.snapshot(requestedDetail(request.query.detail)),
-    ]);
+    const [preferenceState, toolPresentationState, updateStatus, snapshot] =
+      await Promise.all([
+        deps.preferences.inspect(),
+        deps.toolPresentations
+          ? deps.toolPresentations.inspect()
+          : Promise.resolve<ToolPresentationConfigurationState>({
+              configuration: emptyToolPresentationConfiguration(),
+            }),
+        updateCoordinator.status(),
+        deps.runtime.snapshot(requestedDetail(request.query.detail)),
+      ]);
     const encodedSnapshot = JSON.stringify(snapshot);
     const body: BootstrapResponse = {
       appName: "inspire",
@@ -953,7 +983,7 @@ export function createInspireServer(deps: AppDependencies): {
       ...(toolPresentationState.warning
         ? { toolPresentationsWarning: toolPresentationState.warning }
         : {}),
-      availableModels,
+      availableModels: deps.bootstrapModels?.() ?? [],
       snapshot,
     };
     response.set(
@@ -965,7 +995,22 @@ export function createInspireServer(deps: AppDependencies): {
 
   app.get("/api/sessions", async (request, response) => {
     const { q, offset, limit } = sessionQuerySchema.parse(request.query);
-    response.json(await deps.catalog.list({ query: q, offset, limit }));
+    const observer = new AbortController();
+    const cancel = () => observer.abort();
+    response.once("close", cancel);
+    try {
+      const page = await deps.catalog.list({
+        query: q,
+        offset,
+        limit,
+        signal: observer.signal,
+      });
+      if (!observer.signal.aborted) response.json(page);
+    } catch (error) {
+      if (!observer.signal.aborted) throw error;
+    } finally {
+      response.off("close", cancel);
+    }
   });
   app.post("/api/sessions/refresh", async (_request, response) => {
     await deps.catalog.refresh(true);
@@ -992,18 +1037,65 @@ export function createInspireServer(deps: AppDependencies): {
       await deps.runtime.newSession(cwd, { name, model, thinkingLevel }),
     );
   });
-  // These endpoints are read-only previews for the start surface. They neither
-  // create a session nor authorize later file reads; the resulting session
-  // worker and prompt boundary re-resolve the workspace and file references.
-  app.get("/api/new-session/defaults", async (request, response) => {
-    const { cwd } = newSessionDefaultsQuerySchema.parse(request.query);
-    const root = await resolveProjectDirectory(cwd);
-    if (!deps.newSessionDefaults) {
-      return response
-        .status(503)
-        .json({ error: "New-session model resolution is unavailable" });
-    }
-    response.json({ ...(await deps.newSessionDefaults(root)), cwd: root });
+  registerModelSettingsRoutes(app, deps);
+  app.get("/api/models", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    const {
+      sessionId,
+      cwd: requestedCwd,
+      inherit,
+    } = z
+      .object({
+        sessionId: sessionIdField.optional(),
+        cwd: z.string().min(1).max(4_096).optional(),
+        inherit: z.literal("1").optional(),
+      })
+      .parse(request.query);
+    const cwd = sessionId
+      ? deps.runtime.sessionCwd(sessionId)
+      : requestedCwd
+        ? await resolveProjectDirectory(requestedCwd)
+        : process.cwd();
+    const result = sessionId
+      ? await deps.runtime.refreshModels(sessionId, inherit === "1")
+      : deps.modelMetadata
+        ? await deps.modelMetadata(cwd!, true)
+        : { models: (await deps.availableModels?.(true, cwd!)) ?? [] };
+    const catalogCwd = sessionId ? deps.runtime.sessionCwd(sessionId) : cwd;
+    const commonModels =
+      deps.modelSettings && catalogCwd
+        ? (await deps.modelSettings.read(catalogCwd, result.models))
+            .commonModels
+        : [];
+    response.json({
+      models: result.models,
+      ...("defaults" in result ? { defaults: result.defaults } : {}),
+      ...("selection" in result ? { selection: result.selection } : {}),
+      ...("warning" in result && result.warning
+        ? { warning: result.warning }
+        : {}),
+      commonModels,
+    });
+  });
+  app.get("/api/new-session/thinking", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    const query = z
+      .object({
+        cwd: z.string().min(1).max(4_096),
+        provider: z.string().min(1).max(256),
+        modelId: z.string().min(1).max(512),
+        current: z.enum(THINKING_LEVELS),
+      })
+      .parse(request.query);
+    const cwd = await resolveProjectDirectory(query.cwd);
+    response.json({
+      level: modelSwitchThinkingLevel(
+        cwd,
+        query.provider,
+        query.modelId,
+        query.current,
+      ),
+    });
   });
   app.get("/api/new-session/files", async (request, response) => {
     const { cwd, q, limit, showHidden } = newSessionFileQuerySchema.parse(
@@ -1095,6 +1187,14 @@ export function createInspireServer(deps: AppDependencies): {
       response.json({ attachments: await deps.attachments.addMany(files) });
     },
   );
+  app.get("/api/attachments/:id/image", async (request, response) => {
+    const image = await deps.attachments.imagePreview(
+      attachmentIdSchema.parse(request.params.id),
+    );
+    response.setHeader("Cache-Control", "no-store");
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.type(image.mimeType).send(image.bytes);
+  });
   app.delete("/api/attachments/:id", async (request, response) => {
     await deps.attachments.remove(attachmentIdSchema.parse(request.params.id));
     response.json({ ok: true });
@@ -1194,16 +1294,106 @@ export function createInspireServer(deps: AppDependencies): {
       .status(202)
       .json(await observePrompt(operationId, operation, response));
   });
-  app.post("/api/control/native-command", async (request, response) => {
+  app.get("/api/pi/changelog", async (_request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json(await installedPiChangelog());
+  });
+  app.post("/api/sessions/export", async (request, response) => {
+    const { sessionId, format } = z
+      .object({
+        sessionId: sessionIdField,
+        format: z.enum(["html", "jsonl"]),
+      })
+      .parse(request.body);
     response.setHeader("Cache-Control", "no-store");
     response.json(
-      await deps.runtime.nativeCommand(nativeCommandSchema.parse(request.body)),
+      await generatedExports.create(sessionId, format, (path) =>
+        deps.runtime.nativeCommand({
+          sessionId,
+          command: "export",
+          argument: `"${path}"`,
+        }),
+      ),
     );
+  });
+  app.get(
+    "/api/sessions/:sessionId/exports/:exportId",
+    async (request, response, next) => {
+      const file = await generatedExports.get(
+        sessionIdField.parse(request.params.sessionId),
+        z.string().uuid().parse(request.params.exportId),
+      );
+      response.download(
+        file.path,
+        file.fileName,
+        {
+          headers: {
+            "Cache-Control": "no-store",
+            "Content-Type": "application/octet-stream",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox",
+          },
+        },
+        (error) => {
+          if (error) next(error);
+        },
+      );
+    },
+  );
+  app.post("/api/control/native-command", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    const command = nativeCommandSchema.parse(request.body);
+    const result = await deps.runtime.nativeCommand(command);
+    if (result.export) {
+      try {
+        Object.assign(
+          result.export,
+          await generatedExports.add(
+            command.sessionId,
+            result.export.path,
+            result.export.format,
+          ),
+        );
+      } catch (error) {
+        result.details = [
+          ...(result.details ?? []),
+          {
+            label: "Download unavailable",
+            value:
+              error instanceof Error
+                ? error.message
+                : "Export again to download",
+          },
+        ];
+      }
+    }
+    response.json(result);
   });
   app.post("/api/control/abort", async (request, response) => {
     const { sessionId } = abortSchema.parse(request.body);
-    await deps.runtime.abort(sessionId);
-    response.json({ ok: true });
+    response.setHeader("Cache-Control", "no-store");
+    const recovered = await deps.runtime.abort(sessionId);
+    response.json({
+      ...recovered,
+      ...(recovered.attachments?.length ? { authorityId } : {}),
+    });
+  });
+  app.post("/api/pending/text", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json({
+      text: await deps.runtime.pendingText(
+        pendingReadSchema.parse(request.body),
+      ),
+    });
+  });
+  app.post("/api/pending/recover", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    const { sessionId } = clearPendingSchema.parse(request.body);
+    const recovered = await deps.runtime.recoverPending(sessionId);
+    response.json({
+      ...recovered,
+      ...(recovered.attachments?.length ? { authorityId } : {}),
+    });
   });
   app.post("/api/pending/clear", async (request, response) => {
     const { sessionId } = clearPendingSchema.parse(request.body);
@@ -1481,8 +1671,34 @@ export function createInspireServer(deps: AppDependencies): {
     response.json(await deps.runtime.composerHistory(sessionId, start));
   });
   app.get("/api/branches/tree", async (request, response) => {
-    const { sessionId } = branchTreeSchema.parse(request.query);
-    response.json(await deps.runtime.branchTree(sessionId));
+    const { sessionId, ...query } = branchTreeSchema.parse(request.query);
+    response.json(await deps.runtime.branchTree(sessionId, query));
+  });
+  app.get("/api/branches/entry", async (request, response) => {
+    response.json(
+      await deps.runtime.branchEntry(branchEntrySchema.parse(request.query)),
+    );
+  });
+  app.get("/api/branches/image", async (request, response) => {
+    const { index, ...query } = request.query;
+    const image = await deps.runtime.branchImage(
+      branchEntrySchema.parse(query),
+      z.coerce.number().int().min(0).parse(index),
+    );
+    response.setHeader("Cache-Control", "private, no-store");
+    response.type(
+      ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
+        image.mimeType,
+      )
+        ? image.mimeType
+        : "application/octet-stream",
+    );
+    response.send(image.data);
+  });
+  app.post("/api/branches/clone", async (request, response) => {
+    response.json(
+      await deps.runtime.cloneBranch(branchCloneSchema.parse(request.body)),
+    );
   });
   app.post("/api/branches/navigate", async (request, response) => {
     response.json(
@@ -1565,7 +1781,7 @@ export function createInspireServer(deps: AppDependencies): {
     );
     app.get("*path", (_request, response) => {
       response.set("Cache-Control", "no-cache");
-      response.sendFile(resolve(distDir, "index.html"));
+      response.sendFile("index.html", { root: distDir });
     });
   }
 
@@ -1660,6 +1876,10 @@ export function createInspireServer(deps: AppDependencies): {
         () => ({ status: "fulfilled" as const }),
         (reason: unknown) => ({ status: "rejected" as const, reason }),
       );
+      const exportResult = await generatedExports.close().then(
+        () => ({ status: "fulfilled" as const }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
       const attachmentResult = await deps.attachments.close().then(
         () => ({ status: "fulfilled" as const }),
         (reason: unknown) => ({ status: "rejected" as const, reason }),
@@ -1673,6 +1893,7 @@ export function createInspireServer(deps: AppDependencies): {
         drainedResult,
         terminalResult,
         resourceResult,
+        exportResult,
         attachmentResult,
         updateResult,
       ]

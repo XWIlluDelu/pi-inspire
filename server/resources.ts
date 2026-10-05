@@ -1,4 +1,3 @@
-import { requestError } from "./request-error.js";
 import { randomUUID } from "node:crypto";
 import { type BigIntStats, constants } from "node:fs";
 import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
@@ -12,6 +11,10 @@ import {
   sep,
 } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  COMPOSER_HISTORY_IMAGE_REFERENCE,
+  composerArtifactReference,
+} from "../shared/composer-artifact-references.js";
 import {
   MAX_PROMPT_IMAGE_BYTES,
   type ResourceDescriptor,
@@ -34,9 +37,10 @@ import {
 } from "./image-content.js";
 import { escapesBase } from "./paths.js";
 import {
-  workspaceBasenameMatches,
   invalidateProjectFiles,
+  workspaceBasenameMatches,
 } from "./project-files.js";
+import { requestError } from "./request-error.js";
 
 interface ResourceContextIdentity {
   sessionId: string;
@@ -410,9 +414,6 @@ function embeddedCitations(messages: unknown[]): Map<string, EmbeddedCitation> {
     if (!message || typeof message !== "object") return;
     const record = message as Record<string, unknown>;
     if (record.display === false || !Array.isArray(record.content)) return;
-    const persistedIndex = Number.isSafeInteger(record.__inspireMessageIndex)
-      ? Number(record.__inspireMessageIndex)
-      : messageIndex;
     record.content.forEach((part, partIndex) => {
       if (!part || typeof part !== "object") return;
       const image = part as Record<string, unknown>;
@@ -425,12 +426,15 @@ function embeddedCitations(messages: unknown[]): Map<string, EmbeddedCitation> {
       if (!isSupportedPromptImageMimeType(image.mimeType)) return;
       const size = canonicalBase64DecodedSize(image.data);
       if (size === null || size === 0 || size > MAX_PROMPT_IMAGE_BYTES) return;
-      embedded.set(`pi-embedded://${persistedIndex}/${partIndex}`, {
-        messageIndex,
-        partIndex,
-        mimeType: image.mimeType,
-        size,
-      });
+      embedded.set(
+        composerArtifactReference("image", record, messageIndex, partIndex),
+        {
+          messageIndex,
+          partIndex,
+          mimeType: image.mimeType,
+          size,
+        },
+      );
     });
   });
   return embedded;
@@ -440,7 +444,17 @@ function buildCitationIndex(
   context: ResourceContext,
   messages: unknown[],
 ): ResourceCitationIndex {
-  const resources = collectSessionResourceReferences(messages);
+  // Retained history images are recall/preview authority, not additional
+  // visible transcript resources or external-path citations.
+  const resources = collectSessionResourceReferences(
+    messages.filter(
+      (message) =>
+        !message ||
+        typeof message !== "object" ||
+        typeof (message as Record<string, unknown>).__inspireHistoryEntryId !==
+          "string",
+    ),
+  );
   const citedPaths = new Set<string>();
   for (const resource of resources) {
     if (!resource.reference || resource.reference.startsWith("pi-embedded://"))
@@ -616,8 +630,7 @@ export class ResourceStore {
     getIndex: () => Promise<ResourceCitationIndex>,
     workspacePath?: string,
   ): Promise<ResourceDescriptor> {
-    const embeddedReference = /^pi-embedded:\/\/(\d+)\/(\d+)$/.exec(reference);
-    if (embeddedReference) {
+    if (COMPOSER_HISTORY_IMAGE_REFERENCE.test(reference)) {
       const embedded = (await getIndex()).embedded.get(reference);
       if (!embedded) {
         throw requestError("The embedded image is no longer available", 404);
@@ -627,7 +640,7 @@ export class ResourceStore {
         sessionId: context.sessionId,
         viewId: context.viewId,
         reference,
-        name: `embedded-image-${Number(embeddedReference[1]) + 1}`,
+        name: `embedded-image-${embedded.messageIndex + 1}`,
         mimeType: embedded.mimeType,
         size: embedded.size,
         kind: "image",

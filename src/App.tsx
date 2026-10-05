@@ -11,19 +11,27 @@ import {
   memo,
   Suspense,
   useCallback,
+  useDeferredValue,
   useEffect,
   useLayoutEffect,
+  useRef,
   useState,
 } from "react";
 import { isAbortableRunState, type ThemePreference } from "../shared/contracts";
+import type { ModelSettingsDestination } from "../shared/model-settings";
 import { ApiError, pairHost } from "./api";
 import { ActivityBar } from "./components/ActivityBar";
 import { AppTopbar } from "./components/AppTopbar";
 import { CommandActivity } from "./components/CommandActivity";
+import { CommandHelp } from "./components/CommandHelp";
 import { CommandPalette } from "./components/CommandPalette";
 import { Composer } from "./components/Composer";
-import { ContextPaneState } from "./components/ContextPaneState";
+import {
+  ContextPaneLoading,
+  ContextPaneShell,
+} from "./components/ContextPaneShell";
 import { CopyAction } from "./components/CopyAction";
+import { ExportDialog } from "./components/ExportDialog";
 import { ExtensionDisplayDock } from "./components/ExtensionDisplays";
 import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
 import { Nav } from "./components/Nav";
@@ -37,7 +45,7 @@ import { BrandLogo, Wordmark } from "./components/Wordmark";
 import type { Notice } from "./events";
 import { shallowEqual, store, useAppState } from "./store";
 import { type AvailableUpdates, availableUpdates } from "./update-availability";
-import { hasActiveModal, useModalFocus } from "./use-modal-focus";
+import { hasActiveModal } from "./use-modal-focus";
 import {
   applyBrowserTheme,
   cacheVisualPreferences,
@@ -56,72 +64,6 @@ function reportDeferredSurfaceError(error: unknown): void {
   console.error("Deferred surface failed to load", error);
 }
 
-function ContextPaneLoading({
-  isModal,
-  onClose,
-  onRetry,
-}: {
-  isModal: boolean;
-  onClose: () => void;
-  onRetry?: () => void;
-}) {
-  const ref = useModalFocus<HTMLDivElement>(isModal, "context-pane", onClose);
-  const content = (
-    <>
-      <div className="ctx__header">
-        <span className="ctx__title">Context</span>
-        <button
-          type="button"
-          className="icon-button ctx__close"
-          title="Close"
-          aria-label="Close context pane"
-          onClick={onClose}
-        >
-          <X size={15} aria-hidden />
-        </button>
-      </div>
-      <ContextPaneState
-        icon={
-          onRetry ? (
-            <AlertTriangle size={17} aria-hidden />
-          ) : (
-            <Loader2 size={17} className="spin" aria-hidden />
-          )
-        }
-        title={onRetry ? "Context could not be opened." : "Loading context"}
-        role={onRetry ? "alert" : "status"}
-      >
-        {onRetry ? (
-          <button
-            type="button"
-            className="button res__state-action"
-            onClick={onRetry}
-          >
-            Reload
-          </button>
-        ) : null}
-      </ContextPaneState>
-    </>
-  );
-  return isModal ? (
-    <div
-      className="ctx res"
-      id="context-pane"
-      ref={ref}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Context panel"
-      tabIndex={-1}
-    >
-      {content}
-    </div>
-  ) : (
-    <aside className="ctx res" id="context-pane" aria-label="Context panel">
-      {content}
-    </aside>
-  );
-}
-
 function DeferredContextPane({
   isModal,
   onClose,
@@ -129,33 +71,41 @@ function DeferredContextPane({
   isModal: boolean;
   onClose: () => void;
 }) {
+  // Commit loading as ordinary content; suspended background work adds no fallback retry delay.
+  const showContent = useDeferredValue(true, false);
   return (
-    <RenderErrorBoundary
-      onError={reportDeferredSurfaceError}
-      fallback={
-        <ContextPaneLoading
-          isModal={isModal}
-          onClose={onClose}
-          onRetry={() => window.location.reload()}
-        />
-      }
-    >
-      <Suspense
-        fallback={<ContextPaneLoading isModal={isModal} onClose={onClose} />}
+    <ContextPaneShell isModal={isModal} onClose={onClose}>
+      <RenderErrorBoundary
+        onError={reportDeferredSurfaceError}
+        fallback={
+          <ContextPaneLoading
+            onClose={onClose}
+            onRetry={() => window.location.reload()}
+          />
+        }
       >
-        <DeferredContextSurface isModal={isModal} onClose={onClose} />
-      </Suspense>
-    </RenderErrorBoundary>
+        <Suspense fallback={<ContextPaneLoading onClose={onClose} />}>
+          {showContent ? (
+            <DeferredContextSurface isModal={isModal} onClose={onClose} />
+          ) : (
+            <ContextPaneLoading onClose={onClose} />
+          )}
+        </Suspense>
+      </RenderErrorBoundary>
+    </ContextPaneShell>
   );
 }
 
 function DeferredSettings({
   initialCategory,
+  modelDestination,
   onClose,
 }: {
   initialCategory: SettingsCategoryId;
+  modelDestination?: ModelSettingsDestination;
   onClose: () => void;
 }) {
+  const showContent = useDeferredValue(true, false);
   return (
     <SettingsDialog onClose={onClose}>
       <RenderErrorBoundary
@@ -163,7 +113,14 @@ function DeferredSettings({
         fallback={<SettingsLoading onRetry={() => window.location.reload()} />}
       >
         <Suspense fallback={<SettingsLoading />}>
-          <DeferredSettingsSurface initialCategory={initialCategory} />
+          {showContent ? (
+            <DeferredSettingsSurface
+              initialCategory={initialCategory}
+              modelDestination={modelDestination}
+            />
+          ) : (
+            <SettingsLoading />
+          )}
         </Suspense>
       </RenderErrorBoundary>
     </SettingsDialog>
@@ -603,7 +560,6 @@ const ConversationStage = memo(function ConversationStage() {
       )}
       queue={state.queue}
       pendingAction={state.pendingAction}
-      onClearPending={store.clearPending}
       extensionDisplays={state.extensionDisplays}
       thinkingVisibility={state.thinkingVisibility}
       toolVisibility={state.toolVisibility}
@@ -660,6 +616,7 @@ export function App() {
       attentionCount: source.attentionSessionIds.length,
       sessionId: source.sessionId,
       runState: source.runState,
+      bashRunning: source.bashRunning,
       error: source.error,
       errorSeverity: source.errorSeverity,
       projectionConflict: source.projectionConflict,
@@ -669,11 +626,37 @@ export function App() {
   );
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const navSearchRef = useRef<HTMLInputElement>(null);
   const narrowViewport = useMediaQuery("(max-width: 900px)");
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [exportSessionId, setExportSessionId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [commandHelp, setCommandHelp] = useState<
+    "hotkeys" | "changelog" | null
+  >(null);
+  const openCommandHelp = useCallback((mode: "hotkeys" | "changelog") => {
+    setPaletteOpen(false);
+    setSettingsOpen(false);
+    setCommandHelp(mode);
+  }, []);
+  const closeCommandHelp = useCallback(() => setCommandHelp(null), []);
   const [settingsCategory, setSettingsCategory] =
     useState<SettingsCategoryId>("display");
+  const [modelDestination, setModelDestination] =
+    useState<ModelSettingsDestination>();
+  const openSettings = useCallback(
+    (category: SettingsCategoryId, destination?: ModelSettingsDestination) => {
+      setPaletteOpen(false);
+      setSettingsCategory(category);
+      setModelDestination(destination);
+      setSettingsOpen(true);
+    },
+    [],
+  );
+  const openPaletteSettings = useCallback(
+    () => openSettings("behavior"),
+    [openSettings],
+  );
   const extensionOverlayOpen = state.extensionOverlayOpen;
   const [welcomeInheritance, setWelcomeInheritance] =
     useState<WelcomeInheritance | null>(null);
@@ -694,8 +677,10 @@ export function App() {
       // Host deselection must clear session ownership, but the start surface
       // still inherits the workspace choices visible at the user's gesture.
       setWelcomeInheritance({
+        sessionId: current.sessionId,
         cwd: current.cwd,
         model: current.model,
+        modelDiscovery: current.modelDiscovery,
         thinkingLevel: current.thinkingLevel,
         commands: [...current.commands],
       });
@@ -708,6 +693,7 @@ export function App() {
 
   useEffect(() => {
     if (state.sessionId) setWelcomeInheritance(null);
+    setExportSessionId(null);
   }, [state.sessionId]);
 
   const closeMobileNavigation = useCallback(() => {
@@ -718,6 +704,20 @@ export function App() {
   }, []);
   const closeCommandPalette = useCallback(() => setPaletteOpen(false), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const openSessionSearch = useCallback(() => {
+    setPaletteOpen(false);
+    setSettingsOpen(false);
+    setCommandHelp(null);
+    if (narrowViewport) {
+      store.setResourcesOpen(false);
+      setMobileNavOpen(true);
+    } else setNavCollapsed(false);
+    // Let the old modal release focus and the existing navigation mount first.
+    requestAnimationFrame(() => {
+      navSearchRef.current?.focus();
+      navSearchRef.current?.select();
+    });
+  }, [narrowViewport]);
 
   const toggleNavigation = useCallback(() => {
     if (narrowViewport) {
@@ -744,20 +744,33 @@ export function App() {
       setMobileNavOpen(false);
   }, [mobileNavOpen, narrowViewport, state.resourcesOpen]);
 
-  // An extension dialog is an attributed operation boundary, not background
-  // chrome. It supersedes the two app-level overlays instead of competing for
-  // focus or Escape ownership.
+  // Native dialogs temporarily own focus. Keep the palette mounted but inactive
+  // so unsubmitted preparation (and a pending rejection) retains its own draft.
   useEffect(() => {
     if (!extensionOverlayOpen) return;
-    setPaletteOpen(false);
     setSettingsOpen(false);
+    setCommandHelp(null);
   }, [extensionOverlayOpen]);
 
+  const showCommandPalette = useCallback(() => {
+    setSettingsOpen(false);
+    setMobileNavOpen(false);
+    setPaletteOpen(true);
+  }, []);
   const openCommandPalette = useCallback(() => {
     if (extensionOverlayOpen || hasActiveModal()) return;
-    setSettingsOpen(false);
-    setPaletteOpen(true);
-  }, [extensionOverlayOpen]);
+    showCommandPalette();
+  }, [extensionOverlayOpen, showCommandPalette]);
+  const openExport = useCallback(() => {
+    const sessionId = store.getState().sessionId;
+    setPaletteOpen(false);
+    // Let the invoking menu/palette restore focus before taking modal ownership.
+    requestAnimationFrame(() => {
+      if (store.getState().sessionId === sessionId)
+        setExportSessionId(sessionId);
+    });
+  }, []);
+  const closeExport = useCallback(() => setExportSessionId(null), []);
 
   const toggleSettings = useCallback(() => {
     if (settingsOpen) {
@@ -765,43 +778,49 @@ export function App() {
       return;
     }
     if (extensionOverlayOpen || hasActiveModal()) return;
-    setPaletteOpen(false);
-    setSettingsCategory("display");
-    setSettingsOpen(true);
-  }, [extensionOverlayOpen, settingsOpen]);
+    openSettings("display");
+  }, [extensionOverlayOpen, settingsOpen, openSettings]);
 
   const openUpdateSettings = useCallback(() => {
     if (extensionOverlayOpen || (hasActiveModal() && !settingsOpen)) return;
-    setPaletteOpen(false);
-    setSettingsCategory("updates");
-    setSettingsOpen(true);
-  }, [extensionOverlayOpen, settingsOpen]);
+    openSettings("updates");
+  }, [extensionOverlayOpen, settingsOpen, openSettings]);
 
   useEffect(() => {
     const request = state.nativeCommandUiRequest;
     if (!request) return;
-    if (request.sessionId !== store.getState().sessionId) {
+    if (request.sessionId !== (store.getState().sessionId ?? "")) {
       store.consumeNativeCommandUiRequest(request.id);
       return;
     }
     if (request.action === "model" || request.action === "thinking") return;
     if (extensionOverlayOpen) return;
-    if (request.action === "settings") {
-      setPaletteOpen(false);
-      setSettingsCategory("behavior");
-      setSettingsOpen(true);
+    if (request.action === "models") {
+      openSettings("models", {
+        query: request.query,
+        focus: request.modelSettingsFocus,
+        owner: request.modelSettingsOwner,
+      });
+    } else if (request.action === "settings") {
+      openSettings("behavior");
     } else if (request.action === "updates") {
-      setPaletteOpen(false);
-      setSettingsCategory("updates");
-      setSettingsOpen(true);
+      openSettings("updates");
+    } else if (request.action === "hotkeys" || request.action === "changelog") {
+      openCommandHelp(request.action);
     } else if (request.action === "sessions") {
-      setSettingsOpen(false);
-      setPaletteOpen(true);
+      openSessionSearch();
     } else if (request.action === "new") {
       newSession();
     }
     store.consumeNativeCommandUiRequest(request.id);
-  }, [extensionOverlayOpen, newSession, state.nativeCommandUiRequest]);
+  }, [
+    extensionOverlayOpen,
+    newSession,
+    openCommandHelp,
+    openSessionSearch,
+    openSettings,
+    state.nativeCommandUiRequest,
+  ]);
 
   useLayoutEffect(() => {
     if (!state.bootstrapped || !focusedTerminalLaunchRequested()) return;
@@ -870,6 +889,44 @@ export function App() {
         !(event.key === "Escape" && state.runState === "conflict")
       )
         return;
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.keyCode === 229 ||
+        event.getModifierState("AltGraph")
+      )
+        return;
+      const target = event.target instanceof Element ? event.target : null;
+      const cycleKey = event.code
+        ? event.code.replace(/^Key/, "").toLowerCase()
+        : event.key.toLowerCase();
+      const cyclingKey =
+        event.altKey &&
+        event.shiftKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        ["m", "p", "r"].includes(cycleKey);
+      if (cyclingKey) {
+        const editable = target?.closest(
+          "input,textarea,[contenteditable=true]",
+        );
+        const draft = editable && target?.closest(".composer");
+        const combobox = target?.closest("[role=combobox]");
+        if (
+          !store.getState().sessionId ||
+          target?.closest(
+            ".xterm, .dropdown__menu, .model-picker__menu, [role=listbox], [role=menu]",
+          ) ||
+          (combobox &&
+            (!draft || combobox.getAttribute("aria-expanded") !== "false")) ||
+          (editable && !draft)
+        )
+          return;
+        event.preventDefault();
+        if (cycleKey === "r") void store.cycleThinking();
+        else void store.cycleModel(cycleKey === "m" ? 1 : -1);
+        return;
+      }
       const mod = event.ctrlKey || event.metaKey;
       if (mod && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -893,7 +950,7 @@ export function App() {
       } else if (
         event.key === "Escape" &&
         !event.defaultPrevented &&
-        isAbortableRunState(state.runState)
+        (isAbortableRunState(state.runState) || state.bashRunning)
       ) {
         void store.abort();
       }
@@ -902,6 +959,7 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [
     state.runState,
+    state.bashRunning,
     state.resourcesOpen,
     narrowViewport,
     mobileNavOpen,
@@ -930,6 +988,7 @@ export function App() {
         isModal={isNavModal}
         onClose={closeMobileNavigation}
         selectedSessionId={state.sessionId}
+        searchInputRef={navSearchRef}
         onNewSession={newSession}
         onSelectSession={openSession}
       />
@@ -969,6 +1028,7 @@ export function App() {
           settingsOpen={settingsOpen}
           onToggleNavigation={toggleNavigation}
           onOpenCommandPalette={openCommandPalette}
+          onExportSession={openExport}
           onToggleSettings={toggleSettings}
           onToggleResources={toggleResources}
         />
@@ -1019,6 +1079,7 @@ export function App() {
         {settingsOpen && !extensionOverlayOpen ? (
           <DeferredSettings
             initialCategory={settingsCategory}
+            modelDestination={modelDestination}
             onClose={closeSettings}
           />
         ) : null}
@@ -1033,14 +1094,7 @@ export function App() {
       </main>
       {state.resourcesOpen ? (
         <>
-          {narrowViewport ? (
-            <button
-              type="button"
-              className="pane-scrim pane-scrim--resources"
-              onClick={() => store.setResourcesOpen(false)}
-              aria-label="Dismiss resources panel"
-            />
-          ) : (
+          {!narrowViewport ? (
             <PaneResizeHandle
               cssVar="--ctx-w"
               storageKey="inspire.ctx-width"
@@ -1052,17 +1106,37 @@ export function App() {
               variant="ctx"
               wheelTargetSelector="#context-pane [data-pane-scroll-active='true']"
             />
-          )}
+          ) : null}
           {resourcesContent}
         </>
       ) : null}
-      {paletteOpen && !extensionOverlayOpen ? (
+      {exportSessionId && exportSessionId === state.sessionId ? (
+        <ExportDialog
+          key={exportSessionId}
+          sessionId={exportSessionId}
+          active={!extensionOverlayOpen}
+          onClose={closeExport}
+        />
+      ) : null}
+      {paletteOpen ? (
         <CommandPalette
+          onExportSession={openExport}
+          active={!extensionOverlayOpen}
           onClose={closeCommandPalette}
           onToggleNav={toggleNavigation}
           onToggleCtx={toggleResources}
           onNewSession={newSession}
           onOpenSession={openSession}
+          onFindSession={openSessionSearch}
+          onOpenSettings={openPaletteSettings}
+          onOpenHelp={openCommandHelp}
+        />
+      ) : null}
+      {commandHelp && !extensionOverlayOpen ? (
+        <CommandHelp
+          key={commandHelp}
+          mode={commandHelp}
+          onClose={closeCommandHelp}
         />
       ) : null}
       <ExtensionUiDialog />

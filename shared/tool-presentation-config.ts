@@ -18,7 +18,7 @@ const toolNameSchema = z
   .min(1)
   .max(128)
   .regex(/^[A-Za-z0-9_.:-]+$/);
-const fieldPathSchema = z
+const safeFieldPathSchema = z
   .string()
   .min(1)
   .max(512)
@@ -34,25 +34,26 @@ const fieldPathSchema = z
         code: "custom",
         message: "Field paths contain only safe dot-separated keys",
       });
-      return;
-    }
-    const [root, second, ...rest] = segments;
-    const valid =
-      (root === "args" && second !== undefined) ||
-      (root === "tool" && second === "name" && rest.length === 0) ||
-      (root === "result" &&
-        ((second === "text" && rest.length === 0) ||
-          (second === "error" && rest.length === 0) ||
-          second === "details")) ||
-      (root === "thinking" && second === "text" && rest.length === 0);
-    if (!valid) {
-      context.addIssue({
-        code: "custom",
-        message:
-          "Field paths start with args, result.text, result.error, result.details, tool.name, or thinking.text",
-      });
     }
   });
+const fieldPathSchema = safeFieldPathSchema.superRefine((value, context) => {
+  const [root, second, ...rest] = value.split(".");
+  const valid =
+    (root === "args" && second !== undefined) ||
+    (root === "tool" && second === "name" && rest.length === 0) ||
+    (root === "result" &&
+      ((second === "text" && rest.length === 0) ||
+        (second === "error" && rest.length === 0) ||
+        second === "details")) ||
+    (root === "thinking" && second === "text" && rest.length === 0);
+  if (!valid) {
+    context.addIssue({
+      code: "custom",
+      message:
+        "Field paths start with args, result.text, result.error, result.details, tool.name, or thinking.text",
+    });
+  }
+});
 
 export const toolPresentationValueSchema = z.union([
   z
@@ -251,12 +252,36 @@ export const thinkingPresentationRuleDeclarationSchema =
     });
   });
 
+const customMessageFieldPathSchema = safeFieldPathSchema.refine(
+  (value) => value === "content" || value.startsWith("details."),
+  "Custom-message fields select content or details.<key>",
+);
+
+const customMessagePresentationDeclarationSchema = z
+  .object({
+    source: z.string().trim().min(1).max(80),
+    title: z.array(customMessageFieldPathSchema).min(1).max(4),
+    body: customMessageFieldPathSchema,
+    requireAbsent: z
+      .array(customMessageFieldPathSchema)
+      .min(1)
+      .max(8)
+      .optional(),
+  })
+  .strict();
+
 export const toolPresentationConfigurationSchema = z
   .object({
     version: z.literal(1),
     rules: z.record(userRuleIdSchema, toolPresentationRuleDeclarationSchema),
     mappings: z.record(toolNameSchema, ruleIdSchema),
     thinking: thinkingPresentationRuleDeclarationSchema.optional(),
+    customMessages: z
+      .record(
+        z.string().min(1).max(128),
+        customMessagePresentationDeclarationSchema,
+      )
+      .optional(),
   })
   .strict()
   .superRefine((value, context) => {
@@ -265,6 +290,12 @@ export const toolPresentationConfigurationSchema = z
         code: "custom",
         path: ["rules"],
         message: `At most ${MAX_RULES} rules are supported`,
+      });
+    if (Object.keys(value.customMessages ?? {}).length > MAX_MAPPINGS)
+      context.addIssue({
+        code: "custom",
+        path: ["customMessages"],
+        message: `At most ${MAX_MAPPINGS} custom-message presentations are supported`,
       });
     if (Object.keys(value.mappings).length > MAX_MAPPINGS)
       context.addIssue({
@@ -285,6 +316,9 @@ export type ToolPresentationRuleDeclaration = z.infer<
 >;
 export type ThinkingPresentationRuleDeclaration = z.infer<
   typeof thinkingPresentationRuleDeclarationSchema
+>;
+export type CustomMessagePresentationDeclaration = z.infer<
+  typeof customMessagePresentationDeclarationSchema
 >;
 export type ToolPresentationConfiguration = z.infer<
   typeof toolPresentationConfigurationSchema

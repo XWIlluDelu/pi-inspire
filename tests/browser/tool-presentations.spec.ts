@@ -1,7 +1,17 @@
+import type { AddressInfo } from "node:net";
+import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, type WebSocketRoute, test } from "@playwright/test";
+import { expect, type Page, test, type WebSocketRoute } from "@playwright/test";
+import { createInspireServer } from "../../server/app";
+import { AttachmentStore } from "../../server/attachments";
+import { GitInspectionService } from "../../server/git-inspection";
+import { MockCatalog, MockRuntime } from "../../server/mock";
+import { PreferencesStore } from "../../server/preferences";
+import { ResourceStore } from "../../server/resources";
+import { ToolPresentationConfigStore } from "../../server/tool-presentation-config";
 import type { ToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import type { ToolCallContent } from "../../src/events";
+import { toolResultResourcesFixture } from "../fixtures/tool-result-resources.mjs";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 
 test.use({ serviceWorkers: "block" });
@@ -56,7 +66,7 @@ async function openReview(
     const server = client.connectToServer();
     server.onMessage((data) => {
       const event = JSON.parse(String(data));
-      if (event.type === "snapshot")
+      if (socket === client && event.type === "snapshot")
         sessionId =
           event.detailSessionId ?? event.data?.active?.sessionId ?? null;
       client.send(data);
@@ -87,15 +97,274 @@ async function openReview(
   });
   expect(created.ok()).toBe(true);
   sessionId = null;
+  socket = undefined;
   await page.reload();
   await expect(
-    page.getByRole("button", { name: "Rename session", exact: true }),
+    page.getByRole("button", { name: /^Session actions:/ }),
   ).toHaveText("Tool presentation review");
   await expect.poll(() => sessionId).not.toBeNull();
   return (...events: Record<string, unknown>[]) => {
     for (const event of events)
       socket!.send(JSON.stringify({ ...event, sessionId }));
   };
+}
+
+for (const mobile of [false, true]) {
+  test.describe(mobile ? "mobile child calls" : "desktop child calls", () => {
+    test.use(
+      mobile
+        ? {
+            viewport: { width: 390, height: 844 },
+            isMobile: true,
+            hasTouch: true,
+          }
+        : { viewport: { width: 1365, height: 950 } },
+    );
+    test("keeps a reading position through live settlement and reopens result-first", async ({
+      page,
+    }) => {
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      const send = await openReview(page, {
+        toolVisibility: "dynamic",
+        activityFoldVisibility: "dynamic",
+      });
+      const script =
+        "const data = await tools.read({path: 'report.txt'}); text(data);";
+      const calls = Array.from({ length: 80 }, (_, index) => ({
+        id: "script/?",
+        name: index === 0 ? "models.classify" : "read",
+        args:
+          index === 0
+            ? "fixture/classifier"
+            : JSON.stringify({ path: `src/report-${index}.txt`, limit: 30 }),
+        status: "running",
+      }));
+      const assistantMessage = {
+        role: "assistant",
+        __inspireMessageId: "child-call-review",
+        content: [
+          {
+            type: "toolCall",
+            id: "script",
+            name: "codemode",
+            arguments: { code: script },
+          },
+          {
+            type: "toolCall",
+            id: "parent",
+            name: "orchestrator",
+            arguments: {},
+          },
+        ],
+      };
+      send(
+        { type: "agent_start" },
+        { type: "message_start", message: assistantMessage },
+        {
+          type: "tool_execution_start",
+          toolCallId: "script",
+          toolName: "codemode",
+          args: { code: script },
+        },
+        {
+          type: "tool_execution_update",
+          toolCallId: "script",
+          toolName: "codemode",
+          partialResult: { content: [], details: { calls } },
+        },
+        {
+          type: "tool_execution_start",
+          toolCallId: "parent",
+          toolName: "orchestrator",
+          args: {},
+        },
+        {
+          type: "tool_execution_start",
+          parentToolCallId: "parent",
+          toolCallId: "parent/1",
+          toolName: "read",
+          args: { path: "independent.txt" },
+        },
+      );
+      const scriptCard = toolCard(page, "codemode");
+      const parentCard = toolCard(page, "orchestrator");
+      const list = scriptCard.getByRole("group", { name: "Child calls" });
+      await expect(list.locator(".child-call")).toHaveCount(80);
+      expect(
+        await list.evaluate((element) => element.clientHeight),
+      ).toBeLessThanOrEqual(320);
+      const row = list.locator(".child-call > summary").nth(6);
+      await row.scrollIntoViewIfNeeded();
+      if (mobile) await row.tap();
+      else {
+        await row.focus();
+        await row.press("Enter");
+      }
+      await expect(row.locator("..")).toHaveAttribute("open", "");
+      await expect(
+        row.locator("..").getByRole("group", { name: "Arguments preview" }),
+      ).toContainText("report-7.txt");
+      const position = await list.evaluate((element) => element.scrollTop);
+      await page.screenshot({
+        path: `output/playwright/child-calls/${mobile ? "mobile" : "desktop"}-running.png`,
+        animations: "disabled",
+      });
+      const finalCalls = calls.map((call, index) => ({
+        ...call,
+        id: `script/${index + 1}`,
+        status: index === 7 ? "error" : "ok",
+        durationMs: index === 7 ? 1600 : 10,
+        ...(index === 7 ? { error: "Report is unavailable" } : {}),
+      }));
+      const scriptResult = {
+        role: "toolResult",
+        toolCallId: "script",
+        toolName: "codemode",
+        isError: false,
+        __inspireMessageId: "script-result",
+        content: [
+          { type: "text", text: "Actual script result: 79 reports collected" },
+        ],
+        details: { calls: finalCalls },
+      };
+      const parentResult = {
+        role: "toolResult",
+        toolCallId: "parent",
+        toolName: "orchestrator",
+        isError: false,
+        __inspireMessageId: "parent-result",
+        content: [{ type: "text", text: "Independent parent completed" }],
+        nestedCalls: {
+          complete: true,
+          calls: [
+            {
+              id: "parent/1",
+              name: "read",
+              arguments: { path: "independent.txt" },
+              status: "error",
+              error: "Child failed",
+            },
+          ],
+        },
+      };
+      send(
+        {
+          type: "tool_execution_end",
+          parentToolCallId: "parent",
+          toolCallId: "parent/1",
+          toolName: "read",
+          isError: true,
+          result: { content: [{ type: "text", text: "Child failed" }] },
+        },
+        {
+          type: "tool_execution_end",
+          toolCallId: "script",
+          toolName: "codemode",
+          isError: false,
+          result: scriptResult,
+        },
+        { type: "message_end", message: scriptResult },
+        {
+          type: "tool_execution_end",
+          toolCallId: "parent",
+          toolName: "orchestrator",
+          isError: false,
+          result: parentResult,
+        },
+        { type: "message_end", message: parentResult },
+      );
+      await expect(
+        row.locator("..").getByRole("group", { name: "Call error" }),
+      ).toContainText("Report is unavailable");
+      await expect(row.locator("..")).toHaveAttribute("open", "");
+      if (!mobile) await expect(row).toBeFocused();
+      expect(await list.evaluate((element) => element.scrollTop)).toBe(
+        position,
+      );
+      await expect(
+        parentCard.getByText("Independent parent completed"),
+      ).toBeVisible();
+      await expect(
+        parentCard.getByRole("button", { name: "Calls 1" }),
+      ).toHaveAttribute("aria-expanded", "false");
+      await expect(page.locator(".card--failed")).toHaveCount(0);
+      send({
+        type: "message_start",
+        message: {
+          role: "assistant",
+          __inspireMessageId: "child-call-next",
+          content: [{ type: "text", text: "Continuing the fixture" }],
+        },
+      });
+      // Cross Adaptive card and band close delays after the next native boundary.
+      await page.waitForTimeout(3_200);
+      await expect(
+        scriptCard.getByRole("button", { name: "Collapse codemode tool" }),
+      ).toBeVisible();
+      await expect(row.locator("..")).toHaveAttribute("open", "");
+      if (!mobile) await expect(row).toBeFocused();
+      expect(await list.evaluate((element) => element.scrollTop)).toBe(
+        position,
+      );
+      await page.screenshot({
+        path: `output/playwright/child-calls/${mobile ? "mobile" : "desktop"}-settled-reading.png`,
+        animations: "disabled",
+      });
+      await page.route("**/api/bootstrap**", async (route) => {
+        const response = await route.fetch();
+        const body = await response.json();
+        body.preferences = {
+          ...body.preferences,
+          theme: "light",
+          toolVisibility: "expanded",
+          activityFoldVisibility: "expanded",
+        };
+        body.snapshot.active.transcriptPage.messages = [
+          assistantMessage,
+          scriptResult,
+          parentResult,
+        ];
+        await route.fulfill({ response, json: body });
+      });
+      await page.reload();
+      await expect(
+        page.getByText("Actual script result: 79 reports collected"),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Calls 80" }),
+      ).toHaveAttribute("aria-expanded", "false");
+      await expect(
+        page.getByRole("group", { name: "Child calls" }),
+      ).toHaveCount(0);
+      await expect(page.getByText("Script", { exact: true })).toBeVisible();
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: `output/playwright/child-calls/${mobile ? "mobile" : "desktop"}-reopened.png`,
+        animations: "disabled",
+      });
+      await page.getByRole("button", { name: "Calls 80" }).click();
+      const order = await toolCard(page, "codemode").evaluate((card) => {
+        const result = card
+          .querySelector(".tool-call-result")!
+          .getBoundingClientRect();
+        const calls = card
+          .querySelector(".tool-call-disclosure")!
+          .getBoundingClientRect();
+        return calls.top - result.bottom;
+      });
+      expect(order).toBeGreaterThanOrEqual(0);
+      const accessibility = await new AxeBuilder({ page })
+        .include(".card--tool")
+        .analyze();
+      expect(accessibility.violations).toEqual([]);
+      expect(errors).toEqual([]);
+    });
+  });
 }
 
 test("large Markdown stays readable through a stream burst without losing the composer draft", async ({
@@ -549,3 +818,184 @@ for (const palette of ["amber", "teal"]) {
     });
   }
 }
+
+// Native read/bash produce the recorded artifacts offline. The mock Runtime
+// supplies shell/catalog state only; transcript paging and resource authority
+// use SessionProjection and the real Host HTTP resource endpoints.
+test("saved tool images and full logs reopen through the authorized viewers on desktop and narrow screens", async ({
+  page,
+}, testInfo) => {
+  const fixture = await toolResultResourcesFixture();
+  const runtime = new MockRuntime();
+  const snapshot = await runtime.openSession(fixture.record.id);
+  Object.assign(snapshot.active!, {
+    cwd: fixture.record.cwd,
+    sessionName: fixture.record.name,
+    transcriptPage: fixture.page,
+  });
+  runtime.resourceContext = async (sessionId) => {
+    expect(sessionId).toBe(fixture.record.id);
+    return {
+      sessionId,
+      cwd: fixture.record.cwd!,
+      viewId: fixture.page.viewId,
+      revision: fixture.page.revision,
+      messages: fixture.messages,
+    };
+  };
+  const preferences = new PreferencesStore(
+    join(fixture.root, "preferences.json"),
+  );
+  await preferences.patch({
+    theme: "light",
+    toolVisibility: "expanded",
+    activityFoldVisibility: "expanded",
+  });
+  const host = createInspireServer({
+    token: "tool-resources-test-token",
+    runtime,
+    catalog: new MockCatalog(),
+    attachments: new AttachmentStore(join(fixture.root, "uploads")),
+    preferences,
+    toolPresentations: new ToolPresentationConfigStore(
+      join(fixture.root, "presentations.json"),
+    ),
+    resources: new ResourceStore(),
+    git: new GitInspectionService(),
+    mock: true,
+    version: "tool-resources-test",
+    piVersion: fixture.piVersion,
+  });
+  await new Promise<void>((resolve) =>
+    host.server.listen(0, "127.0.0.1", resolve),
+  );
+  const url = `http://127.0.0.1:${(host.server.address() as AddressInfo).port}`;
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  try {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto(url);
+    await page.getByLabel("Access token").fill("tool-resources-test-token");
+    await page.getByRole("button", { name: "Pair", exact: true }).click();
+    await expect(page.getByRole("main")).toBeVisible();
+    for (const presentation of ["native", "generic"] as const) {
+      if (presentation === "generic") {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.route("**/api/bootstrap", async (route) => {
+          const response = await route.fetch();
+          const body = await response.json();
+          body.toolPresentations = {
+            version: 1,
+            rules: {},
+            mappings: { read: "test.raw" },
+          };
+          await route.fulfill({ response, json: body });
+        });
+      }
+      await page.reload();
+      const read = toolCard(page, "read");
+      const thumbnail = read.locator(".tool-image-block__image");
+      await expect(thumbnail).toBeEnabled();
+      await page.locator(".transcript").hover();
+      await page.mouse.wheel(0, -5000);
+      await thumbnail.scrollIntoViewIfNeeded();
+      await expect(thumbnail).toBeInViewport({ ratio: 1 });
+      await expect
+        .poll(() =>
+          thumbnail
+            .locator("img")
+            .evaluate(
+              (image: HTMLImageElement) =>
+                image.complete && image.naturalWidth > 0,
+            ),
+        )
+        .toBe(true);
+      if (presentation === "native")
+        await expect(
+          read.locator('[data-tool-rule="inspire.pi.read"]'),
+        ).toBeVisible();
+      else await expect(read).toContainText("Arguments");
+      const cardScreenshot = testInfo.outputPath(
+        `${presentation}-saved-image.png`,
+      );
+      await read.screenshot({ path: cardScreenshot });
+      await testInfo.attach(`${presentation} saved image`, {
+        path: cardScreenshot,
+        contentType: "image/png",
+      });
+      await thumbnail.focus();
+      await thumbnail.press("Enter");
+      const preview = page.getByRole("dialog", { name: "Image preview" });
+      await expect(preview).toBeVisible();
+      await expect(preview.locator("img")).toHaveAttribute(
+        "src",
+        (await thumbnail.locator("img").getAttribute("src")) ?? "",
+      );
+      const imageScreenshot = testInfo.outputPath(
+        `${presentation}-image-preview.png`,
+      );
+      await page.screenshot({ path: imageScreenshot });
+      await testInfo.attach(`${presentation} image preview`, {
+        path: imageScreenshot,
+        contentType: "image/png",
+      });
+      await preview.getByRole("button", { name: "Zoom image" }).click();
+      await expect(
+        preview.getByRole("button", { name: "Fit image to window" }),
+      ).toHaveAttribute("aria-pressed", "true");
+      await page.keyboard.press("Escape");
+      await expect(preview).toHaveCount(0);
+      await expect(thumbnail).toBeFocused();
+
+      const bash = toolCard(page, "bash");
+      const action = bash.getByRole("button", { name: "View full output" });
+      await action.scrollIntoViewIfNeeded();
+      await expect(action).toHaveAttribute(
+        "data-file-path",
+        fixture.fullOutputPath,
+      );
+      const actionBox = await action.boundingBox();
+      expect(actionBox!.height).toBeGreaterThanOrEqual(44);
+      expect(actionBox!.x + actionBox!.width).toBeLessThanOrEqual(
+        (await page.viewportSize())!.width,
+      );
+      const resolved = page.waitForResponse(
+        (response) =>
+          response.url().includes("/api/resources/resolve") &&
+          response.request().postDataJSON()?.reference ===
+            fixture.fullOutputPath,
+      );
+      await action.focus();
+      await action.press("Enter");
+      const descriptor = await (await resolved).json();
+      expect(descriptor.reference).toBe(fixture.fullOutputPath);
+      expect(descriptor.sessionId).toBe(fixture.record.id);
+      expect(descriptor.viewId).toBe(fixture.page.viewId);
+      await expect(
+        page.getByRole("region", { name: "File source", exact: true }),
+      ).toContainText("native line 1");
+      await expect(
+        page.getByRole("region", { name: "File source", exact: true }),
+      ).toContainText("native line 2500");
+      const content = await page.request.get(
+        `${url}/api/resources/${descriptor.id}/content?sessionId=${fixture.record.id}`,
+      );
+      expect(content.ok()).toBe(true);
+      expect(await content.text()).toBe(fixture.fullOutput);
+      const logScreenshot = testInfo.outputPath(
+        `${presentation}-full-output.png`,
+      );
+      await page.screenshot({ path: logScreenshot });
+      await testInfo.attach(`${presentation} full output`, {
+        path: logScreenshot,
+        contentType: "image/png",
+      });
+    }
+    expect(errors).toEqual([]);
+  } finally {
+    await page.goto("about:blank");
+    await host.close();
+    await fixture.dispose();
+  }
+});

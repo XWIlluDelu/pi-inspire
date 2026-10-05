@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { PI_NATIVE_COMMANDS } from "../../shared/commands";
 import {
+  commandArgumentCandidates,
+  commandUsageHint,
   parseCaretCompletion,
   rankCommands,
   rankProjectFiles,
   replaceCompletionToken,
+  replaceFileCompletion,
   resolveCommandInventory,
 } from "../../src/composer-completion";
 
@@ -73,9 +76,14 @@ describe("composer caret completion", () => {
   it("replaces exactly the parsed range and reports the restored caret", () => {
     const value = "before @src/main after";
     const token = parseCaretCompletion(value, 16)!;
-    expect(replaceCompletionToken(value, token, "")).toEqual({
-      value: "before  after",
-      caret: 7,
+    expect(
+      replaceFileCompletion(value, token, {
+        path: "src/main.ts",
+        name: "main.ts",
+      }),
+    ).toEqual({
+      value: 'before @"src/main.ts" after',
+      caret: 22,
     });
 
     const command = parseCaretCompletion("/com existing args", 3)!;
@@ -85,6 +93,97 @@ describe("composer caret completion", () => {
       value: "/compact  existing args",
       caret: 9,
     });
+  });
+
+  it("preserves multiple and repeated inline references and quotes paths with spaces", () => {
+    const file = { path: "docs/field report.md", name: "field report.md" };
+    const draft = "Compare @src/main.ts with @field then @src/main.ts.";
+    const caret = draft.indexOf(" then");
+    const inserted = replaceFileCompletion(
+      draft,
+      parseCaretCompletion(draft, caret)!,
+      file,
+    );
+    expect(inserted.value).toBe(
+      'Compare @src/main.ts with @"docs/field report.md" then @src/main.ts.',
+    );
+    expect(inserted.value.slice(inserted.caret)).toBe("then @src/main.ts.");
+    expect(parseCaretCompletion(inserted.value, inserted.caret)).toBeNull();
+    const quoted = 'Read @"docs/field report.md" carefully';
+    const token = parseCaretCompletion(quoted, quoted.indexOf("report"))!;
+    expect(token.query).toBe("docs/field ");
+    expect(replaceFileCompletion(quoted, token, file).value).toBe(quoted);
+    expect(
+      replaceFileCompletion(
+        "@field",
+        { start: 0, end: 6 },
+        { ...file, workspaceCwd: "/project" },
+      ).value,
+    ).toBe('@"/project/docs/field report.md" ');
+  });
+
+  it("reconstructs selected reference boundaries and reopens editing inside the path", () => {
+    const inserted = replaceFileCompletion(
+      "Read @src",
+      { start: 5, end: 9 },
+      { path: "src/main.ts", name: "main.ts" },
+    );
+    const reloaded = `${inserted.value}and explain more`;
+    expect(inserted.value).toBe('Read @"src/main.ts" ');
+    expect(parseCaretCompletion(reloaded, reloaded.length)).toBeNull();
+    expect(
+      parseCaretCompletion(reloaded, reloaded.indexOf("main")),
+    ).toMatchObject({ kind: "file", query: "src/", end: 19 });
+    const pair = 'Compare @"src/main.ts" with @other';
+    expect(parseCaretCompletion(pair, pair.length)).toMatchObject({
+      query: "other",
+    });
+    const unusual = replaceFileCompletion(
+      "@file",
+      { start: 0, end: 5 },
+      { path: 'docs/a "quoted" @note.md', name: "file" },
+    );
+    expect(
+      parseCaretCompletion(`${unusual.value}more`, unusual.value.length + 4),
+    ).toBeNull();
+  });
+
+  it("respects native argument scope and supported levels without extension guesses", () => {
+    expect(parseCaretCompletion("/thinking high trailing", 12)).toMatchObject({
+      kind: "argument",
+      name: "thinking",
+      start: 10,
+      end: 14,
+      query: "hi",
+    });
+    expect(parseCaretCompletion("/thinking high trailing", 19)).toBeNull();
+    const token = {
+      kind: "argument" as const,
+      name: "thinking" as const,
+      start: 10,
+      end: 10,
+      query: "",
+    };
+    const model = {
+      provider: "test",
+      id: "reasoning",
+      reasoning: true,
+      thinkingLevelMap: { xhigh: "xhigh", max: null },
+    };
+    const values = commandArgumentCandidates(token, [model], model).map(
+      (candidate) => candidate.value,
+    );
+    expect(values).toContain("xhigh");
+    expect(values).not.toContain("max");
+    expect(
+      commandArgumentCandidates(token, [], {
+        provider: "test",
+        id: "plain",
+        reasoning: false,
+      }),
+    ).toEqual([]);
+    expect(commandUsageHint("/model foo", false)).toBeNull();
+    expect(commandUsageHint("/review foo")).toBeNull();
   });
 
   it("ranks basename and directory matches locally", () => {

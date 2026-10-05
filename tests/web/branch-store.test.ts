@@ -139,7 +139,14 @@ describe("branch request view ownership", () => {
       pending.resolve({ status: 409, body: { error: "Old branch revision" } });
       await expect(acting).resolves.toBe(false);
       expect(store.getState().branchActionId).toBeNull();
-      expect(store.getState().branchTreeError).toMatch(/stale|changed/);
+      // Navigation owns the original leaf; endpoint cloning can survive an
+      // append, so its failed response keeps the native revision error.
+      if (kind === "navigate")
+        expect(store.getState().branchTreeError).toMatch(/stale|changed/);
+      else expect(store.getState().branchTreeError).toBe("Old branch revision");
+      expect(store.getState().sessionId).toBe("s1");
+      expect(store.getState().transcriptEffectiveLeafId).toBe("a2");
+      expect(store.getState().branchTree?.revision).toBe(1);
     },
   );
 
@@ -276,7 +283,7 @@ describe("branch request view ownership", () => {
           branchTreeLoading: false,
           branchActionId: null,
         });
-        expect(store.getState().branchTreeError).toMatch(/stale/);
+        expect(store.getState().branchTreeError).toMatch(/Refresh History/);
 
         if (selectionOutcome === "failed")
           opening.resolve({ status: 500, body: { error: "selection failed" } });
@@ -306,7 +313,7 @@ describe("branch request view ownership", () => {
 
         if (selectionOutcome === "failed") {
           expect(store.getState().sessionId).toBe("s1");
-          expect(store.getState().branchTreeError).toMatch(/stale/);
+          expect(store.getState().branchTreeError).toMatch(/Refresh History/);
           expect(store.getState().error).toBeNull();
           expect(store.getState().sessionActionError).toBe("selection failed");
         } else {

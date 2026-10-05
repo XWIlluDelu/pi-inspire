@@ -22,6 +22,10 @@ export interface FloatingMenuConstraints {
   verticalMargin: number;
   maxWidth: number;
   maxHeight: number;
+  /** Use this direction when its full height budget fits; otherwise use more room. */
+  preferredDirection?: "up" | "down";
+  /** Align the first row with a topbar trigger instead of placing it below. */
+  overlapAnchor?: boolean;
 }
 
 interface FloatingMenuTarget {
@@ -71,14 +75,20 @@ function placeFloatingMenu(
     0,
     anchor.top - constraints.gap - bounds.top - constraints.verticalMargin,
   );
+  const downTop =
+    (constraints.overlapAnchor ? anchor.top : anchor.bottom) + constraints.gap;
   const below = Math.max(
     0,
-    bounds.bottom -
-      constraints.verticalMargin -
-      anchor.bottom -
-      constraints.gap,
+    bounds.bottom - constraints.verticalMargin - downTop,
   );
-  const direction = above >= below ? "up" : "down";
+  const preferred = constraints.preferredDirection;
+  const direction = constraints.overlapAnchor
+    ? "down"
+    : preferred && (preferred === "up" ? above : below) >= constraints.maxHeight
+      ? preferred
+      : above >= below
+        ? "up"
+        : "down";
   const maxHeight = Math.min(
     constraints.maxHeight,
     direction === "up" ? above : below,
@@ -88,7 +98,7 @@ function placeFloatingMenu(
     direction,
     left: Math.round(left),
     ...(direction === "down"
-      ? { top: Math.round(anchor.bottom + constraints.gap) }
+      ? { top: Math.round(downTop) }
       : {
           bottom: Math.round(layoutHeight - anchor.top + constraints.gap),
         }),
@@ -97,7 +107,10 @@ function placeFloatingMenu(
   };
 }
 
-function liveCenterBounds(context: HTMLElement): FloatingMenuBounds {
+function liveCenterBounds(
+  context: HTMLElement,
+  includeTopbar = false,
+): FloatingMenuBounds {
   const visualViewport = window.visualViewport;
   const viewportLeft = visualViewport?.offsetLeft ?? 0;
   const viewportTop = visualViewport?.offsetTop ?? 0;
@@ -122,7 +135,7 @@ function liveCenterBounds(context: HTMLElement): FloatingMenuBounds {
   const topbarBounds = center
     ?.querySelector<HTMLElement>(":scope > .topbar")
     ?.getBoundingClientRect();
-  if (topbarBounds && topbarBounds.height > 0)
+  if (!includeTopbar && topbarBounds && topbarBounds.height > 0)
     bounds.top = Math.max(bounds.top, topbarBounds.bottom);
   return bounds;
 }
@@ -149,7 +162,7 @@ export function useFloatingMenuPlacement(
       if (!target?.context.isConnected) return;
       const next = placeFloatingMenu(
         target.anchor,
-        liveCenterBounds(target.context),
+        liveCenterBounds(target.context, constraints.overlapAnchor),
         document.documentElement.clientHeight || window.innerHeight,
         constraints,
         target.preferredWidth,

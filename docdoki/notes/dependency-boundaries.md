@@ -1,62 +1,36 @@
+---
+purpose: Separate the user's Pi runtime from development pins and browser dependencies.
+---
+
 # Pi dependency boundaries
 
-## Dependency boundaries
+The user's installed `pi` supplies both the SDK and RPC worker from the same package root.
+`server/pi-installation.ts` resolves that installation; startup checks the public APIs Inspire needs.
+The development dependency is not a production fallback.
 
-### Runtime and build dependencies
+`package.json` and the lockfile own development compatibility versions. The separate browser
+`@earendil-works/pi-tui` dependency supplies pure fuzzy search; it is not an agent runtime.
+External Pi installations retain their own dependency trees.
 
-The user's installed `pi` supplies both the public SDK and RPC worker. Resolution is in
-`server/pi-installation.ts` and `server/pi-runtime.ts`; Pi version metadata is reported, while
-startup checks the required APIs.
+`scripts/test-pi-command.mjs` selects the development CLI or `INSPIRE_TEST_PI_COMMAND` for native
+tests and browser-test Hosts. `scripts/verify-release-package.mjs` installs the production package,
+checks that Pi is absent, then supplies an external installation and exercises SDK/RPC startup.
+Use `npm audit --omit=dev` for the production dependency graph.
 
-The exact `@earendil-works/pi-coding-agent` **1.0.0** development pin supplies types and the default
-native-test runtime. Its published dependency ranges currently resolve agent-core, ai and tui to
-**1.0.2** in the lockfile. The separate browser `@earendil-works/pi-tui` pin remains **0.87.0** for
-pure fuzzy search. Neither becomes a production Pi runtime or fallback; external installations
-retain their own dependency trees.
+Pi owns session JSONL, settings, credentials, extension execution, compaction and model context.
+[[pi-integration]] and [[session-persistence]] define their Host/GUI adaptation; [[pi-capability-gaps]]
+lists the public interfaces still needed for further GUI support.
 
-`scripts/verify-release-package.mjs` installs the packed application with production dependencies,
-checks that Pi is absent, then supplies an external Pi installation and exercises SDK/RPC startup.
-Production dependency auditing is a separate `npm audit --omit=dev` check.
+Session search also loads the installed Pi selector's pure internal parser/matcher at
+`dist/modes/interactive/components/session-selector-search.js`; it is not a root SDK export.
+`server/session-search.ts` isolates that compatibility dependency: a missing or incompatible module
+fails the search, not ordinary listing or Host startup. Native catalog-search regressions check the
+selected Pi installation when compatibility versions change.
 
-## Pi capabilities and boundaries
+For upstream behavior, use the installed package's `docs/rpc.md`, `docs/sdk.md`,
+`docs/session-format.md`, `docs/extensions.md`, `docs/settings.md` and `docs/mcp.md`, alongside public
+type declarations.
 
-### Supported foundation
-
-Pi’s public SDK explicitly supports custom web, desktop, and mobile interfaces. Inspire resolves the installed `pi` executable and uses that one package root for both SDK calls and RPC workers; the recorded Pi version is diagnostic metadata rather than a separate compatibility policy. `AgentSession` owns prompts, queues, messages, model state, compaction, abort, and typed events. `AgentSessionRuntime` owns new, switch, fork, clone, and import flows and is the same replacement layer used by Pi’s built-in modes. The normal `agentDir` and working directory locate global and project settings, credentials, models, extensions, skills, prompts, context files, and sessions.
-
-RPC is a practical initial process boundary. It exposes commands, responses, streaming message and tool events, session switching and branching, and `get_entries` with stable entry cursors. A local host must still provide the browser-facing transport and security boundary because Pi RPC itself is stdin/stdout JSONL, not a network service.
-
-Sources:
-
-- [SDK purpose and session API](https://github.com/earendil-works/pi/blob/8dc78834cde4e329284cf505f9e3f99763df5529/packages/coding-agent/docs/sdk.md#L3-L177)
-- [Resource and agent-directory ownership](https://github.com/earendil-works/pi/blob/8dc78834cde4e329284cf505f9e3f99763df5529/packages/coding-agent/docs/sdk.md#L329-L367)
-- [RPC transport](https://github.com/earendil-works/pi/blob/8dc78834cde4e329284cf505f9e3f99763df5529/packages/coding-agent/docs/rpc.md#L1-L38)
-- [Durable entry cursor](https://github.com/earendil-works/pi/blob/8dc78834cde4e329284cf505f9e3f99763df5529/packages/coding-agent/docs/rpc.md#L664-L697)
-
-### Session ownership
-
-Pi sessions are append-only JSONL trees with stable entry identifiers and parent links. Pi’s session manager loads an in-memory snapshot and persists with direct append or whole-file rewrite operations; it does not hold a lifetime session lock or perform optimistic revision checks. Two independent Pi processes therefore should not write one session concurrently. This is a general Pi operating rule, not a GUI-specific deficiency. Inspire should prevent accidental conflicts and otherwise stay out of the user’s way.
-
-Sources:
-
-- [Session format](https://github.com/earendil-works/pi/blob/8dc78834cde4e329284cf505f9e3f99763df5529/packages/coding-agent/docs/session-format.md#L1-L9)
-- [Session loading and persistence](https://github.com/earendil-works/pi/blob/8dc78834cde4e329284cf505f9e3f99763df5529/packages/coding-agent/src/core/session-manager.ts#L826-L971)
-
-### Settings and credentials
-
-Global and project settings merge with project precedence. Settings and credential writes use file locks, but a running process retains an in-memory snapshot until explicit reload or restart. Credentials remain in the trusted host; only non-secret status belongs in browser state.
-
-Sources:
-
-- [Settings precedence](https://github.com/earendil-works/pi/blob/8dc78834cde4e329284cf505f9e3f99763df5529/packages/coding-agent/docs/settings.md#L1-L8)
-- [Settings locking](https://github.com/earendil-works/pi/blob/8dc78834cde4e329284cf505f9e3f99763df5529/packages/coding-agent/src/core/settings-manager.ts#L198-L260)
-- [Credential permissions and locking](https://github.com/earendil-works/pi/blob/8dc78834cde4e329284cf505f9e3f99763df5529/packages/coding-agent/src/core/auth-storage.ts#L35-L132)
-
-### Extension presentation
-
-Functional extensions continue to contribute tools, commands, events, and persistent session entries. Terminal-specific presentation is not portable by itself: RPC supports dialogs and simple notifications or string widgets, while custom TUI components, footers, headers, editors, and theme controls are unsupported or degraded. inspire needs generic web fallbacks plus targeted web-native presentations for high-value interactions such as questionnaires and subagent status.
-
-Sources:
-
-- [RPC extension UI boundary](https://github.com/earendil-works/pi/blob/8dc78834cde4e329284cf505f9e3f99763df5529/packages/coding-agent/docs/rpc.md#L1057-L1078)
-- [RPC UI implementation](https://github.com/earendil-works/pi/blob/8dc78834cde4e329284cf505f9e3f99763df5529/packages/coding-agent/src/modes/rpc/rpc-mode.ts#L120-L300)
+Release notices are generated by `scripts/vite-license-notices.ts`. Version-specific fallback
+license provenance is in `scripts/licenses/README.md`; font licenses are under
+`src/assets/licenses/`. Dependency updates must keep those notices aligned with the shipped versions.

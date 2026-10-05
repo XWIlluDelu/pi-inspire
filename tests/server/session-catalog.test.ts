@@ -1,10 +1,25 @@
+import {
+  appendFile,
+  mkdtemp,
+  open,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import { piInstallation, SessionManager } from "../../server/pi-runtime.js";
 import {
   newestPerCwd,
   orderSessionRecords,
   SessionCatalog,
   type SessionRecord,
 } from "../../server/session-catalog.js";
+import { SessionMetadataIndex } from "../../server/session-metadata.js";
+import { searchSessionRecords } from "../../server/session-search.js";
 
 function record(id: string, cwd: string, modified: string): SessionRecord {
   return {
@@ -161,21 +176,283 @@ describe("catalog identity and pagination", () => {
     );
   });
 
-  it("reports offset, bounded limit, and filtered total independently from page length", async () => {
+  it("reports offset, bounded limit, and total independently from page length", async () => {
     const catalog = new SessionCatalog("/unused");
     const rows = orderSessionRecords([
       record("match-old", "/work/a", "2026-07-01T10:00:00Z"),
       record("other", "/work/a", "2026-07-03T10:00:00Z"),
       record("match-new", "/work/a", "2026-07-02T10:00:00Z"),
     ]);
-    rows[0]!.searchText = "other";
-    rows[1]!.searchText = "match new";
-    rows[2]!.searchText = "match old";
     vi.spyOn(catalog, "refresh").mockResolvedValue(rows);
 
-    const page = await catalog.list({ query: "match", offset: 1, limit: 1000 });
-    expect(page).toMatchObject({ total: 2, offset: 1, limit: 100 });
-    expect(page.sessions.map((session) => session.id)).toEqual(["match-old"]);
+    const page = await catalog.list({ offset: 1, limit: 1000 });
+    expect(page).toMatchObject({ total: 3, offset: 1, limit: 100 });
+    expect(page.sessions.map((session) => session.id)).toEqual([
+      "match-new",
+      "match-old",
+    ]);
+  });
+});
+
+async function withSearchFixture(
+  run: (
+    root: string,
+    index: SessionMetadataIndex,
+    catalog: SessionCatalog,
+  ) => Promise<void>,
+) {
+  const root = await mkdtemp(join(tmpdir(), "inspire-session-search-"));
+  const writeSession = async (
+    id: string,
+    day: number,
+    messages: unknown[],
+    name?: string,
+  ) => {
+    const time = `2026-10-0${day}T00:00:00.000Z`;
+    await writeFile(
+      join(root, `${id}.jsonl`),
+      [
+        {
+          type: "session",
+          version: 3,
+          id,
+          cwd: "/work/quantum-project",
+          timestamp: time,
+        },
+        ...(name
+          ? [
+              {
+                type: "session_info",
+                id: "name",
+                name,
+                parentId: null,
+                timestamp: time,
+              },
+            ]
+          : []),
+        ...messages.map((message, position) => ({
+          type: "message",
+          id: `m${position}`,
+          parentId: position ? `m${position - 1}` : null,
+          timestamp: time,
+          message,
+        })),
+        {
+          type: "compaction",
+          id: "c",
+          parentId: "m1",
+          timestamp: time,
+          firstKeptEntryId: "missing",
+          summary: "Archived context",
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n") + "\n",
+    );
+  };
+  await writeSession(
+    "search-owner",
+    2,
+    [
+      { role: "user", content: "a".repeat(12_000) + " first-body-tail" },
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "NEVER_INDEX_REASONING" },
+          { type: "text", text: "assistant-only cobalt" },
+          { type: "text", text: "exact\n retained\tphrase" },
+        ],
+      },
+      { role: "user", content: 'later-only zirconium and quote "retained' },
+      { role: "toolResult", content: "NEVER_INDEX_TOOL_OUTPUT" },
+      { role: "custom", content: "NEVER_INDEX_EXTENSION_CONTENT" },
+    ],
+    "Quantum migration review",
+  );
+  await writeSession(
+    "search-newer",
+    3,
+    [{ role: "user", content: "cobalt body" }],
+    "Another review",
+  );
+  await writeSession("unrelated", 1, [
+    { role: "user", content: "nothing relevant" },
+  ]);
+  const index = new SessionMetadataIndex();
+  const catalog = new SessionCatalog("/unused", {
+    list: () => index.list(root),
+  });
+  try {
+    await run(root, index, catalog);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+describe("catalog retained-content search", () => {
+  it("matches native query forms over complete retained user/assistant text, with chronological pages and bounded listings", async () => {
+    await withSearchFixture(async (root, index, catalog) => {
+      const native = await import(
+        pathToFileURL(
+          join(
+            piInstallation.packageRoot,
+            "dist/modes/interactive/components/session-selector-search.js",
+          ),
+        ).href
+      );
+      const nativeRows = await SessionManager.list(
+        "/work/quantum-project",
+        root,
+      );
+      const queries = [
+        "first-body-tail",
+        "later-only",
+        "assistant-only",
+        "search-owner",
+        "/work/quantum-project",
+        "Qmgrv",
+        "zirconium cobalt",
+        '"exact retained phrase"',
+        '"cobalt exact"',
+        "re:assistant-only.*cobalt",
+        "re:SEARCH-OWNER",
+        "re:Quantum.*zirconium",
+        "re:[",
+        "re:",
+        '"retained',
+        '"NEVER_INDEX_TOOL_OUTPUT"',
+        '"NEVER_INDEX_REASONING"',
+        '"NEVER_INDEX_EXTENSION_CONTENT"',
+      ];
+      for (const query of queries) {
+        const page = await catalog.list({ query });
+        expect(
+          page.sessions.map((session) => session.id),
+          query,
+        ).toEqual(
+          native
+            .filterAndSortSessions(nativeRows, query, "recent")
+            .map((session: { id: string }) => session.id),
+        );
+      }
+      expect(
+        (await catalog.list({ query: '"exact retained phrase"' })).sessions.map(
+          (session) => session.id,
+        ),
+      ).toEqual(["search-owner"]);
+      const first = await catalog.list({ query: "cobalt", limit: 1 });
+      const second = await catalog.list({
+        query: "cobalt",
+        limit: 1,
+        offset: 1,
+      });
+      expect(first).toMatchObject({
+        total: 2,
+        offset: 0,
+        sessions: [{ id: "search-newer" }],
+      });
+      expect(second).toMatchObject({
+        total: 2,
+        offset: 1,
+        sessions: [{ id: "search-owner" }],
+      });
+      const summaries = await index.list(root);
+      expect(
+        summaries.find((row) => row.id === "search-owner")?.firstMessage,
+      ).toHaveLength(10_000);
+      expect(
+        summaries.every((row) => !Object.hasOwn(row, "allMessagesText")),
+      ).toBe(true);
+      expect(JSON.stringify((await catalog.list()).sessions)).not.toContain(
+        "assistant-only",
+      );
+    });
+  }, 30_000);
+
+  it("searches a growing session's complete prefix, retires cancellation, and refuses replaced identity", async () => {
+    await withSearchFixture(async (root, index) => {
+      const records = await index.list(root);
+      const controller = new AbortController();
+      const searching = searchSessionRecords(
+        records,
+        "re:(a+)+$",
+        controller.signal,
+      );
+      controller.abort();
+      await expect(searching).rejects.toMatchObject({ name: "AbortError" });
+      const growingPath = join(root, "growing.jsonl");
+      await writeFile(
+        growingPath,
+        [
+          { type: "session", version: 3, id: "growing", cwd: "/work/growing" },
+          ...Array.from({ length: 25 }, (_, id) => ({
+            type: "message",
+            id: `long-${id}`,
+            message: {
+              role: "user",
+              content: "complete-prefix-target " + "x".repeat(200_000),
+            },
+          })),
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n") + "\n",
+      );
+      const growing = (await index.list(root)).find(
+        (row) => row.id === "growing",
+      )!;
+      let writing = true;
+      let appended = 0;
+      const writer = (async () => {
+        while (writing) {
+          await appendFile(
+            growingPath,
+            `${JSON.stringify({ type: "message", id: `live-${appended++}`, message: { role: "assistant", content: "new response text" } })}\n`,
+          );
+          await delay(2);
+        }
+      })();
+      try {
+        expect(
+          (
+            await searchSessionRecords([growing], '"complete-prefix-target"')
+          ).map((row) => row.id),
+        ).toEqual(["growing"]);
+        expect(appended).toBeGreaterThan(1);
+      } finally {
+        writing = false;
+        await writer;
+      }
+      // A same-size in-place rewrite is not a preserved prefix, unlike append.
+      const position = (await readFile(growingPath)).indexOf(
+        "complete-prefix-target",
+      );
+      const handle = await open(growingPath, "r+");
+      let rewriting = true;
+      const rewriter = (async () => {
+        while (rewriting) {
+          await handle.write("C", position, "utf8");
+          await delay(2);
+        }
+      })();
+      try {
+        await expect(
+          searchSessionRecords([growing], '"complete-prefix-target"'),
+        ).rejects.toThrow(/source changed/i);
+      } finally {
+        rewriting = false;
+        await rewriter;
+        await handle.close();
+      }
+      const owner = records.find((row) => row.id === "search-owner")!;
+      await rm(owner.path);
+      await writeFile(
+        owner.path,
+        `${JSON.stringify({ type: "session", version: 3, id: "replacement", cwd: owner.cwd })}\n`,
+      );
+      await expect(
+        searchSessionRecords([owner], "replacement"),
+      ).rejects.toThrow(/source changed/i);
+    });
   });
 });
 

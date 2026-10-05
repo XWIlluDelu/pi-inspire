@@ -11,6 +11,7 @@
 @import "./assets/fonts/core-fonts.css";
 
 @import "./styles/foundation.css";
+@import "./styles/scrollbars.css";
 @import "./styles/navigation.css";
 @import "./styles/topbar.css";
 @import "./styles/transcript.css";
@@ -21,5 +22,7 @@
 @import "./styles/terminal.css";
 @import "./styles/welcome.css";
 @import "./styles/settings-overlays.css";
+@import "./styles/model-settings.css";
+@import "./styles/system-settings.css";
 @import "./styles/responsive.css";
 @import "./styles/history.css";

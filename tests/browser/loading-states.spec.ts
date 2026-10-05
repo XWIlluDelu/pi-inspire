@@ -12,14 +12,19 @@ async function pairedPage(page: Page) {
   await expect(page.getByRole("main")).toBeVisible();
 }
 
-async function holdRequests(page: Page, pattern: string) {
+async function holdRequests(
+  page: Page,
+  pattern: string,
+  outcome: "continue" | "abort" = "continue",
+) {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
   await page.route(pattern, async (route) => {
     await gate;
-    await route.continue();
+    if (outcome === "abort") await route.abort();
+    else await route.continue();
   });
   return release;
 }
@@ -117,7 +122,7 @@ test("Settings deferred failure has a styled recovery action and remains dismiss
   ).toBeVisible();
 });
 
-test("Context and History deferred states use the existing pane presentation", async ({
+test("Context and History deferred states preserve pane identity and focus", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -138,10 +143,30 @@ test("Context and History deferred states use the existing pane presentation", a
         .getByRole("status")
         .evaluate((element) => getComputedStyle(element).display),
     ).toBe("flex");
+    await expect(pane.getByRole("status")).toHaveClass(/deferred-loading/);
+    await expect(
+      pane.getByRole("button", { name: "Close context pane" }),
+    ).toBeFocused();
+    await expect(page.locator(".pane-scrim--resources")).toHaveCount(0);
+    await pane.evaluate((element) => {
+      element.setAttribute("data-loading-shell", "context");
+    });
+    release();
+    await expect(
+      pane.getByRole("button", { name: "Files", exact: true }),
+    ).toBeVisible();
+    await expect(pane).toHaveAttribute("data-loading-shell", "context");
+    await expect(
+      pane.getByRole("button", { name: "Files", exact: true }),
+    ).toBeFocused();
     await pane.getByRole("button", { name: "Close context pane" }).click();
     await expect(pane).not.toBeVisible();
-    release();
-    await page.getByRole("button", { name: "Toggle resources panel" }).click();
+    const toggle = page.getByRole("button", { name: "Toggle resources panel" });
+    await expect(toggle).toBeFocused();
+    await toggle.click();
+    await expect(
+      pane.getByRole("button", { name: "Files", exact: true }),
+    ).toBeFocused();
     const releaseTree = await holdRequests(page, "**/api/branches/tree?*");
     try {
       await pane.getByRole("button", { name: "History", exact: true }).click();
@@ -152,11 +177,63 @@ test("Context and History deferred states use the existing pane presentation", a
       await expect(loading).toHaveClass("res__state");
       releaseTree();
       await expect(
-        pane.getByLabel("Conversation history and branches"),
+        pane.getByRole("region", { name: "Conversation history", exact: true }),
       ).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(pane).not.toBeVisible();
+      await expect(toggle).toBeFocused();
     } finally {
       releaseTree();
     }
+  } finally {
+    release();
+  }
+});
+
+test("Context deferred failure preserves its shell, focus and recovery", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await pairedPage(page);
+  const pattern = "**/assets/ContextPane-*.js";
+  const release = await holdRequests(page, pattern, "abort");
+  const toggle = page.getByRole("button", { name: "Toggle resources panel" });
+  const pane = page.getByRole("dialog", { name: "Context panel" });
+  try {
+    await toggle.click();
+    await expect(pane.getByRole("status")).toContainText("Loading context");
+    await pane.getByRole("button", { name: "Close context pane" }).click();
+    await expect(pane).not.toBeVisible();
+    await expect(toggle).toBeFocused();
+    await toggle.click();
+    await expect(pane.getByRole("status")).toContainText("Loading context");
+    await pane.evaluate((element) => {
+      element.setAttribute("data-loading-shell", "context");
+    });
+    release();
+    await expect(pane.getByRole("alert")).toContainText(
+      "Context could not be opened.",
+    );
+    await expect(pane.getByRole("alert")).not.toHaveClass(/deferred-loading/);
+    await expect(pane).toHaveAttribute("data-loading-shell", "context");
+    await expect(pane.getByRole("button", { name: "Reload" })).toHaveClass(
+      /button/,
+    );
+    await expect(
+      pane.getByRole("button", { name: "Close context pane" }),
+    ).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(pane).not.toBeVisible();
+    await expect(toggle).toBeFocused();
+    await toggle.click();
+    await expect(pane.getByRole("alert")).toBeVisible();
+    await page.unroute(pattern);
+    await pane.getByRole("button", { name: "Reload" }).click();
+    await expect(page.getByRole("main")).toBeVisible();
+    await toggle.click();
+    await expect(
+      pane.getByRole("button", { name: "Files", exact: true }),
+    ).toBeFocused();
   } finally {
     release();
   }

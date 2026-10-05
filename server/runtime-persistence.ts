@@ -1,7 +1,7 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { messageFallbackCorrelation } from "../shared/message-identity.js";
-import { MAX_RPC_LINE_BYTES } from "./pi-rpc.js";
 import { samePersistedJson } from "./persisted-json.js";
+import { MAX_RPC_LINE_BYTES } from "./pi-rpc.js";
 import { isCanonicalIsoTimestamp } from "./runtime-entry-chain.js";
 import type {
   PersistenceExpectation,
@@ -87,7 +87,7 @@ export function eventSessionEntry(value: unknown): SessionEntry | null {
   return structuredClone(entry) as unknown as SessionEntry;
 }
 
-export function customMessageEntryMatches(
+function customMessageEntryMatches(
   message: unknown,
   entry: SessionEntry,
 ): boolean {
@@ -105,6 +105,33 @@ export function customMessageEntryMatches(
     samePersistedJson(entry.content, record.content ?? []) &&
     entry.display === record.display &&
     samePersistedJson(entry.details, record.details)
+  );
+}
+
+/** Native Bash receives its timestamp when Pi records the result, not at GUI start. */
+export function payloadActivityEntryMatches(
+  message: unknown,
+  entry: SessionEntry,
+): boolean {
+  if (customMessageEntryMatches(message, entry)) return true;
+  if (!message || typeof message !== "object" || entry.type !== "message")
+    return false;
+  const record = message as Record<string, unknown>;
+  const native = entry.message as unknown as Record<string, unknown>;
+  return (
+    record.role === "bashExecution" &&
+    native.role === "bashExecution" &&
+    record.__inspireBashRunning === false &&
+    [
+      "command",
+      "output",
+      "exitCode",
+      "cancelled",
+      "truncated",
+      "fullOutputPath",
+    ].every((key) => samePersistedJson(record[key], native[key])) &&
+    (record.excludeFromContext === true) ===
+      (native.excludeFromContext === true)
   );
 }
 

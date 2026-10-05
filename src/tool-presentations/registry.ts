@@ -2,6 +2,7 @@ import type {
   ThinkingPresentationRuleDeclaration,
   ToolPresentationConfiguration,
 } from "../../shared/tool-presentation-config";
+import { createCustomMessagePresentationRegistry } from "../custom-message-presentations";
 import {
   compileThinkingPresentationRule,
   compileToolPresentationRules,
@@ -91,6 +92,21 @@ export function createThinkingPresentationRegistry(
 
 export let toolPresentationRegistry = createToolPresentationRegistry();
 export let thinkingPresentationRegistry = createThinkingPresentationRegistry();
+export let customMessagePresentationRegistry: ReturnType<
+  typeof createCustomMessagePresentationRegistry
+> = createCustomMessagePresentationRegistry();
+const customMessageListeners = new Set<() => void>();
+
+export function getCustomMessagePresentationRegistry(): typeof customMessagePresentationRegistry {
+  return customMessagePresentationRegistry;
+}
+
+export function subscribeCustomMessagePresentations(listener: () => void) {
+  customMessageListeners.add(listener);
+  return () => {
+    customMessageListeners.delete(listener);
+  };
+}
 
 /** Replace the user-owned generation after an authoritative host bootstrap.
  * Existing shells and shipped definitions stay immutable; user declarations
@@ -110,4 +126,8 @@ export function configureToolPresentationRegistry(
   thinkingPresentationRegistry = createThinkingPresentationRegistry(
     resolved.thinking,
   );
+  customMessagePresentationRegistry = createCustomMessagePresentationRegistry(
+    resolved.customMessages,
+  );
+  for (const listener of customMessageListeners) listener();
 }

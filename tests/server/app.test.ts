@@ -16,25 +16,25 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { accessCookieName, createInspireServer } from "../../server/app.js";
-import {
-  MAX_JOINING_EVENT_BYTES,
-  MAX_RUNTIME_EVENT_BYTES,
-} from "../../server/runtime-event-sockets.js";
 import { AttachmentStore } from "../../server/attachments.js";
 import type { GitInspectionLike } from "../../server/git-inspection.js";
 import { MockCatalog, MockRuntime } from "../../server/mock.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { ResourceStore } from "../../server/resources.js";
-import { ToolPresentationConfigStore } from "../../server/tool-presentation-config.js";
+import {
+  MAX_JOINING_EVENT_BYTES,
+  MAX_RUNTIME_EVENT_BYTES,
+} from "../../server/runtime-event-sockets.js";
 import { ToolArgumentStream } from "../../server/tool-argument-stream.js";
+import { ToolPresentationConfigStore } from "../../server/tool-presentation-config.js";
 import {
   applyAssistantMessageDelta,
   assistantStreamTextLength,
 } from "../../shared/assistant-stream.js";
 import {
   type ActiveSnapshot,
-  type SessionRuntimeStatus,
   MAX_ATTACHMENT_FILE_BYTES,
+  type SessionRuntimeStatus,
 } from "../../shared/contracts.js";
 
 type DetailFrame = Record<string, unknown> & {
@@ -45,6 +45,12 @@ type DetailFrame = Record<string, unknown> & {
 
 const token = "test-local-token";
 const mockWorkspace = resolve("/home/demo/research");
+const fixtureModel = {
+  provider: "anthropic",
+  id: "claude-sonnet-4",
+  name: "Claude Sonnet 4",
+  reasoning: true,
+};
 
 describe("local host API", () => {
   let temporary: string;
@@ -128,23 +134,12 @@ describe("local host API", () => {
           },
         }),
       },
-      availableModels: async () => [
-        {
-          provider: "anthropic",
-          id: "claude-sonnet-4",
-          name: "Claude Sonnet 4",
-          reasoning: true,
-        },
-      ],
-      newSessionDefaults: async (cwd) => ({
-        cwd,
-        model: {
-          provider: "anthropic",
-          id: "claude-sonnet-4",
-          name: "Claude Sonnet 4",
-          reasoning: true,
-        },
-        thinkingLevel: "high",
+      bootstrapModels: () => [fixtureModel],
+      availableModels: async () => [fixtureModel],
+      modelMetadata: async (cwd) => ({
+        models: [fixtureModel],
+        virtualModels: [],
+        defaults: { cwd, model: fixtureModel, thinkingLevel: "high" },
       }),
       distDir: join(temporary, "missing-dist"),
       shutdown,
@@ -184,6 +179,13 @@ describe("local host API", () => {
           },
         },
         mappings: { example: "user.example.tool" },
+        customMessages: {
+          review_message: {
+            source: "Review",
+            title: ["details.sender"],
+            body: "details.body",
+          },
+        },
         thinking: {
           summary: [{ value: { path: "thinking.text", format: "first-line" } }],
           blocks: [{ type: "markdown", source: { path: "thinking.text" } }],
@@ -198,6 +200,13 @@ describe("local host API", () => {
     expect(response.body.toolPresentations.thinking).toMatchObject({
       summary: [{ value: { path: "thinking.text", format: "first-line" } }],
       blocks: [{ type: "markdown" }],
+    });
+    expect(response.body.toolPresentations.customMessages).toEqual({
+      review_message: {
+        source: "Review",
+        title: ["details.sender"],
+        body: "details.body",
+      },
     });
     expect(response.body.toolPresentationsWarning).toBeUndefined();
   });
@@ -429,11 +438,11 @@ describe("local host API", () => {
     await writeFile(join(temporary, "app.ts"), "export {};\n");
 
     const defaults = await request(application.server)
-      .get("/api/new-session/defaults")
+      .get("/api/models")
       .query({ cwd: join(temporary, ".") })
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
-    expect(defaults.body).toEqual({
+    expect(defaults.body.defaults).toEqual({
       cwd: temporary,
       model: {
         provider: "anthropic",
@@ -456,7 +465,7 @@ describe("local host API", () => {
     });
 
     await request(application.server)
-      .get("/api/new-session/defaults")
+      .get("/api/models")
       .query({ cwd: join(temporary, "missing") })
       .set("Authorization", `Bearer ${token}`)
       .expect(400, { error: "Project path does not exist" });
@@ -713,7 +722,7 @@ describe("local host API", () => {
   });
 
   it("serves current and retained hashed assets without using the SPA fallback", async () => {
-    const dist = await mkdtemp(join(tmpdir(), "inspire-dist-"));
+    const dist = await mkdtemp(join(tmpdir(), ".inspire-dist-"));
     const retainedAssets = await mkdtemp(
       join(tmpdir(), "inspire-retained-assets-"),
     );
@@ -778,10 +787,11 @@ describe("local host API", () => {
       expect(theme.headers["cache-control"]).not.toContain("immutable");
       expect(theme.headers["cache-control"]).toContain("max-age=0");
       // The SPA shell is always revalidated so a new bundle hash is picked up.
-      const shell = await request(served.server)
-        .get("/some/deep/route")
-        .expect(200);
-      expect(shell.headers["cache-control"]).toBe("no-cache");
+      for (const path of ["/", "/some/deep/route"]) {
+        const shell = await request(served.server).get(path).expect(200);
+        expect(shell.text).toContain("<title>INSΠRE</title>");
+        expect(shell.headers["cache-control"]).toBe("no-cache");
+      }
 
       const browser = request.agent(served.server);
       const launch = await browser
@@ -969,7 +979,7 @@ describe("local host API", () => {
     expect(opened.body.active.model.id).toBe("kimi-k3");
   });
 
-  it("exposes only authenticated current-boundary Pending clear, not individual management", async () => {
+  it("authenticates Pending clear, recovery, and exact-text reads without individual management", async () => {
     const clear = vi
       .spyOn(runtime, "clearPending")
       .mockResolvedValue(undefined);
@@ -990,7 +1000,47 @@ describe("local host API", () => {
       .send({ sessionId: "mock-active" })
       .expect(200, { ok: true });
     expect(clear).toHaveBeenCalledExactlyOnceWith("mock-active");
-    for (const path of ["/api/pending", "/api/pending/text"]) {
+    const recover = vi
+      .spyOn(runtime, "recoverPending")
+      .mockResolvedValue({ steering: ["complete"], followUp: ["later"] });
+    const text = vi
+      .spyOn(runtime, "pendingText")
+      .mockResolvedValue("x".repeat(2000));
+    for (const path of ["/api/pending/recover", "/api/pending/text"]) {
+      await request(application.server)
+        .post(path)
+        .send({ sessionId: "mock-active" })
+        .expect(401);
+    }
+    const recovered = await request(application.server)
+      .post("/api/pending/recover")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active" })
+      .expect(200);
+    expect(recovered.body).toEqual({
+      steering: ["complete"],
+      followUp: ["later"],
+    });
+    expect(recover).toHaveBeenCalledExactlyOnceWith("mock-active");
+    const copied = await request(application.server)
+      .post("/api/pending/text")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        sessionId: "mock-active",
+        viewId: "view",
+        revision: 7,
+        itemId: "text-steer-0",
+      })
+      .expect(200);
+    expect(copied.body.text).toHaveLength(2000);
+    expect(copied.headers["cache-control"]).toBe("no-store");
+    expect(text).toHaveBeenCalledExactlyOnceWith({
+      sessionId: "mock-active",
+      viewId: "view",
+      revision: 7,
+      itemId: "text-steer-0",
+    });
+    for (const path of ["/api/pending"]) {
       await request(application.server)
         .post(path)
         .set("Authorization", `Bearer ${token}`)
@@ -1249,6 +1299,45 @@ describe("local host API", () => {
       snapshot: await runtime.openSession("mock-active"),
       editorText: "original",
     });
+    const sourceSnapshot = await runtime.openSession("mock-active");
+    const clone = vi.spyOn(runtime, "cloneBranch").mockResolvedValue({
+      sessionId: "cloned",
+      editorText: "",
+      snapshot: {
+        ...sourceSnapshot,
+        active: { ...sourceSnapshot.active!, sessionId: "cloned" },
+      },
+    });
+    const entry = vi.spyOn(runtime, "branchEntry").mockResolvedValue({
+      sessionId: "mock-active",
+      revision: 3,
+      text: "Complete retained answer",
+      totalChars: 24,
+      nextOffset: null,
+      node: {
+        id: "a1",
+        parentId: "u1",
+        type: "message",
+        role: "assistant",
+        depth: 1,
+        label: "Answer",
+        snippet: "Answer",
+        timestamp: "2026-08-01",
+        active: true,
+        leaf: true,
+        canSwitch: true,
+        canEdit: false,
+        canFork: false,
+      },
+      images: [{ index: 0, mimeType: "image/png" }],
+    });
+    const image = vi.spyOn(runtime, "branchImage").mockResolvedValue({
+      mimeType: "image/png",
+      data: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aPe8AAAAASUVORK5CYII=",
+        "base64",
+      ),
+    });
 
     await request(application.server)
       .get("/api/branches/tree?sessionId=mock-active")
@@ -1258,7 +1347,52 @@ describe("local host API", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(200)
       .expect((response) => expect(response.body.revision).toBe(3));
-    expect(tree).toHaveBeenCalledWith("mock-active");
+    expect(tree).toHaveBeenCalledWith("mock-active", {});
+    await request(application.server)
+      .get("/api/branches/tree?sessionId=mock-active&query=retained&before=a1")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(tree).toHaveBeenLastCalledWith("mock-active", {
+      query: "retained",
+      before: "a1",
+    });
+    const readQuery =
+      "sessionId=mock-active&targetId=a1&viewId=view-1&offset=0";
+    await request(application.server)
+      .get(`/api/branches/entry?${readQuery}`)
+      .expect(401);
+    await request(application.server)
+      .get(`/api/branches/image?${readQuery}&index=0`)
+      .expect(401);
+    expect(entry).not.toHaveBeenCalled();
+    expect(image).not.toHaveBeenCalled();
+    await request(application.server)
+      .get(`/api/branches/entry?${readQuery}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200)
+      .expect((response) =>
+        expect(response.body.text).toBe("Complete retained answer"),
+      );
+    expect(entry).toHaveBeenCalledWith({
+      sessionId: "mock-active",
+      targetId: "a1",
+      viewId: "view-1",
+      offset: 0,
+    });
+    await request(application.server)
+      .get(`/api/branches/image?${readQuery}&index=0`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200)
+      .expect("Content-Type", /image\/png/)
+      .expect("Cache-Control", "private, no-store");
+    expect(image).toHaveBeenCalledWith(
+      { sessionId: "mock-active", targetId: "a1", viewId: "view-1", offset: 0 },
+      0,
+    );
+    await request(application.server)
+      .get(`/api/branches/image?${readQuery}&index=-1`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(400);
 
     await request(application.server)
       .post("/api/branches/navigate")
@@ -1297,6 +1431,27 @@ describe("local host API", () => {
       sessionId: "mock-active",
       revision: 3,
       targetId: "u1",
+    });
+    await request(application.server)
+      .post("/api/branches/clone")
+      .send({ sessionId: "mock-active", revision: 3 })
+      .expect(401);
+    expect(clone).not.toHaveBeenCalled();
+    await request(application.server)
+      .post("/api/branches/clone")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", revision: 3, rawPath: "/forged" })
+      .expect(400);
+    await request(application.server)
+      .post("/api/branches/clone")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", revision: 3, targetId: "a1" })
+      .expect(200)
+      .expect((response) => expect(response.body.editorText).toBe(""));
+    expect(clone).toHaveBeenLastCalledWith({
+      sessionId: "mock-active",
+      revision: 3,
+      targetId: "a1",
     });
   });
 
@@ -3150,10 +3305,23 @@ describe("local host API", () => {
     });
     expect(uploaded.body.attachments[0]).not.toHaveProperty("path");
     const storedFiles = await readdir(join(temporary, "uploads"));
-    expect(storedFiles).toHaveLength(1);
+    const id = uploaded.body.attachments[0].id;
+    expect(storedFiles.sort()).toEqual(
+      [`${id}-notes.txt`, `${id}.json`].sort(),
+    );
+    const ownership = JSON.parse(
+      await readFile(join(temporary, "uploads", `${id}.json`), "utf8"),
+    );
+    expect(ownership).toMatchObject({
+      id,
+      kind: "file",
+      fileName: "notes.txt",
+      path: join(temporary, "uploads", `${id}-notes.txt`),
+    });
     if (process.platform !== "win32") {
       expect(
-        (await stat(join(temporary, "uploads", storedFiles[0]!))).mode & 0o777,
+        (await stat(join(temporary, "uploads", `${id}-notes.txt`))).mode &
+          0o777,
       ).toBe(0o600);
     }
 
