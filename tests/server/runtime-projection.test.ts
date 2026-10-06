@@ -877,7 +877,11 @@ describe("RuntimeController new-session materialization", () => {
           ),
         ).toHaveLength(1);
       } finally {
-        await fixture.runtime.close();
+        if (stopFails)
+          await expect(fixture.runtime.close()).rejects.toThrow(
+            "Fixture stop could not confirm exit",
+          );
+        else await expect(fixture.runtime.close()).resolves.toBeUndefined();
       }
     },
   );

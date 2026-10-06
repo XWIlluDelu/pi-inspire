@@ -209,6 +209,13 @@ export async function assertHerdrGroupMember(
     throw new Error("Pi did not start in its owned Herdr worker group");
 }
 
+function scopeRemoved(error: unknown): boolean {
+  // Removed kernfs nodes return ENODEV through an already-open directory.
+  // A cgroup can only be removed after its last process has left.
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENODEV";
+}
+
 async function openOwnedScope(
   scope: HerdrWorkerScope,
 ): Promise<FileHandle | null> {
@@ -219,7 +226,7 @@ async function openOwnedScope(
       constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
     );
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if (scopeRemoved(error)) return null;
     throw error;
   }
   try {
@@ -245,8 +252,7 @@ async function scopePopulated(directory: FileHandle): Promise<boolean> {
       throw new Error("Unable to inspect Herdr worker scope");
     return populated === "1";
   } catch (error) {
-    // A cgroup can only be removed after its last process has left.
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    if (scopeRemoved(error)) return false;
     throw error;
   }
 }
@@ -307,7 +313,7 @@ export async function stopHerdrProcessGroup(
         await killer.close();
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (!scopeRemoved(error)) throw error;
     }
     let nextWarning = Date.now() + 2_500;
     while (await scopePopulated(directory)) {

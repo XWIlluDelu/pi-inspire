@@ -64,7 +64,9 @@ on the main thread.
 The parser client runs one active job overall and retains only the latest pending source per mounted
 reader. A compatible completed prefix stays formatted while the appended tail appears immediately as
 safe text. A replacement source displays its own text while awaiting parsing. Unmounting retires that
-reader's work; the last reader terminates the worker.
+reader's work. Releasing the active job terminates that worker and immediately admits the next valid
+pending reader, even if other readers retain completed trees. The last reader also terminates the
+worker; valid streaming updates coalesce rather than restarting active parsing on every update.
 
 Sanitized `code`/`pre` renderers pass primitive source and mode/language props to memoized leaves.
 `RichTextMath` runs trust-disabled rehype-katex and HAST-to-React conversion when an expression changes;

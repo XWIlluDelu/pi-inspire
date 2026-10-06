@@ -5,7 +5,6 @@ import {
   MAX_ASSISTANT_STREAM_BATCH_EVENTS,
 } from "../shared/assistant-stream";
 import {
-  boundedExtensionStatus,
   EXTENSION_ONE_WAY_METHODS,
   type ExtensionDisplay,
   type ExtensionUiRequest,
@@ -14,7 +13,6 @@ import {
   isSessionRuntimeStatus,
   MAX_EXTENSION_DISPLAYS,
   MAX_EXTENSION_KEY_CHARS,
-  MAX_EXTENSION_STATUSES,
   MAX_EXTENSION_WIDGET_LINES,
   type PendingQueues,
   parseExtensionStatuses,
@@ -26,15 +24,15 @@ import {
   type RunState,
 } from "../shared/contracts";
 import { structuralMessageIdentity } from "../shared/message-identity";
-
-import type { ToolCallPreview } from "../shared/tool-argument-updates";
 import {
+  type ActivityTool,
+  type ChildCallList,
   codemodeCalls,
   toolOutputPreview,
   updateChildActivity,
-  type ActivityTool,
-  type ChildCallList,
 } from "../shared/tool-activity";
+import type { ToolCallPreview } from "../shared/tool-argument-updates";
+
 export type { ActivityTool } from "../shared/tool-activity";
 
 // --- Chat message model (structural typing over Pi session messages) ---
@@ -271,31 +269,6 @@ function upsert(
   return next;
 }
 
-function summarize(value: unknown, max = 90): string | undefined {
-  if (value == null) return undefined;
-  if (typeof value === "string") return value.slice(0, max);
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    if (Array.isArray(record.content)) {
-      const text = (record.content as Array<{ type?: string; text?: string }>)
-        .map((part) => (typeof part?.text === "string" ? part.text : ""))
-        .filter(Boolean)
-        .join(" ")
-        .trim();
-      if (text) return text.slice(0, max);
-    }
-    for (const key of ["path", "file", "command", "query", "url"]) {
-      const field = record[key];
-      if (typeof field === "string") return field.slice(0, max);
-    }
-  }
-  try {
-    return JSON.stringify(value)?.slice(0, max);
-  } catch {
-    return undefined;
-  }
-}
-
 function pushNotice(
   slice: EventSlice,
   kind: Notice["kind"],
@@ -479,8 +452,8 @@ export function reduceEvent(
         break;
       }
 
-      // Established Pi 0.84 streams carry only public AssistantMessageEvent
-      // deltas. A Host batch is reduced into one immutable browser publication.
+      // Reduce Host-coalesced AssistantMessageEvent deltas into one immutable
+      // browser publication.
       const activeKey = current.activeAssistantMessageKey;
       const wireKey =
         typeof event.streamMessageKey === "string"
@@ -673,10 +646,6 @@ export function reduceEvent(
       const existing = current.tools[id];
       // A delayed update must not resurrect a completed execution.
       if (existing?.phase === "done" || existing?.phase === "error") break;
-      const detail =
-        event.type === "tool_execution_update"
-          ? (summarize(event.partialResult) ?? existing?.detail)
-          : summarize(event.args);
       slice.tools = {
         ...current.tools,
         [id]: {
@@ -686,7 +655,6 @@ export function reduceEvent(
               ? event.toolName
               : (existing?.name ?? "tool"),
           phase: "running",
-          detail,
           ...(event.type === "tool_execution_update"
             ? { outputPreview: toolOutputPreview(event.partialResult) }
             : {}),
@@ -722,7 +690,6 @@ export function reduceEvent(
               ? event.toolName
               : (existing?.name ?? "tool"),
           phase: event.isError ? "error" : "done",
-          detail: existing?.detail ?? summarize(event.result),
           calls:
             typeof event.toolName === "string" && event.toolName === "codemode"
               ? ((event.childCalls as ChildCallList | undefined) ??
@@ -823,18 +790,6 @@ export function reduceEvent(
             ? event.notifyType
             : "info";
         pushNotice(slice, kind, String(event.message ?? ""));
-        changed = true;
-      } else if (method === "setStatus") {
-        const key = typeof event.statusKey === "string" ? event.statusKey : "";
-        if (!key || key.length > MAX_EXTENSION_KEY_CHARS) break;
-        const entries = Object.entries(slice.statuses).filter(
-          ([candidate]) => candidate !== key,
-        );
-        if (typeof event.statusText === "string" && event.statusText)
-          entries.push([key, boundedExtensionStatus(event.statusText)]);
-        slice.statuses = Object.fromEntries(
-          entries.slice(-MAX_EXTENSION_STATUSES),
-        );
         changed = true;
       } else if (method === "setTitle") {
         slice.windowTitle =

@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
+import { terminalMutationHeaders } from "./support/terminal-operations";
 
 // Isolated mock Host and in-process PTYs from playwright.config.ts, never the daily Host.
 test.use({ serviceWorkers: "block" });
@@ -129,6 +130,7 @@ for (const viewport of [
       if (createdId && !page.isClosed())
         await page.request.delete(
           `/api/terminals/${encodeURIComponent(createdId)}?force=1`,
+          { headers: await terminalMutationHeaders(page) },
         );
     }
   });

@@ -40,6 +40,12 @@ export interface TerminalAttachment {
 }
 
 export interface TerminalService {
+  operationEpoch(): Promise<string>;
+  operate<Result>(
+    method: TerminalMutationMethod,
+    params: unknown,
+    operation: TerminalOperationIdentity,
+  ): Promise<Result>;
   list(
     cwd?: string,
   ): TerminalCatalogResponse | Promise<TerminalCatalogResponse>;
@@ -63,18 +69,7 @@ export interface TerminalService {
   close(): Promise<void>;
 }
 
-/** Receipt capability is explicit: a transport without it must not be wrapped
- * in Host-local receipts for identified operations owned somewhere else. */
-export interface TerminalOperationService extends TerminalService {
-  operationEpoch(): Promise<string>;
-  operate<Result>(
-    method: TerminalMutationMethod,
-    params: unknown,
-    operation: TerminalOperationIdentity,
-  ): Promise<Result>;
-}
-
-export class UnavailableTerminalService implements TerminalOperationService {
+export class UnavailableTerminalService implements TerminalService {
   constructor(private readonly reason: string) {}
 
   operationEpoch(): Promise<string> {

@@ -2,32 +2,29 @@
  * sessionStorage avoids cross-tab overwrites; attachments remain controller-owned
  * memory. Storage refusal falls back to the same in-memory switching behavior. */
 const memory = new Map<string, string>();
-const unwritten = new Set<string>();
 const revisions = new Map<string, number>();
 const PREFIX = "inspire:composer-draft:v1:";
 const START_KEY = `${PREFIX}start`;
 
 function readDraft(key: string): string {
-  if (unwritten.has(key)) return memory.get(key) ?? "";
+  const cached = memory.get(key);
+  if (cached !== undefined) return cached;
+  let text = "";
   try {
-    const text = window.sessionStorage.getItem(key) ?? "";
-    if (text) memory.set(key, text);
-    else memory.delete(key);
-    return text;
+    text = window.sessionStorage.getItem(key) ?? "";
   } catch {
-    return memory.get(key) ?? "";
+    // Storage refusal leaves this tab's in-memory draft available.
   }
+  memory.set(key, text);
+  return text;
 }
 
 function writeDraft(key: string, text: string): void {
-  if (text) memory.set(key, text);
-  else memory.delete(key);
+  memory.set(key, text);
   try {
     if (text) window.sessionStorage.setItem(key, text);
     else window.sessionStorage.removeItem(key);
-    unwritten.delete(key);
   } catch {
-    unwritten.add(key);
     // Private-mode/quota restrictions must not interrupt typing or delivery.
   }
 }

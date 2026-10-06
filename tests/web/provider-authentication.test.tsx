@@ -361,6 +361,27 @@ describe("auth attempt observation and owner retirement", () => {
       view.unmount();
     },
   );
+  it("retires a missing login when Cancel confirms there is no attempt", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    host.providerAuth.mockImplementation(async (_owner, operation) =>
+      operation.operation === "cancel" ? null : pendingLogin(),
+    );
+    const view = render(panel());
+    await start();
+    await act(async () => vi.advanceTimersByTimeAsync(250));
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Cancel login" })),
+    );
+    expect(screen.queryByText("Login in progress")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Claude authorization" }),
+    ).toBeEnabled();
+    const reads = host.providerAuth.mock.calls.length;
+    await act(async () => vi.advanceTimersByTimeAsync(1500));
+    expect(host.providerAuth).toHaveBeenCalledTimes(reads);
+    view.unmount();
+  });
+
   it("cleans up a late-created attempt without leaving the new owner busy", async () => {
     const pending = deferred<ProviderLoginAttempt>();
     host.providerAuth.mockImplementation(async (_owner, operation) =>

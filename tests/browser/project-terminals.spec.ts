@@ -6,6 +6,9 @@ import {
 } from "../../shared/terminal-contracts";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { openMockSession, pairedPage } from "./support/navigation";
+import { terminalWriteCommand } from "./support/terminal-command";
+import { terminalMutationHeaders } from "./support/terminal-operations";
+import { terminalTransportFixture } from "./support/terminal-transport";
 
 test("project terminals survive browser detach and keep multiple tabs", async ({
   context,
@@ -39,7 +42,9 @@ test("project terminals survive browser detach and keep multiple tabs", async ({
   const firstTerminal = firstCatalog.terminals[0]!;
   let terminalIds = [firstTerminal.id];
   try {
-    await terminalInput.pressSequentially("printf 'INSPIRE_TERMINAL_E2E\\n'");
+    await terminalInput.pressSequentially(
+      terminalWriteCommand("INSPIRE_TERMINAL_E2E\n"),
+    );
     await terminalInput.press("Enter");
     await expect
       .poll(async () => (await readTerminals()).terminals[0]!.nextOutputOffset)
@@ -50,9 +55,10 @@ test("project terminals survive browser detach and keep multiple tabs", async ({
     await context.grantPermissions(["clipboard-read", "clipboard-write"], {
       origin: new URL(page.url()).origin,
     });
-    await page.evaluate(async () => {
-      await navigator.clipboard.writeText("printf '终端✓\\n'");
-    });
+    await page.evaluate(
+      (command) => navigator.clipboard.writeText(command),
+      terminalWriteCommand("终端✓\n"),
+    );
     await page.getByLabel("Terminal actions", { exact: true }).click();
     await page.getByRole("button", { name: "Paste into terminal" }).click();
     await expect(
@@ -62,7 +68,7 @@ test("project terminals survive browser detach and keep multiple tabs", async ({
     await terminalInput.press("Enter");
     await expect(visibleTerminalOutput).toContainText("终端✓");
     await terminalInput.pressSequentially(
-      "printf '\\033[?1049hINSPIRE_ALT_SCREEN'",
+      terminalWriteCommand("\u001b[?1049hINSPIRE_ALT_SCREEN"),
     );
     await terminalInput.press("Enter");
     await expect(visibleTerminalOutput).toContainText("INSPIRE_ALT_SCREEN");
@@ -97,7 +103,9 @@ test("project terminals survive browser detach and keep multiple tabs", async ({
         ".terminal-views__item:not([hidden]) .xterm-accessibility-tree",
       ),
     ).toContainText("INSPIRE_ALT_SCREEN");
-    await restoredInput.pressSequentially("printf '\\033[?1049l'");
+    await restoredInput.pressSequentially(
+      terminalWriteCommand("\u001b[?1049l"),
+    );
     await restoredInput.press("Enter");
 
     const focusedPage = await context.newPage();
@@ -109,7 +117,7 @@ test("project terminals survive browser detach and keep multiple tabs", async ({
     await expect(
       focusedPage.getByRole("status", { name: "View only", exact: true }),
     ).toBeVisible();
-    await focusedPage.keyboard.press("Control+k");
+    await focusedPage.keyboard.press("ControlOrMeta+k");
     await focusedPage
       .getByRole("dialog", { name: "Command palette" })
       .getByLabel("Filter commands")
@@ -133,6 +141,7 @@ test("project terminals survive browser detach and keep multiple tabs", async ({
     for (const terminalId of terminalIds) {
       const response = await page.request.delete(
         `/api/terminals/${encodeURIComponent(terminalId)}?force=1`,
+        { headers: await terminalMutationHeaders(page) },
       );
       expect(response.ok()).toBe(true);
     }
@@ -146,6 +155,7 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
   await pairedPage(page);
   await openMockSession(page, /Review extension event lifecycle/);
   const created = await page.request.post("/api/terminals", {
+    headers: await terminalMutationHeaders(page),
     data: { cwd: browserWorkspace },
   });
   expect(created.ok()).toBe(true);
@@ -245,6 +255,7 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
   } finally {
     await page.request.delete(
       `/api/terminals/${encodeURIComponent(terminal.id)}?force=1`,
+      { headers: await terminalMutationHeaders(page) },
     );
   }
 });
@@ -253,6 +264,10 @@ test("compact terminal controls keep selection, search, and output scoped to the
   context,
   page,
 }) => {
+  const ids = ["compact-terminal-a", "compact-terminal-b"];
+  const terminals = await terminalTransportFixture(page, browserWorkspace, ids);
+  const firstTerminal = terminals[0]!;
+  const secondTerminal = terminals[1]!;
   await pairedPage(page);
   await openMockSession(page, /Review extension event lifecycle/);
   await page.evaluate(() =>
@@ -261,7 +276,6 @@ test("compact terminal controls keep selection, search, and output scoped to the
       JSON.stringify({ screenReaderMode: true }),
     ),
   );
-  const ids: string[] = [];
   const prompts: string[] = [];
   page.on("request", (request) => {
     if (
@@ -270,264 +284,235 @@ test("compact terminal controls keep selection, search, and output scoped to the
     )
       prompts.push(request.url());
   });
-  try {
-    for (let index = 0; index < 2; index += 1) {
-      const response = await page.request.post("/api/terminals", {
-        data: { cwd: browserWorkspace },
-      });
-      expect(response.ok()).toBe(true);
-      ids.push(((await response.json()) as { id: string }).id);
-    }
-    await page.getByRole("button", { name: "Toggle resources panel" }).click();
-    await page.getByRole("button", { name: "Terminal", exact: true }).click();
-    await page.locator(`#terminal-tab-${ids[0]}`).click();
-    await expect(
-      page.getByRole("status", { name: "Controlling", exact: true }),
-    ).toBeVisible();
-    const activeView = page.locator(".terminal-views__item:not([hidden])");
-    const input = activeView.locator(".xterm-helper-textarea");
-    // The mock Host intentionally skips user shell integration. Exercise its
-    // real PTY stream with explicit advisory command/output boundaries.
-    await input.pressSequentially(
-      "printf '\\033]6973;C1;fixture\\007TERMINAL_REDESIGN_A\\n\\033]6973;D;0\\007'",
-    );
-    await input.press("Enter");
-    await expect(activeView.locator(".xterm-accessibility-tree")).toContainText(
-      "TERMINAL_REDESIGN_A",
-    );
-    await input.evaluate((element) =>
-      element.setAttribute("data-continuity", "retained"),
-    );
-    const dimensions = async () => {
-      const response = await page.request.get(
-        `/api/terminals?cwd=${encodeURIComponent(browserWorkspace)}`,
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await page.locator(`#terminal-tab-${ids[0]}`).click();
+  await expect(
+    page.getByRole("status", { name: "Controlling", exact: true }),
+  ).toBeVisible();
+  const activeView = page.locator(".terminal-views__item:not([hidden])");
+  const input = activeView.locator(".xterm-helper-textarea");
+  // Wait for the live view's initial fit before sending ordered marker/text
+  // bytes. ConPTY may reorder synthetic OSC relative to rendered shell text.
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  await expect.poll(() => firstTerminal.resizes.length).toBeGreaterThan(0);
+  firstTerminal.write(
+    "fixture$ run\r\n" +
+      "\u001b]6973;C1;fixture\u0007TERMINAL_REDESIGN_A\r\n" +
+      "\u001b]6973;D;0\u0007fixture$ ",
+  );
+  await expect(activeView.locator(".xterm-accessibility-tree")).toContainText(
+    "TERMINAL_REDESIGN_A",
+  );
+  await input.evaluate((element) =>
+    element.setAttribute("data-continuity", "retained"),
+  );
+  const dimensions = () => {
+    const { cols, rows } = firstTerminal.descriptor;
+    return { cols, rows };
+  };
+  const beforeSearch = dimensions();
+  const beforeSearchResizes = firstTerminal.resizes.length;
+  const searchButton = page.getByRole("button", {
+    name: "Search terminal output",
+    exact: true,
+  });
+  await expect(searchButton).toHaveCount(1);
+  await searchButton.click();
+  const searchInput = page.getByRole("textbox", {
+    name: "Search terminal output",
+    exact: true,
+  });
+  await expect(searchInput).toBeFocused();
+  await searchInput.fill("TERMINAL_REDESIGN_A");
+  await expect(page.locator(".terminal-search__count")).not.toHaveText("0/0");
+  expect(dimensions()).toEqual(beforeSearch);
+  expect(firstTerminal.resizes).toHaveLength(beforeSearchResizes);
+  await page.locator(`#terminal-tab-${ids[1]}`).click();
+  await expect.poll(() => secondTerminal.resizes.length).toBeGreaterThan(0);
+  secondTerminal.write("TERMINAL_REDESIGN_B\r\n");
+  await expect(searchButton).toHaveCount(1);
+  await expect(searchButton).toHaveAttribute("aria-expanded", "false");
+  await searchButton.click();
+  await expect(searchInput).toHaveValue("");
+  await searchInput.fill("SECOND_VIEW_QUERY");
+  await page.getByLabel("Terminal actions", { exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Copy last output", exact: true }),
+  ).toBeDisabled();
+  await page.locator(`#terminal-tab-${ids[0]}`).click();
+  await expect(searchInput).toHaveValue("TERMINAL_REDESIGN_A");
+  await expect(input).toHaveAttribute("data-continuity", "retained");
+  await page.getByRole("button", { name: "Close terminal search" }).click();
+
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+    origin: new URL(page.url()).origin,
+  });
+  const more = page.getByLabel("Terminal actions", { exact: true });
+  await more.click();
+  const copyOutput = page.getByRole("button", {
+    name: "Copy last output",
+    exact: true,
+  });
+  await expect(copyOutput).toBeEnabled();
+  await copyOutput.click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("TERMINAL_REDESIGN_A");
+  await more.click();
+  await page.getByRole("button", { name: "Copy all", exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain("TERMINAL_REDESIGN_A");
+  const beforeSelectionResizes = firstTerminal.resizes.length;
+  await more.click();
+  await page.getByRole("button", { name: "Select text", exact: true }).click();
+  const textDialog = page.getByRole("dialog", {
+    name: "Select terminal text",
+  });
+  const textOutput = textDialog.getByRole("textbox", {
+    name: "Terminal output",
+  });
+  await expect(page.locator("details[data-terminal-menu][open]")).toHaveCount(
+    0,
+  );
+  await expect(textOutput).toBeFocused();
+  await expect(textOutput).toHaveAttribute("readonly", "");
+  expect(dimensions()).toEqual(beforeSearch);
+  expect(firstTerminal.resizes).toHaveLength(beforeSelectionResizes);
+  await expect(textOutput).not.toHaveValue(/TERMINAL_REDESIGN_B/);
+  await textOutput.press("ControlOrMeta+a");
+  await textDialog
+    .getByRole("button", { name: "Copy selection", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain("TERMINAL_REDESIGN_A");
+  await page
+    .getByRole("button", {
+      name: "Send terminal selection to composer",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toHaveValue(/```text[\s\S]*TERMINAL_REDESIGN_A/);
+  expect(prompts).toEqual([]);
+
+  // A delayed permission/read result belongs to its original activation,
+  // including an A → B → A round trip. A fresh paste reaches the transport.
+  await page.evaluate(() => {
+    Object.defineProperty(navigator.clipboard, "readText", {
+      configurable: true,
+      value: () =>
+        new Promise<string>((resolve) => {
+          document.addEventListener(
+            "test-terminal-paste",
+            (event) => resolve((event as CustomEvent<string>).detail),
+            { once: true },
+          );
+        }),
+    });
+  });
+  const deliverPaste = (value: string) =>
+    page.evaluate(async (text) => {
+      document.dispatchEvent(
+        new CustomEvent("test-terminal-paste", { detail: text }),
       );
-      const catalog = (await response.json()) as {
-        terminals: Array<{ id: string; cols: number; rows: number }>;
-      };
-      const terminal = catalog.terminals.find(({ id }) => id === ids[0])!;
-      return { cols: terminal.cols, rows: terminal.rows };
-    };
-    const beforeSearch = await dimensions();
-    const searchButton = page.getByRole("button", {
-      name: "Search terminal output",
-      exact: true,
-    });
-    await expect(searchButton).toHaveCount(1);
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
+    }, value);
+  await more.click();
+  await page
+    .getByRole("button", { name: "Paste into terminal", exact: true })
+    .click();
+  await page.locator(`#terminal-tab-${ids[1]}`).click();
+  await page.locator(`#terminal-tab-${ids[0]}`).click();
+  await deliverPaste("TERMINAL_CLIPBOARD_STALE");
+  expect(firstTerminal.inputs).toEqual([]);
+  expect(secondTerminal.inputs).toEqual([]);
+  await more.click();
+  await page
+    .getByRole("button", { name: "Paste into terminal", exact: true })
+    .click();
+  await deliverPaste("TERMINAL_CLIPBOARD_FRESH");
+  await expect
+    .poll(() => firstTerminal.inputs)
+    .toEqual(["TERMINAL_CLIPBOARD_FRESH"]);
+  expect(secondTerminal.inputs).toEqual([]);
+  await expect(input).toBeFocused();
+  await page.evaluate(() =>
+    Reflect.deleteProperty(navigator.clipboard, "readText"),
+  );
+
+  const accessibility = await new AxeBuilder({ page })
+    .include(".terminal-pane")
+    .analyze();
+  expect(accessibility.violations).toEqual([]);
+  // Height-only changes preserve output; a short panel also scrolls its menu.
+  const beforeHeight = dimensions();
+  const beforeHeightResizes = firstTerminal.resizes.length;
+  await page
+    .locator(".terminal-pane")
+    .evaluate((element) => (element.style.flex = "0 0 280px"));
+  await expect.poll(() => dimensions().rows).toBeLessThan(beforeHeight.rows);
+  expect(dimensions().cols).toBe(beforeHeight.cols);
+  expect(
+    firstTerminal.resizes
+      .slice(beforeHeightResizes)
+      .every(({ cols }) => cols === beforeHeight.cols),
+  ).toBe(true);
+  await more.click();
+  await expect(copyOutput).toBeEnabled();
+  await copyOutput.click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("TERMINAL_REDESIGN_A");
+  await more.click();
+  await page
+    .locator(".terminal-pane")
+    .getByRole("button", { name: "Settings", exact: true })
+    .scrollIntoViewIfNeeded();
+  const paneBounds = await page.locator(".terminal-pane").boundingBox();
+  const menuBounds = await page
+    .locator(".terminal-menu--more > .terminal-menu__popover")
+    .boundingBox();
+  expect(menuBounds!.y + menuBounds!.height).toBeLessThanOrEqual(
+    paneBounds!.y + paneBounds!.height,
+  );
+  await page
+    .locator(".terminal-pane")
+    .screenshot({ path: "output/playwright/terminal-compact-menu.png" });
+  await more.click();
+  await page
+    .locator(".terminal-pane")
+    .evaluate((element) => element.style.removeProperty("flex"));
+
+  for (const width of [1280, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    if (!(await page.locator(".ctx").count()))
+      await page
+        .getByRole("button", { name: "Toggle resources panel" })
+        .click();
+    await page.getByRole("button", { name: "Terminal", exact: true }).click();
+    const visibleInput = page.locator(
+      ".terminal-views__item:not([hidden]) .xterm-helper-textarea",
+    );
     await searchButton.click();
-    const searchInput = page.getByRole("textbox", {
-      name: "Search terminal output",
-      exact: true,
-    });
     await expect(searchInput).toBeFocused();
     await searchInput.fill("TERMINAL_REDESIGN_A");
-    await expect(page.locator(".terminal-search__count")).not.toHaveText("0/0");
-    expect(await dimensions()).toEqual(beforeSearch);
-    await page.locator(`#terminal-tab-${ids[1]}`).click();
-    await expect(searchButton).toHaveCount(1);
-    await expect(searchButton).toHaveAttribute("aria-expanded", "false");
-    await searchButton.click();
-    await expect(searchInput).toHaveValue("");
-    await searchInput.fill("SECOND_VIEW_QUERY");
-    await page.getByLabel("Terminal actions", { exact: true }).click();
-    await expect(
-      page.getByRole("button", { name: "Copy last output", exact: true }),
-    ).toBeDisabled();
-    await page.locator(`#terminal-tab-${ids[0]}`).click();
-    await expect(searchInput).toHaveValue("TERMINAL_REDESIGN_A");
-    await expect(input).toHaveAttribute("data-continuity", "retained");
-    await page.getByRole("button", { name: "Close terminal search" }).click();
-
-    await context.grantPermissions(["clipboard-read", "clipboard-write"], {
-      origin: new URL(page.url()).origin,
+    await searchInput.press("Escape");
+    await expect(searchInput).toHaveCount(0);
+    await expect(page.locator(".ctx")).toBeVisible();
+    await expect(visibleInput).toBeFocused();
+    await page.locator(".terminal-pane").screenshot({
+      path: `output/playwright/terminal-compact-${width}.png`,
     });
-    const more = page.getByLabel("Terminal actions", { exact: true });
-    await more.click();
-    const copyOutput = page.getByRole("button", {
-      name: "Copy last output",
-      exact: true,
-    });
-    await expect(copyOutput).toBeEnabled();
-    await copyOutput.click();
-    await expect
-      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toBe("TERMINAL_REDESIGN_A");
-    await more.click();
-    await page.getByRole("button", { name: "Copy all", exact: true }).click();
-    await expect
-      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toContain("TERMINAL_REDESIGN_A");
-    await more.click();
-    await page
-      .getByRole("button", { name: "Select text", exact: true })
-      .click();
-    const textDialog = page.getByRole("dialog", {
-      name: "Select terminal text",
-    });
-    const textOutput = textDialog.getByRole("textbox", {
-      name: "Terminal output",
-    });
-    await expect(page.locator("details[data-terminal-menu][open]")).toHaveCount(
-      0,
-    );
-    await expect(textOutput).toBeFocused();
-    await expect(textOutput).toHaveAttribute("readonly", "");
-    expect(await dimensions()).toEqual(beforeSearch);
-    await textOutput.press("Control+a");
-    await textDialog
-      .getByRole("button", { name: "Copy selection", exact: true })
-      .click();
-    await expect
-      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toContain("TERMINAL_REDESIGN_A");
-    await page
-      .getByRole("button", {
-        name: "Send terminal selection to composer",
-        exact: true,
-      })
-      .click();
-    await expect(
-      page.getByRole("textbox", { name: "Message", exact: true }),
-    ).toHaveValue(/```text[\s\S]*TERMINAL_REDESIGN_A/);
-    expect(prompts).toEqual([]);
-
-    // A delayed permission/read result belongs to its original activation,
-    // including an A → B → A round trip. A fresh paste still reaches the PTY.
-    await page.evaluate(() => {
-      document.documentElement.dataset.testPasteSends = "";
-      const send = WebSocket.prototype.send;
-      WebSocket.prototype.send = function (data) {
-        const text =
-          typeof data === "string"
-            ? data
-            : data instanceof Blob
-              ? ""
-              : new TextDecoder().decode(data);
-        if (text.includes("TERMINAL_CLIPBOARD_"))
-          document.documentElement.dataset.testPasteSends += text;
-        return send.call(this, data);
-      };
-      Object.defineProperty(navigator.clipboard, "readText", {
-        configurable: true,
-        value: () =>
-          new Promise<string>((resolve) => {
-            document.addEventListener(
-              "test-terminal-paste",
-              (event) => resolve((event as CustomEvent<string>).detail),
-              { once: true },
-            );
-          }),
-      });
-    });
-    const deliverPaste = (value: string) =>
-      page.evaluate(async (text) => {
-        document.dispatchEvent(
-          new CustomEvent("test-terminal-paste", { detail: text }),
-        );
-        await new Promise<void>((resolve) =>
-          requestAnimationFrame(() => resolve()),
-        );
-      }, value);
-    await more.click();
-    await page
-      .getByRole("button", { name: "Paste into terminal", exact: true })
-      .click();
-    await page.locator(`#terminal-tab-${ids[1]}`).click();
-    await page.locator(`#terminal-tab-${ids[0]}`).click();
-    await deliverPaste("TERMINAL_CLIPBOARD_STALE");
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-test-paste-sends",
-      "",
-    );
-    await more.click();
-    await page
-      .getByRole("button", { name: "Paste into terminal", exact: true })
-      .click();
-    await deliverPaste("TERMINAL_CLIPBOARD_FRESH");
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-test-paste-sends",
-      /TERMINAL_CLIPBOARD_FRESH/,
-    );
-    await expect(input).toBeFocused();
-    await input.press("Control+u");
-    await page.evaluate(() =>
-      Reflect.deleteProperty(navigator.clipboard, "readText"),
-    );
-
-    const accessibility = await new AxeBuilder({ page })
-      .include(".terminal-pane")
-      .analyze();
-    expect(accessibility.violations).toEqual([]);
-    // Height-only changes preserve output; a short panel also scrolls its menu.
-    await page
-      .locator(".terminal-pane")
-      .evaluate((element) => (element.style.flex = "0 0 280px"));
-    await more.click();
-    await expect(copyOutput).toBeEnabled();
-    await copyOutput.click();
-    await expect
-      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toBe("TERMINAL_REDESIGN_A");
-    await more.click();
-    await page
-      .locator(".terminal-pane")
-      .getByRole("button", { name: "Settings", exact: true })
-      .scrollIntoViewIfNeeded();
-    const paneBounds = await page.locator(".terminal-pane").boundingBox();
-    const menuBounds = await page
-      .locator(".terminal-menu--more > .terminal-menu__popover")
-      .boundingBox();
-    expect(menuBounds!.y + menuBounds!.height).toBeLessThanOrEqual(
-      paneBounds!.y + paneBounds!.height,
-    );
-    await page
-      .locator(".terminal-pane")
-      .screenshot({ path: "output/playwright/terminal-compact-menu.png" });
-    await more.click();
-    await page
-      .locator(".terminal-pane")
-      .evaluate((element) => element.style.removeProperty("flex"));
-
-    for (const width of [1280, 390, 320]) {
-      await page.setViewportSize({ width, height: 900 });
-      if (!(await page.locator(".ctx").count()))
-        await page
-          .getByRole("button", { name: "Toggle resources panel" })
-          .click();
-      await page.getByRole("button", { name: "Terminal", exact: true }).click();
-      const visibleInput = page.locator(
-        ".terminal-views__item:not([hidden]) .xterm-helper-textarea",
-      );
-      await searchButton.click();
-      await expect(searchInput).toBeFocused();
-      await searchInput.fill("TERMINAL_REDESIGN_A");
-      await searchInput.press("Escape");
-      await expect(searchInput).toHaveCount(0);
-      await expect(page.locator(".ctx")).toBeVisible();
-      await expect(visibleInput).toBeFocused();
-      for (const theme of ["light", "dark"]) {
-        await page.evaluate(
-          (value) => (document.documentElement.dataset.theme = value),
-          theme,
-        );
-        await page.locator(".terminal-pane").screenshot({
-          path: `output/playwright/terminal-compact-${width}-${theme}.png`,
-        });
-        const themedAccessibility = await new AxeBuilder({ page })
-          .include(".terminal-pane")
-          .analyze();
-        expect(themedAccessibility.violations).toEqual([]);
-      }
-      const overflow = await page
-        .locator(".terminal-tabs-shell")
-        .evaluate((element) => element.scrollWidth - element.clientWidth);
-      expect(overflow).toBeLessThanOrEqual(1);
-    }
-  } finally {
-    for (const id of ids)
-      await page.request.delete(
-        `/api/terminals/${encodeURIComponent(id)}?force=1`,
-      );
+    const overflow = await page
+      .locator(".terminal-tabs-shell")
+      .evaluate((element) => element.scrollWidth - element.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(1);
   }
 });
 
@@ -567,6 +552,7 @@ test.describe("touch terminal", () => {
     await openMockSession(page, /Review extension event lifecycle/);
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     const response = await page.request.post("/api/terminals", {
+      headers: await terminalMutationHeaders(page),
       data: { cwd: browserWorkspace },
     });
     expect(response.ok()).toBe(true);
@@ -597,7 +583,7 @@ test.describe("touch terminal", () => {
       // A native paste is literal even if a touch modifier was waiting.
       await page.evaluate(() => navigator.clipboard.writeText("c"));
       await ctrl.tap();
-      await page.keyboard.press("Control+v");
+      await page.keyboard.press("ControlOrMeta+v");
       await expect
         .poll(() => inputs.at(-1))
         .toMatch(/^(?:\u001b\[200~)?c(?:\u001b\[201~)?$/u);
@@ -621,7 +607,10 @@ test.describe("touch terminal", () => {
       await page.keyboard.insertText("u");
       await expect.poll(() => inputs.at(-1)).toBe("\u0015");
 
-      await page.keyboard.insertText("printf 'TOUCH\\137COPY_中文\\n'");
+      // Ctrl+U above tests PTY bytes, not cmd.exe's line editing. Clear its
+      // pending input using the native shell's own editing key before execution.
+      await input.press(process.platform === "win32" ? "Escape" : "Control+u");
+      await page.keyboard.insertText(terminalWriteCommand("TOUCH_COPY_中文\n"));
       await input.press("Enter");
       await expect.poll(() => output).toContain("TOUCH_COPY_中文");
       const more = page.getByLabel("Terminal actions", { exact: true });
@@ -742,6 +731,7 @@ test.describe("touch terminal", () => {
     } finally {
       await page.request.delete(
         `/api/terminals/${encodeURIComponent(terminal.id)}?force=1`,
+        { headers: await terminalMutationHeaders(page) },
       );
     }
   });

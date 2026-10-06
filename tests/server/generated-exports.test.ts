@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -32,6 +39,30 @@ it("keeps graphical exports as managed downloads and cleans temporary source fil
     }),
   ).rejects.toThrow("Export failed");
   await expect(readFile(source)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("prepares downloads from aliased source directories", async () => {
+  const root = await mkdtemp(join(tmpdir(), "inspire-export-alias-"));
+  cleanup.push(() => rm(root, { recursive: true, force: true }));
+  const directory = join(root, "actual");
+  const alias = join(root, "alias");
+  await mkdir(directory);
+  await symlink(
+    directory,
+    alias,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  await writeFile(join(directory, "branch.jsonl"), "snapshot\n");
+  const store = new GeneratedExportStore();
+  cleanup.push(() => store.close());
+  const result = await store.add(
+    "session",
+    join(alias, "branch.jsonl"),
+    "jsonl",
+  );
+  const generated = await store.get("session", result.downloadId);
+  expect(await readFile(generated.path, "utf8")).toBe("snapshot\n");
+  expect(result.fileName).toBe("branch.jsonl");
 });
 
 it("recovers from transient directory creation failure without acquiring/leaking a source handle", async () => {

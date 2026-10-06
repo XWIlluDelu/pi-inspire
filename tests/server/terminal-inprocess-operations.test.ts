@@ -6,13 +6,9 @@ import express from "express";
 import supertest from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { createTerminalGateway } from "../../server/terminal-gateway.js";
-import {
-  type TerminalService,
-  UnavailableTerminalService,
-} from "../../server/terminal-service.js";
+import type { TerminalService } from "../../server/terminal-service.js";
 import {
   type TerminalHistoryBackend,
-  type TerminalPty,
   TerminalSessionManager,
 } from "../../server/terminal-session-manager.js";
 import type {
@@ -22,25 +18,15 @@ import type {
   TerminalOperationIdentity,
 } from "../../shared/terminal-contracts.js";
 
-class SyntheticPty implements TerminalPty {
-  readonly pid = 1234;
-  readonly process = "synthetic-shell";
+import { FakePty } from "./fixtures/terminal-pty.js";
+
+class SyntheticPty extends FakePty {
   autoExit = true;
-  private readonly exits = new Set<(event: { exitCode: number }) => void>();
-  onData() {
-    return { dispose() {} };
-  }
-  onExit(listener: (event: { exitCode: number }) => void) {
-    this.exits.add(listener);
-    return { dispose: () => this.exits.delete(listener) };
-  }
-  resize() {}
-  write() {}
-  kill = vi.fn((_signal?: string) => {
-    if (this.autoExit) this.exit();
+  kill = vi.fn((signal?: string) => {
+    if (this.autoExit) super.kill(signal);
   });
   exit() {
-    for (const listener of this.exits) listener({ exitCode: 0 });
+    this.emitExit(0);
   }
 }
 
@@ -50,13 +36,18 @@ function httpFixture(service: TerminalService) {
   const gateway = createTerminalGateway(app, service, 60_000);
   app.use(
     (
-      error: { status?: number; code?: string; message?: string },
+      error: {
+        status?: number;
+        code?: string;
+        message?: string;
+        name?: string;
+      },
       _request: express.Request,
       response: express.Response,
       _next: express.NextFunction,
     ) => {
       response
-        .status(error.status ?? 500)
+        .status(error.status ?? (error.name === "ZodError" ? 400 : 500))
         .json({ error: error.message, code: error.code });
     },
   );
@@ -250,8 +241,7 @@ describe("in-process terminal receipt owner", () => {
       const result = await restarting;
       expect(result.outputEpoch).not.toBe(terminal.outputEpoch);
       expect(f.ptys).toHaveLength(2);
-      // Direct compatibility calls remain ordinary new intents/callbacks, and
-      // later metadata changes do not mutate the original receipt snapshot.
+      // Later metadata changes do not mutate the original receipt snapshot.
       await f.manager.rename(terminal.id, { title: "Later direct title" });
       expect(await f.manager.operate("create", params, operation)).toEqual(
         terminal,
@@ -465,36 +455,70 @@ describe("in-process terminal receipt owner", () => {
   );
 });
 
-describe("unsupported terminal receipt services", () => {
-  it.each([{}, { operate: true, operationEpoch: "not-callable" }])(
-    "never adds local receipts or falls back to arbitrary remote mutations (%j)",
-    async (capability) => {
-      const service = Object.assign(
-        new UnavailableTerminalService("Synthetic remote service"),
-        capability,
-      );
-      const create = vi
-        .spyOn(service, "create")
-        .mockResolvedValue({ id: "legacy" } as TerminalDescriptor);
-      const f = httpFixture(service);
+describe("terminal HTTP mutation admission", () => {
+  it.each([
+    ["POST", "/api/terminals", { cwd: "/synthetic" }],
+    ["PATCH", "/api/terminals/tab", { title: "Title" }],
+    ["POST", "/api/terminals/reorder", { cwd: "/synthetic", terminalIds: [] }],
+    ["POST", "/api/terminals/tab/restart", undefined],
+    ["DELETE", "/api/terminals/tab", undefined],
+    ["PATCH", "/api/terminal-settings", { persistOutput: true }],
+    ["DELETE", "/api/terminal-history", undefined],
+  ])("requires an identity for %s %s", async (method, path, body) => {
+    const f = await fixture();
+    try {
+      const dispatch = vi.spyOn(f.manager, "operate");
+      const response = await f.transport(String(path), {
+        method: String(method),
+        body: JSON.stringify(body),
+        headers: { "Content-Type": "application/json" },
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        code: "terminal_operation_required",
+      });
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(f.ptys).toHaveLength(0);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it.each([
+    ["POST", "/api/terminals", {}],
+    ["PATCH", "/api/terminals/tab", { title: 42 }],
+    [
+      "POST",
+      "/api/terminals/reorder",
+      { cwd: "/synthetic", terminalIds: ["bad/id"] },
+    ],
+    ["POST", "/api/terminals/bad%20id/restart", undefined],
+    ["DELETE", "/api/terminals/bad%20id", undefined],
+    ["PATCH", "/api/terminal-settings", { historyRetentionDays: 0 }],
+  ])(
+    "receipts validation refusals before dispatch for %s %s",
+    async (method, path, body) => {
+      const f = await fixture();
       try {
-        await supertest(f.app).get("/api/terminal-operations").expect(503);
-        await supertest(f.app)
-          .post("/api/terminals")
-          .set(
-            "X-Terminal-Operation",
-            JSON.stringify({ id: randomUUID(), epoch: randomUUID() }),
-          )
-          .send({ cwd: "/synthetic" })
-          .expect(503);
-        expect(create).not.toHaveBeenCalled();
-        await supertest(f.app)
-          .post("/api/terminals")
-          .send({ cwd: "/synthetic" })
-          .expect(201);
-        expect(create).toHaveBeenCalledOnce();
+        const dispatch = vi.spyOn(f.manager, "operate");
+        const operation = {
+          id: randomUUID(),
+          epoch: await f.manager.operationEpoch(),
+        };
+        const response = await f.transport(String(path), {
+          method: String(method),
+          body: JSON.stringify(body),
+          headers: {
+            "Content-Type": "application/json",
+            "X-Terminal-Operation": JSON.stringify(operation),
+          },
+        });
+        expect(response.status).toBe(400);
+        expect(response.headers.get("X-Terminal-Operation")).toBe(operation.id);
+        expect(response.headers.get("X-Terminal-Outcome")).toBe("rejected");
+        expect(dispatch).not.toHaveBeenCalled();
       } finally {
-        f.gateway.close();
+        await f.close();
       }
     },
   );

@@ -835,8 +835,7 @@ describe("multi-session event routing", () => {
       sessionId: "s1",
       id: "status-1",
       method: "setStatus",
-      statusKey: "worker",
-      statusText: "indexing",
+      extensionStatuses: { worker: "indexing" },
     });
     socket.emit({
       type: "extension_ui_request",

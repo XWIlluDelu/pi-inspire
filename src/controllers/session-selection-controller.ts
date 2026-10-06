@@ -92,14 +92,10 @@ export class SessionSelectionController {
   /** Creates a session without inventing a fallback project root. */
   async create(
     cwd?: string,
-    nameOrOptions: string | NewSessionOptions = {},
+    options: NewSessionOptions = {},
   ): Promise<string | null> {
     const api = this.host.api();
     if (!api) return null;
-    const options =
-      typeof nameOrOptions === "string"
-        ? { name: nameOrOptions }
-        : nameOrOptions;
     const target = cwd?.trim() || this.host.state().cwd;
     if (!target) {
       this.host.notify(

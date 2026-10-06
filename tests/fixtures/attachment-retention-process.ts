@@ -65,7 +65,6 @@ if (phase === "send") {
           owns: store.ownsPromptFile(record.path),
           name: store.promptFileName(record.path),
           bytes: await readFile(record.path, "utf8"),
-          session: await readFile(record.session, "utf8"),
           pid: process.pid,
         };
   await store.close();

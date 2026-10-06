@@ -2,14 +2,12 @@ import {
   BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
   BRANCH_BRIDGE_MAX_RESULT_BYTES,
   BRANCH_BRIDGE_VERSION,
-  decodeBranchBridgeJson,
-  encodeBranchBridgeJson,
   PENDING_IMAGE_SUFFIX,
 } from "../shared/branch-bridge-protocol.js";
 import type { UserMessageEvidence } from "./pending-image-evidence.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
 import type { BranchBridgeIdentity } from "./runtime-slot.js";
-import { runtimeToken } from "./runtime-token.js";
+import { requestWorkerStatus } from "./worker-status-request.js";
 
 export interface PendingImageEvidence {
   cursor: string | null;
@@ -24,29 +22,23 @@ export async function readPendingImageEvidence(
   sessionId: string,
   since?: string | null,
 ): Promise<PendingImageEvidence> {
-  const nonce = runtimeToken("images");
   const messages: UserMessageEvidence[] = [];
   let cursor: string | null | undefined;
-  let invalid: Error | undefined;
-  const onEvent = (event: Record<string, unknown>) => {
-    if (
-      event.type !== "extension_ui_request" ||
-      event.method !== "setStatus" ||
-      event.statusKey !== `${bridge.statusKey}${PENDING_IMAGE_SUFFIX}`
-    )
-      return;
-    try {
-      const value = decodeBranchBridgeJson(
-        event.statusText,
-        BRANCH_BRIDGE_MAX_RESULT_BYTES,
-      ) as Record<string, unknown>;
-      if (
-        !value ||
-        value.nonce !== nonce ||
-        value.workerId !== bridge.workerId ||
-        value.sessionId !== sessionId
-      )
-        return;
+  await requestWorkerStatus(
+    rpc,
+    bridge,
+    sessionId,
+    {
+      suffix: PENDING_IMAGE_SUFFIX,
+      argument: {
+        v: BRANCH_BRIDGE_VERSION,
+        ...(since === undefined ? {} : { since }),
+      },
+      maxArgumentBytes: BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
+      maxResultBytes: BRANCH_BRIDGE_MAX_RESULT_BYTES,
+      malformedError: new Error("Malformed pending image evidence"),
+    },
+    (value) => {
       if (value.v !== BRANCH_BRIDGE_VERSION || cursor !== undefined)
         throw new Error("Malformed image evidence");
       if ("cursor" in value) {
@@ -70,24 +62,9 @@ export async function readPendingImageEvidence(
           throw new Error("Malformed image evidence");
         messages.push(message);
       }
-    } catch {
-      invalid = new Error("Malformed pending image evidence");
-    }
-  };
-  rpc.on("event", onEvent);
-  try {
-    await rpc.request(
-      {
-        type: "prompt",
-        message: `/${bridge.command}${PENDING_IMAGE_SUFFIX} ${encodeBranchBridgeJson({ v: BRANCH_BRIDGE_VERSION, nonce, workerId: bridge.workerId, sessionId, ...(since === undefined ? {} : { since }) }, BRANCH_BRIDGE_MAX_ARGUMENT_BYTES)}`,
-      },
-      30_000,
-    );
-    if (invalid) throw invalid;
-    if (cursor === undefined)
-      throw new Error("Pi did not confirm pending image evidence");
-    return { cursor, messages };
-  } finally {
-    rpc.off("event", onEvent);
-  }
+    },
+  );
+  if (cursor === undefined)
+    throw new Error("Pi did not confirm pending image evidence");
+  return { cursor, messages };
 }

@@ -110,20 +110,22 @@ export function registerModelSettingsRoutes(
       throw requestError("The selected session is no longer open", 409);
     return { sessionId, cwd: root };
   }
-  async function snapshot(query: unknown) {
-    if (!deps.modelSettings)
-      throw requestError("Model settings are unavailable on this Host", 503);
-    const { sessionId, cwd } = await context(query);
-    const available = sessionId
+  async function modelsFor(owner: { sessionId?: string; cwd: string }) {
+    return owner.sessionId
       ? (
-          (await deps.runtime.snapshot(sessionId)).active?.availableModels ?? []
+          (await deps.runtime.snapshot(owner.sessionId)).active
+            ?.availableModels ?? []
         ).map((model) => modelOption(model as ModelOption))
-      : ((await deps.availableModels?.(false, cwd)) ?? []);
-    return deps.modelSettings.read(cwd, available);
+      : ((await deps.availableModels?.(false, owner.cwd)) ?? []);
   }
   app.get("/api/model-settings", async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
-    response.json(await snapshot(request.query));
+    if (!deps.modelSettings)
+      throw requestError("Model settings are unavailable on this Host", 503);
+    const owner = await context(request.query);
+    response.json(
+      await deps.modelSettings.read(owner.cwd, await modelsFor(owner)),
+    );
   });
   app.patch("/api/model-settings", async (request, response) => {
     const body = z
@@ -133,10 +135,10 @@ export function registerModelSettingsRoutes(
     if (!deps.modelSettings)
       throw requestError("Model settings are unavailable", 503);
     const owner = await context(request.query);
-    const before = await snapshot(request.query);
+    const models = await modelsFor(owner);
     await deps.modelSettings.savePreferences(body.revision, body.patch);
     deps.invalidateModels?.();
-    response.json(await savedSnapshot(owner.cwd, before.models));
+    response.json(await savedSnapshot(owner.cwd, models));
   });
   app.patch("/api/model-settings/config", async (request, response) => {
     const body = z
@@ -146,23 +148,18 @@ export function registerModelSettingsRoutes(
     if (!deps.modelSettings)
       throw requestError("Model settings are unavailable", 503);
     const owner = await context(request.query);
-    const before = await snapshot(request.query);
+    let models = await modelsFor(owner);
     await deps.modelSettings.saveConfig(
       body.revision,
       body.edit as ModelConfigEdit,
     );
     deps.invalidateModels?.();
-    // Same worker, same extension overlays. A refresh failure does not undo a
-    // successful file save or invite the browser to replay it.
+    // Refresh the edited reader; invalidated workspace catalogs reload on demand.
     let warning: string | undefined;
-    let models = before.models;
     try {
-      // Refresh the Host runtime too, so prospective-workspace reads see the
-      // saved file. Session choices still belong to that session's live worker.
-      const hostModels = await deps.availableModels?.(true, owner.cwd);
       models = owner.sessionId
         ? (await deps.runtime.refreshModels(owner.sessionId)).models
-        : (hostModels ?? []);
+        : ((await deps.availableModels?.(true, owner.cwd)) ?? []);
     } catch {
       warning =
         "Configuration saved. Model availability could not refresh; refresh models to retry.";
@@ -213,31 +210,9 @@ export function registerModelSettingsRoutes(
         );
       return deps.runtime.providerAuth(owner.sessionId, operation, workerId);
     }
-    const auth = deps.providerAuth;
-    if (!auth)
+    if (!deps.providerAuth)
       throw requestError("Provider authentication is unavailable", 503);
-    let result: unknown = null;
-    switch (operation.operation) {
-      case "providers":
-        result = await auth.providers();
-        break;
-      case "start":
-        result = auth.start(operation.provider, operation.type);
-        break;
-      case "status":
-        result = auth.snapshot(operation.id);
-        break;
-      case "answer":
-        result = auth.answer(operation.id, operation.promptId, operation.value);
-        break;
-      case "cancel":
-        result = auth.cancel(operation.id);
-        break;
-      case "logout":
-        await auth.logout(operation.provider);
-        break;
-    }
-    return result;
+    return deps.providerAuth.request(operation);
   }
   function endpoint(owner: { sessionId?: string }): AuthEndpoint {
     const lease = owner.sessionId

@@ -9,7 +9,6 @@ import {
 import {
   TERMINAL_DAEMON_PROTOCOL_VERSION,
   TERMINAL_DAEMON_READY_TYPE,
-  TERMINAL_DAEMON_REPLACING_TYPE,
   type TerminalDaemonAttachRequest,
   type TerminalDaemonRpcMethod,
   type TerminalDaemonRpcRequest,
@@ -119,7 +118,6 @@ export class TerminalDaemonServer {
     private readonly address: string,
     private readonly token: string,
     private readonly terminals: TerminalService,
-    private readonly onProtocolReplacement: () => void = () => {},
   ) {}
 
   async start(): Promise<void> {
@@ -221,21 +219,6 @@ export class TerminalDaemonServer {
           const message = asRecord(decodeTerminalIpcJson(frame.payload));
           if (!tokenMatches(this.token, message.token))
             throw new Error("Terminal daemon authentication failed");
-          if (message.mode === "replace") {
-            if (message.protocolVersion === TERMINAL_DAEMON_PROTOCOL_VERSION)
-              throw new Error(
-                "A compatible terminal daemon is already running",
-              );
-            authenticated = true;
-            clearTimeout(handshakeTimeout);
-            socket.end(
-              encodeTerminalIpcJson({
-                type: TERMINAL_DAEMON_REPLACING_TYPE,
-              }),
-              () => setImmediate(this.onProtocolReplacement),
-            );
-            continue;
-          }
           if (message.protocolVersion !== TERMINAL_DAEMON_PROTOCOL_VERSION)
             throw new Error("Terminal daemon protocol is not compatible");
           authenticated = true;

@@ -8,6 +8,52 @@ afterEach(() => {
 });
 
 describe("MockRuntime History reads", () => {
+  it("retains the complete saved branch after navigation and cloning", async () => {
+    const runtime = new MockRuntime();
+    let cloneId: string | undefined;
+    try {
+      await runtime.openSession(HISTORY_FIXTURE_SESSION_ID);
+      const tree = await runtime.branchTree(HISTORY_FIXTURE_SESSION_ID);
+      const { snapshot } = await runtime.navigateBranch({
+        sessionId: HISTORY_FIXTURE_SESSION_ID,
+        revision: tree.revision,
+        targetId: tree.effectiveLeafId!,
+        mode: "switch",
+      });
+      const page = snapshot.active!.transcriptPage;
+      expect(page.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ entryId: "history-u-0" }),
+          expect.objectContaining({
+            entryId: "history-shell-included",
+            role: "bashExecution",
+          }),
+          expect.objectContaining({ entryId: "history-latest" }),
+        ]),
+      );
+      const identities = page.messages.map(
+        (message) =>
+          (message as { __inspireMessageId: string }).__inspireMessageId,
+      );
+      expect(new Set(identities).size).toBe(page.messages.length);
+      expect(page.hasOlder).toBe(false);
+      const cloned = await runtime.cloneBranch({
+        sessionId: HISTORY_FIXTURE_SESSION_ID,
+        revision: page.revision,
+      });
+      cloneId = cloned.sessionId;
+      expect(cloned.snapshot.active!.transcriptPage.messages).toEqual(
+        page.messages,
+      );
+    } finally {
+      if (cloneId) {
+        await runtime.deselectSession();
+        await runtime.deleteSession(cloneId);
+      }
+      await runtime.close();
+    }
+  });
+
   it("uses native content-block image coordinates and the shared detail page bound", async () => {
     const runtime = new MockRuntime();
     try {

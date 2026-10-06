@@ -104,7 +104,9 @@ describe("RuntimeController shell acceptance", () => {
       ).toHaveLength(1);
       expect(worker.stops).toBe(1);
     } finally {
-      await runtime.close();
+      await expect(runtime.close()).rejects.toThrow(
+        "Worker exit could not be confirmed",
+      );
     }
   });
 });

@@ -1,7 +1,8 @@
 import { memo, useMemo } from "react";
+import { stripTerminalSequences } from "../ansi";
 import { highlightSource } from "../syntax-highlighting";
-import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { MarkdownAttachmentsContext } from "./DocumentPreview";
+import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 
 const MAX_NOTEBOOK_CELLS = 200;
 const MAX_NOTEBOOK_OUTPUTS = 400;
@@ -39,10 +40,6 @@ function joinedText(value: unknown, separator = ""): string | null {
   if (Array.isArray(value) && value.every((item) => typeof item === "string"))
     return value.join(separator);
   return null;
-}
-
-function cleanTerminalText(value: string): string {
-  return value.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
 function imageFromBundle(
@@ -111,12 +108,12 @@ function normalizeOutput(value: unknown): NotebookOutput {
     const text = joinedText(output.text);
     return text === null
       ? { kind: "unsupported" }
-      : { kind: "text", text: cleanTerminalText(text) };
+      : { kind: "text", text: stripTerminalSequences(text) };
   }
   if (output.output_type === "error") {
     const traceback = joinedText(output.traceback, "\n");
     if (traceback !== null)
-      return { kind: "error", text: cleanTerminalText(traceback) };
+      return { kind: "error", text: stripTerminalSequences(traceback) };
     const name = typeof output.ename === "string" ? output.ename : "Error";
     const message = typeof output.evalue === "string" ? output.evalue : "";
     return { kind: "error", text: `${name}${message ? `: ${message}` : ""}` };

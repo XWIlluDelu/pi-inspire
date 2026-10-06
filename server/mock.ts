@@ -1434,6 +1434,31 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       request.targetId === undefined ? tree.effectiveLeafId : request.targetId,
     );
   }
+  private mockBranchProjection(sessionId: string, leafId: string | null) {
+    const byId = new Map(
+      this.mockEntries(sessionId).map((entry) => [entry.id, entry]),
+    );
+    const entries: SessionEntry[] = [];
+    for (
+      let entry = leafId ? byId.get(leafId) : undefined;
+      entry;
+      entry = entry.parentId ? byId.get(entry.parentId) : undefined
+    )
+      entries.unshift(entry);
+    const messages = entries.flatMap((entry) =>
+      entry.type === "message"
+        ? [
+            {
+              ...entry.message,
+              entryId: entry.id,
+              __inspireEntryId: entry.id,
+              __inspireMessageId: `${entry.id}:0`,
+            } as unknown as Record<string, unknown>,
+          ]
+        : [],
+    );
+    return { entries, messages };
+  }
   private async copyMockBranch(
     request: BranchCloneRequest,
     targetId: string | null,
@@ -1441,15 +1466,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     const source = this.requireSession(request.sessionId);
     if (request.revision !== source.transcriptPage.revision)
       throw requestError("History changed; refresh it before cloning", 409);
-    const entries = this.mockEntries(request.sessionId);
-    const byId = new Map(entries.map((entry) => [entry.id, entry]));
-    const copied: SessionEntry[] = [];
-    for (
-      let entry = targetId ? byId.get(targetId) : undefined;
-      entry;
-      entry = entry.parentId ? byId.get(entry.parentId) : undefined
-    )
-      copied.unshift(entry);
+    const projection = this.mockBranchProjection(request.sessionId, targetId);
     const sessionId = `mock-branch-clone-${++this.nextSession}`;
     const destination = structuredClone(source);
     destination.sessionId = sessionId;
@@ -1464,21 +1481,10 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       revision: 1,
       viewId: `mock-view-${sessionId}`,
       effectiveLeafId: targetId,
-      messages: copied
-        .flatMap((entry) =>
-          entry.type === "message"
-            ? [
-                { ...entry.message, entryId: entry.id } as unknown as Record<
-                  string,
-                  unknown
-                >,
-              ]
-            : [],
-        )
-        .slice(-24),
+      messages: projection.messages,
     };
     this.sessions.set(sessionId, destination);
-    this.historyEntries.set(sessionId, structuredClone(copied));
+    this.historyEntries.set(sessionId, structuredClone(projection.entries));
     this.state.active = destination;
     this.state.runState = "idle";
     this.state.sessionStatuses[sessionId] = { runState: "idle" };
@@ -1509,33 +1515,12 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     const leaf = nativeNavigationLeaf(detail.node, beforeLeaf);
     active.effectiveLeafId = leaf;
     active.navigationLeased = active.durableLeafId !== leaf;
-    const byId = new Map(
-      this.mockEntries(request.sessionId).map((entry) => [entry.id, entry]),
-    );
-    const path: SessionEntry[] = [];
-    for (
-      let entry = leaf ? byId.get(leaf) : undefined;
-      entry;
-      entry = entry.parentId ? byId.get(entry.parentId) : undefined
-    )
-      path.unshift(entry);
     active.transcriptPage = {
       ...active.transcriptPage,
       revision: active.transcriptPage.revision + 1,
       viewId: `mock-view-${active.sessionId}-latest`,
       effectiveLeafId: leaf,
-      messages: path
-        .flatMap((entry) =>
-          entry.type === "message"
-            ? [
-                { ...entry.message, entryId: entry.id } as unknown as Record<
-                  string,
-                  unknown
-                >,
-              ]
-            : [],
-        )
-        .slice(-24),
+      messages: this.mockBranchProjection(request.sessionId, leaf).messages,
     };
     return {
       snapshot: await this.snapshot(),

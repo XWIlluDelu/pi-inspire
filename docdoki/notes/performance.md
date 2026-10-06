@@ -2,55 +2,70 @@
 
 ## Performance evidence
 
+### Draft and History work
+
+Linux / Node 26.10.0, baseline `34b796bb444a`. Initial draft hydration plus 200 edits changed
+sessionStorage reads from 201 to one. Composer history over 5,000 distinct user messages retained
+the same newest 100 entries while reducing counted content-property reads from 10,000 to 202.
+Sources: `src/session-drafts.ts`, `server/composer-history.ts` and their focused regression tests.
+These are work counts, not typing-latency measurements.
+
+Paired production `projectSessionTree()` measurements used 5,000 alternating user/assistant entries,
+85,065,000 retained text characters and at most 100 returned rows. After warming both implementations,
+12 samples alternated execution order; serialized projections were equal before timing.
+
+| Operation | Before median, ms | After median, ms |
+| --- | ---: | ---: |
+| Ordinary outline | 4.370 | 0.784 |
+| Matching full-text search | 42.780 | 39.258 |
+| Nonmatching full-text search | 31.273 | 30.191 |
+
+Structural snapshot indexes and bounded lazy snippets remove most ordinary outline work. Search
+still scans retained text synchronously; its improvement is modest. These timings cover projection,
+not file I/O, HTTP, network or rendering. Source: `server/session-tree.ts`; integrated review:
+[[state-ownership]]. No timing thresholds were added to tests.
+
 ### Pi 1.0 source and catalog profiles
 
-Local production Chromium at 1440×900 reproduced synchronous source highlighting cost. A
-1,500-line / 193,500-character TypeScript source generated 21,000 spans; two repeated opens
-produced highlighting/layout task pairs of 66+195 ms and 59+191 ms. After lowering the per-leaf
-highlight budget to 64 Ki characters, repeated opens produced no task above 50 ms. The actual
-105,793-character `src/store.ts` changed from a 105 ms task to none above 50 ms; a 64,500-character
-source still highlighted. Larger leaves remain plain text with copying, not omitted content.
-Source: `src/syntax-highlighting.ts`; integrated outcome: .
+Local production Chromium at 1440×900 reproduced synchronous source-highlighting cost. A
+1,500-line / 193,500-character TypeScript source generated 21,000 spans; repeated opens produced
+highlighting/layout task pairs of 66+195 ms and 59+191 ms. With the per-leaf highlight budget reduced
+to 64 Ki characters, neither open produced a task above 50 ms. The actual 105,793-character
+`src/store.ts` changed from a 105 ms task to none above 50 ms; a 64,500-character source still
+highlighted. Larger leaves retain plain text and copying. Source: `src/syntax-highlighting.ts`.
 
-The desktop/390px native catalog fixture held 1,537 catalog / 1,080 available models, mounted at
-most 12 picker/grid rows, and passed distant navigation, search and overflow checks. This is a
-bounded mounting/interaction witness, not a model-query latency measurement.
+The desktop/390px native fixture held 1,537 catalog / 1,080 available models and mounted at most 12
+picker/grid rows while passing distant navigation, search and overflow checks. This demonstrates
+bounded mounting/interaction, not model-query latency.
 
-Host probes retained the existing unchanged-read reuse design: a 16,795,320-byte fixture took
-median 7.248 ms forced versus 0.022 ms version-checked. A separate 20,000-entry / approximately
-41 MiB History fixture returned 100-node / approximately 77 KiB pages; outline work took
-6.7–13.8 ms and full-text search 20.3–25.7 ms over five runs. These are local synthetic projection
-measurements, not remote end-to-end timings. Current boundaries: [[state-ownership]]
-and [[performance]]. No additional Host/remote optimization followed from these profiles.
+A 16,795,320-byte Host projection fixture took median 7.248 ms forced versus 0.022 ms
+version-checked. A separate 20,000-entry / approximately 41 MiB History fixture returned 100-node /
+approximately 77 KiB pages: outline work took 6.7–13.8 ms and full-text search 20.3–25.7 ms over five
+runs. These are local synthetic projection measurements, not remote end-to-end timings. Boundaries:
+[[state-ownership]], [[performance]]. No further optimization followed.
 
-### Settings first-open flash
+### Settings shell continuity
 
-A Chromium production-build probe reproduced two distinct Settings dialog nodes
-and two starts each of `overlay-in` and `pop-in` during the first open: the
-Suspense loading fallback and ready component each mounted their own animated
-shell. Subsequent opens reused the loaded module, explaining the cold-open bias.
+A production Chromium probe found two Settings dialog nodes and two starts of both entrance
+animations on first open: Suspense fallback and ready content each owned an animated shell.
+Subsequent opens reused the module. The eager `SettingsDialog` now owns overlay, header and focus;
+only its content is deferred.
 
-The eager `SettingsDialog` now owns the overlay, header, and modal focus while
-only `SettingsContent` is deferred. A fresh browser context with service workers
-blocked and the Settings module response delayed by 600 ms verified the fix at
-1280×720/light and 390×844/dark: one shell, one start per entrance animation,
-and overlay opacity remaining 1 after the initial entrance through readiness.
-An injected module-evaluation failure preserved the same dialog and Reload
-control; Escape closed it and restored the opener. This is transition-correctness
-evidence, not a general startup-latency benchmark.
+A fresh context with service workers blocked and the module delayed 600 ms checked 1280×720/light
+and 390×844/dark: one shell, one start per animation, and opacity 1 throughout readiness. Injected
+module-evaluation failure preserved that dialog and Reload; Escape restored its opener.
+`tests/web/settings-loading.test.tsx` covers loading dismissal, stable shell/control identities and
+focus continuity. This is transition correctness, not startup-latency evidence.
 
-`tests/web/settings-loading.test.tsx` gates the real lazy import and checks
-loading-state dismissal, stable overlay/dialog/close-button identities, focus
-continuity on readiness, and final opener restoration. Navigation, modal-focus,
-and App integration checks also pass (35 tests across the four targeted files,
-on both Node 26.5.0 and Node 22.23.2). Typecheck, production Web build, formatting,
-lint, and unused-code checks pass.
+### Streaming work counters
 
-### Targeted streaming work counters
-
-The review identified two concrete costs outside the older evaluator's limited stream scenario: background body delivery before browser filtering, and cumulative assistant overlay serialization on every valid delta. The user explicitly requested these targeted changes; the historical no-change decisions below do not forbid them or establish their latency benefit.
-
-`tests/server/runtime-stream-budget.test.ts` drives the real event reducer and overlay owner with alternating 32-character text/thinking fragments. With incremental accounting disabled, 1,000/2,000 updates serialize cumulative assistant messages 1,000/2,000 times and approximately 16.2/64.4 MB of JSON. The incremental path produces identical overlays while serializing only 34/68 KB of fragment JSON and no cumulative assistant messages in that hot path. It also checks escaped characters, split surrogates, revision growth, string/item/overlay limits, structural fallback, and final/snapshot validation. These are serialization-work counters, not network, memory-peak, event-loop-delay, or remote-latency measurements.
+`tests/server/runtime-stream-budget.test.ts` compares the real reducer/overlay with incremental
+accounting disabled and enabled. For 1,000/2,000 alternating 32-character text/thinking fragments,
+the old path serialized cumulative messages 1,000/2,000 times and approximately 16.2/64.4 MB of JSON.
+The incremental path produces identical overlays using 34/68 KB of fragment JSON and no cumulative
+message serialization in that hot path. Escapes, split surrogates, revision growth, budgets,
+structural fallback and final/snapshot validation remain covered. These are work counters, not
+network, peak-memory or latency measurements. Tool-argument wire evidence: [[workbench-implementation]].
 
 ## Rich rendering performance
 

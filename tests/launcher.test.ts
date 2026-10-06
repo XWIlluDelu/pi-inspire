@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import {
@@ -11,7 +12,11 @@ import {
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  isolatedProcessOptions,
+  signalProcessTree,
+} from "../server/process-tree.mjs";
 import { defaultStaticAssetCacheDirectory } from "../server/static-asset-cache.mjs";
 import { TerminalDaemonClient } from "../server/terminal-daemon-client.js";
 
@@ -21,7 +26,7 @@ const unixLauncher = join(root, "inspire");
 const linuxIt = process.platform === "linux" ? it : it.skip;
 const children: ChildProcess[] = [];
 const temporaryDirectories: string[] = [];
-const terminalEnvironments: NodeJS.ProcessEnv[] = [];
+const terminalChildren: ChildProcess[] = [];
 let activeEnvironment: NodeJS.ProcessEnv | null = null;
 
 async function freePort(): Promise<number> {
@@ -189,18 +194,13 @@ afterEach(async () => {
   for (const child of children.splice(0)) {
     if (child.exitCode === null) child.kill("SIGTERM");
   }
-  for (const environment of terminalEnvironments.splice(0)) {
-    try {
-      const address = environment.INSPIRE_TERMINAL_DAEMON_ADDRESS!;
-      const token = (
-        await readFile(environment.INSPIRE_TERMINAL_TOKEN_PATH!, "utf8")
-      ).trim();
-      await new TerminalDaemonClient(address, token).requestProtocolReplacement(
-        0,
-      );
-    } catch {
-      // A launch that failed before starting its terminal daemon needs no stop.
-    }
+  for (const child of terminalChildren.splice(0)) {
+    if (child.exitCode !== null || child.signalCode !== null) continue;
+    const stopped = new Promise<void>((resolve) =>
+      child.once("close", () => resolve()),
+    );
+    await signalProcessTree(child, "SIGTERM", { isolated: true });
+    await stopped;
   }
   await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   await Promise.all(
@@ -494,7 +494,40 @@ describe("production launcher", () => {
         : join(directory, "terminal.sock");
     env.INSPIRE_TERMINAL_TOKEN_PATH = join(directory, "terminal-token");
     env.INSPIRE_TERMINAL_STATE_PATH = join(directory, "terminals.json");
-    terminalEnvironments.push(env);
+    const terminalChild = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        join(root, "server", "terminal-daemon-entry.ts"),
+        "--root",
+        root,
+        "--host",
+        "127.0.0.1",
+        "--port",
+        String(port),
+        "--address",
+        env.INSPIRE_TERMINAL_DAEMON_ADDRESS,
+        "--token-path",
+        env.INSPIRE_TERMINAL_TOKEN_PATH,
+        "--state-path",
+        env.INSPIRE_TERMINAL_STATE_PATH,
+      ],
+      { cwd: root, env, ...isolatedProcessOptions(), stdio: "ignore" },
+    );
+    terminalChildren.push(terminalChild);
+    await vi.waitFor(
+      async () => {
+        const token = (
+          await readFile(env.INSPIRE_TERMINAL_TOKEN_PATH!, "utf8")
+        ).trim();
+        await new TerminalDaemonClient(
+          env.INSPIRE_TERMINAL_DAEMON_ADDRESS!,
+          token,
+        ).probe();
+      },
+      { timeout: 8_000 },
+    );
     expect(runLauncher(["stop"], env)).toContain(
       "No managed INSΠRE instance is running.",
     );
@@ -570,9 +603,17 @@ describe("production launcher", () => {
       Authorization: `Bearer ${firstState.token}`,
       "Content-Type": "application/json",
     };
+    const epochResponse = await fetch(`${origin}/api/terminal-operations`, {
+      headers: terminalHeaders,
+    });
+    const { epoch } = (await epochResponse.json()) as { epoch: string };
+    const mutationHeaders = () => ({
+      ...terminalHeaders,
+      "X-Terminal-Operation": JSON.stringify({ id: randomUUID(), epoch }),
+    });
     const createdTerminalResponse = await fetch(`${origin}/api/terminals`, {
       method: "POST",
-      headers: terminalHeaders,
+      headers: mutationHeaders(),
       body: JSON.stringify({ cwd: directory, cols: 80, rows: 24 }),
     });
     expect(createdTerminalResponse.ok).toBe(true);
@@ -622,7 +663,7 @@ describe("production launcher", () => {
     );
     const closeTerminalResponse = await fetch(
       `${origin}/api/terminals/${encodeURIComponent(createdTerminal.id)}?force=1`,
-      { method: "DELETE", headers: terminalHeaders },
+      { method: "DELETE", headers: mutationHeaders() },
     );
     expect(closeTerminalResponse.ok).toBe(true);
     expect(runLauncher(["stop"], env)).toContain("Stopped INSΠRE process");

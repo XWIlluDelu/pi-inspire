@@ -276,7 +276,7 @@ function AuthenticationPanel({
         operation: "cancel",
         id: attempt.id,
       })) as ProviderLoginAttempt | null;
-      if (mounted.current && next) update(next);
+      if (mounted.current) update(next);
     } catch (error) {
       if (mounted.current) setError(messageOf(error));
     } finally {

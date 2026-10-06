@@ -15,7 +15,6 @@ interface ParseJob {
   request: RichTextParseRequest;
   complete(snapshot: RichTextSnapshot): void;
   fail(error: Error): void;
-  cancelled: boolean;
 }
 
 /** One shared worker, one active parse, and at most one latest pending source
@@ -47,7 +46,6 @@ export class RichTextParserClient {
       request: { id: ++this.nextId, text, headings },
       complete,
       fail,
-      cancelled: false,
     });
     this.pump();
   }
@@ -55,11 +53,11 @@ export class RichTextParserClient {
   release(owner: object): void {
     this.owners.delete(owner);
     this.pending.delete(owner);
-    if (this.active?.owner === owner) this.active.cancelled = true;
-    if (this.owners.size === 0) {
+    if (this.active?.owner === owner || this.owners.size === 0) {
       this.worker?.terminate();
       this.worker = null;
       this.active = null;
+      this.pump();
     }
   }
 
@@ -81,7 +79,7 @@ export class RichTextParserClient {
           )
             return;
           this.active = null;
-          if (!active.cancelled && this.owners.has(active.owner)) {
+          if (this.owners.has(active.owner)) {
             if ("tree" in event.data)
               active.complete({
                 text: active.request.text,
@@ -121,7 +119,7 @@ export class RichTextParserClient {
     this.worker?.terminate();
     this.worker = null;
     for (const job of jobs.values())
-      if (!job.cancelled && this.owners.has(job.owner)) job.fail(error);
+      if (this.owners.has(job.owner)) job.fail(error);
   }
 }
 

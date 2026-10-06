@@ -1,11 +1,14 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { vi } from "vitest";
 import { ProjectTrustStore } from "../../../server/pi-runtime.js";
 
 export async function modelWorkflowFixture() {
-  const root = await mkdtemp(join(tmpdir(), "inspire-model-workflow-"));
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), "inspire-model-workflow-")),
+  );
   const agent = join(root, "agent");
   const sessions = join(root, "sessions");
   const events = join(root, "events");
@@ -46,7 +49,7 @@ export async function modelWorkflowFixture() {
     await mkdir(join(cwd, ".pi/extensions"), { recursive: true });
     await writeFile(
       join(cwd, ".pi/extensions/project.ts"),
-      `import { registerModelWorkflow } from ${JSON.stringify(resolve("tests/fixtures/pi-model-workflow-extension.ts"))}; export default pi => registerModelWorkflow(pi, "project");`,
+      `import { registerModelWorkflow } from ${JSON.stringify(pathToFileURL(resolve("tests/fixtures/pi-model-workflow-extension.ts")).href)}; export default pi => registerModelWorkflow(pi, "project");`,
     );
     await writeFile(
       join(cwd, ".pi/settings.json"),

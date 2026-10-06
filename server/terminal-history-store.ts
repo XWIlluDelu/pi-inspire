@@ -204,7 +204,7 @@ export class TerminalHistoryStore implements TerminalHistoryBackend {
       process.platform === "win32" ? 0 : (constants.O_NOFOLLOW ?? 0);
     const handle = await open(
       path,
-      constants.O_RDWR | constants.O_CREAT | constants.O_APPEND | noFollow,
+      constants.O_RDWR | constants.O_CREAT | noFollow,
       PRIVATE_FILE_MODE,
     );
     try {
@@ -218,6 +218,8 @@ export class TerminalHistoryStore implements TerminalHistoryBackend {
       if (process.platform !== "win32" && (info.mode & 0o077) !== 0)
         await handle.chmod(PRIVATE_FILE_MODE);
       const knownSize = info.size;
+      let output = data;
+      let position = knownSize;
       if (knownSize + data.byteLength > MAX_HISTORY_BYTES) {
         const capacity = RETAIN_HISTORY_BYTES - RESET_SEQUENCE.byteLength;
         const newTail = data.subarray(Math.max(0, data.byteLength - capacity));
@@ -228,11 +230,21 @@ export class TerminalHistoryStore implements TerminalHistoryBackend {
         const oldTail = Buffer.allocUnsafe(oldTailBytes);
         if (oldTailBytes > 0)
           await handle.read(oldTail, 0, oldTailBytes, knownSize - oldTailBytes);
-        const retained = Buffer.concat([RESET_SEQUENCE, oldTail, newTail]);
+        output = Buffer.concat([RESET_SEQUENCE, oldTail, newTail]);
         await handle.truncate(0);
-        await handle.writeFile(retained);
-      } else {
-        await handle.writeFile(data);
+        position = 0;
+      }
+      // Windows append-only handles cannot truncate. This serialized owner
+      // writes explicit offsets for both ordinary appends and compaction.
+      let offset = 0;
+      while (offset < output.byteLength) {
+        const { bytesWritten } = await handle.write(
+          output,
+          offset,
+          output.byteLength - offset,
+          position + offset,
+        );
+        offset += bytesWritten;
       }
     } finally {
       await handle.close();

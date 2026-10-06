@@ -5,6 +5,7 @@ import type {
   BranchTreeNode,
   BranchTreeQuery,
 } from "../shared/contracts.js";
+import { fencedMarkdown } from "../shared/markdown-fence.js";
 import { requestError } from "./request-error.js";
 import { projectSafeValue } from "./safe-projection.js";
 
@@ -49,31 +50,21 @@ export function branchEntryContent(entry: SessionEntry): unknown {
       : undefined;
 }
 
-/** Full retained content, not the compaction-filtered model context. Describe
- * binary images for outlines/search; detail readers return them separately. */
-export function branchEntryText(
+function* branchTextParts(
   entry: SessionEntry,
-  imagePresentation: "describe" | "separate" = "describe",
-): string {
+  imagePresentation: "describe" | "separate",
+): Generator<string> {
   if (
     entry.type === "message" &&
     (entry.message as { role: string }).role === "system"
   )
-    return "";
+    return;
   if (entry.type === "message" && entry.message.role === "bashExecution") {
     const message = entry.message;
     const command = `${message.excludeFromContext ? "!!" : "!"}${message.command}`;
-    const fence = "`".repeat(
-      Math.max(
-        3,
-        ...[...`${command}\n${message.output}`.matchAll(/`+/gu)].map(
-          (match) => match[0].length + 1,
-        ),
-      ),
-    );
-    return [
-      `${fence}\n${command}\n${fence}`,
-      `${fence}\n${message.output}\n${fence}`,
+    yield* [
+      fencedMarkdown(command, ""),
+      fencedMarkdown(message.output, ""),
       message.cancelled
         ? "Cancelled"
         : message.exitCode !== undefined
@@ -84,28 +75,33 @@ export function branchEntryText(
         : "Included in context",
       message.truncated ? "Output truncated" : "",
       message.fullOutputPath ? `Full output: ${message.fullOutputPath}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+    ].filter(Boolean);
+    return;
   }
   const content =
     entry.type === "compaction" || entry.type === "branch_summary"
       ? entry.summary
       : branchEntryContent(entry);
-  if (typeof content === "string") return content;
-  if (Array.isArray(content))
-    return content
-      .flatMap((block) => {
-        if (block.type === "text") return block.text;
-        if (block.type === "thinking") return `Thinking\n\n${block.thinking}`;
-        if (block.type === "image")
-          return imagePresentation === "separate"
-            ? []
-            : `[Image: ${block.mimeType}]`;
-        return JSON.stringify(completeSafeValue(block), null, 2);
-      })
-      .join("\n\n");
-  return JSON.stringify(completeSafeValue(entry), null, 2);
+  if (typeof content === "string") yield content;
+  else if (Array.isArray(content)) {
+    for (const block of content) {
+      if (block.type === "text") yield block.text;
+      else if (block.type === "thinking") yield `Thinking\n\n${block.thinking}`;
+      else if (block.type === "image") {
+        if (imagePresentation === "describe")
+          yield `[Image: ${block.mimeType}]`;
+      } else yield JSON.stringify(completeSafeValue(block), null, 2);
+    }
+  } else yield JSON.stringify(completeSafeValue(entry), null, 2);
+}
+
+/** Full retained content, not the compaction-filtered model context. Describe
+ * binary images for outlines/search; detail readers return them separately. */
+export function branchEntryText(
+  entry: SessionEntry,
+  imagePresentation: "describe" | "separate" = "describe",
+): string {
+  return [...branchTextParts(entry, imagePresentation)].join("\n\n");
 }
 
 function entryRole(entry: SessionEntry): BranchNodeRole {
@@ -126,13 +122,38 @@ function entryPreviewText(entry: SessionEntry): string {
     : text;
 }
 
+/** Normalize only enough retained text to decide the outline snippet. */
+function previewPrefix(entry: SessionEntry): string {
+  const parts =
+    entry.type === "message" && entry.message.role === "bashExecution"
+      ? [entryPreviewText(entry)]
+      : branchTextParts(entry, "describe");
+  let text = "";
+  let space = false;
+  for (const part of parts) {
+    for (let index = 0; index < part.length; index++) {
+      const char = part[index]!;
+      if (/\s/u.test(char)) {
+        space = text.length > 0;
+        continue;
+      }
+      if (space) text += " ";
+      text += char;
+      space = false;
+      if (text.length > BRANCH_SNIPPET_CHARS) return text;
+    }
+    space = text.length > 0;
+  }
+  return text;
+}
+
 export function branchNode(
   entry: SessionEntry,
   active: boolean,
   leaf: boolean,
+  text = previewPrefix(entry),
 ): BranchTreeNode {
   const role = entryRole(entry);
-  const text = entryPreviewText(entry).replace(/\s+/g, " ").trim();
   const snippet =
     text.length > BRANCH_SNIPPET_CHARS
       ? `${text.slice(0, BRANCH_SNIPPET_CHARS - 1)}…`
@@ -177,13 +198,14 @@ function ancestorPath(
   return path.reverse();
 }
 
-/** One bounded page. The complete projection remains action/search authority;
- * page cursors address entries, never an arbitrary truncated array index. */
-export function projectSessionTree(
-  entries: readonly SessionEntry[],
-  effectiveLeafId: string | null,
-  query: BranchTreeQuery = {},
-) {
+/** SessionProjection replaces its immutable entry array on every committed
+ * revision. Keep only structure, not full text, with that snapshot's lifetime. */
+const treeIndexes = new WeakMap<
+  readonly SessionEntry[],
+  ReturnType<typeof indexSessionTree>
+>();
+
+function indexSessionTree(entries: readonly SessionEntry[]) {
   const byId = new Map<string, SessionEntry>();
   const depth = new Map<string, number>();
   const labels = new Map<string, string>();
@@ -215,9 +237,28 @@ export function projectSessionTree(
     if (entry.parentId !== null && !descendant.has(entry.parentId))
       descendant.set(entry.parentId, leaf);
   }
+  return { byId, depth, labels, children, descendant };
+}
+
+/** One bounded page. The complete projection remains action/search authority;
+ * page cursors address entries, never an arbitrary truncated array index. */
+export function projectSessionTree(
+  entries: readonly SessionEntry[],
+  effectiveLeafId: string | null,
+  query: BranchTreeQuery = {},
+) {
+  let index = treeIndexes.get(entries);
+  if (!index) {
+    index = indexSessionTree(entries);
+    treeIndexes.set(entries, index);
+  }
+  const { byId, depth, labels, children, descendant } = index;
   const active = new Set(ancestorPath(byId, effectiveLeafId));
   const routeLeafId = query.leafId ?? effectiveLeafId;
-  const path = new Set(ancestorPath(byId, routeLeafId));
+  const path =
+    routeLeafId === effectiveLeafId
+      ? active
+      : new Set(ancestorPath(byId, routeLeafId));
   const search = query.query?.trim().toLocaleLowerCase();
   const routeParent = query.parentId === "" ? null : query.parentId;
   const candidates = entries.filter((entry) =>
@@ -240,8 +281,13 @@ export function projectSessionTree(
       throw requestError("History page changed; refresh History", 409);
     end = index;
   }
-  const nodeFor = (entry: SessionEntry): BranchTreeNode => ({
-    ...branchNode(entry, active.has(entry.id), entry.id === effectiveLeafId),
+  const nodeFor = (entry: SessionEntry, preview?: string): BranchTreeNode => ({
+    ...branchNode(
+      entry,
+      active.has(entry.id),
+      entry.id === effectiveLeafId,
+      preview,
+    ),
     depth: depth.get(entry.id)!,
     childCount: children.get(entry.id) ?? 0,
     routeLeafId: descendant.get(entry.id)!,
@@ -252,9 +298,11 @@ export function projectSessionTree(
   let bytes = 4096;
   while (start > 0 && nodes.length < BRANCH_TREE_MAX_NODES) {
     const entry = candidates[start - 1]!;
-    const node = nodeFor(entry);
-    if (search) {
-      const text = entryPreviewText(entry).replace(/\s+/g, " ");
+    const text = search
+      ? entryPreviewText(entry).replace(/\s+/g, " ")
+      : undefined;
+    const node = nodeFor(entry, text?.trim());
+    if (text !== undefined && search) {
       const match = text.toLocaleLowerCase().indexOf(search);
       if (match >= 0) {
         const from = Math.max(0, match - 80);

@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -26,8 +33,8 @@ describe("real Pi CLI session-directory compatibility", () => {
   ])(
     "matches %s selection and rediscovers a Pi-written fork after catalog reconstruction",
     async (selection) => {
-      const root = await mkdtemp(
-        join(tmpdir(), "inspire-pi-session-directory-"),
+      const root = await realpath(
+        await mkdtemp(join(tmpdir(), "inspire-pi-session-directory-")),
       );
       roots.push(root);
       const cwd = join(root, "project");

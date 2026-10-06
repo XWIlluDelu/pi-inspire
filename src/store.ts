@@ -1134,8 +1134,8 @@ export class AppStore {
 
   newSession = (
     cwd?: string,
-    nameOrOptions: string | NewSessionOptions = {},
-  ): Promise<string | null> => this.selection.create(cwd, nameOrOptions);
+    options: NewSessionOptions = {},
+  ): Promise<string | null> => this.selection.create(cwd, options);
 
   renameSession = (sessionId: string, name: string): Promise<boolean> =>
     this.sessionManagement.renameSession(sessionId, name);

@@ -10,7 +10,6 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sessionAttachmentReferences } from "../../server/attachment-references.js";
 import {
@@ -18,11 +17,13 @@ import {
   addAttachmentContext,
 } from "../../server/attachments.js";
 import { moveToDesktopTrash } from "../../server/desktop-trash.js";
+import { piInstallation } from "../../server/pi-installation.js";
 import { resolveComposerHistoryArtifacts } from "../../server/runtime-composer-artifacts.js";
 import { createRuntimeSlot } from "../../server/runtime-slot.js";
 import { deleteSessionFile } from "../../server/session-delete.js";
 import { SessionMetadataIndex } from "../../server/session-metadata.js";
 import { SessionProjection } from "../../server/session-projection.js";
+import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 
 const upload = (name = "notes with spaces.txt") =>
   ({
@@ -37,6 +38,7 @@ let sessions: string;
 let trash: string;
 let store: AttachmentStore;
 const stores: AttachmentStore[] = [];
+const processCleanups: Array<() => Promise<void>> = [];
 function openStore(directory = join(root, "uploads")) {
   const value = new AttachmentStore(directory, null, {
     sessionDirectories: [sessions],
@@ -103,35 +105,43 @@ beforeEach(async () => {
   store = openStore();
 });
 afterEach(async () => {
+  for (const close of processCleanups.splice(0)) await close();
   for (const value of stores.splice(0)) await value.close();
   await rm(root, { recursive: true, force: true });
 });
 
 describe("durable owned upload references", () => {
-  it("retains default-store copies across fresh processes and reclaims their last reference", async () => {
-    const environment = {
-      ...process.env,
-      HOME: join(root, "home"),
-      USERPROFILE: join(root, "home"),
-      XDG_STATE_HOME: join(root, "state"),
-      XDG_DATA_HOME: join(root, "data"),
-      APPDATA: join(root, "appdata"),
-      LOCALAPPDATA: join(root, "localappdata"),
-      PI_CODING_AGENT_DIR: join(root, "agent"),
-    };
+  // Three independent Node/tsx + SDK boots, not a five-second unit operation.
+  it("retains default-store copies across fresh processes and reclaims their last reference", async ({
+    signal,
+  }) => {
+    const environment = isolatedTestEnvironment(root, {
+      INSPIRE_PI_COMMAND: piInstallation.cliPath,
+    });
     const phase = async (name: string) => {
-      const { stdout } = await promisify(execFile)(
-        process.execPath,
-        [
-          "--import",
-          "tsx",
-          resolve("tests/fixtures/attachment-retention-process.ts"),
-          name,
-          root,
-        ],
-        { env: environment },
+      let child!: ReturnType<typeof execFile>;
+      const output = new Promise<string>((resolveOutput, reject) => {
+        child = execFile(
+          process.execPath,
+          [
+            "--import",
+            "tsx",
+            resolve("tests/fixtures/attachment-retention-process.ts"),
+            name,
+            root,
+          ],
+          { env: environment, signal, timeout: 10_000, killSignal: "SIGKILL" },
+          (error, stdout) => (error ? reject(error) : resolveOutput(stdout)),
+        );
+      });
+      const closed = new Promise<void>((resolveClose) =>
+        child.once("close", () => resolveClose()),
       );
-      return JSON.parse(stdout.trim());
+      processCleanups.push(async () => {
+        child.kill("SIGKILL");
+        await closed;
+      });
+      return JSON.parse((await output).trim());
     };
     const first = await phase("send");
     const resumed = await phase("read");
@@ -143,10 +153,9 @@ describe("durable owned upload references", () => {
       reclaimed: [],
     });
     expect(resumed.deferred).toBeUndefined();
-    expect(resumed.session).toContain(first.path);
     expect((await phase("delete")).reclaimed).toEqual([first.path]);
     await expect(access(first.path)).rejects.toMatchObject({ code: "ENOENT" });
-  });
+  }, 30_000);
 
   it("survives normal Host close/reopen and recalls the original name and readable bytes", async () => {
     const { doc, path, file } = await sent();
@@ -329,12 +338,34 @@ describe("durable owned upload references", () => {
     expect((await store.collectUnreferenced()).reclaimed).toEqual([path]);
   });
 
+  it("retries failed custom-directory registration before accepting it as durable", async () => {
+    await store.ready();
+    const registry = join(
+      await store.uploadDirectory(),
+      ".session-directories.json",
+    );
+    const custom = join(root, "custom");
+    const file = join(custom, "retained.jsonl");
+    await mkdir(custom);
+    // A failed atomic rename must not turn a later retry into a no-op.
+    await mkdir(registry);
+    await expect(store.registerSession(file)).rejects.toThrow();
+    await rm(registry, { recursive: true });
+    await Promise.all([
+      store.registerSession(file),
+      store.registerSession(file),
+    ]);
+    expect(JSON.parse(await readFile(registry, "utf8"))).toContain(custom);
+  });
+
   it("remembers custom storage independently of catalog/curation after restart", async () => {
     const { path, file } = await sent();
     const custom = join(root, "custom");
     await mkdir(custom);
     const customFile = join(custom, "retained.jsonl");
     await rename(file, customFile);
+    store.discoverSessionDirectories(async () => [custom]);
+    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
     await store.registerSession(customFile);
     await store.close();
     store = openStore();

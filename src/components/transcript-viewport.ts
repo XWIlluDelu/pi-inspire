@@ -85,7 +85,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   const geometricFollowFrameRef = useRef<number | null>(null);
   const anchoredLayoutFrameRef = useRef<number | null>(null);
   const lastScrollTopRef = useRef(0);
-  const olderLoadInFlightRef = useRef(false);
+  const olderLoadInFlightRef = useRef<object | null>(null);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const onLoadOlderRef = useRef(onLoadOlder);
   const projectionIdentity = `${sessionId}\u0000${viewId}`;
@@ -162,46 +162,54 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   const loadOlder = useCallback(async () => {
     const element = scrollRef.current;
     if (!element || olderLoadInFlightRef.current) return;
-    olderLoadInFlightRef.current = true;
+    const owner = {};
+    olderLoadInFlightRef.current = owner;
     setLoadingEarlier(true);
     const loadingProjectionIdentity = projectionIdentityRef.current;
+    // Keep ownership through deferred geometry, not only the page response.
+    const ownsLoad = () =>
+      olderLoadInFlightRef.current === owner &&
+      projectionIdentityRef.current === loadingProjectionIdentity &&
+      scrollRef.current === element;
+    const finish = () => {
+      olderLoadInFlightRef.current = null;
+      setLoadingEarlier(false);
+    };
     const oldHeight = element.scrollHeight;
     const oldTop = element.scrollTop;
     const anchor = captureScrollAnchor(element);
     pinnedRef.current = false;
     setPinned(false);
     const prepended = await onLoadOlderRef.current();
-    if (projectionIdentityRef.current !== loadingProjectionIdentity) {
-      olderLoadInFlightRef.current = false;
-      setLoadingEarlier(false);
-      return;
-    }
+    if (!ownsLoad()) return;
     if (!prepended) {
-      olderLoadInFlightRef.current = false;
-      setLoadingEarlier(false);
+      finish();
       return;
     }
 
     const restore = () => {
+      if (!ownsLoad()) return;
       const current = scrollRef.current;
       if (current && (!anchor || !restoreScrollAnchor(current, anchor))) {
         current.scrollTop =
           oldTop + Math.max(0, current.scrollHeight - oldHeight);
       }
-      olderLoadInFlightRef.current = false;
       // A short visible page can legitimately require several bounded host
       // pages. Keep one continuous loading cycle while the viewport remains in
       // the preload zone instead of flashing between each request.
       if (current && current.scrollTop <= OLDER_PRELOAD_PX) {
         requestAnimationFrame(() => {
+          if (!ownsLoad()) return;
+          olderLoadInFlightRef.current = null;
           if (!requestOlderRef.current()) setLoadingEarlier(false);
         });
       } else {
-        setLoadingEarlier(false);
+        finish();
       }
     };
     requestAnimationFrame(() =>
       requestAnimationFrame(() => {
+        if (!ownsLoad()) return;
         const anchorIndex = anchor
           ? rowsRef.current.findIndex((row) => row.key === anchor.key)
           : -1;
@@ -363,7 +371,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     pinnedRef.current = true;
     userScrollIntentRef.current = false;
     lastScrollTopRef.current = 0;
-    olderLoadInFlightRef.current = false;
+    olderLoadInFlightRef.current = null;
     setLoadingEarlier(false);
     setPinned(true);
     followLatest();

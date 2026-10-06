@@ -29,7 +29,7 @@ class ParserWorker {
   crash() {
     this.onerror?.call(
       this as unknown as Worker,
-      new ErrorEvent("error", { message: "worker failed" }),
+      { message: "worker failed" } as ErrorEvent,
     );
   }
 }
@@ -76,46 +76,55 @@ describe("Markdown parser ownership", () => {
     expect(worker.terminate).toHaveBeenCalledOnce();
   });
 
-  it("withdraws active and queued jobs without interrupting another reader", () => {
+  it("retires a released active reader and starts valid work without waiting for it", () => {
     const { client, workers } = fixture();
-    const owner = {},
-      other = {};
-    const one = callbacks(),
-      two = callbacks();
-    client.parse(owner, "active", false, one.complete, one.fail);
-    client.parse(owner, "queued", false, one.complete, one.fail);
-    client.parse(other, "retained", false, two.complete, two.fail);
-    client.release(owner);
-    const worker = workers[0]!;
-    expect(worker.terminate).not.toHaveBeenCalled();
-    worker.finish(0);
-    expect(one.complete).not.toHaveBeenCalled();
-    expect(worker.requests.map((request) => request.text)).toEqual([
-      "active",
-      "retained",
-    ]);
-    worker.finish(1);
-    expect(two.complete).toHaveBeenCalledOnce();
-    client.release(other);
-    expect(worker.terminate).toHaveBeenCalledOnce();
-  });
-
-  it("ignores responses and errors from a retired worker after another reader starts", () => {
-    const { client, workers } = fixture();
-    const owner = {},
-      other = {};
-    const one = callbacks(),
-      two = callbacks();
-    client.parse(owner, "retired", false, one.complete, one.fail);
-    client.release(owner);
-    client.parse(other, "current", false, two.complete, two.fail);
+    const transcript = {},
+      document = {},
+      replacement = {};
+    const retained = callbacks(),
+      retired = callbacks(),
+      current = callbacks();
+    client.parse(
+      transcript,
+      "transcript",
+      false,
+      retained.complete,
+      retained.fail,
+    );
     workers[0]!.finish(0);
+    client.parse(
+      document,
+      "old document",
+      true,
+      retired.complete,
+      retired.fail,
+    );
+    client.parse(document, "queued edit", true, retired.complete, retired.fail);
+    client.parse(
+      replacement,
+      "new document",
+      true,
+      current.complete,
+      current.fail,
+    );
+    client.release(document);
+
+    expect(workers[0]!.terminate).toHaveBeenCalledOnce();
+    expect(workers[1]!.requests.map((request) => request.text)).toEqual([
+      "new document",
+    ]);
+    workers[0]!.finish(1);
     workers[0]!.crash();
-    expect(one.complete).not.toHaveBeenCalled();
-    expect(two.fail).not.toHaveBeenCalled();
+    expect(retired.complete).not.toHaveBeenCalled();
+    expect(retired.fail).not.toHaveBeenCalled();
+    expect(current.fail).not.toHaveBeenCalled();
     workers[1]!.finish(0);
-    expect(two.complete).toHaveBeenCalledOnce();
-    client.release(other);
+    expect(current.complete).toHaveBeenCalledOnce();
+    expect(retained.complete).toHaveBeenCalledOnce();
+    expect(retained.fail).not.toHaveBeenCalled();
+    client.release(replacement);
+    client.release(transcript);
+    expect(workers[1]!.terminate).toHaveBeenCalledOnce();
   });
 
   it("continues with the latest source after an obsolete parse fails", () => {

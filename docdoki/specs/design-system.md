@@ -165,13 +165,11 @@ keep their existing behavior. Embedded documents retain their own styles.
 - Files, Changes, History, and Terminal share the contextual pane. Resource
   safety and change semantics belong to [[resource-preview]]; branch behavior
   belongs to [[session-continuity]].
-- `ResourcePathLabel` owns semantic path presentation throughout the product.
-  It preserves one complete path value and lets the actual flex/grid container
-  and shared CSS perform single-line overflow elision; it does not maintain a
-  parallel measured or segment-rewritten path. The complete value remains
-  available to assistive technology and the tooltip, and containing controls
-  retain that same value for copying and navigation. Ordinary titles and bare
-  filenames do not enter this path-specific treatment.
+- `ResourcePathLabel` owns semantic path presentation throughout the product. It retains one exact
+  value, separating parent and filename only for CSS layout. A fitting path stays complete; actual
+  container overflow elides the parent before the filename, without breakpoint or percentage quotas.
+  It keeps no parallel measured/reconstructed identity. Assistive text, tooltip, copy and navigation
+  retain the exact value. Ordinary titles and bare filenames use their existing text treatment.
 - Compact Plex labels share a 1px optical adjustment in buttons, segmented controls, dropdown
   values, section titles, and custom-message attribution. Button height and icon geometry stay
   unchanged; prose and mixed-font field descriptions retain their normal line boxes. Custom-message

@@ -75,12 +75,12 @@ async function writeTerminalState(
     PRIVATE_FILE_MODE,
   );
   try {
-    await handle.writeFile(serialized, "utf8");
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  try {
+    try {
+      await handle.writeFile(serialized, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await rename(temporary, path);
   } finally {
     await rm(temporary, { force: true });

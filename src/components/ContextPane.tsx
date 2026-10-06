@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { fencedMarkdown } from "../../shared/markdown-fence";
 import {
   RESOURCE_LIST_INITIAL_SIZE,
   type SessionResourceListResponse,
@@ -21,16 +22,6 @@ import { BranchTree } from "./BranchTree";
 import { ChangesPane } from "./ChangesPane";
 import { selectContextPaneView } from "./context-pane-view";
 import { FilesPane } from "./FilesPane";
-
-function terminalSelectionBlock(text: string): string {
-  const content = text.replace(/\s+$/u, "");
-  const longestFence = Math.max(
-    0,
-    ...[...content.matchAll(/`+/gu)].map((match) => match[0].length),
-  );
-  const fence = "`".repeat(Math.max(3, longestFence + 1));
-  return `${fence}text\n${content}\n${fence}`;
-}
 
 const TerminalPane = lazy(() =>
   import("./TerminalPane").then((module) => ({ default: module.TerminalPane })),
@@ -169,7 +160,7 @@ export const ContextPane = memo(function ContextPane({
     const sessionId = store.getState().sessionId;
     if (!sessionId) return;
     const current = sessionDraft(sessionId);
-    const next = `${current}${current ? "\n\n" : ""}${terminalSelectionBlock(text)}`;
+    const next = `${current}${current ? "\n\n" : ""}${fencedMarkdown(text.replace(/\s+$/u, ""), "text")}`;
     setSessionDraft(sessionId, next);
     store.replaceComposerText(next);
     requestAnimationFrame(() =>

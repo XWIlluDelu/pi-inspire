@@ -6,6 +6,7 @@ import {
   boundedUserText,
   branchEntryContent,
   branchEntryText,
+  branchNode,
   projectSessionTree,
 } from "../../server/session-tree.js";
 
@@ -233,6 +234,110 @@ describe("bounded session branch tree", () => {
         ).toMatchObject({ id: "shell", role: "shell" });
     },
   );
+
+  it("keeps outline whitespace, block separators and truncation without reading unused text", () => {
+    for (const length of [238, 239, 240, 241]) {
+      const entry = message("preview", null, "assistant", "");
+      Object.assign(
+        (entry as Extract<SessionEntry, { type: "message" }>).message,
+        {
+          content: [
+            { type: "text", text: ` \n${"x".repeat(length)}\t ` },
+            { type: "thinking", thinking: "\nThought\tprocess" },
+            { type: "image", mimeType: "image/png", data: "unused" },
+            { type: "text", text: "Last block" },
+          ],
+        },
+      );
+      const normalized = branchEntryText(entry).replace(/\s+/gu, " ").trim();
+      expect(branchNode(entry, true, true).snippet).toBe(
+        normalized.length > 240 ? `${normalized.slice(0, 239)}…` : normalized,
+      );
+    }
+    const entry = message("lazy-preview", null, "assistant", "");
+    Object.assign(
+      (entry as Extract<SessionEntry, { type: "message" }>).message,
+      {
+        content: [
+          { type: "text", text: "x".repeat(1000) },
+          {
+            type: "text",
+            get text(): string {
+              throw new Error("unused preview text");
+            },
+          },
+        ],
+      },
+    );
+    expect(branchNode(entry, false, false).snippet).toBe(`${"x".repeat(239)}…`);
+  });
+
+  it("reuses a snapshot's structure without retaining labels or ancestry across revisions", () => {
+    const first = [message("root", null, "user", "Root")];
+    expect(projectSessionTree(first, "root").rootCount).toBe(1);
+    const next = [
+      ...first,
+      message("child", "root", "assistant", "Child"),
+      {
+        type: "label",
+        id: "label",
+        parentId: "child",
+        targetId: "root",
+        label: "Bookmark",
+        timestamp: "2026-10-05",
+      } as SessionEntry,
+      message("alternate", null, "user", "Alternate"),
+    ];
+    expect(projectSessionTree(next, "child").nodes[0]).toMatchObject({
+      label: "Bookmark",
+      childCount: 1,
+      routeLeafId: "label",
+    });
+    expect(projectSessionTree(next, "alternate").nodes).toMatchObject([
+      { id: "alternate", active: true, leaf: true },
+    ]);
+    expect(projectSessionTree(first, "root").nodes[0]).toMatchObject({
+      label: "Root",
+      childCount: 0,
+      routeLeafId: "root",
+    });
+    const cleared = [
+      ...next,
+      {
+        type: "label",
+        id: "clear",
+        parentId: "alternate",
+        targetId: "root",
+        timestamp: "2026-10-05",
+      } as SessionEntry,
+    ];
+    expect(projectSessionTree(cleared, "child").nodes[0]?.label).toBe("Root");
+  });
+
+  it("fences complete shell output containing many backtick runs without argument expansion", () => {
+    const output = "`x".repeat(150_000);
+    const entry: SessionEntry = {
+      type: "message",
+      id: "shell",
+      parentId: null,
+      timestamp: "2026-10-05",
+      message: {
+        role: "bashExecution",
+        command: "echo ```",
+        output,
+        exitCode: 0,
+        cancelled: false,
+        truncated: false,
+        timestamp: 1,
+      },
+    };
+    const text = branchEntryText(entry);
+    expect(text).toContain(output);
+    expect(text).toContain("````\n!echo ```\n````");
+    expect(branchNode(entry, false, false).snippet.length).toBeLessThanOrEqual(
+      240,
+    );
+  });
 
   it("returns bounded original user text and rejects non-user targets", () => {
     const user = message("user", null, "user", "original text");

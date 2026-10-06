@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
-import type { Express, Request, Response } from "express";
+import type { Express, Response } from "express";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
 import {
@@ -21,7 +21,6 @@ import {
 import { requestError } from "./request-error.js";
 import type {
   TerminalAttachment,
-  TerminalOperationService,
   TerminalService,
 } from "./terminal-service.js";
 
@@ -147,52 +146,36 @@ export function createTerminalGateway(
   // Schema/auth-independent refusals before dispatch are definite. Once a
   // mutation reaches the daemon transport, default to unknown until a receipt.
   app.use(
-    /^\/api\/(?:terminals(?:\/|$)|terminal-settings$|terminal-history$)/u,
+    ["/api/terminals", "/api/terminal-settings", "/api/terminal-history"],
     (request, response, next) => {
       const header = request.get("X-Terminal-Operation");
       if (header !== undefined && request.method !== "GET") {
         if (header.length > 256)
           throw requestError("Invalid terminal operation", 400);
         const operation = terminalOperationSchema.parse(JSON.parse(header));
+        response.locals.terminalOperation = operation;
         response.set("X-Terminal-Operation", operation.id);
         response.set("X-Terminal-Outcome", "rejected");
       }
       next();
     },
   );
-  const operationService = (): TerminalOperationService => {
-    const terminal = requireTerminal();
-    if (
-      !("operate" in terminal) ||
-      typeof terminal.operate !== "function" ||
-      !("operationEpoch" in terminal) ||
-      typeof terminal.operationEpoch !== "function"
-    )
-      throw requestError("Terminal operation receipts are unavailable", 503, {
-        code: "terminal_operations_unavailable",
-      });
-    return terminal as TerminalOperationService;
-  };
   const mutate = async <T>(
-    request: Request,
     response: Response,
     method: TerminalMutationMethod,
     params: unknown,
-    legacy: () => Promise<T>,
   ): Promise<T> => {
-    const header = request.get("X-Terminal-Operation");
-    if (header === undefined) return legacy();
-    if (header.length > 256)
-      throw requestError("Invalid terminal operation", 400);
-    const operation = terminalOperationSchema.parse(JSON.parse(header));
-    response.set("X-Terminal-Operation", operation.id);
+    const operation = response.locals.terminalOperation as
+      | z.infer<typeof terminalOperationSchema>
+      | undefined;
+    if (!operation)
+      throw requestError("A terminal operation identity is required", 400, {
+        code: "terminal_operation_required",
+      });
+    const terminal = requireTerminal();
     response.set("X-Terminal-Outcome", "unknown");
     try {
-      const result = await operationService().operate<T>(
-        method,
-        params,
-        operation,
-      );
+      const result = await terminal.operate<T>(method, params, operation);
       response.set("X-Terminal-Outcome", "completed");
       return result;
     } catch (error) {
@@ -213,7 +196,7 @@ export function createTerminalGateway(
   };
   app.get("/api/terminal-operations", async (_request, response) => {
     response.set("Cache-Control", "no-store");
-    response.json({ epoch: await operationService().operationEpoch() });
+    response.json({ epoch: await requireTerminal().operationEpoch() });
   });
   app.get("/api/terminals", async (request, response) => {
     const { cwd } = terminalListSchema.parse(request.query);
@@ -223,66 +206,38 @@ export function createTerminalGateway(
     const body = terminalCreateSchema.parse(request.body);
     response
       .status(201)
-      .json(
-        await mutate(request, response, "create", { request: body }, () =>
-          requireTerminal().create(body),
-        ),
-      );
+      .json(await mutate(response, "create", { request: body }));
   });
   app.get("/api/terminal-settings", async (_request, response) => {
     response.json(await requireTerminal().getSettings());
   });
   app.patch("/api/terminal-settings", async (request, response) => {
     const patch = terminalSettingsPatchSchema.parse(request.body);
-    response.json(
-      await mutate(request, response, "updateSettings", { patch }, () =>
-        requireTerminal().updateSettings(patch),
-      ),
-    );
+    response.json(await mutate(response, "updateSettings", { patch }));
   });
-  app.delete("/api/terminal-history", async (request, response) => {
-    await mutate(request, response, "clearHistory", {}, () =>
-      requireTerminal().clearHistory(),
-    );
+  app.delete("/api/terminal-history", async (_request, response) => {
+    await mutate(response, "clearHistory", {});
     response.status(204).end();
   });
   app.patch("/api/terminals/:id", async (request, response) => {
     const id = terminalIdSchema.parse(request.params.id);
     const body = terminalRenameSchema.parse(request.body);
-    response.json(
-      await mutate(request, response, "rename", { id, title: body.title }, () =>
-        requireTerminal().rename(id, body),
-      ),
-    );
+    response.json(await mutate(response, "rename", { id, title: body.title }));
   });
   app.post("/api/terminals/reorder", async (request, response) => {
     const { cwd, terminalIds } = terminalReorderSchema.parse(request.body);
     response.json(
-      await mutate(
-        request,
-        response,
-        "reorder",
-        { projectCwd: cwd, ids: terminalIds },
-        () => requireTerminal().reorder(cwd, terminalIds),
-      ),
+      await mutate(response, "reorder", { projectCwd: cwd, ids: terminalIds }),
     );
   });
   app.post("/api/terminals/:id/restart", async (request, response) => {
     const id = terminalIdSchema.parse(request.params.id);
-    response.json(
-      await mutate(request, response, "restart", { id }, () =>
-        requireTerminal().restart(id),
-      ),
-    );
+    response.json(await mutate(response, "restart", { id }));
   });
   app.delete("/api/terminals/:id", async (request, response) => {
     const id = terminalIdSchema.parse(request.params.id);
     const force = request.query.force === "1";
-    response.json(
-      await mutate(request, response, "remove", { id, force }, () =>
-        requireTerminal().remove(id, force),
-      ),
-    );
+    response.json(await mutate(response, "remove", { id, force }));
   });
   app.post("/api/terminals/:id/attach-ticket", async (request, response) => {
     const terminal = requireTerminal();

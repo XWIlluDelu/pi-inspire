@@ -111,8 +111,9 @@ retention uses admission epochs to reject forgotten identities. A replacement da
 epoch, so the client must resolve uncertainty rather than replay an old mutation there.
 
 The browser saves unresolved identities in tab-session storage before dispatch and retains them
-across project changes and reload. Invalid stored intent blocks dispatch. Identified requests use
-the receipt protocol; legacy HTTP callers without identities still create one intent per request.
+across project changes and reload. Invalid stored intent blocks dispatch. All control writes use
+the receipt protocol; HTTP callers without an identity are refused before dispatch. Route-validation
+refusals for valid identities carry the matching rejected receipt, including nested terminal paths.
 The in-process terminal manager uses the same receipt and mutation implementation. Read,
 attachment, and input streams remain separate from control-mutation receipts.
 
@@ -286,7 +287,9 @@ same-model snapshots, manual effort and pending-source inheritance. [[model-sett
 A successful configuration save changes the inputs to workspace discovery. Waiting for the active
 worker's readback before invalidation leaves older cached or in-flight reads able to publish obsolete
 inventory. Invalidate at the successful save boundary; the catalog generation prevents an older
-completion from repopulating the cache. Readback still observes the active worker's registrations.
+completion from repopulating the cache. Session saves refresh only the active worker, so an unrelated
+workspace-discovery process cannot delay their response. Other workspaces rediscover on demand;
+a save without a session refreshes the addressed workspace.
 
 Implementation: `server/model-settings-routes.ts` and `server/model-metadata.ts`. The in-flight/save
 regression is in `tests/server/model-settings.test.ts`.
@@ -380,5 +383,83 @@ On unmount, focus then falls to the document body rather than the outside opener
 retains the previous entry's outside opener when replaying the same dialog with focus still inside.
 The existing modal stack and stale-microtask ownership remain intact.
 
-An isolated regression failed before the correction; the three affected browser flows then restored
-the opener. Source: `src/use-modal-focus.ts` and `tests/web/modal-focus.test.tsx`.
+An isolated regression failed before correction; three affected production Chromium flows then
+restored the opener on Linux / Node 22.23.2. Source: `src/use-modal-focus.ts` and
+`tests/web/modal-focus.test.tsx`.
+
+## Maintainability review
+
+Pi behavior was checked against the public 1.0.0 compatibility dependency and upstream
+[`031b24a`](https://github.com/earendil-works/pi/tree/031b24aa6425067253cb94095fb806a9df9d619c).
+
+### Consolidated responsibilities
+
+- `worker-status-request.ts` owns the repeated hidden-status correlation, subscription,
+  dispatch fencing and cleanup mechanics. Authentication, model refresh, retry state and
+  pending-image adapters retain their own payload and completion semantics; image packets
+  still preserve multiplicity and require a final cursor.
+- Terminal HTTP mutations require operation identities. Nested validation refusals now
+  return matching rejection receipts. The anonymous write path, separate receipt-service
+  subtype and unused destructive protocol-replacement handshake were removed. Launcher
+  tests own and stop their daemon processes rather than exercising a production kill API.
+- Browser status handling uses the Host's normalized projection, not a second implementation
+  of raw Pi status events. Unused tool-detail serialization, old New overloads and the
+  redundant prompt-history compatibility detector were removed.
+- One constant-state Markdown fence helper serves resource quoting and native shell History.
+  It preserves content with 150,000 backtick runs without the former argument-stack overflow.
+
+### Repaired behavior
+
+- Attachment discovery no longer masquerades as durable registration. Failed publication
+  can be retried, and discovered custom session directories remain registered after restart.
+- Host shutdown cancels standalone provider login. Runtime shutdown reports failed worker
+  retirement instead of discarding rejection results. A confirmed missing login also clears
+  the browser's pending state and polling.
+- Released Markdown readers retire their active worker so an obsolete document cannot block
+  the next reader. Old model-refresh warnings and deferred transcript-page geometry cannot
+  update a replacement owner.
+- Export downloads resolve trusted internal source aliases before taking a canonical file
+  snapshot. A directory-alias regression covers the `/tmp` versus `/private/tmp` failure mode.
+- Terminal-state failures during write or sync remove staging files. Terminal History uses
+  serialized positioned writes so compaction does not require truncating a Windows append-only
+  handle.
+- Herdr retirement recognizes removed kernfs nodes (`ENODEV`) as well as missing cgroup paths.
+  It still pins directory identity and rejects unrelated inspection failures before lease cleanup.
+- Login-shell environment capture frames exports on standard stdout and discards startup noise.
+  A compiled Bash 3.2 reproduced its closure of descriptors 3–19; native macOS CI subsequently
+  exposed a process abort with high-descriptor capture. Standard stdio avoids both paths.
+
+Regression tests preserve ownership, publication and retry semantics rather than implementation
+spelling. Runtime attachment fixtures now use disposable storage instead of scanning real Host
+state. Vitest separates node and browser projects; filesystem-only web contracts run under Node,
+without jsdom or the React setup. Current Pi discovery fixtures use canonical temporary roots,
+file-URL imports and a shared isolated environment. On Windows, it preserves inherited key spelling
+so Node's case-insensitive deduplication cannot discard required machine variables behind an
+`undefined` alias. Fresh-process fixtures pass the selected Pi installation explicitly.
+
+### Documentation ownership
+
+Composer owns editing and input UI; Pi integration owns native dispatch; session branches own
+exports; persistence owns writer/file admission; transport owns prompt operation receipts.
+Repeated detailed contracts now link to those owners. Twenty-five obsolete archive stages were
+removed after retaining their useful obligations and evidence. Router guidance was corrected
+against native selection semantics. Remaining capability gaps stay in
+[[pi-capability-gaps]], not in softened specifications.
+
+Measured projection and work-count results are in [[performance]]. The standalone auth
+runtime also skips an unused availability refresh; no startup-latency improvement was measured.
+
+### Behavior-focused tests
+
+Terminal recovery checks separate atomic quarantine, immutable retry identity and admission limits
+from representative stored-request validation. Each damaged value no longer repeats the entire
+quarantine workflow. Request-key probes keep the changed method, path and body independently valid,
+so unrelated route validation cannot make a binding check pass.
+
+Pending input has its own component suite. Ordered full-text copy and truncated previews share one
+scenario; clear confirmation and asynchronous focus ownership remain separate. Focus checks observe
+the recovery callback and prohibit premature focus transfer. The omitted-row case actually copies
+the complete queue instead of checking only that a Copy button exists.
+
+The four affected controller/component suites pass 71 focused checks. Typecheck, unused-code and
+changed-file lint/format checks pass. Production code is unchanged by this test-organization cleanup.

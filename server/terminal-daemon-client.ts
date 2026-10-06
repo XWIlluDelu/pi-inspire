@@ -17,7 +17,6 @@ import {
 import {
   TERMINAL_DAEMON_PROTOCOL_VERSION,
   TERMINAL_DAEMON_READY_TYPE,
-  TERMINAL_DAEMON_REPLACING_TYPE,
   type TerminalDaemonRpcMethod,
   type TerminalDaemonRpcResponse,
 } from "./terminal-daemon-protocol.js";
@@ -34,7 +33,7 @@ import type {
   TerminalAttachment,
   TerminalAttachmentSink,
   TerminalAttachOptions,
-  TerminalOperationService,
+  TerminalService,
 } from "./terminal-service.js";
 import { TerminalServiceError } from "./terminal-service.js";
 
@@ -118,7 +117,7 @@ class DaemonAttachment implements TerminalAttachment {
   }
 }
 
-export class TerminalDaemonClient implements TerminalOperationService {
+export class TerminalDaemonClient implements TerminalService {
   private readonly attachments = new Set<DaemonAttachment>();
   private closed = false;
 
@@ -148,59 +147,10 @@ export class TerminalDaemonClient implements TerminalOperationService {
     method: TerminalMutationMethod,
     params: unknown,
   ): Promise<Result> {
-    // Compatibility callers create a new intent on each method invocation.
-    // Browser retries instead pass their retained identity to operate().
+    // Internal direct calls are new intents; HTTP retries retain their identity
+    // through operate().
     const epoch = await this.operationEpoch();
     return this.operate(method, params, { id: randomUUID(), epoch });
-  }
-
-  /** Ask an authenticated older daemon to leave its IPC address so this
-   * launcher can start a wire-compatible version. A matching daemon refuses. */
-  requestProtocolReplacement(
-    protocolVersion = TERMINAL_DAEMON_PROTOCOL_VERSION,
-  ): Promise<boolean> {
-    return new Promise<boolean>((resolvePromise) => {
-      const socket = createConnection(this.address);
-      const decoder = new TerminalIpcDecoder();
-      let settled = false;
-      const finish = (replacing: boolean): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        resolvePromise(replacing);
-      };
-      const timeout = setTimeout(() => {
-        socket.destroy();
-        finish(false);
-      }, 1_000);
-      timeout.unref?.();
-      socket.once("connect", () => {
-        socket.write(
-          encodeTerminalIpcJson({
-            protocolVersion,
-            mode: "replace",
-            token: this.token,
-          }),
-        );
-      });
-      socket.on("data", (chunk) => {
-        try {
-          for (const frame of decoder.push(socketChunkBytes(chunk))) {
-            if (frame.kind !== TERMINAL_IPC_JSON_FRAME) continue;
-            const message = asRecord(decodeTerminalIpcJson(frame.payload));
-            if (message?.type === TERMINAL_DAEMON_REPLACING_TYPE) {
-              finish(true);
-              socket.end();
-            }
-          }
-        } catch {
-          socket.destroy();
-          finish(false);
-        }
-      });
-      socket.once("error", () => finish(false));
-      socket.once("close", () => finish(false));
-    });
   }
 
   list(projectCwd?: string): Promise<TerminalCatalogResponse> {

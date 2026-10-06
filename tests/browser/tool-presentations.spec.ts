@@ -282,6 +282,13 @@ for (const mobile of [false, true]) {
       expect(await list.evaluate((element) => element.scrollTop)).toBe(
         position,
       );
+      // The parent owns its own Adaptive completion deadline. Inspect it
+      // deliberately even if it closed while the script result was rendered.
+      const parentDisclosure = parentCard.getByRole("button", {
+        name: /^(Expand|Collapse) orchestrator tool$/,
+      });
+      if ((await parentDisclosure.getAttribute("aria-expanded")) === "false")
+        await parentDisclosure.click();
       await expect(
         parentCard.getByText("Independent parent completed"),
       ).toBeVisible();
