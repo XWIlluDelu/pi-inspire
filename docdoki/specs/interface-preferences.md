@@ -90,6 +90,11 @@ remain separate from loaded-extension membership.
 
 - The Extensions check covers global/user packages. Document this scope in the command guide rather
   than adding a persistent qualifier to the result label.
+- System shows the extension update count and copyable update command on the main line, then
+  lists package source links below, one package per line, even for a single update. Details align
+  right on desktop and left on narrow screens; long names wrap. Pi's package observation provides
+  names and source types, not version differences or changelog text; the npm/repository links are
+  source references, not embedded release notes.
 - Explicit checks bypass the cache. Results offer commands or release links; Host/Restart all use
   the confirmation and execution rules in [[host-lifecycle]].
 - The first accepted prompt after 08:00 Host-local time each day invokes cache-aware checks. The
