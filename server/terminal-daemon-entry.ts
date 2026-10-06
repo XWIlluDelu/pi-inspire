@@ -107,10 +107,7 @@ async function main(): Promise<void> {
   );
   const previousState = await readTerminalState(config.statePath);
   if (previousState) await manager.restoreState(previousState);
-  let replaceProtocol = (): void => {};
-  const daemon = new TerminalDaemonServer(config.address, token, manager, () =>
-    replaceProtocol(),
-  );
+  const daemon = new TerminalDaemonServer(config.address, token, manager);
   await daemon.start();
   try {
     await notifySystemdReady();
@@ -144,9 +141,6 @@ async function main(): Promise<void> {
       await daemon.stop();
     })();
     return stopping;
-  };
-  replaceProtocol = () => {
-    void stop().finally(() => process.exit(0));
   };
   for (const signal of ["SIGINT", "SIGTERM"] as const)
     process.once(signal, () => {

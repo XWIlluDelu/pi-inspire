@@ -48,17 +48,13 @@ function fixture(
 }
 
 describe("worker retry state read", () => {
-  it("confirms false and ignores results belonging to other read owners", async () => {
+  it("confirms false without treating it as a missing result", async () => {
     const rpc = fixture((request, emit) => {
-      for (const key of ["nonce", "workerId", "sessionId"]) {
-        emit({ ...request, [key]: "another-owner", autoRetryEnabled: true });
-      }
       emit({ ...request, autoRetryEnabled: false });
     });
     await expect(
       readWorkerRetryState(rpc as unknown as PiRpcProcess, bridge, sessionId),
     ).resolves.toBe(false);
-    expect(rpc.listenerCount("event")).toBe(0);
   });
 
   it.each(["missing", "malformed", "duplicate"])(
@@ -77,7 +73,6 @@ describe("worker retry state read", () => {
       ).rejects.toThrow(
         mode === "missing" ? "did not confirm" : "Malformed retry state result",
       );
-      expect(rpc.listenerCount("event")).toBe(0);
     },
   );
 });

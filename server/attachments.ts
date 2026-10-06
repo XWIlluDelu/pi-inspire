@@ -156,6 +156,7 @@ export class AttachmentStore {
   private initialization: Promise<void> | null = null;
   private readonly owned = new Map<string, AttachmentOwnership>();
   private readonly sessionDirectories = new Set<string>();
+  private readonly registeredDirectories = new Set<string>();
   private readonly awaitingReference = new Map<string, Set<string | null>>();
   private registryTail: Promise<void> = Promise.resolve();
   private readonly pathLeases = new Map<string, number>();
@@ -232,8 +233,10 @@ export class AttachmentStore {
             )
           )
             throw new Error("Invalid attachment session-directory registry");
-          for (const directory of directories)
+          for (const directory of directories) {
             this.sessionDirectories.add(directory);
+            this.registeredDirectories.add(directory);
+          }
           continue;
         }
         if (!/^[0-9a-f-]{36}\.json$/u.test(entry.name)) continue;
@@ -279,15 +282,21 @@ export class AttachmentStore {
   async registerSession(path: string): Promise<void> {
     await this.ensureRoot();
     const directory = dirname(resolve(path));
-    if (this.sessionDirectories.has(directory)) return;
-    this.sessionDirectories.add(directory);
     const writing = this.registryTail.then(async () => {
+      if (this.registeredDirectories.has(directory)) return;
       const temporary = join(this.root, `.directories-${randomUUID()}`);
-      await writeFile(temporary, JSON.stringify([...this.sessionDirectories]), {
-        mode: 0o600,
-        flag: "wx",
-      });
-      await rename(temporary, join(this.root, ".session-directories.json"));
+      try {
+        await writeFile(
+          temporary,
+          JSON.stringify([...this.registeredDirectories, directory]),
+          { mode: 0o600, flag: "wx" },
+        );
+        await rename(temporary, join(this.root, ".session-directories.json"));
+        this.sessionDirectories.add(directory);
+        this.registeredDirectories.add(directory);
+      } finally {
+        await rm(temporary, { force: true });
+      }
     });
     this.registryTail = writing.catch(() => undefined);
     await writing;

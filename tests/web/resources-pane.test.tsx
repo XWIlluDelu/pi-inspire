@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GitPathIdentity } from "../../shared/contracts";
 import { stripResourceLocation } from "../../shared/resource-references";
 import { App } from "../../src/App";
+import { ContextPane } from "../../src/components/ContextPane";
 import { MAX_MEDIA_PREVIEW_BYTES } from "../../src/resource-preview";
 import { store } from "../../src/store";
 import {
@@ -515,19 +516,16 @@ describe("Files pane", () => {
 
   it("renders grouped changes over a stable source view with change navigation", async () => {
     Element.prototype.scrollIntoView = vi.fn();
-    render(<App />);
-    fireEvent.click(await screen.findByRole("link", { name: "notes" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Changes" }));
-
-    const pane = await screen.findByRole("complementary", {
-      name: "Context panel",
-    });
+    await store.openResource("notes.md", "changes");
+    const { container: pane } = render(
+      <ContextPane isModal={false} onClose={vi.fn()} />,
+    );
+    expect(
+      await screen.findByRole("heading", { name: /Conflicts/ }),
+    ).toBeInTheDocument();
     expect(pane.querySelector(".res__index-header")).toHaveTextContent(
       "feature/git4 staged · 7 working · 1 conflict",
     );
-    expect(
-      screen.getByRole("heading", { name: /Conflicts/ }),
-    ).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Staged/ })).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: /Unstaged/ }),
@@ -1192,7 +1190,9 @@ describe("Files pane", () => {
     const pane = await screen.findByRole("complementary", {
       name: "Context panel",
     });
-    expect(within(pane).getByText("File too large to preview")).toBeVisible();
+    expect(
+      await within(pane).findByText("File too large to preview"),
+    ).toBeVisible();
     fireEvent.click(within(pane).getByRole("button", { name: "Source" }));
     expect(
       within(pane).getByRole("region", { name: "File source" }),

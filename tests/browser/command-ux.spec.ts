@@ -7,6 +7,7 @@ import {
   type WebSocketRoute,
 } from "@playwright/test";
 import type { ActiveSnapshot, ModelOption } from "../../shared/contracts";
+import { moveCaretToEnd } from "./support/native-input";
 import { openCommandPalette } from "./support/navigation";
 
 const draft = "UNFINISHED DRAFT — retain these notes";
@@ -383,7 +384,7 @@ for (const touch of [false, true]) {
       await expect(input).toHaveValue(
         'Read @"src/components/FilePreview.tsx" and explain the result',
       );
-      await input.press("Control+End");
+      await moveCaretToEnd(input);
       await input.pressSequentially(" with more context");
       await expect(
         page.getByRole("listbox", { name: "Project file completions" }),
@@ -517,12 +518,26 @@ test("bounds large argument menus without dropping search, scrolling or keyboard
   await page.setViewportSize({ width: 320, height: 740 });
   await input.fill("/model ");
   await expect(options.first()).toHaveAttribute("aria-setsize", "250");
-  await page.locator(".completion").evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-  });
+  const menu = page.locator(".completion");
   const last = page.getByRole("option", { name: "scale/model0249 Model 249" });
+  await menu.hover();
+  // Real wheel input continues through measured row-height changes after resize.
+  await expect
+    .poll(async () => {
+      await page.mouse.wheel(0, 4000);
+      if (!(await last.count())) return false;
+      return last.evaluate((element) => {
+        const row = element.getBoundingClientRect();
+        const menu = element.closest(".completion")!.getBoundingClientRect();
+        return row.top >= menu.top && row.bottom <= menu.bottom;
+      });
+    })
+    .toBe(true);
   await expect(last).toBeInViewport();
   expect(await options.count()).toBeLessThan(30);
+  await page.screenshot({
+    path: "output/playwright/command-ux-last-model-320.png",
+  });
   await last.click();
   await expect(input).toHaveValue("/model scale/model0249");
 });

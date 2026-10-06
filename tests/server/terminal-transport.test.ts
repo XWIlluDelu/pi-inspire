@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -10,6 +11,8 @@ import { AttachmentStore } from "../../server/attachments.js";
 import { MockCatalog, MockRuntime } from "../../server/mock.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { ResourceStore } from "../../server/resources.js";
+import { dispatchTerminalMutation } from "../../server/terminal-operation-dispatch.js";
+import { TerminalOperationReceipts } from "../../server/terminal-operation-receipts.js";
 import type {
   TerminalAttachment,
   TerminalAttachmentSink,
@@ -19,6 +22,8 @@ import type {
 import type {
   TerminalCatalogResponse,
   TerminalDescriptor,
+  TerminalMutationMethod,
+  TerminalOperationIdentity,
   TerminalServiceSettings,
 } from "../../shared/terminal-contracts.js";
 import { encodeTerminalInputFrame } from "../../shared/terminal-contracts.js";
@@ -52,6 +57,19 @@ const terminal: TerminalDescriptor = {
 };
 
 class FakeTerminalService implements TerminalService {
+  private readonly operations = new TerminalOperationReceipts();
+  async operationEpoch() {
+    return this.operations.getEpoch();
+  }
+  operate<Result>(
+    method: TerminalMutationMethod,
+    params: unknown,
+    operation: TerminalOperationIdentity,
+  ): Promise<Result> {
+    return this.operations.run(operation, method, params, () =>
+      dispatchTerminalMutation(this, method, params),
+    ) as Promise<Result>;
+  }
   readonly input = vi.fn();
   readonly controls = vi.fn();
   readonly detach = vi.fn();
@@ -181,6 +199,13 @@ describe("terminal HTTP and WebSocket transport", () => {
     await request(application.server)
       .delete(`/api/terminals/${terminal.id}`)
       .set("Authorization", `Bearer ${token}`)
+      .set(
+        "X-Terminal-Operation",
+        JSON.stringify({
+          id: randomUUID(),
+          epoch: await terminalService.operationEpoch(),
+        }),
+      )
       .expect(200, { catalogEpoch: "catalog-1", revision: 2 });
   });
 

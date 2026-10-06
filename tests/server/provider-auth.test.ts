@@ -4,12 +4,17 @@ import { join } from "node:path";
 import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createInspireServer } from "../../server/app.js";
+import { AttachmentStore } from "../../server/attachments.js";
+import { MockCatalog, MockRuntime } from "../../server/mock.js";
 import { registerModelSettingsRoutes } from "../../server/model-settings-routes.js";
 import { ModelRuntime, piInstallation } from "../../server/pi-runtime.js";
+import { PreferencesStore } from "../../server/preferences.js";
 import {
   nativeOAuthDescriptors,
   ProviderAuthService,
 } from "../../server/provider-auth.js";
+import { ResourceStore } from "../../server/resources.js";
 import type { RuntimeLike } from "../../server/runtime.js";
 import type { ProviderLoginAttempt } from "../../shared/model-settings.js";
 
@@ -407,6 +412,42 @@ describe("public native provider authentication", () => {
       expect(radiusMethod!.remoteHelp).toBeUndefined();
     },
   );
+
+  it("cancels a standalone native login when its Host closes", async () => {
+    const application = createInspireServer({
+      token: "fixture",
+      runtime: new MockRuntime(),
+      catalog: new MockCatalog(),
+      attachments: new AttachmentStore(join(root, "uploads")),
+      preferences: new PreferencesStore(join(root, "preferences.json")),
+      resources: new ResourceStore(),
+      git: {
+        status: async () => ({ kind: "not-repository" }),
+        diff: async () => {
+          throw new Error("unused");
+        },
+      },
+      providerAuth: service,
+      mock: true,
+      version: "fixture",
+      piVersion: piInstallation.version,
+    });
+    try {
+      const attempt = service.start("synthetic", "oauth");
+      await prompt(attempt, "select");
+      await application.close();
+      expect(service.snapshot(attempt.id)).toMatchObject({
+        status: "cancelled",
+        prompt: null,
+      });
+      expect(JSON.parse(await readFile(authPath, "utf8"))).toEqual({});
+      expect(() => service.start("synthetic", "oauth")).toThrow(
+        "Provider authentication is closed",
+      );
+    } finally {
+      await application.close();
+    }
+  });
 
   it("redacts native authentication failures", async () => {
     const base = runtime.getProvider("synthetic")!;

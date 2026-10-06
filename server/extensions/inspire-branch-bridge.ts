@@ -125,13 +125,7 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
         !TOKEN.test(request.nonce)
       )
         throw new Error("invalid retry state owner");
-      // Pi 1.0's public API reads this worker's effective, trust-filtered settings.
-      // The development SDK types predate getSettings().
-      const settings = (
-        pi as ExtensionAPI & {
-          getSettings(): { retry?: { enabled?: boolean } };
-        }
-      ).getSettings();
+      const settings = pi.getSettings();
       ctx.ui.setStatus(
         `${statusKey}${RETRY_STATE_SUFFIX}`,
         encodeBranchBridgeJson(

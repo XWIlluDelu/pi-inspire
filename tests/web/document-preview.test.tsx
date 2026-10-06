@@ -227,7 +227,7 @@ describe("document Markdown", () => {
   it("highlights notebook code, preserves raw source and separates traceback lines", () => {
     const source = 'print("<unsafe>", 42)';
     const traceback = [
-      "\u001b[31mTraceback (most recent call last):\u001b[0m",
+      "\u001b]0;notebook title\u0007\u001b[31mTraceback (most recent call last):\u001b[0m",
       '  File "train.py", line 8',
       "ValueError: invalid sample",
     ];

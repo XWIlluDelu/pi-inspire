@@ -12,6 +12,7 @@ import {
   type TranscriptViewportRow,
   useTranscriptViewport,
 } from "../../src/components/transcript-viewport";
+import { deferred } from "./helpers";
 
 const ROWS: TranscriptViewportRow[] = [{ key: "one" }];
 
@@ -92,15 +93,17 @@ function ViewportHarness({ viewId = "view" }: { viewId?: string }) {
 function OlderLoadingHarness({
   hasOlder,
   onLoadOlder,
+  viewId = "view",
 }: {
   hasOlder: boolean;
   onLoadOlder: () => Promise<boolean>;
+  viewId?: string;
 }) {
   const searchOwnsViewportRef = useRef(false);
   const viewport = useTranscriptViewport({
     rows: ROWS,
     sessionId: "session",
-    viewId: "view",
+    viewId,
     hasOlder,
     olderError: null,
     onLoadOlder,
@@ -204,6 +207,68 @@ describe("transcript viewport geometry", () => {
     });
     expect(log).toHaveAttribute("data-loading-earlier", "false");
   });
+
+  it("keeps the new view's loading owner when a retired page settles", async () => {
+    const oldPage = deferred<boolean>(),
+      currentPage = deferred<boolean>();
+    const onLoadOlder = vi
+      .fn()
+      .mockReturnValueOnce(oldPage.promise)
+      .mockReturnValueOnce(currentPage.promise);
+    const view = render(
+      <OlderLoadingHarness hasOlder viewId="old" onLoadOlder={onLoadOlder} />,
+    );
+    view.rerender(
+      <OlderLoadingHarness
+        hasOlder
+        viewId="current"
+        onLoadOlder={onLoadOlder}
+      />,
+    );
+    expect(onLoadOlder).toHaveBeenCalledTimes(2);
+    await act(async () => oldPage.resolve(false));
+    expect(screen.getByRole("log")).toHaveAttribute(
+      "data-loading-earlier",
+      "true",
+    );
+    await act(async () => currentPage.resolve(false));
+    expect(screen.getByRole("log")).toHaveAttribute(
+      "data-loading-earlier",
+      "false",
+    );
+  });
+
+  it.each([0, 1])(
+    "retires an older page's deferred scroll after a view change at frame %s",
+    async (frames) => {
+      const page = deferred<boolean>();
+      const onLoadOlder = vi.fn(() => page.promise);
+      const view = render(
+        <OlderLoadingHarness hasOlder viewId="old" onLoadOlder={onLoadOlder} />,
+      );
+      const log = screen.getByRole("log");
+      setScrollGeometry(log, { clientHeight: 400, scrollTop: 100 });
+      await act(async () => page.resolve(true));
+      act(() => {
+        for (let index = 0; index < frames; index += 1) flushAnimationFrames();
+      });
+      view.rerender(
+        <OlderLoadingHarness
+          hasOlder={false}
+          viewId="current"
+          onLoadOlder={onLoadOlder}
+        />,
+      );
+      expect(log.scrollTop).toBe(600);
+      act(() => {
+        flushAnimationFrames();
+        flushAnimationFrames();
+        flushAnimationFrames();
+      });
+      expect(log.scrollTop).toBe(600);
+      expect(onLoadOlder).toHaveBeenCalledOnce();
+    },
+  );
 
   it("does not reclaim latest-follow after an unpinned scrollport resize", () => {
     render(<ViewportHarness />);

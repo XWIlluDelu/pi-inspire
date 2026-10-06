@@ -99,7 +99,7 @@ test("service discovery honors interactive login setup, unsets, and arbitrary ex
   skip: !bash,
 }, async () => {
   const f = await fixture(`
-printf 'private startup banner\\n'
+printf '{"PATH":"not-the-export"} private startup banner\\n'
 printf 'private startup warning\\n' >&2
 export PATH="$HOME/.local/bin:/usr/bin:/bin"
 export MULTILINE='line one
@@ -220,7 +220,13 @@ test("startup has a deadline and terminates its isolated shell", {
 test("export size is bounded independently of ignored startup output", {
   skip: !bash,
 }, async () => {
-  const f = await fixture("printf 'banner\\n'\n");
+  const f = await fixture(
+    "printf '%200000s' 'startup banner without a newline'\nexport SIZE_PROBE=ready\n",
+  );
+  const result = await resolveLaunchEnvironment(f.environment, {
+    maxBytes: 4096,
+  });
+  assert.equal(result.SIZE_PROBE, "ready");
   await assert.rejects(
     resolveLaunchEnvironment(f.environment, { maxBytes: 32 }),
     /size limit/,

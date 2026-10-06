@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -23,7 +30,9 @@ afterEach(async () => {
 });
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "inspire-project-discovery-"));
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), "inspire-project-discovery-")),
+  );
   roots.push(root);
   const startup = join(root, "startup");
   const project = join(root, "never-pinned");

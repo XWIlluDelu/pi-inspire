@@ -168,5 +168,7 @@ export function historyFixtureMessages(): unknown[] {
     .map((entry) => ({
       ...(entry as Extract<SessionEntry, { type: "message" }>).message,
       entryId: entry.id,
+      __inspireEntryId: entry.id,
+      __inspireMessageId: `${entry.id}:0`,
     }));
 }

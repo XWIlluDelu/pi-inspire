@@ -20,7 +20,6 @@ export interface ActivityTool {
   id: string;
   name: string;
   phase: "queued" | "running" | "done" | "error";
-  detail?: string;
   outputPreview?: { text: string; truncated: boolean };
   calls?: ChildCallList;
 }

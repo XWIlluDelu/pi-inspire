@@ -2,7 +2,7 @@ import express from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { registerModelSettingsRoutes } from "../../server/model-settings-routes.js";
-import type { ProviderAuthService } from "../../server/provider-auth.js";
+import { ProviderAuthService } from "../../server/provider-auth.js";
 import type { RuntimeLike } from "../../server/runtime.js";
 import type { ProviderLoginAttempt } from "../../shared/model-settings.js";
 
@@ -10,6 +10,7 @@ function fixture() {
   const states = new Map<string, ProviderLoginAttempt>();
   let sequence = 0;
   const auth = {
+    request: ProviderAuthService.prototype.request,
     start: (provider: string, type: "api_key" | "oauth") => {
       const state: ProviderLoginAttempt = {
         id: `attempt-${++sequence}`,

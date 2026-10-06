@@ -96,8 +96,7 @@ export function modelSwitchThinkingLevel(
   return (
     settings.getModelThinkingLevel(provider, id) ??
     settings.getDefaultThinkingLevel() ??
-    current ??
-    "medium"
+    current
   );
 }
 
@@ -153,11 +152,7 @@ export async function resolveNewSessionDefaults(
       : {}),
   });
   const model = session.model;
-  const thinkingLevel = THINKING_LEVELS.includes(
-    session.thinkingLevel as ThinkingLevel,
-  )
-    ? (session.thinkingLevel as ThinkingLevel)
-    : "off";
+  const thinkingLevel = session.thinkingLevel;
   session.dispose();
   return {
     cwd,

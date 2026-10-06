@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { expect, it, vi } from "vitest";
 import { refreshWorkerCatalog } from "../../server/model-catalog-refresh.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
@@ -10,6 +10,7 @@ import type {
   ProviderLoginAttempt,
   ProviderLoginOption,
 } from "../../shared/model-settings.js";
+import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 
 it("uses the live extension provider's native login and refreshes availability without changing the session", async () => {
   const root = await mkdtemp(join(tmpdir(), "inspire-worker-auth-"));
@@ -28,22 +29,11 @@ it("uses the live extension provider's native login and refreshes availability w
   const bridge = newBridgeIdentity();
   const rpc = new PiRpcProcess({
     cwd,
-    env: {
-      ...Object.fromEntries(
-        Object.keys(process.env).map((key) => [key, undefined]),
-      ),
-      PATH: [dirname(process.execPath), "/usr/bin", "/bin"].join(delimiter),
-      HOME: root,
-      USERPROFILE: root,
-      PI_CODING_AGENT_DIR: config,
-      PI_CODING_AGENT_SESSION_DIR: sessions,
-      PI_OFFLINE: "1",
-      PI_TELEMETRY: "0",
-      PI_SKIP_VERSION_CHECK: "1",
+    env: isolatedTestEnvironment(root, {
       INSPIRE_BRANCH_COMMAND: bridge.command,
       INSPIRE_BRANCH_STATUS_KEY: bridge.statusKey,
       INSPIRE_BRANCH_WORKER_ID: bridge.workerId,
-    },
+    }),
     args: [
       "--no-extensions",
       "--no-skills",

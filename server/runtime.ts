@@ -4741,7 +4741,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       ...this.slots.values(),
       ...provisional.map((entry) => entry.slot),
     ]);
-    const stopping = this.stopSlotsForClose(ownedSlots);
+    const stopping = Promise.allSettled(this.stopSlotsForClose(ownedSlots));
     await Promise.allSettled([
       ...this.loadingSlots.values(),
       ...this.loadingPaths.values(),
@@ -4754,7 +4754,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         slot.eventTail,
         slot.projectionTail,
       ]),
-      ...stopping,
+      stopping,
       this.workerPool.settled(),
     ]);
 
@@ -4767,8 +4767,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       ...this.slots.values(),
       ...[...this.provisionalSlots.values()].map((entry) => entry.slot),
     ]);
+    const finalStopping = Promise.allSettled(
+      this.stopSlotsForClose(finalSlots),
+    );
     await Promise.allSettled([
-      ...this.stopSlotsForClose(finalSlots),
+      finalStopping,
       ...[...finalSlots].flatMap((slot) => [
         slot.mutationQueue.tail,
         slot.extensionResponseQueue.tail,
@@ -4786,5 +4789,21 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.deletions.clear();
     this.slots.clear();
     this.selectedSessionId = null;
+    const failures = [
+      ...new Set(
+        [...(await stopping), ...(await finalStopping)]
+          .filter(
+            (result): result is PromiseRejectedResult =>
+              result.status === "rejected",
+          )
+          .map((result) => result.reason),
+      ),
+    ];
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(
+        failures,
+        "Pi workers could not be confirmed stopped",
+      );
   }
 }

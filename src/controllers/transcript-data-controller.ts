@@ -294,21 +294,6 @@ export class TranscriptDataController {
           )
             return null;
           if (
-            page.entries.some(
-              (entry) =>
-                typeof entry === "string" ||
-                (entry &&
-                  typeof entry === "object" &&
-                  typeof entry.text === "string" &&
-                  Array.isArray(entry.images) &&
-                  !Array.isArray(entry.files)),
-            )
-          ) {
-            throw new Error(
-              "The Host is still running the previous prompt-history interface; restart INSΠRE",
-            );
-          }
-          if (
             page.start !== start ||
             !Number.isSafeInteger(page.total) ||
             page.total < 0 ||

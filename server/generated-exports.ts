@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -51,7 +51,7 @@ export class GeneratedExportStore {
       throw error;
     }
     const path = join(directory, id);
-    const source = await openCanonicalResourceFile(sourcePath);
+    const source = await openCanonicalResourceFile(await realpath(sourcePath));
     try {
       await pipeline(
         source.handle.createReadStream({ autoClose: false }),

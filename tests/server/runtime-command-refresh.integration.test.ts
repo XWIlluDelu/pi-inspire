@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
@@ -11,6 +11,7 @@ import type {
   SessionCatalogLike,
   SessionRecord,
 } from "../../server/session-catalog.js";
+import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 
 it("discovers and admits native in-process reload commands without replacing either worker", async () => {
   const root = await mkdtemp(join(tmpdir(), "inspire-command-refresh-"));
@@ -126,14 +127,10 @@ it("discovers and admits native in-process reload commands without replacing eit
       const rpc = new PiRpcProcess({
         ...options,
         cliPath: piInstallation.cliPath,
-        env: {
-          ...Object.fromEntries(
-            Object.keys(process.env).map((key) => [key, undefined]),
-          ),
+        env: isolatedTestEnvironment(root, {
           ...environment,
-          PATH: [dirname(process.execPath), "/usr/bin", "/bin"].join(delimiter),
           ...options.env,
-        },
+        }),
         args: [
           ...(options.args ?? []),
           "--no-extensions",

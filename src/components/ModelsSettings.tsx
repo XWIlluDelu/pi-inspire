@@ -122,9 +122,7 @@ export function ModelsSettings({
     ro.observe(el);
     return () => ro.disconnect();
   }, [hasSnapshot]);
-  const isTouch =
-    typeof window !== "undefined" &&
-    window.matchMedia("(pointer: coarse)").matches;
+  const isTouch = window.matchMedia("(pointer: coarse)").matches;
   const optionSize = listWidth <= 400 ? (isTouch ? 64 : 56) : 48;
   const focusTicketRef = useRef<FocusTicket | null>(null);
   const [focusHandoff, setFocusHandoff] = useState<{
@@ -247,7 +245,7 @@ export function ModelsSettings({
       const warning = await store.refreshModels(owner);
       if (owns()) {
         await load();
-        if (warning) setError(warning);
+        if (warning && owns()) setError(warning);
       }
     } catch (error) {
       if (owns()) setError(messageOf(error));

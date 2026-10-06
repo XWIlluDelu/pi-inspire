@@ -139,17 +139,24 @@ export function composerHistoryEntries(
   fileNameForPath?: ComposerHistoryFileNameResolver,
 ): ComposerHistoryEntry[] {
   const history: ComposerHistoryCandidate[] = [];
-  messages.forEach((message, messageIndex) => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
     const candidate = userMessageEntry(
-      message,
-      messageIndex,
+      messages[index],
+      index,
       cwd,
       fileNameForPath,
     );
-    if (!candidate || (history[0] && samePrompt(history[0], candidate))) return;
-    history.unshift(candidate);
-    if (history.length > MAX_COMPOSER_HISTORY_ENTRIES) history.pop();
-  });
+    if (!candidate) continue;
+    const previous = history.at(-1);
+    if (previous && samePrompt(previous, candidate)) {
+      // Keep the oldest reference in a consecutive duplicate run, matching
+      // forward insertion, without projecting the rest of an obsolete history.
+      history[history.length - 1] = candidate;
+      continue;
+    }
+    if (history.length === MAX_COMPOSER_HISTORY_ENTRIES) break;
+    history.push(candidate);
+  }
   return history.map((candidate) => candidate.entry);
 }
 

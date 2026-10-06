@@ -1,5 +1,5 @@
 import { execFile as execFileCallback, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir,
   mkdtemp,
@@ -28,8 +28,6 @@ const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, "..");
 const plexSansManifestDigest =
   "012a329e2e373c4aba5c81e46eb6df3bc78252fc65d97e2207a5c12ce286e6c6";
-const fluxManifestDigest =
-  "3c2b68ef00d466260b24b4db97d17cb0e552c2d4194a7c4432cff8f69f20181b";
 const fluxSumsDigest =
   "24612c6ced4a164a61f355bcc3e7a3acc5159b8bf5f921f0e2cae0b6b394c281";
 
@@ -65,166 +63,52 @@ function parseSha256Sums(value, label) {
   return entries;
 }
 
-async function verifySourceFonts() {
-  const fontRoot = join(root, "src/assets/fonts");
-  const splitRoot = join(fontRoot, "ibm-plex-sans-sc");
-  const manifestBytes = reviewedText(
-    await readFile(join(splitRoot, "SHA256SUMS")),
-    "IBM Plex Sans SC manifest",
+async function verifyFontFiles(directory, manifestDigest, label) {
+  const manifest = reviewedText(
+    await readFile(join(directory, "SHA256SUMS")),
+    `${label} checksum manifest`,
   );
-  if (sha256(manifestBytes) !== plexSansManifestDigest) {
+  if (sha256(manifest) !== manifestDigest)
     throw new Error(
-      "IBM Plex Sans SC manifest does not match the reviewed official import",
+      `${label} checksum manifest differs from the reviewed release`,
     );
-  }
-  const entries = parseSha256Sums(
-    manifestBytes.toString("ascii"),
-    "IBM Plex Sans SC",
-  );
-  const expectedSplitFiles = new Set(["faces.css"]);
-  for (const style of ["Regular", "Medium", "SemiBold"]) {
-    for (let index = 0; index <= 216; index += 1) {
-      if (index === 99) continue;
-      expectedSplitFiles.add(
-        `IBMPlexSansSC-${style}-${String(index).padStart(3, "0")}.woff2`,
-      );
-    }
-  }
-  if (
-    entries.size !== expectedSplitFiles.size ||
-    [...entries.keys()].some((name) => !expectedSplitFiles.has(name))
-  ) {
-    throw new Error(
-      "IBM Plex Sans SC manifest does not name the complete official 400/500/600 split",
-    );
-  }
-  const actualSplitFiles = (await readdir(splitRoot)).filter(
+  const entries = parseSha256Sums(manifest.toString("ascii"), label);
+  const files = (await readdir(directory)).filter(
     (name) => name !== "SHA256SUMS",
   );
-  if (
-    actualSplitFiles.length !== expectedSplitFiles.size ||
-    actualSplitFiles.some((name) => !expectedSplitFiles.has(name))
-  ) {
-    throw new Error(
-      "IBM Plex Sans SC source directory and checksum manifest disagree",
-    );
+  if (files.length !== entries.size || files.some((name) => !entries.has(name)))
+    throw new Error(`${label} source directory and checksum manifest disagree`);
+  for (const [filename, digest] of entries) {
+    const value = await readFile(join(directory, filename));
+    if (!filename.endsWith(".woff2"))
+      reviewedText(value, `${label} ${filename}`);
+    if (sha256(value) !== digest)
+      throw new Error(`${label} provenance mismatch: ${filename}`);
   }
-  for (const [filename, expected] of entries) {
-    const value = await readFile(join(splitRoot, filename));
-    const actual = sha256(
-      filename.endsWith(".woff2")
-        ? value
-        : reviewedText(value, `IBM Plex Sans SC ${filename}`),
-    );
-    if (actual !== expected)
-      throw new Error(`IBM Plex Sans SC provenance mismatch: ${filename}`);
-  }
-  const facesCss = await readFile(join(splitRoot, "faces.css"), "utf8");
-  if ((facesCss.match(/@font-face/gu) ?? []).length !== 648) {
-    throw new Error(
-      "IBM Plex Sans SC must declare exactly 648 Unicode-range faces",
-    );
-  }
-  for (const weight of [400, 500, 600]) {
-    if (
-      (facesCss.match(new RegExp(`font-weight: ${weight};`, "gu")) ?? [])
-        .length !== 216
-    ) {
-      throw new Error(
-        `IBM Plex Sans SC must declare exactly 216 faces at weight ${weight}`,
-      );
-    }
-  }
+  return [...entries]
+    .filter(([filename]) => filename.endsWith(".woff2"))
+    .map(([, digest]) => digest);
+}
 
-  const fluxRoot = join(fontRoot, "flux-mono-sc");
-  const fluxManifestBytes = reviewedText(
-    await readFile(join(fluxRoot, "manifest.json")),
-    "Flux Mono SC release manifest",
-  );
-  const fluxSumsBytes = reviewedText(
-    await readFile(join(fluxRoot, "SHA256SUMS")),
-    "Flux Mono SC checksum manifest",
-  );
-  if (
-    sha256(fluxManifestBytes) !== fluxManifestDigest ||
-    sha256(fluxSumsBytes) !== fluxSumsDigest
-  ) {
-    throw new Error("Flux Mono SC does not match the reviewed v0.1.0 release");
-  }
-  const fluxManifest = JSON.parse(fluxManifestBytes.toString("utf8"));
-  if (
-    fluxManifest.family !== "Flux Mono SC" ||
-    fluxManifest.version !== "0.100" ||
-    fluxManifest.publicMappings !== 29_835 ||
-    JSON.stringify(fluxManifest.styles) !==
-      JSON.stringify([
-        { style: "Regular", weight: 400 },
-        { style: "Medium", weight: 500 },
-      ])
-  ) {
-    throw new Error("Flux Mono SC manifest contract is wrong");
-  }
-  const fluxEntries = parseSha256Sums(
-    fluxSumsBytes.toString("ascii"),
-    "Flux Mono SC",
-  );
-  const expectedFluxFiles = new Set(["flux-mono-sc.css", "manifest.json"]);
-  for (const face of fluxManifest.files.faces ?? []) {
-    if (face.shards?.length !== 56)
-      throw new Error(`Flux Mono SC ${face.style} must contain 56 Web shards`);
-    for (const shard of face.shards) expectedFluxFiles.add(shard.file);
-  }
-  const actualFluxFiles = new Set(
-    (await readdir(fluxRoot)).filter((name) => name !== "SHA256SUMS"),
-  );
-  if (
-    fluxEntries.size !== expectedFluxFiles.size ||
-    actualFluxFiles.size !== expectedFluxFiles.size ||
-    [...expectedFluxFiles].some(
-      (name) => !fluxEntries.has(name) || !actualFluxFiles.has(name),
-    )
-  ) {
-    throw new Error(
-      "Flux Mono SC directory, release manifest, and checksums disagree",
-    );
-  }
-  for (const [filename, expected] of fluxEntries) {
-    const value = await readFile(join(fluxRoot, filename));
-    const actual = sha256(
-      filename.endsWith(".woff2")
-        ? value
-        : reviewedText(value, `Flux Mono SC ${filename}`),
-    );
-    if (actual !== expected) {
-      throw new Error(`Flux Mono SC provenance mismatch: ${filename}`);
-    }
-  }
-  const fluxCss = await readFile(join(fluxRoot, "flux-mono-sc.css"), "utf8");
-  if (
-    (fluxCss.match(/@font-face/gu) ?? []).length !== 112 ||
-    (fluxCss.match(/font-weight: 400;/gu) ?? []).length !== 56 ||
-    (fluxCss.match(/font-weight: 500;/gu) ?? []).length !== 56
-  ) {
-    throw new Error(
-      "Flux Mono SC CSS must declare the exact 400/500 Web partition",
-    );
-  }
+async function verifySourceFonts() {
+  const fontRoot = join(root, "src/assets/fonts");
+  const digests = await Promise.all([
+    verifyFontFiles(
+      join(fontRoot, "ibm-plex-sans-sc"),
+      plexSansManifestDigest,
+      "IBM Plex Sans SC",
+    ),
+    verifyFontFiles(
+      join(fontRoot, "flux-mono-sc"),
+      fluxSumsDigest,
+      "Flux Mono SC",
+    ),
+  ]);
   return {
-    digests: new Set([
-      ...[...entries]
-        .filter(([filename]) => filename.endsWith(".woff2"))
-        .map(([, digest]) => digest),
-      ...[...fluxEntries]
-        .filter(([filename]) => filename.endsWith(".woff2"))
-        .map(([, digest]) => digest),
-    ]),
-    // The critical sheet repeats only the five Latin/core declarations from
-    // the complete deferred registries. Vite still emits every reviewed font
-    // asset once; these extra declarations change load timing, not provenance.
-    installedFaces: {
-      ibm: 648 + 3,
-      flux: 112 + 2,
-    },
+    digests: new Set(digests.flat()),
+    // The critical sheet repeats five Latin/core declarations from the
+    // complete deferred registries; font assets are still emitted once.
+    installedFaces: { ibm: 648 + 3, flux: 112 + 2 },
   };
 }
 
@@ -728,12 +612,24 @@ try {
   const mockOrigin = `http://127.0.0.1:${port}`;
   await waitForHealth(`${mockOrigin}/api/health`, token, true);
   await waitForInstanceState(environment.INSPIRE_STATE_PATH);
+  const terminalEpochResponse = await fetch(
+    `${mockOrigin}/api/terminal-operations`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+  const { epoch: terminalEpoch } = await terminalEpochResponse.json();
+  const terminalMutationHeaders = () => ({
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+    "X-Terminal-Operation": JSON.stringify({
+      id: randomUUID(),
+      epoch: terminalEpoch,
+    }),
+  });
   const terminalResponse = await fetch(`${mockOrigin}/api/terminals`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
+    headers: terminalMutationHeaders(),
     body: JSON.stringify({ cwd: temporary, cols: 80, rows: 24 }),
   });
   if (!terminalResponse.ok)
@@ -747,7 +643,7 @@ try {
     `${mockOrigin}/api/terminals/${encodeURIComponent(packagedTerminal.id)}?force=1`,
     {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
+      headers: terminalMutationHeaders(),
     },
   );
   if (!closeTerminalResponse.ok)

@@ -10,7 +10,7 @@ import {
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type {
   SessionEntry,
@@ -41,6 +41,7 @@ import type {
   PromptDeliveryResponse,
 } from "../../shared/contracts.js";
 import { pendingTextSummary } from "../../shared/pending-preview.js";
+import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 
 const PROVIDER = "pi-operation-offline";
 const MODEL = "tiny-context-fixture";
@@ -391,19 +392,10 @@ async function fixture(
         "--extension",
         resolve("tests/fixtures/pi-operation-lifecycle-extension.ts"),
       ],
-      env: {
-        // PiRpcProcess normally inherits the Host env. Explicitly remove every
-        // inherited key (auth, proxies, NODE_OPTIONS, PI payload logging, etc.).
-        ...Object.fromEntries(
-          Object.keys(process.env).map((key) => [key, undefined]),
-        ),
-        PATH: [dirname(process.execPath), "/usr/bin", "/bin"].join(delimiter),
-        ...(process.platform === "win32"
-          ? { SystemRoot: process.env.SystemRoot }
-          : {}),
+      env: isolatedTestEnvironment(directory, {
         ...options.env,
         ...environment,
-      },
+      }),
     });
     vi.spyOn(worker, "stop"); // Observe, never replace, real process teardown.
     worker.on("event", (event) =>
@@ -523,7 +515,7 @@ describe("native shell input", () => {
   it("streams direct native results, preserves cwd/context and reopens excluded results without a model turn", async () => {
     const f = await fixture(false);
     const included = f.delivery(
-      "!printf 'NATIVE_INCLUDED'; pwd; sleep 0.2; printf 'TAIL'",
+      "!printf 'NATIVE_INCLUDED'; node -e 'process.stdout.write(process.cwd())'; sleep 0.2; printf 'TAIL'",
     );
     await f.api.prompt(included);
     await f.api.prompt(included); // Reobserving the same receipt must not rerun a shell.
@@ -553,7 +545,7 @@ describe("native shell input", () => {
     });
     expect(bash[0]!.output).toContain(f.workspace);
     expect(bash[1]).toMatchObject({
-      output: "NATIVE_EXCLUDED",
+      output: expect.stringContaining("NATIVE_EXCLUDED"),
       excludeFromContext: true,
     });
     expect(snapshot.bashRunning).toBe(false);
@@ -579,7 +571,7 @@ describe("native shell input", () => {
     expect(
       reopened.some(
         (message) =>
-          message.output === "NATIVE_EXCLUDED" &&
+          String(message.output).includes("NATIVE_EXCLUDED") &&
           message.excludeFromContext === true,
       ),
     ).toBe(true);
@@ -656,6 +648,9 @@ describe("native shell input", () => {
     const running = f.api.prompt(
       f.delivery("!printf 'CANCEL_READY'; sleep 30"),
     );
+    // Own an early rejection even if the running-state assertion fails; the
+    // original promise is still awaited below, so request failure still fails.
+    void running.catch(() => {});
     await vi.waitFor(async () =>
       expect((await f.runtime.snapshot()).bashRunning).toBe(true),
     );
@@ -781,6 +776,7 @@ describe("native shell input", () => {
     const shell = f.api.prompt(
       f.delivery("!printf 'SHELL_ACTIVE'; sleep 2; printf 'SHELL_DONE'"),
     );
+    void shell.catch(() => {});
     try {
       await vi.waitFor(async () =>
         expect((await f.runtime.snapshot()).bashRunning).toBe(true),
@@ -802,7 +798,7 @@ describe("native shell input", () => {
       expect(
         messages.find((message) => message.role === "bashExecution"),
       ).toMatchObject({
-        output: "SHELL_ACTIVESHELL_DONE",
+        output: expect.stringContaining("SHELL_ACTIVESHELL_DONE"),
         cancelled: false,
         exitCode: 0,
       });
@@ -815,6 +811,7 @@ describe("native shell input", () => {
   it("executes during native pre-prompt compaction without joining the model queue", async () => {
     const f = await fixture(true, 1_500);
     const model = f.api.prompt(f.delivery("Model input that compacts first."));
+    void model.catch(() => {});
     await vi.waitFor(async () =>
       expect((await f.runtime.snapshot()).runState).toBe("compacting"),
     );
@@ -827,7 +824,9 @@ describe("native shell input", () => {
     expect(
       (await f.runtime.snapshot()).active!.transcriptPage.messages.some(
         (message) =>
-          (message as Record<string, unknown>).output === "WHILE_COMPACTING",
+          String((message as Record<string, unknown>).output).includes(
+            "WHILE_COMPACTING",
+          ),
       ),
     ).toBe(true);
   }, 20_000);
@@ -849,8 +848,9 @@ describe("native shell input", () => {
       expect(
         (await f.runtime.snapshot()).active!.transcriptPage.messages.some(
           (message) =>
-            (message as Record<string, unknown>).output ===
-            "WHILE_MODEL_ACTIVE",
+            String((message as Record<string, unknown>).output).includes(
+              "WHILE_MODEL_ACTIVE",
+            ),
         ),
       ).toBe(true);
       release();

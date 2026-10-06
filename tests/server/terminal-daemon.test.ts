@@ -45,7 +45,7 @@ afterEach(async () => {
   );
 });
 
-async function setup(onProtocolReplacement: () => void = () => {}) {
+async function setup() {
   const directory = await mkdtemp(join(tmpdir(), "inspire-terminal-daemon-"));
   directories.push(directory);
   const address =
@@ -71,34 +71,13 @@ async function setup(onProtocolReplacement: () => void = () => {}) {
     ],
     ptyFactory,
   });
-  const server = new TerminalDaemonServer(
-    address,
-    "test-secret",
-    manager,
-    onProtocolReplacement,
-  );
+  const server = new TerminalDaemonServer(address, "test-secret", manager);
   await server.start();
   const client = new TerminalDaemonClient(address, "test-secret");
   return { address, client, directory, manager, ptys, server };
 }
 
 describe("terminal daemon", () => {
-  it("only accepts authenticated replacement from a different protocol", async () => {
-    const replaced = vi.fn();
-    const { address, client, server } = await setup(replaced);
-    expect(await client.requestProtocolReplacement()).toBe(false);
-    expect(
-      await new TerminalDaemonClient(
-        address,
-        "wrong-secret",
-      ).requestProtocolReplacement(0),
-    ).toBe(false);
-    expect(await client.requestProtocolReplacement(0)).toBe(true);
-    await vi.waitFor(() => expect(replaced).toHaveBeenCalledOnce());
-    await client.close();
-    await server.stop();
-  });
-
   it.each(["remove", "restart"] as const)(
     "keeps the %s RPC open through graceful stop and delayed PTY exit",
     async (method) => {

@@ -8,7 +8,6 @@ import {
 } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { MAX_SESSION_ID_CHARS } from "../shared/contracts.js";
-import { getAgentDir } from "./pi-runtime.js";
 import { JsonlObjectDecoder, PersistedJsonlError } from "./session-jsonl.js";
 
 const MAX_INDEXED_TEXT_CHARS = 10_000;
@@ -109,13 +108,6 @@ function emptyState(): SessionMetadataState {
     firstMessage: "",
     messageCount: 0,
     lastActivity: null,
-  };
-}
-
-function copyState(state: SessionMetadataState): SessionMetadataState {
-  return {
-    ...state,
-    header: state.header ? { ...state.header } : null,
   };
 }
 
@@ -237,7 +229,7 @@ async function scanSessionFile(
   record: Omit<SessionRecord, "source"> | null;
   completeBytes: number;
 }> {
-  const state = previous ? copyState(previous) : emptyState();
+  const state = previous ? { ...previous } : emptyState();
   if (size === start)
     return {
       state,
@@ -390,7 +382,8 @@ export class SessionMetadataIndex {
     // One failing root must not make another project's sessions look deleted.
     for (const customSessionDir of new Set(roots)) {
       const configuredRoot = resolve(
-        customSessionDir ?? join(getAgentDir(), "sessions"),
+        customSessionDir ??
+          join((await import("./pi-runtime.js")).getAgentDir(), "sessions"),
       );
       let canonicalRoot: string;
       try {
@@ -430,10 +423,8 @@ export class SessionMetadataIndex {
     const worker = async (): Promise<void> => {
       while (next < files.length) {
         const index = next++;
-        const file = files[index];
-        if (file) {
-          records[index] = await this.read(file.path, file.canonical);
-        }
+        const file = files[index]!;
+        records[index] = await this.read(file.path, file.canonical);
       }
     };
     await Promise.all(

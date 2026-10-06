@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { expect, type Page, test } from "@playwright/test";
 import type { UploadedAttachment } from "../../shared/contracts";
 import { pendingTextSummary } from "../../shared/pending-preview";
+import { clipboardLines } from "./support/clipboard";
 
 const token = "inspire-browser-test-token";
 const pixel = Buffer.from(
@@ -261,8 +262,8 @@ test("Pending copies complete text and returns mixed input; Stop and Escape rest
   await expect(pending).toContainText("EXACT_END");
   await pending.getByRole("button", { name: "Copy all pending input" }).click();
   await expect
-    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-    .toBe(`1. ${longText}\n2. follow-up text`);
+    .poll(() => clipboardLines(page))
+    .toEqual([`1. ${longText}`, "2. follow-up text"]);
   await expect(pending.getByRole("listitem")).toHaveCount(2);
   await input.fill("existing draft");
   await pending
@@ -508,9 +509,7 @@ test("Pending text preserves visible head and tail while copying and returning t
   await pending
     .getByRole("button", { name: "Copy steer item 1", exact: true })
     .click();
-  await expect
-    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-    .toBe(text);
+  await expect.poll(() => clipboardLines(page)).toEqual(text.split("\n"));
   await pending
     .getByRole("button", { name: "Return all Pending input to composer" })
     .click();

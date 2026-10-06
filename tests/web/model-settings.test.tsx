@@ -909,6 +909,28 @@ describe("Models settings configuration and ownership", () => {
     ).toBeEnabled();
   });
 
+  it("does not publish an old refresh warning after its settings read crosses an owner change", async () => {
+    const readback = deferred<ReturnType<typeof modelSettingsSnapshot>>();
+    fixture.host.readModelSettings
+      .mockResolvedValueOnce(modelSettingsSnapshot())
+      .mockReturnValueOnce(readback.promise);
+    fixture.host.refreshModels
+      .mockResolvedValueOnce("Old worker warning")
+      .mockResolvedValue(undefined);
+    const view = render(<ModelsSettings />);
+    await waitFor(() =>
+      expect(fixture.host.readModelSettings).toHaveBeenCalledTimes(2),
+    );
+
+    fixture.state = { sessionId: "two", cwd: "/two", transportGeneration: 2 };
+    view.rerender(<ModelsSettings />);
+    await waitFor(() =>
+      expect(fixture.host.readModelSettings).toHaveBeenCalledTimes(4),
+    );
+    await act(async () => readback.resolve(modelSettingsSnapshot()));
+    expect(screen.queryByText("Old worker warning")).not.toBeInTheDocument();
+  });
+
   it("does not invoke old-owner callbacks after logout settles across a session/transport change", async () => {
     const logout = deferred<null>();
     fixture.host.providerAuth.mockImplementation(async (owner, operation) =>

@@ -407,14 +407,12 @@ describe("shared extension interaction", () => {
     request({
       id: "status-b",
       method: "setStatus",
-      statusKey: "b",
-      statusText: "second",
+      extensionStatuses: { b: "second" },
     });
     request({
       id: "status-a",
       method: "setStatus",
-      statusKey: "a",
-      statusText: "\u001b[32mfirst\u001b[0m",
+      extensionStatuses: { a: "first", b: "second" },
     });
     expect(view.container).toHaveTextContent("first · second");
     expect(
@@ -423,8 +421,7 @@ describe("shared extension interaction", () => {
     request({
       id: "updated",
       method: "setStatus",
-      statusKey: "a",
-      statusText: "complete\nmultiline status",
+      extensionStatuses: { a: "complete\nmultiline status", b: "second" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Extension status" }));
     const detail = screen.getByRole("dialog", { name: "Extension status" });
@@ -445,7 +442,7 @@ describe("shared extension interaction", () => {
       id: "clear",
       sessionId: "s2",
       method: "setStatus",
-      statusKey: "a",
+      extensionStatuses: {},
     });
     expect(view.container).toBeEmptyDOMElement();
   });

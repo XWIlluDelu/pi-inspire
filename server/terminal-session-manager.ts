@@ -45,7 +45,7 @@ import {
   type TerminalAttachment,
   type TerminalAttachmentSink,
   type TerminalAttachOptions,
-  type TerminalOperationService,
+  type TerminalService,
   TerminalServiceError,
 } from "./terminal-service.js";
 import { integratedTerminalLaunch } from "./terminal-shell-integration.js";
@@ -428,7 +428,7 @@ class SessionAttachment implements TerminalAttachment {
   }
 }
 
-export class TerminalSessionManager implements TerminalOperationService {
+export class TerminalSessionManager implements TerminalService {
   private readonly operations = new TerminalOperationReceipts();
   private readonly sessions = new Map<string, ManagedTerminal>();
   private readonly lifecycleMutations = new Set<string>();

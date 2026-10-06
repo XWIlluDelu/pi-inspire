@@ -6,6 +6,7 @@ import { expect, it, vi } from "vitest";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
 import { SessionProjection } from "../../server/session-projection.js";
 import { codemodeCalls } from "../../shared/tool-activity.js";
+import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 
 const script = `const results = await Promise.allSettled([
   tools.fixture_leaf({path: "ok.txt"}),
@@ -147,19 +148,7 @@ it("projects native raw-JS Codemode and generic descendants live and after reope
       "--thinking",
       "off",
     ],
-    env: {
-      HOME: join(root, "home"),
-      USERPROFILE: join(root, "home"),
-      PI_CODING_AGENT_DIR: agent,
-      PI_CODING_AGENT_SESSION_DIR: sessions,
-      PI_OFFLINE: "1",
-      PI_SKIP_VERSION_CHECK: "1",
-      PI_TELEMETRY: "0",
-      XDG_CONFIG_HOME: join(root, "config"),
-      XDG_CACHE_HOME: join(root, "cache"),
-      XDG_STATE_HOME: join(root, "state"),
-      TMPDIR: root,
-    },
+    env: isolatedTestEnvironment(root),
   });
   const events: Array<Record<string, unknown>> = [];
   let codemodeRunning = false;

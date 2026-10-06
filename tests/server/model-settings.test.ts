@@ -14,14 +14,16 @@ import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { modelOption } from "../../server/model-catalog.js";
+import {
+  type ModelMetadata,
+  ModelMetadataCatalog,
+} from "../../server/model-metadata.js";
 import { ModelSettingsService } from "../../server/model-settings.js";
 import { registerModelSettingsRoutes } from "../../server/model-settings-routes.js";
 import { ModelRuntime, ProjectTrustStore } from "../../server/pi-runtime.js";
-import {
-  ModelMetadataCatalog,
-  type ModelMetadata,
-} from "../../server/model-metadata.js";
 import type { RuntimeLike } from "../../server/runtime.js";
+import type { ModelOption } from "../../shared/contracts.js";
+import type { ModelConfigEdit } from "../../shared/model-settings.js";
 
 let root: string;
 let agent: string;
@@ -87,10 +89,49 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   await rm(root, { recursive: true, force: true });
 });
 
-describe("native model settings and declarations", () => {
+const readJson = async (path: string) =>
+  JSON.parse(await readFile(path, "utf8"));
+const snapshot = () => service.read(cwd, models);
+async function editConfig(edit: ModelConfigEdit) {
+  await service.saveConfig((await snapshot()).configRevision, edit);
+}
+function routes(
+  overrides: Partial<Parameters<typeof registerModelSettingsRoutes>[1]> = {},
+) {
+  const runtime = {
+    sessionCwd: vi.fn((): string | null => cwd),
+    snapshot: vi.fn(async () => ({
+      active: { availableModels: models as ModelOption[] },
+    })),
+    refreshModels: vi.fn(async () => ({ models: models as ModelOption[] })),
+  };
+  const availableModels = vi.fn(async () => models);
+  const invalidateModels = vi.fn();
+  const app = express();
+  app.use(express.json());
+  registerModelSettingsRoutes(app, {
+    runtime: runtime as unknown as RuntimeLike,
+    modelSettings: service,
+    availableModels,
+    invalidateModels,
+    ...overrides,
+  });
+  app.use(
+    (
+      error: Error & { status?: number },
+      _request: express.Request,
+      response: express.Response,
+      _next: express.NextFunction,
+    ) => response.status(error.status ?? 500).json({ error: error.message }),
+  );
+  return { app, runtime, availableModels, invalidateModels };
+}
+
+describe("model settings routes", () => {
   it("offers native available models, not the full catalog, and refreshes configuration choices while retaining unavailable saved scope", async () => {
     const native = await ModelRuntime.create({
       modelsPath: join(agent, "models.json"),
@@ -107,17 +148,9 @@ describe("native model settings and declarations", () => {
     expect(builtIn).toBeDefined();
     expect(native.getModels().length).toBeGreaterThan(available.length);
     const sessionChoices = [builtIn];
-    const runtime = {
-      sessionCwd: () => cwd,
-      snapshot: async () => ({ active: { availableModels: sessionChoices } }),
-      refreshModels: vi.fn(async () => ({ models: sessionChoices })),
-    } as unknown as RuntimeLike;
-    const app = express();
-    app.use(express.json());
-    registerModelSettingsRoutes(app, {
-      runtime,
-      modelSettings: service,
-      availableModels,
+    const { app, runtime, invalidateModels } = routes({ availableModels });
+    runtime.snapshot.mockResolvedValue({
+      active: { availableModels: sessionChoices },
     });
     const host = await request(app).get("/api/model-settings").query({ cwd });
     expect(host.status).toBe(200);
@@ -157,27 +190,14 @@ describe("native model settings and declarations", () => {
     expect(saved.body.snapshot.saved.enabledModels).toEqual(
       initialSettings.enabledModels,
     );
-    const sessionSave = await request(app)
-      .patch("/api/model-settings/config?sessionId=fixture")
-      .send({
-        revision: saved.body.snapshot.configRevision,
-        edit: {
-          kind: "provider",
-          id: "fixture",
-          values: { apiKey: "synthetic-config-key" },
-        },
-      });
-    expect(sessionSave.status).toBe(200);
-    expect(runtime.refreshModels).toHaveBeenCalledWith("fixture");
-    expect(sessionSave.body.snapshot.models).toEqual(sessionChoices);
-    expect(
-      (await availableModels()).some((model) => model.provider === "fixture"),
-    ).toBe(true);
+    expect(invalidateModels).toHaveBeenCalledOnce();
+    expect(runtime.refreshModels).not.toHaveBeenCalled();
+    await native.setRuntimeApiKey("fixture", "synthetic-not-requested");
     const declaration = await request(app)
       .patch("/api/model-settings/config")
       .query({ cwd })
       .send({
-        revision: sessionSave.body.snapshot.configRevision,
+        revision: saved.body.snapshot.configRevision,
         edit: {
           kind: "model",
           provider: "fixture",
@@ -198,11 +218,10 @@ describe("native model settings and declarations", () => {
       thinkingLevel: "high",
     });
     expect(
-      JSON.parse(await readFile(join(agent, "settings.json"), "utf8"))
-        .enabledModels,
+      (await readJson(join(agent, "settings.json"))).enabledModels,
     ).toEqual(initialSettings.enabledModels);
   });
-  it("invalidates an in-flight workspace catalog after saving configuration through a session", async () => {
+  it("invalidates workspace discovery without delaying a session save or retaining stale results", async () => {
     const metadata = (items: typeof models): ModelMetadata => ({
       models: items,
       virtualModels: [],
@@ -218,35 +237,85 @@ describe("native model settings and declarations", () => {
       .mockResolvedValue(metadata([models[1]!]));
     const catalog = new ModelMetadataCatalog(query);
     const inFlight = catalog.read(cwd);
-    const runtime = {
-      sessionCwd: () => cwd,
-      snapshot: async () => ({ active: { availableModels: models } }),
-      refreshModels: async () => ({ models }),
-    } as unknown as RuntimeLike;
-    const app = express();
-    app.use(express.json());
-    registerModelSettingsRoutes(app, {
-      runtime,
-      modelSettings: service,
-      availableModels: async (refresh, target) =>
+    const availableModels = vi.fn(
+      async (refresh?: boolean, target?: string) =>
         (await catalog.read(target!, refresh)).models,
+    );
+    const { app, runtime } = routes({
+      availableModels,
       invalidateModels: () => catalog.invalidate(),
     });
-    const before = await service.read(cwd, models);
-    const saved = request(app)
+    const before = await snapshot();
+    const read = vi.spyOn(service, "read");
+    const response = await request(app)
       .patch("/api/model-settings/config?sessionId=fixture")
       .send({
         revision: before.configRevision,
         edit: { kind: "provider", id: "fixture", values: { apiKey: null } },
       });
-    const response = saved.then((value) => value);
-    await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2));
-    expect((await response).status).toBe(200);
-    expect(catalog.peek(cwd)?.defaults.model?.id).toBe("first");
+    expect(response.status).toBe(200);
+    expect(response.body.snapshot.models).toEqual(models);
+    expect(runtime.refreshModels).toHaveBeenCalledWith("fixture");
+    expect(runtime.snapshot).toHaveBeenCalledOnce();
+    expect(read).toHaveBeenCalledOnce();
+    expect(availableModels).not.toHaveBeenCalled();
+    expect(catalog.peek(cwd)).toBeUndefined();
     release(metadata(models));
     await inFlight;
+    expect(catalog.peek(cwd)).toBeUndefined();
     expect((await catalog.read(cwd)).defaults.model?.id).toBe("first");
+    expect(query).toHaveBeenCalledTimes(2);
   });
+
+  it("keeps committed saves when the worker or readback retires", async () => {
+    const { app, runtime } = routes();
+    const before = await snapshot();
+    const save = service.saveConfig.bind(service);
+    vi.spyOn(service, "saveConfig").mockImplementation(async (...args) => {
+      await save(...args);
+      runtime.sessionCwd.mockReturnValue(null);
+      runtime.snapshot.mockRejectedValue(new Error("Worker retired"));
+    });
+    runtime.refreshModels.mockRejectedValue(new Error("Worker retired"));
+    const saved = await request(app)
+      .patch("/api/model-settings/config?sessionId=fixture")
+      .send({
+        revision: before.configRevision,
+        edit: {
+          kind: "model",
+          provider: "fixture",
+          originalId: "first",
+          values: { id: "first", name: "Committed" },
+        },
+      });
+    expect(saved.status).toBe(200);
+    expect(saved.body.saved).toBe(true);
+    expect(saved.body.warning).toMatch(/Configuration saved/);
+    expect(saved.body.snapshot.providers[0].models[0].name).toBe("Committed");
+    expect(runtime.sessionCwd).toHaveBeenCalledOnce();
+
+    const after = await snapshot();
+    vi.spyOn(service, "read").mockRejectedValue(
+      new Error("Readback unavailable"),
+    );
+    const preferences = await request(app)
+      .patch("/api/model-settings")
+      .query({ cwd })
+      .send({
+        revision: after.settingsRevision,
+        patch: { defaultThinkingLevel: "medium" },
+      });
+    expect(preferences.status).toBe(200);
+    expect(preferences.body.saved).toBe(true);
+    expect(preferences.body.snapshot).toBeUndefined();
+    expect(preferences.body.warning).toMatch(/Saved to Pi/);
+    expect(
+      (await readJson(join(agent, "settings.json"))).defaultThinkingLevel,
+    ).toBe("medium");
+  });
+});
+
+describe("native configuration round trips", () => {
   it("keeps saved defaults distinct from project precedence, per-model thinking and ordered native patterns", async () => {
     new ProjectTrustStore(agent).set(cwd, true);
     await writeFile(
@@ -256,7 +325,7 @@ describe("native model settings and declarations", () => {
         enabledModels: ["fixture/first"],
       }),
     );
-    const before = await service.read(cwd, models);
+    const before = await snapshot();
     expect(before.saved).toEqual({
       defaultModel: { provider: "fixture", id: "first" },
       defaultThinkingLevel: "high",
@@ -269,16 +338,14 @@ describe("native model settings and declarations", () => {
       defaultThinkingLevel: "medium",
       enabledModels: ["fixture/first", "fixture/second", "*sonnet*:high"],
     });
-    const settings = JSON.parse(
-      await readFile(join(agent, "settings.json"), "utf8"),
-    );
+    const settings = await readJson(join(agent, "settings.json"));
     expect(settings).toEqual({
       ...initialSettings,
       defaultModel: "second",
       defaultThinkingLevel: "medium",
       enabledModels: ["fixture/first", "fixture/second", "*sonnet*:high"],
     });
-    const after = await service.read(cwd, models);
+    const after = await snapshot();
     expect(after.saved.defaultModel).toEqual({
       provider: "fixture",
       id: "second",
@@ -291,9 +358,7 @@ describe("native model settings and declarations", () => {
       defaultThinkingLevel: null,
       enabledModels: [],
     });
-    const cleared = JSON.parse(
-      await readFile(join(agent, "settings.json"), "utf8"),
-    );
+    const cleared = await readJson(join(agent, "settings.json"));
     expect(cleared.defaultModel).toBeUndefined();
     expect(cleared.defaultProvider).toBeUndefined();
     expect(cleared.defaultThinkingLevel).toBeUndefined();
@@ -301,14 +366,14 @@ describe("native model settings and declarations", () => {
     expect(cleared.modelThinkingLevels).toEqual(
       initialSettings.modelThinkingLevels,
     );
-    const readback = await service.read(cwd, models);
+    const readback = await snapshot();
     expect(readback.saved.defaultModel).toBeNull();
     expect(readback.saved.defaultThinkingLevel).toBeNull();
     expect(readback.effective.defaultThinkingLevel).toBe("low");
   });
 
   it("preserves advanced declarations and secrets while adding, editing and removing graphical fields", async () => {
-    const before = await service.read(cwd, models);
+    const before = await snapshot();
     expect(before.commonModels).toEqual([
       { provider: "fixture", id: "second" },
       { provider: "fixture", id: "first", thinkingLevel: "high" },
@@ -326,17 +391,14 @@ describe("native model settings and declarations", () => {
       originalId: "first",
       values: { id: "first", name: "Edited" },
     });
-    const edited = JSON.parse(
-      await readFile(join(agent, "models.json"), "utf8"),
-    );
+    const edited = await readJson(join(agent, "models.json"));
     expect(edited.providers.fixture).toEqual({
       ...initialConfig.providers.fixture,
       models: [
         { ...initialConfig.providers.fixture.models[0], name: "Edited" },
       ],
     });
-    let snapshot = await service.read(cwd, models);
-    await service.saveConfig(snapshot.configRevision, {
+    await editConfig({
       kind: "model",
       provider: "fixture",
       values: {
@@ -347,44 +409,33 @@ describe("native model settings and declarations", () => {
         maxTokens: 128,
       },
     });
-    snapshot = await service.read(cwd, models);
-    await service.saveConfig(snapshot.configRevision, {
+    await editConfig({
       kind: "provider",
       id: "fixture",
       values: { baseUrl: "https://changed.invalid/v1" },
     });
-    snapshot = await service.read(cwd, models);
-    await service.saveConfig(snapshot.configRevision, {
+    await editConfig({
       kind: "remove-model",
       provider: "fixture",
       id: "new-model",
     });
-    snapshot = await service.read(cwd, models);
-    await service.saveConfig(snapshot.configRevision, {
+    await editConfig({
       kind: "provider",
       id: "fixture",
       values: { apiKey: null },
     });
-    const final = JSON.parse(
-      await readFile(join(agent, "models.json"), "utf8"),
-    );
-    expect(final.providers.fixture.apiKey).toBeUndefined();
-    expect(final.providers.fixture.headers).toEqual(
-      initialConfig.providers.fixture.headers,
-    );
-    expect(final.providers.fixture.modelOverrides).toEqual(
-      initialConfig.providers.fixture.modelOverrides,
-    );
-    expect(final.providers.fixture.models).toHaveLength(1);
-    expect(await readFile(join(agent, "auth.json"), "utf8")).toBe("{}");
-    snapshot = await service.read(cwd, models);
-    await service.saveConfig(snapshot.configRevision, {
-      kind: "remove-provider",
-      id: "fixture",
-    });
+    const { apiKey: _key, ...provider } = edited.providers.fixture;
     expect(
-      JSON.parse(await readFile(join(agent, "models.json"), "utf8")),
-    ).toEqual({ providers: {} });
+      (await readJson(join(agent, "models.json"))).providers.fixture,
+    ).toEqual({
+      ...provider,
+      baseUrl: "https://changed.invalid/v1",
+    });
+    expect(await readFile(join(agent, "auth.json"), "utf8")).toBe("{}");
+    await editConfig({ kind: "remove-provider", id: "fixture" });
+    expect(await readJson(join(agent, "models.json"))).toEqual({
+      providers: {},
+    });
   });
 
   it("edits symlink targets and accepts native models comments/settings BOM without losing fields", async () => {
@@ -403,7 +454,7 @@ describe("native model settings and declarations", () => {
       symlink(settingsTarget, join(agent, "settings.json")),
       symlink(modelsTarget, join(agent, "models.json")),
     ]);
-    const before = await service.read(cwd, models);
+    const before = await snapshot();
     expect(before.settingsError).toBeUndefined();
     expect(before.configError).toBeUndefined();
     await service.savePreferences(before.settingsRevision, {
@@ -421,11 +472,11 @@ describe("native model settings and declarations", () => {
     expect((await lstat(join(agent, "models.json"))).isSymbolicLink()).toBe(
       true,
     );
-    expect(JSON.parse(await readFile(settingsTarget, "utf8"))).toEqual({
+    expect(await readJson(settingsTarget)).toEqual({
       ...initialSettings,
       defaultThinkingLevel: "medium",
     });
-    const linked = JSON.parse(await readFile(modelsTarget, "utf8"));
+    const linked = await readJson(modelsTarget);
     expect(linked.providers.fixture.models[0]).toEqual({
       ...initialConfig.providers.fixture.models[0],
       name: "Linked edit",
@@ -433,7 +484,7 @@ describe("native model settings and declarations", () => {
     expect(linked.providers.fixture.headers).toEqual(
       initialConfig.providers.fixture.headers,
     );
-    const saved = await service.read(cwd, models);
+    const saved = await snapshot();
     const external = JSON.stringify({
       ...initialSettings,
       defaultThinkingLevel: "low",
@@ -447,89 +498,25 @@ describe("native model settings and declarations", () => {
     expect(await readFile(settingsTarget, "utf8")).toBe(external);
   });
 
-  it("recovers abandoned native-compatible locks and returns committed saves after optional worker reads retire", async () => {
+  it("recovers an abandoned native-compatible lock", async () => {
     const lock = join(agent, "models.json.lock");
     await mkdir(lock);
     const old = new Date(Date.now() - 20_000);
     await utimes(lock, old, old);
-    let before = await service.read(cwd, models);
-    await service.saveConfig(before.configRevision, {
+    await editConfig({
       kind: "model",
       provider: "fixture",
       originalId: "first",
       values: { id: "first", name: "Recovered" },
     });
     expect(
-      JSON.parse(await readFile(join(agent, "models.json"), "utf8")).providers
-        .fixture.models[0].name,
+      (await readJson(join(agent, "models.json"))).providers.fixture.models[0]
+        .name,
     ).toBe("Recovered");
-    let live = true;
-    const runtime = {
-      sessionCwd: () => (live ? cwd : null),
-      snapshot: async () => {
-        if (!live) throw new Error("Worker retired");
-        return { active: { availableModels: models } };
-      },
-      refreshModels: async () => {
-        throw new Error("Worker retired");
-      },
-    } as unknown as RuntimeLike;
-    const saveConfig = service.saveConfig.bind(service);
-    vi.spyOn(service, "saveConfig").mockImplementation(async (...args) => {
-      await saveConfig(...args);
-      live = false;
-    });
-    const app = express();
-    app.use(express.json());
-    registerModelSettingsRoutes(app, {
-      runtime,
-      modelSettings: service,
-      availableModels: async () => [],
-    });
-    app.use(
-      (
-        error: Error & { status?: number },
-        _request: express.Request,
-        response: express.Response,
-        _next: express.NextFunction,
-      ) => response.status(error.status ?? 500).json({ error: error.message }),
-    );
-    before = await service.read(cwd, models);
-    const saved = await request(app)
-      .patch("/api/model-settings/config?sessionId=retiring-session")
-      .send({
-        revision: before.configRevision,
-        edit: {
-          kind: "model",
-          provider: "fixture",
-          originalId: "first",
-          values: { id: "first", name: "Committed" },
-        },
-      });
-    expect(saved.status).toBe(200);
-    expect(saved.body.saved).toBe(true);
-    expect(saved.body.warning).toMatch(/Configuration saved/);
-    expect(saved.body.snapshot.providers[0].models[0].name).toBe("Committed");
-    live = true;
-    const savePreferences = service.savePreferences.bind(service);
-    vi.spyOn(service, "savePreferences").mockImplementation(async (...args) => {
-      await savePreferences(...args);
-      live = false;
-    });
-    before = await service.read(cwd, models);
-    const preferences = await request(app)
-      .patch("/api/model-settings?sessionId=retiring-session")
-      .send({
-        revision: before.settingsRevision,
-        patch: { defaultThinkingLevel: "medium" },
-      });
-    expect(preferences.status).toBe(200);
-    expect(preferences.body.saved).toBe(true);
-    expect(preferences.body.snapshot.saved.defaultThinkingLevel).toBe("medium");
   });
 
   it("refuses stale, malformed and native-invalid writes instead of replacing existing data", async () => {
-    const before = await service.read(cwd, models);
+    const before = await snapshot();
     const external = JSON.stringify({
       ...initialSettings,
       defaultThinkingLevel: "max",
@@ -543,7 +530,7 @@ describe("native model settings and declarations", () => {
     ).rejects.toMatchObject({ status: 409 });
     expect(await readFile(join(agent, "settings.json"), "utf8")).toBe(external);
     await writeFile(join(agent, "models.json"), "{broken");
-    const malformed = await service.read(cwd, models);
+    const malformed = await snapshot();
     expect(malformed.configError).toMatch(/invalid/);
     await expect(
       service.saveConfig(malformed.configRevision, {
@@ -554,7 +541,7 @@ describe("native model settings and declarations", () => {
     ).rejects.toMatchObject({ status: 409 });
     expect(await readFile(join(agent, "models.json"), "utf8")).toBe("{broken");
     await writeFile(join(agent, "models.json"), JSON.stringify(initialConfig));
-    const valid = await service.read(cwd, models);
+    const valid = await snapshot();
     await expect(
       service.saveConfig(valid.configRevision, {
         kind: "model",
@@ -562,8 +549,6 @@ describe("native model settings and declarations", () => {
         values: { id: "invalid", maxTokens: -1 },
       }),
     ).rejects.toMatchObject({ status: 400 });
-    expect(
-      JSON.parse(await readFile(join(agent, "models.json"), "utf8")),
-    ).toEqual(initialConfig);
+    expect(await readJson(join(agent, "models.json"))).toEqual(initialConfig);
   });
 });

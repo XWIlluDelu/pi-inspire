@@ -8,7 +8,6 @@ import {
 
 export const TERMINAL_DAEMON_PROTOCOL_VERSION = 2;
 export const TERMINAL_DAEMON_READY_TYPE = "terminal_daemon_ready";
-export const TERMINAL_DAEMON_REPLACING_TYPE = "terminal_daemon_replacing";
 
 export type TerminalDaemonRpcMethod =
   | "ping"
