@@ -8,13 +8,15 @@ covers:
   - src/tool-presentations/**
   - src/custom-message-presentations.ts
   - src/components/CustomMessage.tsx
-  - src/components/{Transcript,transcript-cards,ChildCalls,ImagePreview}.tsx
+  - src/components/{Transcript,transcript-cards,ChildCalls,CodeModeResult,ImagePreview}.tsx
   - src/components/ResourcePathLabel.tsx
+  - src/child-call-summary.ts
+  - tests/web/child-call-summary.test.ts
   - src/styles/activity-cards.css
   - tests/browser/{tool-presentations,custom-message}.spec.ts
   - tests/server/app.test.ts
   - tests/server/tool-presentation-config.test.ts
-  - tests/web/{tool-cards,tool-card-fallbacks,streaming-edit-cards,child-calls}.test.tsx
+  - tests/web/{tool-cards,tool-card-fallbacks,streaming-edit-cards,child-calls,codemode-result}.test.tsx
   - tests/server/pi-child-calls.integration.test.ts
   - tests/fixtures/pi-child-calls-extension.ts
   - tests/fixtures/tool-result-resources.{mjs,d.mts}
@@ -90,12 +92,36 @@ the workspace or calculate an applied diff.
 Codemode and ordinary nested tools share a compact child-call view inside the parent card. Existing
 card/activity preferences still choose initial disclosure; no separate density setting is added.
 
-- Open running cards emphasize current calls without reserving an empty result area. Open settled
-  cards put the actual result first, with Calls and Script as secondary disclosures. Manual choices,
-  focus and reading position survive settlement.
+- The display title is `CodeMode`; the native tool name remains `codemode`. Its compact header
+  keeps recorded call/failure counts and available runner duration visible while open or collapsed,
+  without inferring script intent or changing the parent outcome. User-selected presentation rules
+  retain their own summaries.
+- Calls lists appear directly whenever the parent card is open, without a second list-level
+  disclosure or a call-count threshold. Long lists remain height-bounded and scrollable. CodeMode
+  does not repeat its header counts in a Calls heading; ordinary nested tools retain that heading.
+  Individual rows still disclose parameters, errors and duration.
+- Open CodeMode cards retain Calls → Output → Script throughout execution and saved-history reading.
+  Calls use a labelled, unboxed list; Output uses the same section heading and inset surface as native
+  tool output. Script stays collapsed below, without a repeated language heading. Focus and reading
+  position survive settlement; finishing does not reorder the areas. Ordinary nested tools retain
+  their result-first settled presentation unless their calls are being read.
+- CodeMode renders output blocks in their original order in one reading view, separated by whitespace,
+  without mode tabs, interactive JSON trees, collection paging or a panel and heading per block.
+  JSON keeps every key, scalar type, numeric literal and object/array hierarchy; multiline strings
+  show decoded newlines. Never assign output to calls or infer metadata from property names.
+- A recognized standalone first-part runner banner contributes duration to the card header instead
+  of the output body. Other text stays literal. Received output remains available in a height-bounded,
+  keyboard-scrollable viewport; images retain their existing preview and original persisted indices.
+- The single header copy follows the shared tool-block contract: tool name, arguments/Script, original
+  result text (including the runner banner) and recorded result details. Result-only imports copy their
+  result record without inventing a Script. There is no duplicate output-copy or Result details
+  inspector. Recorded full-output files remain available through the existing authorized viewer.
 - Rows show native status, tool/model identity and a useful path/query/parameter summary. Available
   arguments, errors and useful duration details open through keyboard/touch-capable disclosure.
-  Parameter previews are not labelled complete. Keep order and row identity stable and long lists bounded.
+  Parameter previews are not labelled complete. Truncated JSON previews may contribute complete
+  top-level fields, never partial strings or nested lookalikes. Omit unusable summaries instead of
+  displaying broken JSON; retain the original preview in row details. Paths preserve their leaf name
+  when shortened visually. Keep order and row identity stable and long lists bounded.
 - Select native sources rather than merging unrelated schemas: Codemode `details.calls` for its tool
   and model calls; parented execution events for generic live calls; top-level result-message
   `nestedCalls` for generic history. A parent has one displayed call list.
@@ -104,7 +130,8 @@ card/activity preferences still choose initial disclosure; no separate density s
 - Keep output in its tool presentation, reusing existing text, image, authorized file and full-output
   readers. Classification-specific presentation requires an actual structured data contract.
 - No dedicated cost display, completion percentage, local stop/retry control or arbitrary-JSON-to-table
-  conversion is added. Native content and existing raw inspection remain available.
+  conversion is added. Script and recorded call details remain available on demand; generic fallback
+  tools retain their raw inspection.
 
 Decided on 2026-10-05; implementation evidence: [[follow-codemode-mcp-adaptation-2026-10-05]].
 

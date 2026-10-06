@@ -1,14 +1,25 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { MAX_CHILD_CALLS, resultChildCalls } from "../../shared/tool-activity";
-import { ToolCard } from "../../src/components/transcript-cards";
 import {
-  emptyEventSlice,
-  reduceEvent,
+  ToolCard,
+  ToolResultCard,
+} from "../../src/components/transcript-cards";
+import {
   type ActivityTool,
   type ChatMessage,
+  emptyEventSlice,
+  reduceEvent,
   type ToolCallContent,
+  toolResultText,
 } from "../../src/events";
 import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
 
@@ -27,24 +38,23 @@ const records = [
     status: "running",
   },
 ];
+const finishedCalls = [
+  {
+    ...records[0],
+    id: "script/1",
+    status: "error",
+    durationMs: 1600,
+    error: "Cannot read a.txt",
+  },
+  { ...records[1], id: "script/models.classify/1", status: "ok" },
+];
 const final: ChatMessage = {
   role: "toolResult",
   toolCallId: "script",
   toolName: "codemode",
   isError: false,
   content: [{ type: "text", text: "Script completed\nactual result" }],
-  details: {
-    calls: [
-      {
-        ...records[0],
-        id: "script/1",
-        status: "error",
-        durationMs: 1600,
-        error: "Cannot read a.txt",
-      },
-      { ...records[1], id: "script/models.classify/1", status: "ok" },
-    ],
-  },
+  details: { calls: finishedCalls },
 };
 afterEach(() => {
   vi.useRealTimers();
@@ -71,6 +81,90 @@ function toolCard(
     />
   );
 }
+
+it("separates Calls and Output and copies the complete tool block once from the header", async () => {
+  const result = {
+    ...final,
+    content: [
+      {
+        type: "text",
+        text: "Script completed\nWall time 3.5 seconds\nOutput:\n",
+      },
+      { type: "text", text: '{"output":"line one\\nline two"}' },
+    ],
+  };
+  const writeText = vi.fn(async () => {});
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText },
+  });
+  const view = render(toolCard(result));
+  expect(screen.getByText("3.5s")).toBeVisible();
+  expect(screen.getAllByText("1 failed · 2 calls")).toHaveLength(1);
+  expect(screen.getByText("Calls", { exact: true })).toBeVisible();
+  expect(screen.getByText("Output", { exact: true })).toBeVisible();
+  expect(
+    screen.queryByText("Result details", { exact: true }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Raw" })).not.toBeInTheDocument();
+  const copy = screen.getAllByRole("button", {
+    name: "Copy codemode tool block",
+  });
+  expect(copy).toHaveLength(1);
+  expect(view.container.querySelector(".card__header")!.contains(copy[0])).toBe(
+    true,
+  );
+  fireEvent.click(copy[0]);
+  await waitFor(() =>
+    expect(writeText).toHaveBeenCalledWith(
+      [
+        "codemode",
+        "Arguments",
+        JSON.stringify(call.arguments, null, 2),
+        "Result",
+        toolResultText(result),
+        "Result details",
+        JSON.stringify(result.details, null, 2),
+      ].join("\n\n"),
+    ),
+  );
+});
+
+it("retains result-only imports and their copy without inventing a Script", async () => {
+  const writeText = vi.fn(async (_text: string) => {});
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText },
+  });
+  render(
+    <ToolResultCard
+      result={{
+        ...final,
+        details: {
+          ...(final.details as object),
+          fullOutputPath: "/tmp/recorded-output.txt",
+        },
+      }}
+      visibility="expanded"
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "View full output" }),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Copy codemode result" }));
+  await waitFor(() => expect(writeText).toHaveBeenCalled());
+  expect(JSON.parse(writeText.mock.calls[0][0])).toMatchObject({
+    content: final.content,
+    details: {
+      calls: finishedCalls,
+      fullOutputPath: "/tmp/recorded-output.txt",
+    },
+  });
+  expect(screen.queryByText("Script", { exact: true })).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("Result details", { exact: true }),
+  ).not.toBeInTheDocument();
+});
 
 it("uses Codemode's snapshot positions, not temporary ids or generic receipts, and keeps parent outcome independent", () => {
   let slice = emptyEventSlice();
@@ -127,7 +221,7 @@ it("uses Codemode's snapshot positions, not temporary ids or generic receipts, a
   expect(slice.tools.script?.calls?.calls[0]?.status).toBe("error");
 });
 
-it("keeps manually opened child detail, focus and list position through settlement; settled history defaults to result first", async () => {
+it("keeps Calls before Result and preserves child detail, focus and list position through settlement and history", async () => {
   const activity: ActivityTool = {
     id: "script",
     name: "codemode",
@@ -139,10 +233,10 @@ it("keeps manually opened child detail, focus and list position through settleme
   };
   const hold = vi.fn();
   const view = render(toolCard(undefined, activity, "expanded", true, hold));
-  expect(screen.getByRole("button", { name: "Calls 2" })).toHaveAttribute(
-    "aria-expanded",
-    "true",
-  );
+  expect(
+    screen.queryByRole("button", { name: "Calls 2" }),
+  ).not.toBeInTheDocument();
+  expect(view.container.querySelectorAll(".child-call")).toHaveLength(2);
   expect(screen.queryByText("Running…")).not.toBeInTheDocument();
   expect(screen.queryByText("Arguments preview")).not.toBeInTheDocument();
   const row = view.container.querySelector(
@@ -164,7 +258,7 @@ it("keeps manually opened child detail, focus and list position through settleme
   vi.useRealTimers();
   expect(hold).toHaveBeenCalledWith(true);
   expect(
-    screen.getByRole("button", { name: "Collapse codemode tool" }),
+    screen.getByRole("button", { name: "Collapse CodeMode tool" }),
   ).toHaveAttribute("aria-expanded", "true");
   expect(view.container.querySelector(".child-call > summary")).toBe(row);
   expect(document.activeElement).toBe(row);
@@ -177,7 +271,7 @@ it("keeps manually opened child detail, focus and list position through settleme
   expect(view.container.querySelector(".card--failed")).toBeNull();
   expect(
     view.container
-      .querySelector(".tool-call-disclosure")!
+      .querySelector(".tool-call-list")!
       .compareDocumentPosition(
         view.container.querySelector(".tool-call-result")!,
       ) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -185,24 +279,54 @@ it("keeps manually opened child detail, focus and list position through settleme
   view.unmount();
   render(toolCard(final));
   expect(screen.getByText(/actual result/)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Calls 2" })).toHaveAttribute(
-    "aria-expanded",
-    "false",
-  );
   expect(
-    screen.queryByRole("group", { name: "Child calls" }),
+    screen.queryByRole("button", { name: "Calls 2" }),
   ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("group", { name: "Child calls" }),
+  ).toBeInTheDocument();
   expect(
     screen.queryByText("JavaScript", { exact: true }),
   ).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Calls 2" }));
   expect(
     document
-      .querySelector(".tool-call-result")!
-      .compareDocumentPosition(
-        document.querySelector(".tool-call-disclosure")!,
-      ) & Node.DOCUMENT_POSITION_FOLLOWING,
+      .querySelector(".tool-call-list")!
+      .compareDocumentPosition(document.querySelector(".tool-call-result")!) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
+});
+
+it("keeps the collapsed summary useful and shows every call when the parent opens, without another list disclosure", async () => {
+  const result: ChatMessage = {
+    ...final,
+    details: {
+      calls: [
+        ...finishedCalls,
+        {
+          id: "script/3",
+          name: "grep",
+          args: '{"pattern":"TODO"}',
+          status: "ok",
+        },
+        {
+          id: "script/4",
+          name: "read",
+          args: '{"path":"b.txt"}',
+          status: "ok",
+        },
+      ],
+    },
+  };
+  const view = render(toolCard(result, undefined, "collapsed"));
+  expect(screen.getByText("CodeMode")).toBeVisible();
+  expect(screen.getByText("1 failed · 4 calls")).toBeVisible();
+  expect(view.container.querySelector(".card--failed")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Expand CodeMode tool" }));
+  const list = await screen.findByRole("group", { name: "Child calls" });
+  expect(list.querySelectorAll(".child-call")).toHaveLength(4);
+  expect(
+    screen.queryByRole("button", { name: /^Calls / }),
+  ).not.toBeInTheDocument();
 });
 
 it("holds an inspected Script open through Adaptive completion", async () => {
@@ -221,6 +345,9 @@ it("holds an inspected Script open through Adaptive completion", async () => {
   fireEvent(summary.parentElement!, new Event("toggle"));
   const scriptReader = within(summary.parentElement!);
   const code = await scriptReader.findByRole("group", { name: "Code" });
+  expect(
+    scriptReader.queryByText("JavaScript", { exact: true }),
+  ).not.toBeInTheDocument();
   summary.focus();
   vi.useFakeTimers();
   view.rerender(
@@ -272,9 +399,6 @@ it("bounds long lists and distinguishes native previews, omitted arguments and u
       visibility="expanded"
     />,
   );
-  fireEvent.click(
-    screen.getByRole("button", { name: `Calls ${MAX_CHILD_CALLS}` }),
-  );
   expect(view.container.querySelectorAll(".child-call")).toHaveLength(
     MAX_CHILD_CALLS,
   );
@@ -296,13 +420,13 @@ it("retains lazy bodies and exact user-mapping precedence over the Codemode rule
   const spy = vi.spyOn(JSON, "stringify");
   const view = render(toolCard(final, undefined, "collapsed"));
   expect(spy).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Expand codemode tool" }));
+  fireEvent.click(screen.getByRole("button", { name: "Expand CodeMode tool" }));
   expect(
     view.container.querySelector('[data-tool-rule="inspire.pi.codemode"]'),
   ).toBeNull();
   expect(view.container.querySelector(".tool-call-script")).toBeNull();
   expect(
-    await screen.findByRole("button", { name: "Calls 2" }),
-  ).toHaveAttribute("aria-expanded", "false");
+    await screen.findByRole("group", { name: "Child calls" }),
+  ).toBeVisible();
   spy.mockRestore();
 });

@@ -22,9 +22,12 @@ following independent Gemini and Astra review. Gemini also reviewed the actual d
   events and persisted top-level `nestedCalls`. Each parent has one displayed call list.
 - Shared bounded rows show status, identity and a useful parameter summary. Available parameters,
   errors and duration open on demand; previews remain labelled previews.
-- Running cards emphasize calls. Settled history leads with results; Calls and Script are secondary.
-  Calls/Script inspection holds the existing card and Adaptive activity group, retaining focus and
-  inner scroll position. Keyed blocks keep visual and keyboard order aligned.
+- CodeMode keeps Calls → Output → Script, with a light call list and one native-style inset output
+  area. Other nested tools lead with results after settlement unless their calls are being read.
+  Calls/Script inspection holds the card and Adaptive activity group, retaining focus and inner
+  scroll position. Keyed blocks keep visual and keyboard order aligned.
+- Calls summarize complete fields from truncated parameter previews without showing broken JSON or
+  guessing missing values. Header copy retains the complete tool block, consistent with other cards.
 - Reconnect restores Host-held activity. Parent outcome remains independent of child failures.
   Existing mapping precedence, raw inspection, copy and authorized result readers remain available.
 - No cost UI, completion percentage, per-call stop/retry or generic compatibility layer was added.
@@ -40,8 +43,9 @@ Contracts: [[tool-presentations]], [[activity-presentation]] and [[pi-integratio
 - Focused projection, event, store, presentation and resource checks pass. The final Adaptive/inspection
   web group passed 105 tests; session projection passed 37.
 - Desktop/mobile browser flows pass across native settlement and Adaptive close delays. They cover
-  script/call disclosure ownership, keyboard/touch operation, focus, list scrolling, result-first
-  reopened cards, accessibility and horizontal overflow. Existing output/resource flows also pass.
+  script/call disclosure ownership, keyboard/touch operation, focus, list scrolling, fixed CodeMode
+  section order, accessibility and horizontal overflow. Existing output/resource flows also pass.
+  Focused summary and card tests cover partial-parameter summaries, readable output and whole-block copy.
 - Formatting, lint, type and unused-code checks passed in the implementation tree. Mainline type
   checking and the web build pass.
 - The mainline default suite passed 2,319 tests, with two failures in existing verification paths.

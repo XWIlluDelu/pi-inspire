@@ -34,6 +34,10 @@ import {
   isLocalResourceReference,
   isToolResourceArgumentKey,
 } from "../../shared/resource-references";
+import {
+  type ChildCallList,
+  resultChildCalls,
+} from "../../shared/tool-activity";
 import { stripTerminalSequences } from "../ansi";
 import { type DiffLine, parseUnifiedDiff } from "../diff";
 import {
@@ -54,16 +58,14 @@ import {
   toolPresentationSummaryText,
   toolResultImage,
 } from "../tool-presentations/model";
+import { codeModeResultBlocks } from "../tool-presentations/pi-native";
 import {
   thinkingPresentationRegistry,
   toolPresentationRegistry,
 } from "../tool-presentations/registry";
+import { ChildCalls, childCallsSummary } from "./ChildCalls";
+import { CodeModeResult, codeModeDuration } from "./CodeModeResult";
 import { CopyAction } from "./CopyAction";
-import { ChildCalls } from "./ChildCalls";
-import {
-  resultChildCalls,
-  type ChildCallList,
-} from "../../shared/tool-activity";
 import {
   EmbeddedImageOwnerContext,
   ImagePreview,
@@ -175,6 +177,7 @@ interface CardProps {
   label: React.ReactNode;
   toggleLabel: string;
   summary?: React.ReactNode;
+  summaryVisibleWhenOpen?: boolean;
   status?: React.ReactNode;
   copyText?: string | (() => string);
   copyLabel?: string;
@@ -190,6 +193,7 @@ function CollapsibleCard({
   label,
   toggleLabel,
   summary,
+  summaryVisibleWhenOpen = false,
   status,
   copyText,
   copyLabel,
@@ -251,7 +255,7 @@ function CollapsibleCard({
           onManualOpenChange?.(nextOpen);
         }}
         summary={
-          !open && summary ? (
+          (!open || summaryVisibleWhenOpen) && summary ? (
             typeof summary === "string" ? (
               <span className="card__summary">{summary}</span>
             ) : (
@@ -798,23 +802,44 @@ export function ToolResultCard({
 }) {
   const name = typeof result.toolName === "string" ? result.toolName : "Tool";
   const calls = result.__inspireCalls ?? resultChildCalls(result);
+  const output =
+    name === "codemode" ? (
+      codeModeResultBlocks(result).map((block, index) => (
+        <ToolPresentationBlockView key={index} block={block} />
+      ))
+    ) : (
+      <RawToolResult result={result} />
+    );
   return (
     <CollapsibleCard
       defaultVisibility={visibility}
-      className={`card--tool ${result.isError ? "card--failed" : ""}`}
+      className={`card--tool ${name === "codemode" ? "card--codemode" : ""} ${result.isError ? "card--failed" : ""}`}
       icon={toolIcon(name)}
-      label={<code className="card__tool-name">{name} result</code>}
-      toggleLabel={`${name} result details`}
+      label={
+        <code className="card__tool-name">{toolDisplayName(name)} result</code>
+      }
+      toggleLabel={`${toolDisplayName(name)} result details`}
+      summary={
+        name === "codemode" ? (
+          <CodeModeSummary result={result} calls={calls} />
+        ) : undefined
+      }
+      summaryVisibleWhenOpen={name === "codemode"}
       status={statusIcon(result.isError ? "failure" : "success")}
       copyText={() => JSON.stringify(result, null, 2)}
       copyLabel={`${name} result`}
     >
       {calls ? (
-        <PhaseToolDetails calls={calls} running={false} settled>
-          <RawToolResult result={result} />
+        <PhaseToolDetails
+          calls={calls}
+          running={false}
+          settled
+          codemode={name === "codemode"}
+        >
+          {output}
         </PhaseToolDetails>
       ) : (
-        <RawToolResult result={result} />
+        output
       )}
     </CollapsibleCard>
   );
@@ -1001,6 +1026,16 @@ function ToolPresentationBlockView({
   block: ToolPresentationBlock;
 }) {
   switch (block.type) {
+    case "codemode-result":
+      return (
+        <div className="tool-block">
+          <ToolBlockHeading label="Output" />
+          <CodeModeResult
+            result={block.result}
+            renderImage={(image) => <ToolImage block={image} />}
+          />
+        </div>
+      );
     case "properties":
       return (
         <div
@@ -1295,18 +1330,19 @@ function PhaseToolDetails({
   settled,
   children,
   script,
+  codemode = false,
 }: {
   calls?: ChildCallList;
   running: boolean;
   settled: boolean;
   children: React.ReactNode;
   script?: React.ReactNode;
+  codemode?: boolean;
 }) {
-  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
   const [readingCalls, setReadingCalls] = useState(false);
-  const callsId = useId();
   const inspect = useContext(CardInspectionContext);
-  const open = manualOpen ?? (!settled || readingCalls);
+  const failed =
+    calls?.calls.filter((call) => call.status === "error").length ?? 0;
   const resultBody = (
     <div key="result" className="tool-call-result">
       {children}
@@ -1314,49 +1350,38 @@ function PhaseToolDetails({
   );
   const callsBody =
     calls && (calls.calls.length > 0 || !calls.complete) ? (
-      <div key="calls" className="tool-call-disclosure">
-        <button
-          type="button"
-          className="tool-call-disclosure__button"
-          aria-expanded={open}
-          aria-controls={open ? callsId : undefined}
-          onClick={() => {
-            setManualOpen(!open);
+      <div key="calls" className="tool-call-list">
+        {codemode ? (
+          <ToolBlockHeading label="Calls" />
+        ) : (
+          <div className="tool-call-list__heading">
+            Calls{" "}
+            <span className="tool-call-list__count">{calls.calls.length}</span>
+            {failed ? (
+              <span className="child-call__status--error">
+                · {failed} failed
+              </span>
+            ) : null}
+          </div>
+        )}
+        <ChildCalls
+          list={calls}
+          running={running}
+          onRead={() => {
+            inspect?.();
             if (!settled) setReadingCalls(true);
           }}
-        >
-          <ChevronRight
-            size={12}
-            className={`chev ${open ? "chev--open" : ""}`}
-            aria-hidden
-          />
-          Calls{" "}
-          <span className="tool-call-disclosure__count">
-            {calls.calls.length}
-          </span>
-        </button>
-        {open ? (
-          <div id={callsId}>
-            <ChildCalls
-              list={calls}
-              running={running}
-              onRead={() => {
-                inspect?.();
-                if (!settled) setReadingCalls(true);
-              }}
-            />
-          </div>
-        ) : null}
+        />
       </div>
     ) : null;
   return (
     <div
-      className="tool-call-layout"
+      className={`tool-call-layout ${codemode ? "tool-call-layout--codemode" : ""}`}
       onFocusCapture={inspect}
       onClickCapture={inspect}
       onPointerDownCapture={inspect}
     >
-      {!settled || readingCalls
+      {codemode || !settled || readingCalls
         ? [callsBody, resultBody]
         : [resultBody, callsBody]}
       {script ? <div className="tool-call-script">{script}</div> : null}
@@ -1394,7 +1419,6 @@ function ToolScript({ call }: { call: ToolCallContent }) {
             type: "code",
             text: args.code,
             language: "javascript",
-            label: "JavaScript",
           }}
         />
       ) : null}
@@ -1432,6 +1456,7 @@ function ToolDetails({
           running={status === "running"}
           settled={Boolean(result)}
           script={codemode ? <ToolScript call={call} /> : undefined}
+          codemode={codemode}
         >
           {presentation ? (
             <ToolDetailsContent
@@ -1445,16 +1470,6 @@ function ToolDetails({
             <RawToolResult result={result} />
           ) : !calls?.calls.length ? (
             <PendingToolResult status={status} />
-          ) : null}
-          {codemode && result && hasResultData(result.details) ? (
-            <RawResultData
-              value={{
-                details: result.details,
-                ...(result.nestedCalls
-                  ? { nestedCalls: result.nestedCalls }
-                  : {}),
-              }}
-            />
           ) : null}
           {preview ? <LiveToolOutput preview={preview} /> : null}
           {!presentation ? <ToolArguments call={call} /> : null}
@@ -1541,6 +1556,57 @@ function toolClipboardText(
   return sections.join("\n\n");
 }
 
+function toolDisplayName(name: string): string {
+  return name === "codemode" ? "CodeMode" : name;
+}
+
+function CodeModeSummary({
+  result,
+  calls,
+}: {
+  result?: ChatMessage;
+  calls?: ChildCallList;
+}) {
+  const duration = codeModeDuration(result);
+  const summary = childCallsSummary(calls);
+  return (
+    <>
+      {duration ? (
+        <span className="card__summary codemode-duration">{duration}</span>
+      ) : null}
+      {summary ? (
+        <span className="card__summary" title={summary}>
+          {summary}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+function ToolCardSummary({
+  call,
+  result,
+  activity,
+  presentation,
+}: {
+  call: ToolCallContent;
+  result: ChatMessage | undefined;
+  activity?: ActivityTool;
+  presentation: ResolvedToolPresentation | null;
+}) {
+  if (presentation?.ruleId === "inspire.pi.codemode") {
+    const calls = result
+      ? (result.__inspireCalls ?? resultChildCalls(result))
+      : activity?.calls;
+    return <CodeModeSummary result={result} calls={calls} />;
+  }
+  return presentation ? (
+    <PresentedSummary summary={presentation.summary} />
+  ) : (
+    <ToolSummary call={call} />
+  );
+}
+
 export function ToolCard({
   call,
   result,
@@ -1586,17 +1652,21 @@ export function ToolCard({
         }
         forceClosed={forceClosed}
         onManualOpenChange={onManualOpenChange}
-        className={`card--tool ${status === "failure" ? "card--failed" : ""}`}
+        className={`card--tool ${call.name === "codemode" ? "card--codemode" : ""} ${status === "failure" ? "card--failed" : ""}`}
         icon={toolIcon(call.name)}
-        label={<code className="card__tool-name">{call.name}</code>}
-        toggleLabel={`${call.name} tool`}
-        summary={
-          presentation ? (
-            <PresentedSummary summary={presentation.summary} />
-          ) : (
-            <ToolSummary call={call} />
-          )
+        label={
+          <code className="card__tool-name">{toolDisplayName(call.name)}</code>
         }
+        toggleLabel={`${toolDisplayName(call.name)} tool`}
+        summary={
+          <ToolCardSummary
+            call={call}
+            result={result}
+            activity={activity}
+            presentation={presentation}
+          />
+        }
+        summaryVisibleWhenOpen={presentation?.ruleId === "inspire.pi.codemode"}
         status={statusIcon(status)}
         copyText={() => toolClipboardText(call, result, activity)}
         copyLabel={toolClipboardLabel(call, result, activity)}
@@ -1647,13 +1717,22 @@ function collapsedActivityPresentation(
     call: activity.call,
     result: activity.result,
   });
-  const summary = resolved
-    ? toolPresentationSummaryText(resolved.summary)
-    : toolSummary(activity.call).slice(0, 90);
+  const summary =
+    resolved?.ruleId === "inspire.pi.codemode"
+      ? childCallsSummary(
+          activity.result
+            ? (activity.result.__inspireCalls ??
+                resultChildCalls(activity.result))
+            : activity.activity?.calls,
+        )
+      : resolved
+        ? toolPresentationSummaryText(resolved.summary)
+        : toolSummary(activity.call).slice(0, 90);
+  const name = toolDisplayName(activity.call.name);
   return {
     failed: status === "failure",
-    label: `${activity.call.name}: ${TOOL_STATUS_LABEL[status]}${summary ? ` — ${summary}` : ""}`,
-    title: `${activity.call.name}${summary ? ` — ${summary}` : ""} · ${TOOL_STATUS_LABEL[status]}`,
+    label: `${name}: ${TOOL_STATUS_LABEL[status]}${summary ? ` — ${summary}` : ""}`,
+    title: `${name}${summary ? ` — ${summary}` : ""} · ${TOOL_STATUS_LABEL[status]}`,
     content: (
       <>
         {toolIcon(activity.call.name)}
@@ -1789,19 +1868,18 @@ export function CollapsedActivityStrip({
                   icon={toolIcon(rendered.call.name)}
                   label={
                     <code className="card__tool-name">
-                      {rendered.call.name}
+                      {toolDisplayName(rendered.call.name)}
                     </code>
                   }
-                  toggleLabel={`${rendered.call.name} tool details`}
+                  toggleLabel={`${toolDisplayName(rendered.call.name)} tool details`}
                   onToggle={() => setSelectedIndex(null)}
                   summary={
-                    renderedPresentation ? (
-                      <PresentedSummary
-                        summary={renderedPresentation.summary}
-                      />
-                    ) : (
-                      <ToolSummary call={rendered.call} />
-                    )
+                    <ToolCardSummary
+                      call={rendered.call}
+                      result={rendered.result}
+                      activity={rendered.activity}
+                      presentation={renderedPresentation}
+                    />
                   }
                   status={statusIcon(
                     toolStatus(

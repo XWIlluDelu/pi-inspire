@@ -73,13 +73,22 @@ User rule IDs must be namespaced, such as `user.example.search`. Shipped `inspir
 
 ## Native Codemode and nested calls
 
-Codemode and nested tools show child calls inside the parent card. Expanded running cards show the
-call process; settled cards lead with the result and keep Calls and Script as secondary disclosures.
-Open a call to inspect available parameters, errors and duration. Codemode parameter summaries remain
-labelled previews. Inspecting Calls or Script keeps the card open through completion.
+CodeMode and nested tools show child calls inside the parent card. CodeMode headers summarize the
+observed tools and any child failures; the native tool name stays `codemode`. CodeMode keeps Calls,
+Output and Script in that order during execution and afterward. Calls lists always appear directly
+inside an open parent card; long lists scroll rather than collapse. Script remains behind its own
+disclosure. Open a call to inspect available parameters, errors and duration. Parameter previews
+remain labelled. Inspecting Calls or Script
+keeps the card open through completion; child failures do not change the parent's recorded outcome.
 
-Results use the existing text, image and authorized file viewers. The shared call view does not require
-a custom presentation profile and preserves the configured tool/activity display preferences.
+Calls use compact rows with path/command summaries; output sits in a separate reading area using
+the native tool-card style. Output blocks retain their order, JSON keeps its fields and hierarchy,
+and multiline strings show actual newlines. Long results scroll inside the card, without mode tabs,
+JSON tree controls or collection paging. The header shows call/failure counts and available duration.
+Its copy button copies the complete tool block—arguments/Script, original result text and recorded
+result details—like other tool cards. Images and recorded full-output files use the existing viewers.
+The shared call view requires no custom presentation profile and preserves the configured tool/activity
+display preferences.
 
 ## Values and summaries
 
