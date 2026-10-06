@@ -35,7 +35,7 @@ route tests passed. [[follow-upload-dependency-2026-09-29]] records the complete
 
 | Baseline | Environment and checks | Result |
 | --- | --- | --- |
-| 1.0.0, current development pin | Linux; default suite, portable/launcher checks, production-only package installation and external SDK/RPC startup | Passed. [[follow-native-workflow-quality-2026-10-03]] records the repairs and integration evidence. |
+| 1.0.0, current development pin | Linux, recorded 2026-10-03; default suite, portable/launcher checks, production-only package installation and external SDK/RPC startup | Those recorded checks passed. [[follow-native-workflow-quality-2026-10-03]] holds the evidence, not a claim about every later revision/platform. |
 | 0.99.1 | Linux; isolated installation, 25 real RPC/runtime checks, codemode file/MCP calls with local model/service fixtures, and concurrent extension-dialog lifecycle | Passed. At that baseline child-call presentation and MCP management were deferred; current coverage is in [[spec_abstract]]. Dialog repair evidence: [[follow-core-review-repairs-2026-09-30]]. |
 | 0.87.0 | Linux / Node 22; [CI run](https://github.com/XWIlluDelu/pi-inspire/actions/runs/35689791288), `npm run ci`, `release:verify`, and context-edit regressions | Passed. The job recorded external SDK/RPC Pi 0.87.0. |
 | 0.86.0 | Linux / Node 26.5.0 full CI and release verification; Node 22.19.0 types and 168 focused tests | Passed; the separate Multer audit finding remained open. |

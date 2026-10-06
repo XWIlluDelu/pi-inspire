@@ -1,64 +1,108 @@
 ---
-purpose: Historical long-session measurements and reproducibility, plus scoped evidence for current performance work.
+purpose: Scoped performance measurements and reproduction points; historical experiments are not current acceptance gates.
 ---
 
 # Performance evidence
 
+## Draft and History work (2026-10-06)
+
+Linux / Node 26.10.0, baseline `3106c0a`. Initial draft hydration plus 200 edits changed
+sessionStorage reads from 201 to one. Composer history over 5,000 distinct user messages retained
+the same newest 100 entries while reducing counted content-property reads from 10,000 to 202.
+Sources: `src/session-drafts.ts`, `server/composer-history.ts` and their focused regression tests.
+These are work counts, not typing-latency measurements.
+
+Paired production `projectSessionTree()` measurements used 5,000 alternating user/assistant entries,
+85,065,000 retained text characters and at most 100 returned rows. After warming both implementations,
+12 samples alternated execution order; serialized projections were equal before timing.
+
+| Operation | Before median, ms | After median, ms |
+| --- | ---: | ---: |
+| Ordinary outline | 4.370 | 0.784 |
+| Matching full-text search | 42.780 | 39.258 |
+| Nonmatching full-text search | 31.273 | 30.191 |
+
+Structural snapshot indexes and bounded lazy snippets remove most ordinary outline work. Search
+still scans retained text synchronously; its improvement is modest. These timings cover projection,
+not file I/O, HTTP, network or rendering. Source: `server/session-tree.ts`; integrated review:
+[[maintainability-review]]. No timing thresholds were added to tests.
+
 ## Pi 1.0 source and catalog profiles (2026-10-05)
 
-Local production Chromium at 1440×900 reproduced synchronous source highlighting cost. A
-1,500-line / 193,500-character TypeScript source generated 21,000 spans; two repeated opens
-produced highlighting/layout task pairs of 66+195 ms and 59+191 ms. After lowering the per-leaf
-highlight budget to 64 Ki characters, repeated opens produced no task above 50 ms. The actual
-105,793-character `src/store.ts` changed from a 105 ms task to none above 50 ms; a 64,500-character
-source still highlighted. Larger leaves remain plain text with copying, not omitted content.
-Source: `src/syntax-highlighting.ts`; integrated outcome: [[challenge-pi-1-quality-2026-10-05]].
+Local production Chromium at 1440×900 reproduced synchronous source-highlighting cost. A
+1,500-line / 193,500-character TypeScript source generated 21,000 spans; repeated opens produced
+highlighting/layout task pairs of 66+195 ms and 59+191 ms. With the per-leaf highlight budget reduced
+to 64 Ki characters, neither open produced a task above 50 ms. The actual 105,793-character
+`src/store.ts` changed from a 105 ms task to none above 50 ms; a 64,500-character source still
+highlighted. Larger leaves retain plain text and copying. Source: `src/syntax-highlighting.ts`;
+outcome: [[challenge-pi-1-quality-2026-10-05]].
 
-The desktop/390px native catalog fixture held 1,537 catalog / 1,080 available models, mounted at
-most 12 picker/grid rows, and passed distant navigation, search and overflow checks. This is a
-bounded mounting/interaction witness, not a model-query latency measurement.
+The desktop/390px native fixture held 1,537 catalog / 1,080 available models and mounted at most 12
+picker/grid rows while passing distant navigation, search and overflow checks. This demonstrates
+bounded mounting/interaction, not model-query latency.
 
-Host probes retained the existing unchanged-read reuse design: a 16,795,320-byte fixture took
-median 7.248 ms forced versus 0.022 ms version-checked. A separate 20,000-entry / approximately
-41 MiB History fixture returned 100-node / approximately 77 KiB pages; outline work took
-6.7–13.8 ms and full-text search 20.3–25.7 ms over five runs. These are local synthetic projection
-measurements, not remote end-to-end timings. Current boundaries: [[projection-reconciliation-ownership]]
-and [[session-scale]]. No additional Host/remote optimization followed from these profiles.
+A 16,795,320-byte Host projection fixture took median 7.248 ms forced versus 0.022 ms
+version-checked. A separate 20,000-entry / approximately 41 MiB History fixture returned 100-node /
+approximately 77 KiB pages: outline work took 6.7–13.8 ms and full-text search 20.3–25.7 ms over five
+runs. These are local synthetic projection measurements, not remote end-to-end timings. Boundaries:
+[[projection-reconciliation-ownership]], [[session-scale]]. No further optimization followed.
 
-## Settings first-open flash (2026-09-06)
+## Settings shell continuity (2026-09-06)
 
-A Chromium production-build probe reproduced two distinct Settings dialog nodes
-and two starts each of `overlay-in` and `pop-in` during the first open: the
-Suspense loading fallback and ready component each mounted their own animated
-shell. Subsequent opens reused the loaded module, explaining the cold-open bias.
+A production Chromium probe found two Settings dialog nodes and two starts of both entrance
+animations on first open: Suspense fallback and ready content each owned an animated shell.
+Subsequent opens reused the module. The eager `SettingsDialog` now owns overlay, header and focus;
+only its content is deferred.
 
-The eager `SettingsDialog` now owns the overlay, header, and modal focus while
-only `SettingsContent` is deferred. A fresh browser context with service workers
-blocked and the Settings module response delayed by 600 ms verified the fix at
-1280×720/light and 390×844/dark: one shell, one start per entrance animation,
-and overlay opacity remaining 1 after the initial entrance through readiness.
-An injected module-evaluation failure preserved the same dialog and Reload
-control; Escape closed it and restored the opener. This is transition-correctness
-evidence, not a general startup-latency benchmark.
+A fresh context with service workers blocked and the module delayed 600 ms checked 1280×720/light
+and 390×844/dark: one shell, one start per animation, and opacity 1 throughout readiness. Injected
+module-evaluation failure preserved that dialog and Reload; Escape restored its opener.
+`tests/web/settings-loading.test.tsx` covers loading dismissal, stable shell/control identities and
+focus continuity. This is transition correctness, not startup-latency evidence.
 
-`tests/web/settings-loading.test.tsx` gates the real lazy import and checks
-loading-state dismissal, stable overlay/dialog/close-button identities, focus
-continuity on readiness, and final opener restoration. Navigation, modal-focus,
-and App integration checks also pass (35 tests across the four targeted files,
-on both Node 26.5.0 and Node 22.23.2). Typecheck, production Web build, formatting,
-lint, and unused-code checks pass.
+## Streaming work counters
 
-## Targeted streaming work counters
+`tests/server/runtime-stream-budget.test.ts` compares the real reducer/overlay with incremental
+accounting disabled and enabled. For 1,000/2,000 alternating 32-character text/thinking fragments,
+the old path serialized cumulative messages 1,000/2,000 times and approximately 16.2/64.4 MB of JSON.
+The incremental path produces identical overlays using 34/68 KB of fragment JSON and no cumulative
+message serialization in that hot path. Escapes, split surrogates, revision growth, budgets,
+structural fallback and final/snapshot validation remain covered. These are work counters, not
+network, peak-memory or latency measurements. Tool-argument wire evidence: [[streaming-tool-arguments]].
 
-The review of `0c7b390` identified two concrete costs outside the older evaluator's limited stream scenario: background body delivery before browser filtering, and cumulative assistant overlay serialization on every valid delta. The user explicitly requested these targeted changes; the historical no-change decisions below do not forbid them or establish their latency benefit.
+## Retired long-session evaluator
 
-`tests/server/runtime-stream-budget.test.ts` drives the real event reducer and overlay owner with alternating 32-character text/thinking fragments. With incremental accounting disabled, 1,000/2,000 updates serialize cumulative assistant messages 1,000/2,000 times and approximately 16.2/64.4 MB of JSON. The incremental path produces identical overlays while serializing only 34/68 KB of fragment JSON and no cumulative assistant messages in that hot path. It also checks escaped characters, split surrogates, revision growth, string/item/overlay limits, structural fallback, and final/snapshot validation. These are serialization-work counters, not network, memory-peak, event-loop-delay, or remote-latency measurements.
+Retired 2026-09-08: the opt-in evaluator had drifted into another fake protocol implementation,
+with five TypeScript diagnostics and eleven missing runtime methods. Its exact HTTP/frame ledger
+predated interest-scoped/batched delivery, and its source-text verifier rejected ordinary formatted
+renderer branches. It was not a CI regression gate. Preserve the measurements, not a second runtime.
 
-## Historical evaluator (retired 2026-09-08)
+The historical fixture held 11,830,406 bytes of Pi JSONL, a large abandoned branch and a bounded
+100-message active projection. Each batch used 21 accepted fresh-browser samples at 1440×900 plus
+21 Host repetitions. It exercised Changes refresh/diff, History inspection/edit, referenced Files,
+search, Pending, 36 text deltas, a tool lifecycle and four rendered background completions. React
+commits, Long Task/Event Timing, scroll delay, request/frame accounting and real projection/catalog/
+Git timings were observed. Frame-gap and event-loop p95 above 25 ms invalidated an attempt; failing
+to collect 21 accepted samples within 28 attempts yielded `invalid-benchmark`, not no change.
 
-The evaluator and its App-only Profiler branches are no longer part of the current tree. It was an opt-in experiment, not a CI regression gate. Review found five TypeScript diagnostics against today's session/runtime/Git contracts (including eleven missing runtime methods), and its production verifier rejected ordinary formatted direct-element branches. Its exact legacy HTTP/frame counts also predate current interest-scoped and batched event delivery. Keeping the old fake runtime alive would require maintaining another protocol implementation, not merely preserving a measurement tool.
+The experiment required threshold-reaching p95 and at least three individual crossings. Thresholds
+were 50 ms for long-task/input/scroll delay, 200 ms for the two-action Changes/History flow, 16.7 ms
+for a React surface, and 150/150/100 ms for Host projection/catalog/Git. These were experiment-specific
+gates, not permanent requirements. All valid runs below returned `no-performance-change`.
 
-The results and methodology below remain historical evidence, not a current performance baseline. Reproduce them with the corresponding application **and** evaluator revision from the table below, in a separate checkout; for example:
+| Run and application/evaluator commit | Environment | Accepted / attempts | Changes / History p95 | Host projection / catalog / Git p95 |
+| --- | --- | --- | --- | --- |
+| 2026-08-01 `b4d2b4b26bf2dacafda21c123dc4c8a842476bf6` | Node 26.5.0, npm 11.17.0, Chromium 145.0.7632.6, Pi 0.83.0 | Two batches, each 21/22 | 173.0 / 117.4 ms; 176.8 / 113.2 ms | 16.65 / 11.78 / 11.60 ms; 17.39 / 11.78 / 12.93 ms |
+| 2026-08-07 `4002fa6f23400640394601234922e2fcac057c74` | Node 26.5.0, Chromium 145.0.7632.6, Pi 0.84.1 | 21/26 | 175.5 / 114.9 ms | 17.95 / 13.22 / 10.86 ms |
+| 2026-08-08 `c6acf45071fbcc589867a2e4e96d00329e8a795e` | Node 26.5.0; repaired evaluator and Dynamic dwell policy | 21/22 | 179.9 / 115.7 ms | 16.41 / 12.22 / 12.42 ms |
+| 2026-08-24 `11d4bc2ad1487512060a7997d14c8acd9818effb` | Node 26.5.0, Chrome for Testing 152.0.7977.8 | 21/28 | 184.2 / 116.9 ms | 17.64 / 13.06 / 12.35 ms |
+
+No valid run observed a long task or repeatable activation crossing. An earlier August 24 run
+contaminated by concurrent CPU work exhausted its budget and is not performance evidence.
+Resource extraction, broad subscriptions, automatic refresh coalescing and proactive mention checks
+were unactivated hypotheses at those baselines, not present-day diagnoses.
+
+Reproduce only with the corresponding application **and** evaluator in an isolated checkout:
 
 ```sh
 git worktree add --detach /tmp/inspire-performance-history 11d4bc2ad1487512060a7997d14c8acd9818effb
@@ -67,132 +111,25 @@ npm ci
 INSPIRE_BENCHMARK_ISOLATED=1 npx tsx tests/benchmarks/evidence-gated-maintenance.ts
 ```
 
-Use the recorded runtime/browser versions for meaningful historical comparison. Keep the isolated loopback ports free (defaults: host 14587, web 15173; overrides: `INSPIRE_BENCHMARK_HOST_PORT` and `INSPIRE_BENCHMARK_WEB_PORT`) and run no intentional CPU workload concurrently. The environment flag acknowledges that precondition; checks/builds run only afterward. This review verified that the referenced Git object retains both evaluator files and the profiler source; it did not rerun historical timing measurements.
+Use recorded runtime/browser versions, isolated free ports (defaults 14587/15173; overrides
+`INSPIRE_BENCHMARK_HOST_PORT`/`INSPIRE_BENCHMARK_WEB_PORT`) and no concurrent CPU-heavy checks.
+The evaluator discovers Chromium, creates/removes temporary state and prints results to stdout.
+The historical commit also contains `tests/benchmarks/verify-production-bundle.ts`, which checks
+benchmark symbols/direct-element production branches after a build. Neither tool is in the current
+tree; obsolete exact frame counts and source-string checks are not current contracts.
 
-Future performance work needs a current representative scenario and before/after measurements. The maintained `runtime-stream-budget` tests, browser network ledgers, and `transport-performance` counters remain available; no latency improvement is claimed by retiring the old experiment.
+Future performance work needs a current representative scenario and before/after comparison with
+equivalent output and operation semantics. Maintained stream-budget tests, browser network ledgers
+and `transport-performance` counters remain available. Removing old instrumentation claims no speedup.
 
-The historical executable evaluator creates and removes its own temporary Pi session, workspace, preferences, Chrome profile, Vite proxy configuration, and host, then writes the complete machine-readable result to stdout without retaining a profiling artifact. It discovers `CHROME_PATH`, system Chromium/Chrome, or the newest Playwright Chromium cache entry instead of hard-coding one browser release; teardown terminates Chrome before removing its profile. The browser viewport is fixed at 1440×900 so desktop-surface performance is not reinterpreted by responsive drawer behavior. The fixture persists 11,830,406 bytes of valid Pi JSONL, with a large abandoned branch and a bounded 100-message active projection. It keeps Files, Changes, and History available, session and transcript search populated, pending steer/follow-up queues visible, and branch navigation controls present while delivering 36 text deltas, a tool lifecycle, and four background settlements.
+## Package size versus font transfer
 
-Twenty-one accepted fresh browser samples characterize frontend noise; 21 fresh opens or forced reads characterize each host operation. With 21 samples, nearest-rank p95 is the second-highest sample rather than the maximum. The observation window starts before Changes: every iteration selects the concrete changed row, then observes the explicit refresh button/loading cycle, a changed rendered Git-status revision, a changed selected-diff revision, the settled controls, and retained selection before stopping that interaction timer. It then opens four real branch rows, proves current/edit/fork/refresh control state, executes edit-from-here and observes the composer prefill, returns to referenced Files, and runs text/tool streaming with pending queues and four background settlements. Settlement success is derived from the four rendered Completed session rows after the authoritative snapshot resync, not from fixture intent. The evaluator records these end-to-end Changes/History durations, React Profiler commits and actual durations by navigation/transcript/composer/resources surface, Long Task and Event Timing observations, wheel-to-animation-frame delay, exact CDP request/WebSocket accounting, and real `SessionProjection`, `SessionCatalog`, and `GitInspectionService` timings.
+`npm run size:report` prepares and validates release artifacts before packing. On 2026-08-14 it
+reported 29,781,248 tarball bytes, 37,158,962 unpacked bytes, 34,116,728 packaged font bytes and
+729,564 bytes across 21 filename-derived `coldStartFontCandidates`. That last field is a package
+heuristic, not transfer.
 
-A continuous requestAnimationFrame-gap control and 25 ms event-loop-delay control run throughout every measured browser attempt. An attempt is accepted only with at least 30 frame and 20 event-loop observations and with both control p95 values <=25 ms. A contaminated attempt is recorded, discarded, and retried; the evaluator must obtain 21 accepted samples within 28 total attempts. If it cannot, it emits `decision: invalid-benchmark`, exits nonzero, and cannot report no change.
-
-The frozen activation thresholds are:
-
-- browser long task p95 >= 50 ms;
-- input event delay p95 >= 50 ms;
-- wheel-to-animation-frame delay p95 >= 50 ms;
-- either two-action Changes or History flow p95 >= 200 ms (two 100 ms response budgets);
-- any React surface commit p95 >= 16.7 ms;
-- host projection or catalog p95 >= 150 ms;
-- host Git status p95 >= 100 ms.
-
-Counts and aggregate React work remain diagnostic. Every activation uses independent-sample witnesses: p95 must reach its threshold **and** at least `max(3, ceil(samples * 0.10))` samples must individually cross it. At 21 samples this requires three crossings, so neither one spike nor the two samples that determine nearest-rank p95 can activate work alone. React uses each iteration's surface p95 as its independent value. A Vite chunk-size warning or an isolated microbenchmark never activates maintenance by itself.
-
-### Recorded-run identities
-
-Each historical result below is tied to the Git object that contained both the measured application and evaluator. The evaluator SHA-256 is over `tests/benchmarks/evidence-gated-maintenance.ts` at that commit; the immutable commit carries the corresponding source tree and this note.
-
-| Recorded run                 | Application/evaluator commit               | Source tree                                | Evaluator SHA-256                                                  |
-| ---------------------------- | ------------------------------------------ | ------------------------------------------ | ------------------------------------------------------------------ |
-| 2026-08-01 baseline          | `b4d2b4b26bf2dacafda21c123dc4c8a842476bf6` | `1a1bb2b8278e0304e7c9b8e5e178182287ac5fdd` | `4b4879a2c00648fcddc8c67953434d194132bdecc4bed1b38b6f0f00a408646f` |
-| 2026-08-07 current evidence  | `4002fa6f23400640394601234922e2fcac057c74` | `1f48ddf2cd727fc5473c330eca61c764230bcc12` | `23c87df9e414b03335959b7301c06d35071e425b2e09a4233005fa763beb75a6` |
-| 2026-08-08 project hardening | `c6acf45071fbcc589867a2e4e96d00329e8a795e` | `fc02173b43a68228054e34d3e8054a2daf93fb0a` | `4728f874f766af31d6944db519dfbbdfd9f8402f0e1f2a4340c26005452afd64` |
-| 2026-08-24 recent features   | `11d4bc2ad1487512060a7997d14c8acd9818effb` | `ed732283148a9500b88c4547e6a1a796ee6cdd04` | `279406b52873dd391b76160219021e5b36a07b62f8bbcf9dde64bf5b77bd2ae3` |
-
-## Package and font-transfer evidence
-
-`npm run size:report` is static package inventory, not a network measurement.
-It first prepares the release client and compiled host, then packs with lifecycle
-scripts disabled and rejects a tarball missing `build/server/index.js`,
-`dist/index.html`, or `dist/THIRD_PARTY_NOTICES.txt`; the report therefore
-measures the same prepared release shape rather than a clean-checkout
-source-only package. On 2026-08-14 it reported a 29,781,248-byte tarball,
-37,158,962 unpacked bytes, 34,116,728 packaged font bytes, and 729,564 bytes
-across 21 `coldStartFontCandidates`. The candidate field is deliberately a
-filename-based package heuristic; it must not be reported as cold-start
-transfer.
-
-The mock-host Playwright workbench tests independently open a Chrome DevTools
-Protocol Network session before navigation, disable the cache, wait for
-`document.fonts.ready` and network idle, and preserve each
-`Network.loadingFinished.encodedDataLength` font ledger in the CI artifact.
-The desktop and 390px scenarios each observed 297,018 aggregate encoded bytes
-on that run. This is an observed test-scenario transfer metric, not an
-installation-size claim or a release budget: network/browser versions, content,
-and font range selection can change it. Establish a threshold only after
-collecting representative release and product scenarios.
-
-## 2026-08-24 recent-feature validation
-
-The evaluator ran after the recent-feature correctness review with Node 26.5.0 and Chrome for Testing 152.0.7977.8. It accepted 21 browser samples at the 28-attempt budget, discarding seven attempts whose frame-gap or event-loop controls exceeded 25 ms. The valid samples produced `no-performance-change` with no activated suspect. An earlier run overlapped an unrelated CPU-bound workload and exhausted its attempt budget; it was invalid by construction and is not performance evidence.
-
-- Browser p95: Changes 184.20 ms and History 116.90 ms against 200 ms; input delay 1.80 ms and scroll delay 22.50 ms against 50 ms; no long tasks.
-- React aggregate p95: navigation 10.80 ms, transcript 2.60 ms, composer 0.80 ms, and Files 1.10 ms against 16.7 ms.
-- Host p95 over the 11,830,406-byte fixture: projection 17.64 ms, catalog 13.06 ms, and Git status 12.35 ms against 150/150/100 ms.
-- The repaired runtime-shaped benchmark fixture completed the full Files, Changes, History, search, pending-queue, branch-navigation, streaming, and background-settlement contract without substituting benchmark-only host behavior.
-
-## 2026-08-08 project-hardening validation
-
-The repaired evaluator ran against the completed hardening change set and final Dynamic dwell policy on isolated ports. It accepted 21 browser samples within 22 attempts and rejected one attempt whose event-loop-delay p95 reached 31.70 ms against the 25 ms control bound, so the final decision used only uncontaminated samples. Exact accounting observed 52 typed WebSocket frames and one `/api/resources/list` request per accepted iteration in addition to the established branch, Git, prompt, session-list, and snapshot contract. The settled-tool witness accepts either the ordinary tool card or Dynamic mode's compact button with the same accessible `read: finished — analysis.ts` identity, instead of depending on an internal card-name node remaining mounted across its minimum-residency transition. No activation witness crossed its threshold three times, and the evaluator returned `no-performance-change` with zero activated suspects.
-
-- Browser p95: Changes 179.90 ms and History 115.70 ms against 200 ms; input delay 1.00 ms and scroll delay 12.50 ms against 50 ms; no long tasks.
-- React per-iteration surface p95: navigation 11.70 ms, transcript 2.70 ms, composer 0.90 ms, Files 1.00 ms against 16.7 ms.
-- Host p95 over the 11,830,406-byte fixture: projection 16.41 ms, catalog 12.22 ms, Git status 12.42 ms against 150/150/100 ms.
-- The repaired request contract attributes `/api/resources/list: 1` to the one bounded Files page loaded after returning from History; an extra, missing, or misordered request remains an invalid sample rather than a performance result.
-
-The accepted conclusion is to keep the bounded resource index/pagination and completion-scheduled Git polling fixes, but add no further speculative cache, subscription split, or background coalescer.
-
-## 2026-08-07 current evidence
-
-Environment: Node 26.5.0, Chromium 145.0.7632.6, Pi 0.84.1. One isolated full batch accepted 21 samples in 26 attempts, discarded five frame-gap/event-loop-contaminated attempts at 33.20–33.30 ms frame-gap p95 or 25.10–30.90 ms event-loop p95 against the 25 ms control bound, and returned `no-performance-change` with zero activated suspects. Host p95 was 17.95 ms for projection, 13.22 ms for catalog, and 10.86 ms for Git status. Browser p95 was 11.20 ms for navigation commits, 2.40 ms for transcript commits, 0.50 ms for composer commits, 0.70 ms for resources commits, 0.80 ms for input delay, and 11.90 ms for scroll delay; no long task was observed. The Changes and Branches interactions measured 175.50 ms and 114.90 ms p95 respectively, both below their 200 ms gate. The active projection serialized to 43,174 bytes. The evaluator therefore authorizes no speculative application performance change.
-
-This run also witnesses the maintenance fixes themselves: the benchmark uses isolated ports without editing `vite.config.ts`, targets its own host rather than the normal 4587 instance, selects the newest available Playwright Chromium instead of `chromium-1232`, holds a deterministic desktop viewport, and terminates Chrome before profile cleanup.
-
-## 2026-08-01 baseline
-
-Environment: Node 26.5.0, npm 11.17.0, Chromium 145.0.7632.6, Pi 0.83.0. Two isolated full batches ran consecutively with no concurrent check or build; the final recorded checks and build ran afterward. The batches took 47 and 46 seconds, each accepted 21 samples within 22 attempts, discarded one sustained-load-contaminated attempt, and independently returned `no-performance-change` with zero activated suspects. Batch A rejected event-loop-delay p95 26.00 ms and batch B rejected 25.90 ms against the 25 ms control bound, directly exercising bounded retry.
-
-| Observation (p95 ms unless noted) | batch A | batch B |
-| --- | ---: | ---: |
-| projection open | 16.65 | 17.39 |
-| catalog forced list | 11.78 | 11.78 |
-| real Git status | 11.60 | 12.93 |
-| Changes two-action flow | 173.00 | 176.80 |
-| History two-action flow | 117.40 | 113.20 |
-| Files plus fixed stream | 1,014.40 | 1,012.80 |
-| navigation commit (aggregate) | 9.50 | 9.70 |
-| transcript commit (aggregate) | 2.40 | 2.50 |
-| composer commit (aggregate) | 0.90 | 0.90 |
-| resources commit (aggregate) | 0.70 | 0.70 |
-| browser long task | 0.00 | 0.00 |
-| input delay (aggregate) | 1.00 | 0.80 |
-| scroll delay (aggregate) | 14.70 | 14.10 |
-| frame-gap control | 16.80 | 16.80 |
-| event-loop-delay control | 15.10 | 16.00 |
-
-All activation witnesses had 21 independent values, required three crossings, and observed zero. In particular, per-sample Changes p95 was 173.00/176.80 ms with maxima 175.40/177.10 ms, and History p95 was 117.40/113.20 ms with maxima 117.60/120.90 ms. Per-sample React witness p95 values remained at most 10.00/10.10 ms. Thus both the percentile gate and repeatability gate independently remain below activation.
-
-The counters reset at the observation boundary after bootstrap/search/initial status settles. Every iteration then receives exactly 52 WebSocket frames/71,218 bytes: 5 prompt-start frames + 36 text deltas + 1 tool end + 8 background lifecycle frames + 2 selected-session settlement frames. Each payload must parse as JSON and the complete ordered sequence must exactly match the expected `{type, sessionId, outcome}` witnesses: roles for message boundaries, running/completed status for agent boundaries, queue counts, tool name/result, and `text_delta` updates. Startup failure probes prove rejection of malformed JSON, a missing typed address, missing/extra frames, wrong order/type, wrong session address, and wrong outcome. HTTP is also exact per iteration: 1 branch navigate, 2 branch trees (initial plus post-navigation), 2 diffs (selection plus explicit-status selected-diff reload), 3 Git statuses (Changes entry, explicit refresh, settled tool refresh), 1 prompt, 4 session-list refreshes (one per rendered background completion), and 1 selected-session snapshot resync. Any missing, extra, reordered, mistyped, differently addressed, or wrong-outcome request/frame fails the evaluator.
-
-**Decision:** no activation threshold crossed, so no speculative performance implementation was made.
-
-Explicitly unactivated suspects:
-
-- resource extraction at settled boundaries: the current bounded visible-message pass had 0.70 ms aggregate React p95 and no input trace cost;
-- broad store subscriptions/selectors: repeated navigation commits were visible in the diagnostic count, but 9.50/9.70 ms aggregate p95, no long tasks, and 1.00/0.80 ms aggregate input-delay p95 do not establish user-visible cost;
-- automatic background refresh coalescing: four settlements produced four refresh requests, but no attributable user-visible latency crossed a threshold;
-- visible mention checks: the bounded 100-message resource surface remained below threshold;
-- revision/generation guard changes: no stale-result or output-equivalence failure occurred in the frozen scenario.
-
-These were unactivated hypotheses at the recorded baseline, not present-day diagnoses. For a newly selected optimization, establish a current scenario first and preserve its asserted output and operation semantics across the before/after comparison; do not reuse obsolete exact frame counts as a current contract.
-
-## Historical production instrumentation witness
-
-The historical evaluator used compile-time `import.meta.env.MODE` branches at App call sites, with direct elements in production. Both the branches and their dedicated verifier have been removed from the current tree. In the historical checkout only, after `npm run build`, run:
-
-```sh
-npx tsx tests/benchmarks/verify-production-bundle.ts
-```
-
-That witness scanned production HTML/JS/CSS/source-map artifacts for the benchmark component name, callback, global sink, mode constant/string, and module identity. Its additional source-text checks were tied to the exact historical App layout and formatting. The 2026-08-01 production build scanned four artifacts (no source maps were emitted), found zero benchmark symbols, confirmed all four direct-element production fallbacks, and reported zero wrapper fibers in those production branches.
+The mock workbench's cache-disabled CDP network ledger, observed after fonts and network settled,
+measured 297,018 aggregate encoded font bytes for both desktop and 390px scenarios. Browser/content/
+Unicode-range selection can change it; it is neither installation size nor a release budget. Set a
+budget only from representative current scenarios.

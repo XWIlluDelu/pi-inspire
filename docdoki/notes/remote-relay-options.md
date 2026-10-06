@@ -6,7 +6,9 @@ purpose: Comparative transport and hosting evidence constrains a future general 
 
 The candidate transports were compared against an outbound machine connection, explicit pairing, visible machine identity, end-to-end authenticated encryption, and no canonical conversation or credential store at the relay. TLS to a public relay is necessary but not sufficient because it terminates at that relay; application payloads remain confidential from the relay only when endpoints protect them separately.
 
-This is not the record of the deployed single-owner HTTPS relay. That operational boundary and its remaining hardening work belong to [[groom-personal-remote-relay-2026-08-01]]; this note compares a later general remote product without selecting its transport.
+The implemented single-owner HTTPS relay follows [[connection-modules]] and
+[Reverse SSH](../../docs/ssh-reverse.md). Its trusted edge can read application traffic. This note
+compares a possible later opaque-relay product; no such product or transport is selected.
 
 ## Transport evidence
 
@@ -22,7 +24,10 @@ Tailscale provides the smallest custom security surface but substitutes tailnet 
 
 A future design must also separate the ciphertext broker from the browser-code trust authority. If the relay serves or can replace the remote JavaScript, it can steal browser keys and plaintext before application encryption; TLS and SRI on relay-controlled HTML do not remove that power. The remote UI therefore needs a separately trusted installed/verifiable artifact or static distribution origin. Audited cryptographic primitives likewise do not make pairing, transcript authentication, framing, reconnect, permission, and unknown-mutation semantics an audited protocol; independent review remains a gate.
 
-[[groom-personal-remote-relay-2026-08-01]] owns the product, threat-model, client-distribution, transport, protocol-review, and deployment decisions. This comparison constrains that planning but selects no transport; protocol behavior, vendor capabilities, and prices must be revalidated at the decision and deployment boundaries.
+A future opaque-relay task needs explicit product, threat-model, client-distribution, transport,
+protocol-review and deployment decisions. Revalidate protocol behavior, vendor capabilities and
+prices before selecting or deploying it; the completed reverse-SSH implementation decides none of
+these future choices.
 
 Sources:
 

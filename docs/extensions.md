@@ -44,6 +44,11 @@ RPC startup must finish before Pi can consume a dialog response. Awaiting `selec
 
 For interactive setup, register a command and advertise it in a startup notice or widget. The command can open dialogs once the worker is ready. Retain the existing interactive startup path in TUI mode if needed.
 
+Extension factories also run during prospective-workspace model discovery, without `session_start`
+or a persistent session. Register capabilities there; start processes, watchers and timers from
+`session_start` or the command/tool that needs them, and release them in an idempotent
+`session_shutdown` handler.
+
 ## Session lifecycle
 
 GUI navigation uses independent workers rather than switching one TUI process between every conversation:

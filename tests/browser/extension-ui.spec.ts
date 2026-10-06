@@ -6,6 +6,8 @@ import type {
   SupportedExtensionUiRequest,
 } from "../../shared/contracts";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
+import { clipboardLines } from "./support/clipboard";
+import { moveCaretToEnd } from "./support/native-input";
 
 test.use({ serviceWorkers: "block" });
 
@@ -309,7 +311,7 @@ test("native dialog keyboard/pointer flow, deadline reconnect and content-first 
     exact: true,
   });
   await expect(editor).toHaveValue(noteLines.join("\n"));
-  await editor.press("ControlOrMeta+End");
+  await moveCaretToEnd(editor);
   await editor.press("Enter");
   await editor.pressSequentially("Record the outcome.");
   await expect(
@@ -356,9 +358,7 @@ test("native dialog keyboard/pointer flow, deadline reconnect and content-first 
   await above
     .getByRole("button", { name: "Copy extension widget", exact: true })
     .click();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-    summaryLines.join("\n"),
-  );
+  await expect.poll(() => clipboardLines(page)).toEqual(summaryLines);
   const message = page.getByRole("article", { name: "Review prepared" });
   await expect(message).toContainText("Check touch.");
   await expect(message.locator(".custom-message__body strong")).toHaveText(
@@ -462,9 +462,7 @@ test.describe("narrow touch reading", () => {
     await below
       .getByRole("button", { name: "Copy extension widget", exact: true })
       .tap();
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-      noteLines.join("\n"),
-    );
+    await expect.poll(() => clipboardLines(page)).toEqual(noteLines);
     clearDisplays(fixture);
     await expect(
       page.locator(

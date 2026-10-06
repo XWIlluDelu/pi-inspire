@@ -12,8 +12,8 @@ import type {
   BranchTreeNode,
   BranchTreeResponse,
 } from "../../shared/contracts";
-import { Composer } from "../../src/components/Composer";
 import { BranchTree } from "../../src/components/BranchTree";
+import { Composer } from "../../src/components/Composer";
 import { EarlierBranchBanner } from "../../src/components/EarlierBranchBanner";
 import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
 import { store } from "../../src/store";
@@ -151,7 +151,9 @@ beforeEach(async () => {
             { status: 503 },
           );
         }
-        return new Response(new Blob(["fixture image"], { type: "image/png" }));
+        return new Response("fixture image", {
+          headers: { "Content-Type": "image/png" },
+        });
       }
       if (url.startsWith("/api/branches/entry")) {
         if (fixture.entryFailures) {

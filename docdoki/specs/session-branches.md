@@ -3,12 +3,13 @@ purpose: "Pi owns branch semantics while same-file navigation and isolated fork 
 covers:
   - server/runtime.ts
   - server/runtime-branch*.ts
-  - server/session-{tree,projection,fork,fork-worker}.ts
+  - server/session-{tree,projection,fork,fork-worker,export}.ts
+  - server/generated-exports.ts
   - server/extensions/inspire-branch-bridge.ts
   - shared/{branch-node-actions,branch-bridge-protocol}.ts
   - src/controllers/branch-controller.ts
   - src/components/{BranchTree,EarlierBranchBanner,AppTopbar}.tsx
-  - tests/server/{runtime-branching,session-fork,session-tree,branch-bridge-extension}.test.ts
+  - tests/server/{runtime-branching,session-fork,session-tree,branch-bridge-extension,session-export.integration,generated-exports}.test.ts
   - tests/web/{branch-tree,branch-store}.test.ts*
 ---
 
@@ -25,38 +26,12 @@ Independent copies do not replace the active source worker. Durable trust comes 
 
 ### Pi-authoritative tree actions
 
-- New sessions, naming, switching, compaction, and same-file branch navigation use Pi’s supported
-  runtime operations; fork uses Pi's supported `SessionManager` branch semantics through the
-  isolated boundary below. Pi reserves and reports a new session path immediately but deliberately
-  does not create the JSONL until an assistant message exists; model, thinking, name, extension
-  state, and the first user message can therefore remain only in the creating worker meanwhile. An
-  explicit new-session model and thinking choice enters as Pi startup arguments.
+- New sessions, naming, switching, compaction and same-file navigation use supported Pi operations;
+  independent copies use `SessionManager` through the isolated boundary below. New-file
+  materialization and worker admission belong to [[session-persistence]]. RPC uncertainty and
+  completion-driven hooks belong to [[pi-integration]] and [[session-transport]].
 
-  Until a corresponding JSONL change exists, the explicit startup thinking choice remains visible
-  across returned and later worker snapshots rather than yielding to the pending projection's
-  structural `off` default; a session without an explicit choice takes the live worker state
-  instead. Only `newSession` may open a healthy empty projection for that absent path. The host
-  reads the creating worker’s bounded contiguous `get_entries` state once to cover a file appearing
-  during setup, then attests each complete-line prefix observed while the first file materializes;
-  the parsed disk entries must be the worker state’s exact prefix and the current Pi header version,
-  session id, cwd, root parent, entry chain, and physical append lineage must agree.
-
-  Header-only and multi-write first flushes keep this single materialization transition open until
-  disk catches the attested worker state. This verification does not depend on whether stdout
-  message events or the filesystem notification arrives first: entries absorbed from disk before
-  their event arrives are indexed by persistence correlation, matched by exact persisted payload,
-  and consumed once. A mismatched first file fails closed and stops the worker; an ordinary
-  existing-session open still treats a missing JSONL as an error. An unselected idle session that
-  never materialized has no catalog identity to resume and may be abandoned by the existing worker
-  LRU, while selected or running work retains its worker. Once materialized, the normal
-  inode/version/append rules apply without exception.
-
-  Once an RPC request frame has been written, stream failure or child loss is an explicit
-  acceptance-unknown outcome: after confirmed worker termination, disk is reconciled inside the
-  operation lane and the session remains conflicted rather than retrying or restaging attachments.
-  A local observation timeout alone neither proves failure nor authorizes termination; Pi-owned
-  branch hooks and summaries have no generic wall-clock allowance (see [[pi-integration]]). The
-  branch tree is loaded through bounded projections of Pi entry identities, with older and alternate
+  The branch tree is loaded through bounded projections of Pi entry identities, with older and alternate
   points still reachable and searchable. Route pages keep their containing user prompt visible when
   tool/event detail crosses a page boundary; that heading does not skip any retained activity.
   Complete retained text is read in bounded chunks. Native shell records expose the command, output,
@@ -159,6 +134,27 @@ Independent copies do not replace the active source worker. Durable trust comes 
   cancellation uses native abort and preserves the worker/extension locals when it settles; confirmed
   retirement remains the fallback for an explicitly cancelled operation that cannot settle.
   Implementation evidence: [[follow-history-cloning-2026-10-02]].
+
+### Export content and publication
+
+- HTML preserves Pi's whole session tree. JSONL preserves the active branch's original native entries,
+  embedded images and metadata, with a current native header and linear parents. Context edits affect
+  model context, not exported raw history. Export never switches the source `SessionManager` or worker.
+- Export captures content available at invocation, including during active work; it does not promise
+  a future completed answer or lock later input. JSONL reuses the verified local prefix and reads only
+  the native suffix/effective leaf; an unmaterialized session uses its owning worker's entries.
+- Typed `/export` preserves Pi's one-path parsing, including quoted spaces and `~/`; `.jsonl` selects
+  branch JSONL and other destinations use native HTML. It refuses the canonical source session and
+  its symlink/hardlink aliases. Export and reload use writer admission under [[session-persistence]].
+- Graphical Export creates a temporary native export, captures a private managed download and removes
+  temporary source files on success or failure rather than leaving them in the workspace.
+- Authenticated, session-owned opaque IDs serve captured snapshots, not caller-selected Host paths;
+  later output changes cannot retarget them. Retain at most 16 downloads for 24 hours, remove them on
+  shutdown, and require re-export after Host restart. Failed allocation remains retryable and every
+  acquired source handle closes. [[composer]] owns the standalone dialog and typed receipts.
+
+Checks: `tests/server/session-export.integration.test.ts` and `generated-exports.test.ts` cover native
+content, active/empty branches, source protection and managed downloads.
 
 ### Earlier-branch presentation
 

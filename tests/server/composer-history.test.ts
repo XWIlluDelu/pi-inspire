@@ -54,6 +54,25 @@ describe("composer history projection", () => {
     expect(bounded.at(-1)?.text).toBe("prompt-5");
   });
 
+  it("stops projecting old artifacts after the retained prompt limit", () => {
+    const obsolete = {
+      role: "user",
+      get content(): string {
+        throw new Error("Obsolete artifacts should not be projected");
+      },
+    };
+    const recent = Array.from(
+      { length: MAX_COMPOSER_HISTORY_ENTRIES + 1 },
+      (_, index) => ({
+        role: "user",
+        content: `recent-${index}`,
+      }),
+    );
+    const history = composerHistoryEntries([obsolete, ...recent]);
+    expect(history).toHaveLength(MAX_COMPOSER_HISTORY_ENTRIES);
+    expect(history.at(-1)?.text).toBe("recent-1");
+  });
+
   it("projects text and image-only prompts as branch-scoped references", () => {
     const data = Buffer.from("pixels").toString("base64");
     expect(

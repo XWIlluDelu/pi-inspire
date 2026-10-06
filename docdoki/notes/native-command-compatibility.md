@@ -5,7 +5,8 @@ purpose: Explain native-command dispatch, compaction presentation, and input own
 # Native command compatibility
 
 Contracts: [[pi-integration]], [[composer]], and [[conversation]]. The supported command table is
-in `README.md`; the remaining presentation proposal is in [[follow-native-command-surface-2026-09-04]].
+in [Pi commands](../../docs/pi-commands.md); the remaining presentation proposal is in
+[[follow-native-command-surface-2026-09-04]].
 
 ## Command ownership
 
@@ -58,6 +59,13 @@ Each delivery owns its operation identity and attachment handoff. An older recei
 later input or clear a newer draft. The Host's 20-second HTTP observation window retains that
 identity; an unknown outcome keeps it for recovery. Host-held input becomes conversation history
 only when Pi persists it.
+
+## Superseded Pending design
+
+The dormant companion-Pi protocol for pause/resume, per-item identities/deletion/conversion and
+structured queue pagination was withdrawn in the review of `0c7b390`. It is not a future commitment.
+Current Pending uses Pi's public queue events and `clear_queue`, with retained original input for
+copy/recovery under [[composer]] and [[pi-integration]].
 
 ## Regression evidence
 

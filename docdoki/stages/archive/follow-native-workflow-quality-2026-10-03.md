@@ -65,8 +65,8 @@ Recorded Linux verification on 2026-10-03, before later Pending-preview changes:
 - Relevant browser/native task checks are linked from the topic stages; authentication used
   isolated credentials/callbacks rather than live accounts.
 
-## Remaining work
+## Continuation
 
-Native behavior-setting persistence feedback, virtual-model identity and cold-start extension-model
-discovery remain unrepaired. The full command, extension, tool, resource and presentation backlog
-stays in [[follow-pi-native-capability-review-2026-10-02]].
+Virtual-model identity and cold-start extension discovery were subsequently repaired in
+[[follow-native-model-workflow-2026-10-05]]. Native setting-persistence feedback and the remaining
+adaptation gaps belong to [[follow-pi-native-capability-review-2026-10-02]].

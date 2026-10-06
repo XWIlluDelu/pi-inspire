@@ -48,20 +48,61 @@ it("does not resurrect sent, explicitly cleared, transferred, or deleted-session
   expect(window.sessionStorage.length).toBe(0);
 });
 
+it("hydrates each partition once, including empty and cleared drafts", async () => {
+  const getItem = vi.spyOn(
+    Object.getPrototypeOf(window.sessionStorage),
+    "getItem",
+  );
+  const drafts = await import("../../src/session-drafts");
+  expect(drafts.sessionDraft("typing")).toBe("");
+  for (let index = 0; index < 200; index += 1) {
+    drafts.setSessionDraft("typing", `edit ${index}`);
+    expect(drafts.sessionDraft("typing")).toBe(`edit ${index}`);
+  }
+  const revision = drafts.sessionDraftRevision("typing");
+  drafts.setSessionDraft("typing", "edit 199");
+  expect(drafts.sessionDraftRevision("typing")).toBe(revision);
+  drafts.deleteSessionDraft("typing");
+  expect(drafts.sessionDraft("typing")).toBe("");
+  expect(drafts.sessionDraftRevision("typing")).toBe(revision + 1);
+  expect(getItem).toHaveBeenCalledOnce();
+
+  expect(drafts.startDraft()).toBe("");
+  drafts.setStartDraft("start");
+  expect(drafts.startDraft()).toBe("start");
+  drafts.setStartDraft("");
+  expect(drafts.startDraft()).toBe("");
+  expect(drafts.sessionDraft("empty")).toBe("");
+  expect(drafts.sessionDraft("empty")).toBe("");
+  expect(getItem).toHaveBeenCalledTimes(3);
+});
+
 it("keeps ordinary typing/send-clear behavior when storage is denied or quota is exhausted", async () => {
   const drafts = await import("../../src/session-drafts");
   drafts.setSessionDraft("quota", "old persisted text");
-  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+  vi.spyOn(
+    Object.getPrototypeOf(window.sessionStorage),
+    "setItem",
+  ).mockImplementation(() => {
     throw new DOMException("quota", "QuotaExceededError");
   });
   drafts.setSessionDraft("quota", "new unsent text");
   expect(drafts.sessionDraft("quota")).toBe("new unsent text");
+  expect(
+    window.sessionStorage.getItem("inspire:composer-draft:v1:session:quota"),
+  ).toBe("old persisted text");
   drafts.setSessionDraft("quota", "");
   expect(drafts.sessionDraft("quota")).toBe("");
-  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+  vi.spyOn(
+    Object.getPrototypeOf(window.sessionStorage),
+    "getItem",
+  ).mockImplementation(() => {
     throw new DOMException("denied", "SecurityError");
   });
-  vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+  vi.spyOn(
+    Object.getPrototypeOf(window.sessionStorage),
+    "removeItem",
+  ).mockImplementation(() => {
     throw new DOMException("denied", "SecurityError");
   });
   drafts.setSessionDraft("private", "memory draft");

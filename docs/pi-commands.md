@@ -59,9 +59,11 @@ per-model/global thinking defaults and supported-level clamping. For example, `x
 becomes `high` on a model supporting through `high`, rather than disabling thinking. You can still
 choose another effort afterward. These are session choices, not writes to saved defaults.
 
-Known extension-model limits: a virtual-model reply can make the GUI display and inherit the physical
-responder instead of the selected router. Cold-start discovery also omits extension-registered models.
-Existing virtual-session continuation, Fork and Clone retain native routing.
+Virtual models are marked **Router**. The picker and New inheritance retain your selected router;
+reply headers and usage describe the physical model that answered. If a router is no longer
+registered, reopened sessions follow Pi's physical-response recovery. Prospective-workspace discovery
+includes global and already-trusted project extensions; untrusted project resources are skipped with
+a warning. New trust decisions remain part of Pi startup.
 
 ## Model settings and login
 
@@ -176,7 +178,7 @@ even if the output file later changes. Re-export after a Host restart or an expi
 
 ## Compaction and reload
 
-`/compact` has its own progress and completion receipt. Pi determines its duration; the Composer can retain Steer/Queue input meanwhile. **Stop** or Escape uses Pi's native cancellation and recovers unconsumed Pending input so it does not restart the task. Cooperative cancellation keeps the session's worker and extension state and shows a neutral cancelled receipt. An unresponsive extension hook may require retiring that worker and starting a fresh one on next use. A checkpoint already committed before Stop remains completed.
+`/compact` uses the same state-owned compaction indicator as automatic compaction and retains a completion receipt. Pi determines its duration; the Composer can retain Steer/Queue input meanwhile. **Stop** or Escape uses Pi's native cancellation and recovers unconsumed Pending input so it does not restart the task. Cooperative cancellation keeps the session's worker and extension state and shows a neutral cancelled receipt. An unresponsive extension hook may require retiring that worker and starting a fresh one on next use. A checkpoint already committed before Stop remains completed.
 
 The small context ring shows occupancy, not compaction progress. Hover or focus it—or tap it on touch—to see the model and Pi's used tokens/context capacity. Tap outside to dismiss. When Pi temporarily reports unknown usage after compaction, the ring shows `—` while the hint retains known capacity and explains that the count updates after the next reply.
 

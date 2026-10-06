@@ -1,8 +1,4 @@
 import {
-  decodeBranchBridgeJson,
-  encodeBranchBridgeJson,
-} from "../shared/branch-bridge-protocol.js";
-import {
   PROVIDER_AUTH_LIMIT,
   PROVIDER_AUTH_SUFFIX,
   type ProviderAuthOperation,
@@ -11,7 +7,7 @@ import {
 import type { PiRpcProcess } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
 import type { BranchBridgeIdentity } from "./runtime-slot.js";
-import { runtimeToken } from "./runtime-token.js";
+import { requestWorkerStatus } from "./worker-status-request.js";
 
 export async function requestWorkerAuth(
   rpc: PiRpcProcess,
@@ -19,51 +15,33 @@ export async function requestWorkerAuth(
   sessionId: string,
   operation: ProviderAuthOperation,
 ): Promise<ProviderAuthResult> {
-  const nonce = runtimeToken("auth");
   let result: { result: ProviderAuthResult; error?: string } | undefined;
-  const event = (event: Record<string, unknown>) => {
-    if (
-      event.type !== "extension_ui_request" ||
-      event.method !== "setStatus" ||
-      event.statusKey !== `${bridge.statusKey}${PROVIDER_AUTH_SUFFIX}`
-    )
-      return;
-    try {
-      const value = decodeBranchBridgeJson(
-        event.statusText,
-        PROVIDER_AUTH_LIMIT,
-      ) as Record<string, unknown>;
-      if (
-        value.nonce !== nonce ||
-        value.workerId !== bridge.workerId ||
-        value.sessionId !== sessionId
-      )
-        return;
-      result = value as unknown as typeof result;
-    } catch {
-      result = {
-        result: null,
-        error: "Pi returned an invalid authentication response",
-      };
-    }
-  };
-  rpc.on("event", event);
-  try {
-    await rpc.request(
-      {
-        type: "prompt",
-        message: `/${bridge.command}${PROVIDER_AUTH_SUFFIX} ${encodeBranchBridgeJson({ ...operation, nonce, workerId: bridge.workerId, sessionId }, PROVIDER_AUTH_LIMIT)}`,
-      },
-      30_000,
-    );
-    if (!result)
-      throw requestError(
-        "Pi did not confirm this authentication operation",
+  await requestWorkerStatus(
+    rpc,
+    bridge,
+    sessionId,
+    {
+      suffix: PROVIDER_AUTH_SUFFIX,
+      argument: { ...operation },
+      maxArgumentBytes: PROVIDER_AUTH_LIMIT,
+      maxResultBytes: PROVIDER_AUTH_LIMIT,
+      malformedError: requestError(
+        "Pi returned an invalid authentication response",
         409,
-      );
-    if (result.error) throw requestError(result.error, 409);
-    return result.result;
-  } finally {
-    rpc.off("event", event);
-  }
+      ),
+    },
+    (value) => {
+      if (
+        result ||
+        !Object.hasOwn(value, "result") ||
+        (value.error !== undefined && typeof value.error !== "string")
+      )
+        throw new Error("Invalid authentication response");
+      result = value as unknown as typeof result;
+    },
+  );
+  if (!result)
+    throw requestError("Pi did not confirm this authentication operation", 409);
+  if (result.error) throw requestError(result.error, 409);
+  return result.result;
 }

@@ -272,7 +272,15 @@ const attachments: AttachmentStore[] = [];
 export const workspaceDirectories: string[] = [];
 
 export function trackedAttachmentStore(): AttachmentStore {
-  const store = new AttachmentStore();
+  const store = new AttachmentStore(
+    join(fixtureWorkspace, `attachments-${attachments.length}`),
+    null,
+    {
+      sessionDirectories: [fixtureWorkspace],
+      trashDirectories: [],
+      sweepIntervalMs: 0,
+    },
+  );
   attachments.push(store);
   return store;
 }

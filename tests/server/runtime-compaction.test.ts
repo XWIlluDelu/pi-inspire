@@ -267,7 +267,12 @@ describe("RuntimeController compaction lifecycle", () => {
         }
       } finally {
         finishRetirement();
-        await runtime.close();
+        if (outcome === "confirmed")
+          await expect(runtime.close()).resolves.toBeUndefined();
+        else
+          await expect(runtime.close()).rejects.toThrow(
+            "Synthetic retirement was not confirmed",
+          );
       }
     },
   );

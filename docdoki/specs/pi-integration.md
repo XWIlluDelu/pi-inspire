@@ -5,8 +5,7 @@ covers:
   - server/runtime*.ts
   - server/session-projection.ts
   - server/pending-image-evidence.ts
-  - server/{session-export,generated-exports,pi-changelog}.ts
-  - tests/server/{session-export.integration,generated-exports}.test.ts
+  - server/pi-changelog.ts
   - server/extensions/**
   - shared/{contracts,commands}.ts
   - src/{api,store,events}.ts
@@ -69,10 +68,13 @@ and errors omit stored or resolved keys/tokens. Native evidence:
 [[follow-model-settings-auth-2026-10-02]].
 
 Pi RPC enumerates extension, prompt, and skill commands but not interactive built-ins.
-`shared/commands.ts` reserves built-in names before resource dispatch, matching Pi's interactive
-client. Namespaced extension commands remain available. Browser commands reuse existing surfaces;
-Host commands perform compaction, native HTML/current-branch JSONL export, and resource reload. Terminal-only commands expose
-copy/open guidance. `/bug` does not upload a report or submit its description as a model prompt.
+`shared/commands.ts` reserves the installed interactive built-in vocabulary before resource dispatch,
+matching Pi's interactive client. Within resources, preserve Pi's first wire owner. Namespaced
+extension commands remain available. Names are case-sensitive. First-message completion hides native
+commands needing a session without exposing colliding resources instead. Browser commands reuse
+existing surfaces, including Models settings for `/scoped-models`, `/login` and `/logout`; Host
+commands own compaction, export and reload. Terminal-only commands expose precise copy/open guidance.
+`/bug` neither uploads a report nor sends its description to the model.
 The public command inventory is [Pi commands](../../docs/pi-commands.md).
 
 The Host rejects unknown command-shaped text at the prompt boundary, dispatches direct `!`/`!!`
@@ -81,7 +83,12 @@ after reload/worker replacement. Snapshots and slash-command admission/delivery 
 current loaded inventory. Resource-command completion refreshes browser discovery even during model
 work, without settling that work or Pending. Native in-process reload therefore does not require a
 GUI worker replacement merely to discover its commands.
-`/compact` also has a first-message path using its standalone operation lifecycle.
+`/compact` also has a first-message path using its standalone operation lifecycle. The browser
+acknowledges typed Host commands immediately; their HTTP results remain completion-driven, outside
+prompt confirmation timeouts. Read-only/local
+commands remain available through delivery phases; Reload and a new manual Compact refuse active Pi
+work. Typed native commands and shell input reject artifacts without consuming them; palette actions
+have an independent draft owner under [[composer]].
 
 Compaction completes according to Pi, outside browser prompt deadlines. Standalone manual Stop uses
 Pi's generic `abort`, retaining the same worker and extension-local state when cancellation cooperates.
@@ -97,21 +104,10 @@ command/status pair is worker/session/nonce-owned, hidden from user command/stat
 coalesced per worker, and independent of the persistence/branch mutation lane. A 15-second abort
 budget bounds catalog discovery without stopping Pi. Pi retains extension registrations, credentials,
 offline/network policy and usable cached catalogs.
-The active worker supplies its own model list, and model changes use native RPC. [[composer]] owns
-cached-first browser behavior, start-surface thinking transitions and command feedback;
-[[follow-model-selection-2026-10-02]] records verification. Export and reload share writer admission.
-
-Graphical Export uses an independent format-and-download dialog shared by the title menu and
-command palette. Its Host endpoint writes a temporary native export, captures the managed download,
-and removes the temporary source on success or failure; it does not leave export files in the project.
-Typed export preserves Pi's path parsing and whole-tree HTML default. JSONL serializes the active ancestry with
-original entries/images/metadata, a native header and linear parents, without switching SessionManager.
-It reuses the verified local prefix and reads only the native suffix/effective leaf; unmaterialized
-sessions use their worker-owned entries. Export refuses the source and its symlink/hardlink aliases.
-Authenticated, session-owned opaque IDs serve private snapshots rather than caller-selected Host
-paths. Later output-file changes cannot retarget them. Keep at most 16 downloads for 24 hours and
-remove them on shutdown; Host restart requires re-export. Failed storage allocation remains retryable,
-and each acquired source handle closes. [[composer]] owns the export controls and receipts.
+The active worker supplies its own model list, and model changes use native RPC. [[model-settings]]
+owns selection/discovery semantics; [[composer]] owns cached-first controls and feedback.
+[[follow-model-selection-2026-10-02]] records verification. Export content, source protection and
+managed downloads belong to [[session-branches]], with controls/receipts in [[composer]].
 
 `/changelog` reads the installed package's matching version section, not a dependency fallback or
 remote latest-release feed. Public extension command enumeration has no argument-completion hooks;
@@ -154,10 +150,15 @@ automatic retry. Evidence: [[follow-shell-input-2026-10-02]].
   Actual stream/stdin failure or child loss initiates retirement. A response deadline alone does
   not establish stream failure or process exit.
 
-Explicit Stop first dequeues pending text and recoverable original Inspire images into the composer,
-then sends public `clear_queue` before `abort`; abort alone can continue Pi's queued work. Queue recovery and Stop bypass a blocked
-persistence lane, and Stop can retire a preflight worker when Pi's ordinary abort cannot interrupt a
-hook. A failed clear is reported and Stop retires the worker rather than letting pending work resume.
+During compaction, Pi's public prompt path may refuse input. The Host holds a bounded temporary
+queue owned by that worker and branch selection. Original preflight input stays first; only an actual
+active agent receives Steer/Queue directly. After standalone manual compaction, the first surviving
+input starts a prompt. Host-held input is not history and cannot cross worker/branch replacement.
+
+Stop recovers Pending under [[composer]] through public `clear_queue` before `abort`; abort alone can
+continue queued work. Recovery and Stop bypass blocked persistence/prompt-hook lanes, reject new
+deliveries while Stop runs and retire a preflight worker when native abort cannot interrupt its hook.
+Failed clear reports failure and retires the worker rather than leaving a live queue.
 A prompt written to Pi but stopped before its receipt remains acceptance-unknown. Unwritten image
 preparation remains with its existing owner: worker retirement rejects retained preparations back to
 staged originals rather than deleting them. A Stop epoch is rechecked after asynchronous preparation

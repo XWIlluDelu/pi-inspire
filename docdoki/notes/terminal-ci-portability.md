@@ -6,7 +6,7 @@ purpose: Keep terminal tests portable to the Node 22 CI baseline and preserve tr
 
 ## Match the supported runtime
 
-`.github/workflows/ci.yml` runs Node 22 on Ubuntu, macOS, and Windows, including packaged-Host smoke checks on main. A green Linux/Node 26 run is not evidence for that matrix. Verify `node --version` after selecting Node 22, then run `npm run ci` and `npm run release:verify`; follow the pushed commit's workflow through completion.
+`.github/workflows/ci.yml` runs Node 22 on Ubuntu, macOS, and Windows, including packaged-Host smoke checks on main. Platform-specific behavior is verified by the corresponding native jobs.
 
 ## Isolate the intended test boundary
 

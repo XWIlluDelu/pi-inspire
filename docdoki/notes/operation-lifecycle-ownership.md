@@ -71,8 +71,9 @@ retention uses admission epochs to reject forgotten identities. A replacement da
 epoch, so the client must resolve uncertainty rather than replay an old mutation there.
 
 The browser saves unresolved identities in tab-session storage before dispatch and retains them
-across project changes and reload. Invalid stored intent blocks dispatch. Identified requests use
-the receipt protocol; legacy HTTP callers without identities still create one intent per request.
+across project changes and reload. Invalid stored intent blocks dispatch. All control writes use
+the receipt protocol; HTTP callers without an identity are refused before dispatch. Route-validation
+refusals for valid identities carry the matching rejected receipt, including nested terminal paths.
 The in-process terminal manager uses the same receipt and mutation implementation. Read,
 attachment, and input streams remain separate from control-mutation receipts.
 

@@ -17,7 +17,7 @@ import {
 async function discover(cwd: string) {
   const agentDir = getAgentDir();
   const settings = modelSettings(cwd);
-  const runtime = await ModelRuntime.create();
+  const runtime = await ModelRuntime.create({ refreshOnCreate: false });
   const loader = new DefaultResourceLoader({
     cwd,
     agentDir,

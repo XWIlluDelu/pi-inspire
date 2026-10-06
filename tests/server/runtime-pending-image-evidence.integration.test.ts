@@ -3,10 +3,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, it } from "vitest";
 import { userMessageEvidence } from "../../server/pending-image-evidence.js";
-import { PiRpcProcess, MAX_RPC_LINE_BYTES } from "../../server/pi-rpc.js";
+import { MAX_RPC_LINE_BYTES, PiRpcProcess } from "../../server/pi-rpc.js";
 import { newBridgeIdentity } from "../../server/runtime-branch-bridge.js";
 import { readPendingImageEvidence } from "../../server/runtime-pending-image-evidence.js";
 import { PENDING_IMAGE_SUFFIX } from "../../shared/branch-bridge-protocol.js";
+import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 
 it("reads an append cursor and image identities without transporting a large native history", async () => {
   const root = await mkdtemp(join(tmpdir(), "inspire-image-evidence-"));
@@ -74,24 +75,12 @@ it("reads an append cursor and image identities without transporting a large nat
       "--extension",
       resolve("server/extensions/inspire-branch-bridge.ts"),
     ],
-    env: {
-      HOME: root,
-      USERPROFILE: root,
-      XDG_CONFIG_HOME: join(root, "xdg-config"),
-      XDG_CACHE_HOME: join(root, "cache"),
-      XDG_DATA_HOME: join(root, "data"),
-      XDG_STATE_HOME: join(root, "state"),
-      APPDATA: join(root, "appdata"),
-      LOCALAPPDATA: join(root, "localappdata"),
+    env: isolatedTestEnvironment(root, {
       PI_CODING_AGENT_DIR: config,
-      PI_CODING_AGENT_SESSION_DIR: join(root, "sessions"),
-      PI_OFFLINE: "1",
-      PI_SKIP_VERSION_CHECK: "1",
-      PI_TELEMETRY: "0",
       INSPIRE_BRANCH_COMMAND: bridge.command,
       INSPIRE_BRANCH_STATUS_KEY: bridge.statusKey,
       INSPIRE_BRANCH_WORKER_ID: bridge.workerId,
-    },
+    }),
   });
   const evidenceEvents: unknown[] = [];
   rpc.on("event", (event) => {

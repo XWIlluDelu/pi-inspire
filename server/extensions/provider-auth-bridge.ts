@@ -62,14 +62,9 @@ export function registerProviderAuthBridge(
         },
       };
       const settings = SettingsManager.create(ctx.cwd, getAgentDir());
-      const device = settings as typeof settings & {
-        getOrCreateDeviceId?: () => string;
-      };
       service = new ProviderAuthService(
         runtime,
-        device.getOrCreateDeviceId
-          ? () => device.getOrCreateDeviceId!()
-          : undefined,
+        () => settings.getOrCreateDeviceId(),
         source,
         await nativeOAuthDescriptors(entry),
       );
@@ -107,28 +102,7 @@ export function registerProviderAuthBridge(
         const auth = await getService(ctx);
         if (value.operation === "providers" || value.operation === "start")
           await authRuntime!.refresh({ allowNetwork: false });
-        switch (value.operation) {
-          case "providers":
-            result = await auth.providers();
-            break;
-          case "start":
-            result = auth.start(value.provider, value.type);
-            break;
-          case "status":
-            result = auth.snapshot(value.id);
-            break;
-          case "answer":
-            result = auth.answer(value.id, value.promptId, value.value);
-            break;
-          case "cancel":
-            result = auth.cancel(value.id);
-            break;
-          case "logout":
-            await auth.logout(value.provider);
-            break;
-          default:
-            throw new Error("invalid auth operation");
-        }
+        result = await auth.request(value);
       } catch {
         error =
           "Pi could not complete this authentication operation. Reload its status before retrying.";

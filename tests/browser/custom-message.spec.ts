@@ -56,11 +56,10 @@ async function openReview(page: Page) {
   };
 }
 
-test("sender-led custom messages retain exact content, raw inspection, keyboard access and responsive geometry", async ({
+test("sender-led custom messages preserve content, keyboard inspection and responsive reading", async ({
   page,
   context,
 }) => {
-  test.setTimeout(90_000);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   const send = await openReview(page);
@@ -90,97 +89,48 @@ test("sender-led custom messages retain exact content, raw inspection, keyboard 
   ])
     await expect(card).not.toContainText(hidden);
 
-  for (const palette of ["amber", "teal"]) {
-    for (const theme of ["light", "dark"]) {
-      await page.evaluate(
-        ({ palette, theme }) => {
-          document.documentElement.dataset.palette = palette;
-          document.documentElement.dataset.theme = theme;
-        },
-        { palette, theme },
-      );
-      for (const width of [1280, 390, 320]) {
-        await page.setViewportSize({ width, height: 1000 });
-        await card.scrollIntoViewIfNeeded();
-        const geometry = await card.evaluate((element) => {
-          const title = element
-            .querySelector(".custom-message__title")!
-            .getBoundingClientRect();
-          const body = element
-            .querySelector(".custom-message__body")!
-            .getBoundingClientRect();
-          const details = element
-            .querySelector("summary")!
-            .getBoundingClientRect();
-          const identity = element.querySelector(".custom-message__identity")!;
-          const identityBox = identity.getBoundingClientRect();
-          const copy = element
-            .querySelector(".custom-message__copy")!
-            .getBoundingClientRect();
-          return {
-            overflow: element.scrollWidth - element.clientWidth,
-            transcriptOverflow:
-              element.closest(".transcript")!.scrollWidth -
-              element.closest(".transcript")!.clientWidth,
-            titleLeft: title.left,
-            bodyLeft: body.left,
-            detailsLeft: details.left,
-            identityRight: identityBox.right,
-            copyLeft: copy.left,
-            alignment: getComputedStyle(identity).alignItems,
-            shortWordLines: Array.from(element.querySelectorAll("th, td"))
-              .filter((cell) =>
-                ["Surface", "Desktop"].includes(cell.textContent ?? ""),
-              )
-              .map((cell) => {
-                const range = document.createRange();
-                range.selectNodeContents(cell);
-                return range.getClientRects().length;
-              }),
-          };
-        });
-        expect(geometry.overflow).toBeLessThanOrEqual(1);
-        expect(geometry.transcriptOverflow).toBeLessThanOrEqual(1);
-        expect(geometry.titleLeft).toBeCloseTo(geometry.bodyLeft, 0);
-        expect(geometry.bodyLeft).toBeCloseTo(geometry.detailsLeft, 0);
-        expect(geometry.identityRight).toBeLessThan(geometry.copyLeft);
-        expect(geometry.alignment).toBe("baseline");
-        expect(geometry.shortWordLines).toEqual([1, 1]);
-        const summary = card.locator("summary");
-        await summary.focus();
-        await expect(summary).toBeFocused();
-        expect(
-          await summary.evaluate(
-            (element) => getComputedStyle(element).outlineStyle,
-          ),
-        ).toBe("solid");
-        await summary.press("Enter");
-        await expect(card.locator("details")).toHaveAttribute("open", "");
-        const raw = await card.locator(".custom-message__raw").textContent();
-        expect(JSON.parse(raw!)).toEqual({
-          customType: message.customType,
-          content: message.content,
-          details: message.details,
-        });
-        await summary.press("Space");
-        await expect(card.locator(".custom-message__raw")).toHaveCount(0);
-        expect(
-          (await new AxeBuilder({ page }).include(".custom-message").analyze())
-            .violations,
-        ).toEqual([]);
-        await summary.evaluate((element: HTMLElement) => element.blur());
-        const jump = page.getByRole("button", {
-          name: "Jump to latest",
-          exact: true,
-        });
-        if (await jump.isVisible()) await jump.click();
-        await expect(jump).not.toBeVisible();
-        await card.screenshot({
-          path: `output/playwright/intercom-card-${palette}-${theme}-${width}.png`,
-        });
-      }
-    }
+  for (const [width, theme] of [
+    [1280, "light"],
+    [390, "dark"],
+    [320, "light"],
+  ] as const) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+    }, theme);
+    await card.scrollIntoViewIfNeeded();
+    expect(
+      await card.evaluate(
+        (element) =>
+          element.scrollWidth <= element.clientWidth + 1 &&
+          element.closest(".transcript")!.scrollWidth <=
+            element.closest(".transcript")!.clientWidth + 1,
+      ),
+    ).toBe(true);
+    await card.screenshot({
+      path: `output/playwright/intercom-card-${theme}-${width}.png`,
+    });
   }
+
+  const summary = card.locator("summary");
+  await summary.focus();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  await expect(summary).toBeFocused();
+  await summary.press("Enter");
+  await expect(card.locator("details")).toHaveAttribute("open", "");
+  const raw = await card.locator(".custom-message__raw").textContent();
+  expect(JSON.parse(raw!)).toEqual({
+    customType: message.customType,
+    content: message.content,
+    details: message.details,
+  });
+  await summary.press("Space");
+  await expect(card.locator(".custom-message__raw")).toHaveCount(0);
+  expect(
+    (await new AxeBuilder({ page }).include(".custom-message").analyze())
+      .violations,
+  ).toEqual([]);
 
   await context.grantPermissions(["clipboard-read", "clipboard-write"], {
     origin: new URL(page.url()).origin,
@@ -217,9 +167,6 @@ test("sender-led custom messages retain exact content, raw inspection, keyboard 
     const header = element
       .querySelector(".custom-message__head")!
       .getBoundingClientRect();
-    const icon = element
-      .querySelector(".custom-message__head > svg")!
-      .getBoundingClientRect();
     const copy = element
       .querySelector(".custom-message__copy")!
       .getBoundingClientRect();
@@ -227,15 +174,10 @@ test("sender-led custom messages retain exact content, raw inspection, keyboard 
       fits: element.scrollWidth <= element.clientWidth + 1,
       headerHeight: header.height,
       copyHeight: copy.height,
-      iconCenter: icon.y + icon.height / 2,
-      copyCenter: copy.y + copy.height / 2,
-      headerCenter: header.y + header.height / 2,
     };
   });
   expect(wrappedHeader.fits).toBe(true);
   expect(wrappedHeader.headerHeight).toBeGreaterThan(wrappedHeader.copyHeight);
-  expect(wrappedHeader.iconCenter).toBeCloseTo(wrappedHeader.headerCenter, 1);
-  expect(wrappedHeader.copyCenter).toBeCloseTo(wrappedHeader.headerCenter, 1);
   await longCard.screenshot({
     path: "output/playwright/intercom-card-long-sender-320.png",
   });

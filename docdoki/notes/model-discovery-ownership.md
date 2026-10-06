@@ -24,7 +24,9 @@ same-model snapshots, manual effort and pending-source inheritance. [[model-sett
 A successful configuration save changes the inputs to workspace discovery. Waiting for the active
 worker's readback before invalidation leaves older cached or in-flight reads able to publish obsolete
 inventory. Invalidate at the successful save boundary; the catalog generation prevents an older
-completion from repopulating the cache. Readback still observes the active worker's registrations.
+completion from repopulating the cache. Session saves refresh only the active worker, so an unrelated
+workspace-discovery process cannot delay their response. Other workspaces rediscover on demand;
+a save without a session refreshes the addressed workspace.
 
 Implementation: `server/model-settings-routes.ts` and `server/model-metadata.ts`. The in-flight/save
 regression is in `tests/server/model-settings.test.ts`.

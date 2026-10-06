@@ -70,8 +70,9 @@ Running operations are not evicted. Before forgetting an identity, reclamation f
 epoch; daemon replacement also changes the epoch. Unknown old identities are refused. The browser
 retains unresolved controls across pane, project, and reload generations, offers same-operation checks,
 and releases them after a confirmed result or definite refusal. Unavailable or malformed storage blocks
-untracked writes. Legacy callers without identities retain one-new-intent-per-call behavior; identified
-requests require receipt support.
+untracked writes. Every control mutation requires an operation identity and receipt support; missing
+identity is refused before dispatch. Valid identified requests rejected during route validation carry
+the matching operation ID and definite rejected outcome, including nested terminal routes.
 
 The in-process development owner follows the same mutation contract. An incompatible listening daemon
 requires an explicit terminal-service upgrade; ordinary Host launch leaves its PTYs running and reports

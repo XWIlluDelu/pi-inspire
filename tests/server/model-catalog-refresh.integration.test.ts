@@ -2,11 +2,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { expect, it, vi } from "vitest";
 import { refreshWorkerCatalog } from "../../server/model-catalog-refresh.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
 import { newBridgeIdentity } from "../../server/runtime-branch-bridge.js";
+import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 
 it("refreshes usable models in the same active Pi worker and retains extension providers/dialogs/session selection", async () => {
   const root = await mkdtemp(join(tmpdir(), "inspire-catalog-"));
@@ -67,22 +68,11 @@ it("refreshes usable models in the same active Pi worker and retains extension p
     }),
   );
   const bridge = newBridgeIdentity();
-  const env = {
-    ...Object.fromEntries(
-      Object.keys(process.env).map((key) => [key, undefined]),
-    ),
-    PATH: [dirname(process.execPath), "/usr/bin", "/bin"].join(delimiter),
-    HOME: root,
-    USERPROFILE: root,
-    PI_CODING_AGENT_DIR: config,
-    PI_CODING_AGENT_SESSION_DIR: sessions,
-    PI_OFFLINE: "1",
-    PI_SKIP_VERSION_CHECK: "1",
-    PI_TELEMETRY: "0",
+  const env = isolatedTestEnvironment(root, {
     INSPIRE_BRANCH_COMMAND: bridge.command,
     INSPIRE_BRANCH_STATUS_KEY: bridge.statusKey,
     INSPIRE_BRANCH_WORKER_ID: bridge.workerId,
-  };
+  });
   const rpc = new PiRpcProcess({
     cwd,
     env,

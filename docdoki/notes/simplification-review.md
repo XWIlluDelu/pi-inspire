@@ -47,6 +47,6 @@ On unmount, focus then falls to the document body rather than the outside opener
 retains the previous entry's outside opener when replaying the same dialog with focus still inside.
 The existing modal stack and stale-microtask ownership remain intact.
 
-An isolated regression failed before the correction; the three affected browser flows then restored
-the opener. Source: `src/use-modal-focus.ts` and `tests/web/modal-focus.test.tsx`. Work outcome and
-verification environment: [[challenge-simplification-2026-09-08]].
+An isolated regression failed before correction; three affected production Chromium flows then
+restored the opener on Linux / Node 22.23.2. Source: `src/use-modal-focus.ts` and
+`tests/web/modal-focus.test.tsx`. Native macOS/Windows behavior was outside that review's evidence.

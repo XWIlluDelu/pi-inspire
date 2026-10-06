@@ -13,7 +13,7 @@ import {
 } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createInspireServer } from "../../server/app.js";
@@ -34,6 +34,7 @@ import {
 } from "../../server/session-export.js";
 import { exportArgumentPath } from "../../shared/commands.js";
 import type { HostNativeCommandResponse } from "../../shared/contracts.js";
+import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
@@ -232,14 +233,10 @@ async function fixture() {
         "off",
         ...(options.args ?? []),
       ],
-      env: {
-        ...Object.fromEntries(
-          Object.keys(process.env).map((key) => [key, undefined]),
-        ),
-        PATH: [dirname(process.execPath), "/usr/bin", "/bin"].join(delimiter),
+      env: isolatedTestEnvironment(directory, {
         ...options.env,
         ...environment,
-      },
+      }),
     });
     workers.push(worker);
     return worker;

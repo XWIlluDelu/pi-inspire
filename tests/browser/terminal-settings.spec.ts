@@ -107,7 +107,8 @@ for (const width of [1280, 320]) {
         name: "Terminal scrollback lines",
       });
       await scrollback.click();
-      await settings
+      await page
+        .locator(`[id="${await scrollback.getAttribute("aria-controls")}"]`)
         .getByRole("option", { name: "50,000 lines", exact: true })
         .click();
       if (width < 600)
@@ -139,7 +140,8 @@ for (const width of [1280, 320]) {
         name: "Terminal output retention",
       });
       await retention.click();
-      await settings
+      await page
+        .locator(`[id="${await retention.getAttribute("aria-controls")}"]`)
         .getByRole("option", { name: "90 days", exact: true })
         .click();
       await expect.poll(() => patches).toEqual([{ historyRetentionDays: 90 }]);

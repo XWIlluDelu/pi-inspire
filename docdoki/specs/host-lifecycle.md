@@ -40,8 +40,8 @@ making deployment machinery a second Pi runtime. Typed runtime integration is sp
 - INSΠRE targets the latest Pi release. Pi's coding-agent and TUI packages are pinned exactly as
   deterministic development witnesses for type-checking, browser bundling, and installed-Pi
   integration suites; that checkout copy does not become a production runtime authority. Older Pi
-  versions may remain incidentally usable but are neither tested nor supported, and no compatibility
-  branch is added solely for them. Optional capabilities beyond the current public protocol remain
+  versions may remain incidentally usable; historical test results do not establish current support,
+  and no compatibility branch is added solely for them. Optional capabilities beyond the current public protocol remain
   inactive unless explicitly negotiated; absence follows current public behavior rather than version
   guessing. Production releases require zero `npm audit --omit=dev` advisories, without root
   overrides or downgrades that conceal the affected dependency. [[dependency-boundaries]] records
@@ -75,8 +75,9 @@ making deployment machinery a second Pi runtime. Typed runtime integration is sp
   account's default shell for export discovery. Unsupported shells or platforms fail explicitly
   rather than silently substituting an incomplete environment. Windows direct launch inherits.
 - Discovery invokes the selected shell's normal login/interactive initialization in the user's home,
-  without a PTY, then exports through a dedicated pipe. It has a ten-second deadline and a 1 MiB
-  export limit, terminates its isolated probe group on failure, and never logs or persists shell
+  without a PTY, then exports a uniquely framed record through its stdout pipe. Startup output is
+  discarded without counting toward the 1 MiB export limit. The entire probe has a ten-second
+  deadline, terminates its isolated group on failure, and never logs or persists shell
   output or environment values. Failed or incomplete discovery prevents the new launch. User
   unsets are preserved; service identity and explicit Inspire controls survive shell initialization.
   Probe-only state is not propagated, and children inherit the resolved environment without probing

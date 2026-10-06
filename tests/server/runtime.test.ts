@@ -776,7 +776,11 @@ describe("RuntimeController concurrent sessions", () => {
       await expect(store.resolveForPrompt([doc.id])).rejects.toThrow(
         /already belong/,
       );
-      await runtime.close();
+      if (confirmed) await expect(runtime.close()).resolves.toBeUndefined();
+      else
+        await expect(runtime.close()).rejects.toThrow(
+          "Worker exit unconfirmed",
+        );
     },
   );
 
@@ -1650,7 +1654,7 @@ describe("RuntimeController concurrent sessions", () => {
         const worker = new FakeRpc(options);
         const generation = workers.length + 1;
         worker.responseOverrides.set("export_html", {
-          path: `/tmp/session-${generation}.html`,
+          path: resolve(`/tmp/session-${generation}.html`),
         });
         worker.responseOverrides.set("get_commands", {
           commands: [
@@ -1680,7 +1684,7 @@ describe("RuntimeController concurrent sessions", () => {
       }),
     ).resolves.toMatchObject({
       outcome: "completed",
-      details: [{ label: "File", value: "/tmp/session-1.html" }],
+      details: [{ label: "File", value: resolve("/tmp/session-1.html") }],
     });
 
     await expect(
@@ -2489,9 +2493,11 @@ describe("RuntimeController concurrent sessions", () => {
           await runtime.newSession(TEST_CWD);
         }
         expect(worker.options.args).toEqual([
-          ...(mode === "resume" ? ["--session", "/sessions/a.jsonl"] : []),
+          ...(mode === "resume"
+            ? ["--session", resolve("/sessions/a.jsonl")]
+            : []),
           "--extension",
-          expect.stringMatching(/\/inspire-branch-bridge\.(ts|js)$/),
+          expect.stringMatching(/[\\/]inspire-branch-bridge\.(ts|js)$/),
         ]);
         expect(Object.keys(worker.options.env ?? {}).sort()).toEqual([
           "INSPIRE_BRANCH_COMMAND",
@@ -3376,7 +3382,11 @@ describe("RuntimeController concurrent sessions", () => {
         await expect(runtime.openSession("new-id")).rejects.toBe(unconfirmed);
         expect(workers).toHaveLength(1);
       }
-      await runtime.close();
+      if (confirmed) await expect(runtime.close()).resolves.toBeUndefined();
+      else
+        await expect(runtime.close()).rejects.toThrow(
+          "Worker exit unconfirmed",
+        );
     },
   );
 
@@ -4146,7 +4156,7 @@ describe("maintenance restart admission", () => {
       expect(createProcess).toHaveBeenCalledOnce();
     } finally {
       stopGate.resolve();
-      await runtime.close();
+      await expect(runtime.close()).rejects.toThrow("Pi stop unconfirmed");
     }
   });
 

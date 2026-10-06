@@ -1846,6 +1846,7 @@ export function createInspireServer(deps: AppDependencies): {
     server,
     authorityId,
     close: async () => {
+      deps.providerAuth?.close();
       // Stop accepting HTTP/upgrades first, but do not await the drain before
       // runtime teardown: an active request may itself be waiting on runtime.
       const drained = server.listening

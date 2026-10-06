@@ -7,6 +7,10 @@ import type {
   ProviderLoginAttempt,
   ProviderLoginOption,
 } from "../shared/model-settings.js";
+import type {
+  ProviderAuthOperation,
+  ProviderAuthResult,
+} from "../shared/provider-auth-bridge.js";
 import { requestError } from "./request-error.js";
 
 type Interaction = Parameters<ModelRuntime["login"]>[2];
@@ -136,6 +140,7 @@ interface Attempt {
 export class ProviderAuthService {
   private readonly attempts = new Map<string, Attempt>();
   private readonly owners = new Map<string, string>();
+  private closed = false;
   constructor(
     private readonly runtime: Pick<
       ModelRuntime,
@@ -157,6 +162,25 @@ export class ProviderAuthService {
       OAuthDescriptor
     > = new Map(),
   ) {}
+  async request(operation: ProviderAuthOperation): Promise<ProviderAuthResult> {
+    switch (operation.operation) {
+      case "providers":
+        return this.providers();
+      case "start":
+        return this.start(operation.provider, operation.type);
+      case "status":
+        return this.snapshot(operation.id);
+      case "answer":
+        return this.answer(operation.id, operation.promptId, operation.value);
+      case "cancel":
+        return this.cancel(operation.id);
+      case "logout":
+        await this.logout(operation.provider);
+        return null;
+      default:
+        throw new Error("Invalid provider authentication operation");
+    }
+  }
   private remoteHelp(provider: Provider): RemoteHelp | undefined {
     const id = provider.id;
     const oauth = provider.auth.oauth;
@@ -211,6 +235,8 @@ export class ProviderAuthService {
     return providers.sort((a, b) => a.name.localeCompare(b.name));
   }
   start(provider: string, type: ProviderAuthType): ProviderLoginAttempt {
+    if (this.closed)
+      throw requestError("Provider authentication is closed", 503);
     const declaration = (this.providerSource ?? this.runtime).getProvider(
       provider,
     );
@@ -254,16 +280,8 @@ export class ProviderAuthService {
     this.attempts.set(id, attempt);
     this.owners.set(provider, id);
     const signal = attempt.controller.signal;
-    const login = this.runtime.login as typeof this.runtime.login &
-      ((
-        provider: string,
-        type: ProviderAuthType,
-        interaction: Parameters<ModelRuntime["login"]>[2],
-        options?: { getDeviceId: () => string },
-      ) => ReturnType<ModelRuntime["login"]>);
-    void login
-      .call(
-        this.runtime,
+    void this.runtime
+      .login(
         provider,
         type,
         {
@@ -407,6 +425,7 @@ export class ProviderAuthService {
     }
   }
   close(): void {
+    this.closed = true;
     for (const id of this.attempts.keys()) this.cancel(id);
   }
 }

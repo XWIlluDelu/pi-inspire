@@ -166,14 +166,22 @@ and explicit re-open, cancelled-response/401 ownership, and the unconfirmed-crea
 
 ### Prompt observation ownership
 
-- A prompt operation outlives any individual HTTP observer. The Host's bounded pending receipts and
-  authenticated, authority-bound read-only observation route preserve one dispatch while Pi performs
-  preflight/compaction/hooks. Browser observation cancellation or its 30-second transport deadline
-  does not cancel execution. Only the still-current browser owner may apply the eventual receipt.
-- Same-Host HTTP errors identify the responding process, not the original operation outcome. A
-  definitive prompt refusal must match that Host and operation's retained rejection receipt; a
-  refused/expired/missing observation remains uncertain and retains the operation identity as in
-  [[composer]]. Evidence and limits: [[operation-lifecycle-ownership]].
+- Every prompt carries a random operation identity and process-lifetime Host authority. Bounded
+  Host fingerprints admit it once: concurrent/near-term copies await or return the same result,
+  changed content under an identity is refused, and replaced-Host identities fail explicitly.
+  Retired response bodies leave tombstones; a retired result fails closed rather than allowing
+  redispatch.
+- POST observes one delivery for at most 20 seconds, then returns a pending receipt. Authenticated,
+  identity/authority-bound GET observations continue without resending payloads. Each browser
+  observation has a 30-second limit; cancellation/reconnect retires observation, not Pi execution.
+  Only the current browser owner can apply its result. Acceptance can exceed these windows.
+- Same-Host headers identify the respondent, not the operation result. Only matched Host authority,
+  operation ID and retained rejected outcome establish refusal. A receipt lookup's 401/404/500,
+  transport timeout, marked-edge error, unowned 5xx or unknown/retired outcome remains uncertain.
+  Unchanged-draft user retry reuses the exact identity/payload while Host authority is unchanged,
+  including after a delivery-mode change. Host restart requires inspecting refreshed history before
+  resending. [[composer]] owns handoff and restoration; [[operation-lifecycle-ownership]] records
+  evidence and limits.
 
 ### View-bound transcript and bounded streaming
 

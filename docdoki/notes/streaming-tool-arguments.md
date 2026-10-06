@@ -40,7 +40,8 @@ bytes, with zero cumulative assistant-message serializations in the append hot p
 serialization/wire measurements, not a general end-to-end latency result.
 
 Evidence: parser tests, runtime projection/stream-budget suites, shared reducer tests and authenticated
-WebSocket batching fixtures. [[follow-streaming-tool-arguments-2026-09-08]] records the delivery run.
+WebSocket batching fixtures. The recorded delivery checks used Linux / Node 22.19.0 / Pi 0.85.1;
+synthetic browser fixtures did not execute a model or write project files.
 
 ## Incomplete edit items are valid generation shapes
 

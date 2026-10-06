@@ -94,15 +94,8 @@ custom messages remain independent readable boundaries in this contract.
   links and file references wrap only when needed and remain inside the reading measure at narrow
   widths.
 
-- Composer project-file selections are display handles, not durable filesystem authority. At prompt
-  delivery the Host resolves the workspace and each candidate through real paths and accepts only
-  regular files contained by the current canonical workspace. Discovery membership, hidden visibility
-  and Git ignore rules do not authorize references. Symlink retargets fail closed; becoming ignored
-  does not revoke a still-valid selected file. File references added to the prompt are
-  JSON string literals under an explicit context heading, so filename newlines or list markers
-  cannot create new prompt instructions. A transport replacement invalidates in-flight prompt/upload
-  ownership; stale completions cannot clear current composer state, and uploaded bytes completed on
-  the old transport are reclaimed.
+- Project references and artifact handoff follow [[composer]]; preview authorization follows
+  [[resource-preview]]. Transcript paths are presentation, not filesystem authority.
 
 ### View-local search and Prompt Map
 
@@ -234,6 +227,10 @@ custom messages remain independent readable boundaries in this contract.
   tool, and extension-message cards, their headers show no timestamp or elapsed-time metadata.
   Canonical timestamps and source content remain unchanged. They are not hidden behind a
   generic-message raw JSON fallback and remain distinct rows at their context boundaries.
+  Manual/automatic cancellation and failure have visible outcome notices even without a local
+  receipt, not duplicate successful summaries. Host snapshots restore summarization retry wait,
+  attempts and bounded reason; attempts/completion retire details without altering compaction's
+  cancellation boundary in [[pi-integration]].
 
 - Structured file paths and explicit local file references in conversation content remain
   distinguishable from external web links and can open the owning session’s resource preview.
@@ -268,12 +265,9 @@ history keep one result per native execution. [[pi-integration]] owns execution 
   inside the expanded body, subject to host redaction and transport bounds; unsupported future
   response-bearing methods enter the same cancellable dialog model rather than being dropped.
 
-- Concurrent extension dialogs are retained in arrival order by Pi request id while the oldest is
-  modal. Responses are idempotent in the browser, revalidated inside the host mutation gate, and
-  remove only their owning request. Positive Pi timeouts are bounded and mirrored with host expiry
-  timers; expiry, explicit Stop, worker replacement/exit, and close remove stale requests.
-  Model settlement does not end an independent extension command or its dialog. Snapshots retain
-  pending requests with their owning worker.
+- Concurrent extension dialogs retain arrival order while the oldest is modal. Browser response
+  gestures are idempotent; [[pi-integration]] owns Host request/worker validation, deadlines,
+  reconnect retention and cleanup. Model settlement does not dismiss an independent command's dialog.
 
 - Pending appears at the end of Transcript with visible, bounded Steer/Queue previews, known image
   counts and omission markers. Its header groups Return, complete Copy and Clear actions.

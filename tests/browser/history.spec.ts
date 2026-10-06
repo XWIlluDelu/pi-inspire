@@ -57,7 +57,8 @@ for (const touch of [false, true]) {
       page,
     }) => {
       await connectCalibration(page);
-      let imageRequests = 0;
+      let imageAvailable = false;
+      const imageRequests: string[] = [];
       let entryRequests = 0;
       await page.route("**/api/branches/entry?**", async (route) => {
         entryRequests++;
@@ -69,8 +70,10 @@ for (const touch of [false, true]) {
         await route.fulfill({ response, json: body });
       });
       await page.route("**/api/branches/image?**", async (route) => {
-        imageRequests++;
-        if (imageRequests === 1)
+        imageRequests.push(route.request().url());
+        // Fail the selected resource, not an arbitrary first request that a
+        // retired effect may abort before it reaches the browser.
+        if (!imageAvailable)
           await route.fulfill({
             status: 503,
             json: { error: "Temporary image failure" },
@@ -90,9 +93,14 @@ for (const touch of [false, true]) {
         return history;
       };
       let history = await selectInput();
-      await history
-        .getByRole("button", { name: "Retry image", exact: true })
-        .click();
+      const retryImage = history.getByRole("button", {
+        name: "Retry image",
+        exact: true,
+      });
+      await expect(retryImage).toBeVisible();
+      const failedReads = imageRequests.length;
+      imageAvailable = true;
+      await retryImage.click();
       const image = history.getByRole("button", {
         name: "Preview image in this history entry",
       });
@@ -103,7 +111,8 @@ for (const touch of [false, true]) {
             .evaluate((node) => (node as HTMLImageElement).naturalWidth),
         )
         .toBeGreaterThan(0);
-      expect(imageRequests).toBe(2);
+      expect(imageRequests.length).toBeGreaterThan(failedReads);
+      expect(new Set(imageRequests).size).toBe(1);
       expect(entryRequests).toBe(1);
       await history.getByRole("button", { name: "Back to history" }).click();
       await expect(
@@ -136,7 +145,7 @@ for (const touch of [false, true]) {
       }
     });
 
-    test("reads native-shaped shell History, saved images and the complete direct-shell log", async ({
+    test("reads native-shaped shell History and inspects saved images", async ({
       page,
     }) => {
       await connectCalibration(page);
@@ -227,39 +236,6 @@ for (const touch of [false, true]) {
         path: `output/playwright/history/${size}-image-escape.png`,
       });
       await history.getByRole("button", { name: "Back to history" }).click();
-      if (touch)
-        await page
-          .getByRole("button", { name: "Close context pane", exact: true })
-          .click();
-      if (touch) {
-        await page.getByRole("log").hover();
-        await page.mouse.wheel(0, -3000);
-      }
-      const card = page
-        .getByRole("region", { name: "Shell command" })
-        .filter({ hasText: "Included in context" });
-      const reference = await card
-        .getByRole("button", { name: "View full output", exact: true })
-        .getAttribute("data-file-path");
-      expect(reference).toBe(resolve(browserWorkspace, "native-shell.log"));
-      const resolved = page.waitForRequest(
-        (request) =>
-          new URL(request.url()).pathname === "/api/resources/resolve" &&
-          request.postDataJSON().reference === reference,
-      );
-      await card
-        .getByRole("button", { name: "View full output", exact: true })
-        .click();
-      const request = await resolved;
-      expect(request.postDataJSON().sessionId).toBe("mock-calibration-history");
-      const source = page.getByRole("region", { name: "File source" });
-      await expect(source).toBeVisible();
-      expect(await source.locator("code").textContent()).toBe(
-        await readFile(resolve(browserWorkspace, "native-shell.log"), "utf8"),
-      );
-      await page.screenshot({
-        path: `output/playwright/history/${size}-shell-full-output.png`,
-      });
     });
 
     test("clears a pending search and retries the selected failed detail without losing its place", async ({
@@ -640,12 +616,12 @@ for (const touch of [false, true]) {
       ).toBeEnabled();
       await expect(composer).toHaveValue("");
       await composer.fill("/clone");
-      await composer.press("Enter"); // Accept completion, as with the other slash commands.
-      if (touch)
-        await page
-          .getByRole("button", { name: "Send message", exact: true })
-          .tap();
-      else await composer.press("Enter"); // Explicitly invoke the prepared command.
+      const send = page.getByRole("button", {
+        name: "Send message",
+        exact: true,
+      });
+      if (touch) await send.tap();
+      else await send.click();
       await expect
         .poll(
           () =>
@@ -671,6 +647,47 @@ for (const touch of [false, true]) {
     });
   });
 }
+
+test("navigates to a native shell card and opens its complete log on a narrow screen", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await connectCalibration(page);
+  await page.getByRole("button", { name: "Open conversation search" }).click();
+  const search = page.getByRole("searchbox", { name: "Search conversation" });
+  await search.fill("COMPLETE_NATIVE_SHELL_LOG_END");
+  await expect(page.getByLabel("Transcript search matches")).toContainText(
+    "1 match",
+  );
+  await search.press("Enter");
+  const card = page
+    .getByRole("region", { name: "Shell command" })
+    .filter({ hasText: "Included in context" });
+  const action = card.getByRole("button", {
+    name: "View full output",
+    exact: true,
+  });
+  await expect(action).toBeInViewport();
+  const reference = resolve(browserWorkspace, "native-shell.log");
+  await expect(action).toHaveAttribute("data-file-path", reference);
+  const resolved = page.waitForRequest(
+    (request) =>
+      new URL(request.url()).pathname === "/api/resources/resolve" &&
+      request.postDataJSON().reference === reference,
+  );
+  await action.click();
+  expect((await resolved).postDataJSON().sessionId).toBe(
+    "mock-calibration-history",
+  );
+  const source = page.getByRole("region", { name: "File source" });
+  await expect(source).toBeVisible();
+  expect(await source.locator("code").textContent()).toBe(
+    await readFile(reference, "utf8"),
+  );
+  await page.screenshot({
+    path: "output/playwright/history/narrow-shell-full-output.png",
+  });
+});
 
 test("History Edit with a delayed summary preserves a newer draft and image", async ({
   page,

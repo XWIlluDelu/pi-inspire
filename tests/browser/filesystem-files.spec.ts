@@ -229,42 +229,43 @@ for (const narrow of [false, true]) {
         .getByRole("region", { name: "Workspace search results" })
         .locator('[data-workspace-path="dist/report.md"]'),
     ).toBeVisible();
-    if (narrow)
-      await pane.getByRole("button", { name: "Close context pane" }).click();
-    else
-      await page
-        .getByRole("button", { name: "Toggle resources panel" })
-        .click();
-    const input = page.getByRole("textbox", { name: "Message", exact: true });
-    await input.fill("@config");
-    await expect(
-      page
-        .getByRole("listbox", { name: "Project file completions" })
-        .getByText("No matching project files"),
-    ).toBeVisible();
-    await page
-      .locator(".completion")
-      .getByRole("button", { name: "Show hidden files" })
-      .click();
-    await expect(input).toBeFocused();
-    await expect(input).toHaveValue("@config");
-    const completionOption = page.getByRole("option", {
+  });
+}
+
+test("hidden inline references send unchanged text; only explicit picker selections deliver files", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByLabel("Access token").fill(token);
+  await page.getByRole("button", { name: "Pair", exact: true }).click();
+  await expect(page.getByRole("main")).toBeVisible();
+  const created = await page.request.post("/api/sessions/new", {
+    data: { cwd: root, name: "Project file delivery fixture" },
+  });
+  expect(created.ok()).toBe(true);
+  await page.reload();
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Read @config");
+  const completion = page.getByRole("listbox", {
+    name: "Project file completions",
+  });
+  await expect(completion.getByText("No matching project files")).toBeVisible();
+  await page
+    .locator(".completion")
+    .getByRole("button", { name: "Show hidden files" })
+    .click();
+  await expect(input).toBeFocused();
+  await completion
+    .getByRole("option", {
       name: "config.txt .settings/config.txt",
       exact: true,
-    });
-    await expect(completionOption).toBeVisible();
-    await expect(page.locator(".completion .completion__heading")).toHaveCount(
-      1,
-    );
-    await page.screenshot({
-      path: `output/playwright/filesystem-completion-${narrow ? "narrow" : "desktop"}.png`,
-      fullPage: true,
-    });
-    await completionOption.click();
-    await expect(
-      page.getByRole("list", { name: "Referenced project files" }),
-    ).toContainText("config.txt");
-    await input.fill("Use the selected synthetic configuration");
+    })
+    .click();
+  const text = 'Read @".settings/config.txt" ';
+  await expect(input).toHaveValue(text);
+  const chips = page.getByRole("list", { name: "Referenced project files" });
+  await expect(chips).toHaveCount(0);
+  const submit = async () => {
     const submitted = page.waitForResponse(
       (response) =>
         response.url().endsWith("/api/prompt") &&
@@ -275,8 +276,40 @@ for (const narrow of [false, true]) {
       .click();
     const response = await submitted;
     expect(response.ok()).toBe(true);
-    expect(response.request().postDataJSON().projectFiles).toEqual([
-      ".settings/config.txt",
-    ]);
-  });
-}
+    return response.request().postDataJSON();
+  };
+  const inline = await submit();
+  expect(inline.message).toBe(text);
+  expect(inline.projectFiles ?? []).toEqual([]);
+  await expect(
+    page.getByRole("button", { name: "Send message", exact: true }),
+  ).toBeVisible();
+
+  await page
+    .getByRole("button", { name: "Add project files", exact: true })
+    .click();
+  const picker = page.getByRole("dialog", { name: "Add project files" });
+  await picker
+    .getByRole("combobox", { name: "Search project files" })
+    .fill("config");
+  // The hidden-files choice is shared with inline completion; opening the
+  // picker must retain it rather than toggling the file out of the results.
+  await expect(
+    picker.getByRole("button", { name: "Show hidden files" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await picker
+    .getByRole("option", {
+      name: "config.txt, .settings/config.txt",
+      exact: true,
+    })
+    .click();
+  await picker
+    .getByRole("combobox", { name: "Search project files" })
+    .press("Escape");
+  await expect(chips).toContainText("config.txt");
+  const prompt = "Use the selected synthetic configuration";
+  await input.fill(prompt);
+  const picked = await submit();
+  expect(picked.message).toBe(prompt);
+  expect(picked.projectFiles).toEqual([".settings/config.txt"]);
+});

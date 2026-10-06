@@ -167,7 +167,7 @@ describe("message reconciliation", () => {
     expect(start.slice.runState).toBe("running");
   });
 
-  it("reconstructs Pi 0.84 message_update deltas without creating phantom rows", () => {
+  it("reconstructs message_update deltas without creating phantom rows", () => {
     let result = reduce(emptyEventSlice(), new Set(), {
       type: "message_start",
       message: {
@@ -669,7 +669,6 @@ describe("transient tool/retry/queue activity", () => {
     expect(started.slice.tools.t1).toMatchObject({
       name: "read",
       phase: "running",
-      detail: "src/index.ts",
     });
 
     const updated = reduce(started.slice, new Set(), {
@@ -683,7 +682,7 @@ describe("transient tool/retry/queue activity", () => {
     });
     expect(updated.slice.tools.t1).toMatchObject({
       phase: "running",
-      detail: "reading lines 1-40",
+      outputPreview: { text: "reading lines 1-40", truncated: false },
     });
 
     const failed = reduce(updated.slice, new Set(), {
@@ -694,8 +693,7 @@ describe("transient tool/retry/queue activity", () => {
       isError: true,
     });
     expect(failed.slice.tools.t1!.phase).toBe("error");
-    // truthful: the last known detail survives completion
-    expect(failed.slice.tools.t1!.detail).toBe("reading lines 1-40");
+    expect(failed.slice.tools.t1!.outputPreview).toBeUndefined();
   });
 
   it("maps auto-retry start/end into run state and retry info", () => {
@@ -921,30 +919,6 @@ describe("extension_ui_request mapping", () => {
       extensionStatuses: {},
     });
     expect(cleared.slice.statuses).toEqual({});
-  });
-
-  it("bounds legacy setStatus events and retains only the latest 20", () => {
-    let current = emptyEventSlice();
-    for (let index = 0; index < 22; index += 1) {
-      current = reduce(current, new Set(), {
-        type: "extension_ui_request",
-        id: `legacy-status-${index}`,
-        method: "setStatus",
-        statusKey: `status-${index}`,
-        statusText: "🧭".repeat(MAX_EXTENSION_STATUS_CHARS + 1),
-      }).slice;
-    }
-    expect(Object.keys(current.statuses)).toHaveLength(20);
-    expect(current.statuses).not.toHaveProperty("status-0");
-    expect(current.statuses).not.toHaveProperty("status-1");
-    expect(Object.values(current.statuses)).toEqual(
-      expect.arrayContaining([expect.stringMatching(/^(?:🧭)*…$/u)]),
-    );
-    expect(
-      Object.values(current.statuses).every(
-        (status) => Array.from(status).length <= MAX_EXTENSION_STATUS_CHARS,
-      ),
-    ).toBe(true);
   });
 
   it("injects set_editor_text with an incrementing nonce", () => {

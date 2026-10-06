@@ -50,4 +50,5 @@ ownership. Chromium phase-injection fixtures restored retry 2/3 across reload an
 without a command receipt at desktop light and narrow dark/Jade sizes. Those checks exercise
 presentation/reconstruction, not a live provider's threshold compaction or overload.
 
-[[challenge-state-authority-2026-09-08]] holds the completed review and verification environment.
+The 2026-09-08 review used Linux / Node 22.19.0 and production Chromium. It checked phase
+reconstruction without restarting the daily Host or inducing a real provider failure/compaction.

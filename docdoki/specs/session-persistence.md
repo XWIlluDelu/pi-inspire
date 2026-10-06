@@ -32,6 +32,24 @@ boundary. Catalog and navigation obligations remain in [[session-continuity]]; b
   replaces the temporary preview with authoritative RPC state only if that session is still selected.
   Readiness requires the startup attestation below.
 
+### New-session materialization
+
+Pi reserves a session path before creating JSONL, so model, thinking, name, extension state and the
+first user message may exist only in the creating worker. Explicit model/thinking choices enter as
+startup arguments. Until corresponding disk changes exist, the explicit thinking choice remains
+visible in returned/later snapshots rather than yielding to a projection's structural `off`; without
+an explicit choice, use live worker state.
+
+Only `newSession` may open a healthy empty projection for an absent path. Read the creating worker's
+bounded contiguous `get_entries` once, covering a file appearing during setup, then attest each
+observed complete-line prefix against that state. Header version, session ID, cwd, root parent, entry
+chain and physical append lineage must agree. Header-only and multi-write flushes keep this one
+transition open until disk catches up. Disk-before-event entries retain persistence correlation and
+consume their exact matching event once. Mismatch stops the worker; ordinary existing-session open
+treats missing JSONL as an error. Once materialized, normal inode/version/append rules apply.
+An unselected idle never-materialized session has no catalog identity and may be abandoned by LRU;
+selected/running work retains its worker.
+
 ### Startup trust boundary
 
 - Worker startup establishes a trusted projection tail (or trusted empty baseline), constructs the
@@ -52,6 +70,10 @@ boundary. Catalog and navigation obligations remain in [[session-continuity]]; b
   baseline. The one-writer rule remains authoritative, and messages, model changes, compactions,
   unsupported or oversized mixed deltas, wrong parents or values, path/session mismatch,
   filesystem-object change, and rewrites stop the worker.
+
+- After an RPC mutation frame is written, stream failure or child loss leaves acceptance unknown.
+  Confirm worker termination, reconcile disk inside the operation lane and retain a conflict rather
+  than retrying or restaging its input. An observer timeout alone proves neither failure nor exit.
 
 - A reconciliation conflict is sticky across `agent_settled` and other terminal lifecycle events:
   the worker remains stopped until the explicit recovery boundary clears the conflict, and no

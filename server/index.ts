@@ -245,9 +245,9 @@ if (process.env.INSPIRE_TERMINAL_IN_PROCESS === "1") {
 }
 const modelRuntime = mock
   ? null
-  : await ModelRuntime.create().catch((error) => {
+  : await ModelRuntime.create({ refreshOnCreate: false }).catch((error) => {
       console.error(
-        "Unable to load Pi's model catalog for the new-session picker:",
+        "Unable to initialize Pi provider authentication:",
         error instanceof Error ? error.message : String(error),
       );
       return null;
@@ -337,17 +337,7 @@ const application = createInspireServer({
   providerAuth: modelRuntime
     ? new ProviderAuthService(
         modelRuntime,
-        () => {
-          const settings = SettingsManager.create(
-            root,
-            getAgentDir(),
-          ) as ReturnType<typeof SettingsManager.create> & {
-            getOrCreateDeviceId?: () => string;
-          };
-          if (!settings.getOrCreateDeviceId)
-            throw new Error("This Pi version does not require a device ID");
-          return settings.getOrCreateDeviceId();
-        },
+        () => SettingsManager.create(root, getAgentDir()).getOrCreateDeviceId(),
         undefined,
         await nativeOAuthDescriptors(piInstallation.sdkEntryPath),
       )

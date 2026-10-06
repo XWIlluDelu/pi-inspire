@@ -34,10 +34,10 @@ continues to inherit the supplied environment.
 - Supported shell initialization uses `-i -l -c`, not manually sourcing a particular rc file in a
   potentially different shell. `INSPIRE_SHELL` overrides SHELL/account selection; explicit inherit
   mode supports externally managed environments. This does not change Pi's native shell tools.
-- Startup output is discarded, while exports use a separate pipe. The final command redirects its
-  stdout to that pipe: interactive Bash did not reliably preserve an inherited auxiliary descriptor
-  into Node, so writing directly to fd 3 failed in the initial experiment. Explicit descriptor
-  duplication works with the tested Bash and Zsh initialization.
+- Exports use a uniquely framed record on the stdout pipe. The reader discards startup output
+  incrementally and buffers only the export. This avoids auxiliary descriptors that older Bash
+  closes during startup and the high-descriptor spawn failure observed in macOS CI. Startup
+  banners, including JSON-looking text and output without a newline, cannot become an export.
 - The probe is isolated, limited to ten seconds and 1 MiB of exports, and killed as a process group
   on timeout/overflow/failure. Errors do not repeat shell output or environment values. No partial
   result or silently reduced PATH is accepted.

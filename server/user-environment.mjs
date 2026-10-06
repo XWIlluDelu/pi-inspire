@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { userInfo } from "node:os";
 import { basename, isAbsolute } from "node:path";
 import { isolatedProcessOptions, signalProcessTree } from "./process-tree.mjs";
@@ -58,10 +59,11 @@ async function shellEnvironment(environment, options) {
     throw environmentError(
       "the selected shell is not a supported absolute shell path",
     );
-  const script = 'process.stdout.write(JSON.stringify(process.env))';
-  // Interactive Bash can mark inherited auxiliary descriptors close-on-exec.
-  // Duplicate the dedicated pipe to stdout only for this final export command.
-  const command = `exec ${shellQuote(process.execPath)} -e ${shellQuote(script)} 1>&3`;
+  // Shell startup can close auxiliary descriptors. Frame the export on stdout
+  // instead, so banners are discarded without relying on inherited high FDs.
+  const marker = Buffer.from(`\0${randomUUID()}\0`);
+  const script = `process.stdout.write(${JSON.stringify(marker.toString())} + JSON.stringify(process.env))`;
+  const command = `exec ${shellQuote(process.execPath)} -e ${shellQuote(script)}`;
   const result = await new Promise((resolve, reject) => {
     const child = spawn(shell, ["-i", "-l", "-c", command], {
       cwd: environment.HOME || userInfo().homedir,
@@ -72,11 +74,12 @@ async function shellEnvironment(environment, options) {
         INSPIRE_RESOLVING_ENVIRONMENT: "1",
       },
       ...isolatedProcessOptions(),
-      // A separate pipe keeps banners, prompts, and startup warnings out of the
-      // environment protocol. No startup output or environment is persisted.
-      stdio: ["ignore", "ignore", "ignore", "pipe"],
+      stdio: ["ignore", "pipe", "ignore"],
     });
+    const output = child.stdout;
     const chunks = [];
+    let prefix = Buffer.alloc(0);
+    let exporting = false;
     let length = 0;
     let settled = false;
     const fail = (reason) => {
@@ -84,14 +87,25 @@ async function shellEnvironment(environment, options) {
       settled = true;
       clearTimeout(timer);
       void signalProcessTree(child, "SIGKILL", { isolated: true });
-      child.stdio[3]?.destroy();
+      output.destroy();
       reject(environmentError(reason));
     };
     const timer = setTimeout(
       () => fail("shell initialization timed out"),
       options.timeoutMs ?? 10_000,
     );
-    child.stdio[3].on("data", (chunk) => {
+    output.on("data", (chunk) => {
+      if (!exporting) {
+        const bytes = Buffer.concat([prefix, chunk]);
+        const start = bytes.indexOf(marker);
+        if (start === -1) {
+          prefix = bytes.subarray(Math.max(0, bytes.length - marker.length + 1));
+          return;
+        }
+        exporting = true;
+        prefix = Buffer.alloc(0);
+        chunk = bytes.subarray(start + marker.length);
+      }
       length += chunk.length;
       if (length > (options.maxBytes ?? 1024 * 1024)) {
         fail("the exported environment exceeded the size limit");
@@ -99,7 +113,7 @@ async function shellEnvironment(environment, options) {
       }
       chunks.push(chunk);
     });
-    child.stdio[3].on("error", () => fail("the environment pipe failed"));
+    output.on("error", () => fail("the environment pipe failed"));
     child.once("error", () => fail("the shell could not be started"));
     child.once("close", (code) => {
       if (settled) return;
