@@ -1,7 +1,7 @@
 ---
 purpose: Thinking and tool activity keep stable disclosure identity, bounded lazy bodies, independent density preferences, and Pi-owned lifecycle states.
 covers:
-  - src/components/transcript-{activity,fold,row-projection,rows,cards}.ts*
+  - src/components/transcript-{activity,activity-visibility,fold,row-projection,rows,cards}.ts*
   - src/ansi.ts
   - src/events.ts
   - src/components/Transcript.tsx
@@ -30,13 +30,25 @@ round-lead content retain their existing cards inside it. Displayed custom messa
 | --- | --- |
 | Expanded | Every card in source order. |
 | Compact | Latest 24 cards; a top `···` reveals an omitted prefix. Equivalent to Expanded for shorter runs. |
-| Collapsed | Centered `···` between the rails. Already materialized card state is retained. |
+| Collapsed | One disclosure button containing both rails and centered `···`. Already materialized card state is retained. |
 | Adaptive (`dynamic`) | Historical bands start Collapsed; live bands start Compact and close at the lifecycle boundary below. |
 
 Preferences choose the initial state. Manual disclosure follows the same ladder in every mode:
 Collapsed opens Compact, the Compact prefix opens Expanded, and either rail steps downward.
 When Expanded and Compact are equivalent, closing skips that intermediate state. Rail glyphs point
 toward the activity when contracting and away when expanding; adjacent telemetry edges stay parallel.
+
+Collapsed rails and dots are presentational children of one native button: one accessible disclosure
+name, one Tab stop, and one full-stack hit area, including the space between marks. Hover and keyboard
+focus apply the existing rail/glyph and dot feedback together. Activating any part, including with
+Enter or Space, opens Compact with the fold's center reading anchor. Open activity retains separate
+upper/lower controls and their respective reading anchors. When the lower control disappears on
+collapse, focus returns to the unified disclosure with `preventScroll`.
+
+Both rails retain colored tool/Thinking segments in source order, giving an approximate composition
+while collapsed. Historical runs over 24 items use evenly spaced samples; live runs show the latest
+24 and pulse only live segments. These are local activity cues, not an aggregate success/failure
+status or exact totals. Original double-rail, dot and glyph geometry remains unchanged.
 
 Fold-local choice overrides the default and survives pagination, virtualization, pairing changes,
 and deferred materialization within the branch view. Manual disclosure stops automatic collapse.
@@ -121,6 +133,8 @@ messages use the same interruption projection.
 
 ## Checks
 
-Activity/fold tests cover density, timing, identity, pagination, and scroll anchoring. Event tests
-cover generation, waiting, execution, settlement, and late updates. The browser matrix and streaming
+Activity/fold tests cover the single collapsed disclosure and focus return, density, timing,
+identity, pagination, and scroll anchoring. Implementation and review state:
+[[follow-frontend-refinement-2026-10-07]]. Event tests cover generation, waiting, execution,
+settlement, and late updates. The browser matrix and streaming
 flows are recorded in [[follow-tool-display-review-2026-09-29]].

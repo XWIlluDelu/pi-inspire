@@ -51,9 +51,6 @@ describe("settled transcript search", () => {
     const input = screen.getByRole("searchbox", {
       name: "Search conversation",
     });
-    const log = screen.getByRole("log");
-    expect(search.parentElement).toHaveClass("transcript-wrap");
-    expect(search.nextElementSibling).toBe(log);
     expect(search).not.toHaveClass("transcript-search--active");
 
     fireEvent.change(input, { target: { value: "shared" } });
@@ -89,6 +86,35 @@ describe("settled transcript search", () => {
 
     fireEvent.change(input, { target: { value: "" } });
     expect(search).not.toHaveClass("transcript-search--active");
+  });
+
+  it("desktop Escape releases input focus without clearing search ownership", () => {
+    render(
+      <Transcript
+        sessionId="desktop-escape"
+        messages={[{ role: "user", content: "find this prompt", timestamp: 1 }]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+    const input = screen.getByRole("searchbox", {
+      name: "Search conversation",
+    });
+    fireEvent.change(input, { target: { value: "find" } });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Next transcript match" }),
+    );
+    input.focus();
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(input).not.toHaveFocus();
+    expect(input).toHaveValue("find");
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("1 of 1");
+    expect(
+      screen.getByRole("button", { name: "Jump to latest" }),
+    ).toBeInTheDocument();
   });
 
   it("opens and closes mobile search explicitly without hiding an active query", async () => {

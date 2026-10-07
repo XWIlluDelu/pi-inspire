@@ -51,11 +51,13 @@ declaration.
   four detached accent datum ticks, and a centered square aperture. Its small
   and display masters compensate independently; the transparent 16px favicon
   is a pixel-fitted optical master. Launcher assets place the mark on a carbon
-  tile: ordinary PWA PNGs preserve transparency outside the rounded tile so a
-  desktop shell cannot paint white corner wedges, while maskable and Apple
-  touch assets use the full-bleed carbon master and rely on the operating
-  system's own mask. Installed icons are palette-independent: carbon `#14171A`,
-  titanium-white brackets `#F4F6F8`, and silver ticks/aperture `#B9C0C7`.
+  tile: ordinary PWA icons scale the complete tile and mark to 81.25% of the
+  canvas, leaving a 9.375% transparent inset on each side (48px on the 512px
+  master). This keeps launcher size comparable to neighboring desktop icons
+  and avoids white corner wedges. Maskable and Apple touch assets use the
+  full-bleed carbon master and rely on the operating system's own mask.
+  Installed icons are palette-independent: carbon `#14171A`, titanium-white
+  brackets `#F4F6F8`, and silver ticks/aperture `#B9C0C7`.
   The transparent browser-tab favicon is also palette-independent: it keeps its
   pixel geometry and ink/white brackets, with neutral quartz-gray `#63676C` ticks
   in light browser chrome and silver `#B9C0C7` ticks in dark browser chrome.

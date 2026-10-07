@@ -28,6 +28,47 @@ afterEach(() => {
 });
 
 describe("response activity folds", () => {
+  it("uses one collapsed disclosure and restores focus after lower collapse", () => {
+    const { container } = render(
+      <ResponseActivityFold
+        visibility="collapsed"
+        lifecycleActive={false}
+        closeRequested={false}
+      >
+        <button type="button">Retained card</button>
+      </ResponseActivityFold>,
+    );
+    const fold = container.querySelector<HTMLElement>("[data-activity-fold]")!;
+    const control = screen.getByRole("button", {
+      name: "Expand assistant activity",
+    });
+    expect(within(fold).getAllByRole("button")).toEqual([control]);
+    expect(control).toHaveAttribute("aria-expanded", "false");
+    expect(control).toHaveAttribute("data-activity-fold-anchor", "center");
+    expect(control.querySelector("button, [tabindex]")).toBeNull();
+    expect(
+      control.querySelectorAll(".activity-fold__rail[aria-hidden]"),
+    ).toHaveLength(2);
+
+    fireEvent.click(control.querySelector(".activity-fold__rail--lower")!);
+    expect(fold).toHaveAttribute("data-activity-fold-presentation", "compact");
+    const lower = screen.getByRole("button", {
+      name: "Collapse assistant activity from the lower boundary",
+    });
+    lower.focus();
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    fireEvent.click(lower);
+    expect(fold).toHaveAttribute(
+      "data-activity-fold-presentation",
+      "collapsed",
+    );
+    expect(
+      screen.getByRole("button", { name: "Expand assistant activity" }),
+    ).toHaveFocus();
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    focus.mockRestore();
+  });
+
   it.each(["collapsed", "compact"] as const)(
     "animates only a live fold's existing %s dots and stops on settlement or error",
     (visibility) => {
@@ -202,22 +243,18 @@ describe("response activity folds", () => {
     });
     fireEvent.click(lowerRail);
     expect(toolFold).toHaveAttribute("data-activity-fold", "closed");
-    expect(lowerRail).toHaveFocus();
+    const collapsedControl = within(toolFold).getByRole("button", {
+      name: "Expand assistant activity",
+    });
+    expect(collapsedControl).toHaveFocus();
+    expect(lowerRail).not.toBeInTheDocument();
     expect(toolFold.querySelector(".activity-fold__content")).toHaveAttribute(
       "hidden",
     );
     expect(toolDisclosure).toHaveAttribute("aria-expanded", "true");
 
-    expect(
-      within(toolFold).getByRole("button", {
-        name: "Expand assistant activity from the lower boundary",
-      }),
-    ).toBeVisible();
-    fireEvent.click(
-      within(toolFold).getByRole("button", {
-        name: "Expand assistant activity from the upper boundary",
-      }),
-    );
+    expect(within(toolFold).getAllByRole("button")).toEqual([collapsedControl]);
+    fireEvent.click(collapsedControl);
     expect(toolFold).toHaveAttribute("data-activity-fold", "open");
     expect(toolDisclosure).toHaveAttribute("aria-expanded", "true");
     expect(consoleError.mock.calls.flat().join(" ")).not.toContain(
@@ -845,14 +882,14 @@ describe("response activity folds", () => {
     expect(fold).toHaveAttribute("data-activity-fold", "closed");
     fireEvent.click(
       within(fold).getByRole("button", {
-        name: "Expand assistant activity from the lower boundary",
+        name: "Expand assistant activity",
       }),
     );
     expect(within(fold).getByText("earlier activity")).toBeVisible();
     expect(thinkingDisclosure).toHaveAttribute("aria-expanded", "false");
     expect(document.activeElement).toBe(
       within(fold).getByRole("button", {
-        name: "Collapse assistant activity from the lower boundary",
+        name: "Collapse assistant activity from the upper boundary",
       }),
     );
   });

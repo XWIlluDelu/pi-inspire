@@ -11,6 +11,8 @@ covers:
   - src/components/RichText.tsx
   - src/components/ScrollRail.tsx
   - src/components/Transcript.tsx
+  - src/components/TranscriptUtilities.tsx
+  - tests/browser/reading-navigation.spec.ts
   - src/components/PromptMap.tsx
   - src/components/transcript-activity.ts
   - src/components/transcript-cards.tsx
@@ -106,6 +108,12 @@ custom messages remain independent readable boundaries in this contract.
   latest-follow across prepends and live appends until search is cleared or the user explicitly
   jumps to latest.
 
+  Desktop search floats at the top-right of the reading measure. Search and narrow navigation
+  surfaces do not reserve layout height; opening controls preserves the scrollport and reading
+  position. Desktop Escape blurs the search input without clearing its query or selected match.
+  When latest-follow is released, a bottom-centered floating text button, `Jump to latest`, restores
+  follow. Search and narrow launchers precede messages in keyboard order; Latest follows them.
+
   On a narrow workbench, Search is an explicit 44px launcher in an idle control with no shared
   backdrop that floats over Transcript without reserving layout height; activating it replaces the
   launchers with the complete search row on a surface background and focuses the input, while Close,
@@ -148,6 +156,8 @@ custom messages remain independent readable boundaries in this contract.
   while same-branch pagination, append snapshots, branch rewrites, search ownership, and
   latest-follow preserve their existing authorities.
 
+Implementation and review state: [[follow-frontend-refinement-2026-10-07]].
+
 ### Response streaming and message-owned outcomes
 
 - Assistant text streams smoothly without visually rebuilding the entire transcript for every
@@ -169,8 +179,9 @@ custom messages remain independent readable boundaries in this contract.
   below the fold. Only an explicit wheel, touch, or keyboard gesture releases latest-follow
   outright.
 
-  A fold disclosure gesture owns its layout mutation before resizing and keeps the selected upper,
-  lower, or middle anchor fixed through ordinary and virtualized history; it retains latest-follow
+  A fold disclosure gesture owns its layout mutation before resizing. The unified collapsed
+  disclosure keeps the center anchor; open upper/lower controls keep their respective anchors through
+  ordinary and virtualized history. It retains latest-follow
   afterward only when the anchored result remains at the exact latest boundary. Input owns the
   viewport before its deferred scroll event, and once released, Markdown reflow, virtual-row
   measurement, scrollport resize, and other programmatic scroll events cannot silently reacquire

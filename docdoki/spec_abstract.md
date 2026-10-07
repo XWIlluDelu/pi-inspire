@@ -40,6 +40,13 @@ through the same RPC and GUI. [[northstar]] defines the product boundary;
 
 ## Current work
 
+The frontend redesign round is closed; the established overall design is retained. Accepted
+maintenance preserves floating reading controls and unifies collapsed activity interaction without
+changing its double rails, colored segments or middle dots. The Files layout experiment was withdrawn;
+remaining visual redesign proposals are not scheduled. [[follow-frontend-refinement-2026-10-07]]
+records the accepted maintenance and closure. Further work targets demonstrated bugs, vulnerabilities
+or necessary maintenance rather than restyling.
+
 [[follow-pi-native-capability-review-2026-10-02]] owns the remaining native-capability backlog.
 The separate presentation questions are compact-success receipts in
 [[follow-native-command-surface-2026-09-04]] and Files layout in

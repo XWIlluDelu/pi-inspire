@@ -16,6 +16,12 @@ The tab/favicon now keeps its 16px pixel geometry, fully transparent background 
 
 Verification: `browser-icon.test.ts` and `theme-init.test.ts` passed 12 tests on Node 22.19.0, including the stale service-worker icon regression. Chromium rasterization at 16px confirmed the expected light/dark center pixels and identical before/after alpha at every pixel. The 16px, 32px and enlarged comparison was visually inspected in `output/playwright/neutral-favicon.png`. This establishes asset rendering, not immediate replacement in browser-owned tab/history caches.
 
+## Launcher sizing
+
+Ordinary launcher icons now apply the transparent inset specified in [[design-system]]. At an equal 64px canvas, the previous tile occupied 64×64px while the local Papirus Chrome and VS Code icons occupied 56×56px. Scaling the complete tile and mark to 81.25% gives Inspire a 52×52px visible tile, compensating for the solid background's greater visual weight without changing internal proportions or palette. Only the ordinary manifest icon URLs advance to `v=6`; maskable, Apple touch, and favicon assets remain unchanged.
+
+Verification: regenerated PNGs have visible bounds (alpha ≥ 0.5) of 156×156px with 18px insets at 192px, and 416×416px with 48px insets at 512px. Maskable and Apple touch PNGs remain fully opaque and byte-identical to the previous assets. The production web build passed. The before/after comparison at 64px was visually inspected on light and dark backgrounds in `output/playwright/launcher-icon-sizing.png`.
+
 ## Browser boundary
 
 [MDN's PWA color guide](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/How_to/Customize_your_app_colors) describes page `theme-color` overriding the manifest fallback in supporting browsers. It is a browser hint, not CSS ownership of OS window borders. Installed icons are manifest/OS assets rather than live theme components; [Chrome's manifest update guide](https://web.dev/articles/manifest-updates) documents browser-controlled delayed update behavior. Versioned URLs do not promise immediate replacement of already installed launcher icons. Platform/browser differences remain; restarting the installed app or reinstalling may be necessary to see a cached icon change.

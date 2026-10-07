@@ -30,10 +30,16 @@ independent project shells in [[terminal]].
   gutter and rail position before paint, so the rail never covers conversation content or retains an
   earlier-width position.
 
+  Desktop search floats at the top-right of the reading measure. On both desktop and narrow
+  screens, search/navigation controls preserve vertical reading space rather than reserve a toolbar
+  row. The floating `Jump to latest` text button remains bottom-centered within the transcript.
+
   On a narrow workbench, the floating rail is removed entirely: a top-right control floats over
   Transcript without reserving layout height, has no shared backdrop while its mutually exclusive
   Search and Prompt Map launchers are idle, and gives Search or the rotated Prompt Map a surface
   background when active in that same zone while retaining its complete temporary directory.
+  [[conversation]] owns interaction details; [[follow-frontend-refinement-2026-10-07]] records
+  implementation and review state.
 
 - The navigation and contextual regions can collapse so the conversation can use the available
   width. Below 900px, desktop rail preference is preserved but navigation itself becomes an

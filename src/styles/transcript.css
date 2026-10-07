@@ -604,8 +604,8 @@
   }
 }
 
-/* A response-activity fold is a band: two interactive rails bound the activity
-   with visual affordance, directional glyphs, and activity telemetry segments. */
+/* Open activity has independent boundary controls. Collapsed rails and dots
+   share one disclosure, retaining the original visual stack. */
 .activity-fold {
   display: flex;
   min-width: 0;
@@ -615,6 +615,18 @@
 .activity-fold--collapsed {
   gap: 0;
   padding: 0;
+}
+
+.activity-fold__disclosure {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: var(--font-mono);
 }
 
 .activity-fold__rail {
@@ -734,28 +746,28 @@
     transform var(--dur-micro) var(--ease-standard);
 }
 
-button.activity-fold__rail:hover .activity-fold__line,
-button.activity-fold__rail:focus-visible .activity-fold__line {
+:is(button.activity-fold__rail, .activity-fold__disclosure):hover .activity-fold__line,
+:is(button.activity-fold__rail, .activity-fold__disclosure):focus-visible .activity-fold__line {
   background: color-mix(in srgb, var(--accent) 45%, var(--hairline));
 }
 
-button.activity-fold__rail:hover .activity-fold__segment,
-button.activity-fold__rail:focus-visible .activity-fold__segment {
+:is(button.activity-fold__rail, .activity-fold__disclosure):hover .activity-fold__segment,
+:is(button.activity-fold__rail, .activity-fold__disclosure):focus-visible .activity-fold__segment {
   opacity: 1;
 }
 
-button.activity-fold__rail:hover .activity-fold__handle,
-button.activity-fold__rail:focus-visible .activity-fold__handle {
+:is(button.activity-fold__rail, .activity-fold__disclosure):hover .activity-fold__handle,
+:is(button.activity-fold__rail, .activity-fold__disclosure):focus-visible .activity-fold__handle {
   transform: scale(1.15);
 }
 
-button.activity-fold__rail:hover .activity-fold__glyph,
-button.activity-fold__rail:focus-visible .activity-fold__glyph {
+:is(button.activity-fold__rail, .activity-fold__disclosure):hover .activity-fold__glyph,
+:is(button.activity-fold__rail, .activity-fold__disclosure):focus-visible .activity-fold__glyph {
   color: var(--accent);
   opacity: 1;
 }
 
-button.activity-fold__rail:focus-visible {
+:is(button.activity-fold__rail, .activity-fold__disclosure):focus-visible {
   outline: none;
 }
 
@@ -822,7 +834,7 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 }
 
 .activity-fold__omission--error,
-.activity-fold__summary--error .activity-fold__summary-badge {
+.activity-fold__disclosure--error .activity-fold__summary-badge {
   color: var(--danger);
   opacity: 0.9;
 }
@@ -909,17 +921,13 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
     transform var(--dur-micro) var(--ease-standard);
 }
 
-.activity-fold__summary:hover .activity-fold__summary-badge {
+.activity-fold__disclosure:hover .activity-fold__summary-badge {
   color: var(--accent);
   opacity: 1;
   transform: scale(1.08);
 }
 
-.activity-fold__summary:focus-visible {
-  outline: none;
-}
-
-.activity-fold__summary:focus-visible .activity-fold__summary-badge {
+.activity-fold__disclosure:focus-visible .activity-fold__summary-badge {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
   border-radius: var(--radius-xs);

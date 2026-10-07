@@ -240,6 +240,10 @@
   outline-offset: -2px;
 }
 
+.topbar__title-button[data-restored-focus]:focus-visible {
+  outline: none;
+}
+
 .session-actions-menu {
   position: fixed;
   z-index: 45;

@@ -200,6 +200,7 @@ const SessionIdent = memo(function SessionIdent({
     };
   }, shallowEqual);
   const [editing, setEditing] = useState(false);
+  const [restoredTitleFocus, setRestoredTitleFocus] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [value, setValue] = useState("");
   const [renameWidth, setRenameWidth] = useState(240);
@@ -212,6 +213,7 @@ const SessionIdent = memo(function SessionIdent({
     restoreTitleFocus.current = Boolean(
       inputRef.current?.form?.contains(document.activeElement),
     );
+    setRestoredTitleFocus(restoreTitleFocus.current);
     editIncarnationRef.current += 1;
     setEditing(false);
   }, []);
@@ -300,12 +302,15 @@ const SessionIdent = memo(function SessionIdent({
             ref={titleRef}
             type="button"
             className="topbar__title-button"
+            data-restored-focus={restoredTitleFocus || undefined}
+            onBlur={() => setRestoredTitleFocus(false)}
             aria-label={`Session actions: ${heading}`}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             title={heading}
             onClick={() => setMenuOpen((open) => !open)}
             onKeyDown={(event) => {
+              setRestoredTitleFocus(false);
               if (event.key === "ArrowDown" && !event.nativeEvent.isComposing) {
                 event.preventDefault();
                 setMenuOpen(true);
