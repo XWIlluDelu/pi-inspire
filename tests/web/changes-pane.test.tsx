@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import type { GitStatusResponse } from "../../shared/contracts";
+import type {
+  GitDiffResponse,
+  GitStatusResponse,
+} from "../../shared/contracts";
 import { createInitialAppState } from "../../src/app-state";
 import { ChangesPane } from "../../src/components/ChangesPane";
 import { selectContextPaneView } from "../../src/components/context-pane-view";
@@ -30,6 +33,61 @@ const staleNotice = "Refresh failed; showing the last known status.";
 const initial = selectContextPaneView(createInitialAppState());
 
 afterEach(cleanup);
+
+describe("Changes source rendering", () => {
+  it("renders highlighted source without changing line text or row geometry", () => {
+    const result: GitDiffResponse = {
+      kind: "text",
+      path: changed.files[0].path,
+      side: "unstaged",
+      additions: 1,
+      deletions: 1,
+      truncated: true,
+      encodingLossy: false,
+      lines: [
+        { kind: "delete", text: "-# Old heading", oldLine: 1, newLine: null },
+        { kind: "add", text: "+# New heading", oldLine: null, newLine: 1 },
+        {
+          kind: "context",
+          text: " <script>&</script>",
+          oldLine: 2,
+          newLine: 2,
+        },
+      ],
+    };
+    const { container } = render(
+      <ChangesPane
+        state={{
+          ...initial,
+          gitStatus: changed,
+          selectedGitPathId: "notes",
+          selectedGitSide: "unstaged",
+          gitDiff: { status: "ready", result },
+        }}
+      />,
+    );
+    const rowIcon = screen
+      .getByRole("button", { name: "notes.md, unstaged modified" })
+      .querySelector("svg");
+    expect(rowIcon).toHaveClass("lucide-file-text");
+    expect(rowIcon).toHaveAttribute("aria-hidden", "true");
+    expect(rowIcon).toHaveAttribute("width", "13");
+    const rows = container.querySelectorAll(".source-diff__line");
+    expect(rows).toHaveLength(3);
+    expect(
+      [...rows].map((row) => row.querySelector("code")?.textContent),
+    ).toEqual(["# Old heading", "# New heading", "<script>&</script>"]);
+    expect(rows[0].querySelector(".hljs-section")).not.toBeNull();
+    expect(rows[1].querySelector(".hljs-section")).not.toBeNull();
+    expect(rows[0].children).toHaveLength(4);
+    expect(rows[1].querySelector(".source-diff__mark")).toHaveTextContent("+");
+    expect(rows[2].querySelector("script")).toBeNull();
+    expect(screen.getByText("Source truncated")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Next change" }),
+    ).not.toBeDisabled();
+  });
+});
 
 describe("Changes status observation", () => {
   it("distinguishes initial loading and failure from retained results", () => {

@@ -3,7 +3,7 @@ purpose: Session-authorized files, documents, media, and Git changes are inspect
 covers:
   - shared/{contracts,resource-references}.ts
   - server/{resources,image-content,project-files,git-inspection,app,runtime,runtime-reads,mock}.ts
-  - src/{api,resources,resource-preview,document-resources,diff,store,pdf-renderer}.ts
+  - src/{api,resources,resource-preview,document-resources,diff,source-diff,file-icons,syntax-highlighting,store,pdf-renderer}.ts
   - scripts/vite-pdf-assets.ts
   - server/static-asset-cache.mjs
   - src/controllers/{resource,git,workspace}-controller.ts
@@ -14,7 +14,8 @@ covers:
   - src/styles/*.css
   - tests/server/{app,resources,resources-windows-paths,runtime-reads,git-inspection,runtime}.test.ts
   - tests/web/{resources,document-resources,document-image-controller,git-controller,workspace-controller,store-resources}.test.ts
-  - tests/web/{document-preview,pdf-preview,resources-pane,pane-resize,rich-text}.test.tsx
+  - tests/web/{document-preview,pdf-preview,resources-pane,changes-pane,pane-resize,rich-text}.test.tsx
+  - tests/web/{source-diff,file-icons,syntax-highlighting}.test.ts
   - tests/browser/workbench.spec.ts
 ---
 
@@ -197,7 +198,15 @@ Switching to Changes preserves the canonical selected workspace file whether or 
 Git status. The upper region shows repository identity, staged/working/conflict counts, and grouped
 paths. The lower region shows Source with the selected comparison's inline additions/deletions,
 counts, and non-wrapping previous/next change controls. The current change uses an edge marker
-without replacing the addition/deletion background colors.
+without replacing the addition/deletion background colors. Changed-file rows use filename-appropriate
+monochrome Lucide icons with a generic document fallback, retaining their size and Git decoration.
+
+Source comparisons reuse the Source highlighting palette and 64 Ki-character bound per revision.
+Highlight old and new source independently with full Git context, then render balanced token spans
+in the existing rows. Deletions use the old revision and its original filename for renames; additions
+and shared context use the selected new revision. Unknown languages and oversized revisions remain
+escaped plain text. Highlighting does not change source text, selection/copying or row/navigation
+geometry.
 
 - Working comparisons use working-tree source; staged comparisons use index source. An empty
   comparison reports no diff rather than substituting disk content for index source.

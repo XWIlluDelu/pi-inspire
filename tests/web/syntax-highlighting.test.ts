@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   highlightSource,
+  highlightSourceLines,
   languageForFile,
 } from "../../src/syntax-highlighting";
 
@@ -14,6 +15,20 @@ describe("source highlighting", () => {
     ["train.py", "print('ready')", "hljs-built_in"],
   ])("recognizes %s without guessing from content", (name, source, token) => {
     expect(highlightSource(source, languageForFile(name))).toContain(token);
+  });
+
+  it("balances multiline nested tokens into independently renderable rows", () => {
+    const rows = highlightSourceLines('<div\n title="first\n second">', "html");
+    expect(rows).toHaveLength(3);
+    expect(rows[2]).toContain('class="hljs-string"');
+    for (const row of rows) {
+      expect(row.match(/<span\b/g)?.length ?? 0).toBe(
+        row.match(/<\/span>/g)?.length ?? 0,
+      );
+    }
+    expect(rows[2]).toMatch(
+      /^<span class="hljs-tag"><span class="hljs-string">/,
+    );
   });
 
   it("keeps unknown and oversized source escaped", () => {

@@ -18,21 +18,22 @@ import {
   useState,
 } from "react";
 import type {
-  GitDiffLine,
   GitDiffResponse,
   GitDiffSide,
   GitFileChange,
   GitStatusResponse,
 } from "../../shared/contracts";
+import { fileIconForPath } from "../file-icons";
 import {
   gitDecorationForChange,
   gitHeadLabel,
   presentGitFacet,
 } from "../git-presentation";
+import { type SourceDiffProjection, sourceDiffRows } from "../source-diff";
 import { store } from "../store";
-import type { ContextPaneView } from "./context-pane-view";
 import { ContextPaneState } from "./ContextPaneState";
 import { ContextSplitBody } from "./ContextSplitBody";
+import type { ContextPaneView } from "./context-pane-view";
 import { PathCopyButton, ResourcePreviewContent } from "./FilePreview";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 
@@ -46,45 +47,6 @@ function selectedChange(
 
 function pathName(change: GitFileChange): string {
   return change.path.utf8Path ?? change.path.display;
-}
-
-interface SourceDiffRow {
-  line: GitDiffLine;
-  changeIndex: number | null;
-  startsChange: boolean;
-}
-
-interface SourceDiffProjection {
-  rows: SourceDiffRow[];
-  changes: number;
-}
-
-function sourceDiffRows(
-  diff: Extract<GitDiffResponse, { kind: "text" }>,
-): SourceDiffProjection {
-  const rows: SourceDiffRow[] = [];
-  let changeIndex = -1;
-  let insideChange = false;
-  for (const line of diff.lines) {
-    if (
-      line.kind !== "context" &&
-      line.kind !== "add" &&
-      line.kind !== "delete"
-    ) {
-      insideChange = false;
-      continue;
-    }
-    const changed = line.kind === "add" || line.kind === "delete";
-    const startsChange = changed && !insideChange;
-    if (startsChange) changeIndex += 1;
-    rows.push({
-      line,
-      changeIndex: changed ? changeIndex : null,
-      startsChange,
-    });
-    insideChange = changed;
-  }
-  return { rows, changes: changeIndex + 1 };
 }
 
 function SourceDiffView({
@@ -108,24 +70,29 @@ function SourceDiffView({
       data-pane-scroll-active="true"
     >
       <div className="source-diff__lines">
-        {projection.rows.map(({ line, changeIndex, startsChange }, index) => (
-          <div
-            key={`${line.kind}-${line.oldLine ?? ""}-${line.newLine ?? ""}-${index}`}
-            className={`source-diff__line source-diff__line--${line.kind} ${changeIndex !== null && changeIndex === activeChange ? "source-diff__line--active" : ""}`}
-            {...(startsChange ? { "data-change-index": changeIndex } : {})}
-          >
-            <span className="source-diff__number" aria-hidden>
-              {line.oldLine ?? ""}
-            </span>
-            <span className="source-diff__number" aria-hidden>
-              {line.newLine ?? ""}
-            </span>
-            <span className="source-diff__mark" aria-hidden>
-              {line.kind === "add" ? "+" : line.kind === "delete" ? "−" : ""}
-            </span>
-            <code>{line.text.slice(1)}</code>
-          </div>
-        ))}
+        {projection.rows.map(
+          ({ line, html, changeIndex, startsChange }, index) => (
+            <div
+              key={`${line.kind}-${line.oldLine ?? ""}-${line.newLine ?? ""}-${index}`}
+              className={`source-diff__line source-diff__line--${line.kind} ${changeIndex !== null && changeIndex === activeChange ? "source-diff__line--active" : ""}`}
+              {...(startsChange ? { "data-change-index": changeIndex } : {})}
+            >
+              <span className="source-diff__number" aria-hidden>
+                {line.oldLine ?? ""}
+              </span>
+              <span className="source-diff__number" aria-hidden>
+                {line.newLine ?? ""}
+              </span>
+              <span className="source-diff__mark" aria-hidden>
+                {line.kind === "add" ? "+" : line.kind === "delete" ? "−" : ""}
+              </span>
+              <code
+                // Highlighting escapes source and emits only balanced token spans.
+                dangerouslySetInnerHTML={{ __html: html }}
+              />
+            </div>
+          ),
+        )}
       </div>
       {diff.truncated ? (
         <div className="source-diff__boundary" role="status">
@@ -210,6 +177,7 @@ const ChangeRow = memo(function ChangeRow({
   selectedPathId: string | null;
   selectedSide: GitDiffSide | null;
 }) {
+  const Icon = fileIconForPath(pathName(change));
   const facet = presentGitFacet(change);
   const decoration = gitDecorationForChange(change);
   const sideChange = side === "staged" ? change.staged : change.unstaged;
@@ -236,7 +204,7 @@ const ChangeRow = memo(function ChangeRow({
       title={pathName(change)}
       onClick={() => void store.openGitDiff(change.path.id, side)}
     >
-      <History size={13} aria-hidden />
+      <Icon size={13} aria-hidden />
       <span
         className={`res__row-name ${decoration ? `git-deco--${decoration}` : ""}`}
       >
@@ -406,9 +374,13 @@ function ChangesDetail({ state }: { state: ContextPaneView }) {
   const diffView = state.gitDiff;
   const result = diffView?.status === "ready" ? diffView.result : null;
   const textResult = result?.kind === "text" ? result : null;
+  const oldPath = (
+    result?.side === "staged" ? change?.staged : change?.unstaged
+  )?.originalPath;
+  const oldName = oldPath?.utf8Path ?? oldPath?.display;
   const projection = useMemo(
-    () => (textResult ? sourceDiffRows(textResult) : null),
-    [textResult],
+    () => (textResult ? sourceDiffRows(textResult, oldName) : null),
+    [textResult, oldName],
   );
   const preview = state.resourcePreview;
   const noComparison = !change
