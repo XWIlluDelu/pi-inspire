@@ -636,9 +636,7 @@ describe("Files pane", () => {
     expect(
       await within(pane).findByRole("region", { name: "File source" }),
     ).toHaveAttribute("data-pane-scroll-active", "true");
-    expect(
-      within(pane).getByRole("button", { name: "Preview" }),
-    ).toBeDisabled();
+    expect(within(pane).queryByRole("button", { name: "Preview" })).toBeNull();
     expect(
       within(pane).getByRole("link", { name: "Download long.ts" }),
     ).toHaveAttribute(
@@ -1178,6 +1176,11 @@ describe("Files pane", () => {
       pane.querySelector(".notebook-preview__cell--code code"),
     ).toHaveTextContent("print('hello')");
     expect(within(pane).getByText("hello")).toBeInTheDocument();
+    expect(
+      pane.querySelector(
+        ".notebook-preview__cell--markdown .notebook-preview__prompt",
+      ),
+    ).toBeEmptyDOMElement();
     fireEvent.click(within(pane).getByRole("button", { name: "Source" }));
     expect(
       within(pane).getByRole("region", { name: "File source" }),

@@ -127,11 +127,9 @@ type FileViewMode = "preview" | "source";
 
 function FileViewControl({
   mode,
-  canToggle,
   onChange,
 }: {
   mode: FileViewMode;
-  canToggle: boolean;
   onChange: (mode: FileViewMode) => void;
 }) {
   const target = mode === "preview" ? "source" : "preview";
@@ -139,7 +137,6 @@ function FileViewControl({
     <button
       type="button"
       className="file-detail-header__view"
-      disabled={!canToggle}
       onClick={() => onChange(target)}
     >
       {target === "source" ? "Source" : "Preview"}
@@ -443,13 +440,15 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
               <Download size={14} aria-hidden />
             </button>
           )}
-          <FileViewControl
-            mode={viewMode}
-            canToggle={canToggle}
-            onChange={(mode) => {
-              if (descriptor) setFileView({ resourceId: descriptor.id, mode });
-            }}
-          />
+          {canToggle ? (
+            <FileViewControl
+              mode={viewMode}
+              onChange={(mode) => {
+                if (descriptor)
+                  setFileView({ resourceId: descriptor.id, mode });
+              }}
+            />
+          ) : null}
         </div>
       </div>
       <div className="file-preview__content">

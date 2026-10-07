@@ -128,8 +128,8 @@ requests and object URLs. Cancellation closes the exact opened file even if it a
 | Unsupported binary | File information. |
 
 The selected-file header stays above scrolling content. Its path copies the path, Download streams
-through the authenticated attachment route, and the reciprocal view action keeps a fixed trailing
-slot, disabled when unavailable. Source uses highlighting and line numbers; `:line` and `#Lline`
+through the authenticated attachment route, and dual-view files retain one reciprocal view action
+in a fixed trailing slot. Files with no alternative view omit that action. Source uses highlighting and line numbers; `:line` and `#Lline`
 open Source at that position, including for files that normally open in Preview. Files does not
 duplicate Changes with a Diff mode or add file-editing controls. Source, Markdown code blocks and
 Notebook cells highlight recognized languages up to 64 Ki characters per leaf; larger leaves retain
@@ -148,8 +148,9 @@ resolve-time size estimate.
 
 Notebook Preview statically renders Markdown cells, highlighted code, execution counts, text/error
 output, and images. Highlighting uses notebook language metadata, with common kernel-name recovery;
-error traces retain line breaks and omit ANSI escapes. Notebook code is not executed. Markdown raw
-HTML is disabled.
+error traces retain line breaks and omit ANSI escapes. Markdown cells leave the prompt gutter empty
+while retaining the common cell-body alignment. Notebook code is not executed. Markdown raw HTML is
+disabled.
 
 Local document images load inline through independently authorized resource requests and document-owned
 blob URLs. Reading a document does not authorize linked files. Each mounted document deduplicates at
@@ -195,7 +196,8 @@ and non-repository results. Initial failure does not claim a Git result.
 Switching to Changes preserves the canonical selected workspace file whether or not it appears in
 Git status. The upper region shows repository identity, staged/working/conflict counts, and grouped
 paths. The lower region shows Source with the selected comparison's inline additions/deletions,
-counts, and non-wrapping previous/next change controls.
+counts, and non-wrapping previous/next change controls. The current change uses an edge marker
+without replacing the addition/deletion background colors.
 
 - Working comparisons use working-tree source; staged comparisons use index source. An empty
   comparison reports no diff rather than substituting disk content for index source.

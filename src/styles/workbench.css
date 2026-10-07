@@ -1117,7 +1117,6 @@ button.res__more:hover {
 
 .source-diff__line--active {
   box-shadow: inset 2px 0 var(--accent);
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
 .source-diff__boundary {
