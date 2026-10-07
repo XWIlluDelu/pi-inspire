@@ -130,8 +130,16 @@ function AuthenticationPanel({
   const mutationRevision = useRef(0);
   const attemptRef = useRef<ProviderLoginAttempt | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const ownsPendingAttempt = useCallback(
+    (id: string) =>
+      mounted.current &&
+      attemptRef.current?.id === id &&
+      attemptRef.current.status === "pending",
+    [],
+  );
   const update = useCallback((next: ProviderLoginAttempt | null) => {
     attemptRef.current = next;
+    if (next?.status !== "pending") setError(null);
     setAttempt(next);
   }, []);
   const attemptId = attempt?.id;
@@ -166,7 +174,7 @@ function AuthenticationPanel({
           operation: "status",
           id: attemptId,
         })) as ProviderLoginAttempt;
-        if (!observing) return;
+        if (!observing || !ownsPendingAttempt(attemptId)) return;
         // A pending read started before a prompt mutation must not restore its
         // old prompt. Terminal receipts are authoritative and always settle it.
         if (
@@ -181,12 +189,11 @@ function AuthenticationPanel({
           setError((error) => (error === recovered ? null : error));
           pollError = null;
         }
-        if (next.status !== "pending") setError(null);
         update(next);
         if (next.status === "pending")
           timer = setTimeout(() => void poll(), 750);
       } catch (error) {
-        if (!observing) return;
+        if (!observing || !ownsPendingAttempt(attemptId)) return;
         pollError = messageOf(error);
         setError(pollError);
         timer = setTimeout(() => void poll(), 750);
@@ -197,7 +204,7 @@ function AuthenticationPanel({
       observing = false;
       clearTimeout(timer);
     };
-  }, [attemptId, attemptStatus, owner, update]);
+  }, [attemptId, attemptStatus, owner, update, ownsPendingAttempt]);
   useEffect(() => {
     if (attemptStatus !== "completed" && attemptStatus !== "failed") return;
     void onRefresh()
@@ -240,6 +247,13 @@ function AuthenticationPanel({
     if (!attempt?.prompt || busy) return;
     ++mutationRevision.current;
     const promptId = attempt.prompt.id;
+    const ownsPrompt = () => {
+      const livePrompt = attemptRef.current?.prompt;
+      return (
+        ownsPendingAttempt(attempt.id) &&
+        (!livePrompt || livePrompt.id === promptId)
+      );
+    };
     setBusy(true);
     setError(null);
     try {
@@ -249,18 +263,12 @@ function AuthenticationPanel({
         promptId,
         value,
       })) as ProviderLoginAttempt;
-      const live = attemptRef.current;
-      if (
-        mounted.current &&
-        live?.id === attempt.id &&
-        live.status === "pending" &&
-        (!live.prompt || live.prompt.id === promptId)
-      ) {
+      if (ownsPrompt()) {
         update(next);
         setInput("");
       }
     } catch (error) {
-      if (mounted.current) setError(messageOf(error));
+      if (ownsPrompt()) setError(messageOf(error));
     } finally {
       ++mutationRevision.current;
       if (mounted.current) setBusy(false);
@@ -276,9 +284,9 @@ function AuthenticationPanel({
         operation: "cancel",
         id: attempt.id,
       })) as ProviderLoginAttempt | null;
-      if (mounted.current) update(next);
+      if (ownsPendingAttempt(attempt.id)) update(next);
     } catch (error) {
-      if (mounted.current) setError(messageOf(error));
+      if (ownsPendingAttempt(attempt.id)) setError(messageOf(error));
     } finally {
       ++mutationRevision.current;
       if (mounted.current) setBusy(false);

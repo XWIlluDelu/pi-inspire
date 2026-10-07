@@ -14,10 +14,12 @@ import { ProviderAuthentication } from "../../src/components/ProviderAuthenticat
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 const refresh = vi.fn(async () => {});
 const panel = (owner = { sessionId: "one" }) => (
@@ -361,6 +363,90 @@ describe("auth attempt observation and owner retirement", () => {
       view.unmount();
     },
   );
+  it.each(["answer", "cancel"] as const)(
+    "ignores a late %s failure after polling has confirmed completion",
+    async (operation) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const receipt = deferred<ProviderLoginAttempt>();
+      const pending = pendingLogin({
+        type: "api_key",
+        prompt: { id: "key", type: "secret", message: "API key" },
+      });
+      host.providerAuth.mockImplementation(async (_owner, request) => {
+        if (request.operation === "start") return pending;
+        if (request.operation === operation) return receipt.promise;
+        if (request.operation === "status")
+          return {
+            ...pending,
+            status: "completed",
+            prompt: null,
+            message: "Login complete.",
+          };
+        return null;
+      });
+      const view = render(panel());
+      await start("Anthropic API key");
+      if (operation === "answer")
+        fireEvent.change(screen.getByLabelText("API key"), {
+          target: { value: "test-key" },
+        });
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: operation === "answer" ? "Continue" : "Cancel login",
+        }),
+      );
+
+      await act(async () => vi.advanceTimersByTimeAsync(250));
+      expect(screen.getByText("Login complete.")).toBeVisible();
+      await act(async () => receipt.reject(new Error("Response unavailable")));
+      expect(screen.getByText("Login complete.")).toBeVisible();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      view.unmount();
+    },
+  );
+
+  it("keeps answer completion authoritative over failed and outstanding polls", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const poll = deferred<ProviderLoginAttempt>();
+    let statusReads = 0;
+    const pending = pendingLogin({
+      type: "api_key",
+      prompt: { id: "key", type: "secret", message: "API key" },
+    });
+    host.providerAuth.mockImplementation((_owner, request) => {
+      if (request.operation === "start") return Promise.resolve(pending);
+      if (request.operation === "status")
+        return ++statusReads === 1
+          ? Promise.reject(new Error("Status unavailable"))
+          : poll.promise;
+      if (request.operation === "answer")
+        return Promise.resolve({
+          ...pending,
+          status: "completed",
+          prompt: null,
+          message: "Login complete.",
+        });
+      return Promise.resolve(null);
+    });
+    const view = render(panel());
+    await start("Anthropic API key");
+    fireEvent.change(screen.getByLabelText("API key"), {
+      target: { value: "test-key" },
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(250));
+    expect(screen.getByRole("alert")).toHaveTextContent("Status unavailable");
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    // Both requests settle before React cleans up the pending polling effect.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      await Promise.resolve();
+      poll.reject(new Error("Status unavailable"));
+    });
+    expect(screen.getByText("Login complete.")).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    view.unmount();
+  });
+
   it("retires a missing login when Cancel confirms there is no attempt", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     host.providerAuth.mockImplementation(async (_owner, operation) =>

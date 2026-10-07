@@ -120,8 +120,9 @@ method's device-code, pasted-code or redirect interaction.
 
 Attempts retain their originating worker. Cancellation or supersession prevents an older attempt
 from replacing a newer credential choice. Status-read failures resume observation; failed cancellation
-also resumes observation. The Host briefly retains settled outcomes so clients can recover a lost
-final response.
+also resumes observation. Once an attempt settles, its outcome supersedes earlier request errors;
+late answer, cancellation or status responses cannot replace it or add stale errors. The Host briefly
+retains settled outcomes so clients can recover a lost final response.
 
 Stored or resolved keys/tokens are omitted from ordinary model/status payloads and logs. Logout removes
 Pi's saved credential; environment and `models.json` credentials are managed separately.
