@@ -15,8 +15,8 @@ import { highlightSource, languageForFile } from "../syntax-highlighting";
 import { useCopied } from "../use-copied";
 import { ContextPaneState } from "./ContextPaneState";
 import type { ContextPaneView } from "./context-pane-view";
-import { ImagePreview } from "./ImagePreview";
 import { DocumentPreview } from "./DocumentPreview";
+import { ImagePreview } from "./ImagePreview";
 import { NotebookPreview } from "./NotebookPreview";
 import { PdfPreview } from "./PdfPreview";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
@@ -99,7 +99,7 @@ function SourceCodePreview({
   }, [jump]);
   return (
     <div
-      className="source-view"
+      className="source-view source-reader"
       ref={rootRef}
       tabIndex={0}
       role="region"

@@ -169,8 +169,8 @@ body.srail-dragging {
     display: inline-flex;
   }
 
-  .app--narrow .file-preview__content,
-  .app--narrow .changes__content {
+  .app--narrow .file-preview__content:not(:has(> .source-reader)),
+  .app--narrow .changes__content:not(:has(> .source-reader)) {
     padding: var(--space-2);
   }
 

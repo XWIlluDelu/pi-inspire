@@ -618,7 +618,18 @@ describe("Files pane", () => {
     expect(
       within(pane).getByRole("heading", { name: "proj" }),
     ).toBeInTheDocument();
-    fireEvent.click(await within(pane).findByRole("button", { name: "src" }));
+    expect(
+      pane.querySelector('.recent-file[title="demo.html"] > svg'),
+    ).toHaveClass("lucide-file-code-corner");
+    const directory = await within(pane).findByRole("button", { name: "src" });
+    expect(directory.querySelector(".lucide-folder")).not.toBeNull();
+    fireEvent.click(directory);
+    const fileIcon = (
+      await within(pane).findByRole("button", { name: "long.ts" })
+    ).querySelector("svg");
+    expect(fileIcon).toHaveClass("lucide-file-code-corner");
+    expect(fileIcon).toHaveAttribute("width", "13");
+    expect(fileIcon).toHaveAttribute("aria-hidden", "true");
     const browserScroller = pane.querySelector<HTMLElement>(
       ".files-browser__scroll",
     )!;
@@ -669,11 +680,11 @@ describe("Files pane", () => {
       name: "Search workspace files",
     });
     fireEvent.change(search, { target: { value: "main" } });
-    expect(
-      await within(pane).findByRole("button", {
-        name: /main\.ts.*src\/main\.ts/,
-      }),
-    ).toBeInTheDocument();
+    const match = await within(pane).findByRole("button", {
+      name: /main\.ts.*src\/main\.ts/,
+    });
+    expect(match).toBeInTheDocument();
+    expect(match.querySelector("svg")).toHaveClass("lucide-file-code-corner");
   });
 
   it("reveals an opened workspace file once without chasing later tree updates", async () => {

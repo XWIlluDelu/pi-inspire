@@ -692,17 +692,23 @@ button.res__index-header--back:hover svg {
   text-align: center;
 }
 
-.source-view {
-  display: grid;
+.file-preview__content:has(> .source-reader),
+.changes__content:has(> .source-reader) {
+  padding: 0;
+}
+
+.source-reader {
   min-height: 0;
   flex: 1 1 auto;
-  grid-template-columns: auto minmax(max-content, 1fr);
   overflow: auto;
   overscroll-behavior: contain;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
   background: var(--bg-surface);
   font: var(--text-reading-code)/var(--leading-mono) var(--font-mono);
+}
+
+.source-view {
+  display: grid;
+  grid-template-columns: auto minmax(max-content, 1fr);
 }
 
 .source-view__gutter {
@@ -1046,28 +1052,29 @@ button.res__more:hover {
   cursor: default;
 }
 
-.source-diff {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  background: var(--bg-surface);
-  font: var(--text-reading-code)/var(--leading-mono) var(--font-mono);
-}
-
 .source-diff__lines {
   width: max-content;
   min-width: 100%;
+  padding-block: var(--space-3);
 }
 
 .source-diff__line {
   display: grid;
   min-height: 22px;
-  grid-template-columns: 3.5ch 3.5ch 16px minmax(max-content, 1fr);
+  grid-template-columns: auto minmax(max-content, 1fr);
   align-items: center;
   font-size: var(--text-reading-code);
+}
+
+.source-diff__gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 3.5ch 3.5ch 16px;
+  align-items: center;
+  align-self: stretch;
+  background: var(--bg-surface);
 }
 
 .source-diff__number,
@@ -1099,23 +1106,26 @@ button.res__more:hover {
   font-size: var(--text-reading-code);
 }
 
-.source-diff__line--add {
-  background: color-mix(in srgb, var(--success) 8%, transparent);
+.source-diff__line--add,
+.source-diff__line--add .source-diff__gutter {
+  background: color-mix(in srgb, var(--success) 8%, var(--bg-surface));
 }
 
 .source-diff__line--add .source-diff__mark {
   color: var(--success);
 }
 
-.source-diff__line--delete {
-  background: color-mix(in srgb, var(--error) 7%, transparent);
+.source-diff__line--delete,
+.source-diff__line--delete .source-diff__gutter {
+  background: color-mix(in srgb, var(--error) 7%, var(--bg-surface));
 }
 
 .source-diff__line--delete .source-diff__mark {
   color: var(--error);
 }
 
-.source-diff__line--active {
+.source-diff__line--active,
+.source-diff__line--active .source-diff__gutter {
   box-shadow: inset 2px 0 var(--accent);
 }
 

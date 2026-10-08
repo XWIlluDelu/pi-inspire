@@ -73,6 +73,11 @@ and share the panel's existing 0.75-to-1 emphasis. User Copy/Fork, constant copy
 touch defaults are preserved; [[design-system]] holds the complete assignment table.
 The topbar location-glyph experiment is withdrawn; the project name/path retains its plain-text
 presentation and original copy feedback. [[workspace-layout]] holds the contract.
+Files Source and Changes now share an unframed full-width code canvas; Changes adds the sticky
+dual-line-number/sign gutter already present in Files, retaining diff tints and navigation.
+This independently reviewable slice is ready for review; [[resource-preview]] holds the contract.
+Files Recent, workspace-tree/search rows and the shared explorer now reuse Changes' file-type icons,
+with unchanged layout, directory icons and Git decoration; this separate slice is ready for review.
 
 [[follow-pi-native-capability-review-2026-10-02]] owns the remaining native-capability backlog.
 The separate presentation questions are compact-success receipts in

@@ -79,7 +79,10 @@ describe("Changes source rendering", () => {
     ).toEqual(["# Old heading", "# New heading", "<script>&</script>"]);
     expect(rows[0].querySelector(".hljs-section")).not.toBeNull();
     expect(rows[1].querySelector(".hljs-section")).not.toBeNull();
-    expect(rows[0].children).toHaveLength(4);
+    const gutter = rows[0].querySelector(".source-diff__gutter");
+    expect(gutter).toHaveAttribute("aria-hidden", "true");
+    expect(gutter?.querySelectorAll(".source-diff__number")).toHaveLength(2);
+    expect(gutter?.querySelector(".source-diff__mark")).toHaveTextContent("−");
     expect(rows[1].querySelector(".source-diff__mark")).toHaveTextContent("+");
     expect(rows[2].querySelector("script")).toBeNull();
     expect(screen.getByText("Source truncated")).toBeInTheDocument();

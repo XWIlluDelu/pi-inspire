@@ -11,7 +11,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { fileIconForPath } from "../../src/file-icons";
 
-describe("Changes file icons", () => {
+describe("Shared file icons", () => {
   it.each([
     ["src/panel.tsx", FileCode2],
     ["src\\panel.TSX", FileCode2],

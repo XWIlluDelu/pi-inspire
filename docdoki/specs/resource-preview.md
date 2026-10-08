@@ -31,7 +31,9 @@ preview; Changes owns Git comparisons. [[composer]] owns file attachment and the
 With no file selected, Files shows up to five deduplicated **Recent in this chat** references from
 one 16-reference Host page, followed by the workspace filesystem tree. Search replaces both sections
 while a query is present. Recent rows use an icon, filename, subdued parent path, and fixed trailing
-Git state on one line.
+Git state on one line. Recent, workspace-tree and search file rows reuse Changes' filename-based
+monochrome Lucide icon mapping at 13px, including the shared lower-left explorer. Directory icons,
+Git decorations, file labels and row geometry are unchanged.
 
 Selecting a recent, search, or tree entry opens a fixed index/detail stack: the workspace tree stays
 above the preview, while Search and Recent yield space. **← project-folder** returns to Browse with
@@ -132,7 +134,10 @@ The selected-file header stays above scrolling content. Its path copies the path
 through the authenticated attachment route, and dual-view files retain one reciprocal view action
 in a fixed trailing slot. Files with no alternative view omit that action. Source uses highlighting and line numbers; `:line` and `#Lline`
 open Source at that position, including for files that normally open in Preview. Files does not
-duplicate Changes with a Diff mode or add file-editing controls. Source, Markdown code blocks and
+duplicate Changes with a Diff mode or add file-editing controls. Files Source and Changes share an unframed, full-width source canvas below the fixed header, without
+outer card padding; inner text spacing remains. Their line-number gutters stay visible during
+horizontal scrolling. Rendered document/media previews and loading/error states retain their padding.
+Source, Markdown code blocks and
 Notebook cells highlight recognized languages up to 64 Ki characters per leaf; larger leaves retain
 text and copying without highlighting.
 
@@ -198,7 +203,9 @@ Switching to Changes preserves the canonical selected workspace file whether or 
 Git status. The upper region shows repository identity, staged/working/conflict counts, and grouped
 paths. The lower region shows Source with the selected comparison's inline additions/deletions,
 counts, and non-wrapping previous/next change controls. The current change uses an edge marker
-without replacing the addition/deletion background colors. Changed-file rows use filename-appropriate
+without replacing the addition/deletion background colors. The old/new line numbers and change sign
+share a sticky gutter with an opaque matching row tint, keeping code from showing beneath it;
+the active edge marker stays visible during horizontal scrolling. Changed-file rows use filename-appropriate
 monochrome Lucide icons with a generic document fallback, retaining their size and Git decoration.
 
 Source comparisons reuse the Source highlighting palette and 64 Ki-character bound per revision.

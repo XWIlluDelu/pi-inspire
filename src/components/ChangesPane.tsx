@@ -62,7 +62,7 @@ function SourceDiffView({
 }) {
   return (
     <div
-      className="source-diff"
+      className="source-diff source-reader"
       role="region"
       aria-label={`Source changes for ${diff.path.display}`}
       tabIndex={0}
@@ -77,14 +77,20 @@ function SourceDiffView({
               className={`source-diff__line source-diff__line--${line.kind} ${changeIndex !== null && changeIndex === activeChange ? "source-diff__line--active" : ""}`}
               {...(startsChange ? { "data-change-index": changeIndex } : {})}
             >
-              <span className="source-diff__number" aria-hidden>
-                {line.oldLine ?? ""}
-              </span>
-              <span className="source-diff__number" aria-hidden>
-                {line.newLine ?? ""}
-              </span>
-              <span className="source-diff__mark" aria-hidden>
-                {line.kind === "add" ? "+" : line.kind === "delete" ? "−" : ""}
+              <span className="source-diff__gutter" aria-hidden>
+                <span className="source-diff__number">
+                  {line.oldLine ?? ""}
+                </span>
+                <span className="source-diff__number">
+                  {line.newLine ?? ""}
+                </span>
+                <span className="source-diff__mark">
+                  {line.kind === "add"
+                    ? "+"
+                    : line.kind === "delete"
+                      ? "−"
+                      : ""}
+                </span>
               </span>
               <code
                 // Highlighting escapes source and emits only balanced token spans.

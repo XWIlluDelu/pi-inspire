@@ -1,7 +1,6 @@
 import {
   AlertTriangle,
   ChevronRight,
-  FileText,
   Folder,
   Loader2,
   RefreshCw,
@@ -17,6 +16,7 @@ import {
   useRef,
 } from "react";
 import type { GitFileChange } from "../../shared/contracts";
+import { fileIconForPath } from "../file-icons";
 import {
   gitDecorationForChange,
   gitDecorationForDirectory,
@@ -28,8 +28,8 @@ import {
   store,
   useAppState,
 } from "../store";
-import { ResourcePathLabel } from "./ResourcePathLabel";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
+import { ResourcePathLabel } from "./ResourcePathLabel";
 
 export function WorkspaceVisibilityToggle() {
   const showHidden = useAppState((source) => source.workspaceShowHidden);
@@ -118,6 +118,7 @@ const WorkspaceFileRow = memo(function WorkspaceFileRow({
   depth?: number;
   showPath?: boolean;
 }) {
+  const Icon = fileIconForPath(path);
   const selected = selectedPath === path;
   const decoration = gitDecorationForChange(change);
   const facet = presentGitFacet(change);
@@ -132,7 +133,7 @@ const WorkspaceFileRow = memo(function WorkspaceFileRow({
       data-workspace-path={path}
       onClick={() => void store.openWorkspaceFile(path)}
     >
-      <FileText size={13} aria-hidden />
+      <Icon size={13} aria-hidden />
       <span className="workspace-tree__file-label">
         <span
           className={`workspace-tree__name ${decoration ? `git-deco--${decoration}` : ""}`}

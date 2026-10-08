@@ -396,9 +396,41 @@ it selects its own session instead of depending on previous test state. Before c
 `output/playwright/topbar-location/` show the restored appearance; after captures document the
 withdrawn experiment.
 
+## Files / Changes source canvas — ready for review
+
+Implemented from `cb3efdb` after the approved Changes-reader proposal and the user's instruction to
+identify shared Files/Changes design. Both use the same unframed source canvas and full available
+width; rendered previews and status views retain their outer spacing. Files already had a sticky
+line-number gutter. Changes now groups old/new numbers and the sign in a sticky gutter, with opaque
+matching diff tints and retained active-edge feedback. Highlighting, text selection, change
+navigation, source line jumps and index/detail allocation are unchanged.
+
+The 23 relevant reader component cases, the existing style contract, TypeScript and repository lint
+passed. Chromium captures and desktop/narrow checks cover the shared canvas, horizontal gutter
+position, matching diff backgrounds, active-change navigation, selection without gutter text, and
+retained rendered-HTML padding. Evidence: `output/playwright/source-readers/`, including
+`files-after-light.png`, `changes-after-light.png`, `changes-scrolled-{light,dark}.png`,
+`{files,changes}-narrow-dark.png`, `desktop-check.log`, `narrow-check.log` and component/static/build
+logs. Browser assets are rebuilt; verification uses only isolated mock state. The previous
+`changes-readability` captures retain the pre-slice card framing for comparison.
+
+## Files file-type icons — ready for review
+
+Implemented from `68d1168` after approval. Recent and the shared workspace file row now use
+`fileIconForPath`, the existing Changes mapping. Recent prefers the resolved workspace path, then
+the display filename, which already strips reference line/fragment suffixes. The common row covers
+Files tree/search and the lower-left explorer. Directory icons, 13px sizing, decorative accessibility,
+Git decoration, labels, layout and file operations remain unchanged.
+
+The 30 existing mapping/Files cases pass, with icon assertions added to the existing browse/search
+case. TypeScript, changed-file Biome and the web build pass. One isolated Chromium check covers
+Recent, code/document/image/audio/video search rows, tree image categories and unchanged folders;
+light/dark captures live in `output/playwright/files-type-icons/`. Existing Changes icon evidence
+is reused. Browser assets are rebuilt.
+
 ## Next actions
 
-Review the separate content-action slice above. The Welcome and topbar-glyph visual experiments
+Review the file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
 are withdrawn. Propose a next independently reviewable frontend batch
 and await approval before implementing it. Straightforward image copying and reverse-input ordering when copying multiple
 images separately remain independent, unimplemented capability directions.
