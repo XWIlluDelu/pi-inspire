@@ -1,7 +1,6 @@
 import {
   ArrowDown,
   ArrowUp,
-  Check,
   Cpu,
   KeyRound,
   Pencil,
@@ -13,6 +12,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -100,6 +100,7 @@ export function ModelsSettings({
     { kind: "remove-provider" | "remove-model" }
   > | null>(null);
   const [declarationsOpen, setDeclarationsOpen] = useState(false);
+  const defaultGroupName = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const savedEntriesRef = useRef<HTMLDetailsElement>(null);
   const editorOpener = useRef<HTMLElement | null>(null);
@@ -838,62 +839,67 @@ export function ModelsSettings({
                       modelIdentityKey(savedModel) === modelIdentityKey(model);
                     return (
                       <>
-                        <button
-                          type="button"
-                          className={`models-chip ${patterns.length ? "models-chip--pattern" : ""}`}
-                          tabIndex={active ? 0 : -1}
-                          disabled={busy || preferencesUnavailable}
-                          aria-pressed={Boolean(sources.length)}
-                          title={
-                            patterns.length
-                              ? "Included by a rule — edit rule"
-                              : undefined
-                          }
-                          aria-label={
-                            patterns.length
-                              ? `Edit common pattern for ${model.name ?? model.id}`
-                              : `${exact.length ? "Remove" : "Add"} ${model.name ?? model.id} ${exact.length ? "from" : "to"} common`
-                          }
-                          onClick={(event) => {
-                            if (patterns.length)
-                              editCommon(patterns[0]!, event.currentTarget);
-                            else
+                        {patterns.length ? (
+                          <button
+                            type="button"
+                            className="models-rule-action"
+                            data-model-action="common"
+                            tabIndex={active ? 0 : -1}
+                            disabled={busy || preferencesUnavailable}
+                            title={`Included by ${patterns.join(", ")} — edit rule`}
+                            aria-label={`Edit common pattern for ${model.name ?? model.id}`}
+                            onClick={(event) =>
+                              editCommon(patterns[0]!, event.currentTarget)
+                            }
+                          >
+                            <Pencil size={12} aria-hidden />
+                            Via rule
+                          </button>
+                        ) : (
+                          <label className="models-choice">
+                            <input
+                              type="checkbox"
+                              data-model-action="common"
+                              tabIndex={active ? 0 : -1}
+                              disabled={busy || preferencesUnavailable}
+                              checked={Boolean(exact.length)}
+                              aria-label={`Common: ${model.name ?? model.id}`}
+                              onChange={() =>
+                                void save({
+                                  enabledModels: exact.length
+                                    ? snapshot.saved.enabledModels.filter(
+                                        (entry) => !exact.includes(entry),
+                                      )
+                                    : [
+                                        ...snapshot.saved.enabledModels,
+                                        identity,
+                                      ],
+                                })
+                              }
+                            />
+                            <span>Common</span>
+                          </label>
+                        )}
+                        <label className="models-choice">
+                          <input
+                            type="radio"
+                            name={defaultGroupName}
+                            data-model-action="default"
+                            tabIndex={active ? 0 : -1}
+                            disabled={busy || preferencesUnavailable}
+                            checked={Boolean(selected)}
+                            aria-label={`Default: ${model.name ?? model.id}`}
+                            onChange={() =>
                               void save({
-                                enabledModels: exact.length
-                                  ? snapshot.saved.enabledModels.filter(
-                                      (entry) => !exact.includes(entry),
-                                    )
-                                  : [...snapshot.saved.enabledModels, identity],
-                              });
-                          }}
-                        >
-                          {sources.length ? (
-                            <Check size={12} aria-hidden />
-                          ) : null}
-                          Common
-                        </button>
-                        <button
-                          type="button"
-                          className="models-chip"
-                          tabIndex={active ? 0 : -1}
-                          disabled={busy || preferencesUnavailable}
-                          aria-pressed={Boolean(selected)}
-                          aria-label={
-                            selected
-                              ? `Clear default ${model.name ?? model.id}`
-                              : `Set ${model.name ?? model.id} as default`
-                          }
-                          onClick={() =>
-                            void save({
-                              defaultModel: selected
-                                ? null
-                                : { provider: model.provider, id: model.id },
-                            })
-                          }
-                        >
-                          {selected ? <Check size={12} aria-hidden /> : null}
-                          Default
-                        </button>
+                                defaultModel: {
+                                  provider: model.provider,
+                                  id: model.id,
+                                },
+                              })
+                            }
+                          />
+                          <span>Default</span>
+                        </label>
                       </>
                     );
                   }}

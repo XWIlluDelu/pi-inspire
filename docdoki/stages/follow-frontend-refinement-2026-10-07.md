@@ -39,13 +39,12 @@ misinterpretation, superseded by the user's clarification.
   Source/Preview actions and removes Notebook Markdown gutter labels without changing alignment
   (`a9693b5`).
 - Changes: active-change navigation preserves red/green addition/deletion backgrounds and retains
-  the existing edge marker (`5c16908`). The approved readability batch below adds highlighting and
-  file icons without changing this layout or navigation.
+  the existing edge marker (`5c16908`). Source highlighting and filename-appropriate icons
+  (`d486a07`) are retained after the user moved to the next batch.
 - Authentication: settled login results supersede earlier request errors and late responses
-  (`a098b26`). Model settings presentation was not changed.
+  (`a098b26`).
 
-All of these implementation commits have been pushed to main. The worktree was clean before this
-handoff documentation update. Earlier temporary implementation worktrees/sessions were removed. For ongoing sequential frontend
+The Models batch below started from a clean `d486a07` main worktree. For ongoing sequential frontend
 work, use the main worktree; isolation requires a concrete need rather than a generic precaution.
 Execution Pi sessions use normal persistent storage, remain discoverable in Inspire and are retained
 for the user's occasional inspection. Finishing a task is not grounds to delete those session records.
@@ -61,9 +60,9 @@ Frontend assets have been rebuilt for the current implementation.
 Do not repeat full suites or visual matrices for unchanged behavior. Verify the actual net change
 and relevant failure modes, then stop.
 
-## Changes readability batch — awaiting review
+## Changes readability — retained baseline
 
-Implemented in the main worktree from `0842fc7`; ready for user review.
+Implemented as `d486a07`; retained while work continues on Models.
 
 - Changes uses the existing Source highlighting facility, palette, typography and row geometry.
   The Host's full-context diff supplies independent old/new revisions; multiline token spans are
@@ -84,12 +83,46 @@ Implemented in the main worktree from `0842fc7`; ready for user review.
   `output/playwright/changes-readability/`: `before-{light,dark}.png`,
   `after-{light,dark}.png` and `after-change-{light,dark}.png`.
 
+## Models choices — awaiting review
+
+Implemented in the main worktree from `d486a07`, including the indicator finish aligned with
+Settings controls; ready for user review.
+
+- Common exact membership uses native checkboxes; Default uses native radios and is idempotent
+  when reselected. Clear remains in the saved-default summary. Rule inclusion has a separate
+  “Via rule” edit action with source-pattern attribution, not a dashed/indeterminate checkbox.
+- Provider headings are quiet labels without repeated shaded bands or bottom borders. Existing
+  list bounds, row capacity, model typography, default/thinking summaries, section order,
+  declaration forms and authentication presentation remain. Obsolete chip styles are removed.
+- The action grid explicitly navigates the full filtered model list and mounts distant targets
+  before focusing them. Radio arrows/Home/End select; Common navigation only moves focus. Saves
+  preserve the focused input unless the user moves away. Pi storage/API semantics are unchanged.
+- The 19-case Models component suite passed, with updated control roles and focused assertions
+  for idempotent selection and rule attribution. A new Chromium regression checks distant-row
+  navigation, radio wrapping, independent Common membership, Tab, save focus and summary Clear;
+  the existing responsive default-row case also passed. Prior auth and model-workflow evidence
+  was reused. Typecheck, repository lint, changed-file Biome and the web build passed.
+- Chromium visual inspection used the mock browser Host at 1280px and 390px, in light/dark;
+  desktop Jade checks reused the same roles. The rule action opened its actual saved pattern.
+  Evidence is in `output/playwright/models-refinement/`: `before-light.png`,
+  `after-{light,dark}.png`, `after-narrow-{light,dark}.png`,
+  `after-selected-light.png`, `after-rule-light.png` and `after-jade-{light,dark}.png`.
+  Browser assets are rebuilt. The user's Host and global model preferences were not touched.
+- The indicator follow-up replaces browser-native strokes/fills with Settings control surfaces,
+  hairlines, accent tints and precise checkbox ticks/radio dots. Native inputs, labels, handlers,
+  dimensions, focus and disabled styling remain; forced-colors mode keeps native indicators.
+- One focused mock-browser check confirmed label activation, Space/Tab, save focus, the 2px keyboard
+  outline and unchanged indicator/label geometry. Amber/Jade light/dark spot-checks matched indicator
+  surface, border and mark colors to actual Settings switches. CSS lint added no diagnostics; the
+  web build passed. Prior
+  component, virtualized-keyboard and narrow-layout evidence remains valid and was not rerun.
+  `choice-style-{light,dark}.png` show the finish beside real Settings switches in the same artifact
+  directory; earlier screenshots remain intact.
+
 ## Next actions
 
-Review this concrete Changes slice before proceeding. Models Common/Default choice presentation
-and repetitive grouping/border hierarchy remain later candidates, not implemented or pre-approved
-exact controls/layouts. Preserve effective existing design; do not reintroduce rejected reading,
-activity or Files layout changes by default.
+Review this Models slice before proceeding to another batch. Preserve effective existing design;
+do not reintroduce rejected reading, activity or Files layout changes by default.
 
 Use an independent `gpt-6.1-sol` / high Pi implementation session when delegating, as requested;
 keep execution sessions persistent and user-visible.

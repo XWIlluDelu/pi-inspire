@@ -173,6 +173,8 @@ export function ModelList({
   const prepared = useMemo(() => prepareModelOptions(models), [models]);
   const pendingFocus = useRef<{
     key: string;
+    action?: string;
+    select?: boolean;
     canFocus: () => boolean;
     complete: () => void;
   } | null>(null);
@@ -309,12 +311,15 @@ export function ModelList({
     if (index === undefined || activeModelKey !== request.key) return;
     const target = document
       .getElementById(`${id}-option-${index}`)
-      ?.querySelector<HTMLButtonElement>(
-        ".models-row-actions button:not(:disabled)",
+      ?.querySelector<HTMLElement>(
+        request.action
+          ? `[data-model-action="${request.action}"]:not(:disabled)`
+          : ".models-row-actions [data-model-action]:not(:disabled)",
       );
     pendingFocus.current = null;
     request.complete();
     target?.focus();
+    if (request.select) target?.click();
   });
   const navigate = (event: KeyboardEvent) => {
     if (event.defaultPrevented || event.nativeEvent.isComposing) return;
@@ -342,6 +347,53 @@ export function ModelList({
       event.preventDefault();
       onSelect(options[active]!);
     } else onKeyDown?.(event);
+  };
+  const navigateAction = (event: KeyboardEvent, index: number) => {
+    const target = event.target;
+    if (
+      event.defaultPrevented ||
+      event.nativeEvent.isComposing ||
+      !(target instanceof HTMLElement) ||
+      !target.dataset.modelAction ||
+      target.matches(":disabled")
+    )
+      return;
+    const radio = target instanceof HTMLInputElement && target.type === "radio";
+    const previous =
+      event.key === "ArrowUp" || (radio && event.key === "ArrowLeft");
+    const next =
+      event.key === "ArrowDown" || (radio && event.key === "ArrowRight");
+    if (!previous && !next && !["Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const destination =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? options.length - 1
+          : radio
+            ? (index + (previous ? -1 : 1) + options.length) % options.length
+            : Math.max(
+                0,
+                Math.min(index + (previous ? -1 : 1), options.length - 1),
+              );
+    const model = options[destination];
+    if (!model) return;
+    if (destination === index) {
+      if (radio) target.click();
+      return;
+    }
+    // Native radio navigation only sees mounted rows. Route through the full
+    // filtered grid, mount/scroll the destination, then focus and select it.
+    pendingFocus.current?.complete();
+    pendingFocus.current = {
+      key: modelIdentityKey(model),
+      action: target.dataset.modelAction,
+      select: radio,
+      canFocus: () => true,
+      complete: () => {},
+    };
+    setKeyboardActive(true);
+    activate(destination);
   };
   return (
     <>
@@ -459,6 +511,9 @@ export function ModelList({
                       activate(index);
                     }}
                     onFocus={grid ? () => activate(index) : undefined}
+                    onKeyDown={
+                      grid ? (event) => navigateAction(event, index) : undefined
+                    }
                     onClick={grid ? undefined : () => onSelect?.(model)}
                   >
                     <span

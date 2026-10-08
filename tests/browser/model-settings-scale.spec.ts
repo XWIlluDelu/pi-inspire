@@ -242,7 +242,7 @@ for (const touch of [false, true]) {
         ).toBeFocused();
         await page.keyboard.press("Tab");
         await expect(
-          lastRow.getByRole("button", { name: /^Add .* to common$/ }),
+          lastRow.getByRole("checkbox", { name: /^Common:/ }),
         ).toBeFocused();
         const gridTyped = Date.now();
         await gridSearch.fill(`${target.provider} ${target.id}`);

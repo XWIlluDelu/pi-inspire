@@ -95,9 +95,17 @@ describe("Models settings configuration and ownership", () => {
     fireEvent.click(screen.getByRole("option", { name: "xhigh" }));
     await waitFor(() => expect(thinking).toHaveTextContent("xhigh"));
     fireEvent.click(
-      screen.getByRole("button", { name: "Set Claude Haiku as default" }),
+      screen.getByRole("radio", { name: "Default: Claude Haiku" }),
     );
     await screen.findByRole("button", { name: "Clear default model" });
+    const selectedDefault = screen.getByRole("radio", {
+      name: "Default: Claude Haiku",
+    });
+    expect(selectedDefault).toBeChecked();
+    const writes = fixture.host.saveModelPreferences.mock.calls.length;
+    fireEvent.click(selectedDefault);
+    expect(selectedDefault).toBeChecked();
+    expect(fixture.host.saveModelPreferences).toHaveBeenCalledTimes(writes);
     view.unmount();
     render(<ModelsSettings />);
     const reloadedThinking = await screen.findByRole("combobox", {
@@ -175,7 +183,7 @@ describe("Models settings configuration and ownership", () => {
     );
     expect(screen.queryByText("None")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Set Claude Haiku as default" }),
+      screen.getByRole("radio", { name: "Default: Claude Haiku" }),
     ).toBeDisabled();
   });
 
@@ -224,8 +232,8 @@ describe("Models settings configuration and ownership", () => {
       />,
     );
     fireEvent.click(
-      await screen.findByRole("button", {
-        name: "Set Claude Haiku as default",
+      await screen.findByRole("radio", {
+        name: "Default: Claude Haiku",
       }),
     );
     expect(fixture.host.readModelSettings).toHaveBeenCalledWith({
@@ -285,7 +293,7 @@ describe("Models settings configuration and ownership", () => {
     ).not.toBeInTheDocument();
     expect(within(list).queryByText("Local model")).not.toBeInTheDocument();
     fireEvent.click(
-      within(list).getByRole("button", { name: "Add GPT 5 to common" }),
+      within(list).getByRole("checkbox", { name: "Common: GPT 5" }),
     );
     await waitFor(() =>
       expect(fixture.host.saveModelPreferences).toHaveBeenCalledWith(
@@ -305,13 +313,13 @@ describe("Models settings configuration and ownership", () => {
     const patternRow = within(list)
       .getByText("Claude Haiku")
       .closest("[role=row]")! as HTMLElement;
-    expect(within(patternRow).getByText("Common")).toBeInTheDocument();
+    expect(within(patternRow).getByText("Via rule")).toBeInTheDocument();
+    expect(within(patternRow).queryByRole("checkbox")).not.toBeInTheDocument();
     expect(
-      within(patternRow).queryByText(/Common via/),
-    ).not.toBeInTheDocument();
-    expect(
-      within(patternRow).queryByRole("button", { name: /Remove.*from common/ }),
-    ).not.toBeInTheDocument();
+      within(patternRow).getByRole("button", {
+        name: "Edit common pattern for Claude Haiku",
+      }),
+    ).toHaveAttribute("title", "Included by *haiku*:high — edit rule");
     fireEvent.click(
       within(patternRow).getByRole("button", {
         name: "Edit common pattern for Claude Haiku",
@@ -361,10 +369,10 @@ describe("Models settings configuration and ownership", () => {
     ];
     fixture.host.readModelSettings.mockResolvedValue(snapshot);
     render(<ModelsSettings />);
-    const remove = await screen.findByRole("button", {
-      name: "Remove Local model from common",
+    const remove = await screen.findByRole("checkbox", {
+      name: "Common: Local model",
     });
-    expect(remove).toHaveAttribute("aria-pressed", "true");
+    expect(remove).toBeChecked();
     expect(
       screen.queryByRole("button", {
         name: "Edit common pattern for Local model",
@@ -502,8 +510,8 @@ describe("Models settings configuration and ownership", () => {
     );
     render(<ModelsSettings />);
     fireEvent.click(
-      await screen.findByRole("button", {
-        name: "Set Claude Haiku as default",
+      await screen.findByRole("radio", {
+        name: "Default: Claude Haiku",
       }),
     );
     await waitFor(() =>
@@ -660,8 +668,8 @@ describe("Models settings configuration and ownership", () => {
     const saveModel = screen.getByRole("button", { name: "Save model" });
     saveModel.focus();
     fireEvent.click(saveModel);
-    const common = await screen.findByRole("button", {
-      name: "Add New model to common",
+    const common = await screen.findByRole("checkbox", {
+      name: "Common: New model",
     });
     await waitFor(() => expect(common).toHaveFocus());
     expect(search).toHaveValue("");
@@ -677,11 +685,11 @@ describe("Models settings configuration and ownership", () => {
     finishSave!();
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Remove New model from common" }),
+        screen.getByRole("checkbox", { name: "Common: New model" }),
       ).toHaveFocus(),
     );
-    const setDefault = screen.getByRole("button", {
-      name: "Set New model as default",
+    const setDefault = screen.getByRole("radio", {
+      name: "Default: New model",
     });
     setDefault.focus();
     fireEvent.click(setDefault);
@@ -689,8 +697,8 @@ describe("Models settings configuration and ownership", () => {
     setDefault.blur();
     finishSave!();
     await waitFor(() => expect(setDefault).toHaveFocus());
-    const remove = screen.getByRole("button", {
-      name: "Remove New model from common",
+    const remove = screen.getByRole("checkbox", {
+      name: "Common: New model",
     });
     remove.focus();
     fireEvent.click(remove);
@@ -817,10 +825,10 @@ describe("Models settings configuration and ownership", () => {
     )!;
     expect(active).toHaveTextContent("GPT 5");
     expect(
-      within(active).getByRole("button", { name: "Remove GPT 5 from common" }),
+      within(active).getByRole("checkbox", { name: "Common: GPT 5" }),
     ).toHaveAttribute("tabindex", "0");
     expect(
-      screen.getByRole("button", { name: "Set Claude Haiku as default" }),
+      screen.getByRole("radio", { name: "Default: Claude Haiku" }),
     ).toHaveAttribute("tabindex", "-1");
   });
 

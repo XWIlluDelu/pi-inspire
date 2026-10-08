@@ -36,7 +36,6 @@
 .dialog.settings,
 .dialog.terminal-settings {
   --set-control-h: 32px;
-  --set-chip-h: 24px;
   --set-icon-btn: 28px;
   --set-row-pad: 10px 14px;
   --set-row-min-h: 48px;
@@ -59,7 +58,6 @@
   .dialog.settings,
   .dialog.terminal-settings {
     --set-control-h: 40px;
-    --set-chip-h: 28px;
     --set-icon-btn: 30px;
     --set-row-pad: 12px 14px;
     --set-row-min-h: 56px;
@@ -1538,43 +1536,6 @@
   color: var(--accent-deep);
   font-weight: 600;
   white-space: nowrap;
-}
-
-/* --- Chips & Models list items --- */
-.models-chip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  height: var(--set-chip-h);
-  min-height: var(--set-chip-h);
-  padding: 0 10px;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--muted);
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: all var(--dur-micro) var(--ease-standard);
-}
-
-.models-chip:hover:not(:disabled) {
-  border-color: var(--line-strong);
-  color: var(--ink);
-}
-
-.models-chip[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--accent-tint);
-  color: var(--accent-deep);
-  font-weight: 600;
-}
-
-.models-chip--pattern[aria-pressed="true"] {
-  border-style: dashed;
 }
 
 .models-results {

@@ -29,7 +29,7 @@ configuration editing and login remain independent.
 
 The Models category has three sections:
 
-1. **Models:** a searchable available-model list with Common and Default actions, followed by the saved
+1. **Models:** a searchable available-model list with Common and Default choices, followed by the saved
    default model, Clear action and default-thinking dropdown. “Model default” clears the explicit
    thinking setting. Common order and rules expand below the list. Declared models offer an edit action.
 2. **Login & API keys:** saved providers with credential status and Manage, plus Connect provider.
@@ -39,8 +39,15 @@ The Models category has three sections:
    Add provider. Each provider owns its connection fields and a collapsible model list with Add model.
 
 Available-model and provider lists window large result sets while keeping every result reachable by
-search and keyboard. Provider headings span the list; compact rows give Common and Default equal-width
-columns. The picker marks its selected model with one checkmark and `aria-selected`, and offers one
+search and keyboard. Provider headings are quiet, unboxed labels within the Models card; compact
+rows give Common and Default equal-width columns. Common uses a checkbox for independent membership;
+Default uses a radio for the single saved startup choice. Their indicators share Settings control
+surfaces, hairlines and accent tint/mark roles while retaining native input behavior. Reselecting
+Default leaves it set; the saved-default summary's Clear action removes it. Action-row Up/Down and
+Home/End navigation reaches the full filtered list, including unmounted rows. Default also supports Left/Right and wraps between
+the first and last result, focusing and selecting the destination after it mounts. Common navigation
+moves focus without toggling membership. Search navigation remains neutral until explicitly used.
+The picker marks its selected model with one checkmark and `aria-selected`, and offers one
 Manage models destination. From New, that destination keeps the prospective project directory; an
 open session keeps its session owner. General control and focus styling follows [[design-system]].
 
@@ -50,7 +57,9 @@ Settings edits global Pi preferences and displays effective project overrides al
 identities and patterns remain visible when unavailable. A failed read has its own error state.
 
 Common choices use Pi's ordered model-cycle patterns. Exact entries, including thinking-effort
-suffixes, toggle directly; rule-covered rows expose their source rules in expanded details. Editing
+suffixes, toggle directly. Rule-covered rows show a separate “Via rule” edit action instead of a
+checkbox, including when an exact entry also matches. Its tooltip attributes the source rules; the
+action opens the existing rule editor, where the pattern remains explicit. Editing
 retains pattern syntax, order, unmatched entries and unrelated settings. Common matches appear first
 in the picker; without a configured common scope, the picker has no Common group.
 

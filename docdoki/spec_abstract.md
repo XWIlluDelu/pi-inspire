@@ -45,9 +45,9 @@ Frontend improvement continues in small batches for review of each concrete net 
 Feedback on a particular visual change does not cancel independent work or restrict the project to
 bug fixes. Clear functional defects can be repaired and retained, but do not replace frontend
 improvement. Floating reading controls and the activity rails remain; the Files layout experiment
-was withdrawn, while its two independent preview-control/label cleanups are retained. The latest
-Changes batch adds source syntax highlighting and filename-appropriate icons without changing its
-layout, navigation or addition/deletion backgrounds; it is ready for user review.
+was withdrawn, while its two independent preview-control/label cleanups are retained. Changes source
+highlighting and filename-appropriate icons form the retained baseline. The latest Models slice distinguishes Common checkboxes, Default radios and rule-edit
+actions, and quiets provider headings without reordering Settings; it is ready for review.
 
 [[follow-pi-native-capability-review-2026-10-02]] owns the remaining native-capability backlog.
 The separate presentation questions are compact-success receipts in

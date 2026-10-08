@@ -139,6 +139,94 @@ test("model search and refresh preserve defaults and browsing position", async (
     .toBe(0);
 });
 
+test("Common and Default choices navigate unmounted rows without losing saved focus", async ({
+  page,
+}) => {
+  const scenario = await modelSettingsScenario(page);
+  scenario.snapshot().models.push(
+    ...Array.from({ length: 40 }, (_, index) => ({
+      provider: "openai",
+      id: `z-${String(index).padStart(3, "0")}`,
+      name: `Model ${index}`,
+      reasoning: true,
+    })),
+  );
+  const writes: unknown[] = [];
+  page.on("request", (request) => {
+    if (
+      request.url().includes("/api/model-settings") &&
+      request.method() === "PATCH"
+    )
+      writes.push(request.postDataJSON());
+  });
+  await pairAndOpen(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await settings.getByRole("button", { name: "Models", exact: true }).click();
+  const firstDefault = settings.getByRole("radio", {
+    name: "Default: Claude Haiku",
+  });
+  await firstDefault.click();
+  await expect(firstDefault).toBeChecked();
+  await expect(firstDefault).toBeFocused();
+  await firstDefault.click();
+  expect(writes).toHaveLength(1);
+  await expect(settings.getByRole("radio", { checked: true })).toHaveCount(1);
+
+  await firstDefault.press("End");
+  const lastDefault = settings.getByRole("radio", {
+    name: "Default: Model 39",
+    exact: true,
+  });
+  await expect(lastDefault).toBeChecked();
+  await expect(lastDefault).toBeFocused();
+  await expect(lastDefault).toBeInViewport();
+  expect(await settings.getByRole("row").count()).toBeLessThan(20);
+  await expect
+    .poll(() => scenario.snapshot().saved.defaultModel)
+    .toEqual({
+      provider: "openai",
+      id: "z-039",
+    });
+  await lastDefault.press("ArrowDown");
+  await expect(firstDefault).toBeChecked();
+  await expect(firstDefault).toBeFocused();
+
+  const firstCommon = settings.getByRole("checkbox", {
+    name: "Common: Claude Haiku",
+  });
+  await firstCommon.focus();
+  await firstCommon.press("Space");
+  await expect(firstCommon).toBeChecked();
+  await expect(firstCommon).toBeFocused();
+  const selected = scenario.snapshot().saved.defaultModel;
+  await firstCommon.press("End");
+  const lastCommon = settings.getByRole("checkbox", {
+    name: "Common: Model 39",
+    exact: true,
+  });
+  await expect(lastCommon).toBeFocused();
+  await expect(lastCommon).not.toBeChecked();
+  expect(scenario.snapshot().saved.defaultModel).toEqual(selected);
+  await lastCommon.press("Tab");
+  await expect(lastDefault).toBeFocused();
+  await lastDefault.press("ArrowUp");
+  const previousDefault = settings.getByRole("radio", {
+    name: "Default: Model 38",
+    exact: true,
+  });
+  await expect(previousDefault).toBeChecked();
+  await expect(previousDefault).toBeFocused();
+
+  await settings.getByRole("button", { name: "Clear default model" }).click();
+  await expect(settings.getByRole("radio", { checked: true })).toHaveCount(0);
+  await expect(
+    settings.getByRole("combobox", { name: "Default thinking" }),
+  ).toBeFocused();
+  expect(scenario.snapshot().saved.defaultModel).toBeNull();
+  expect(scenario.errors).toEqual([]);
+});
+
 test.describe("scalar default rows", () => {
   test.use({ hasTouch: true });
   test("keeps default rows and existing model actions readable at desktop and narrow widths", async ({
@@ -181,23 +269,24 @@ test.describe("scalar default rows", () => {
       expect((await thinking.boundingBox())!.height).toBeGreaterThanOrEqual(32);
       await expect(thinking).toBeVisible();
       expect(scenario.snapshot().saved.defaultThinkingLevel).toBeNull();
-      const common = settings.getByRole("button", {
-        name: "Remove Local model from common",
+      const common = settings.getByRole("checkbox", {
+        name: "Common: Local model",
       });
-      const makeDefault = settings.getByRole("button", {
-        name: "Set Local model as default",
+      const makeDefault = settings.getByRole("radio", {
+        name: "Default: Local model",
       });
-      const commonBox = (await common.boundingBox())!;
-      const defaultBox = (await makeDefault.boundingBox())!;
+      const commonBox = (await common.locator("..").boundingBox())!;
+      const defaultBox = (await makeDefault.locator("..").boundingBox())!;
       expect(Math.abs(commonBox.y - defaultBox.y)).toBeLessThan(1);
       expect(defaultBox.x + defaultBox.width).toBeLessThanOrEqual(width);
       expect(commonBox.width).toBe(defaultBox.width);
       const otherDefault = (await settings
-        .getByRole("button", { name: "Set Claude Haiku as default" })
+        .getByRole("radio", { name: "Default: Claude Haiku" })
+        .locator("..")
         .boundingBox())!;
       expect(defaultBox.x).toBe(otherDefault.x);
       const modelRow = settings.getByRole("row").filter({
-        has: page.getByRole("button", { name: "Set Local model as default" }),
+        has: page.getByRole("radio", { name: "Default: Local model" }),
       });
       const rowBox = (await modelRow.boundingBox())!;
       const modelName = (await modelRow
@@ -334,13 +423,13 @@ for (const touch of [false, true]) {
         await settings
           .getByRole("button", { name: "Save model", exact: true })
           .click();
-        const common = settings.getByRole("button", {
-          name: "Add New available model to common",
+        const common = settings.getByRole("checkbox", {
+          name: "Common: New available model",
         });
         await expect(common).toBeFocused();
         await common.click();
         await settings
-          .getByRole("button", { name: "Set New available model as default" })
+          .getByRole("radio", { name: "Default: New available model" })
           .click();
         await expect
           .poll(() => scenario.snapshot().saved.defaultModel)
