@@ -280,8 +280,11 @@ history keep one result per native execution. [[pi-integration]] owns execution 
   gestures are idempotent; [[pi-integration]] owns Host request/worker validation, deadlines,
   reconnect retention and cleanup. Model settlement does not dismiss an independent command's dialog.
 
-- Pending appears at the end of Transcript with visible, bounded Steer/Queue previews, known image
-  counts and omission markers. Its header groups Return, complete Copy and Clear actions.
+- Pending appears at the end of Transcript with bounded Steer/Queue previews, known image counts and
+  omission markers. It remains secondary through deliberate idle dimming and gains full emphasis on
+  hover or focus within, as specified in [[composer]]. Its header shows one total
+  with complete Copy, Return and Clear actions in that order. A fully supplied single mode is named there; mixed
+  or incomplete previews retain quiet group labels without repeated mode badges or group counts.
   [[composer]] owns their behavior: Return and Stop recover unconsumed input; explicitly confirmed
   Clear discards it. The projection does not create browser-owned queue authority.
 

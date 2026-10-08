@@ -49,9 +49,15 @@ was withdrawn, while its two independent preview-control/label cleanups are reta
 highlighting and filename-appropriate icons form the retained baseline. The accepted Models slice
 distinguishes Common checkboxes, Default radios and rule-edit actions, and quiets provider headings
 without reordering Settings. The accepted main Settings category views preserve drafts and login
-state and use one narrow selection underline. Terminal settings now follows the same navigation for
-Appearance, Interaction and Saved output, retaining browser preferences and ongoing Host operations;
-this Terminal slice is ready for review.
+state and use one narrow selection underline. The accepted Terminal settings slice follows the same
+navigation for Appearance, Interaction and Saved output, retaining browser preferences and ongoing
+Host operations.
+The attachment/Pending slice is accepted at `e96c3ea`: file chips emphasize names and state, and
+Pending retains deliberate idle dimming and interaction emphasis, with one total and non-repeating,
+truthful mode labels. Narrow Model/Thinking adjacency is accepted at `acbcf3f`, with long model
+labels shrinking to preserve Thinking and the filled red Stop unchanged. The next small slice is ready
+for review: Command Palette group headings drop their repeated shaded bands and bottom rules, keeping
+existing typography, spacing, command highlights, shortcut hints and interactions.
 
 [[follow-pi-native-capability-review-2026-10-02]] owns the remaining native-capability backlog.
 The separate presentation questions are compact-success receipts in

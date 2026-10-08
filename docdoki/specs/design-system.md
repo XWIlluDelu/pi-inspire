@@ -157,13 +157,19 @@ keep their existing behavior. Embedded documents retain their own styles.
   work above the writing field and a quiet metadata toolbar below. Model,
   thinking, project files, attachments, context usage, and send/abort stay
   aligned to that toolbar. On phones, model and thinking share the first row;
-  file tools, context, and send/abort use the second. This keeps selectors usable
+  at widths up to 420px they remain adjacent with an 8px token gap, reserving Thinking's full width
+  and letting Model shrink without filling spare space. File tools, context, and send/abort use the
+  second row; Stop retains its filled error-color treatment. This keeps selectors usable
   with long values or busy-state controls. A constrained model label truncates
   inside its trigger rather than painting across adjacent controls. Completion
   titles wrap within their column, leaving adjacent path hints visible. Model
   status badges and their selected-row backgrounds preserve AA text contrast across both palettes and
   luminosity modes. The detailed input, delivery, and ownership contract lives
   in [[composer]].
+- Supporting input stays quieter than conversation prose: attachment file chips put filenames and
+  state ahead of technical metadata. Pending deliberately dims at rest and gains full emphasis on
+  hover or focus within; preserve this attention hierarchy while simplifying repeated labels/counts.
+  [[composer]] owns its visual states, bounded-summary and action semantics.
 - Files, Changes, History, and Terminal share the contextual pane. Resource
   safety and change semantics belong to [[resource-preview]]; branch behavior
   belongs to [[session-continuity]].
@@ -181,6 +187,10 @@ keep their existing behavior. Embedded documents retain their own styles.
   dismissing the panel or blurring its search field. Checkmarks and `aria-selected` identify committed
   values independently of that candidate highlight. Settings model search stays neutral until keyboard
   navigation or an explicit row action.
+- Command Palette group headings use the existing muted semibold type and spacing without
+  full-width shaded bands or bottom rules. Labels guide scanning; the accent-tinted command candidate
+  remains the action highlight, and shortcut hints remain separate. Input and overlay boundaries stay
+  intact.
 - Command Palette, Settings, extension dialogs, pickers, and destructive
   confirmation use the shared overlay grammar: a 6px surface, hairline,
   elevated shadow, restrained scrim with a 2px backdrop blur, and a short

@@ -604,14 +604,12 @@ export function PendingQueueGroups({
     {
       key: "steering",
       label: "Steer",
-      mark: "S",
       start: 0,
       items: queue.steering,
     },
     {
       key: "follow-up",
       label: "Queue",
-      mark: "Q",
       start: queue.steering.length,
       items: queue.followUp,
     },
@@ -649,13 +647,16 @@ export function PendingQueueGroups({
   }
 
   const omitted = queue.totalCount - entries.length;
+  const singleMode = omitted === 0 && groups.length === 1;
   if (queue.totalCount === 0) return null;
 
   return (
     <section className="pending-groups" aria-label="Pending input">
       <div className="pending-groups__head">
         <div className="pending-groups__lead">
-          <span className="pending-groups__title">Pending input</span>
+          <span className="pending-groups__title">
+            {singleMode ? `Pending · ${groups[0]!.label}` : "Pending input"}
+          </span>
           <span
             className="pending-groups__count"
             title={`${queue.totalCount} pending items`}
@@ -667,6 +668,13 @@ export function PendingQueueGroups({
           </span>
         </div>
         <div className="pending-groups__actions">
+          {entries.some((entry) => entry.textLength > 0) || omitted > 0 ? (
+            <CopyAction
+              getText={() => getText(queue.revision)}
+              label="all pending input"
+              className="pending-group__copy"
+            />
+          ) : null}
           <button
             type="button"
             className="icon-button pending-group__control"
@@ -681,13 +689,6 @@ export function PendingQueueGroups({
               <CornerUpLeft size={13} aria-hidden />
             )}
           </button>
-          {entries.some((entry) => entry.textLength > 0) || omitted > 0 ? (
-            <CopyAction
-              getText={() => getText(queue.revision)}
-              label="all pending input"
-              className="pending-group__copy"
-            />
-          ) : null}
           {confirmClear ? (
             <span className="pending-groups__confirm">
               <span className="pending-groups__confirm-label">Clear all?</span>
@@ -738,20 +739,9 @@ export function PendingQueueGroups({
           className={`pending-group pending-group--${group.key}`}
           aria-label={`Pending ${group.label.toLowerCase()}`}
         >
-          <div className="pending-group__head">
-            <div className="pending-group__head-lead">
-              <span className="pending-group__label">{group.label}</span>
-            </div>
-            <span className="pending-group__head-count">
-              <span aria-hidden>
-                {group.items.length}{" "}
-                {group.items.length === 1 ? "item" : "items"}
-              </span>
-              <span className="visually-hidden">
-                {group.items.length} items
-              </span>
-            </span>
-          </div>
+          {!singleMode ? (
+            <div className="pending-group__head">{group.label}</div>
+          ) : null}
           <ol className="pending-group__list" start={group.start + 1}>
             {group.items.map((entry, index) => {
               const number = group.start + index + 1;
@@ -761,16 +751,6 @@ export function PendingQueueGroups({
                   <span className="pending-group__number" aria-hidden>
                     {number}.
                   </span>
-                  <div className="pending-group__mark-col">
-                    <span
-                      className={`pending-group__mark pending-group__mark--${group.key}`}
-                      title={group.label}
-                    >
-                      <span className="pending-group__mark-text">
-                        {group.mark}
-                      </span>
-                    </span>
-                  </div>
                   <div className="pending-group__content">
                     {entry.textPreview || !entry.imageCount ? (
                       <pre

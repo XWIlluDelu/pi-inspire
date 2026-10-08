@@ -20,11 +20,23 @@ export function AttachmentList({
     <ul className="composer__attachments" aria-label="Attachments">
       {items.map((item) => {
         const image = item.kind === "image";
+        const fileDetails =
+          item.recalledArtifact?.type === "file"
+            ? item.recalledArtifact.fileKind === "project"
+              ? "project file"
+              : "recalled file"
+            : `${item.mimeType} · ${formatBytes(item.size)}`;
         return (
           <li
             key={item.localId}
             className={`attachment attachment--${item.status} ${image ? "attachment--image" : ""}`}
-            title={image ? item.error : (item.error ?? item.fileName)}
+            title={
+              image
+                ? item.error
+                : [item.fileName, fileDetails, item.error]
+                    .filter(Boolean)
+                    .join("\n")
+            }
           >
             {image ? (
               item.recalledArtifact?.type === "image" && sessionId ? (
@@ -50,13 +62,6 @@ export function AttachmentList({
               <>
                 <FileText size={13} aria-hidden />
                 <span className="attachment__name">{item.fileName}</span>
-                <span className="attachment__meta">
-                  {item.recalledArtifact?.type === "file"
-                    ? item.recalledArtifact.fileKind === "project"
-                      ? "project file"
-                      : "recalled file"
-                    : `${item.mimeType} · ${formatBytes(item.size)}`}
-                </span>
               </>
             )}
             {item.status === "uploading" ? (
@@ -71,6 +76,7 @@ export function AttachmentList({
                 size={12}
                 className="status-error attachment__status"
                 aria-label="Upload failed"
+                aria-description={item.error}
               />
             ) : null}
             <button

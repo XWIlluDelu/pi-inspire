@@ -5,7 +5,7 @@ scope:
   - src/{source-diff,file-icons,syntax-highlighting}.ts
   - tests/web/
   - tests/browser/
-  - docdoki/specs/{conversation,workspace-layout,activity-presentation,resource-preview,model-settings,interface-preferences,design-system,terminal}.md
+  - docdoki/specs/{conversation,workspace-layout,activity-presentation,resource-preview,model-settings,interface-preferences,design-system,terminal,composer}.md
 ---
 
 # Incremental frontend refinement
@@ -45,8 +45,10 @@ misinterpretation, superseded by the user's clarification.
   (`a098b26`).
 
 The accepted Models batch below is retained at `f085a42`. Main Settings categories are accepted at
-`4cdcf70`; the Terminal category batch starts from that clean main-worktree baseline. For ongoing sequential frontend work, use the main worktree;
-isolation requires a concrete need rather than a generic precaution.
+`4cdcf70`; Terminal categories are accepted at `4a65392`. Attachments/Pending are accepted at
+`e96c3ea` with deliberate idle dimming restored. Narrow Thinking grouping is accepted at `acbcf3f`;
+the Command Palette headings slice starts from that clean main-worktree baseline. For ongoing sequential
+frontend work, use the main worktree; isolation requires a concrete need rather than a generic precaution.
 Execution Pi sessions use normal persistent storage, remain discoverable in Inspire and are retained
 for the user's occasional inspection. Finishing a task is not grounds to delete those session records.
 
@@ -148,7 +150,7 @@ selected treatment change.
   Verification uses the isolated mock browser Host, not user preferences or the running user Host.
   Browser assets are rebuilt; temporary mock processes are stopped.
 
-## Terminal categories — ready for review
+## Terminal categories — accepted and preserved
 
 Implemented from the clean `4cdcf70` main worktree following the user's approval of the analogous
 Terminal category navigation. The accepted main Settings and Models controls are unchanged.
@@ -181,11 +183,89 @@ Terminal category navigation. The accepted main Settings and Models controls are
   and the user's service were not changed. Temporary mock/browser resources are stopped; the
   normal persistent execution session is retained.
 
+## Attachments and Pending — accepted and preserved
+
+Implemented from clean `4a65392` in the main worktree after the user's approval to continue.
+The accepted Terminal, main Settings and Models slices are preserved. Accepted at `e96c3ea`
+with the user's idle/interaction hierarchy restored.
+
+- File chips show filename, existing upload/error state and removal. Native tooltips retain full
+  filenames, MIME/size or recalled-file provenance and error diagnostics; error icons also expose
+  their diagnostic to assistive technology. Image tiles and recalled/persisted image loading remain.
+  File labels shrink without squeezing icons/actions, and chips retain their compact height beside
+  thumbnails. No attachment authority or budget changes.
+- Pending retains the user's deliberate secondary-information treatment: 0.75 overall opacity,
+  transparent background and quiet border at rest, with full opacity/shared surface/hairline on
+  hover or focus within. The attempted removal of idle dimming was rejected and restored; it was
+  intentional hierarchy, not a readability defect. The header shows one quiet total. Complete single-mode queues use `Pending · Steer` or
+  `Pending · Queue` without another group heading; mixed or incomplete previews retain quiet group
+  labels. Group counts, row S/Q badges and their grid column/styles are removed. Numbering, ordering,
+  omitted disclosure, exact copy targets, image previews and action handlers remain.
+- Composer toolbar, Model/Thinking, delivery controls, Stop/Send, ActivityBar Pending count,
+  reading controls, activity rails and Files layout are unchanged.
+- The two focused component suites passed (14 cases), including both single modes, mixed ordering,
+  bounded-summary truth, filename/tooltips, upload/error/removal and disabled states. Three relevant
+  Chromium cases passed for thumbnail/viewer/narrow wrapping, Clear confirmation/draft preservation,
+  complete-copy/mixed recovery and Stop/Escape. The image fixture now supplies five thumbnails in
+  one row group to verify wrapping after removal of the badge column frees enough room for four.
+  Typecheck, repository lint, changed-file Biome and the web build passed.
+- Visual inspection used isolated mock content at 1280px and 390px in Amber light/dark, with desktop
+  Jade light/dark spot-checks after waiting for actual root theme/palette attributes. Captures include
+  mixed and complete single-mode Pending, chart thumbnails, long filenames and ready/upload/error
+  files. At 320px, browser assertions confirmed page/chip/action fit and reachable Clear confirmation.
+  Evidence: `output/playwright/composer-hierarchy/` contains
+  `before-{desktop,narrow}-light.png` and component/browser/static-check logs. The earlier
+  normal-opacity after-captures are superseded by the restored idle/interaction treatment and removed.
+  CSS restoration reuses the unchanged action/geometry evidence above. A focused Chromium CLI check
+  confirmed idle opacity 0.75, hover/focus-within opacity 1, and return to 0.75 after leaving the panel;
+  refreshed evidence is `restored-{idle,hover,focus,narrow}-light.png` and `restore-visual.log`.
+  Browser assets are rebuilt; no real user sessions, queues, attachments
+  or preferences were changed. Temporary mock/browser resources are stopped; the normal persistent
+  execution session is retained.
+
+## Narrow Thinking grouping — accepted and preserved
+
+Implemented from clean `e96c3ea` in the main worktree. The user selected only Thinking adjacency
+from the screenshot comparison; accepted at `acbcf3f` with filled red Stop preserved.
+
+- Two CSS values change at widths up to 420px: the selector gap uses `--space-2` (8px), and Model
+  uses shrink-only flex sizing. Thinking keeps its existing non-shrinking width; available space,
+  not a fixed model quota, determines truncation. Desktop, Stop/Send, Steer/Queue, textarea,
+  attachments and Pending are unchanged.
+- Three focused Chromium mock probes passed: 390px with Kimi K3 and 320px/360px with a long model
+  label. All measured an 8px gap, aligned controls, fully visible Thinking and no page overflow.
+  Long labels truncated while Thinking stayed fully visible. Stop retained its filled error color.
+  Final screenshots were compared with the selected narrow sketch and visually inspected.
+- Evidence: `output/playwright/thinking-group/after-narrow-light.png`, `after-long-320-light.png`,
+  `geometry.log` and `build.log`. The web build passed. Validation used an isolated mock Host;
+  no real preferences, models or sessions were changed. Temporary probes and mock resources are
+  removed, and the normal execution session is retained.
+
+## Command Palette headings — ready for review
+
+Implemented from clean `acbcf3f` in the main worktree. Only `.palette__group` changes:
+its control-surface fill and bottom hairline are removed. Existing muted semibold type, case,
+padding and section gaps keep groups readable without competing with command-row highlights.
+Input focus/boundary, palette frame, row treatments, hints, order and handlers are unchanged.
+
+- Inspected real before/after Chromium captures at 1280×900 light and 390×900 dark using the isolated
+  mock Host. Short Help and longer Workspace/Sessions groups retain a clear rhythm; the light
+  panel loses its repetitive strips, and dark headings remain legible on the shared surface.
+- One focused CLI browser check traversed all 15 default command rows across groups: the last
+  candidate scrolled fully into view while focus stayed in Filter commands. Theme search/Enter
+  dispatch was exercised while capturing. Existing palette interaction evidence remains applicable.
+  The web build passed; no full test/typecheck/lint suites were rerun for this two-declaration change.
+- Evidence: `output/playwright/palette-groups/before-{desktop-light,narrow-dark}.png`,
+  `after-{desktop-light,narrow-dark}.png`, `after-sessions-light.png`, `visual-check.log`,
+  `keyboard-check.log` and `build.log`.
+  Browser assets are rebuilt. No real user sessions/configuration were touched; temporary mock/browser
+  resources are stopped and removed. The normal persistent execution session is retained.
+
 ## Next actions
 
-Review the Terminal category slice before proceeding to another batch. Preserve the accepted Models
-controls and effective existing design; do not reintroduce rejected reading, activity or Files layout
-changes by default.
+Review the Command Palette headings slice before proceeding to another batch. Preserve accepted narrow
+Thinking adjacency, filled red Stop, attachment/Pending hierarchy, Terminal, main Settings and Models
+controls; do not reintroduce rejected reading, activity or Files layout changes by default.
 
 Use an independent `gpt-6.1-sol` / high Pi implementation session when delegating, as requested;
 keep execution sessions persistent and user-visible.

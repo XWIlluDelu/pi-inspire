@@ -45,7 +45,11 @@ browser snapshot and cross-domain commit authority. Append-only transcript updat
 active textarea, focus and selection.
 
 The compact input keeps its padding, control order and icon-only send button. Controls wrap only as
-needed; phone Steer/Queue buttons split their delivery row equally. The textarea grows with content.
+needed; phone Steer/Queue buttons split their delivery row equally. At widths up to 420px, Model and
+Thinking sit together with an 8px token gap on the selector row. Model shrinks without growing into
+spare space; long labels truncate while Thinking keeps its full width. Stop retains its existing
+filled error-color treatment and delivery-row placement. Desktop controls are unchanged.
+The textarea grows with content.
 Expand appears at the top right only when actual compact layout requires internal scrolling. The same
 input expands within the main column, preserving text, artifacts, focus and selection. Collapse
 remains available even after text becomes shorter and restores compact layout; no hidden control
@@ -117,7 +121,10 @@ proofing is disabled for technical input.
 ## Attachments and image inspection
 
 Images accept paste, drop and file selection. Staged images are separate thumbnail tiles with overlay
-removal, not metadata chips. Ordinary files show name, MIME, size and submission meaning. Clipboard
+removal, not metadata chips. Ordinary file chips emphasize the filename, upload/error state and
+removal. Full filenames, MIME/size or recalled-file provenance stay in native tooltips rather than
+repeating inline; errors retain their diagnostic and removal guidance. Filenames truncate without
+squeezing status/removal controls, and file chips do not stretch to adjacent image-tile height. Clipboard
 `files` is the complete source when non-empty; only an empty list falls back to file-kind `items`.
 Do not combine these projections or deduplicate distinct files by coincident metadata.
 
@@ -197,9 +204,16 @@ reconnect. Available attempt/reason details enrich the label; missing details ne
 Ordinary, compaction and summary retry keep short status separate from wrapping reasons. Executing
 and failed tools remain in chronological cards.
 
-Pending sits at Transcript's end, immediately showing ordered S/Q rows. Its header groups count,
-Return, Copy and Clear; ActivityBar keeps a compact count. Text previews preserve beginning and end,
-up to three leading lines and one trailing line within 512 characters, with explicit middle ellipsis.
+Pending sits at Transcript's end, immediately showing ordered Steer/Queue input. As secondary
+information, the panel deliberately uses 0.75 overall opacity, a transparent background and a quiet
+border at rest; hover or focus within restores full opacity, the shared surface and normal hairline.
+One header contains the total and actions ordered Copy, Return, Clear. Copy retains its hover/focus
+reveal; placing it first keeps Return and Clear adjacent at rest. A fully supplied
+single-mode queue names its mode in that header; mixed queues use quiet group labels without group
+counts or per-row S/Q badges. Bounded previews with omitted entries retain a generic header and visible
+group labels, since the supplied groups cannot establish the whole queue's mode. ActivityBar keeps its
+compact count. Text previews preserve beginning and end, up to three leading lines and one trailing
+line within 512 characters, with explicit middle ellipsis.
 Short text stays whole; omitted rows retain total and omitted counts. Known images have wrapping,
 clickable thumbnails from retained handles through the attachment endpoint. Until handles arrive,
 count-only rows show Image / N images; unknown empty rows imply no image. Consumed image admissions
