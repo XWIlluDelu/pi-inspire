@@ -46,8 +46,12 @@ Feedback on a particular visual change does not cancel independent work or restr
 bug fixes. Clear functional defects can be repaired and retained, but do not replace frontend
 improvement. Floating reading controls and the activity rails remain; the Files layout experiment
 was withdrawn, while its two independent preview-control/label cleanups are retained. Changes source
-highlighting and filename-appropriate icons form the retained baseline. The latest Models slice distinguishes Common checkboxes, Default radios and rule-edit
-actions, and quiets provider headings without reordering Settings; it is ready for review.
+highlighting and filename-appropriate icons form the retained baseline. The accepted Models slice
+distinguishes Common checkboxes, Default radios and rule-edit actions, and quiets provider headings
+without reordering Settings. The accepted main Settings category views preserve drafts and login
+state and use one narrow selection underline. Terminal settings now follows the same navigation for
+Appearance, Interaction and Saved output, retaining browser preferences and ongoing Host operations;
+this Terminal slice is ready for review.
 
 [[follow-pi-native-capability-review-2026-10-02]] owns the remaining native-capability backlog.
 The separate presentation questions are compact-success receipts in

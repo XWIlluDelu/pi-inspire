@@ -1019,21 +1019,8 @@
   font: var(--text-sm) / var(--leading-ui) var(--font-sans);
 }
 
-.dialog.terminal-settings {
-  width: min(680px, calc(100vw - 32px));
-  max-width: 100%;
-  max-height: min(
-    820px,
-    calc(100dvh - max(8px, var(--safe-top)) - max(8px, var(--safe-bottom)))
-  );
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  padding: 0;
-  overflow: hidden;
-}
-
 .terminal-settings__body {
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1135,11 +1122,6 @@
 
   .terminal-pending__row > button {
     min-height: 44px;
-  }
-
-  .dialog.terminal-settings {
-    width: calc(100vw - 16px);
-    max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 16px);
   }
 
   .terminal-undo,

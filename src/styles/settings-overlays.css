@@ -262,6 +262,11 @@
   gap: var(--space-6);
 }
 
+/* Keep category drafts mounted without exposing inactive controls. */
+.settings__page[hidden] {
+  display: none;
+}
+
 .dialog.settings .button,
 .dialog.settings .settings-section-action .button,
 .dialog.settings .host-restart .button,

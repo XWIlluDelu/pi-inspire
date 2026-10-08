@@ -728,7 +728,8 @@ body.srail-dragging {
       max(var(--space-2), var(--safe-left));
   }
 
-  .dialog.settings {
+  .dialog.settings,
+  .dialog.terminal-settings {
     width: 100%;
     height: calc(
       100dvh - var(--safe-top) - var(--safe-bottom) - 2 * var(--space-2)
@@ -780,6 +781,13 @@ body.srail-dragging {
     font-size: var(--text-xs);
     white-space: nowrap;
     scroll-snap-align: nearest;
+  }
+
+  .settings__nav-item--active,
+  .settings__nav-item--active:hover {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
   }
 
   .settings__nav-item--active::before {

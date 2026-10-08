@@ -54,9 +54,13 @@ const messageOf = (error: unknown) =>
     : "The Host could not complete this operation";
 export function ModelsSettings({
   destination,
+  active = true,
 }: {
   destination?: ModelSettingsDestination;
+  active?: boolean;
 }) {
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const state = useAppState(
     (source) => ({
       sessionId: source.sessionId,
@@ -154,6 +158,7 @@ export function ModelsSettings({
         !released &&
         !moved &&
         mounted.current &&
+        activeRef.current &&
         Boolean(rootRef.current?.isConnected) &&
         currentOwner.current.owner === owner &&
         currentOwner.current.transport === state.transport,
@@ -279,7 +284,12 @@ export function ModelsSettings({
   const focusedDestination = useRef<string | undefined>(undefined);
   useEffect(() => {
     const key = `${destination?.focus ?? ""}/${destination?.query ?? ""}`;
-    if (!snapshot || !destination?.focus || focusedDestination.current === key)
+    if (
+      !active ||
+      !snapshot ||
+      !destination?.focus ||
+      focusedDestination.current === key
+    )
       return;
     const frame = requestAnimationFrame(() => {
       document
@@ -292,7 +302,7 @@ export function ModelsSettings({
       focusedDestination.current = key;
     });
     return () => cancelAnimationFrame(frame);
-  }, [snapshot, destination]);
+  }, [active, snapshot, destination]);
   const mutate = async (
     operation: () => Promise<ModelSettingsWriteResult>,
     onSaved?: (next: ModelSettingsWriteResult) => FocusPlan,

@@ -133,7 +133,11 @@ its summary, without also closing a narrow drawer. A newer modal has priority. M
 within the pane; header controls align across desktop/touch layouts, and hidden views publish no controls.
 
 Terminal Settings is a body-level modal, above the pane's stacking context. Its header/footer remain
-visible around the scrolling body. Settings and Select text restore focus to the visible More summary;
+visible around the scrolling body. Appearance, Interaction and Saved output are separate category views,
+with the main Settings desktop sidebar, narrow horizontal strip and safe-area-aware narrow frame.
+Only the active category exposes its controls. Switching or reselecting a category starts its content at the top; scrolling does not
+change the selection. Browser preferences and Host loading, saving, clearing and error state survive
+category switches. Settings and Select text restore focus to the visible More summary;
 modal Escape leaves terminal focus mode and the underlying drawer unchanged. **Restore defaults**
 resets browser presentation/interaction preferences, not Host history. Appearance, Interaction and
 Saved output use the main Settings controls and dialog header, with 40px touch controls. Font size
@@ -203,4 +207,5 @@ future options.
 [[terminal-ci-portability]] records cross-platform runtime and exit checks.
 [[operation-lifecycle-ownership]] covers receipts, upgrade behavior, and uncertainty.
 [[terminal-controls-redesign]] and [[follow-interface-review-2026-09-29]] record controls, clipboard,
-settings, and browser verification.
+settings, and browser verification. [[follow-frontend-refinement-2026-10-07]] records the category-view
+batch and its focused navigation/state checks.

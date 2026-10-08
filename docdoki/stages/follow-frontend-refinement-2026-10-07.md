@@ -5,7 +5,7 @@ scope:
   - src/{source-diff,file-icons,syntax-highlighting}.ts
   - tests/web/
   - tests/browser/
-  - docdoki/specs/{conversation,workspace-layout,activity-presentation,resource-preview,model-settings}.md
+  - docdoki/specs/{conversation,workspace-layout,activity-presentation,resource-preview,model-settings,interface-preferences,design-system,terminal}.md
 ---
 
 # Incremental frontend refinement
@@ -44,8 +44,9 @@ misinterpretation, superseded by the user's clarification.
 - Authentication: settled login results supersede earlier request errors and late responses
   (`a098b26`).
 
-The Models batch below started from a clean `d486a07` main worktree. For ongoing sequential frontend
-work, use the main worktree; isolation requires a concrete need rather than a generic precaution.
+The accepted Models batch below is retained at `f085a42`. Main Settings categories are accepted at
+`4cdcf70`; the Terminal category batch starts from that clean main-worktree baseline. For ongoing sequential frontend work, use the main worktree;
+isolation requires a concrete need rather than a generic precaution.
 Execution Pi sessions use normal persistent storage, remain discoverable in Inspire and are retained
 for the user's occasional inspection. Finishing a task is not grounds to delete those session records.
 
@@ -83,10 +84,10 @@ Implemented as `d486a07`; retained while work continues on Models.
   `output/playwright/changes-readability/`: `before-{light,dark}.png`,
   `after-{light,dark}.png` and `after-change-{light,dark}.png`.
 
-## Models choices — awaiting review
+## Models choices — accepted and preserved
 
-Implemented in the main worktree from `d486a07`, including the indicator finish aligned with
-Settings controls; ready for user review.
+Implemented from `d486a07`, with the indicator finish aligned with Settings controls at `f085a42`.
+Accepted by the user; this category-navigation batch preserves those controls.
 
 - Common exact membership uses native checkboxes; Default uses native radios and is idempotent
   when reselected. Clear remains in the saved-default summary. Rule inclusion has a separate
@@ -114,15 +115,77 @@ Settings controls; ready for user review.
 - One focused mock-browser check confirmed label activation, Space/Tab, save focus, the 2px keyboard
   outline and unchanged indicator/label geometry. Amber/Jade light/dark spot-checks matched indicator
   surface, border and mark colors to actual Settings switches. CSS lint added no diagnostics; the
-  web build passed. Prior
-  component, virtualized-keyboard and narrow-layout evidence remains valid and was not rerun.
+  web build passed. Prior component, virtualized-keyboard and narrow-layout evidence remains valid
+  and was not rerun.
   `choice-style-{light,dark}.png` show the finish beside real Settings switches in the same artifact
   directory; earlier screenshots remain intact.
 
+## Settings categories — accepted and preserved
+
+Implemented from the clean `f085a42` main worktree. Category content, field order, icons, desktop
+sidebar, dialog frame and footer geometry remain; only category visibility/navigation and the narrow
+selected treatment change.
+
+- Display, Conversation, Behavior, Models and System are separate views. The selected page starts at
+  its content top, including when reselected. Scrolling stays within the selected category.
+- Inactive pages remain mounted but hidden from rendering, focus and assistive technology. This
+  preserves provider/model and rule editors, model browsing, loaded data and authentication lifetime.
+  Models keeps its destination owner across switches and defers destination scrolling and save-focus
+  handoffs while hidden. Manage models and credentials reveal their intended section.
+- The narrow category strip drops the selected card border, fill and shadow, leaving one accent
+  underline. Desktop selection, keyboard outlines, touch dimensions and horizontal reachability remain.
+- Four focused Vitest files passed (33 cases): Settings navigation/loading, modal focus and Models.
+  Chromium checks passed for dropdown Tab, desktop/320px category visibility/top landing, stable
+  selection during scroll, hidden-control focus/Tab exclusion, an initially hidden virtualized catalog,
+  retained search/provider draft, delayed login arriving while hidden, retained login input/completion,
+  credentials navigation and Manage models' prospective-project owner across category switches.
+  Typecheck, repository lint, changed-file TS/TSX lint and the web build passed.
+- Before/after screenshots in `output/playwright/settings-categories/` show 1280px desktop and 390px
+  narrow Conversation views. Final Amber light/dark and narrow Jade light/dark captures were visually
+  inspected; `visual-check.log` records theme/palette identity and the single narrow selected treatment.
+  Baseline captures are `before-{desktop,narrow}-light.png`; final captures are
+  `after-{desktop,narrow}-{light,dark}.png` and `after-narrow-jade-{light,dark}.png`.
+  Verification uses the isolated mock browser Host, not user preferences or the running user Host.
+  Browser assets are rebuilt; temporary mock processes are stopped.
+
+## Terminal categories — ready for review
+
+Implemented from the clean `4cdcf70` main worktree following the user's approval of the analogous
+Terminal category navigation. The accepted main Settings and Models controls are unchanged.
+
+- Appearance, Interaction and Saved output now occupy separate category views. They reuse the
+  main Settings desktop sidebar and narrow underline strip. Switches and reselection land at the
+  content top; scrolling does not select another category.
+- The modal owns browser preferences and Host load/save/clear/error state throughout navigation.
+  Only the selected section mounts; this excludes inactive controls and their portaled menus
+  without adding a category framework. Existing fields, immediate saves, confirmation policies,
+  browser-only Restore defaults and footer save errors remain.
+- The Terminal content scroller flexes within the sidebar/main layout. Desktop frame and field tokens
+  remain; the narrow frame now uses the same safe-area-aware available height as main Settings.
+  Multi-option controls move below their labels on narrow cards, using the shared wide-field styling.
+  Desktop/narrow captures were inspected in Amber light/dark, and
+  Jade accent roles were checked against actual root theme/palette attributes. A 700px tablet
+  check confirmed label/control separation and untruncated control labels in all three categories.
+- Four new component cases passed for page isolation/top landing, immediate browser persistence
+  and reset separation, delayed Host loading/saving while hidden, and retained clear progress/errors.
+  The existing terminal pane (21 cases) and UI storage (3 cases) suites passed; the pane focus case
+  now observes the initial Appearance view. Four Chromium cases passed across 1280px/320px:
+  category scroll/selection, hidden Tab exclusion, keyboard-visible focus, portaled-menu dismissal,
+  and the existing browser/Host controls, confirmations and reopen workflow with explicit categories.
+  Typecheck, repository lint, changed-file Biome and the web build passed.
+- Evidence in `output/playwright/terminal-categories/`: `before-{desktop,narrow}-light.png`,
+  `after-{desktop,narrow}-{light,dark}.png`, component/browser logs, `fit.log` and
+  `visual-check.log`. Final narrow viewport fit and refreshed light/dark captures passed after the
+  frame refinement; the Interaction page and footer fit at 390×900. The isolated mock Host was used
+  throughout; user preferences, real terminals
+  and the user's service were not changed. Temporary mock/browser resources are stopped; the
+  normal persistent execution session is retained.
+
 ## Next actions
 
-Review this Models slice before proceeding to another batch. Preserve effective existing design;
-do not reintroduce rejected reading, activity or Files layout changes by default.
+Review the Terminal category slice before proceeding to another batch. Preserve the accepted Models
+controls and effective existing design; do not reintroduce rejected reading, activity or Files layout
+changes by default.
 
 Use an independent `gpt-6.1-sol` / high Pi implementation session when delegating, as requested;
 keep execution sessions persistent and user-visible.

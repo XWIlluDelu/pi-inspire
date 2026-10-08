@@ -9,7 +9,7 @@ covers:
   - src/styles/settings-overlays.css
   - tests/server/{preferences,update-checker,pi-update-checker,update-coordinator}.test.ts
   - tests/web/{settings-navigation,settings-loading,notices,update-controller,attention,modal-focus}.test.ts*
-  - tests/browser/workbench.spec.ts
+  - tests/browser/{workbench,settings-layout}.spec.ts
 ---
 
 # Interface preferences and completion attention
@@ -21,9 +21,12 @@ Keep persistent preferences easy to find and save each change without overwritin
 
 ## Settings organization
 
-Settings opens from the topbar as a modal, leaving session navigation in place. Categories locate
-sections in one continuous scrolling document, as in Terminal settings. Navigation tracks the visible
-section; form edits and login state remain intact while browsing.
+Settings opens from the topbar as a modal, leaving session navigation in place. Display, Conversation,
+Behavior, Models and System are separate category views. Only the selected category is visible,
+focusable and exposed to assistive technology. Category navigation starts its content at the top;
+scrolling within a category does not change the selection. Drafts, model browsing state and pending
+login attempts remain intact across category switches. Model and credential destinations reveal their
+owning category before locating the requested section.
 
 | Category | Controls |
 | --- | --- |
@@ -48,9 +51,12 @@ state unchanged.
 
 Settings and Terminal settings share field, switch, stepper and segmented-control styling: 32px
 controls for a mouse, 40px for touch. Card width determines when wide controls move below their
-labels; switches stay inline. Segment labels do not wrap. Continuous navigation scrolls only the
-settings content, keeping the dialog header and navigation visible. Unknown runtime values show
-Unavailable rather than a confirmed state.
+labels; switches stay inline. Segment labels do not wrap. Terminal settings uses the same category
+navigation for Appearance, Interaction and Saved output under [[terminal]]. Category and subsection
+navigation scroll only dialog content, keeping the header, navigation and utility footer in place.
+The narrow horizontal category strip uses one accent underline for selection, with visible keyboard focus and
+reachable offscreen categories; the desktop sidebar retains its existing treatment. Unknown runtime
+values show Unavailable rather than a confirmed state.
 Open menus can extend beyond cards without clipping. Disabled controls remain legible and distinct
 from selected, available controls.
 

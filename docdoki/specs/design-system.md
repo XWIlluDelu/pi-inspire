@@ -187,7 +187,10 @@ keep their existing behavior. Embedded documents retain their own styles.
   0.97→1 pop-in. Modal focus/keyboard ownership is behaviorally centralized in
   `useModalFocus`; a visual overlay never leaves shell shortcuts active below
   it. Settings update checks use the same section/card geometry as preferences, with compact rows
-  for Pi, Extensions, and INSΠRE.
+  for Pi, Extensions, and INSΠRE. Settings and Terminal settings categories show one page at a time
+  within their dialog frame, with fixed navigation and utility footer. Both use the same safe-area-aware
+  narrow frame. Narrow category selection uses one accent underline without a selected card fill,
+  border or shadow; keyboard focus keeps the shared outline.
 
 - Deferred Settings and Context keep one shell and focus owner through loading, ready, and failure.
   Content loads in the background while the shell remains interactive. Loading visuals appear only

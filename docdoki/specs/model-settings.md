@@ -104,7 +104,9 @@ Forms retain untouched providers, model metadata, overrides and advanced fields 
 Removing a declaration affects `models.json`, independently of built-in catalog entries and saved
 login credentials. Configured declarations remain editable when their models are unavailable.
 
-Drafts belong to their provider/model and creation mode. Errors remain in the form. Creating a
+Drafts belong to their provider/model and creation mode and survive Settings category switches.
+Model search and loaded data retain the same Settings owner while its category is hidden; hidden
+content does not take focus or apply destination scrolling. Errors remain in the form. Creating a
 provider continues at Add model; a newly available model appears in the ordinary model list. Cancel
 returns to the entry point, and Common/Default saves retain row focus unless the user has moved it.
 
@@ -123,7 +125,8 @@ Provider methods come from the installed Pi, including native and extension API-
 `/login` opens provider selection and may reveal an unambiguous provider's methods; authorization
 starts only after selecting a method. Loading, errors and empty results are separate states.
 
-Login operates on the connected Host's Pi credentials. The browser displays native links, codes,
+Login operates on the connected Host's Pi credentials. Switching Settings categories leaves the
+attempt running and preserves entered responses. The browser displays native links, codes,
 prompts and outcomes. Supported methods offer Remote login help on demand, following the selected
 method's device-code, pasted-code or redirect interaction.
 

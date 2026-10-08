@@ -13,7 +13,7 @@ import {
   memo,
   type ReactNode,
   useCallback,
-  useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -197,61 +197,59 @@ export const SettingsContent = memo(function SettingsContent({
     subscribeInstallAvailability,
     installAvailability,
   );
-  const [activeCategory, setActiveCategory] =
-    useState<CategoryId>(initialCategory);
+  const [navigation, setNavigation] = useState<{
+    category: CategoryId;
+    section?: string;
+  }>({ category: initialCategory });
+  const activeCategory = navigation.category;
   const contentRef = useRef<HTMLElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
 
-  const navigate = useCallback(
-    (categoryId: CategoryId, sectionId: string = categoryId) => {
-      setActiveCategory(categoryId);
-      const id = sectionId.startsWith("settings-")
-        ? sectionId
-        : `settings-section-${sectionId}`;
-      document
-        .getElementById(id)
-        ?.scrollIntoView({ block: "start", behavior: "instant" });
-    },
-    [],
-  );
+  const navigate = useCallback((category: CategoryId, section?: string) => {
+    setNavigation({ category, section });
+  }, []);
 
-  useEffect(() => {
-    const frame = requestAnimationFrame(() =>
-      navigate(
-        initialCategory,
-        initialCategory === "models" &&
-          modelDestination?.focus === "credentials"
-          ? "credentials"
-          : undefined,
-      ),
+  useLayoutEffect(() => {
+    navigate(
+      initialCategory,
+      initialCategory === "models" && modelDestination?.focus === "credentials"
+        ? "settings-section-credentials"
+        : undefined,
     );
-    return () => cancelAnimationFrame(frame);
   }, [initialCategory, modelDestination?.focus, navigate]);
 
-  const trackCategory = () => {
-    const container = contentRef.current;
-    if (!container) return;
-    if (
-      container.scrollTop + container.clientHeight >=
-      container.scrollHeight - 24
-    ) {
-      setActiveCategory("updates");
-      return;
-    }
-    const top = container.getBoundingClientRect().top;
-    let current: CategoryId = "display";
-    for (const category of CATEGORIES) {
-      const section = document.getElementById(
-        `settings-section-${category.id}`,
-      );
-      if (section && section.getBoundingClientRect().top <= top + 48)
-        current = category.id;
-    }
-    setActiveCategory(current);
-  };
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    // Wait for the selected page to be visible; scroll only this content area.
+    const section = navigation.section
+      ? content.querySelector<HTMLElement>(`#${navigation.section}`)
+      : null;
+    content.scrollTo({
+      top: section
+        ? content.scrollTop +
+          section.getBoundingClientRect().top -
+          content.getBoundingClientRect().top -
+          Number.parseFloat(getComputedStyle(content).paddingTop)
+        : 0,
+      behavior: "instant",
+    });
+    sidebarRef.current
+      ?.querySelector<HTMLElement>('[aria-current="location"]')
+      ?.scrollIntoView({
+        block: "nearest",
+        inline: "nearest",
+        behavior: "instant",
+      });
+  }, [navigation]);
 
   return (
     <div className="settings__layout">
-      <nav className="settings__sidebar" aria-label="Settings categories">
+      <nav
+        className="settings__sidebar"
+        aria-label="Settings categories"
+        ref={sidebarRef}
+      >
         <div className="settings__nav-list">
           {CATEGORIES.map((category) => {
             const active = activeCategory === category.id;
@@ -274,12 +272,12 @@ export const SettingsContent = memo(function SettingsContent({
       </nav>
 
       <div className="settings__main">
-        <main
-          className="settings__content"
-          ref={contentRef}
-          onScroll={trackCategory}
-        >
-          <div className="settings__page" data-category="display">
+        <main className="settings__content" ref={contentRef}>
+          <div
+            className="settings__page"
+            data-category="display"
+            hidden={activeCategory !== "display"}
+          >
             <Section id="display" icon={<Palette size={14} />} title="Display">
               <SettingField label="Theme">
                 <SegmentedControl
@@ -340,7 +338,11 @@ export const SettingsContent = memo(function SettingsContent({
             </Section>
           </div>
 
-          <div className="settings__page" data-category="conversation">
+          <div
+            className="settings__page"
+            data-category="conversation"
+            hidden={activeCategory !== "conversation"}
+          >
             <Section
               id="conversation"
               icon={<ScrollText size={14} />}
@@ -423,7 +425,11 @@ export const SettingsContent = memo(function SettingsContent({
             </Section>
           </div>
 
-          <div className="settings__page" data-category="behavior">
+          <div
+            className="settings__page"
+            data-category="behavior"
+            hidden={activeCategory !== "behavior"}
+          >
             <Section
               id="behavior"
               icon={<Compass size={14} />}
@@ -565,17 +571,22 @@ export const SettingsContent = memo(function SettingsContent({
             </Section>
           </div>
 
-          <div className="settings__page" data-category="models">
+          <div
+            className="settings__page"
+            data-category="models"
+            hidden={activeCategory !== "models"}
+          >
             <ModelsSettings
-              destination={
-                activeCategory === "models" || initialCategory === "models"
-                  ? modelDestination
-                  : undefined
-              }
+              active={activeCategory === "models"}
+              destination={modelDestination}
             />
           </div>
 
-          <div className="settings__page" data-category="updates">
+          <div
+            className="settings__page"
+            data-category="updates"
+            hidden={activeCategory !== "updates"}
+          >
             <SystemVersionsCard />
 
             <Section icon={<RefreshCw size={14} />} title="Restart">

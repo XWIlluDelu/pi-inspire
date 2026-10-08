@@ -163,9 +163,7 @@ describe("terminal project ownership", () => {
     const dialog = await screen.findByRole("dialog", {
       name: "Terminal settings",
     });
-    await within(dialog).findByRole("switch", {
-      name: "Persist terminal output",
-    });
+    await within(dialog).findByRole("group", { name: "Terminal font size" });
     expect(view.container).not.toContainElement(dialog);
     const close = within(dialog).getByRole("button", {
       name: "Close terminal settings",

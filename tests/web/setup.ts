@@ -23,6 +23,13 @@ window.matchMedia = (query: string) => ({
 URL.createObjectURL = () => "blob:test";
 URL.revokeObjectURL = () => {};
 Element.prototype.scrollIntoView = () => {};
+Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+  configurable: true,
+  value(this: HTMLElement, options: ScrollToOptions = {}) {
+    this.scrollTop = options.top ?? this.scrollTop;
+    this.scrollLeft = options.left ?? this.scrollLeft;
+  },
+});
 HTMLElement.prototype.setPointerCapture = () => {};
 HTMLElement.prototype.releasePointerCapture = () => {};
 HTMLElement.prototype.hasPointerCapture = () => false;

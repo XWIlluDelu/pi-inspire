@@ -39,6 +39,25 @@ test("Manage models carries New's prospective project only for its Settings visi
     .click();
   await expect.poll(() => settingsOwner).toEqual({ cwd: target });
   await expect(page.getByText(/This project uses/)).toBeVisible();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await expect(
+    settings.getByRole("button", { name: "Models", exact: true }),
+  ).toHaveAttribute("aria-current", "location");
+  await expect(
+    settings.getByRole("heading", { name: "Models", exact: true }),
+  ).toBeInViewport();
+  await settings
+    .getByRole("button", { name: "Add provider", exact: true })
+    .click();
+  await settings
+    .getByLabel("Provider ID", { exact: true })
+    .fill("prospective-draft");
+  await settings.getByRole("button", { name: "Display", exact: true }).click();
+  await settings.getByRole("button", { name: "Models", exact: true }).click();
+  await expect(settings.getByLabel("Provider ID", { exact: true })).toHaveValue(
+    "prospective-draft",
+  );
+  expect(settingsOwner).toEqual({ cwd: target });
 
   await page
     .getByRole("dialog", { name: "Settings", exact: true })
