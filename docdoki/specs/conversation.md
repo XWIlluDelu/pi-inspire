@@ -90,6 +90,7 @@ custom messages remain independent readable boundaries in this contract.
   complete source projection; completed-tool copies include the name, arguments, and result under
   the existing Host projection bounds, while a generating/interrupted call explicitly copies only
   its partial argument preview. Custom copies include the type, content, and details.
+  [[design-system]] defines the shared Copy/Fork presentation types and activation scopes.
 
 - User turns appear as compact bubbles while assistant answers use an open, left-aligned document
   flow suitable for long Markdown, mathematical notation, code, and structured activity. Unbroken

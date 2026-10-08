@@ -533,25 +533,35 @@ describe("explicit History actions", () => {
       name: "Edit in this session",
     });
     await waitFor(() => expect(edit).toBeEnabled());
+    const sameSession = screen.getByRole("group", { name: "This session" });
+    const summary = within(sameSession).getByRole("checkbox", {
+      name: "Carry branch summary",
+    });
+    expect(summary).not.toBeChecked();
     expect(
-      screen.getByRole("checkbox", {
-        name: "Carry branch summary",
-      }),
-    ).not.toBeChecked();
+      Array.from(sameSession.querySelectorAll("input, textarea, button")),
+    ).toEqual([summary, edit]);
     fireEvent.click(edit);
     expect(
       requests.filter((request) => request.url === "/api/branches/navigate"),
     ).toHaveLength(0);
     expect(sessionDraft("s1")).toBe("existing draft");
-    fireEvent.click(
-      screen.getByRole("checkbox", {
-        name: "Carry branch summary",
-      }),
-    );
-    fireEvent.change(
-      screen.getByRole("textbox", { name: "Summary instructions" }),
-      { target: { value: "Keep the measurements" } },
-    );
+    fireEvent.click(summary);
+    const instructions = within(sameSession).getByRole("textbox", {
+      name: "Summary instructions",
+    });
+    expect(instructions).toHaveAttribute("maxlength", "2000");
+    expect(
+      Array.from(sameSession.querySelectorAll("input, textarea, button")),
+    ).toEqual([summary, instructions, edit]);
+    expect(
+      within(screen.getByRole("group", { name: "New session" })).queryByRole(
+        "checkbox",
+      ),
+    ).not.toBeInTheDocument();
+    fireEvent.change(instructions, {
+      target: { value: "Keep the measurements" },
+    });
     fireEvent.click(
       screen.getByRole("button", { name: "Edit in this session" }),
     );

@@ -127,13 +127,17 @@ Independent copies do not replace the active source worker. Durable trust comes 
 - A deliberate same-session continuation can carry Pi's summary of the branch being left, with
   optional custom instructions. Group node actions under This session and New session; user entries
   offer both Fork and Clone. A default-off Carry branch summary checkbox reveals optional
-  instructions when selected. Its description identifies the conversation being left. Honor
+  instructions when selected. Within This session, show this configuration before Edit in this
+  session / Continue here in both visual and keyboard order. Summary applies only to that action,
+  not Fork/Clone in the separate New session group. Keep the bottom action dock bounded and scrollable
+  independently of the reading body. Its description identifies the conversation being left. Honor
   the native skip-summary-prompt preference. Summary
   generation is never a side effect of searching or previewing History. Cancellation follows Pi's
   native outcome rather than leaving the browser at a falsely completed destination. Ordinary summary
   cancellation uses native abort and preserves the worker/extension locals when it settles; confirmed
   retirement remains the fallback for an explicitly cancelled operation that cannot settle.
-  Implementation evidence: [[follow-history-cloning-2026-10-02]].
+  Native implementation evidence: [[follow-history-cloning-2026-10-02]]; configuration-order review
+  evidence: [[follow-frontend-refinement-2026-10-07]].
 
 ### Export content and publication
 

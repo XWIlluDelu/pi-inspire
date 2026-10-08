@@ -5,7 +5,7 @@ scope:
   - src/{source-diff,file-icons,syntax-highlighting}.ts
   - tests/web/
   - tests/browser/
-  - docdoki/specs/{conversation,workspace-layout,activity-presentation,resource-preview,model-settings,interface-preferences,design-system,terminal,composer}.md
+  - docdoki/specs/{workbench,conversation,workspace-layout,activity-presentation,resource-preview,model-settings,interface-preferences,design-system,terminal,composer,session-branches}.md
 ---
 
 # Incremental frontend refinement
@@ -15,6 +15,8 @@ scope:
 Continue frontend improvement in small, independently reviewable batches. The user wants to see
 each batch's concrete net changes before proceeding, not review a large redesign all at once.
 Prioritize beauty, consistency, readability and intuitive interaction.
+Propose each next batch before implementation and wait for the user's approval; approval of one
+slice does not authorize the following slice.
 
 Feedback rejecting particular visual changes applies to those changes, not automatically the entire
 batch or all future frontend work. Preserve independent, useful changes. The agent owns routine
@@ -47,8 +49,10 @@ misinterpretation, superseded by the user's clarification.
 The accepted Models batch below is retained at `f085a42`. Main Settings categories are accepted at
 `4cdcf70`; Terminal categories are accepted at `4a65392`. Attachments/Pending are accepted at
 `e96c3ea` with deliberate idle dimming restored. Narrow Thinking grouping is accepted at `acbcf3f`;
-the Command Palette headings slice starts from that clean main-worktree baseline. For ongoing sequential
-frontend work, use the main worktree; isolation requires a concrete need rather than a generic precaution.
+Command Palette headings are accepted at `71769cf`; Pending header action order is retained at
+`1013f42`. Quiet secondary buttons are accepted at `a5ad7e7`. The session-row overflow experiment
+below is withdrawn. For ongoing sequential frontend work, use the main worktree; isolation requires
+a concrete need rather than a generic precaution.
 Execution Pi sessions use normal persistent storage, remain discoverable in Inspire and are retained
 for the user's occasional inspection. Finishing a task is not grounds to delete those session records.
 
@@ -241,9 +245,10 @@ from the screenshot comparison; accepted at `acbcf3f` with filled red Stop prese
   no real preferences, models or sessions were changed. Temporary probes and mock resources are
   removed, and the normal execution session is retained.
 
-## Command Palette headings — ready for review
+## Command Palette headings — accepted and preserved
 
-Implemented from clean `acbcf3f` in the main worktree. Only `.palette__group` changes:
+Implemented from clean `acbcf3f` in the main worktree; accepted at `71769cf` when the user requested
+the next batch. Only `.palette__group` changes:
 its control-surface fill and bottom hairline are removed. Existing muted semibold type, case,
 padding and section gaps keep groups readable without competing with command-row highlights.
 Input focus/boundary, palette frame, row treatments, hints, order and handlers are unchanged.
@@ -261,11 +266,147 @@ Input focus/boundary, palette frame, row treatments, hints, order and handlers a
   Browser assets are rebuilt. No real user sessions/configuration were touched; temporary mock/browser
   resources are stopped and removed. The normal persistent execution session is retained.
 
+## Session-row overflow — withdrawn
+
+The user rejected hiding frequent Pin/Hide actions behind an ellipsis menu. Restored the pre-experiment
+row implementation, navigation styles and direct-action tests; removed the menu component and its
+menu-specific tests. Narrow/touch rows expose Pin/Unpin and Hide directly, and Hidden retains direct
+Restore/Delete. Desktop hover/focus controls, ages, status, grouping and existing deletion protection
+remain unchanged.
+
+The independent Pending action-order repair at `1013f42` is retained: Copy, Return, Clear.
+Other accepted frontend slices remain. Product code, styles and tests match `1013f42`; the restored
+11-case navigation suite and web build passed. The normal persistent execution session is retained.
+
+## Quiet secondary buttons — accepted and preserved
+
+Implemented from clean `f06da23`; accepted at `a5ad7e7` when the user requested the next batch.
+Preserves its shared action-button model and the accepted baseline.
+Only `src/styles/foundation.css` changes product code: existing `.button--quiet` controls now have
+transparent enabled resting fills/borders, retain body-color labels and inherit existing dimensions.
+Hover/press use shared inset/control surfaces without a visible border; shared focus and disabled
+states remain. History Back, pagination, recovery and Fork/Clone, the earlier-branch Clone, and
+Terminal's Retry same operation share this finish. No modifier usages, handlers or action ordering
+change. Terminal's empty-state New terminal remains primary, not quiet.
+
+- Inspected real mock UI before/after captures at 1280×900 light and 390×900 dark. History list/detail
+  and the earlier-branch banner lose repeated boxes without fading labels. Current-session actions
+  and Terminal's primary New terminal retain their fills. Terminal recovery was exposed by aborting
+  a browser-intercepted creation request before it reached the mock Host; no shell was created.
+- Focused Chromium CLI checks confirm pagination, keyboard Back/focus restoration, Tab to Clone with
+  the shared 2px outline, unchanged text/geometry, disabled hover, enabled hover/press and Terminal
+  recovery styling. Existing History Fork/Clone and Terminal operation lifecycle evidence remains
+  applicable; no full suites or theme matrices were repeated. A CSS-enabled Biome lint and web build
+  passed. The build retains its existing large-chunk warning.
+- Evidence: `output/playwright/quiet-buttons/` contains `{before,after}-history-list-desktop-light.png`,
+  `{before,after}-history-detail-{desktop-light,narrow-dark}.png`,
+  `{before,after}-banner-{desktop-light,narrow-dark}.png`,
+  `{before,after}-terminal-retry-desktop-light.png`, hover/focus captures, `interaction-check.log`,
+  `css-lint.log`, `build.log` and `visual-check.log`. Browser assets are rebuilt. Only isolated mock
+  state and browser resources were used; no real sessions/preferences or user Host were changed.
+  Temporary resources are stopped and removed; the normal persistent execution session is retained.
+
+## History configuration order — accepted and preserved
+
+Implemented at `d712e24`; accepted when the user requested the next batch. Based on `a5ad7e7`
+in the main worktree. Pre-existing independent edits in
+`activity-cards.css`, `composer.css` and `transcript.css` were left untouched.
+
+- Only the same-session JSX order changes: Carry branch summary and its optional instructions now
+  precede Edit in this session / Continue here. Existing spacing, typography, button roles, labels,
+  bounded bottom dock and separate New session Fork/Clone group remain. No CSS changes were needed.
+  Native skip/leaf conditions, blocked reasons, instruction state/limit and callbacks are unchanged.
+- Strengthened the existing summary/Edit regression with checked and unchecked DOM order and
+  same-session-only configuration assertions, while retaining its summary flag/instruction checks.
+  The History component/controller/store suites passed (49 cases); changed-file Biome lint/format,
+  TypeScript checking and the web build passed. The existing large-chunk build warning remains.
+- Inspected before/after Chromium captures with checked and unchecked instructions at 1280×900,
+  390×844 and 320×568 in Amber light. The compact configuration leads into its action without adding
+  visual weight; the lower Fork/Clone group remains distinct. At short/narrow height, the existing
+  dock scrolls, rather than expanding over the reading body. Tab reveals the complete focused action,
+  including the wrapped Clone, and the instructions field fits at the dock's top.
+- Browser checks confirm checkbox → optional instructions → Edit → Fork → Clone, stable dock bottom,
+  retained instructions, unchanged reading scroll when toggling, and Back search/focus restoration.
+  A separate Continue check confirms instructions → Continue order, summary flag/instructions,
+  pending status and Stop summary dispatch, then cancelled-detail/configuration retention.
+  Navigate, Pending recovery and abort were fulfilled entirely by browser routes, not sent to a Host.
+- Evidence: `output/playwright/history-config/` holds
+  `{before,after}-{desktop,narrow,short-narrow}-{unchecked,checked}.png`,
+  `after-short-narrow-actions.png`, `after-summary-pending.png`, component/static/build logs,
+  `browser-check.log`, `summary-cancel-check.log`, `visual-check.log` and `execution.log`.
+  Browser assets are rebuilt. No real sessions/preferences or user Host were changed.
+  This slice's mock processes, private fixture state and browser resources are stopped and removed;
+  the shared browser workspace remains available to another active mock. The normal persistent
+  execution session is retained.
+
+## Welcome location hierarchy — visual experiment withdrawn
+
+The user preferred the original layout and explicitly restored it. The bordered, filled directory
+control is an editable path input, not redundant framing. Its location below the toolbar keeps the
+first message visually primary. The directory-first order, underline-only field and added hero gap
+from `bcb846c` are withdrawn; no directory-before-model ordering is a requirement.
+
+Only the independent Enter repair remains: editing the directory cannot implicitly create a session;
+IME confirmation and the first-message send shortcut keep their native behavior. The existing
+regression now tests focus and Enter ownership without requiring the rejected visual order.
+Welcome's stylesheet and visual DOM match `d712e24`; existing before captures under
+`output/playwright/welcome-location/` represent the retained appearance, while after captures record
+the withdrawn experiment. The 11-case start-surface suite, changed-file lint and rebuilt web assets
+passed; restored results are in `restored-component.log` and `restored-build.log`. Earlier model,
+attachment and browser-flow evidence remains applicable. Other accepted frontend slices and
+the independent content-action presentation batch are retained.
+
+## Content action presentation — ready for review
+
+Implemented against the retained action styles after the user's per-scenario decisions.
+Product changes are confined to `activity-cards.css`, `transcript.css` and `composer.css`;
+the independent History and Welcome slices remain intact.
+
+- CodeMode header Copy now reuses ordinary Tool/Thinking reveal behavior, including nested activity
+  headers. Displayed custom-message Copy reveals within its header; extension text-widget Copy
+  reveals within its whole widget. Pointer idle opacity is 0 and activation opacity is 1.
+- Branch/compaction Copy now responds only to its disclosure header or independently focusable Copy
+  control, not an expanded body. Native disclosure and Copy remain separate actions while collapsed.
+- Assistant-response footer Copy retains emphasized presentation with desktop idle opacity adjusted
+  from 0.48 to 0.50. All Pending Copy, Return and Clear actions stay visible and inherit the panel's
+  existing 0.75-to-1 emphasis, without individual opacity layers. Panel surfaces, confirmation and
+  Copy/Return/Clear order remain unchanged.
+- User-message Copy/Fork already share reveal behavior and remain unchanged. System information,
+  code-block and direct Shell-result Copy remain constant, as do path and Terminal text-reader
+  controls. No-hover reveal defaults and the existing response-footer touch default remain 0.75.
+  Content capability, clipboard payloads, layout and operation guards are unchanged.
+- Chromium CLI checks passed for idle/hover/focus states, title-only versus body activation, collapsed
+  summary Tab/Enter copying without disclosure, custom/widget clipboard payloads, Pending effective
+  opacity and confirmation cancellation. Desktop light and 390px touch dark captures were inspected;
+  the touch view has no horizontal overflow. CSS lint completed with specificity warnings; the focused
+  style-contract suite and web build passed. The existing large-chunk build warning remains.
+- Evidence is in `output/playwright/action-presentation/`: `after-desktop-light.png`,
+  `after-activity-{idle,hover}-light.png`, `after-pending-{idle,hover}-light.png`,
+  `after-touch-dark.png`, `after-{activity,pending}-touch-dark.png`, and browser/CSS/style/build logs.
+  Verification used an isolated mock Host; no user Host, real sessions or user preferences changed.
+  Browser assets are rebuilt. Temporary mock/browser resources are stopped and private fixture state
+  is removed; the normal persistent execution session remains available.
+
+## Topbar location glyph — withdrawn
+
+The user rejected the added folder glyph. Restore the project name/path's plain-text presentation,
+original spacing and copy feedback; remove glyph-specific CSS and assertions. Git's existing icon
+and all other frontend slices remain. The independent project-path test initialization stays:
+it selects its own session instead of depending on previous test state. Before captures under
+`output/playwright/topbar-location/` show the restored appearance; after captures document the
+withdrawn experiment.
+
 ## Next actions
 
-Review the Command Palette headings slice before proceeding to another batch. Preserve accepted narrow
-Thinking adjacency, filled red Stop, attachment/Pending hierarchy, Terminal, main Settings and Models
-controls; do not reintroduce rejected reading, activity or Files layout changes by default.
+Review the separate content-action slice above. The Welcome and topbar-glyph visual experiments
+are withdrawn. Propose a next independently reviewable frontend batch
+and await approval before implementing it. Straightforward image copying and reverse-input ordering when copying multiple
+images separately remain independent, unimplemented capability directions.
+
+Preserve direct session curation,
+accepted palette headings, narrow Thinking adjacency, filled red Stop, attachment/Pending hierarchy,
+Terminal, main Settings and Models controls; do not reintroduce rejected reading, activity, Files
+layout or session-row overflow changes.
 
 Use an independent `gpt-6.1-sol` / high Pi implementation session when delegating, as requested;
 keep execution sessions persistent and user-visible.

@@ -207,8 +207,9 @@ and failed tools remain in chronological cards.
 Pending sits at Transcript's end, immediately showing ordered Steer/Queue input. As secondary
 information, the panel deliberately uses 0.75 overall opacity, a transparent background and a quiet
 border at rest; hover or focus within restores full opacity, the shared surface and normal hairline.
-One header contains the total and actions ordered Copy, Return, Clear. Copy retains its hover/focus
-reveal; placing it first keeps Return and Clear adjacent at rest. A fully supplied
+One header contains the total and actions ordered Copy, Return, Clear. All header and item actions
+use emphasized presentation: they remain visible and inherit the panel's 0.75-to-1 opacity without
+additional button-level dimming. [[design-system]] owns the shared presentation model. A fully supplied
 single-mode queue names its mode in that header; mixed queues use quiet group labels without group
 counts or per-row S/Q badges. Bounded previews with omitted entries retain a generic header and visible
 group labels, since the supplied groups cannot establish the whole queue's mode. ActivityBar keeps its
@@ -298,7 +299,10 @@ unless a newer query/pointer/key choice intervenes. Cached choices appear immedi
 owning worker refreshes without interruption or selection change; failure keeps cache and local
 status. Changes commit selection/recency only on success; failed thinking rolls back and both warn.
 
-New uses the same editor/artifacts, with a full-width directory address/browser below the toolbar.
+New uses the same editor/artifacts, with a full-width editable directory address/browser below the
+toolbar. Its filled bordered input expresses path editability and remains separate from the message.
+The first-message editor receives initial autofocus. Directory Enter does not implicitly submit
+creation; IME confirmation remains native. Review evidence: [[follow-frontend-refinement-2026-10-07]].
 Readiness distinguishes pending/failed model resolution and in-flight creation; errors offer Retry
 and Pi's `unknown/unknown` means no model. While cwd matches, the inherited worker supplies model and
 resource completion; changing directory clears its commands until the new worker loads. Existing-

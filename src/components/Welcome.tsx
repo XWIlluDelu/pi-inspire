@@ -731,6 +731,14 @@ export const Welcome = memo(function Welcome({
             placeholder="/path/to/project"
             aria-label="Project directory"
             spellCheck={false}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Enter" &&
+                !event.nativeEvent.isComposing &&
+                event.nativeEvent.keyCode !== 229
+              )
+                event.preventDefault();
+            }}
             disabled={starting}
           />
         </div>

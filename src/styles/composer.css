@@ -222,6 +222,22 @@
   width: 24px;
   height: 24px;
   color: var(--muted);
+  opacity: 0;
+  transition:
+    opacity var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
+}
+
+.extension-display:hover .extension-display__copy,
+.extension-display:focus-within .extension-display__copy {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .extension-display__copy.icon-button {
+    opacity: 0.75;
+  }
 }
 
 .extension-display__copy.icon-button:hover,

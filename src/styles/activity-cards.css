@@ -969,10 +969,6 @@ span.card__file-arg {
   word-break: break-word;
 }
 
-.card--codemode .card__copy {
-  opacity: 1;
-}
-
 .codemode-duration {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;

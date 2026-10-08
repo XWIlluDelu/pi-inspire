@@ -579,6 +579,21 @@ a {
   cursor: default;
 }
 
+.button--quiet {
+  border-color: transparent;
+  background: transparent;
+}
+
+.button--quiet:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--bg-inset);
+}
+
+.button--quiet:active:not(:disabled) {
+  border-color: transparent;
+  background: var(--bg-control);
+}
+
 .button--primary {
   border-color: transparent;
   background: var(--accent-fill);

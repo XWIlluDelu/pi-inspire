@@ -904,25 +904,6 @@ export function BranchTree({
                   aria-label="This session"
                 >
                   <h3>This session</h3>
-                  <button
-                    type="button"
-                    className="button"
-                    disabled={
-                      Boolean(sameSessionBlocked) || !detail || selected.leaf
-                    }
-                    title={
-                      selected.canEdit
-                        ? "Move before this input and prepare it in Composer"
-                        : "Continue after this point"
-                    }
-                    onClick={() =>
-                      void navigate(carrySummary && !tree.skipSummaryPrompt)
-                    }
-                  >
-                    {selected.canEdit
-                      ? "Edit in this session"
-                      : "Continue here"}
-                  </button>
                   {!tree.skipSummaryPrompt && !selected.leaf ? (
                     <div className="history-summary">
                       <label title="Carry a summary of the conversation being left">
@@ -949,6 +930,25 @@ export function BranchTree({
                       ) : null}
                     </div>
                   ) : null}
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={
+                      Boolean(sameSessionBlocked) || !detail || selected.leaf
+                    }
+                    title={
+                      selected.canEdit
+                        ? "Move before this input and prepare it in Composer"
+                        : "Continue after this point"
+                    }
+                    onClick={() =>
+                      void navigate(carrySummary && !tree.skipSummaryPrompt)
+                    }
+                  >
+                    {selected.canEdit
+                      ? "Edit in this session"
+                      : "Continue here"}
+                  </button>
                   {sameSessionBlocked ? (
                     <p className="history-detail__blocked">
                       {sameSessionBlocked}

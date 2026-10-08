@@ -36,6 +36,7 @@ covers:
   - src/components/AppTopbar.tsx
   - src/components/EarlierBranchBanner.tsx
   - src/components/Nav.tsx
+  - src/components/NavSessions.tsx
   - src/components/Welcome.tsx
   - src/components/DirectoryPicker.tsx
   - src/components/CommandPalette.tsx
@@ -144,8 +145,8 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   persistent pin state, while putting their smaller session count in that same right-hand column, so
   the panel reads down one rule. The exact timestamp and the message count stay in tooltips rather
   than becoming a second number. The pin and hide actions take over that column on hover or focus
-  without moving anything, and where there is no hover to reveal them they take their own space
-  beside the age.
+  without moving anything. On phone-width layouts or without hover they remain visible beside the
+  age. Pin and Hide are frequent actions and stay directly accessible, not behind an overflow menu.
 
 - Project groups expose native expand/collapse controls; a collapsed group containing the visible
   session carries the active highlight on its header, and active search results remain visible

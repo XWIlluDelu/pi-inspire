@@ -210,6 +210,52 @@ keep their existing behavior. Embedded documents retain their own styles.
   stay outside the accessibility tree and tab order; loading has a concise status, and failure an
   alert and styled recovery action.
 
+## Action-button presentation
+
+Copy, Fork, Pending Return/Clear and similar actions share three presentation types:
+
+1. **Constant:** visible, with unchanged visibility and opacity across activation conditions.
+2. **Emphasized:** visible and semi-transparent at rest; a specified condition reduces transparency,
+   possibly to full opacity.
+3. **Revealed:** absent visually at rest; a specified condition makes the action visible, possibly
+   still semi-transparent.
+
+The implemented message/content action assignments are:
+
+| Surface | Type | Activation |
+| --- | --- | --- |
+| User-message Copy and adjacent Fork | Revealed | Hover or focus within the whole message |
+| Tool, Thinking and CodeMode header Copy | Revealed | Hover or focus within that card's header |
+| Branch/compaction summary Copy | Revealed | Hover or focus in the disclosure header or its independent Copy control, including while collapsed |
+| Displayed custom-message Copy | Revealed | Hover or focus within the message header |
+| Extension text-widget Copy | Revealed | Hover or focus within the whole widget |
+| Assistant-response footer Copy | Emphasized | Whole-message hover/focus changes desktop opacity from 0.50 to 1 |
+| All Pending Copy, Return and Clear controls | Emphasized | Whole-panel hover/focus changes effective opacity from 0.75 to 1 |
+| System error/update information, code blocks, direct Shell results, file/project paths and Terminal text-reader Copy | Constant | Visibility and opacity stay unchanged |
+
+Revealed actions retain their layout space and keyboard access. On devices without hover they are
+visible at 0.75 opacity by default; focus still reveals them fully. The existing message-footer
+touch default of 0.75 is preserved. Icon colors retain their surface roles: full opacity does not
+replace the deliberately subdued glyph color.
+
+Pending retains its independently decided panel-level idle dimming, transparent background and
+quiet border. All its actions stay locally opaque and inherit the panel's 0.75-to-1 emphasis; do not
+add a second opacity layer to individual buttons. Content roles, disclosure structure, clipboard
+payloads and operation guards remain unchanged. [[conversation]] and [[composer]] own their behavior.
+
+Existing `.button--quiet` controls in History, the earlier-branch banner and Terminal recovery use
+constant presentation. Enabled controls keep body-color text, unchanged geometry and a transparent
+resting fill/border; the transparent border retains layout space. Hover and press use the standard
+button inset/control surfaces without a visible border. Shared keyboard focus and disabled styling
+remain. These secondary actions stay directly available; ordinary and primary buttons are unchanged.
+
+Content availability is a capability concern, not a fourth presentation type. Design straightforward
+copy behavior for the content rather than hiding an action simply because the current implementation
+only copies text. Image-only content should support image copying. Multiple images may be copied
+separately if that produces a useful result; in that case write them in reverse input order so the
+earliest-entered image is copied last and sits at the top/first position in clipboard history.
+The image-copy implementation and effective paste behavior remain to be established.
+
 ## Responsive, motion, and accessibility
 
 - Below the narrow-workbench breakpoint, navigation and contextual work become
