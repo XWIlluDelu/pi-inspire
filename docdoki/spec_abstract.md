@@ -56,8 +56,10 @@ The attachment/Pending slice is accepted at `e96c3ea`: file chips emphasize name
 Pending retains deliberate idle dimming and interaction emphasis, with one total and non-repeating,
 truthful mode labels. Narrow Model/Thinking adjacency is accepted at `acbcf3f`, with long model
 labels shrinking to preserve Thinking and the filled red Stop unchanged. Command Palette headings are
-accepted at `71769cf`: quiet labels retain their typography, spacing and interactions without shaded
-bands or bottom rules. The session-row overflow experiment is withdrawn: frequent Pin/Hide actions
+retained from `71769cf`: quiet labels keep their typography, spacing and interactions without shaded
+bands. The current approved slice adds thin shared category boundaries and title match emphasis,
+alongside session-search emphasis, conversation-scrolled CodeMode calls and source-specific compaction
+metrics. Matched captures are ready for visual review; the active stage records the evidence. The session-row overflow experiment is withdrawn: frequent Pin/Hide actions
 remain directly available on narrow/touch rows. The independent Pending header action order
 Copy/Return/Clear is retained at `1013f42`. Quiet secondary buttons are accepted at `a5ad7e7`:
 existing History, earlier-branch Clone and Terminal recovery buttons keep readable labels and

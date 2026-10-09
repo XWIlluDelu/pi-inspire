@@ -360,6 +360,10 @@
 
 /* Ellipsis lives on the inner text span so the dot's halo is not clipped
    by the truncation box. */
+.nav__list .search-match {
+  font-weight: 600;
+}
+
 .nav__row-name {
   min-width: 0;
   overflow: hidden;

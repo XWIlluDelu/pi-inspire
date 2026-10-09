@@ -235,7 +235,14 @@ Implementation and review state: [[follow-frontend-refinement-2026-10-07]].
   surface.
 
 - Durable Pi `compaction` and `branch_summary` entries are projected as dedicated, collapsed
-  context-summary cards with retained token counts and searchable Markdown bodies. Like Thinking,
+  context-summary cards with recorded token counts and searchable Markdown bodies. Pi compaction
+  shows `Context compacted` and `Before ≈… tokens` for its pre-compaction context estimate.
+  Magic Context shows `Magic Context compacted` and `History chunk ≈… tokens`: its marker writes
+  the historian input chunk estimate into Pi's `tokensBefore` field. Source is read from the public
+  compaction entry's `details.source` and projected as `__inspireCompactionSource`; cached source-less
+  snapshots also recognize the extension's known marker prefix. Its redundant `Magic Context compacted:`
+  body prefix is omitted in display, while Copy retains the recorded summary. No savings ratio is derived.
+  Branch summaries have no compaction-before metric. Like Thinking,
   tool, and extension-message cards, their headers show no timestamp or elapsed-time metadata.
   Canonical timestamps and source content remain unchanged. They are not hidden behind a
   generic-message raw JSON fallback and remain distinct rows at their context boundaries.

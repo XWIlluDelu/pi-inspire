@@ -60,11 +60,14 @@ export function fuzzySearchMatchRanges(
   text: string,
   query: string,
   fold: (value: string) => string,
+  preferLiteral = true,
 ): SearchMatchRange[] {
   query = fold(query.trim());
   if (!query) return [];
-  const direct = searchMatchRanges(text, [query], fold);
-  if (direct.length) return direct;
+  if (preferLiteral) {
+    const direct = searchMatchRanges(text, [query], fold);
+    if (direct.length) return direct;
+  }
   const folded = fold(text);
   const starts: number[] = [],
     ends: number[] = [];

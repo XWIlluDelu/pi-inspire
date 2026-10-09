@@ -274,7 +274,15 @@ describe("session navigation controls", () => {
     });
     expect(searchAlphaGroup).toHaveAttribute("aria-expanded", "true");
     expect(searchAlphaGroup).toBeDisabled();
-    expect(screen.getByText("Alpha session")).toBeInTheDocument();
+    expect(searchAlphaGroup.querySelector(".search-match")).toHaveTextContent(
+      "alpha",
+    );
+    expect(
+      document.querySelector(".nav__row-name .search-match"),
+    ).toHaveTextContent("Alpha");
+    expect(
+      screen.getByRole("button", { name: /^Alpha session/ }),
+    ).toBeInTheDocument();
 
     fireEvent.change(
       screen.getByRole("searchbox", { name: "Search sessions" }),
@@ -333,7 +341,9 @@ describe("session navigation controls", () => {
       ".nav__group--hidden",
     ) as HTMLElement;
     expect(
-      await within(hiddenSection).findByText("Alpha session"),
+      await within(hiddenSection).findByRole("button", {
+        name: /^Alpha session/,
+      }),
     ).toBeInTheDocument();
     fireEvent.change(
       screen.getByRole("searchbox", { name: "Search sessions" }),
@@ -478,16 +488,18 @@ describe("session navigation controls", () => {
     searchPageSize = 2;
     await user.click(search);
     await user.type(search, "session");
-    await screen.findByText("Beta session");
+    await screen.findByRole("button", { name: /^Beta session/ });
     await user.keyboard("{ArrowDown}");
-    expect(screen.getByText("Alpha session").closest(".nav__row")).toHaveClass(
-      "nav__row--highlighted",
-    );
+    expect(
+      screen
+        .getByRole("button", { name: /^Alpha session/ })
+        .closest(".nav__row"),
+    ).toHaveClass("nav__row--highlighted");
     expect(search).toHaveFocus();
     expect(store.getState().sessionListNextOffset).toBe(2);
     expect(screen.queryByText("Gamma session")).not.toBeInTheDocument();
     await store.loadOlderSessions();
-    await screen.findByText("Gamma session");
+    await screen.findByRole("button", { name: /^Gamma session/ });
     expect(store.getState().sessionListNextOffset).toBe(3);
     await user.keyboard("{Enter}");
     expect(onSelect).toHaveBeenLastCalledWith("alpha");
@@ -495,9 +507,11 @@ describe("session navigation controls", () => {
       screen.getByRole("button", { name: 'Pin "Alpha session"' }),
     );
     await user.click(search);
-    expect(screen.getByText("Alpha session").closest(".nav__row")).toHaveClass(
-      "nav__row--highlighted",
-    );
+    expect(
+      screen
+        .getByRole("button", { name: /^Alpha session/ })
+        .closest(".nav__row"),
+    ).toHaveClass("nav__row--highlighted");
     await user.keyboard("{ArrowDown}{Enter}");
     expect(onSelect).toHaveBeenLastCalledWith("beta");
     await user.keyboard("{ArrowUp}");
@@ -507,7 +521,9 @@ describe("session navigation controls", () => {
     await user.click(search);
     const hidden = document.querySelector(".nav__group--hidden") as HTMLElement;
     expect(
-      within(hidden).getByText("Alpha session").closest(".nav__row"),
+      within(hidden)
+        .getByRole("button", { name: /^Alpha session/ })
+        .closest(".nav__row"),
     ).toHaveClass("nav__row--highlighted");
     await user.keyboard("{ArrowUp}{Enter}");
     expect(onSelect).toHaveBeenLastCalledWith("gamma");
@@ -516,7 +532,7 @@ describe("session navigation controls", () => {
     onSelect.mockClear();
     fireEvent.keyDown(search, { key: "Enter" });
     expect(onSelect).not.toHaveBeenCalled();
-    await screen.findByText("Beta session");
+    await screen.findByRole("button", { name: /^Beta session/ });
     await user.keyboard("{Enter}");
     expect(onSelect).toHaveBeenCalledWith("beta");
   });
@@ -534,7 +550,7 @@ describe("session navigation controls", () => {
     const search = screen.getByRole("searchbox", { name: "Search sessions" });
     await user.click(search);
     await user.type(search, "session");
-    await screen.findByText("Beta session");
+    await screen.findByRole("button", { name: /^Beta session/ });
     const highlighted = () =>
       document.querySelector(".nav__row--highlighted .nav__row-name")
         ?.textContent;

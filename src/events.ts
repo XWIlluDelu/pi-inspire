@@ -99,6 +99,8 @@ export interface ChatMessage {
   /** Pi-authored context checkpoint messages. */
   summary?: string;
   tokensBefore?: number;
+  /** Public Pi compaction entry's details.source, when recorded. */
+  __inspireCompactionSource?: string;
   fromId?: string;
   /** Native direct Bash, independent of assistant tool calls. */
   command?: string;

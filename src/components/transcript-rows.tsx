@@ -462,10 +462,19 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
 }) {
   const compacted = message.role === "compactionSummary";
   const summary = typeof message.summary === "string" ? message.summary : "";
+  const magicContext =
+    compacted &&
+    (message.__inspireCompactionSource === "magic-context" ||
+      (!message.__inspireCompactionSource &&
+        /^Magic Context compacted(?:[:\s]|$)/.test(summary)));
+  const displaySummary = magicContext
+    ? summary.replace(/^Magic Context compacted:\s*/, "")
+    : summary;
   const tokens =
+    compacted &&
     typeof message.tokensBefore === "number" &&
     Number.isFinite(message.tokensBefore)
-      ? `${Math.round(message.tokensBefore).toLocaleString()} tokens before`
+      ? `${magicContext ? "History chunk" : "Before"} ≈${Math.round(message.tokensBefore).toLocaleString()} tokens`
       : null;
   const [open, setOpen] = useState(false);
   return (
@@ -485,10 +494,23 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
               aria-hidden
             />
             <span className="context-checkpoint__title">
-              {compacted ? "Context compacted" : "Branch context"}
+              {compacted
+                ? magicContext
+                  ? "Magic Context compacted"
+                  : "Context compacted"
+                : "Branch context"}
             </span>
             {tokens ? (
-              <span className="context-checkpoint__metric">{tokens}</span>
+              <span
+                className="context-checkpoint__metric"
+                title={
+                  magicContext
+                    ? "Estimated tokens in the history chunk sent to Magic Context for processing."
+                    : "Estimated context size before compaction."
+                }
+              >
+                {tokens}
+              </span>
             ) : null}
             <span className="context-checkpoint__spacer" aria-hidden />
             {summary ? (
@@ -503,7 +525,7 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
           {open ? (
             <div className="context-checkpoint__body">
               {summary ? (
-                <RichText text={summary} />
+                <RichText text={displaySummary} />
               ) : (
                 <p>No summary was recorded.</p>
               )}

@@ -979,7 +979,9 @@ span.card__file-arg {
 }
 
 .tool-call-layout--codemode .child-calls {
-  max-height: min(11.25rem, 30vh);
+  max-height: none;
+  overflow: visible;
+  overscroll-behavior: auto;
 }
 
 .codemode-result {

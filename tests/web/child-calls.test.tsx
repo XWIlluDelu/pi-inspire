@@ -221,7 +221,7 @@ it("uses Codemode's snapshot positions, not temporary ids or generic receipts, a
   expect(slice.tools.script?.calls?.calls[0]?.status).toBe("error");
 });
 
-it("keeps Calls before Result and preserves child detail, focus and list position through settlement and history", async () => {
+it("keeps Calls before Result and preserves child detail and focus through settlement and history", async () => {
   const activity: ActivityTool = {
     id: "script",
     name: "codemode",
@@ -247,9 +247,6 @@ it("keeps Calls before Result and preserves child detail, focus and list positio
   (row.parentElement as HTMLDetailsElement).open = true;
   fireEvent(row.parentElement!, new Event("toggle"));
   await screen.findByRole("group", { name: "Arguments preview" });
-  const list = screen.getByRole("group", { name: "Child calls" });
-  list.scrollTop = 60;
-  fireEvent.scroll(list);
   vi.useFakeTimers();
   view.rerender(
     toolCard(final, { ...activity, phase: "done" }, "expanded", true, hold),
@@ -262,7 +259,6 @@ it("keeps Calls before Result and preserves child detail, focus and list positio
   ).toHaveAttribute("aria-expanded", "true");
   expect(view.container.querySelector(".child-call > summary")).toBe(row);
   expect(document.activeElement).toBe(row);
-  expect(list.scrollTop).toBe(60);
   expect(row.parentElement).toHaveAttribute("open");
   expect(
     await screen.findByRole("group", { name: "Call error" }),

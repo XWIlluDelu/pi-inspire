@@ -233,6 +233,19 @@ No thinking labels use muted, normal-weight text without a filled badge, retaini
 and padding. Model identity, match emphasis, row heights, selection marks and Settings choices
 are unchanged. This is an approved visual trial awaiting review.
 
+## Session and command search presentation
+
+Session titles and visible project names/context emphasize matching text at weight 600, without
+changing colors, backgrounds, ellipsis or direct Pin/Hide controls. Plain tokens follow Pi's greedy
+subsequence matching (including its letter/digit swap); quoted phrases preserve native whitespace
+normalization. Regex queries retain native worker filtering without browser-side regex execution
+or match emphasis. Matches in hidden search fields do not require a visible hit.
+
+Command Palette emphasizes visible title matches, retaining aliases/hints as search inputs without
+bolding the right-hand hints. Ranking, search-time Results grouping, shortcuts, focus and keyboard
+selection remain unchanged. Its category headings stay transparent with a shared `--line` bottom
+rule; the rule replaces one pixel of bottom padding, preserving heading height and text position.
+
 ## Searchable-surface focus
 
 On primary touch/no-hover devices, opening the model picker, Command Palette or project-file

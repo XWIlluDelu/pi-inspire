@@ -1,5 +1,25 @@
 import { expect, it } from "vitest";
-import { rankPaletteItems } from "../../src/palette-search";
+import {
+  paletteTitleMatchRanges,
+  rankPaletteItems,
+} from "../../src/palette-search";
+
+it.each([
+  ["Settings", " /SET ", ["Set"]],
+  ["Settings", "st", ["S", "t"]],
+  ["Session information", "session cost", ["Session"]],
+  ["Settings", "preferences", []],
+  ["Settings", "", []],
+])(
+  "emphasizes title %s matching %s without inventing alias or hint text",
+  (title, query, expected) => {
+    expect(
+      paletteTitleMatchRanges(title, query).map((range) =>
+        title.slice(range.start, range.end),
+      ),
+    ).toEqual(expected);
+  },
+);
 
 it("ranks exact aliases above category noise and still discovers descriptive tasks", () => {
   expect(

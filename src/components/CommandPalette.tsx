@@ -25,7 +25,8 @@ import {
 } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import { isTouchFirstDevice } from "../input-device";
-import { rankPaletteItems } from "../palette-search";
+import { paletteTitleMatchRanges, rankPaletteItems } from "../palette-search";
+import { SearchMatchText } from "./SearchMatchText";
 import { preferenceChoiceLabel } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
 import {
@@ -892,7 +893,12 @@ export const CommandPalette = memo(function CommandPalette({
                         }}
                         onClick={() => runItem(item)}
                       >
-                        <span className="palette__title">{item.title}</span>
+                        <span className="palette__title">
+                          <SearchMatchText
+                            text={item.title}
+                            ranges={paletteTitleMatchRanges(item.title, searchQuery)}
+                          />
+                        </span>
                         {item.hint ? (
                           <span className="palette__hint-inline">
                             {item.hint}

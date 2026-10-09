@@ -28,6 +28,15 @@ describe("static asset contracts", () => {
     );
   });
 
+  it("lets CodeMode call lists use conversation scrolling instead of a capped inner viewport", async () => {
+    const css = await readStylesheet();
+    const rule = css.match(
+      /\.tool-call-layout--codemode\s+\.child-calls\s*\{([^}]*)\}/,
+    )?.[1];
+    expect(rule).toMatch(/max-height:\s*none/);
+    expect(rule).toMatch(/overflow:\s*visible/);
+  });
+
   it("does not reference undeclared project CSS variables", async () => {
     const css = await readStylesheet();
     const controls = await readFile(

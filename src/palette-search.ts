@@ -1,4 +1,26 @@
 import { fuzzyScore } from "./composer-completion";
+import {
+  fuzzySearchMatchRanges,
+  mergeSearchMatchRanges,
+} from "./components/SearchMatchText";
+
+const paletteSearchQuery = (query: string) =>
+  query.trim().toLocaleLowerCase().replace(/^\//u, "");
+
+/** Emphasize visible title matches; aliases and hints still rank independently. */
+export function paletteTitleMatchRanges(title: string, query: string) {
+  const needle = paletteSearchQuery(query);
+  if (!needle) return [];
+  const fold = (value: string) => value.toLocaleLowerCase();
+  const whole = fuzzySearchMatchRanges(title, needle, fold);
+  return whole.length
+    ? whole
+    : mergeSearchMatchRanges(
+        needle
+          .split(/\s+/u)
+          .flatMap((word) => fuzzySearchMatchRanges(title, word, fold)),
+      );
+}
 
 interface PaletteSearchItem {
   title: string;
@@ -11,7 +33,7 @@ export function rankPaletteItems<T extends PaletteSearchItem>(
   items: readonly T[],
   query: string,
 ): T[] {
-  const needle = query.trim().toLocaleLowerCase().replace(/^\//u, "");
+  const needle = paletteSearchQuery(query);
   if (!needle) return [...items];
   const words = needle.split(/\s+/u);
   return items

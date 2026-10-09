@@ -16,6 +16,8 @@ import {
   type SessionSummary,
 } from "../../shared/contracts";
 import { shallowEqual, store, useAppState } from "../store";
+import { sessionSearchMatchRanges } from "../session-search-presentation";
+import { SearchMatchText } from "./SearchMatchText";
 import { compactAge, parentSegment, type SessionGroup } from "./nav-model";
 
 const INDICATOR_LABELS: Record<SessionIndicator, string> = {
@@ -34,6 +36,7 @@ export const SessionRow = memo(function SessionRow({
   selectedSessionId,
   highlightedSessionId,
   showProject = false,
+  searchQuery = "",
   onSelect,
   onDelete,
 }: {
@@ -41,6 +44,7 @@ export const SessionRow = memo(function SessionRow({
   selectedSessionId: string | null;
   highlightedSessionId?: string | null;
   showProject?: boolean;
+  searchQuery?: string;
   onSelect: (id: string) => void;
   onDelete?: (session: SessionSummary) => void;
 }) {
@@ -130,12 +134,23 @@ export const SessionRow = memo(function SessionRow({
               title={attentionLabel!}
             />
           ) : null}
-          <span className="nav__row-name">{title}</span>
+          <span className="nav__row-name">
+            <SearchMatchText
+              text={title}
+              ranges={sessionSearchMatchRanges(title, searchQuery)}
+            />
+          </span>
         </span>
         <span className="nav__row-meta">
           {showProject ? (
             <span className="nav__row-project">
-              {projectNameFromCwd(session.cwd)}
+              <SearchMatchText
+                text={projectNameFromCwd(session.cwd)}
+                ranges={sessionSearchMatchRanges(
+                  projectNameFromCwd(session.cwd),
+                  searchQuery,
+                )}
+              />
             </span>
           ) : null}
           <span
@@ -212,6 +227,7 @@ export function ProjectGroup({
   group,
   headingId,
   searching,
+  searchQuery = "",
   showContext,
   selectedSessionId,
   highlightedSessionId,
@@ -222,6 +238,7 @@ export function ProjectGroup({
   group: SessionGroup;
   headingId: string;
   searching: boolean;
+  searchQuery?: string;
   showContext: boolean;
   selectedSessionId: string | null;
   highlightedSessionId?: string | null;
@@ -267,10 +284,21 @@ export function ProjectGroup({
             aria-hidden
           />
           <Folder size={14} aria-hidden />
-          <span className="nav__group-name">{group.name}</span>
+          <span className="nav__group-name">
+            <SearchMatchText
+              text={group.name}
+              ranges={sessionSearchMatchRanges(group.name, searchQuery)}
+            />
+          </span>
           {showContext ? (
             <span className="nav__group-context">
-              {parentSegment(group.cwd)}
+              <SearchMatchText
+                text={parentSegment(group.cwd)}
+                ranges={sessionSearchMatchRanges(
+                  parentSegment(group.cwd),
+                  searchQuery,
+                )}
+              />
             </span>
           ) : null}
           <span className="nav__group-count" aria-hidden>
@@ -330,6 +358,7 @@ export function ProjectGroup({
             <SessionRow
               key={session.id}
               session={session}
+              searchQuery={searchQuery}
               selectedSessionId={selectedSessionId}
               highlightedSessionId={highlightedSessionId}
               onSelect={onSelectSession}

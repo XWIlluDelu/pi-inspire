@@ -97,8 +97,9 @@ card/activity preferences still choose initial disclosure; no separate density s
   without inferring script intent or changing the parent outcome. User-selected presentation rules
   retain their own summaries.
 - Calls lists appear directly whenever the parent card is open, without a second list-level
-  disclosure or a call-count threshold. Long lists remain height-bounded and scrollable. CodeMode
-  has no repeated visible Calls heading; its call/failure counts remain in the compact card header.
+  disclosure or a call-count threshold. CodeMode lists grow with their content and use the conversation
+  scroller rather than a height-limited inner viewport; individual argument/output viewports remain bounded.
+  Ordinary nested calls retain their bounded list viewport. CodeMode has no repeated visible Calls heading; its call/failure counts remain in the compact card header.
   Ordinary nested tools retain their heading.
   Individual rows still disclose parameters, errors and duration.
 - Open CodeMode cards retain Calls → Output → Script throughout execution and saved-history reading.

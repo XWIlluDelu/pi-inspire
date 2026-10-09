@@ -146,7 +146,7 @@ describe("response activity folds", () => {
             {
               role,
               summary: "## Goal\n\nPreserve the parser decisions.",
-              tokensBefore: 42_500,
+              tokensBefore: role === "compactionSummary" ? 42_500 : undefined,
               timestamp: Date.now(),
             },
           ],
@@ -157,10 +157,15 @@ describe("response activity folds", () => {
       const title = screen.getByText(label);
       const checkpoint = title.closest("details") as HTMLDetailsElement;
       expect(title).toBeVisible();
-      expect(screen.getByText("42,500 tokens before")).toBeVisible();
+      if (role === "compactionSummary")
+        expect(screen.getByText("Before ≈42,500 tokens")).toBeVisible();
+      else
+        expect(
+          checkpoint.querySelector(".context-checkpoint__metric"),
+        ).toBeNull();
       expect(checkpoint.querySelector("time")).toBeNull();
       expect(title.closest("summary")?.textContent).toBe(
-        `${label}42,500 tokens before`,
+        `${label}${role === "compactionSummary" ? "Before ≈42,500 tokens" : ""}`,
       );
       expect(container.querySelector(".card__generic")).toBeNull();
       expect(
@@ -191,6 +196,40 @@ describe("response activity folds", () => {
 
       fireEvent.click(copyBtn);
       expect(checkpoint).toHaveAttribute("open");
+    },
+  );
+
+  it.each(["magic-context", undefined])(
+    "labels Magic Context history-chunk estimates for source %s, including cached source-less snapshots",
+    async (source) => {
+      const summary =
+        "Magic Context compacted: Band power and response interpretation";
+      const { container } = render(
+        transcript(
+          [
+            {
+              role: "compactionSummary",
+              summary,
+              tokensBefore: 5757,
+              __inspireCompactionSource: source,
+            },
+          ],
+          "compact",
+        ),
+      );
+      const title = screen.getByText("Magic Context compacted");
+      expect(screen.getByText("History chunk ≈5,757 tokens")).toBeVisible();
+      expect(screen.queryByText(/Before/)).toBeNull();
+      fireEvent.click(title.closest("summary")!);
+      expect(
+        await screen.findByText("Band power and response interpretation"),
+      ).toBeVisible();
+      expect(
+        container.querySelector(".context-checkpoint__body"),
+      ).not.toHaveTextContent("Magic Context compacted:");
+      expect(
+        screen.getByRole("button", { name: "Copy compaction summary" }),
+      ).toBeVisible();
     },
   );
 

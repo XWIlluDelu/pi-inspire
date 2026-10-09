@@ -655,9 +655,27 @@ tool cards and Pending at matched sizes/content. Before views restore only the b
 CSS. Narrow picker rendering and Pending hover recovery (0.75 → 1 → 0.75) pass. Captures are in
 `output/playwright/line-tokens/`; [[design-system]] records the shared roles.
 
+## Search feedback, palette boundaries and transcript information
+
+The user approved session/Command Palette match emphasis, then added thin palette category boundaries,
+unbounded CodeMode call-list height and clearer compaction information. Visible search hits use weight 600;
+filtering/ranking and existing curation, hints and selection remain unchanged. Palette headings stay transparent
+with shared ordinary bottom rules at their original height. CodeMode call lists use conversation scrolling;
+individual detail/output viewports and ordinary nested lists retain their existing bounds.
+
+Compaction cards distinguish Pi pre-context estimates from Magic Context historian-chunk estimates using
+public entry source metadata, with known-prefix compatibility for already-loaded source-less snapshots.
+Magic Context body display omits its repeated marker prefix; recorded text/copy and Pi context remain intact.
+
+131 relevant tests, type checking and lint pass; the frontend is rebuilt. Chromium compares identical session results and palette options
+using the retained pre-change frontend build: order, session-row heights, heading heights and narrow palette
+row heights match. A 40-call CodeMode fixture grows from a 180px inner viewport to its full 1120px content.
+Light/dark palette, 390px context labels, and keyboard execution of Settings pass. Captures are in
+`output/playwright/navigation-search/`. Rules are in [[design-system]], [[tool-presentations]] and [[conversation]].
+
 ## Next actions
 
-Review the model-list hierarchy trial, project-wide quiet-button trial, editable directory path, built-in dialog, shared model-list, inline completion, project-file picker, History match-emphasis, match-emphasis, search-clear, file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
+Review the search/palette/transcript slice and the model-list hierarchy trial, project-wide quiet-button trial, editable directory path, built-in dialog, shared model-list, inline completion, project-file picker, History match-emphasis, match-emphasis, search-clear, file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
 are withdrawn. Group related refinements by topic rather than individual micro-adjustments;
 propose the next batch's full scope and await approval before implementing it. Straightforward image copying and reverse-input ordering when copying multiple
 images separately remain independent, unimplemented capability directions.
