@@ -12,6 +12,7 @@ import { App } from "../../src/App";
 import { ExtensionStatus } from "../../src/components/ExtensionDisplays";
 import { ExtensionUiDialog } from "../../src/components/ExtensionUiDialog";
 import { store } from "../../src/store";
+import { mockTouchFirstDevice } from "./fixtures/touch-device";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -88,6 +89,39 @@ async function openPalette() {
 }
 
 describe("overlay ownership", () => {
+  it("keeps the touch palette search opt-in but focuses an explicitly requested rename", async () => {
+    const touch = mockTouchFirstDevice();
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    try {
+      render(<App />);
+      const dialog = await openPalette();
+      const search = screen.getByRole("combobox", { name: "Filter commands" });
+      expect(dialog).toHaveFocus();
+      expect(focus.mock.contexts).not.toContain(search);
+      fireEvent.keyDown(dialog, { key: "ArrowDown" });
+      expect(search).toHaveAttribute("aria-activedescendant");
+      search.focus();
+      fireEvent.change(search, { target: { value: "rename" } });
+      expect(search).toHaveFocus();
+      fireEvent.click(screen.getByRole("option", { name: /Rename session/ }));
+      expect(screen.getByLabelText("New session name")).toHaveFocus();
+      fireEvent.keyDown(screen.getByLabelText("New session name"), {
+        key: "Escape",
+      });
+      expect(dialog).toHaveFocus();
+      expect(screen.getByLabelText("Filter commands")).toHaveValue("rename");
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: "Command palette" }),
+        ).toBeNull(),
+      );
+    } finally {
+      focus.mockRestore();
+      touch.mockRestore();
+    }
+  });
+
   it("keeps pointer hover separate from keyboard selection without dismissing the palette", async () => {
     render(<App />);
     await openPalette();

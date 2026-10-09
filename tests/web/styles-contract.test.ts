@@ -17,6 +17,17 @@ async function readStylesheet(
 }
 
 describe("static asset contracts", () => {
+  it("keeps stroke compatibility names as single aliases of canonical colors", async () => {
+    const css = await readStylesheet();
+    expect([...css.matchAll(/--hairline\s*:/g)]).toHaveLength(1);
+    expect([...css.matchAll(/--hairline-strong\s*:/g)]).toHaveLength(1);
+    expect(css).toMatch(/--hairline\s*:\s*var\(--line\)/);
+    expect(css).toMatch(/--hairline-strong\s*:\s*var\(--line-strong\)/);
+    expect(css).not.toMatch(
+      /--(?:line|hairline)(?:-strong)?\s*:\s*\d+(?:\.\d+)?px/,
+    );
+  });
+
   it("does not reference undeclared project CSS variables", async () => {
     const css = await readStylesheet();
     const controls = await readFile(

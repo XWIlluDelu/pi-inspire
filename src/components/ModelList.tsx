@@ -18,6 +18,7 @@ import {
   type ModelOption,
   modelIdentityKey,
 } from "../../shared/contracts";
+import { useSearchFocus } from "../use-search-focus";
 
 import {
   fuzzySearchMatchRanges,
@@ -328,9 +329,7 @@ export function ModelList({
     items.push(item);
     visibleGroups.set(group, items);
   }
-  useEffect(() => {
-    if (autoFocus) inputRef.current?.focus({ preventScroll: true });
-  }, [autoFocus]);
+  useSearchFocus(autoFocus, inputRef, listRef);
   useEffect(() => {
     fallbackActiveIndex.current = active;
     const key = options[active] ? modelIdentityKey(options[active]) : null;
@@ -481,9 +480,14 @@ export function ModelList({
         data-keyboard-active={keyboardActive}
         id={`${id}-list`}
         tabIndex={grid ? undefined : -1}
+        onKeyDown={grid ? undefined : navigate}
         {...{
           role: grid ? "grid" : "listbox",
           "aria-label": "Available models",
+          "aria-activedescendant":
+            !grid && keyboardActive && options[active]
+              ? `${id}-option-${active}`
+              : undefined,
           "aria-rowcount": grid ? options.length : undefined,
         }}
         className={`model-picker__list ${options.length ? "" : "model-picker__list--empty"}`}

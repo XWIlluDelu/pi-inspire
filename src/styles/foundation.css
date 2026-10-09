@@ -20,8 +20,9 @@
   --radius-md: 4px;
   --radius-lg: 6px;
   --radius-pill: 999px;
-  --line: 1px;
-  --line-strong: 1px;
+  /* Compatibility names share the same two stroke-color roles. */
+  --hairline: var(--line);
+  --hairline-strong: var(--line-strong);
   --witness: 2px;
   --dur-micro: 90ms;
   --dur-standard: 150ms;
@@ -117,8 +118,6 @@
   --bg-file-surface: #FFFFFF;
   --bg-file-inset: #F1F1F1;
   --bg-overlay: rgba(19, 21, 23, 0.4);
-  --hairline: #DFDAD0;
-  --hairline-strong: #AFAAA0;
   --line: #DFDAD0;
   --line-strong: #AFAAA0;
   --ink: #131517;
@@ -178,9 +177,7 @@
   --bg-file-surface: #1D1D1D;
   --bg-file-inset: #0F0F0F;
   --bg-overlay: rgba(0, 0, 0, 0.65);
-  --hairline: #232831;
-  --hairline-strong: #3A4250;
-  --line: #232831;
+  --line: #303742;
   --line-strong: #3A4250;
   --ink: #F4F6F8;
   --body: #CAD0D8;
@@ -234,7 +231,6 @@
   --bg-activity: #EFF3F0;
   --bg-code: #E6ECE8;
   --bg-overlay: rgba(18, 23, 21, 0.4);
-  --hairline: #D5DCD7;
   --line: #D5DCD7;
   --line-strong: #A6B0AB;
   --ink: #121715;
@@ -285,8 +281,7 @@
   --bg-activity: #141A17;
   --bg-code: #080B0A;
   --bg-overlay: rgba(0, 0, 0, 0.6);
-  --hairline: #222925;
-  --line: #222925;
+  --line: #303A34;
   --line-strong: #3A443F;
   --ink: #F0F3F1;
   --body: #CBD3CE;

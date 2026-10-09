@@ -24,6 +24,7 @@ import {
   resolveCommandInventory,
 } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
+import { isTouchFirstDevice } from "../input-device";
 import { rankPaletteItems } from "../palette-search";
 import { preferenceChoiceLabel } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
@@ -32,6 +33,7 @@ import {
   type TerminalUiAction,
 } from "../terminal-actions";
 import { useModalFocus } from "../use-modal-focus";
+import { useSearchFocus } from "../use-search-focus";
 import { sessionHeading } from "./AppTopbar";
 import { ComposerInput } from "./ComposerInput";
 import { relativeTime } from "./transcript-rows";
@@ -174,9 +176,10 @@ export const CommandPalette = memo(function CommandPalette({
       state.transcriptDurableLeafId !== state.transcriptEffectiveLeafId,
   );
 
+  useSearchFocus(active && !preparation && !renaming, inputRef, dialogRef);
   useEffect(() => {
-    if (active && !preparation) inputRef.current?.focus();
-  }, [active, renaming, preparation]);
+    if (active && renaming) inputRef.current?.focus({ preventScroll: true });
+  }, [active, renaming]);
 
   useEffect(() => {
     if (preparation && preparation.owner !== state.sessionId)
@@ -672,6 +675,32 @@ export const CommandPalette = memo(function CommandPalette({
         aria-modal="true"
         aria-label="Command palette"
         tabIndex={-1}
+        data-modal-autofocus={
+          isTouchFirstDevice() && !preparation && !renaming ? true : undefined
+        }
+        onKeyDown={(event) => {
+          if (
+            preparation ||
+            renaming ||
+            event.defaultPrevented ||
+            event.nativeEvent.isComposing ||
+            (event.target !== event.currentTarget &&
+              event.target !== inputRef.current)
+          )
+            return;
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            setKeyboardActive(true);
+            setIndex(Math.min(clamped + 1, filtered.length - 1));
+          } else if (event.key === "ArrowUp") {
+            event.preventDefault();
+            setKeyboardActive(true);
+            setIndex(Math.max(clamped - 1, 0));
+          } else if (event.key === "Enter") {
+            event.preventDefault();
+            runItem(filtered[clamped]);
+          }
+        }}
         onClick={(event) => event.stopPropagation()}
       >
         {preparation ? (
@@ -804,21 +833,6 @@ export const CommandPalette = memo(function CommandPalette({
                   setSearchQuery(event.target.value);
                   setIndex(0);
                   setKeyboardActive(true);
-                }}
-                onKeyDown={(event) => {
-                  if (event.nativeEvent.isComposing) return;
-                  if (event.key === "ArrowDown") {
-                    event.preventDefault();
-                    setKeyboardActive(true);
-                    setIndex(Math.min(clamped + 1, filtered.length - 1));
-                  } else if (event.key === "ArrowUp") {
-                    event.preventDefault();
-                    setKeyboardActive(true);
-                    setIndex(Math.max(clamped - 1, 0));
-                  } else if (event.key === "Enter") {
-                    event.preventDefault();
-                    runItem(filtered[clamped]);
-                  }
                 }}
               />
             )}

@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelSelector } from "../../src/components/ModelSelector";
 import { supportedThinkingLevels } from "../../src/model-options";
 import { mockModelMenuLayout } from "./fixtures/model-menu-layout";
+import { mockTouchFirstDevice } from "./fixtures/touch-device";
 
 beforeEach(mockModelMenuLayout);
 
@@ -30,6 +31,39 @@ const models = [
 ];
 
 describe("model picker interaction", () => {
+  it("focuses the list on touch devices while retaining explicit search and keyboard selection", async () => {
+    const touch = mockTouchFirstDevice();
+    try {
+      const change = vi.fn();
+      render(
+        <ModelSelector
+          value={models[0]!}
+          models={models}
+          recent={[]}
+          onChange={change}
+        />,
+      );
+      const trigger = screen.getByRole("button", { name: "Model" });
+      fireEvent.click(trigger);
+      const list = screen.getByRole("listbox", { name: "Available models" });
+      const search = screen.getByRole("combobox", { name: "Search models" });
+      expect(list).toHaveFocus();
+      search.focus();
+      fireEvent.change(search, { target: { value: "GPT" } });
+      expect(search).toHaveFocus();
+      expect(
+        screen.queryByRole("option", { name: /Claude Sonnet/ }),
+      ).toBeNull();
+      list.focus();
+      fireEvent.keyDown(list, { key: "End" });
+      fireEvent.keyDown(list, { key: "Enter" });
+      expect(change).toHaveBeenCalledWith("openai", "gpt-5");
+      await waitFor(() => expect(trigger).toHaveFocus());
+    } finally {
+      touch.mockRestore();
+    }
+  });
+
   it("retains full model identity captions and projects literal, cross-identity and fuzzy matches into visible fields", () => {
     const choices = [
       { provider: "openai", id: "alpha", name: "alpha" },

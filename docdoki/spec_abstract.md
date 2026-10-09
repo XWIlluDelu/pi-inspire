@@ -92,6 +92,13 @@ argument hints use muted, lighter text; grouping, replacements and responsive la
 The project-wide quiet-button trial now aligns subordinate Cancel/Back, completed-login Dismiss and
 content loading/preview recovery, while preserving actual choices, ongoing cancellation and
 primary/preferred actions. It is ready for visual review; [[design-system]] owns the allocation.
+A separate model-list hierarchy trial removes filled picker heading bars, retains thin dividers and lightens shared auxiliary
+labels; row geometry, model identity and selection behavior remain unchanged.
+
+Touch opening of model selection, Command Palette and the project-file picker now focuses their
+list/panel without entering search; desktop autofocus and deliberate text editing are preserved.
+Component and touch/desktop browser checks cover explicit search and focus retention;
+[[design-system]] holds the focus contract.
 
 [[follow-pi-native-capability-review-2026-10-02]] owns the remaining native-capability backlog.
 The separate presentation questions are compact-success receipts in

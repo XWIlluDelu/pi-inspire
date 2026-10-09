@@ -1351,9 +1351,7 @@ function PhaseToolDetails({
   const callsBody =
     calls && (calls.calls.length > 0 || !calls.complete) ? (
       <div key="calls" className="tool-call-list">
-        {codemode ? (
-          <ToolBlockHeading label="Calls" />
-        ) : (
+        {!codemode ? (
           <div className="tool-call-list__heading">
             Calls{" "}
             <span className="tool-call-list__count">{calls.calls.length}</span>
@@ -1363,7 +1361,7 @@ function PhaseToolDetails({
               </span>
             ) : null}
           </div>
-        )}
+        ) : null}
         <ChildCalls
           list={calls}
           running={running}

@@ -94,6 +94,18 @@ declaration.
   completion uses success, failure uses error, and recovery remains visibly
   distinct. Color alone never carries a product state.
 
+## Neutral stroke colors
+
+- `--line` supplies ordinary structural dividers and resting boundaries. `--line-strong`
+  supplies emphasized neutral edges, including stronger control boundaries and hover states.
+  Both are colors, not widths; components specify their stroke width separately.
+- `--hairline` and `--hairline-strong` are single aliases of those roles, not independent
+  palette values. All four palette/luminosity combinations resolve each alias to its canonical color.
+- Ordinary strokes remain quiet but visible on neutral surfaces, including raised menus/dialogs.
+  Dark Amber uses `#303742` and dark Jade `#303A34`; light ordinary strokes retain their existing
+  palette colors. Strong strokes retain each palette’s own values; Jade does not inherit Amber’s.
+  Components select the ordinary or strong role by purpose, without local dark-mode color patches.
+
 ## Type, geometry, and spatial hierarchy
 
 - IBM Plex Sans SC owns interface controls, reading text, Chinese/Latin flow,
@@ -209,6 +221,27 @@ keep their existing behavior. Embedded documents retain their own styles.
   Context and History reuse `ContextPaneState` for centered status and recovery actions. Skeletons
   stay outside the accessibility tree and tab order; loading has a concise status, and failure an
   alert and styled recovery action.
+
+## Model-list hierarchy trial
+
+The shared model picker uses transparent provider/group headings with a thin bottom rule for distinct groups,
+retaining heading typography, spacing and 28px virtual-row height. The bottom rule uses the shared
+ordinary stroke in both luminosities; no picker-specific dark-mode override is needed.
+Settings' provider headings
+already use transparent surfaces and retain their existing typography. Recent, Router and
+No thinking labels use muted, normal-weight text without a filled badge, retaining their placement
+and padding. Model identity, match emphasis, row heights, selection marks and Settings choices
+are unchanged. This is an approved visual trial awaiting review.
+
+## Searchable-surface focus
+
+On primary touch/no-hover devices, opening the model picker, Command Palette or project-file
+picker focuses its non-editable list/panel rather than the search field. Search starts when the
+user taps the field; opening a chooser must not summon the software keyboard. Desktop retains
+search autofocus, including in narrow windows. Explicit text actions such as Rename and prepared
+command editing still focus their input. Returning to the palette list follows the same device
+rule. Modal containment, nested portals, keyboard navigation and opener restoration remain intact;
+result updates and viewport resizing must not steal focus from a field the user has entered.
 
 ## Action-button presentation
 

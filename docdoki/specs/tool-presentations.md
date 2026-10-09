@@ -98,10 +98,11 @@ card/activity preferences still choose initial disclosure; no separate density s
   retain their own summaries.
 - Calls lists appear directly whenever the parent card is open, without a second list-level
   disclosure or a call-count threshold. Long lists remain height-bounded and scrollable. CodeMode
-  does not repeat its header counts in a Calls heading; ordinary nested tools retain that heading.
+  has no repeated visible Calls heading; its call/failure counts remain in the compact card header.
+  Ordinary nested tools retain their heading.
   Individual rows still disclose parameters, errors and duration.
 - Open CodeMode cards retain Calls → Output → Script throughout execution and saved-history reading.
-  Calls use a labelled, unboxed list; Output uses the same section heading and inset surface as native
+  Calls use an unboxed list without a visible section heading; Output uses the same section heading and inset surface as native
   tool output. Script stays collapsed below, without a repeated language heading. Focus and reading
   position survive settlement; finishing does not reorder the areas. Ordinary nested tools retain
   their result-first settled presentation unless their calls are being read.

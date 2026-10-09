@@ -607,9 +607,57 @@ Computed-style checks confirm compact resource recovery retains transparent rest
 and standard hover fill. Evidence: `output/playwright/quiet-actions/`. Browser assets are rebuilt;
 visual acceptance is pending.
 
+## Model-list group and metadata hierarchy — ready for review
+
+The user approved a visual trial of lighter group headings and auxiliary labels. Composer/Welcome's
+shared picker loses the full-width heading fill but retains a thin bottom rule to distinguish groups.
+The initial dark-only stronger rule is superseded by the shared neutral-stroke correction below;
+provider headings now use the visible ordinary stroke in both luminosities. Settings' already-transparent
+headings are unchanged. Shared Recent/Router/No thinking labels lose their filled background and
+use normal-weight muted text; Settings shares the Router change. Identity, ordering, matching,
+selection and Common/Default controls are unchanged.
+
+All 35 relevant model component/CSS tests and the web build pass. Chromium compares the same
+model data using restored baseline CSS for before captures, verifies unchanged heading/model heights
+(28/48px) and row contents in picker and Settings, and exercises search/keyboard selection. Light,
+dark and narrow-dark captures are in `output/playwright/model-list-hierarchy/`. Browser assets are
+rebuilt; this trial awaits visual review. [[design-system]] records the presentation contract.
+
+## Touch search-surface focus — complete
+
+The user reported that opening model selection and the Command Palette immediately raised the
+mobile software keyboard. ModelList, Command Palette and the matching project-file picker now
+share device-aware initial focus: primary touch/no-hover opens on the non-editable list/panel;
+desktop search remains focused. The palette modal also explicitly owns panel focus on touch so
+its initial focus trap never focuses search first. Rename and prepared-command editing retain
+intentional text focus. Result updates and viewport resizing preserve manually entered search.
+The existing Composer touch-key policy shares the same device predicate without changing behavior.
+
+77 relevant component/keyboard/modal tests, type checking, lint and the web build pass. Regression
+cases cover opt-in search, absence of even transient palette search focus, mobile rename/back,
+model selection/trigger restoration and project-file result updates. Chromium desktop and mobile
+contexts (`isMobile`/`hasTouch`) verify initial focus, explicit filtering in all three surfaces,
+and focus retention after viewport shrink. [[design-system]] records the shared contract.
+
+## Shared neutral stroke colors — complete
+
+The user approved unifying palette values and stroke roles across the project. `--line` and
+`--line-strong` are the canonical ordinary/emphasized colors; the hairline names are single aliases.
+Removed the overwritten 1px definitions. Dark ordinary strokes now differ from raised surfaces
+(Amber `#303742`, Jade `#303A34`), fixing default internal divisions in searchable overlays,
+command help and Terminal menus without per-component patches. Light ordinary colors are unchanged;
+Jade strong hairlines now follow its own palette in both luminosities. Model headings use the shared
+ordinary rule. Widths, surfaces, semantic accents, layout and Pending fading are unchanged.
+
+The CSS contracts and web build pass. Chromium verifies both alias mappings in all four
+palette/luminosity combinations and compares model menus, unfocused palette search, Settings,
+tool cards and Pending at matched sizes/content. Before views restore only the baseline stroke
+CSS. Narrow picker rendering and Pending hover recovery (0.75 → 1 → 0.75) pass. Captures are in
+`output/playwright/line-tokens/`; [[design-system]] records the shared roles.
+
 ## Next actions
 
-Review the project-wide quiet-button trial, editable directory path, built-in dialog, shared model-list, inline completion, project-file picker, History match-emphasis, match-emphasis, search-clear, file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
+Review the model-list hierarchy trial, project-wide quiet-button trial, editable directory path, built-in dialog, shared model-list, inline completion, project-file picker, History match-emphasis, match-emphasis, search-clear, file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
 are withdrawn. Group related refinements by topic rather than individual micro-adjustments;
 propose the next batch's full scope and await approval before implementing it. Straightforward image copying and reverse-input ordering when copying multiple
 images separately remain independent, unimplemented capability directions.

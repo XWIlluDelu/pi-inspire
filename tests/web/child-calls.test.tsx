@@ -101,7 +101,7 @@ it("separates Calls and Output and copies the complete tool block once from the 
   const view = render(toolCard(result));
   expect(screen.getByText("3.5s")).toBeVisible();
   expect(screen.getAllByText("1 failed · 2 calls")).toHaveLength(1);
-  expect(screen.getByText("Calls", { exact: true })).toBeVisible();
+  expect(screen.queryByText("Calls", { exact: true })).not.toBeInTheDocument();
   expect(screen.getByText("Output", { exact: true })).toBeVisible();
   expect(
     screen.queryByText("Result details", { exact: true }),
