@@ -673,9 +673,22 @@ row heights match. A 40-call CodeMode fixture grows from a 180px inner viewport 
 Light/dark palette, 390px context labels, and keyboard execution of Settings pass. Captures are in
 `output/playwright/navigation-search/`. Rules are in [[design-system]], [[tool-presentations]] and [[conversation]].
 
+## Terminal navigator presentation slice
+
+The user approved refining the All terminals menu: shared search-hit emphasis, original-case lighter
+project names, and flexible secondary command hints. Implemented without changing the existing
+case-insensitive substring filter, catalog order, status dots, Current marker or switching behavior.
+Long command hints now use an available-width track rather than a fixed 72px cap; names keep the larger
+share. Existing separators and compact rows remain. Desktop/touch row heights remain 30px/44px.
+
+35 focused terminal and shared match tests, type checking, formatting and lint pass; the frontend is
+rebuilt. Chromium review covers the same three-project/five-terminal catalog before and after, light
+and dark themes, 390px/320px layouts, clear/filter behavior and keyboard switching to another project.
+Visual comparisons are in `output/playwright/terminal-menu/`. Ready for user visual review.
+
 ## Next actions
 
-Review the search/palette/transcript slice and the model-list hierarchy trial, project-wide quiet-button trial, editable directory path, built-in dialog, shared model-list, inline completion, project-file picker, History match-emphasis, match-emphasis, search-clear, file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
+Review the Terminal navigator presentation slice and the search/palette/transcript slice and the model-list hierarchy trial, project-wide quiet-button trial, editable directory path, built-in dialog, shared model-list, inline completion, project-file picker, History match-emphasis, match-emphasis, search-clear, file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
 are withdrawn. Group related refinements by topic rather than individual micro-adjustments;
 propose the next batch's full scope and await approval before implementing it. Straightforward image copying and reverse-input ordering when copying multiple
 images separately remain independent, unimplemented capability directions.

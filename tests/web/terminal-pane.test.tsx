@@ -206,6 +206,60 @@ describe("terminal project ownership", () => {
     expect(more).not.toHaveAttribute("open");
   });
 
+  it("emphasizes literal case-insensitive hits across project, terminal and command without changing catalog order", async () => {
+    const values = [
+      {
+        ...terminal("Dev server", "/DevLab"),
+        currentCommand: "npm run dev -- --host",
+      },
+      {
+        ...terminal("Dev worker", "/DevLab"),
+        currentCommand: "node worker.js",
+      },
+      {
+        ...terminal("Trainer", "/ModelLab"),
+        currentCommand: "python train.py",
+      },
+    ];
+    api.terminals.mockImplementation(async (cwd?: string) =>
+      catalog(cwd ? values.filter((t) => t.projectCwd === cwd) : values),
+    );
+    render(<TerminalPane cwd="/DevLab" />);
+    await screen.findByRole("button", { name: "Dev server", pressed: true });
+    screen.getByLabelText("Terminal actions").closest("details")!.open = true;
+    const projects = screen
+      .getByLabelText("Terminals in all projects")
+      .closest("details")!;
+    projects.open = true;
+    fireEvent(projects, new Event("toggle"));
+    await within(projects).findByRole("button", { name: /Trainer/ });
+    fireEvent.change(screen.getByLabelText("Find terminal or project"), {
+      target: { value: "DEV" },
+    });
+    expect(
+      Array.from(
+        projects.querySelectorAll(".search-match"),
+        (n) => n.textContent,
+      ),
+    ).toEqual(["Dev", "Dev", "dev", "Dev"]);
+    expect(
+      within(projects).queryByRole("button", { name: /Trainer/ }),
+    ).toBeNull();
+    expect(
+      within(projects)
+        .getAllByRole("button")
+        .map((n) => n.textContent),
+    ).toEqual(["Dev servernpm run dev -- --host", "Dev workernode worker.js"]);
+    fireEvent.change(screen.getByLabelText("Find terminal or project"), {
+      target: { value: "" },
+    });
+    expect(projects.querySelector(".search-match")).toBeNull();
+    expect(projects.querySelectorAll(".terminal-menu__project")).toHaveLength(
+      2,
+    );
+    expect(within(projects).getByText("Current")).toBeVisible();
+  });
+
   it("references a terminal panel only after its lazy view exists", async () => {
     render(<TerminalPane cwd="/A" />);
     const unopened = await screen.findByRole("button", {

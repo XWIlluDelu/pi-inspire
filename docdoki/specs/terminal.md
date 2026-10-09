@@ -132,6 +132,13 @@ and management groups, the navigator, and settings. Escape closes the innermost 
 its summary, without also closing a narrow drawer. A newer modal has priority. Menus fit and scroll
 within the pane; header controls align across desktop/touch layouts, and hidden views publish no controls.
 
+The all-project navigator preserves project-name casing and uses lighter group text with the existing
+neutral separators and accent Current marker. Visible case-insensitive literal search hits in project
+names, terminal names and current commands use the shared unfilled semibold emphasis. Filtering and
+catalog order remain unchanged. Rows stay single-line; command hints can use up to 42% of the available
+row width, shrink for short values, and ellipsize within their track instead of a fixed 72px limit.
+Terminal names retain the larger share of the row; status dots and switching behavior are unchanged.
+
 Terminal Settings is a body-level modal, above the pane's stacking context. Its header/footer remain
 visible around the scrolling body. Appearance, Interaction and Saved output are separate category views,
 with the main Settings desktop sidebar, narrow horizontal strip and safe-area-aware narrow frame.

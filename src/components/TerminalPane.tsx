@@ -52,6 +52,7 @@ import {
   loadTerminalUiSettings,
   type TerminalUiSettings,
 } from "../terminal-settings";
+import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 import { TerminalSettingsDialog } from "./TerminalSettingsDialog";
 import { TerminalView } from "./TerminalView";
 
@@ -912,6 +913,8 @@ export const TerminalPane = memo(function TerminalPane({
     );
   }
 
+  const terminalMatches = (text: string) =>
+    searchMatchRanges(text, [terminalFilter], (value) => value.toLowerCase());
   const globalGroups = new Map<string, TerminalDescriptor[]>();
   for (const terminal of globalCatalog?.terminals ?? []) {
     if (
@@ -1257,7 +1260,12 @@ export const TerminalPane = memo(function TerminalPane({
                   [...globalGroups].map(([projectCwd, projectTerminals]) => (
                     <div className="terminal-menu__project" key={projectCwd}>
                       <div title={projectCwd}>
-                        {projectLabel(projectCwd)}
+                        <span className="terminal-menu__project-name">
+                          <SearchMatchText
+                            text={projectLabel(projectCwd)}
+                            ranges={terminalMatches(projectLabel(projectCwd))}
+                          />
+                        </span>
                         {projectCwd === cwd ? <small>Current</small> : null}
                       </div>
                       {projectTerminals.map((terminal) => (
@@ -1273,8 +1281,18 @@ export const TerminalPane = memo(function TerminalPane({
                             className={`terminal-tab__status terminal-tab__status--${terminal.status}`}
                             aria-hidden
                           />
-                          <span>{terminalLabel(terminal)}</span>
-                          <small>{terminal.currentCommand}</small>
+                          <span>
+                            <SearchMatchText
+                              text={terminalLabel(terminal)}
+                              ranges={terminalMatches(terminalLabel(terminal))}
+                            />
+                          </span>
+                          <small>
+                            <SearchMatchText
+                              text={terminal.currentCommand}
+                              ranges={terminalMatches(terminal.currentCommand)}
+                            />
+                          </small>
                         </button>
                       ))}
                     </div>

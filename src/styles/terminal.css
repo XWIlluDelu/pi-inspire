@@ -349,23 +349,35 @@
   gap: 8px;
   padding: 4px 9px;
   color: var(--faint);
-  font: 600 10px / 1.2 var(--font-sans);
-  letter-spacing: 0.035em;
-  text-transform: uppercase;
+  font: 500 10px / 1.2 var(--font-sans);
+}
+
+.terminal-menu__project-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-menu__project .search-match {
+  font-weight: 600;
 }
 
 .terminal-menu__project > div small {
+  flex-shrink: 0;
   color: var(--accent);
   font: inherit;
+  font-weight: 600;
 }
 
 .terminal-menu__popover .terminal-menu__project button {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) fit-content(42%);
 }
 
 .terminal-menu__project button small {
-  max-width: 72px;
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

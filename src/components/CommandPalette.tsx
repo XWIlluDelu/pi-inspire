@@ -896,7 +896,10 @@ export const CommandPalette = memo(function CommandPalette({
                         <span className="palette__title">
                           <SearchMatchText
                             text={item.title}
-                            ranges={paletteTitleMatchRanges(item.title, searchQuery)}
+                            ranges={paletteTitleMatchRanges(
+                              item.title,
+                              searchQuery,
+                            )}
                           />
                         </span>
                         {item.hint ? (
