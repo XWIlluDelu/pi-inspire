@@ -19,7 +19,51 @@ import {
   modelIdentityKey,
 } from "../../shared/contracts";
 
+import {
+  fuzzySearchMatchRanges,
+  mergeSearchMatchRanges,
+  SearchMatchText,
+} from "./SearchMatchText";
+
 const EMPTY_IDENTITIES: readonly ModelIdentity[] = [];
+
+function modelSearchHighlights(model: ModelOption, query: string) {
+  const name = model.name ?? model.id;
+  const nameOffset = model.provider.length + model.id.length + 2;
+  const identityOffset = nameOffset + (model.name ?? "").length + 1;
+  const matches = fuzzySearchMatchRanges(
+    modelSearchText(model),
+    query,
+    (value) => value.toLocaleLowerCase(),
+  );
+  const project = (text: string, offsets: number[]) =>
+    mergeSearchMatchRanges(
+      offsets.flatMap((offset) =>
+        matches
+          .map((range) => ({
+            start: Math.max(0, range.start - offset),
+            end: Math.min(text.length, range.end - offset),
+          }))
+          .filter((range) => range.end > range.start),
+      ),
+    );
+  const idOffsets = [
+    model.provider.length + 1,
+    identityOffset + model.provider.length + 1,
+  ];
+  return {
+    provider: project(model.provider, [0, identityOffset]),
+    id: project(model.id, idOffsets),
+    name: project(
+      name,
+      model.name == null
+        ? idOffsets
+        : name === model.id
+          ? [nameOffset, ...idOffsets]
+          : [nameOffset],
+    ),
+  };
+}
 function fuzzyCategory(value: string, queryValue: string): number | null {
   const query = queryValue.trim().toLocaleLowerCase();
   if (!query) return 0;
@@ -478,11 +522,22 @@ export function ModelList({
                       aria-hidden
                       style={style}
                     >
-                      {group.provider}
+                      <SearchMatchText
+                        text={group.provider}
+                        ranges={
+                          group.common
+                            ? []
+                            : modelSearchHighlights(group.models[0]!, query)
+                                .provider
+                        }
+                      />
                     </div>
                   );
                 const { model, index, key } = row;
                 const selected = key === currentKey;
+                const name = model.name ?? model.id;
+                const showId = !grid || name !== model.id;
+                const matches = modelSearchHighlights(model, query);
                 return (
                   <div
                     key={key}
@@ -522,7 +577,7 @@ export function ModelList({
                     >
                       <span className="model-picker__name">
                         <span className="model-picker__name-text">
-                          {model.name ?? model.id}
+                          <SearchMatchText text={name} ranges={matches.name} />
                         </span>
                         {model.virtual ? (
                           <span className="model-picker__badge model-picker__badge--neutral">
@@ -531,10 +586,25 @@ export function ModelList({
                         ) : null}
                         {renderNameAction?.(model, index === active)}
                       </span>
-                      <span className="model-picker__id">
-                        {group.common || grid ? `${model.provider}/` : ""}
-                        {model.id}
-                      </span>
+                      {group.common || showId ? (
+                        <span className="model-picker__id">
+                          {group.common ? (
+                            <>
+                              <SearchMatchText
+                                text={model.provider}
+                                ranges={matches.provider}
+                              />
+                              {showId ? "/" : ""}
+                            </>
+                          ) : null}
+                          {showId ? (
+                            <SearchMatchText
+                              text={model.id}
+                              ranges={matches.id}
+                            />
+                          ) : null}
+                        </span>
+                      ) : null}
                     </span>
                     {renderActions ? (
                       <div

@@ -73,6 +73,34 @@ beforeEach(() => {
 });
 
 describe("Models settings configuration and ownership", () => {
+  it("uses provider headings instead of repeated prefixes and keeps model controls when identity captions are deduplicated", async () => {
+    fixture.host.readModelSettings.mockResolvedValue(
+      modelSettingsSnapshot({
+        models: [
+          { provider: "openai", id: "same", name: "same" },
+          { provider: "openai", id: "alias", name: "Friendly" },
+        ],
+      }),
+    );
+    render(<ModelsSettings />);
+    const same = await screen.findByRole("row", { name: /same/ });
+    expect(same.querySelector(".model-picker__id")).toBeNull();
+    expect(within(same).getByRole("checkbox")).toBeInTheDocument();
+    expect(within(same).getByRole("radio")).toBeInTheDocument();
+    const alias = screen.getByRole("row", { name: /Friendly/ });
+    expect(alias.querySelector(".model-picker__id")).toHaveTextContent(
+      /^alias$/,
+    );
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "Search available models" }),
+      { target: { value: "openai/alias" } },
+    );
+    expect(screen.getAllByRole("row")).toHaveLength(1);
+    expect(
+      document.querySelector(".model-picker__id .search-match"),
+    ).toHaveTextContent(/^alias$/);
+  });
+
   it("round-trips startup defaults and clears native preferences", async () => {
     let snapshot = modelSettingsSnapshot();
     fixture.host.readModelSettings.mockImplementation(async () => snapshot);

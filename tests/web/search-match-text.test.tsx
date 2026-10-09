@@ -2,9 +2,31 @@ import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { ResourcePathLabel } from "../../src/components/ResourcePathLabel";
 import {
+  fuzzySearchMatchRanges,
   SearchMatchText,
   searchMatchRanges,
 } from "../../src/components/SearchMatchText";
+
+describe("fuzzy search match presentation", () => {
+  it.each([
+    ["Alpha alpha", " ALPHA ", ["Alpha", "alpha"]],
+    ["Nested chat", "nedct", ["Ne", "d", "c", "t"]],
+    ["İmage", "ig", ["İ", "g"]],
+    ["😀image", "😀g", ["😀", "g"]],
+    ["model", "missing", []],
+    ["model", "  ", []],
+  ])(
+    "traces %s matching %s without altering original offsets",
+    (text, query, expected) => {
+      const ranges = fuzzySearchMatchRanges(text, query, (value) =>
+        value.toLocaleLowerCase(),
+      );
+      expect(ranges.map((range) => text.slice(range.start, range.end))).toEqual(
+        expected,
+      );
+    },
+  );
+});
 
 describe("file search match presentation", () => {
   it.each([

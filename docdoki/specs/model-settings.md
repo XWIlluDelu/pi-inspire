@@ -47,6 +47,13 @@ Default leaves it set; the saved-default summary's Clear action removes it. Acti
 Home/End navigation reaches the full filtered list, including unmounted rows. Default also supports Left/Right and wraps between
 the first and last result, focusing and selecting the destination after it mounts. Common navigation
 moves focus without toggling membership. Search navigation remains neutral until explicitly used.
+The shared picker and Settings list show display names first. Provider-group captions omit the
+provider already named by the heading; Common captions retain it. The picker always retains its
+second-line ID, including identical names and IDs, and shows provider/ID in Common. Settings
+shows identical names and IDs once. Both retain full-identity row tooltips.
+Search emphasizes original-text matches in names, IDs and provider labels, tracing the existing
+locale-folded literal-first/greedy-subsequence rule, including provider/ID-spanning queries.
+Identity deduplication and emphasis preserve fixed row heights, capacity, ordering and badges.
 The picker marks its selected model with one checkmark and `aria-selected`, and offers one
 Manage models destination. From New, that destination keeps the prospective project directory; an
 open session keeps its session owner. General control and focus styling follows [[design-system]].

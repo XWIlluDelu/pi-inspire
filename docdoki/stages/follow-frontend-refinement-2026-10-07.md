@@ -520,9 +520,28 @@ Welcome root-file captions. Matched files/commands before/after plus dark/narrow
 `output/playwright/completion-presentation/`; `after.log` records measurements. Browser assets
 are rebuilt. No auxiliary Pi execution session was created for this batch.
 
+## Shared model-list identity and match presentation — ready for review
+
+Implemented from `5fa79bb` after approval as one batch across Composer/Welcome pickers and
+Settings Models. Provider-group captions no longer repeat the provider; Common captions retain
+it. Settings shows exact name/ID duplicates (including missing-name fallbacks) once, while distinct
+IDs and full-identity tooltips remain. After review, picker identity deduplication is withdrawn:
+Composer/Welcome keep the second-line ID and Common provider/ID, including identical names/IDs. Visible names, IDs and provider labels reuse match text spans,
+projecting locale-folded literal/greedy-subsequence offsets from the unchanged model search text.
+The existing filter/ranking, provider/Common groups, Router/Recent/No thinking marks and controls
+are unchanged; model rows remain 48px in the matched Chromium fixture.
+
+The 47 focused selector, Settings and match-renderer cases, TypeScript, lint and web build pass.
+Chromium compares identical orders/heights in both empty and searched lists, checks shared
+identity/fuzzy emphasis, native checkbox/radio types and keyboard selection, and captures light,
+dark and narrow layouts. Before/after evidence is in `output/playwright/model-list-presentation/`.
+Browser assets are rebuilt. No auxiliary Pi execution session was created. Selector and Settings
+regressions (34 cases), TypeScript and the web build also pass after restoring picker captions.
+The `after-picker*` captures predate this review correction; Settings captures remain applicable.
+
 ## Next actions
 
-Review the inline completion, project-file picker, History match-emphasis, match-emphasis, search-clear, file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
+Review the shared model-list, inline completion, project-file picker, History match-emphasis, match-emphasis, search-clear, file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
 are withdrawn. Group related refinements by topic rather than individual micro-adjustments;
 propose the next batch's full scope and await approval before implementing it. Straightforward image copying and reverse-input ordering when copying multiple
 images separately remain independent, unimplemented capability directions.
