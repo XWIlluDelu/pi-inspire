@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { UploadedAttachment } from "../../shared/contracts";
+import {
+  deleteSessionDraft,
+  sessionDraft,
+  setSessionDraft,
+} from "../../src/session-drafts";
 import { AppStore } from "../../src/store";
 import {
   activeSnapshot,
@@ -9,20 +15,22 @@ import {
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
+  jsonBody,
   type RouteResponse,
 } from "./helpers";
 
 async function setup(
   route: (
     url: string,
+    init: RequestInit,
   ) => Promise<RouteResponse | undefined> | RouteResponse | undefined,
 ) {
-  installFetch(async (url) => {
+  installFetch(async (url, init) => {
     if (url.startsWith("/api/bootstrap"))
       return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
     if (url.startsWith("/api/sessions?"))
       return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
-    return route(url);
+    return route(url, init);
   });
   const store = new AppStore();
   await store.init("token");
@@ -53,7 +61,98 @@ function moveView(store: AppStore, viewId = "view-2"): void {
 }
 
 describe("branch request view ownership", () => {
-  beforeEach(() => installFakeWebSocket());
+  beforeEach(() => {
+    installFakeWebSocket();
+    for (const id of ["s1", "s2", "forked"]) deleteSessionDraft(id);
+  });
+
+  it.each(["", "Compare the charts"])(
+    "restores a Fork's saved images beside its text (%j), without transferring the source draft",
+    async (text) => {
+      const image: UploadedAttachment = {
+        id: "fork-image",
+        fileName: "Recovered image 1.png",
+        mimeType: "image/png",
+        size: 7,
+        kind: "image",
+      };
+      let sent: Record<string, unknown> | null = null;
+      const store = await setup((url, init) => {
+        if (url === "/api/branches/fork")
+          return {
+            body: {
+              sessionId: "forked",
+              snapshot: activeSnapshot({ sessionId: "forked" }),
+              editorText: text,
+              editorAttachments: [image],
+            },
+          };
+        if (url.endsWith("/image")) return { body: "saved pixels" };
+        if (url === "/api/sessions/open")
+          return {
+            body: activeSnapshot({ sessionId: String(jsonBody(init).id) }),
+          };
+        if (url === "/api/prompt") {
+          sent = jsonBody(init);
+          return { status: 202, body: { accepted: true } };
+        }
+        return undefined;
+      });
+      setSessionDraft("s1", "Unsent source draft");
+      await expect(store.forkBranch("u1")).resolves.toBe(true);
+      expect(sessionDraft("s1")).toBe("Unsent source draft");
+      expect(sessionDraft("forked")).toBe(text);
+      expect(sent).toBeNull();
+      await vi.waitFor(() =>
+        expect(store.getState().attachments[0]?.previewUrl).toMatch(/^blob:/),
+      );
+      expect(store.getState().attachments[0]).toMatchObject({
+        status: "ready",
+        uploadedId: image.id,
+      });
+      await store.openSession("s1");
+      expect(store.getState().attachments).toEqual([]);
+      await store.openSession("forked");
+      expect(store.getState().attachments[0]?.uploadedId).toBe(image.id);
+      await expect(store.sendPrompt(text)).resolves.toBeTruthy();
+      expect(sent).toMatchObject({
+        sessionId: "forked",
+        message: text,
+        attachmentIds: [image.id],
+      });
+    },
+  );
+
+  it("withdraws images from an obsolete Fork response instead of adding them to a newer session", async () => {
+    const fork = deferred<RouteResponse>();
+    const deletes: string[] = [];
+    const store = await setup((url, init) => {
+      if (url === "/api/branches/fork") return fork.promise;
+      if (url === "/api/sessions/open")
+        return { body: activeSnapshot({ sessionId: "s2" }) };
+      if (init.method === "DELETE") {
+        deletes.push(url);
+        return { body: { ok: true } };
+      }
+      return undefined;
+    });
+    const forking = store.forkBranch("u1");
+    await store.openSession("s2");
+    fork.resolve({
+      body: {
+        sessionId: "forked",
+        snapshot: activeSnapshot({ sessionId: "forked" }),
+        editorText: "old",
+        editorAttachments: [{ id: "old-image" }],
+      },
+    });
+    await expect(forking).resolves.toBe(false);
+    expect(deletes).toEqual(["/api/attachments/old-image"]);
+    expect(store.getState()).toMatchObject({
+      sessionId: "s2",
+      attachments: [],
+    });
+  });
 
   it("ignores a delayed tree success after a same-session view transition", async () => {
     const pending = deferred<RouteResponse | undefined>();

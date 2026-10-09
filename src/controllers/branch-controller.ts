@@ -337,6 +337,13 @@ export class BranchController {
       },
       "Fork failed",
       "view",
+      async (response) => {
+        await Promise.allSettled(
+          (response.editorAttachments ?? []).map((item) =>
+            api.deleteAttachment(item.id),
+          ),
+        );
+      },
     );
   }
 
@@ -382,6 +389,7 @@ export class BranchController {
     commit: (response: T) => boolean | void | Promise<boolean | void>,
     fallbackError: string,
     ownership: "position" | "view" = "position",
+    discard?: (response: T) => Promise<void>,
   ): Promise<boolean> {
     const actionRequest = ++this.actionRequest;
     const transportGeneration = this.host.transportGeneration();
@@ -396,7 +404,10 @@ export class BranchController {
     this.host.patch({ branchActionId: actionId, branchTreeError: null });
     try {
       const response = await perform();
-      if (!owns()) return false;
+      if (!owns()) {
+        await discard?.(response);
+        return false;
+      }
       return (await commit(response)) !== false;
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {

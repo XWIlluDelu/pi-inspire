@@ -328,7 +328,17 @@ export default function (pi) {
     const configDir = join(directory, "config");
     await mkdir(configDir, { recursive: true });
     const entries = [
-      message("u1", null, "user", "question one", 1),
+      {
+        ...message("u1", null, "user", "question one", 1),
+        message: {
+          role: "user",
+          timestamp: 1,
+          content: [
+            { type: "text", text: "question one" },
+            { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
+          ],
+        },
+      },
       message("a1", "u1", "assistant", "answer one", 2),
     ];
     await writeFile(
@@ -401,6 +411,12 @@ export default function (pi) {
       });
       expect(forked.editorText).toBe("question one");
       expect(forked.snapshot.active?.transcriptPage.messages).toEqual([]);
+      expect(forked.editorAttachments).toHaveLength(1);
+      expect(
+        (
+          await attachments.imagePreview(forked.editorAttachments![0]!.id)
+        ).bytes.toString("base64"),
+      ).toBe("aW1hZ2U=");
 
       await runtime.rename(forked.sessionId, "Writable root fork");
       const destinationText = await readFile(

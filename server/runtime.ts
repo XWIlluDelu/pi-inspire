@@ -11,8 +11,8 @@ import {
   type BranchBridgeResult,
   encodeBranchBridgeJson,
   MODEL_REFRESH_SUFFIX,
-  RETRY_STATE_SUFFIX,
   PENDING_IMAGE_SUFFIX,
+  RETRY_STATE_SUFFIX,
 } from "../shared/branch-bridge-protocol.js";
 import {
   isBranchEditTarget,
@@ -56,9 +56,11 @@ import {
   type SessionRuntimeStatus,
   type TranscriptActivityPage,
   type TranscriptPage,
+  type UploadedAttachment,
   type UserTurnIndexPage,
   type UserTurnTranscriptPage,
 } from "../shared/contracts.js";
+import type { ModelCatalogResponse } from "../shared/model-settings.js";
 import {
   type AttachmentContextFile,
   AttachmentStore,
@@ -76,7 +78,6 @@ import {
   type PiRpcResponseFence,
 } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
-import type { ModelCatalogResponse } from "../shared/model-settings.js";
 import { RuntimeBashController } from "./runtime-bash.js";
 import { newBridgeIdentity } from "./runtime-branch-bridge.js";
 import {
@@ -129,8 +130,8 @@ import {
   type ProviderAuthResult,
 } from "../shared/provider-auth-bridge.js";
 import { modelOption, modelSettings } from "./model-catalog.js";
-import type { ModelMetadata, ModelMetadataCatalog } from "./model-metadata.js";
 import { refreshWorkerCatalog } from "./model-catalog-refresh.js";
+import type { ModelMetadata, ModelMetadataCatalog } from "./model-metadata.js";
 import { commonModelOptions } from "./model-settings.js";
 import { getAgentDir, SettingsManager } from "./pi-runtime.js";
 import { requestWorkerAuth } from "./provider-auth-bridge.js";
@@ -140,11 +141,11 @@ import {
   pendingContentFromTexts,
   pendingQueuesFromContent,
 } from "./runtime-pending.js";
+import { readPendingImageEvidence } from "./runtime-pending-image-evidence.js";
 import {
   type PendingImageDelivery,
   PendingImageRecovery,
 } from "./runtime-pending-images.js";
-import { readPendingImageEvidence } from "./runtime-pending-image-evidence.js";
 import { RuntimeStartupAttestor } from "./runtime-startup-attestor.js";
 import { runtimeToken as bridgeToken } from "./runtime-token.js";
 import { RuntimeWorkerLifecycle } from "./runtime-worker-lifecycle.js";
@@ -3393,6 +3394,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         );
       const editorText =
         mode === "fork" ? projection.userText(targetId!, MAX_PROMPT_CHARS) : "";
+      const editorImages =
+        mode === "fork" ? projection.userImages(targetId!) : [];
       const staged = await this.stageFork({
         sourcePath,
         sourceSessionId: source.id,
@@ -3409,7 +3412,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       let destinationProjection: SessionProjectionView | null = null;
       let published = false;
       let attached = false;
+      let returned = false;
+      let editorAttachments: UploadedAttachment[] = [];
       try {
+        editorAttachments = await this.attachments.stageImages(editorImages);
         const identityCollision =
           destinationId === source.id ||
           this.slots.has(destinationId) ||
@@ -3577,7 +3583,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         // its runtime even when a different browser owns the Host selection.
         void this.ensureProcess(destination).catch(() => undefined);
         this.scheduleIdleWorkerEviction();
-        return { sessionId: destinationId, snapshot, editorText };
+        returned = true;
+        return {
+          sessionId: destinationId,
+          snapshot,
+          editorText,
+          ...(editorAttachments.length ? { editorAttachments } : {}),
+        };
       } catch (error) {
         await stagedProjection?.close().catch(() => undefined);
         if (!attached)
@@ -3589,6 +3601,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         throw requestError(message, 409, { cause: error });
       } finally {
         reservation?.release();
+        if (!returned)
+          await Promise.allSettled(
+            editorAttachments.map((item) => this.attachments.remove(item.id)),
+          );
         if (!published)
           await discardStagedSessionFork(staged).catch(() => undefined);
       }

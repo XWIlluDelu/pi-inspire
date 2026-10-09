@@ -56,6 +56,28 @@ describe("attachment consumption lifecycle", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it("validates a saved-image batch before staging any copies", async () => {
+    const valid = { data: "aW1hZ2U=", mimeType: "image/png" };
+    for (const invalid of [
+      { ...valid, data: "invalid base64" },
+      { ...valid, mimeType: "image/svg+xml" },
+    ]) {
+      await expect(store.stageImages([valid, invalid])).rejects.toMatchObject({
+        status: 422,
+      });
+    }
+    const attachments = await store.stageImages([valid, valid]);
+    expect(attachments).toHaveLength(2);
+    expect(attachments[0]!.id).not.toBe(attachments[1]!.id);
+    const resolved = await store.resolveForPrompt(
+      attachments.map((item) => item.id),
+    );
+    expect(resolved.images).toEqual([
+      { type: "image", ...valid },
+      { type: "image", ...valid },
+    ]);
+  });
+
   it("keeps consumed ordinary files through later withdrawals and reclaims consumed images", async () => {
     const doc = await store.add(upload("notes.txt", "text/plain"));
     const image = await store.add(upload("shot.png", "image/png"));

@@ -1070,6 +1070,9 @@ export interface BranchForkResponse {
   sessionId: string;
   snapshot: ActiveSnapshot;
   editorText: string;
+  /** Private staged copies of the excluded user message's saved images.
+   * Clone leaves the editor empty and supplies no attachments. */
+  editorAttachments?: UploadedAttachment[];
 }
 
 export interface ProjectionConflict {

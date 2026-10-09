@@ -73,7 +73,8 @@ describe("local host API", () => {
   beforeEach(async () => {
     temporary = await realpath(await mkdtemp(join(tmpdir(), "inspire-test-")));
     resources = new ResourceStore();
-    runtime = new MockRuntime();
+    attachments = new AttachmentStore(join(temporary, "uploads"));
+    runtime = new MockRuntime({ attachments });
     git = {
       status: vi.fn(async () => ({ kind: "not-repository" as const })),
       diff: vi.fn(async (_cwd, pathId, side) => ({
@@ -88,7 +89,6 @@ describe("local host API", () => {
         reason: "no-changes" as const,
       })),
     };
-    attachments = new AttachmentStore(join(temporary, "uploads"));
     shutdown = vi.fn<() => void>();
     application = createInspireServer({
       token,
