@@ -43,6 +43,7 @@ import { emptyPendingQueues } from "../shared/contracts.js";
 import { pendingTextSummary } from "../shared/pending-preview.js";
 import { sequentialUserTurnAnchors } from "../shared/user-turns.js";
 import { lastAssistantText } from "./assistant-text.js";
+import type { AttachmentStore } from "./attachments.js";
 import { projectComposerHistoryPage } from "./composer-history.js";
 import type { GitInspectionLike } from "./git-inspection.js";
 import {
@@ -611,9 +612,15 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   private nextSession = 0;
   private nextPending = 0;
 
-  constructor({ streamIntervalMs = 18 }: { streamIntervalMs?: number } = {}) {
+  private readonly attachments?: AttachmentStore;
+
+  constructor({
+    streamIntervalMs = 18,
+    attachments,
+  }: { streamIntervalMs?: number; attachments?: AttachmentStore } = {}) {
     super();
     this.streamIntervalMs = streamIntervalMs;
+    this.attachments = attachments;
   }
 
   get activeSessionId(): string | null {
@@ -1534,6 +1541,16 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     });
     if (!detail.node.canFork)
       throw requestError("Fork requires a user input", 409);
+    const entry = this.mockEntries(request.sessionId).find(
+      (entry) => entry.id === request.targetId,
+    );
+    const content = entry ? branchEntryContent(entry) : undefined;
+    const images = Array.isArray(content)
+      ? content.filter((block) => block.type === "image")
+      : [];
+    if (images.length && !this.attachments)
+      throw new Error("Mock image Fork requires an AttachmentStore");
+    const editorAttachments = await this.attachments?.stageImages(images);
     const result = await this.copyMockBranch(request, detail.node.parentId);
     const destination = this.requireSession(result.sessionId);
     destination.sessionName = "Fork of selected input";
@@ -1543,6 +1560,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       ...result,
       snapshot: await this.snapshot(),
       editorText: detail.text,
+      ...(editorAttachments?.length ? { editorAttachments } : {}),
     };
   }
   async resourceContext(sessionId: string): Promise<ResourceContext> {

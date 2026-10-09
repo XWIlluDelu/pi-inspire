@@ -27,8 +27,8 @@ import type {
   StageSessionFork,
 } from "../../server/session-fork.js";
 import { SessionProjection } from "../../server/session-projection.js";
-import { nativeNavigationLeaf } from "../../shared/branch-node-actions.js";
 import { RETRY_STATE_SUFFIX } from "../../shared/branch-bridge-protocol.js";
+import { nativeNavigationLeaf } from "../../shared/branch-node-actions.js";
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const FORK_SESSION_ID = "22222222-2222-4222-8222-222222222222";
@@ -40,7 +40,9 @@ const entry = (
   id: string,
   parentId: string | null,
   role: "user" | "assistant",
-  content: string,
+  content:
+    | string
+    | Array<{ type: string; text?: string; data?: string; mimeType?: string }>,
   timestamp: number,
 ) => ({
   type: "message",
@@ -268,7 +270,7 @@ function fakeStageFork(directory: string): StageSessionFork {
         cwd: directory,
         parentSession: request.sourcePath,
       },
-      ...source.slice(1, targetIndex),
+      ...source.slice(1, targetIndex + (request.mode === "clone" ? 1 : 0)),
     ];
     await writeFile(
       stagedPath,
@@ -293,6 +295,7 @@ async function setup(
   branchBridgeTimeoutMs = 15_000,
   openForkProjection?: ConstructorParameters<typeof RuntimeController>[5],
   stageFork?: StageSessionFork,
+  userContent?: Parameters<typeof entry>[3],
 ) {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), "inspire-branch-runtime-")),
@@ -309,7 +312,7 @@ async function setup(
     },
     entry("u1", null, "user", "root", 1),
     entry("a1", "u1", "assistant", "first answer", 2),
-    entry("u2", "a1", "user", "second question", 3),
+    entry("u2", "a1", "user", userContent ?? "second question", 3),
     entry("a2", "u2", "assistant", "second answer", 4),
   ];
   await writeFile(
@@ -361,7 +364,16 @@ async function setup(
   await vi.waitFor(async () =>
     expect((await runtime.snapshot()).active?.commands).toBeDefined(),
   );
-  return { runtime, worker, workers, path, directory, records, catalog };
+  return {
+    runtime,
+    worker,
+    workers,
+    path,
+    directory,
+    records,
+    catalog,
+    attachments,
+  };
 }
 
 async function openOtherSession(fixture: Awaited<ReturnType<typeof setup>>) {
@@ -840,8 +852,111 @@ describe("stock RPC branch bridge", () => {
     }
   });
 
+  it.each(["image-only", "text-and-images"] as const)(
+    "restages a %s Fork from persisted bytes, preserving image order and duplicates",
+    async (kind) => {
+      const images = [
+        {
+          type: "image",
+          data: Buffer.from("first image").toString("base64"),
+          mimeType: "image/png",
+        },
+        {
+          type: "image",
+          data: Buffer.from("second image").toString("base64"),
+          mimeType: "image/webp",
+        },
+      ];
+      images.push(images[0]!);
+      const text = kind === "image-only" ? "" : "Compare these images";
+      const { runtime, workers, worker, path, attachments } = await setup(
+        15_000,
+        undefined,
+        undefined,
+        [...(text ? [{ type: "text", text }] : []), ...images],
+      );
+      const original = await readFile(path, "utf8");
+      try {
+        const tree = await runtime.branchTree(SESSION_ID);
+        const forked = await runtime.forkBranch({
+          sessionId: SESSION_ID,
+          revision: tree.revision,
+          targetId: "u2",
+        });
+        expect(forked.editorText).toBe(text);
+        const restored = forked.editorAttachments!;
+        expect(restored).toHaveLength(3);
+        expect(new Set(restored.map((item) => item.id)).size).toBe(3);
+        for (const [index, item] of restored.entries()) {
+          expect(item).toMatchObject({
+            kind: "image",
+            mimeType: images[index]!.mimeType,
+          });
+          expect(item).not.toHaveProperty("previewDataUrl");
+          const preview = await attachments.imagePreview(item.id);
+          expect(preview.bytes.toString("base64")).toBe(images[index]!.data);
+        }
+        expect(await readFile(path, "utf8")).toBe(original);
+        expect(
+          await readFile(forked.snapshot.active!.sessionFile!, "utf8"),
+        ).not.toContain('"id":"u2"');
+        expect(worker.stops).toBe(0);
+        await vi.waitFor(() => expect(workers).toHaveLength(2));
+        expect(
+          workers[1]!.commands.some((command) => command.type === "prompt"),
+        ).toBe(false);
+
+        // Removing one copy leaves the original persisted input and its duplicates intact.
+        await attachments.remove(restored[1]!.id);
+        await expect(
+          attachments.imagePreview(restored[1]!.id),
+        ).rejects.toMatchObject({ status: 404 });
+        await runtime.prompt({
+          sessionId: forked.sessionId,
+          message: text,
+          attachmentIds: [restored[0]!.id, restored[2]!.id],
+        });
+        expect(
+          workers[1]!.commands.find((command) => command.type === "prompt"),
+        ).toMatchObject({
+          message: text,
+          images: [images[0], images[0]],
+        });
+        expect(await readFile(path, "utf8")).toBe(original);
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
+
+  it("keeps a Clone's images in history rather than staging them in the editor", async () => {
+    const image = { type: "image", data: "aW1hZ2U=", mimeType: "image/png" };
+    const { runtime } = await setup(15_000, undefined, undefined, [image]);
+    try {
+      const tree = await runtime.branchTree(SESSION_ID);
+      const cloned = await runtime.cloneBranch({
+        sessionId: SESSION_ID,
+        revision: tree.revision,
+        targetId: "u2",
+      });
+      expect(cloned.editorText).toBe("");
+      expect(cloned.editorAttachments).toBeUndefined();
+      expect(
+        await readFile(cloned.snapshot.active!.sessionFile!, "utf8"),
+      ).toContain(image.data);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("rejects an atomic destination-path collision without changing the source", async () => {
-    const { runtime, worker, directory, path } = await setup();
+    const { runtime, worker, directory, path, attachments } = await setup(
+      15_000,
+      undefined,
+      undefined,
+      [{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }],
+    );
+    const staging = vi.spyOn(attachments, "stageImages");
     const destinationPath = join(directory, `${FORK_SESSION_ID}.jsonl`);
     await writeFile(destinationPath, "existing destination\n");
     const sourceBefore = await readFile(path, "utf8");
@@ -854,6 +969,11 @@ describe("stock RPC branch bridge", () => {
           targetId: "u2",
         }),
       ).rejects.toMatchObject({ status: 409 });
+      const copied = await staging.mock.results[0]!.value;
+      expect(copied).toHaveLength(1);
+      await expect(
+        attachments.imagePreview(copied[0]!.id),
+      ).rejects.toMatchObject({ status: 404 });
       expect(await readFile(destinationPath, "utf8")).toBe(
         "existing destination\n",
       );

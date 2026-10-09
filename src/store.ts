@@ -247,6 +247,12 @@ export class AppStore {
     applyFork: (response) => {
       this.applySnapshot(response.snapshot);
       this.ensureSessionVisible(response.sessionId);
+      this.composer.restoreStagedAttachments(
+        response.sessionId,
+        response.editorAttachments ?? [],
+        this.hostAuthorityId,
+      );
+      setSessionDraft(response.sessionId, response.editorText);
       this.set({
         editorText: {
           text: response.editorText,
@@ -2013,7 +2019,7 @@ export class AppStore {
     const text = [...recovered.steering, ...recovered.followUp].join("\n\n");
     const hasImages = Boolean(recovered.attachments?.length);
     if (text.trim() || hasImages)
-      this.composer.restorePendingArtifacts(
+      this.composer.restoreStagedAttachments(
         sessionId,
         recovered.attachments ?? [],
         recovered.authorityId ?? this.hostAuthorityId,

@@ -51,8 +51,8 @@ import type { SessionRecord } from "./session-catalog.js";
 import { JsonlObjectDecoder } from "./session-jsonl.js";
 import {
   appendModelSelection,
-  branchModelSelection,
   type BranchModelSelection,
+  branchModelSelection,
   selectedBranchModel,
 } from "./session-model-selection.js";
 import {
@@ -245,6 +245,7 @@ export interface SessionProjectionView {
   entriesAfter(tailEntryId: string | null): readonly SessionEntry[];
   persistedEntryMatches(entry: SessionEntry): boolean;
   userText(id: string, maxChars: number): string;
+  userImages(id: string): Array<{ data: string; mimeType: string }>;
   viewMessages(effectiveLeafId?: string | null): readonly unknown[];
   /** Retained USER entries on this branch, independent of model compaction. */
   composerHistoryMessages(effectiveLeafId?: string | null): readonly unknown[];
@@ -1202,6 +1203,16 @@ export class SessionProjection
     const entry = this.currentEntriesById.get(id);
     if (!entry) throw requestError("Branch target does not exist", 404);
     return boundedUserText(entry, maxChars);
+  }
+
+  userImages(id: string): Array<{ data: string; mimeType: string }> {
+    const entry = this.currentEntriesById.get(id);
+    if (entry?.type !== "message" || entry.message.role !== "user")
+      throw requestError("Fork requires a retained user message", 409);
+    const content = entry.message.content;
+    return Array.isArray(content)
+      ? content.filter((block) => block.type === "image")
+      : [];
   }
 
   editableText(id: string, maxChars: number): string {
