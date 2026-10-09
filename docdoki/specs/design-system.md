@@ -243,11 +243,33 @@ quiet border. All its actions stay locally opaque and inherit the panel's 0.75-t
 add a second opacity layer to individual buttons. Content roles, disclosure structure, clipboard
 payloads and operation guards remain unchanged. [[conversation]] and [[composer]] own their behavior.
 
-Existing `.button--quiet` controls in History, the earlier-branch banner and Terminal recovery use
-constant presentation. Enabled controls keep body-color text, unchanged geometry and a transparent
-resting fill/border; the transparent border retains layout space. Hover and press use the standard
-button inset/control surfaces without a visible border. Shared keyboard focus and disabled styling
-remain. These secondary actions stay directly available; ordinary and primary buttons are unchanged.
+The user-approved project-wide quiet-button trial assigns presentation by a control's role,
+not its label alone. `.button--quiet` uses constant presentation: enabled text buttons keep body-color
+text and a transparent resting fill/border; transparent borders retain layout space. Hover and press
+use standard inset/control surfaces without a visible border. Shared keyboard focus and disabled
+styling remain.
+
+- Subordinate exit/navigation actions use quiet: form and pre-execution confirmation Cancel,
+  Command Palette Back, and Dismiss after a login attempt ends. Existing compact navigation links
+  and icon-close controls retain their already-unframed variants.
+- Content loading/preview recovery uses quiet across History, Files/Changes, Models/provider
+  loading, Command Help, deferred Settings/context views and Terminal settings. Host status
+  rechecking is also quiet; retrying a restart request remains an execution action.
+- Existing History pagination/Fork/Clone, earlier-branch Clone and directory-root shortcuts remain
+  quiet. Root shortcuts retain compact mono typography and geometry.
+- Primary or preferred execution/navigation stays emphasized: Save/Submit, add/reset controls,
+  branch continuation and the earlier-branch banner's Back to latest. Actual response choices
+  (Pi Yes/No, login methods/options), pending Cancel login and dangerous execution retain their
+  ordinary/primary/danger variants. A label such as Back or Retry does not override that role.
+
+Files/Changes compact recovery buttons share quiet surfaces while retaining their existing sizing.
+The directory
+picker's editable path uses the same canvas fill, line border, small radius and inset accent focus
+mark as Welcome's directory field, with mono text, soft wrapping and content-sized height at the
+current viewport width. It remains above
+the bordered directory list. Welcome's editable directory input is unchanged.
+These secondary actions stay directly available; this trial changes presentation, not event handling,
+keyboard order, focus ownership or operation guards.
 
 Content availability is a capability concern, not a fourth presentation type. Design straightforward
 copy behavior for the content rather than hiding an action simply because the current implementation

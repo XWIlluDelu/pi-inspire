@@ -542,7 +542,7 @@ export function BranchTree({
         {!state.loading ? (
           <button
             type="button"
-            className="button"
+            className="button button--quiet"
             onClick={() => void store.loadBranchTree()}
           >
             Retry

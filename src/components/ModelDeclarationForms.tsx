@@ -135,7 +135,7 @@ export function ProviderForm({
           Save provider
         </button>
         <button
-          className="button"
+          className="button button--quiet"
           type="button"
           onClick={onCancel}
           disabled={busy}
@@ -337,7 +337,7 @@ export function ModelForm({
           Save model
         </button>
         <button
-          className="button"
+          className="button button--quiet"
           type="button"
           onClick={onCancel}
           disabled={busy}

@@ -109,7 +109,7 @@ export function ExportDialog({
         ) : null}
         <footer className="dialog__actions">
           <button
-            className="button"
+            className="button button--quiet"
             type="button"
             disabled={busy}
             onClick={onClose}

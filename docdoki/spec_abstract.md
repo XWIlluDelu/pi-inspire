@@ -89,6 +89,9 @@ Composer/Welcome file picker now shares file-type icons, parent-only captions an
 while retaining single-line rows and keyboard selection; its matched captures are ready for review.
 Composer/Welcome inline `@` completion now follows those same file-result rules, while slash-command
 argument hints use muted, lighter text; grouping, replacements and responsive layouts remain unchanged.
+The project-wide quiet-button trial now aligns subordinate Cancel/Back, completed-login Dismiss and
+content loading/preview recovery, while preserving actual choices, ongoing cancellation and
+primary/preferred actions. It is ready for visual review; [[design-system]] owns the allocation.
 
 [[follow-pi-native-capability-review-2026-10-02]] owns the remaining native-capability backlog.
 The separate presentation questions are compact-success receipts in

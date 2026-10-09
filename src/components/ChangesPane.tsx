@@ -467,7 +467,7 @@ function ChangesDetail({ state }: { state: ContextPaneView }) {
       >
         <button
           type="button"
-          className="res__more"
+          className="res__more button--quiet"
           onClick={() => void store.openGitDiff(diffView.pathId, diffView.side)}
         >
           <RotateCw size={12} aria-hidden /> Retry

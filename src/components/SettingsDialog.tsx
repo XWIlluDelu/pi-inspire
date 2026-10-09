@@ -30,7 +30,7 @@ export function SettingsLoading({ onRetry }: { onRetry?: () => void }) {
           >
             <button
               type="button"
-              className="button res__state-action"
+              className="button button--quiet res__state-action"
               onClick={onRetry}
             >
               Reload

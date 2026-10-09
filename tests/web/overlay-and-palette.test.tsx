@@ -324,6 +324,9 @@ describe("shared extension interaction", () => {
     expect(
       screen.getAllByRole("button").map((button) => button.textContent),
     ).toEqual(["No", "Yes"]);
+    expect(screen.getByRole("button", { name: "No" })).not.toHaveClass(
+      "button--quiet",
+    );
     fireEvent.click(screen.getByRole("button", { name: "No" }));
     expect(respond).toHaveBeenLastCalledWith({
       id: "confirm",
@@ -345,6 +348,9 @@ describe("shared extension interaction", () => {
         .emit({ type: "extension_ui_clear", reason: "stopped" }),
     );
     request({ id: "input", method: "input", title: "Name" });
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass(
+      "button--quiet",
+    );
     fireEvent.change(screen.getByRole("textbox"), {
       target: { value: "A name" },
     });

@@ -724,7 +724,7 @@ export function ModelsSettings({
                 </button>
                 <button
                   type="button"
-                  className="models-text-button"
+                  className="button button--quiet"
                   disabled={busy}
                   onClick={() => {
                     const ticket = captureFocus();
@@ -1099,7 +1099,7 @@ export function ModelsSettings({
                               </button>
                               <button
                                 type="button"
-                                className="models-text-button"
+                                className="button button--quiet"
                                 disabled={busy}
                                 onClick={() => {
                                   const ticket = captureFocus();
@@ -1189,7 +1189,7 @@ export function ModelsSettings({
           ) : readFailed ? (
             <button
               type="button"
-              className="button"
+              className="button button--quiet"
               onClick={() => void load()}
             >
               Retry loading models

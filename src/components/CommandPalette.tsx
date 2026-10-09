@@ -741,7 +741,7 @@ export const CommandPalette = memo(function CommandPalette({
             <div className="palette__prepare-actions">
               <button
                 type="button"
-                className="button"
+                className="button button--quiet"
                 disabled={preparationSending}
                 onClick={() => setPreparation(null)}
               >
@@ -824,7 +824,11 @@ export const CommandPalette = memo(function CommandPalette({
             )}
             {renaming ? (
               <div className="palette__prepare-actions">
-                <button type="button" className="button" onClick={exitRename}>
+                <button
+                  type="button"
+                  className="button button--quiet"
+                  onClick={exitRename}
+                >
                   Back
                 </button>
                 <button

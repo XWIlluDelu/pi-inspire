@@ -803,6 +803,11 @@ button.res__index-header--back:hover svg {
     color var(--dur-micro) var(--ease-standard);
 }
 
+.res__more.button--quiet {
+  background: transparent;
+  border-color: transparent;
+}
+
 button.res__more:hover {
   background: var(--bg-inset);
   border-color: var(--hairline-strong);

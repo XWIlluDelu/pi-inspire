@@ -52,6 +52,69 @@ const toggle = () =>
 const confirm = () =>
   screen.getByRole("button", { name: "Use this directory" });
 
+describe("typed project directories", () => {
+  it("browses a typed path with Enter, then selects the host-normalized directory", async () => {
+    const onPick = vi.fn();
+    const browse = vi
+      .mocked(store.browseHostDirs)
+      .mockImplementation(async (path) =>
+        path?.includes("project") ? project : home,
+      );
+    render(<DirectoryPicker onCancel={vi.fn()} onPick={onPick} />);
+    await waitFor(() => expect(confirm()).toBeEnabled());
+    const input = screen.getByRole("textbox", { name: "Project directory" });
+    expect(input).toHaveValue(home.path);
+    fireEvent.change(input, { target: { value: "  /home/demo/project/  " } });
+    input.focus();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(input).toHaveValue(project.path));
+    expect(browse).toHaveBeenLastCalledWith("/home/demo/project/", false);
+    expect(onPick).not.toHaveBeenCalled();
+    fireEvent.click(confirm());
+    expect(onPick).toHaveBeenCalledWith(project.path);
+  });
+
+  it("validates typed confirmation instead of selecting the old directory and recovers from invalid paths", async () => {
+    const onPick = vi.fn();
+    vi.mocked(store.browseHostDirs).mockImplementation(async (path) => {
+      if (path === "/missing") throw new Error("Directory not found");
+      return path === project.path ? project : home;
+    });
+    render(<DirectoryPicker onCancel={vi.fn()} onPick={onPick} />);
+    await waitFor(() => expect(confirm()).toBeEnabled());
+    const input = screen.getByRole("textbox", { name: "Project directory" });
+    fireEvent.change(input, { target: { value: "/missing" } });
+    fireEvent.click(confirm());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Directory not found",
+    );
+    expect(onPick).not.toHaveBeenCalled();
+    expect(confirm()).toBeDisabled();
+    fireEvent.change(input, { target: { value: project.path } });
+    fireEvent.click(confirm());
+    await waitFor(() => expect(onPick).toHaveBeenCalledWith(project.path));
+  });
+
+  it("does not pick a pending typed confirmation after dismissal", async () => {
+    const pending = deferred<HostDirListing>();
+    const onPick = vi.fn();
+    vi.mocked(store.browseHostDirs).mockImplementation((path) =>
+      path === project.path ? pending.promise : Promise.resolve(home),
+    );
+    const { unmount } = render(
+      <DirectoryPicker onCancel={vi.fn()} onPick={onPick} />,
+    );
+    await waitFor(() => expect(confirm()).toBeEnabled());
+    const input = screen.getByRole("textbox", { name: "Project directory" });
+    fireEvent.change(input, { target: { value: project.path } });
+    fireEvent.click(confirm());
+    expect(input).toHaveAttribute("readonly");
+    unmount();
+    await act(async () => pending.resolve(project));
+    expect(onPick).not.toHaveBeenCalled();
+  });
+});
+
 describe("hidden project directories", () => {
   it.each([
     { root: "/home/demo", child: "/home/demo/.hidden", parent: "/home" },

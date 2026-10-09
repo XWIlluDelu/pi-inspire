@@ -91,7 +91,7 @@ export function HiddenClearDialog({
         <footer className="session-delete__actions">
           <button
             type="button"
-            className="button"
+            className="button button--quiet"
             onClick={onClose}
             disabled={deleting}
           >

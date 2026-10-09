@@ -1280,14 +1280,48 @@
   min-width: 0;
 }
 
+.dirpicker__path-field {
+  display: grid;
+}
+
+/* A hidden copy sizes the row as text wraps, including on viewport resize. */
+.dirpicker__path-field::after {
+  content: attr(data-path) " ";
+  visibility: hidden;
+}
+
 .dirpicker__path {
+  resize: none;
+  overflow: hidden;
+  height: 100%;
+}
+
+.dirpicker__path,
+.dirpicker__path-field::after {
+  box-sizing: border-box;
+  grid-area: 1 / 1;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-canvas);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
-  color: var(--body);
-  background: var(--bg-inset);
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-2);
-  overflow-wrap: anywhere;
+  color: var(--ink);
+  padding: var(--space-2);
+}
+
+.dirpicker__path::placeholder {
+  color: var(--faint);
+}
+
+.dirpicker__path:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: inset 2px 0 0 0 var(--accent);
 }
 
 .dirpicker__roots {
@@ -1305,17 +1339,14 @@
   flex: 0 0 auto;
   min-height: 28px;
   padding-inline: var(--space-2);
-  border: 1px solid var(--hairline);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  background: var(--bg-surface);
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
 }
 
 .dirpicker__root:hover {
-  border-color: var(--hairline-strong);
-  background: var(--bg-inset);
   color: var(--ink);
 }
 

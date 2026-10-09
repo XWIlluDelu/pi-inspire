@@ -534,12 +534,18 @@ describe("auth attempt observation and owner retirement", () => {
     view.rerender(panel());
     expect(screen.getByText("Login in progress")).toBeVisible();
     expect(
+      screen.getByRole("button", { name: "Cancel login" }),
+    ).not.toHaveClass("button--quiet");
+    expect(
       host.providerAuth.mock.calls.some(
         ([, operation]) => operation.operation === "cancel",
       ),
     ).toBe(false);
     await act(async () => vi.advanceTimersByTimeAsync(250));
     expect(screen.getByText("Login complete.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Dismiss" })).toHaveClass(
+      "button--quiet",
+    );
     view.unmount();
   });
 });

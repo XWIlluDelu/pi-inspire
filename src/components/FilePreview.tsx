@@ -336,7 +336,7 @@ export function ResourcePreviewContent({
         {!invalid ? (
           <button
             type="button"
-            className="res__more res__state-action"
+            className="res__more button--quiet res__state-action"
             onClick={() =>
               void store.openResource(
                 preview.reference,

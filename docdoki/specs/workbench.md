@@ -236,7 +236,11 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   machine sessions run on, and entry paths arrive joined with the host's own separators. Root
   discovery is host-owned too: POSIX exposes `/`, while Windows exposes every currently readable
   drive root so a user can cross from `C:\` to `D:\` without inventing a nonexistent common parent.
-  A missing or relative starting point falls back to the host home.
+  A missing or relative starting point falls back to the host home. The picker path is editable,
+  automatically wraps long text and grows/shrinks with content and available width. Enter browses the typed path without selecting it. Use this directory validates an edited path
+  against the Host before selection instead of choosing the old listing. Errors retain the draft;
+  editing clears the error for retry. While browsing, the path is temporarily read-only but retains
+  keyboard focus, and stale or dismissed requests cannot select a directory.
 
 - The directory picker places an eye-icon `Show hidden folders` toggle button immediately after
   the `Choose project directory` heading, with an accessible label, tooltip, and `aria-pressed`

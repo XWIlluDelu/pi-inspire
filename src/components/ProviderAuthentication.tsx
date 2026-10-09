@@ -412,7 +412,7 @@ function AuthenticationPanel({
                     Remove saved credentials
                   </button>
                   <button
-                    className="button"
+                    className="button button--quiet"
                     type="button"
                     disabled={busy}
                     onClick={() => setRemoving(null)}
@@ -448,7 +448,7 @@ function AuthenticationPanel({
       {loadError ? (
         <button
           type="button"
-          className="button"
+          className="button button--quiet"
           onClick={() =>
             void onRefresh().catch((error) => setError(messageOf(error)))
           }
@@ -595,7 +595,7 @@ function AuthenticationPanel({
           ) : null}
           <button
             type="button"
-            className="button"
+            className={`button${attempt.status === "pending" ? "" : " button--quiet"}`}
             disabled={busy}
             onClick={() => {
               if (attempt.status === "pending") void cancel();

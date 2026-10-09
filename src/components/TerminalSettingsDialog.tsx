@@ -505,7 +505,7 @@ export function TerminalSettingsDialog({
                           <p role="alert">{serviceError}</p>
                           <button
                             type="button"
-                            className="button"
+                            className="button button--quiet"
                             onClick={() =>
                               setReadRevision((revision) => revision + 1)
                             }

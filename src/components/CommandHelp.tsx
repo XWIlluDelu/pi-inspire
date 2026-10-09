@@ -179,7 +179,7 @@ export function CommandHelp({
               <p>{error}</p>
               <button
                 type="button"
-                className="button"
+                className="button button--quiet"
                 onClick={() => setAttempt((value) => value + 1)}
               >
                 Retry

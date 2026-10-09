@@ -539,9 +539,77 @@ Browser assets are rebuilt. No auxiliary Pi execution session was created. Selec
 regressions (34 cases), TypeScript and the web build also pass after restoring picker captions.
 The `after-picker*` captures predate this review correction; Settings captures remain applicable.
 
+## Built-in dialog hierarchy — ready for review
+
+Approved as a related batch from `a05a8fc`. The read-only path fill removal was subsequently
+superseded by the requested editable path below; root shortcuts reuse quiet resting/hover/pressed surfaces while keeping
+their compact dimensions and typography. Cancel in directory, export, individual-delete and
+Clear Hidden dialogs uses the existing quiet modifier. Lists, frame geometry, primary/danger
+actions, messages, Welcome's editable path and all operation/focus behavior remain unchanged.
+
+The 17 focused directory/export/deletion-recovery/style cases, changed-file Biome, TypeScript
+and web build pass. Chromium compares identical dialog, Cancel, primary and two-root shortcut
+dimensions, checks transparent resting surfaces, root hover/focus and keyboard cancellation,
+and reviews light/dark/narrow captures in `output/playwright/dialog-hierarchy/`.
+Confirmation images compare the original and quiet Cancel classes in the same stable overlay.
+No destructive action was executed.
+Browser assets are rebuilt; no auxiliary Pi execution session was created.
+
+## Editable directory-picker path — ready for review
+
+Requested after dialog review. The picker replaces its read-only path with a real input matching
+Welcome's canvas fill, line border, radius, mono typography and inset accent focus. Enter browses
+without picking; confirming an edited path validates it with the Host and selects its normalized
+result, not the old listing. Invalid paths remain editable and recover on editing/retry. Loading
+makes the input read-only without losing focus; existing request ownership rejects stale/dismissed
+results. Root shortcuts, folder browsing and hidden-folder behavior remain.
+
+All 13 directory-picker cases, changed-file Biome, TypeScript and the web build pass. Chromium
+compares computed input surface roles against Welcome, exercises Enter, invalid-path recovery
+and direct typed confirmation, and checks dark/narrow layouts. Evidence:
+`output/playwright/directory-input/`. Browser assets are rebuilt.
+
+No other button styles changed in the directory follow-up. The subsequently approved
+project-wide quiet-button trial is recorded below.
+
+The approved wrapping follow-up uses a one-row textarea and hidden CSS sizing copy: short paths
+remain one line, long paths soft-wrap, and height follows content and viewport width without a
+manual resize handle or text scrollbar. Fill, border, focus, Enter navigation and typed confirmation
+are retained; Welcome stays single-line. All 13 directory cases, changed-file Biome, TypeScript and
+web build pass. Chromium measures one-line shrink, two-line desktop/four-line narrow growth with
+no clipped text, then verifies Enter does not insert a newline and direct typed selection still works.
+Updated light/narrow-dark evidence is in `output/playwright/directory-wrap/`.
+
+## Window controls overlay — withdrawn
+
+The user chose to remove the titlebar-fusion experiment after trying 32px and 40px rows.
+The manifest, styles and tests are restored to ordinary standalone PWA behavior; neutral browser
+chrome remains unchanged. Titlebar fusion is not pending implementation or review.
+
+## Project-wide quiet buttons — ready for review
+
+The user approved trying quiet buttons wherever appropriate across the project, with consistent
+semantics. Presentation follows operation role rather than button text: subordinate Cancel/Back,
+completed-login Dismiss and content loading/preview recovery now share quiet styling. This covers
+model/provider edits and removal confirmations, extension select/input/editor requests, restart
+confirmation, both Command Palette editing flows, History/Files/Changes and deferred-view recovery,
+Command Help, provider/model loading and Terminal Host-settings loading. Host status rechecking
+also uses quiet; restarting again, pending Cancel login and actual Pi Yes/No answers remain ordinary.
+Primary/preferred actions and icon/selection/copy controls are unchanged. Deletion confirmation's
+Cancel remains quiet, now aligned with other pre-execution confirmation exits. [[design-system]]
+holds the role allocation.
+
+All 97 relevant component/CSS cases, changed-file Biome, TypeScript and the web build pass.
+Semantic regressions cover pending Cancel login versus finished Dismiss and Pi No versus input
+Cancel. Chromium checks matched provider-form and palette-rename captures, dark/narrow form
+presentation, editor cancellation and Back focus restoration; Back retains 63×44px geometry.
+Computed-style checks confirm compact resource recovery retains transparent resting/hover borders
+and standard hover fill. Evidence: `output/playwright/quiet-actions/`. Browser assets are rebuilt;
+visual acceptance is pending.
+
 ## Next actions
 
-Review the shared model-list, inline completion, project-file picker, History match-emphasis, match-emphasis, search-clear, file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
+Review the project-wide quiet-button trial, editable directory path, built-in dialog, shared model-list, inline completion, project-file picker, History match-emphasis, match-emphasis, search-clear, file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
 are withdrawn. Group related refinements by topic rather than individual micro-adjustments;
 propose the next batch's full scope and await approval before implementing it. Straightforward image copying and reverse-input ordering when copying multiple
 images separately remain independent, unimplemented capability directions.
