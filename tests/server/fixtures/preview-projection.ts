@@ -234,6 +234,10 @@ export class PreviewProjection
     throw requestError("Branch history is unavailable for this preview", 503);
   }
 
+  userImages(_id: string): Array<{ data: string; mimeType: string }> {
+    throw requestError("Branch history is unavailable for this preview", 503);
+  }
+
   composerHistoryMessages(): readonly unknown[] {
     return this.preview.transcriptPage.messages.filter(
       (value) =>

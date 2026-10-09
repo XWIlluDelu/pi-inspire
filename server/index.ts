@@ -200,7 +200,10 @@ let runtime: RuntimeLike;
 const modelMetadata = new ModelMetadataCatalog();
 if (mock) {
   catalog = new MockCatalog();
-  runtime = new MockRuntime({ streamIntervalMs: mockStreamIntervalMs });
+  runtime = new MockRuntime({
+    streamIntervalMs: mockStreamIntervalMs,
+    attachments,
+  });
 } else {
   catalog = createHostSessionCatalog(process.cwd(), preferences);
   runtime = new RuntimeController(

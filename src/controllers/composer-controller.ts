@@ -218,7 +218,7 @@ export class ComposerController {
 
   /** The receipt transfers handles, not a browser queue. Preserve every image
    * and the existing draft even when their combined count exceeds send limits. */
-  restorePendingArtifacts(
+  restoreStagedAttachments(
     sessionId: string,
     attachments: UploadedAttachment[],
     authorityId: string | null,

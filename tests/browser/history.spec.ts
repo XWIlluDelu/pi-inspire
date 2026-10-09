@@ -53,6 +53,79 @@ for (const touch of [false, true]) {
         : { width: 1280, height: 900 },
       hasTouch: touch,
     });
+    test("Fork restores saved images for preview, editing and explicit resend", async ({
+      page,
+    }) => {
+      await connectCalibration(page);
+      const composer = page.getByRole("form", { name: "Message composer" });
+      const input = composer.getByRole("textbox", {
+        name: "Message",
+        exact: true,
+      });
+      await input.fill("Keep this source draft");
+      const history = await openHistory(page);
+      await history
+        .getByRole("searchbox", { name: "Find in history" })
+        .fill("Compare the calibration strategies");
+      await history
+        .getByRole("button", {
+          name: /Your input.*Compare the calibration strategies/,
+        })
+        .click();
+      const response = page.waitForResponse(
+        (response) => new URL(response.url()).pathname === "/api/branches/fork",
+      );
+      await history
+        .getByRole("button", { name: "Fork to new session", exact: true })
+        .click();
+      const forked = await (await response).json();
+      expect(forked.editorAttachments).toHaveLength(1);
+      expect(forked.editorText).toContain("Compare the calibration strategies");
+      await expect(input).toHaveValue(forked.editorText);
+      const restored = composer.getByRole("button", {
+        name: "Preview attached image",
+      });
+      await expect(restored).toHaveCount(1);
+      await expect(restored.locator("img")).toHaveJSProperty(
+        "naturalWidth",
+        720,
+      );
+      await restored.click();
+      const viewer = page.getByRole("dialog", { name: "Image preview" });
+      await expect(viewer).toBeVisible();
+      await viewer.getByRole("button", { name: "Close image preview" }).click();
+
+      // New uploads and restored images share removal and submission behavior.
+      await composer
+        .locator('input[type="file"][aria-label="Attach files"]')
+        .setInputFiles(
+          "tests/browser/fixtures/file-previews/training curve.png",
+        );
+      await expect(restored).toHaveCount(2);
+      await composer
+        .getByRole("button", { name: "Remove attached image" })
+        .last()
+        .click();
+      await expect(restored).toHaveCount(1);
+      await input.fill("Compare the saved image again");
+      await page.screenshot({
+        path: `output/playwright/history/${size}-fork-image-draft.png`,
+      });
+      const prompt = page.waitForRequest(
+        (request) => new URL(request.url()).pathname === "/api/prompt",
+      );
+      await composer
+        .getByRole("button", { name: "Send message", exact: true })
+        .click();
+      expect((await prompt).postDataJSON()).toMatchObject({
+        sessionId: forked.sessionId,
+        message: "Compare the saved image again",
+        attachmentIds: [forked.editorAttachments[0].id],
+      });
+      await expect(restored).toHaveCount(0);
+      await expect(input).toHaveValue("");
+    });
+
     test("retries a History image locally and opens local references in the authorized session reader", async ({
       page,
     }) => {

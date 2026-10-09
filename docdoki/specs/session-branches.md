@@ -9,8 +9,13 @@ covers:
   - shared/{branch-node-actions,branch-bridge-protocol}.ts
   - src/controllers/branch-controller.ts
   - src/components/{BranchTree,EarlierBranchBanner,AppTopbar,SearchMatchText}.tsx
+  - server/attachments.ts
+  - shared/contracts.ts
+  - src/store.ts
+  - src/controllers/composer-controller.ts
   - tests/server/{runtime-branching,session-fork,session-tree,branch-bridge-extension,session-export.integration,generated-exports}.test.ts
   - tests/web/{branch-tree,branch-store}.test.ts*
+  - tests/browser/history.spec.ts
   - src/styles/history.css
 ---
 
@@ -104,8 +109,18 @@ Independent copies do not replace the active source worker. Durable trust comes 
   rebinds, or writes through the source worker. Source models, tools, extensions, queues, dialogs,
   and active work continue unchanged. Pi determines the ancestor path, labels, metadata,
   and generated destination identity. Fork excludes the selected user message and returns it as
-  the destination Composer draft. Clone includes its endpoint and opens an empty destination
-  Composer; it sends no new model prompt and leaves the source's draft and pending input in place.
+  the destination Composer draft, including text and saved user images in their original order and
+  multiplicity. The Host restages image bytes from the admitted Pi projection as independent private
+  attachment copies; neither original upload handles nor original file paths are required. The
+  response carries handles/metadata, not Base64 bodies. Restored images use ordinary Composer
+  thumbnails, preview, removal and explicit send; image-only input remains sendable. Fork never
+  sends automatically or transfers the source's unsent draft/artifacts. Message-wide attachment
+  limits apply when sending, so users can trim an over-limit recovered draft. Invalid/unsupported
+  or individually oversized saved images reject Fork rather than silently losing content. Failed
+  publication/attachment withdraws staged copies; a browser that retires the Fork response also
+  withdraws its unclaimed copies.
+  Clone includes its endpoint and opens an empty destination Composer; it sends no new model prompt
+  and leaves the source's draft and pending input in place.
   Neither action depends on whether the point happens to occur in the current History page.
 
   The helper canonicalizes the real source path as parent provenance and materializes header-only or

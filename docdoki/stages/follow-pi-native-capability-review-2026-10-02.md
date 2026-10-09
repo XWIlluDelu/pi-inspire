@@ -41,6 +41,16 @@ records targeted repairs.
 | Codemode and nested tool-call presentation | [[follow-codemode-mcp-adaptation-2026-10-05]] |
 | Host/remote, Herdr, Files/Changes and project terminals | [[follow-existing-enhancement-review-2026-10-03]] |
 
+Fork now restores saved user images together with text, including image-only messages and ordered
+multiple/duplicate images, as independent staged attachments. Source drafts stay in their own
+partition; Clone remains endpoint-inclusive with an empty editor. Runtime tests cover restored
+bytes, explicit resend/removal and failed-Fork cleanup; stock-Pi integration covers a first-turn
+image Fork. Browser-store tests cover partition switching and stale-response withdrawal; desktop
+and narrow Chromium checks exercise saved-image preview, upload/removal and explicit resend.
+Evidence: `tests/server/{runtime-branching,attachments,pi-branch-bridge.integration}.test.ts`,
+`tests/web/branch-store.test.ts` and `tests/browser/history.spec.ts`.
+[[session-branches]] and [[composer]] own the contract.
+
 Effective retry reads use the owning worker's public settings, and command discovery/admission use
 its current loaded inventory, including native in-process reload. Graphical Reload intentionally
 replaces only the selected idle worker; it does not promise extension-memory/tool-selection

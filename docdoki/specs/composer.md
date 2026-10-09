@@ -152,6 +152,10 @@ remain outside the canvas, have 44px targets and fit within safe areas on narrow
 Activation toggles fit/2× zoom; movement crosses a threshold before zoomed panning. Only backdrop,
 close or Escape dismisses. Native image dragging is disabled so inspection cannot restage an image.
 
+Fork restores the excluded user input's text and saved images into the destination draft, using
+these same staged thumbnails, preview, removal and send controls. Clone leaves the draft empty;
+[[session-branches]] owns extraction, independent publication and unclaimed-copy cleanup.
+
 Delivered user images remain inspectable after refresh. Pi JSONL owns bytes; bounded transcript data
 carries MIME and stable message/part coordinates, and authenticated session/view-bound reads supply
 thumbnails without embedding duplicate bytes in browser state.

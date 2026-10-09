@@ -41,6 +41,10 @@ import {
   containsAttachmentPath,
   sessionAttachmentReferences,
 } from "./attachment-references.js";
+import {
+  canonicalBase64DecodedSize,
+  isSupportedPromptImageMimeType,
+} from "./image-content.js";
 import { escapesBase } from "./paths.js";
 import { getAgentDir } from "./pi-runtime.js";
 import { resolvePiSessionDirectory } from "./pi-session-directory.js";
@@ -685,6 +689,41 @@ export class AttachmentStore {
     }
   }
 
+  /** Recover saved images as ordinary staging, preserving order and multiplicity.
+   * Message-wide send limits apply at submission so users can trim a large draft. */
+  async stageImages(
+    images: readonly { data: string; mimeType: string }[],
+  ): Promise<UploadedAttachment[]> {
+    const sizes = images.map((image) => {
+      const size = canonicalBase64DecodedSize(image.data);
+      if (!isSupportedPromptImageMimeType(image.mimeType) || !size)
+        throw requestError("A saved image is invalid", 422);
+      if (size > MAX_ATTACHMENT_FILE_BYTES)
+        throw payloadTooLarge(
+          `Each image must be at most ${MAX_ATTACHMENT_FILE_BYTES} bytes`,
+        );
+      return size;
+    });
+    const copied: UploadedAttachment[] = [];
+    try {
+      for (const [index, image] of images.entries()) {
+        const extension = image.mimeType.split("/")[1]!.toLowerCase();
+        copied.push(
+          await this.storeFile({
+            originalname: `Recovered image ${index + 1}.${extension === "jpeg" ? "jpg" : extension}`,
+            mimetype: image.mimeType,
+            size: sizes[index]!,
+            buffer: Buffer.from(image.data, "base64"),
+          } as Express.Multer.File),
+        );
+      }
+      return copied;
+    } catch (error) {
+      await Promise.allSettled(copied.map((value) => this.remove(value.id)));
+      throw error;
+    }
+  }
+
   /** Worker-owned copies survive queue acceptance, including resolved history
    * images that have no current upload handle. No send limit truncates recovery. */
   async holdPendingImages(
@@ -697,38 +736,19 @@ export class AttachmentStore {
         ? [value]
         : [];
     });
-    const copied: UploadedAttachment[] = [];
-    try {
-      for (const [index, image] of recalled.entries()) {
-        const buffer = Buffer.from(image.data, "base64");
-        const extension =
-          image.mimeType.split("/")[1] === "jpeg"
-            ? "jpg"
-            : image.mimeType.split("/")[1];
-        const value = await this.storeFile({
-          originalname: `Recovered image ${index + 1}.${extension}`,
-          mimetype: image.mimeType,
-          size: buffer.length,
-          buffer,
-        } as Express.Multer.File);
-        copied.push(value);
-      }
-      for (const value of [
-        ...originals,
-        ...copied.map((item) => this.values.get(item.id)!),
-      ])
-        value.state = "pending";
-      return {
-        attachments: [
-          ...originals.map((value) => this.publicValue(value)),
-          ...copied,
-        ],
-        copiedIds: copied.map((value) => value.id),
-      };
-    } catch (error) {
-      await Promise.all(copied.map((value) => this.remove(value.id)));
-      throw error;
-    }
+    const copied = await this.stageImages(recalled);
+    for (const value of [
+      ...originals,
+      ...copied.map((item) => this.values.get(item.id)!),
+    ])
+      value.state = "pending";
+    return {
+      attachments: [
+        ...originals.map((value) => this.publicValue(value)),
+        ...copied,
+      ],
+      copiedIds: copied.map((value) => value.id),
+    };
   }
 
   restorePendingImages(ids: readonly string[]): UploadedAttachment[] {
