@@ -17,7 +17,7 @@ import { gitChangeForWorkspacePath, store } from "../store";
 import { ContextSplitBody } from "./ContextSplitBody";
 import type { ContextPaneView } from "./context-pane-view";
 import { FilePreview } from "./FilePreview";
-import { ResourcePathLabel } from "./ResourcePathLabel";
+import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
 import {
   selectedWorkspacePath,
   WorkspaceFileSearch,
@@ -30,11 +30,6 @@ type ResourceStanding = ResourceProbeResult | undefined;
 
 function workspaceLabel(cwd: string | null): string {
   return cwd ? projectNameFromCwd(cwd) : "Project files";
-}
-
-function parentPath(path: string): string | null {
-  const end = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return end > 0 ? path.slice(0, end) : null;
 }
 
 const RecentFileRow = memo(function RecentFileRow({

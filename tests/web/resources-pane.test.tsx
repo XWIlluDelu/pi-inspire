@@ -685,6 +685,23 @@ describe("Files pane", () => {
     });
     expect(match).toBeInTheDocument();
     expect(match.querySelector("svg")).toHaveClass("lucide-file-code-corner");
+    expect(match.querySelector(".workspace-tree__path")).toHaveAttribute(
+      "title",
+      "src/main.ts",
+    );
+    expect(match.querySelector(".resource-path__visible")).toHaveTextContent(
+      /^src$/,
+    );
+    expect(match).toHaveAttribute("title", "src/main.ts");
+    expect(match.querySelector(".file-search-match")).toHaveTextContent(
+      /^main$/,
+    );
+    fireEvent.click(match);
+    expect(
+      await within(pane).findByRole("button", {
+        name: "Copy path src/main.ts",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("reveals an opened workspace file once without chasing later tree updates", async () => {

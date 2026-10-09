@@ -78,6 +78,11 @@ dual-line-number/sign gutter already present in Files, retaining diff tints and 
 This independently reviewable slice is ready for review; [[resource-preview]] holds the contract.
 Files Recent, workspace-tree/search rows and the shared explorer now reuse Changes' file-type icons,
 with unchanged layout, directory icons and Git decoration; this separate slice is ready for review.
+Files search captions now show only the parent directory below the filename, preserving full-path
+hover/accessibility and file opening; this slice is accepted. Workspace search alone suppresses
+the duplicate native cancel button beside its themed clear control; matched captures are ready for review.
+Files search-only matches now use weight 600 in filenames/directories, with inherited colors,
+unchanged matching and layout; multi-term before/after captures are ready for review.
 
 [[follow-pi-native-capability-review-2026-10-02]] owns the remaining native-capability backlog.
 The separate presentation questions are compact-success receipts in

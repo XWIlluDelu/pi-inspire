@@ -428,9 +428,53 @@ Recent, code/document/image/audio/video search rows, tree image categories and u
 light/dark captures live in `output/playwright/files-type-icons/`. Existing Changes icon evidence
 is reused. Browser assets are rebuilt.
 
+## Search directory captions — accepted and preserved
+
+Implemented from `9aba88a` after approval. Files search results display only the parent directory
+under the filename, reusing Recent's parent-path extraction. Both hover titles retain the full file
+path; accessibility names, open targets, matching and row heights remain unchanged. Root-level
+results have no second line. The lower-left explorer only renders the shared tree, not search
+results, and therefore needs no visual change; Changes also has no duplicated filename to remove.
+
+The 18 Files cases pass, extending the existing search case to assert directory-only text,
+full-path titles and opening. TypeScript, changed-file Biome and the web build pass.
+One isolated Chromium run checks the same 11 results before/after, identical row heights,
+full-path hover titles, root-file captions and opening, plus dark/narrow captures.
+Evidence in `output/playwright/search-directories/`: `{before,after}-detail.png` and
+`{before,after}-panel.png` are matched at the same viewport/scroll; `after-check.log` records
+the measurements. Browser assets are rebuilt.
+
+## Workspace search clear control — ready for review
+
+Implemented after approval from `fe1e33c`. Only `.workspace-search input` suppresses the
+WebKit-native search cancel button, retaining the existing themed clear button. The other four
+`type="search"` inputs have no duplicate clear action and remain unchanged; transcript Close
+is a separate action. No input handlers, layout or loading states changed.
+
+The web build passes. An isolated Chromium check confirms identical before/after input geometry,
+custom-button clearing, Escape clearing and the session search's native cancel still working.
+Matched light crops plus dark/narrow captures are in `output/playwright/search-clear/`.
+No new tests or fixtures are needed for this scoped CSS change. Browser assets are rebuilt.
+The user accepted the preceding directory-caption slice.
+
+## File search match emphasis — ready for review
+
+Implemented from `42e894b` after approval. Only search result filename/directory text emphasizes
+matching ranges at weight 600; it inherits existing text/Git colors and adds no background.
+The full-path lowercase/whitespace-term matching mirrors Host search, then projects ranges into
+the two display fields. Repeated/overlapping matches merge, and case-fold expansions retain original
+character offsets. Resource labels retain their leaf-preserving elision and bidi isolation.
+Recent, trees, Changes, titles, open targets, search ordering and matching remain unchanged.
+
+The 24 focused Files/match cases, TypeScript, changed-file Biome and web build pass.
+An isolated Chromium check compares the same multi-term results before/after, verifies equal
+row heights/colors, weight 600, transparent matches, Git foreground inheritance, path-spanning
+queries and no emphasis after clearing. Light before/after and dark/narrow captures are in
+`output/playwright/search-matches/`, with measurements in `after.log`. Browser assets are rebuilt.
+
 ## Next actions
 
-Review the file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
+Review the match-emphasis, search-clear, file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
 are withdrawn. Propose a next independently reviewable frontend batch
 and await approval before implementing it. Straightforward image copying and reverse-input ordering when copying multiple
 images separately remain independent, unimplemented capability directions.

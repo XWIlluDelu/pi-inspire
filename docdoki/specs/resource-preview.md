@@ -7,14 +7,14 @@ covers:
   - scripts/vite-pdf-assets.ts
   - server/static-asset-cache.mjs
   - src/controllers/{resource,git,workspace}-controller.ts
-  - src/components/{ContextPane,ContextPaneState,ContextSplitBody,FilesPane,FilePreview,PdfPreview,DocumentPreview,ChangesPane,WorkspaceBrowser,NotebookPreview,PaneResizeHandle,RichText,Transcript}.tsx
+  - src/components/{ContextPane,ContextPaneState,ContextSplitBody,FilesPane,FilePreview,PdfPreview,DocumentPreview,ChangesPane,WorkspaceBrowser,ResourcePathLabel,SearchMatchText,NotebookPreview,PaneResizeHandle,RichText,Transcript}.tsx
   - src/components/context-pane-view.ts
   - src/App.tsx
   - src/styles.css
   - src/styles/*.css
   - tests/server/{app,resources,resources-windows-paths,runtime-reads,git-inspection,runtime}.test.ts
   - tests/web/{resources,document-resources,document-image-controller,git-controller,workspace-controller,store-resources}.test.ts
-  - tests/web/{document-preview,pdf-preview,resources-pane,changes-pane,pane-resize,rich-text}.test.tsx
+  - tests/web/{document-preview,pdf-preview,resources-pane,search-match-text,changes-pane,pane-resize,rich-text}.test.tsx
   - tests/web/{source-diff,file-icons,syntax-highlighting}.test.ts
   - tests/browser/workbench.spec.ts
 ---
@@ -33,7 +33,15 @@ one 16-reference Host page, followed by the workspace filesystem tree. Search re
 while a query is present. Recent rows use an icon, filename, subdued parent path, and fixed trailing
 Git state on one line. Recent, workspace-tree and search file rows reuse Changes' filename-based
 monochrome Lucide icon mapping at 13px, including the shared lower-left explorer. Directory icons,
-Git decorations, file labels and row geometry are unchanged.
+Git decorations, file labels and row geometry are unchanged. Search results show the filename above
+its parent directory, without repeating the filename; root-level files have no directory caption.
+Both the row and directory caption keep the full file path in their hover title, while the row's
+accessible name and open target also retain the full path. Workspace search keeps its themed clear
+button and suppresses the duplicate WebKit-native cancel button. Other search fields keep their
+native clear controls; the transcript search close action remains distinct. Search-only text matches
+use weight 600 with inherited foreground and no background. Matching follows Host lowercase,
+whitespace-separated substring terms on the full path; ranges project into the filename and
+parent-directory fields, including path-spanning terms, without changing titles or bidi isolation.
 
 Selecting a recent, search, or tree entry opens a fixed index/detail stack: the workspace tree stays
 above the preview, while Search and Recent yield space. **← project-folder** returns to Browse with

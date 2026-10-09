@@ -620,6 +620,10 @@
   font: var(--text-xs)/var(--leading-ui) var(--font-mono);
 }
 
+.workspace-tree--results .file-search-match {
+  font-weight: 600;
+}
+
 .workspace-tree__row--result {
   height: auto;
   min-height: 34px;
@@ -705,6 +709,11 @@ button.workspace-tree__status:hover {
   padding: var(--space-2) 0;
   color: var(--ink);
   font: var(--text-sm)/var(--leading-ui) var(--font-sans);
+}
+
+/* This field already provides a themed clear button. */
+.workspace-search input::-webkit-search-cancel-button {
+  display: none;
 }
 
 .workspace-search input::placeholder {

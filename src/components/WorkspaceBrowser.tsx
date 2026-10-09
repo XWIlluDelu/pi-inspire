@@ -29,7 +29,8 @@ import {
   useAppState,
 } from "../store";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
-import { ResourcePathLabel } from "./ResourcePathLabel";
+import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
+import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 
 export function WorkspaceVisibilityToggle() {
   const showHidden = useAppState((source) => source.workspaceShowHidden);
@@ -110,6 +111,7 @@ const WorkspaceFileRow = memo(function WorkspaceFileRow({
   change,
   depth = 0,
   showPath = false,
+  query = "",
 }: {
   path: string;
   name: string;
@@ -117,8 +119,11 @@ const WorkspaceFileRow = memo(function WorkspaceFileRow({
   change?: GitFileChange;
   depth?: number;
   showPath?: boolean;
+  query?: string;
 }) {
   const Icon = fileIconForPath(path);
+  const directory = showPath ? parentPath(path) : null;
+  const matches = searchMatchRanges(path, query);
   const selected = selectedPath === path;
   const decoration = gitDecorationForChange(change);
   const facet = presentGitFacet(change);
@@ -138,10 +143,19 @@ const WorkspaceFileRow = memo(function WorkspaceFileRow({
         <span
           className={`workspace-tree__name ${decoration ? `git-deco--${decoration}` : ""}`}
         >
-          {name}
+          <SearchMatchText
+            text={name}
+            ranges={matches}
+            offset={path.length - name.length}
+          />
         </span>
-        {showPath && path !== name ? (
-          <ResourcePathLabel path={path} className="workspace-tree__path" />
+        {directory ? (
+          <ResourcePathLabel
+            path={directory}
+            title={path}
+            className="workspace-tree__path"
+            matches={matches}
+          />
         ) : null}
       </span>
       {facet ? (
@@ -392,6 +406,7 @@ export function WorkspaceSearchResults({
             selectedPath={selectedPath}
             change={gitChangeForWorkspacePath(state.gitStatus, file.path)}
             showPath
+            query={state.workspaceQuery}
           />
         ))
       )}
