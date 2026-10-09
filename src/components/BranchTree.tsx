@@ -22,12 +22,13 @@ import type {
   BranchTreeQuery,
   BranchTreeResponse,
 } from "../../shared/contracts";
-import { sessionDraft } from "../session-drafts";
 import { resourceReferenceFromEventTarget } from "../resources";
+import { sessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { ContextPaneState } from "./ContextPaneState";
 import { ImagePreview } from "./ImagePreview";
 import { RichText } from "./RichText";
+import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 
 interface Turn {
   id: string;
@@ -685,7 +686,16 @@ export function BranchTree({
                     onClick={(event) => void preview(node, event.currentTarget)}
                   >
                     <small>{pointKind(node)}</small>{" "}
-                    <span>{node.snippet || node.label}</span>
+                    <span>
+                      <SearchMatchText
+                        text={node.snippet || node.label}
+                        ranges={searchMatchRanges(
+                          node.snippet || node.label,
+                          [query.trim()],
+                          (value) => value.toLocaleLowerCase(),
+                        )}
+                      />
+                    </span>
                   </button>
                 ))
             ) : (

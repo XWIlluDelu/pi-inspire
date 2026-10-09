@@ -28,12 +28,23 @@ describe("file search match presentation", () => {
     ],
     ["foo.ts", "  ", []],
   ])("maps %s matching %s to original text ranges", (text, query, expected) => {
-    expect(searchMatchRanges(text, query)).toEqual(expected);
+    expect(searchMatchRanges(text, query.trim().split(/\s+/))).toEqual(
+      expected,
+    );
+  });
+
+  it("matches a whole phrase without separately emphasizing its words", () => {
+    expect(
+      searchMatchRanges("Root question, then question Root", ["root question"]),
+    ).toEqual([{ start: 0, end: 13 }]);
+    expect(
+      searchMatchRanges("Root alternate question", ["root question"]),
+    ).toEqual([]);
   });
 
   it("projects a path-spanning match into directory and filename without changing labels", () => {
     const path = "src/main.ts";
-    const matches = searchMatchRanges(path, "src/ma");
+    const matches = searchMatchRanges(path, ["src/ma"]);
     const { container } = render(
       <button type="button" aria-label={path}>
         <SearchMatchText text="main.ts" ranges={matches} offset={4} />
@@ -42,7 +53,7 @@ describe("file search match presentation", () => {
     );
     expect(
       Array.from(
-        container.querySelectorAll(".file-search-match"),
+        container.querySelectorAll(".search-match"),
         (node) => node.textContent,
       ),
     ).toEqual(["ma", "src"]);

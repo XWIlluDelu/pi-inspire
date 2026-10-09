@@ -5,20 +5,21 @@ export interface SearchMatchRange {
   end: number;
 }
 
-/** Mirror workspace search's lowercase, whitespace-separated substring matching. */
+/** Match literal terms and preserve original-text offsets after case folding. */
 export function searchMatchRanges(
   text: string,
-  query: string,
+  terms: readonly string[],
+  fold: (value: string) => string = (value) => value.toLowerCase(),
 ): SearchMatchRange[] {
-  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const words = terms.map(fold).filter(Boolean);
   if (!words.length) return [];
-  const folded = text.toLowerCase();
+  const folded = fold(text);
   // Lowercasing can expand a character (e.g. İ); map back to original text.
   const starts: number[] = [];
   const ends: number[] = [];
   let offset = 0;
   for (const character of text) {
-    for (let i = 0; i < character.toLowerCase().length; i++) {
+    for (let i = 0; i < fold(character).length; i++) {
       starts.push(offset);
       ends.push(offset + character.length);
     }
@@ -66,7 +67,7 @@ export function SearchMatchText({
     if (end <= start) continue;
     nodes.push(
       text.slice(cursor, start),
-      <span className="file-search-match" key={start}>
+      <span className="search-match" key={start}>
         {text.slice(start, end)}
       </span>,
     );

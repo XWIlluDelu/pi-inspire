@@ -86,12 +86,26 @@ creating a session. Picker selections bind to its canonical root; changing the d
 and creation uses that root. New's inline selections use absolute canonical-workspace paths so a
 later directory change cannot retarget them.
 
+The explicit project-file picker (Composer and Welcome) keeps its compact single-line rows and
+existing placement/keyboard behavior. Each result uses the shared 13px monochrome file-type icon,
+filename at weight 500, and parent directory without repeating the filename; root files have no
+directory caption. Literal query-term matches use weight 600 and inherited colors with no background.
+Full relative paths remain in titles/accessibility labels. Long filenames elide without overflowing;
+other picker surfaces and referenced-file chips are unchanged.
+
 Both searches offer default-off Show hidden files for dot names and native hidden attributes,
 independently of Git ignore. Incomplete scans are reported; Git failure does not block discovery.
 Picker chips are deduplicated and removable. Search results confer no delivery authority: the Host
 revalidates canonical regular files within the workspace at the prompt boundary and before delivery.
 Selected paths become JSON string literals under an explicit context heading, so filename newlines
 and list markers cannot manufacture instructions.
+
+Inline `@` completion shares the picker/Files file-type icons, parent-only directory captions and
+literal-term emphasis. Full relative paths remain in titles and accessible option labels; root files
+omit directory captions. Its existing desktop two-column/narrow stacked layout and virtualized
+candidate handling are retained. Slash command titles keep the command name in the primary color
+and render native argument hints at weight 400 in the muted color; descriptions and model/thinking
+argument candidates are unchanged.
 
 `@` insertion replaces only the active token, preserving sentence position and repeated references.
 Paths with spaces are quoted; unfinished and quoted queries accept spaces. Committed references stay

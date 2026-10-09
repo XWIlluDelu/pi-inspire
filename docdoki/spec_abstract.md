@@ -83,6 +83,12 @@ hover/accessibility and file opening; this slice is accepted. Workspace search a
 the duplicate native cancel button beside its themed clear control; matched captures are ready for review.
 Files search-only matches now use weight 600 in filenames/directories, with inherited colors,
 unchanged matching and layout; multi-term before/after captures are ready for review.
+History search snippets share this presentation but match the whole query phrase; outline and
+branch actions are unchanged, with before/after captures ready for review. The explicit
+Composer/Welcome file picker now shares file-type icons, parent-only captions and match emphasis
+while retaining single-line rows and keyboard selection; its matched captures are ready for review.
+Composer/Welcome inline `@` completion now follows those same file-result rules, while slash-command
+argument hints use muted, lighter text; grouping, replacements and responsive layouts remain unchanged.
 
 [[follow-pi-native-capability-review-2026-10-02]] owns the remaining native-capability backlog.
 The separate presentation questions are compact-success receipts in

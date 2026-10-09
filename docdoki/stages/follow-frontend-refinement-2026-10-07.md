@@ -472,11 +472,59 @@ row heights/colors, weight 600, transparent matches, Git foreground inheritance,
 queries and no emphasis after clearing. Light before/after and dark/narrow captures are in
 `output/playwright/search-matches/`, with measurements in `after.log`. Browser assets are rebuilt.
 
+## History search match emphasis — ready for review
+
+Implemented from `4325edf` after approval. History result snippets reuse the shared text-range
+renderer at weight 600 with inherited foreground and no background. The helper now accepts explicit
+terms/case folding: Files retains independent whitespace terms; History retains its whole trimmed,
+locale-case-insensitive literal phrase. The shared class is now `search-match`, with separate
+Files/History scoped styles. Roles, snippet text/clamp, search order, preview, outline and branch
+actions remain unchanged.
+
+The 43 focused History/Files/matcher cases, TypeScript and web build pass. Chromium compares 100
+same results before/after with equal text/heights, weight 600 and unchanged colors; uppercase phrase
+matching, preview/Back state, no outline emphasis and Files multi-term regression checks pass.
+Light before/after plus dark/narrow evidence lives in `output/playwright/history-matches/`.
+Browser assets are rebuilt. The user requested moderately larger topic-based batches going forward.
+
+## Project-file picker presentation — ready for review
+
+Implemented from `530ab1c` after approval as a consistency follow-up to the file-icon,
+directory-caption and match-emphasis slices. The shared Composer/Welcome picker now uses the
+same 13px file-type icons, parent-only captions and literal-term emphasis. Filename idle weight
+is 500 and matches are 600; full paths stay in titles/accessibility labels. The new `picker--files`
+scope preserves other picker styles. Single-line layout, panel sizing, results/order, selected rows
+and keyboard/add behavior remain unchanged; long names elide within the available width.
+Inline caret completion and referenced-file chips are not changed.
+
+The five focused picker cases, TypeScript, changed-file Biome and web build pass. An isolated
+Chromium comparison confirms identical result order, 420px width and 34.125px row height.
+Keyboard adding, selected-row disabling, input focus and Escape return pass. Welcome root files
+omit captions; narrow long-name simulation stays within the popup. Matched before/after plus
+dark/narrow evidence is in `output/playwright/picker-file-presentation/`. Browser assets are rebuilt.
+
+## Inline completion presentation — ready for review
+
+Implemented from `d621d4d` after approval as one related batch. Composer and Welcome share the
+same input menu: inline `@` results now reuse file-type icons, parent-only captions and literal-term
+emphasis, with full paths in titles/option labels. Slash command titles separate the command name
+from native argument hints (muted, weight 400). Descriptions, source grouping, ordering,
+argument candidates, replacements and virtual-list mechanics are unchanged.
+Desktop columns and narrow stacking remain; explicit baseline alignment prevents the icon/caption
+markup from increasing row height.
+
+The ten focused caret-completion cases plus Welcome's native-command case, TypeScript, changed-file
+Biome and web build pass. Chromium compares identical file ordering/heights and all 25 command
+texts/order/heights, verifies file insertion, Tab command completion, path-spanning emphasis and
+Welcome root-file captions. Matched files/commands before/after plus dark/narrow captures are in
+`output/playwright/completion-presentation/`; `after.log` records measurements. Browser assets
+are rebuilt. No auxiliary Pi execution session was created for this batch.
+
 ## Next actions
 
-Review the match-emphasis, search-clear, file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
-are withdrawn. Propose a next independently reviewable frontend batch
-and await approval before implementing it. Straightforward image copying and reverse-input ordering when copying multiple
+Review the inline completion, project-file picker, History match-emphasis, match-emphasis, search-clear, file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
+are withdrawn. Group related refinements by topic rather than individual micro-adjustments;
+propose the next batch's full scope and await approval before implementing it. Straightforward image copying and reverse-input ordering when copying multiple
 images separately remain independent, unimplemented capability directions.
 
 Preserve direct session curation,
@@ -484,5 +532,8 @@ accepted palette headings, narrow Thinking adjacency, filled red Stop, attachmen
 Terminal, main Settings and Models controls; do not reintroduce rejected reading, activity, Files
 layout or session-row overflow changes.
 
-Use an independent `gpt-6.1-sol` / high Pi implementation session when delegating, as requested;
-keep execution sessions persistent and user-visible.
+Use an independent `gpt-6.1-sol` / high Pi implementation session when delegating, as requested.
+Keep auxiliary sessions persistent and user-visible during work; clean them up when their tasks
+finish. On 2026-10-09, the user requested cleanup and the 12 completed assistant-created execution
+sessions were deleted through the Host into desktop Trash. The two user-facing frontend sessions
+remain; code, documents and visual evidence are retained.

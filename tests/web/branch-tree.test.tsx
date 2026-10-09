@@ -307,6 +307,7 @@ describe("read-only History inspection", () => {
     const match = await screen.findByRole("button", {
       name: "Your input Root question",
     });
+    expect(match.querySelector(".search-match")).toHaveTextContent(/^Root$/);
     const rows = history().querySelector(".branch-tree__rows")!;
     rows.scrollTop = 81;
     fireEvent.click(match);

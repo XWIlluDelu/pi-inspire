@@ -693,9 +693,7 @@ describe("Files pane", () => {
       /^src$/,
     );
     expect(match).toHaveAttribute("title", "src/main.ts");
-    expect(match.querySelector(".file-search-match")).toHaveTextContent(
-      /^main$/,
-    );
+    expect(match.querySelector(".search-match")).toHaveTextContent(/^main$/);
     fireEvent.click(match);
     expect(
       await within(pane).findByRole("button", {

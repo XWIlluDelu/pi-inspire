@@ -1001,6 +1001,16 @@ describe("caret completion", () => {
     const fileOption = await screen.findByRole("option", {
       name: /index\.ts.*src\/index\.ts/,
     });
+    expect(fileOption.querySelector("svg")).toHaveClass(
+      "lucide-file-code-corner",
+    );
+    expect(fileOption.querySelector(".search-match")).toHaveTextContent(
+      /^ind$/,
+    );
+    expect(
+      fileOption.querySelector(".resource-path__visible"),
+    ).toHaveTextContent(/^src$/);
+    expect(fileOption).toHaveAttribute("title", "src/index.ts");
     const fileList = screen.getByRole("listbox", {
       name: "Project file completions",
     });
@@ -1086,6 +1096,12 @@ describe("caret completion", () => {
     const commandOption = await screen.findByRole("option", {
       name: /\/compact.*Compact the current context/,
     });
+    expect(
+      commandOption.querySelector(".completion__arguments"),
+    ).toHaveTextContent("[instructions]");
+    expect(commandOption.querySelector(".completion__title")).toHaveTextContent(
+      "/compact [instructions]",
+    );
     const commandList = screen.getByRole("listbox", {
       name: "Slash command completions",
     });
@@ -1418,6 +1434,16 @@ describe("project file picker", () => {
     });
 
     const row = await screen.findByRole("option", { name: /index\.ts/ });
+    expect(row.querySelector("svg")).toHaveClass("lucide-file-code-corner");
+    expect(row.querySelector(".search-match")).toHaveTextContent(/^index$/);
+    expect(row.querySelector(".resource-path__visible")).toHaveTextContent(
+      /^src$/,
+    );
+    expect(row.querySelector(".picker__path")).toHaveAttribute(
+      "title",
+      "src/index.ts",
+    );
+    expect(row).toHaveAttribute("title", "src/index.ts");
     fireEvent.click(row);
     expect(screen.getByLabelText("Remove src/index.ts")).toBeInTheDocument();
 

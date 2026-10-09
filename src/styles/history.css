@@ -111,6 +111,7 @@
 .history-result small,
 .history-route small { color: var(--muted); font-size: var(--text-xs); }
 .history-result { border-bottom: 1px solid var(--hairline); }
+.history-result .search-match { font-weight: 600; }
 .history-route { flex-direction: row; align-items: center; }
 .history-route > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .history-route svg { flex: none; color: var(--muted); }

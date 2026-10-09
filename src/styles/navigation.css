@@ -620,7 +620,7 @@
   font: var(--text-xs)/var(--leading-ui) var(--font-mono);
 }
 
-.workspace-tree--results .file-search-match {
+.workspace-tree--results .search-match {
   font-weight: 600;
 }
 

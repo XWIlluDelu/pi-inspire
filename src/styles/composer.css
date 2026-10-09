@@ -984,6 +984,25 @@
   font-weight: 600;
 }
 
+.picker--files .picker__row > svg {
+  flex: 0 0 13px;
+  align-self: center;
+  color: var(--faint);
+}
+
+.picker--files .picker__name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.picker--files .search-match {
+  font-weight: 600;
+}
+
 .picker__path {
   flex: 1;
   min-width: 0;
@@ -1054,6 +1073,31 @@
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   font-weight: 500;
+}
+
+.completion__title--file {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.completion__title--file > svg {
+  flex: 0 0 13px;
+  align-self: center;
+  color: var(--faint);
+}
+
+.completion__title--file > span {
+  min-width: 0;
+}
+
+.completion__option--file .search-match {
+  font-weight: 600;
+}
+
+.completion__arguments {
+  color: var(--muted);
+  font-weight: 400;
 }
 
 .completion__hint {

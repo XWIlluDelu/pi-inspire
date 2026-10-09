@@ -10,14 +10,16 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
+import { rankProjectFiles } from "../composer-completion";
+import { fileIconForPath } from "../file-icons";
 import {
   type FloatingMenuConstraints,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
 import { useModalPortal } from "../use-modal-focus";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
-import { rankProjectFiles } from "../composer-completion";
-import { ResourcePathLabel } from "./ResourcePathLabel";
+import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
+import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 
 export function ProjectFileChips({
   paths,
@@ -199,7 +201,7 @@ export function ProjectFilePicker({
   return createPortal(
     <div
       ref={menuRef}
-      className="picker"
+      className="picker picker--files"
       role="dialog"
       aria-label="Add project files"
       data-placement={placement.direction}
@@ -278,6 +280,12 @@ export function ProjectFilePicker({
         }}
       >
         {results.map((file, index) => {
+          const Icon = fileIconForPath(file.path);
+          const directory = parentPath(file.path);
+          const matches = searchMatchRanges(
+            file.path,
+            query.trim().split(/\s+/),
+          );
           const added = selected.includes(file.path);
           const unavailable = disabled || added;
           return (
@@ -286,6 +294,7 @@ export function ProjectFilePicker({
               id={`${listId}-option-${index}`}
               role="option"
               aria-label={`${file.name}, ${file.path}`}
+              title={file.path}
               aria-selected={added}
               disabled={unavailable}
               tabIndex={-1}
@@ -298,8 +307,22 @@ export function ProjectFilePicker({
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => onAdd(file)}
             >
-              <span className="picker__name">{file.name}</span>
-              <ResourcePathLabel path={file.path} className="picker__path" />
+              <Icon size={13} aria-hidden />
+              <span className="picker__name">
+                <SearchMatchText
+                  text={file.name}
+                  ranges={matches}
+                  offset={file.path.length - file.name.length}
+                />
+              </span>
+              {directory ? (
+                <ResourcePathLabel
+                  path={directory}
+                  title={file.path}
+                  className="picker__path"
+                  matches={matches}
+                />
+              ) : null}
             </button>
           );
         })}

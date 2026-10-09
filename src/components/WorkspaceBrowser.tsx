@@ -123,7 +123,7 @@ const WorkspaceFileRow = memo(function WorkspaceFileRow({
 }) {
   const Icon = fileIconForPath(path);
   const directory = showPath ? parentPath(path) : null;
-  const matches = searchMatchRanges(path, query);
+  const matches = searchMatchRanges(path, query.trim().split(/\s+/));
   const selected = selectedPath === path;
   const decoration = gitDecorationForChange(change);
   const facet = presentGitFacet(change);

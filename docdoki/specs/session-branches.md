@@ -8,9 +8,10 @@ covers:
   - server/extensions/inspire-branch-bridge.ts
   - shared/{branch-node-actions,branch-bridge-protocol}.ts
   - src/controllers/branch-controller.ts
-  - src/components/{BranchTree,EarlierBranchBanner,AppTopbar}.tsx
+  - src/components/{BranchTree,EarlierBranchBanner,AppTopbar,SearchMatchText}.tsx
   - tests/server/{runtime-branching,session-fork,session-tree,branch-bridge-extension,session-export.integration,generated-exports}.test.ts
   - tests/web/{branch-tree,branch-store}.test.ts*
+  - src/styles/history.css
 ---
 
 # History, branches and independent copies
@@ -34,6 +35,10 @@ Independent copies do not replace the active source worker. Durable trust comes 
   The branch tree is loaded through bounded projections of Pi entry identities, with older and alternate
   points still reachable and searchable. Route pages keep their containing user prompt visible when
   tool/event detail crosses a page boundary; that heading does not skip any retained activity.
+  Search result snippets emphasize matches at weight 600, retaining text color, no background,
+  role labels and the existing three-line clamp. History matches the whole trimmed query as a
+  case-insensitive literal phrase, unlike Files' whitespace-separated terms. The shared text renderer
+  preserves snippet text and accessible labels; ordinary outline entries remain unaccented.
   Complete retained text is read in bounded chunks. Native shell records expose the command, output,
   status and context inclusion as shell activity, not system bodies or storage JSON. Exact image
   coordinates remain Host-resolved and cancellable; saved images use the shared image viewer, with
