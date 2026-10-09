@@ -12,6 +12,7 @@ import type {
   ProviderLoginOption,
 } from "../../shared/model-settings";
 import { store } from "../store";
+import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 
 type Owner = { sessionId?: string; cwd?: string };
 type ProviderView = { kind: "saved" | "connect"; provider?: string };
@@ -323,14 +324,28 @@ function AuthenticationPanel({
     if (selected) backRef.current?.focus();
     else searchRef.current?.focus();
   }, [discovering, selected, attempt]);
-  const providerRow = (provider: ProviderLoginOption, forceOpen = false) => {
+  const providerRow = (
+    provider: ProviderLoginOption,
+    forceOpen = false,
+    searchQuery = "",
+  ) => {
+    const nameMatches = searchMatchRanges(provider.name, [searchQuery]);
+    const idMatches = searchMatchRanges(provider.id, [searchQuery]);
+    const showMatchedId = !nameMatches.length && Boolean(idMatches.length);
     const open = forceOpen || view.provider === provider.id;
     const disclosureId = `${inputId}-provider-${provider.id}`;
     return (
       <div className="models-provider-login" key={provider.id}>
         <div className="models-provider-login__heading">
           <div className="models-provider-login__copy">
-            <strong>{provider.name}</strong>
+            <strong>
+              <SearchMatchText text={provider.name} ranges={nameMatches} />
+            </strong>
+            {showMatchedId ? (
+              <code className="models-provider-login__matched-id">
+                <SearchMatchText text={provider.id} ranges={idMatches} />
+              </code>
+            ) : null}
             {provider.stored ? (
               <span className="settings__field-help">
                 {provider.stored === "api_key"
@@ -677,7 +692,9 @@ function AuthenticationPanel({
                 <>
                   {available.length ? (
                     <div className="models-auth__providers">
-                      {available.map((provider) => providerRow(provider))}
+                      {available.map((provider) =>
+                        providerRow(provider, false, query.trim()),
+                      )}
                     </div>
                   ) : null}
                   {!available.length ? (

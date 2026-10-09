@@ -132,6 +132,12 @@ Provider methods come from the installed Pi, including native and extension API-
 `/login` opens provider selection and may reveal an unambiguous provider's methods; authorization
 starts only after selecting a method. Loading, errors and empty results are separate states.
 
+The Connect provider directory uses regular-weight names and semibold literal search matches.
+Search keeps its existing case-insensitive substring filter over provider ID and name. When only the
+ID matches, the row also shows that ID as secondary monospace text with the matching fragment emphasized.
+Names matching the query need no extra ID. Connected-provider and method-page titles retain their
+stronger hierarchy, with no directory match emphasis; returning from methods preserves query and focus.
+
 Login operates on the connected Host's Pi credentials. Switching Settings categories leaves the
 attempt running and preserves entered responses. The browser displays native links, codes,
 prompts and outcomes. Supported methods offer Remote login help on demand, following the selected

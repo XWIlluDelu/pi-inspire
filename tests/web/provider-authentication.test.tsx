@@ -43,6 +43,69 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("provider directory", () => {
+  it("emphasizes directory name matches and explains ID-only results without changing method titles", () => {
+    const { container } = render(
+      <ProviderAuthentication
+        owner={{}}
+        providers={[
+          ...loginProviders(),
+          {
+            id: "azure-openai-responses",
+            name: "Azure OpenAI",
+            stored: null,
+            methods: [{ type: "api_key", label: "Azure API key" }],
+          },
+        ]}
+        onRefresh={refresh}
+        discover
+      />,
+    );
+    const directory = container.querySelector(".models-auth__providers")!;
+    const search = screen.getByLabelText("Search providers");
+    expect(directory.querySelector(".search-match")).toBeNull();
+    expect(directory.querySelector("code")).toBeNull();
+    fireEvent.change(search, { target: { value: "  AZURE  " } });
+    expect(directory.querySelectorAll(".models-provider-login")).toHaveLength(
+      1,
+    );
+    expect(directory.querySelector(".search-match")).toHaveTextContent("Azure");
+    expect(directory.querySelector("code")).toBeNull();
+    fireEvent.change(search, { target: { value: "RESPONSES" } });
+    expect(directory.querySelector("strong .search-match")).toBeNull();
+    expect(directory.querySelector("code")).toHaveTextContent(
+      "azure-openai-responses",
+    );
+    expect(directory.querySelector("code .search-match")).toHaveTextContent(
+      "responses",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Set up Azure OpenAI" }),
+    );
+    expect(container.querySelector(".models-auth__providers")).toBeNull();
+    expect(
+      container.querySelector(
+        ".search-match, .models-provider-login__matched-id",
+      ),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "Azure API key" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Back to providers" }));
+    expect(screen.getByLabelText("Search providers")).toHaveValue("RESPONSES");
+    expect(container.querySelector("code .search-match")).toHaveTextContent(
+      "responses",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Back to connected providers" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Manage Anthropic" }),
+    ).toBeVisible();
+    expect(
+      container.querySelector(
+        ".search-match, .models-provider-login__matched-id",
+      ),
+    ).toBeNull();
+    expect(host.providerAuth).not.toHaveBeenCalled();
+  });
   it("keeps the same optional connection entry when nothing is stored", () => {
     render(
       <ProviderAuthentication

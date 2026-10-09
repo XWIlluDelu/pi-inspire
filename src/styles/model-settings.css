@@ -312,6 +312,9 @@
 .models-auth__provider-detail { border-top: 1px solid var(--hairline); }
 .models-auth__provider-detail .models-provider-login { padding-top: var(--space-1); }
 .models-auth__providers { max-height: 180px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.models-auth__providers .models-provider-login__copy > strong { font-weight: 400; }
+.models-auth__providers .search-match { font-weight: 600; }
+.models-provider-login__matched-id { color: var(--muted); font-size: var(--text-xs); }
 .models-provider-login { padding: var(--space-2) 0; border-bottom: 1px solid var(--hairline); }
 .models-provider-login:last-child { border-bottom: 0; }
 .models-provider-login__copy { display: flex; min-width: 0; align-items: baseline; flex-wrap: wrap; gap: var(--space-1) var(--space-2); font-size: var(--text-sm); overflow-wrap: anywhere; }

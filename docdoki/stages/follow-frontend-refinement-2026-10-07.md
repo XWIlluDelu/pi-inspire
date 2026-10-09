@@ -710,9 +710,23 @@ baseline offset. Chromium confirms task box/text rectangles and line heights equ
 geometry, and zero changed pixels for the accepted form-control skin in representative Models layouts.
 A stylesheet regression contract covers this alignment; 40 focused renderer/style tests pass. Follow-up images are in `output/playwright/markdown-choices/` and ready for visual review.
 
+## Provider connection-directory slice
+
+The user approved regular-weight provider names with semibold search matches in Connect provider,
+plus a secondary monospace ID only when the ID matches but the name does not. The shared literal
+match renderer supplies emphasis. Styling is scoped to the directory; connected-provider and
+method-page titles retain their original weight. Filtering, order, controls, credential status and
+authentication lifecycle are unchanged.
+
+50 focused authentication/model-settings/match-renderer tests, type checking, scoped lint and formatting,
+and the frontend build pass. Chromium before/after checks cover no query, name matches and ID-only
+matches, dark and 390px layouts without horizontal overflow, keyboard Set up, method-title weight,
+query/focus restoration and no authorization starts. Images are in `output/playwright/provider-directory/`.
+Ready for user visual review.
+
 ## Next actions
 
-Review the Markdown task-marker follow-up and the search/palette/transcript slice and the model-list hierarchy trial, project-wide quiet-button trial, editable directory path, built-in dialog, shared model-list, inline completion, project-file picker, History match-emphasis, match-emphasis, search-clear, file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
+Review the Provider connection-directory presentation. The Welcome and topbar-glyph visual experiments
 are withdrawn. Group related refinements by topic rather than individual micro-adjustments;
 propose the next batch's full scope and await approval before implementing it. Straightforward image copying and reverse-input ordering when copying multiple
 images separately remain independent, unimplemented capability directions.
