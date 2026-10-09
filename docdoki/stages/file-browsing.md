@@ -44,8 +44,23 @@ The document-context repair is also complete: Markdown/Notebook images, document
 - Selecting a workspace, search, recent, transcript, or Git file replaces Browse with a fixed index/detail stack: the shared workspace tree stays above the preview, while a compact project-folder row returns to Browse without losing tree, query, or Browse scroll state.
 - Files and Changes share fixed upper-region, divider, detail-header, source-canvas, and narrow-drawer geometry without an internal splitter. Files owns preview/source reading; Changes owns grouped Git facets and source diffs.
 - Recent refreshes run only while Browse is visible and retain the previous page and standing until current results arrive. Preview stays mounted through compatible transcript appends, preserving its reader scroll. Git polling likewise retains the selected diff and scroll while that exact facet remains present.
-- Resource probe and resolve generations prevent stale standing from overwriting a successful preview. Downloads stream through the authenticated resource route, text detection covers common source/configuration names, truncated rendered previews are explicit, and every iframe uses the same empty sandbox capability set.
+- Resource probe and resolve generations prevent stale standing from overwriting a successful preview. Downloads stream through the authenticated resource route, text detection covers common source/configuration names, truncated rendered previews are explicit, and static HTML frames use an empty sandbox capability set. The authorized interactive HTML follow-up below supersedes the earlier all-frames statement.
 - On narrow layouts, opening a resource from navigation closes that drawer before the contextual drawer appears. Directory, search, probe, preview, Git, session, view, and transport transitions reject stale asynchronous results.
+
+## Interactive HTML follow-up
+
+User-authorized interactive HTML is implemented without changing the Files layout: the header
+adds Enable interaction / Stop interaction for complete HTML previews. Static remains the default;
+a click is the authorization, with no second prompt or self-contained/offline restriction.
+The separate document route preserves opaque-origin isolation and supports relative project assets
+and external resources. [[resource-preview]] owns the execution, resource-scope and lifetime contract.
+
+Regression evidence lives in `tests/server/html-preview.test.ts`,
+`tests/web/resources-pane.test.tsx` and `tests/browser/html-preview.spec.ts`.
+These cover explicit execution and stopping, local modules/fetch/media, external resource loading,
+application isolation and stale/retired capabilities on desktop and narrow layouts.
+A self-contained SVG cycling animation was also exercised in Chromium: wheel movement,
+Pause/Resume and speed adjustment to 2.0× worked, with desktop and 390px layouts inspected.
 
 ## Reader conformance follow-up
 

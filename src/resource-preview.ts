@@ -2,11 +2,12 @@ import type {
   ResourceDescriptor,
   ResourceProbeResult,
 } from "../shared/contracts";
+import { HTML_PREVIEW_BYTES } from "../shared/html-preview";
 import { ApiError } from "./api";
 
 /** Text-like previews are range-capped; a body shorter than the file's
  * size marks the preview truncated. */
-export const TEXT_PREVIEW_BYTES = 256 * 1024;
+export const TEXT_PREVIEW_BYTES = HTML_PREVIEW_BYTES;
 /** Complete notebooks are parsed for their static document view up to this
  * bound; larger notebooks retain the ordinary bounded JSON source view. */
 export const NOTEBOOK_PREVIEW_BYTES = 4 * 1024 * 1024;

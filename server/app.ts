@@ -28,6 +28,7 @@ import {
   THINKING_LEVELS,
 } from "../shared/contracts.js";
 import type { HerdrEnhancementStatus } from "../shared/herdr.js";
+import { HTML_PREVIEW_BYTES } from "../shared/html-preview.js";
 import {
   MAX_RESOURCE_LIST_PAGE_SIZE,
   MAX_RESOURCE_PROBE_REFERENCES,
@@ -38,6 +39,7 @@ import type { AttachmentStore } from "./attachments.js";
 import { GeneratedExportStore } from "./generated-exports.js";
 import type { GitInspectionLike } from "./git-inspection.js";
 import { listHostDirectories, listHostRoots } from "./host-dirs.js";
+import { HtmlPreviewStore } from "./html-preview.js";
 import type {
   MaintenanceRestartOutcome,
   MaintenanceRestartTransition,
@@ -53,6 +55,7 @@ import {
   searchProjectFiles,
 } from "./project-files.js";
 import { requestError } from "./request-error.js";
+import { resourceByteRange, sendResourceFile } from "./resource-http.js";
 import type { ResourceStore } from "./resources.js";
 import type { RuntimeLike } from "./runtime.js";
 import { createRuntimeEventSockets } from "./runtime-event-sockets.js";
@@ -561,29 +564,6 @@ function encodeContentDispositionName(name: string): string {
   );
 }
 
-/** This endpoint deliberately supports one byte range. Express owns RFC
- * parsing (including suffix and open-ended forms); malformed, unsatisfiable,
- * non-byte, and multi-range requests fail rather than unexpectedly receiving
- * the whole potentially large resource. An empty representation ignores Range
- * and returns its complete zero-byte body, as HTTP permits. */
-function resourceByteRange(
-  request: Request,
-  size: number,
-): { start: number; end: number } | null {
-  if (!request.get("range") || size === 0) return null;
-  const ranges = request.range(size);
-  if (
-    !Array.isArray(ranges) ||
-    ranges.type !== "bytes" ||
-    ranges.length !== 1
-  ) {
-    throw requestError("The requested byte range cannot be served", 416, {
-      contentRange: `bytes */${size}`,
-    });
-  }
-  return ranges[0]!;
-}
-
 async function withRequestSignal<T>(
   request: Request,
   response: Response,
@@ -779,6 +759,12 @@ export function createInspireServer(deps: AppDependencies): {
     next();
   });
   app.use(express.json({ limit: "2mb" }));
+  const htmlPreviews = new HtmlPreviewStore(deps.resources, (sessionId) =>
+    deps.runtime.resourceContext(sessionId),
+  );
+  app.get("/html-preview/:id/*path", (request, response) =>
+    htmlPreviews.serve(request, response),
+  );
 
   // Pair one browser profile to this loopback host. The credential becomes an
   // origin-scoped HttpOnly cookie; it never needs durable JavaScript storage.
@@ -1530,6 +1516,27 @@ export function createInspireServer(deps: AppDependencies): {
       await deps.resources.resolve(context, reference, true, workspacePath),
     );
   });
+  app.post("/api/resources/:id/interactive", async (request, response) => {
+    const { sessionId, html } = z
+      .object({
+        sessionId: z.string().min(1),
+        html: z.string().max(HTML_PREVIEW_BYTES),
+      })
+      .strict()
+      .parse(request.body);
+    const context = await deps.runtime.resourceContext(sessionId);
+    const preview = await htmlPreviews.create(request.params.id, context, html);
+    if (response.destroyed) htmlPreviews.remove(preview.id, sessionId);
+    else response.json(preview);
+  });
+  app.delete("/api/html-previews/:id", (request, response) => {
+    const { sessionId } = z
+      .object({ sessionId: z.string().min(1) })
+      .strict()
+      .parse(request.query);
+    htmlPreviews.remove(request.params.id, sessionId);
+    response.status(204).end();
+  });
   app.get("/api/resources/:id/content", async (request, response) => {
     let closed = response.destroyed;
     response.once("close", () => {
@@ -1579,39 +1586,8 @@ export function createInspireServer(deps: AppDependencies): {
         await handle.close();
         return;
       }
-      let range: { start: number; end: number } | null;
-      try {
-        range = resourceByteRange(request, size);
-      } catch (error) {
-        await handle.close();
-        throw error;
-      }
       setResourceHeaders();
-      response.set("Accept-Ranges", "bytes");
-      if (range) {
-        response.status(206).set({
-          "Content-Range": `bytes ${range.start}-${range.end}/${size}`,
-          "Content-Length": String(range.end - range.start + 1),
-        });
-      } else {
-        response.set("Content-Length", String(size));
-        if (size === 0) {
-          await handle.close();
-          response.end();
-          return;
-        }
-      }
-      const stream = handle.createReadStream(
-        range
-          ? { start: range.start, end: range.end }
-          : { start: 0, end: size - 1 },
-      );
-      response.on("close", () => stream.destroy());
-      stream.on("error", () => {
-        if (!response.headersSent) response.status(500);
-        response.end();
-      });
-      stream.pipe(response);
+      await sendResourceFile(request, response, handle, size);
     } else {
       response
         .status(404)
@@ -1847,6 +1823,7 @@ export function createInspireServer(deps: AppDependencies): {
     authorityId,
     close: async () => {
       deps.providerAuth?.close();
+      htmlPreviews.close();
       // Stop accepting HTTP/upgrades first, but do not await the drain before
       // runtime teardown: an active request may itself be waiting on runtime.
       const drained = server.listening
