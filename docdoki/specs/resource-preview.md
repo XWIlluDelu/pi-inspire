@@ -2,7 +2,8 @@
 purpose: Session-authorized files, documents, media, and Git changes are inspectable beside the conversation.
 covers:
   - shared/{contracts,resource-references}.ts
-  - server/{resources,image-content,project-files,git-inspection,app,runtime,runtime-reads,mock}.ts
+  - server/{resources,resource-http,html-preview,image-content,project-files,git-inspection,app,runtime,runtime-reads,mock}.ts
+  - shared/html-preview.ts
   - src/{api,resources,resource-preview,document-resources,diff,source-diff,file-icons,syntax-highlighting,store,pdf-renderer}.ts
   - scripts/vite-pdf-assets.ts
   - server/static-asset-cache.mjs
@@ -16,7 +17,8 @@ covers:
   - tests/web/{resources,document-resources,document-image-controller,git-controller,workspace-controller,store-resources}.test.ts
   - tests/web/{document-preview,pdf-preview,resources-pane,search-match-text,changes-pane,pane-resize,rich-text}.test.tsx
   - tests/web/{source-diff,file-icons,syntax-highlighting}.test.ts
-  - tests/browser/workbench.spec.ts
+  - tests/server/html-preview.test.ts
+  - tests/browser/{workbench,html-preview}.spec.ts
 ---
 
 # Resource preview
@@ -182,8 +184,39 @@ and image layout. Reader interaction cancels pending automatic positioning.
 
 ### HTML, PDF, and media
 
-HTML stays outside the conversation DOM in an empty-sandbox iframe. Scripts, forms, top navigation,
-and external subresources are blocked.
+HTML defaults to static rendering outside the conversation DOM in an empty-sandbox iframe.
+Scripts, forms, top navigation and external subresources are blocked until the user chooses
+**Enable interaction** in the file header. That click authorizes execution without a second dialog:
+users decide which files they trust. Interactive mode permits JavaScript, page-internal interaction,
+animation, and normal HTTP(S) resource loading, including external scripts, styles, images and
+network requests. Browser CORS, mixed-content rules and any policy authored by the document still
+apply. It is not restricted to self-contained HTML.
+
+**Stop interaction** destroys the running frame and returns to static Preview. Source, Browse,
+file replacement/refresh, pane close, session/view or browser-transport replacement also retire
+execution and its capability. Returning to Preview does not auto-run the page. A compatible transcript
+append does not reset it. Loading can be stopped; a late start response releases its own capability
+rather than activating the current selection. A failed start retains the static preview and offers
+the same explicit action again. Truncated HTML has no execution action.
+
+The Host serves interactive documents from a separate preview route with its own CSP and
+`sandbox allow-scripts`; the iframe independently uses the same sandbox. Neither grants
+`allow-same-origin`, popup, top-navigation, form or download privileges. Main-application CSP and
+API origin checks are unchanged. The opaque-origin document cannot read Inspire's DOM, origin
+storage or pairing cookie, and receives no Host credentials or internal control bridge. HTTP(S)
+and WebSocket networking is allowed, not represented as offline execution.
+
+An authenticated start creates a revocable random capability for the exact loaded HTML snapshot.
+The capability URL, not browser pairing, authorizes document and asset requests. Every request
+rechecks the original resource's current session/view authority and anchored file identity.
+Relative assets stream with correct MIME, byte ranges and credential-free CORS for opaque-origin
+module/font/fetch requests. Local scope is the canonical workspace for a contained document, or
+the containing directory for an explicitly cited external document; traversal and escaping
+symlinks are refused. Site-root URLs such as `/assets/app.js` still address the Inspire origin,
+not a project application server. This reader does not run a project's dev server or server-side
+code. The Host retains at most 32 live capabilities; stopping releases the corresponding capability.
+The loaded HTML retains the 256 KiB text-preview bound; assets stream rather than being bundled
+into the page or copied into browser-owned blobs.
 
 PDF uses a lazy, local PDF.js worker to render one page at a time, with selectable text, page
 navigation, zoom, and fit-to-width. Zoom and resize preserve the reading position. It renders static
@@ -241,7 +274,10 @@ geometry.
 
 Resource, workspace, and Git tests cover authority, limits, filesystem changes, cancellation, and
 selection races. The workbench browser test also opens a cited HTML fixture containing a remote image
-and checks that parsing it sends no external HTTP(S) request. PDF checks cover painted pixels,
+and checks that static rendering sends no external HTTP(S) request. Interactive HTML API/component
+and desktop/narrow browser checks cover explicit start/stop, loaded-version execution, local modules,
+fetch and ranged media, external resources, opaque-origin isolation, revocation, stale starts,
+branch/file changes, and local scope. PDF checks cover painted pixels,
 selectable text, page/zoom state across layout changes, worker disposal, and inactive document actions.
 Document behavior is covered by [[document-relative-previews]] and [[follow-interface-review-2026-09-29]];
 filesystem/Git separation is in [[filesystem-git-separation]].

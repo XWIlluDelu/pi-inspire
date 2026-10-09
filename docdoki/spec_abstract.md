@@ -38,6 +38,10 @@ through the same RPC and GUI. [[northstar]] defines the product boundary;
 | Files and Changes | [[resource-preview]] |
 | Connections | [[connection-modules]] |
 
+Files supports explicitly enabled interactive HTML alongside default static rendering.
+The user click authorizes script execution and resource loading; the preview retains opaque-origin
+isolation from Inspire. [[resource-preview]] defines the capability and lifecycle boundaries.
+
 ## Current work
 
 Frontend improvement continues in small batches for review of each concrete net change.

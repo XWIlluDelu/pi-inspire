@@ -2893,6 +2893,8 @@ export class AppStore {
   ): Promise<Blob> =>
     this.resources.loadDocumentImage(documentId, reference, signal);
 
+  createHtmlPreview = () => this.resources.createHtmlPreview();
+
   loadAttachmentImage = (id: string, signal: AbortSignal): Promise<Blob> => {
     if (!this.api) return Promise.reject(new Error("The Host is unavailable"));
     return this.api.attachmentPreview(id, signal);

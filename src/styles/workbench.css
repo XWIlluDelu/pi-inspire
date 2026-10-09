@@ -652,6 +652,16 @@ button.res__index-header--back:hover svg {
     color var(--dur-micro) var(--ease-standard);
 }
 
+.file-detail-header__interaction {
+  width: auto;
+  flex-basis: auto;
+  white-space: nowrap;
+}
+
+.file-detail-header__interaction[aria-pressed="true"] {
+  color: var(--ink);
+}
+
 .file-detail-header__view:hover:not(:disabled) {
   background: var(--bg-inset);
   color: var(--ink);

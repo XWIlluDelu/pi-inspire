@@ -38,6 +38,10 @@ describe("Files pane", () => {
   let bootstrapMessages: unknown[] = [];
   let transcriptRevision = 1;
   let resourceListHead: string | null = null;
+  let htmlStartGate: Promise<void> | null = null;
+  let htmlStartError = false;
+  let htmlStarts = 0;
+  let htmlReleases: string[] = [];
 
   beforeEach(async () => {
     gitStatusFails = false;
@@ -51,6 +55,10 @@ describe("Files pane", () => {
     resourceProbeGate = null;
     transcriptRevision = 1;
     resourceListHead = null;
+    htmlStartGate = null;
+    htmlStartError = false;
+    htmlStarts = 0;
+    htmlReleases = [];
     bootstrapMessages = [
       {
         role: "assistant",
@@ -366,6 +374,17 @@ describe("Files pane", () => {
                     },
             ),
           });
+        }
+        if (url.startsWith("/api/html-previews/")) {
+          htmlReleases.push(url);
+          return new Response(null, { status: 204 });
+        }
+        if (url.endsWith("/interactive")) {
+          const id = `html-grant-${++htmlStarts}`;
+          if (htmlStartGate) await htmlStartGate;
+          if (htmlStartError)
+            return Response.json({ error: "Start refused" }, { status: 409 });
+          return Response.json({ id, url: `/html-preview/${id}/demo.html` });
         }
         if (url.startsWith("/api/resources/resolve")) {
           resourceResolveRequests += 1;
@@ -1121,6 +1140,145 @@ describe("Files pane", () => {
       ).not.toBeInTheDocument(),
     );
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:preview");
+  });
+
+  it("starts HTML only on click and releases it on Source, refresh and close", async () => {
+    render(<App />);
+    await act(async () => {
+      await store.openResource("demo.html");
+    });
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    expect(htmlStarts).toBe(0);
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Enable interaction" }),
+    );
+    await waitFor(() =>
+      expect(within(pane).getByTitle("Preview demo.html")).toHaveAttribute(
+        "sandbox",
+        "allow-scripts",
+      ),
+    );
+    expect(within(pane).getByTitle("Preview demo.html")).toHaveAttribute(
+      "src",
+      "/html-preview/html-grant-1/demo.html",
+    );
+    fireEvent.click(within(pane).getByRole("button", { name: "Source" }));
+    await waitFor(() => expect(htmlReleases).toHaveLength(1));
+    fireEvent.click(within(pane).getByRole("button", { name: "Preview" }));
+    expect(within(pane).getByTitle("Preview demo.html")).toHaveAttribute(
+      "sandbox",
+      "",
+    );
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Enable interaction" }),
+    );
+    await within(pane).findByRole("button", { name: "Stop interaction" });
+    await waitFor(() =>
+      expect(within(pane).getByTitle("Preview demo.html")).toHaveAttribute(
+        "sandbox",
+        "allow-scripts",
+      ),
+    );
+    await act(async () => {
+      await store.openResource("demo.html");
+    });
+    await waitFor(() => expect(htmlReleases).toHaveLength(2));
+    expect(within(pane).getByTitle("Preview demo.html")).toHaveAttribute(
+      "sandbox",
+      "",
+    );
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Enable interaction" }),
+    );
+    await waitFor(() =>
+      expect(within(pane).getByTitle("Preview demo.html")).toHaveAttribute(
+        "sandbox",
+        "allow-scripts",
+      ),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Toggle resources panel" }),
+    );
+    await waitFor(() => expect(htmlReleases).toHaveLength(3));
+  });
+
+  it("discards a late HTML start after cancellation or file replacement", async () => {
+    render(<App />);
+    await act(async () => {
+      await store.openResource("demo.html");
+    });
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    let release!: () => void;
+    htmlStartGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Enable interaction" }),
+    );
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Stop interaction" }),
+    );
+    await act(async () => {
+      release();
+    });
+    await waitFor(() => expect(htmlReleases).toHaveLength(1));
+    expect(within(pane).getByTitle("Preview demo.html")).toHaveAttribute(
+      "sandbox",
+      "",
+    );
+    htmlStartGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Enable interaction" }),
+    );
+    await act(async () => {
+      await store.openResource("notes.md");
+      release();
+    });
+    await waitFor(() => expect(htmlReleases).toHaveLength(2));
+    expect(
+      within(pane).queryByTitle("Preview demo.html"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps failed or truncated HTML static, with a retryable explicit start", async () => {
+    render(<App />);
+    await act(async () => {
+      await store.openResource("demo.html");
+    });
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    htmlStartError = true;
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Enable interaction" }),
+    );
+    expect(await within(pane).findByText("Start refused")).toBeVisible();
+    expect(within(pane).getByTitle("Preview demo.html")).toHaveAttribute(
+      "sandbox",
+      "",
+    );
+    htmlStartError = false;
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Enable interaction" }),
+    );
+    await waitFor(() =>
+      expect(within(pane).getByTitle("Preview demo.html")).toHaveAttribute(
+        "sandbox",
+        "allow-scripts",
+      ),
+    );
+    await act(async () => {
+      await store.openResource("truncated.html");
+    });
+    expect(
+      within(pane).queryByRole("button", { name: "Enable interaction" }),
+    ).not.toBeInTheDocument();
   });
 
   it("uses the static PDF reader rather than a native frame, retaining Download", async () => {

@@ -164,10 +164,12 @@ function ReadyResource({
   state,
   jump,
   viewMode,
+  interactiveUrl,
 }: {
   state: ContextPaneView;
   jump: LineJump | null;
   viewMode: FileViewMode;
+  interactiveUrl?: string;
 }) {
   const preview = state.resourcePreview;
   if (!preview || preview.status !== "ready") return null;
@@ -228,10 +230,12 @@ function ReadyResource({
       <>
         {preview.truncated ? <TruncatedRenderedNotice /> : null}
         <iframe
+          key={interactiveUrl ?? preview.objectUrl}
           className="res__frame"
           title={`Preview ${descriptor.name}`}
-          sandbox=""
-          src={preview.objectUrl}
+          sandbox={interactiveUrl ? "allow-scripts" : ""}
+          referrerPolicy="no-referrer"
+          src={interactiveUrl ?? preview.objectUrl}
         />
       </>
     );
@@ -280,10 +284,12 @@ export function ResourcePreviewContent({
   state,
   jump = null,
   viewMode = "preview",
+  interactiveUrl,
 }: {
   state: ContextPaneView;
   jump?: LineJump | null;
   viewMode?: FileViewMode;
+  interactiveUrl?: string;
 }) {
   const preview = state.resourcePreview;
   if (!preview)
@@ -351,7 +357,14 @@ export function ResourcePreviewContent({
       </ContextPaneState>
     );
   }
-  return <ReadyResource state={state} jump={jump} viewMode={viewMode} />;
+  return (
+    <ReadyResource
+      state={state}
+      jump={jump}
+      viewMode={viewMode}
+      interactiveUrl={interactiveUrl}
+    />
+  );
 }
 
 function downloadHref(
@@ -394,6 +407,72 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
     descriptor && fileView?.resourceId === descriptor.id
       ? fileView.mode
       : defaultView;
+  const htmlScope = [
+    descriptor?.id,
+    preview?.status === "ready" ? preview.objectUrl : null,
+    state.transportGeneration,
+    state.sessionId,
+    state.transcriptViewId,
+    state.resourcesOpen,
+    state.contextMode,
+    state.fileBrowserView,
+    viewMode,
+  ].join("|");
+  const interactionGeneration = useRef(0);
+  const interactionLease = useRef<{ release: () => void } | null>(null);
+  const [interaction, setInteraction] = useState<{
+    scope: string;
+    status: "loading" | "running" | "error";
+    url?: string;
+    error?: string;
+  } | null>(null);
+  const retireInteraction = () => {
+    interactionGeneration.current++;
+    interactionLease.current?.release();
+    interactionLease.current = null;
+  };
+  useEffect(() => {
+    setInteraction(null);
+    return () => {
+      interactionGeneration.current++;
+      interactionLease.current?.release();
+      interactionLease.current = null;
+    };
+  }, [htmlScope]);
+  const currentInteraction =
+    interaction?.scope === htmlScope ? interaction : null;
+  const canInteract =
+    descriptor?.kind === "html" &&
+    viewMode === "preview" &&
+    preview?.status === "ready" &&
+    preview.text !== undefined &&
+    !preview.truncated;
+  const toggleInteraction = async () => {
+    retireInteraction();
+    if (currentInteraction && currentInteraction.status !== "error") {
+      setInteraction(null);
+      return;
+    }
+    const generation = interactionGeneration.current;
+    setInteraction({ scope: htmlScope, status: "loading" });
+    try {
+      const lease = await store.createHtmlPreview();
+      if (generation !== interactionGeneration.current) {
+        lease.release();
+        return;
+      }
+      interactionLease.current = lease;
+      setInteraction({ scope: htmlScope, status: "running", url: lease.url });
+    } catch (error) {
+      if (generation !== interactionGeneration.current) return;
+      setInteraction({
+        scope: htmlScope,
+        status: "error",
+        error:
+          error instanceof Error ? error.message : "Interactive preview failed",
+      });
+    }
+  };
   const lineCount =
     preview?.status === "ready" && preview.text !== undefined
       ? preview.text.split("\n").length
@@ -440,6 +519,24 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
               <Download size={14} aria-hidden />
             </button>
           )}
+          {canInteract ? (
+            <button
+              type="button"
+              className="file-detail-header__view file-detail-header__interaction"
+              aria-pressed={currentInteraction?.status === "running"}
+              aria-busy={currentInteraction?.status === "loading"}
+              title={
+                currentInteraction && currentInteraction.status !== "error"
+                  ? "Stop this page and return to static preview"
+                  : "Run this file's JavaScript and load its resources"
+              }
+              onClick={() => void toggleInteraction()}
+            >
+              {currentInteraction && currentInteraction.status !== "error"
+                ? "Stop interaction"
+                : "Enable interaction"}
+            </button>
+          ) : null}
           {canToggle ? (
             <FileViewControl
               mode={viewMode}
@@ -452,7 +549,17 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
         </div>
       </div>
       <div className="file-preview__content">
-        <ResourcePreviewContent state={state} jump={jump} viewMode={viewMode} />
+        {currentInteraction?.error ? (
+          <div className="file-preview__notice" role="status">
+            {currentInteraction.error}
+          </div>
+        ) : null}
+        <ResourcePreviewContent
+          state={state}
+          jump={jump}
+          viewMode={viewMode}
+          interactiveUrl={currentInteraction?.url}
+        />
       </div>
     </div>
   );

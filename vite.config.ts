@@ -33,6 +33,10 @@ export default defineConfig({
     port: 5173,
     strictPort: false,
     proxy: {
+      "/html-preview": {
+        target: "http://127.0.0.1:4587",
+        changeOrigin: false,
+      },
       "/api": {
         target: "http://127.0.0.1:4587",
         changeOrigin: false,
