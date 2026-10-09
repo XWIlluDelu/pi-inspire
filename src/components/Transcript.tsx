@@ -561,7 +561,7 @@ export const Transcript = memo(function Transcript({
           <EmbeddedImageOwnerContext value={imageOwner}>
             {rows.length === 0 ? (
               <div className="transcript__column">
-                <div className="empty-state">
+                <div className="empty-state empty-state--conversation">
                   <p className="empty-state__title">Empty session</p>
                   <p className="empty-state__hint">
                     Send a message below to start working with Pi.

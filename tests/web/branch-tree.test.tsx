@@ -409,6 +409,24 @@ describe("read-only History inspection", () => {
     ).toHaveLength(1);
   });
 
+  it("shows a shared no-match state without duplicating the query and restores the outline on Escape", async () => {
+    render(<BranchTree />);
+    const search = screen.getByRole("searchbox", { name: "Find in history" });
+    const query = "no matching retained phrase";
+    fireEvent.change(search, { target: { value: query } });
+    const title = await screen.findByText("No matching history");
+    expect(title.closest(".res__state")).toHaveAttribute("role", "status");
+    expect(search).toHaveValue(query);
+    expect(screen.queryByText(query, { exact: false })).not.toBeInTheDocument();
+    fireEvent.keyDown(search, { key: "Escape" });
+    await screen.findByRole("button", { name: "Root question" });
+    expect(search).toHaveValue("");
+    expect(screen.queryByText("No matching history")).not.toBeInTheDocument();
+    expect(
+      requests.filter((request) => request.url === "/api/branches/navigate"),
+    ).toEqual([]);
+  });
+
   it("retires a pending search when cleared without letting it retire the next read", async () => {
     fixture.paged = true;
     await store.loadBranchTree();

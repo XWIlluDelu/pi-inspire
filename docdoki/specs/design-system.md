@@ -150,6 +150,18 @@ keep their existing behavior. Embedded documents retain their own styles.
 
 ## Component grammar
 
+- Shared pane states use an unfilled 36px icon slot, title weight 500 and the existing
+  secondary hint typography. Empty, loading and unavailable states retain their spacing,
+  semantic roles and actions. Compact directory-list messages keep their own layout.
+- Compact list/search empty states use the base stack: 24px 16px padding, 4px gap and
+  a `--text-sm` title at weight 500. Conversation emptiness uses the explicit
+  `empty-state--conversation` variant: 64px vertical padding, 8px gap and a `--text-xl`
+  title at weight 500. Its rules do not leak into Navigation or Command Palette.
+  Terminal empty titles also use weight 500, retaining terminal colors, icons and actions.
+- Git change-group counts use ordinary secondary monospace text at weight 400, without
+  a capsule background. Keep their existing size, padding, colors and count semantics;
+  Git status marks and the repository summary retain their separate roles.
+
 - The navigation header carries the optical reticle and wordmark; the collapsed
   rail carries only the mark. A selected session uses a restrained accent edge
   and tint, while project/session hierarchy, curation, and runtime state remain

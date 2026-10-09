@@ -448,8 +448,8 @@
   background: var(--bg-inset);
 }
 
-/* Shared empty-state stack: a faint icon, a short title, one hint line.
-   Used by the session list, the command palette, and the files pane. */
+/* Compact empty-state stack for lists and search results.
+   Conversation-specific spacing and type use an explicit variant. */
 .empty-state {
   display: flex;
   flex-direction: column;

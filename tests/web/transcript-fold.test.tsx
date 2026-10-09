@@ -158,14 +158,14 @@ describe("response activity folds", () => {
       const checkpoint = title.closest("details") as HTMLDetailsElement;
       expect(title).toBeVisible();
       if (role === "compactionSummary")
-        expect(screen.getByText("Before ≈42,500 tokens")).toBeVisible();
+        expect(screen.getByText("Before ≈ 42,500 tokens")).toBeVisible();
       else
         expect(
           checkpoint.querySelector(".context-checkpoint__metric"),
         ).toBeNull();
       expect(checkpoint.querySelector("time")).toBeNull();
       expect(title.closest("summary")?.textContent).toBe(
-        `${label}${role === "compactionSummary" ? "Before ≈42,500 tokens" : ""}`,
+        `${label}${role === "compactionSummary" ? "Before ≈ 42,500 tokens" : ""}`,
       );
       expect(container.querySelector(".card__generic")).toBeNull();
       expect(
@@ -218,7 +218,7 @@ describe("response activity folds", () => {
         ),
       );
       const title = screen.getByText("Magic Context compacted");
-      expect(screen.getByText("History chunk ≈5,757 tokens")).toBeVisible();
+      expect(screen.getByText("History chunk ≈ 5,757 tokens")).toBeVisible();
       expect(screen.queryByText(/Before/)).toBeNull();
       fireEvent.click(title.closest("summary")!);
       expect(

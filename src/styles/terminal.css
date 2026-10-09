@@ -845,7 +845,7 @@
 
 .terminal-empty strong {
   color: var(--terminal-fg);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .terminal-empty span {

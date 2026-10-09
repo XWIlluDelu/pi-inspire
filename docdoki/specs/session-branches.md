@@ -44,6 +44,8 @@ Independent copies do not replace the active source worker. Durable trust comes 
   role labels and the existing three-line clamp. History matches the whole trimmed query as a
   case-insensitive literal phrase, unlike Files' whitespace-separated terms. The shared text renderer
   preserves snippet text and accessible labels; ordinary outline entries remain unaccented.
+  No search matches use the shared pane state with a search icon and `No matching history`;
+  the query remains in its input rather than being repeated in the state title.
   Complete retained text is read in bounded chunks. Native shell records expose the command, output,
   status and context inclusion as shell activity, not system bodies or storage JSON. Exact image
   coordinates remain Host-resolved and cancellable; saved images use the shared image viewer, with

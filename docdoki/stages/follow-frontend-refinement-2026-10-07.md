@@ -15,8 +15,9 @@ scope:
 Continue frontend improvement in small, independently reviewable batches. The user wants to see
 each batch's concrete net changes before proceeding, not review a large redesign all at once.
 Prioritize beauty, consistency, readability and intuitive interaction.
-Propose each next batch before implementation and wait for the user's approval; approval of one
-slice does not authorize the following slice.
+The user now authorizes direct implementation of each locally scoped batch. Show net changes and
+before/after evidence afterward, then ask whether to retain it. Finish the local batches before the
+holistic visual review; there is no predetermined limit on the remaining batch count.
 
 Feedback rejecting particular visual changes applies to those changes, not automatically the entire
 batch or all future frontend work. Preserve independent, useful changes. The agent owns routine
@@ -722,13 +723,57 @@ authentication lifecycle are unchanged.
 and the frontend build pass. Chromium before/after checks cover no query, name matches and ID-only
 matches, dark and 390px layouts without horizontal overflow, keyboard Set up, method-title weight,
 query/focus restoration and no authorization starts. Images are in `output/playwright/provider-directory/`.
-Ready for user visual review.
+The user retained this slice and moved to the next batch.
+
+## Shared pane-state presentation — retained
+
+Shared empty/loading/unavailable states now use an unfilled icon slot and title weight 500.
+The 36px slot, spacing, sizes, hint text, actions and loading behavior are unchanged. History
+search no matches uses the shared state with a search icon and `No matching history`, without
+repeating the input query. Compact directory-list messages are unchanged.
+
+The user also requested spacing around the approximation sign: compaction metrics retain `≈`
+and add a space before the number (`History chunk ≈ 888 tokens`; native Pi retains `Before`).
+The estimate source and value are unchanged.
+
+53 focused History/style/transcript tests, type checking, scoped lint/format checks and the frontend
+build pass. Chromium compares the same empty preview, initial History loading and zero-result query
+before/after, verifies the 36px unfilled slot and title weight, checks dark/390px presentation and
+Escape restoring the outline. Images are in `output/playwright/pane-states/`. The user retained
+this slice and requested a project-wide check for similar issues.
+
+## Empty-state consistency — awaiting retention review
+
+Delegated to the new persistent Pi session `UI · empty-state consistency`. The conversation’s
+large empty-state rules now target an explicit variant instead of globally overriding the base
+stack. Navigation and Command Palette recover compact empty/search states; Empty session keeps
+its larger title and spacing. These ordinary titles and both Terminal empty titles use weight 500.
+Shared pane states, searches, menus, terminal colors/actions and runtime indicators are unchanged.
+
+34 CSS/transcript tests, type checking and scoped lint/format checks pass. Focused Chromium checks
+cover desktop/light and 390px/dark Nav empty/no-results, Palette no-results/query clearing, blank
+conversation, Terminal no-project/loading/project-empty and New terminal availability. Matched
+before/after images are in `output/playwright/empty-state-consistency/`. The worker used its own
+Vite and mock Host without overwriting shared assets. Retention awaits user review; the Pi session
+record remains discoverable after task completion.
+
+## Changes group-count presentation — awaiting retention review
+
+Change-group counts no longer use capsule backgrounds or emphasized weight. They remain secondary
+monospace numbers with the same size, padding, color and values. Titles, statuses, Git summary,
+listing, selection and navigation are unchanged. Files has no equivalent capsule to adjust.
+
+11 relevant Changes component tests and the shared frontend build pass. Chromium verifies the same
+14/2 UI fixture before and after, identical counter bounds, dark styling and narrow detail selection.
+The rebuilt assets independently resolve the count style to weight 400, transparent background and
+zero radius. Comparisons are in `output/playwright/change-counts/`. The shared frontend rebuild also
+includes the delegated empty-state slice; both slices await retention review.
 
 ## Next actions
 
-Review the Provider connection-directory presentation. The Welcome and topbar-glyph visual experiments
-are withdrawn. Group related refinements by topic rather than individual micro-adjustments;
-propose the next batch's full scope and await approval before implementing it. Straightforward image copying and reverse-input ordering when copying multiple
+Review the empty-state consistency and Changes group-count presentations. The Welcome and topbar-glyph visual experiments are withdrawn.
+Group related refinements by topic rather than individual micro-adjustments; implement each batch
+and show its net changes for retention review, with holistic review after the local batches. Straightforward image copying and reverse-input ordering when copying multiple
 images separately remain independent, unimplemented capability directions.
 
 Preserve direct session curation,

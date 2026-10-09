@@ -699,7 +699,10 @@ export function BranchTree({
                   </button>
                 ))
             ) : (
-              <p className="history-empty">No history matches “{query}”.</p>
+              <ContextPaneState
+                icon={<Search size={17} aria-hidden />}
+                title="No matching history"
+              />
             )
           ) : turns.length ? (
             turns.map((turn, index) => {

@@ -474,7 +474,7 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
     compacted &&
     typeof message.tokensBefore === "number" &&
     Number.isFinite(message.tokensBefore)
-      ? `${magicContext ? "History chunk" : "Before"} ≈${Math.round(message.tokensBefore).toLocaleString()} tokens`
+      ? `${magicContext ? "History chunk" : "Before"} ≈ ${Math.round(message.tokensBefore).toLocaleString()} tokens`
       : null;
   const [open, setOpen] = useState(false);
   return (

@@ -236,8 +236,8 @@ Implementation and review state: [[follow-frontend-refinement-2026-10-07]].
 
 - Durable Pi `compaction` and `branch_summary` entries are projected as dedicated, collapsed
   context-summary cards with recorded token counts and searchable Markdown bodies. Pi compaction
-  shows `Context compacted` and `Before ≈… tokens` for its pre-compaction context estimate.
-  Magic Context shows `Magic Context compacted` and `History chunk ≈… tokens`: its marker writes
+  shows `Context compacted` and `Before ≈ … tokens` for its pre-compaction context estimate.
+  Magic Context shows `Magic Context compacted` and `History chunk ≈ … tokens`: its marker writes
   the historian input chunk estimate into Pi's `tokensBefore` field. Source is read from the public
   compaction entry's `details.source` and projected as `__inspireCompactionSource`; cached source-less
   snapshots also recognize the extension's known marker prefix. Its redundant `Magic Context compacted:`
