@@ -101,7 +101,7 @@ Optional **Settings → Behavior → Herdr enhancement** places Pi workers in He
 
 Pairing grants full control of the installation, including a shell with the Host user's permissions. Pair only trusted browser profiles and use HTTPS remotely. A remote HTTPS edge can observe application traffic, so it must also be trusted.
 
-Provider credentials stay on the Host. Conversation Markdown is sanitized; HTML previews use sandboxed frames. Local file previews are authorized against the selected session and workspace.
+Provider credentials stay on the Host. Conversation Markdown is sanitized. HTML previews are static by default; **Enable interaction** runs a trusted file's scripts and loads its resources in an isolated frame, and **Stop interaction** returns to static viewing. Local file previews are authorized against the selected session and workspace.
 
 ## Development
 

@@ -50,6 +50,7 @@ import type {
   HostRestartRequest,
   HostRestartStatus,
 } from "../shared/host-restart";
+import type { HtmlPreviewResponse } from "../shared/html-preview";
 import type {
   ModelCatalogResponse,
   ModelConfigEdit,
@@ -1098,6 +1099,18 @@ export function createApi(token: string | null = null) {
         },
         { signal },
         { mutation: false },
+      ),
+    createHtmlPreview: (id: string, sessionId: string, html: string) =>
+      post<HtmlPreviewResponse>(
+        token,
+        `/api/resources/${encodeURIComponent(id)}/interactive`,
+        { sessionId, html },
+      ),
+    deleteHtmlPreview: (id: string, sessionId: string) =>
+      request<void>(
+        token,
+        `/api/html-previews/${encodeURIComponent(id)}?sessionId=${encodeURIComponent(sessionId)}`,
+        { method: "DELETE" },
       ),
     resourceContent: (
       id: string,

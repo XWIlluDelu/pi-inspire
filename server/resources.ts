@@ -192,6 +192,10 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   ".wav": "audio/wav",
   ".webm": "video/webm",
   ".webp": "image/webp",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".wasm": "application/wasm",
   ".xml": "application/xml",
   ".yaml": "application/yaml",
   ".yml": "application/yaml",
@@ -246,7 +250,7 @@ export function referencePath(referenceInput: string, cwd: string): string {
   return isAbsolute(reference) ? resolve(reference) : resolve(cwd, reference);
 }
 
-function mimeTypeFor(path: string): string {
+export function mimeTypeFor(path: string): string {
   return (
     MIME_BY_EXTENSION[extname(path).toLowerCase()] ??
     (isTextFileName(path) ? "text/plain" : "application/octet-stream")

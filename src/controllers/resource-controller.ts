@@ -331,6 +331,48 @@ export class ResourceController {
     }
   }
 
+  /** The returned lease captures the API that issued it, including cleanup
+   * after a late response or a browser transport replacement. */
+  async createHtmlPreview(): Promise<{ url: string; release: () => void }> {
+    const api = this.host.api();
+    const generation = this.host.transportGeneration();
+    const {
+      sessionId,
+      transcriptViewId,
+      resourcePreview: preview,
+    } = this.host.state();
+    if (
+      !api ||
+      !sessionId ||
+      preview?.status !== "ready" ||
+      preview.descriptor.kind !== "html" ||
+      preview.text === undefined ||
+      preview.truncated
+    )
+      throw new Error(
+        "Load the complete HTML file before enabling interaction",
+      );
+    const result = await api.createHtmlPreview(
+      preview.descriptor.id,
+      sessionId,
+      preview.text,
+    );
+    const release = () => {
+      void api.deleteHtmlPreview(result.id, sessionId).catch(() => undefined);
+    };
+    const current = this.host.state();
+    if (
+      !this.ownsTransport(api, generation) ||
+      current.sessionId !== sessionId ||
+      current.transcriptViewId !== transcriptViewId ||
+      current.resourcePreview !== preview
+    ) {
+      release();
+      throw new Error("The preview selection has changed");
+    }
+    return { url: result.url, release };
+  }
+
   private revokePreviewObjectUrl(): void {
     if (this.previewObjectUrl) URL.revokeObjectURL(this.previewObjectUrl);
     this.previewObjectUrl = null;
