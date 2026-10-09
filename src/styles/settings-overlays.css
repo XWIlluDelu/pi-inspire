@@ -1259,10 +1259,7 @@
   cursor: pointer;
 }
 
-.export-dialog__formats input {
-  accent-color: var(--accent);
-  margin: 0;
-}
+.export-dialog__formats input { margin: 0; }
 
 .export-dialog__formats small {
   color: var(--muted);

@@ -686,9 +686,33 @@ rebuilt. Chromium review covers the same three-project/five-terminal catalog bef
 and dark themes, 390px/320px layouts, clear/filter behavior and keyboard switching to another project.
 Visual comparisons are in `output/playwright/terminal-menu/`. Ready for user visual review.
 
+## Shared native-choice skin slice
+
+The user approved bringing History Carry branch summary, Export HTML/JSONL and model/provider declaration
+checkboxes into the accepted Models Common/Default visual language. The existing Models skin is now an
+opt-in shared `choice-input` stylesheet; all these inputs use it without changing native input types,
+labels, grouping, handlers or layout containers. Models keeps its whole-label focus and disabled fading.
+Other controls receive one input outline/fade. Switches remain unchanged. The user subsequently approved the same skin for Markdown task markers
+across conversation, file previews and Notebook readers. RichText now supplies the shared class while
+keeping them disabled; document CSS retains 13px geometry, original baseline alignment and normal opacity.
+
+43 focused component/style tests, type checking, lint and the frontend build pass. Chromium checks cover
+light/dark, narrow History, Space activation, forced-colors native recovery, and Models whole-label
+focus/disabled behavior without duplicate rings or fading. Before/after screenshots are in
+`output/playwright/choice-inputs/`. The base batch was accepted. The Markdown follow-up passes 54
+renderer/document/worker/style tests plus type checking and lint; Chromium confirms checked/unchecked,
+13px size, normal opacity, dark-theme paint and native forced-colors recovery in the Markdown file
+reader. A subsequent user review caught a checked-state baseline error: inline-grid used its check
+pseudo-element baseline, shifting checked boxes 4px down and increasing line height. Task markers now
+initially used middle alignment, which equalized states but left a subpixel shift from the original.
+The final skin uses inline-block inputs with absolutely centered marks, restoring the original task
+baseline offset. Chromium confirms task box/text rectangles and line heights equal to native original
+geometry, and zero changed pixels for the accepted form-control skin in representative Models layouts.
+A stylesheet regression contract covers this alignment; 40 focused renderer/style tests pass. Follow-up images are in `output/playwright/markdown-choices/` and ready for visual review.
+
 ## Next actions
 
-Review the Terminal navigator presentation slice and the search/palette/transcript slice and the model-list hierarchy trial, project-wide quiet-button trial, editable directory path, built-in dialog, shared model-list, inline completion, project-file picker, History match-emphasis, match-emphasis, search-clear, file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
+Review the Markdown task-marker follow-up and the search/palette/transcript slice and the model-list hierarchy trial, project-wide quiet-button trial, editable directory path, built-in dialog, shared model-list, inline completion, project-file picker, History match-emphasis, match-emphasis, search-clear, file-type icon, source-canvas and separate content-action slices above. The Welcome and topbar-glyph visual experiments
 are withdrawn. Group related refinements by topic rather than individual micro-adjustments;
 propose the next batch's full scope and await approval before implementing it. Straightforward image copying and reverse-input ordering when copying multiple
 images separately remain independent, unimplemented capability directions.

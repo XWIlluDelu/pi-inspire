@@ -114,6 +114,7 @@ export function ProviderForm({
         <label className="models-checkbox">
           <input
             type="checkbox"
+            className="choice-input"
             checked={removeKey}
             disabled={busy || Boolean(key)}
             onChange={(event) => setRemoveKey(event.target.checked)}
@@ -243,6 +244,7 @@ export function ModelForm({
           <label className="models-checkbox">
             <input
               type="checkbox"
+              className="choice-input"
               checked={reasoning}
               disabled={busy}
               onChange={(event) => setReasoning(event.target.checked)}
@@ -253,6 +255,7 @@ export function ModelForm({
             <label className="models-checkbox" key={type}>
               <input
                 type="checkbox"
+                className="choice-input"
                 checked={input.includes(type)}
                 disabled={busy}
                 onChange={(event) =>

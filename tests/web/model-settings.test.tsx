@@ -432,6 +432,7 @@ describe("Models settings configuration and ownership", () => {
     fireEvent.change(screen.getByLabelText("Base URL"), {
       target: { value: "https://unsaved-existing.test" },
     });
+    expect(screen.getByLabelText("Remove API key")).toHaveClass("choice-input");
     fireEvent.click(screen.getByLabelText("Remove API key"));
     fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
     expect(screen.getByLabelText("Provider ID")).toHaveValue("");

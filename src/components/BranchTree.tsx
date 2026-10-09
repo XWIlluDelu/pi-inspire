@@ -919,6 +919,7 @@ export function BranchTree({
                       <label title="Carry a summary of the conversation being left">
                         <input
                           type="checkbox"
+                          className="choice-input"
                           checked={carrySummary}
                           disabled={Boolean(sameSessionBlocked) || !detail}
                           onChange={(event) =>

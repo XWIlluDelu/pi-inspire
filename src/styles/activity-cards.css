@@ -1318,14 +1318,15 @@ span.card__file-arg {
   padding-left: var(--space-2);
 }
 
-/* GFM task lists render disabled native checkboxes; pull them into the
-   control language instead of leaving the browser default. */
+/* Task markers share the choice skin, but remain normal-weight document
+   content rather than faded unavailable form actions. */
 .rich-text .contains-task-list input[type="checkbox"] {
   width: 13px;
   height: 13px;
   margin: 0 var(--space-2) 0 var(--space-1);
   vertical-align: -0.15em;
-  accent-color: var(--accent-fill);
+  opacity: 1;
+  cursor: default;
 }
 
 .inline-code {

@@ -200,7 +200,7 @@ keep their existing behavior. Embedded documents retain their own styles.
   values independently of that candidate highlight. Settings model search stays neutral until keyboard
   navigation or an explicit row action.
 - Command Palette group headings use the existing muted semibold type and spacing without
-  full-width shaded bands or bottom rules. Labels guide scanning; the accent-tinted command candidate
+  full-width shaded bands. A shared neutral bottom rule distinguishes groups. Labels guide scanning; the accent-tinted command candidate
   remains the action highlight, and shortcut hints remain separate. Input and overlay boundaries stay
   intact.
 - Command Palette, Settings, extension dialogs, pickers, and destructive
@@ -221,6 +221,23 @@ keep their existing behavior. Embedded documents retain their own styles.
   Context and History reuse `ContextPaneState` for centered status and recovery actions. Skeletons
   stay outside the accessibility tree and tab order; loading has a concise status, and failure an
   alert and styled recovery action.
+
+## Native choice controls
+
+Ordinary checkbox and radio inputs opt into the shared `choice-input` skin: 14px controls, strong
+neutral borders and control surfaces when unchecked, then accent tint with a check or dot when checked.
+Checkboxes remain square and radios circular. Models Common/Default, model/provider declaration forms,
+History Carry branch summary and Export format use this same rule. Native labels, grouping, keyboard
+operation and disabled semantics remain authoritative; no wrapper replaces the inputs.
+
+Keyboard focus uses the shared accent outline. Models owns focus and disabled fading on the whole
+choice label, so its input has no second outline or opacity reduction. Other disabled choice inputs
+use one opacity reduction. Forced-colors mode restores native appearance and removes the custom marker.
+Settings switches do not opt into this skin. Markdown task markers in conversation, file and Notebook
+readers share it while retaining their 13px size, document margins and original -0.15em vertical
+alignment. Check/dot markers are absolutely centered inside each input, outside inline baseline
+calculation; checked state must not change box position or line height. They remain
+disabled/noninteractive but keep opacity 1: a recorded task state is not an unavailable form action.
 
 ## Model-list hierarchy trial
 

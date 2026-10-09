@@ -182,7 +182,7 @@
   line-height: 1.5;
   cursor: pointer;
 }
-.history-summary input { flex: none; margin: 2px 0 0; accent-color: var(--accent); }
+.history-summary input { flex: none; margin: 2px 0 0; }
 .history-summary textarea {
   box-sizing: border-box;
   width: 100%;

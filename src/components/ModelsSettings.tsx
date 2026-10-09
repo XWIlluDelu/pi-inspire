@@ -869,6 +869,7 @@ export function ModelsSettings({
                           <label className="models-choice">
                             <input
                               type="checkbox"
+                              className="choice-input"
                               data-model-action="common"
                               tabIndex={active ? 0 : -1}
                               disabled={busy || preferencesUnavailable}
@@ -893,6 +894,7 @@ export function ModelsSettings({
                         <label className="models-choice">
                           <input
                             type="radio"
+                            className="choice-input"
                             name={defaultGroupName}
                             data-model-action="default"
                             tabIndex={active ? 0 : -1}

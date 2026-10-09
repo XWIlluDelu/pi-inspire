@@ -538,6 +538,7 @@ describe("explicit History actions", () => {
     const summary = within(sameSession).getByRole("checkbox", {
       name: "Carry branch summary",
     });
+    expect(summary).toHaveClass("choice-input");
     expect(summary).not.toBeChecked();
     expect(
       Array.from(sameSession.querySelectorAll("input, textarea, button")),

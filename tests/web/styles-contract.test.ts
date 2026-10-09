@@ -37,6 +37,28 @@ describe("static asset contracts", () => {
     expect(rule).toMatch(/overflow:\s*visible/);
   });
 
+  it("loads the opt-in native choice skin with keyboard focus and high-contrast recovery", async () => {
+    const css = await readStylesheet();
+    expect(css).toMatch(/\.choice-input\s*\{[^}]*appearance:\s*none/);
+    expect(css).toMatch(/\.choice-input:focus-visible\s*\{[^}]*outline:/);
+    expect(css).toMatch(
+      /@media\s*\(forced-colors:\s*active\)\s*\{\s*\.choice-input\s*\{\s*appearance:\s*auto/,
+    );
+  });
+
+  it("aligns task markers independently of checked glyph baselines", async () => {
+    const css = await readStylesheet();
+    const taskSkin = css.match(
+      /\.rich-text\s+\.contains-task-list\s+input\[type="checkbox"\]\s*\{([^}]*)\}/,
+    )?.[1];
+    expect(css).toMatch(/\.choice-input\s*\{[^}]*display:\s*inline-block/);
+    expect(css).toMatch(
+      /\.choice-input:checked::before\s*\{[^}]*position:\s*absolute/,
+    );
+    expect(taskSkin).toMatch(/vertical-align:\s*-0\.15em/);
+    expect(taskSkin).toMatch(/opacity:\s*1/);
+  });
+
   it("does not reference undeclared project CSS variables", async () => {
     const css = await readStylesheet();
     const controls = await readFile(
