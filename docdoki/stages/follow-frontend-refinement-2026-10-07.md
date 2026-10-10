@@ -742,7 +742,7 @@ before/after, verifies the 36px unfilled slot and title weight, checks dark/390p
 Escape restoring the outline. Images are in `output/playwright/pane-states/`. The user retained
 this slice and requested a project-wide check for similar issues.
 
-## Empty-state consistency — awaiting retention review
+## Empty-state consistency — retained
 
 Delegated to the new persistent Pi session `UI · empty-state consistency`. The conversation’s
 large empty-state rules now target an explicit variant instead of globally overriding the base
@@ -754,10 +754,10 @@ Shared pane states, searches, menus, terminal colors/actions and runtime indicat
 cover desktop/light and 390px/dark Nav empty/no-results, Palette no-results/query clearing, blank
 conversation, Terminal no-project/loading/project-empty and New terminal availability. Matched
 before/after images are in `output/playwright/empty-state-consistency/`. The worker used its own
-Vite and mock Host without overwriting shared assets. Retention awaits user review; the Pi session
-record remains discoverable after task completion.
+Vite and mock Host without overwriting shared assets. The user retained this slice at `458b223`;
+the Pi session record remains discoverable after task completion.
 
-## Changes group-count presentation — awaiting retention review
+## Changes group-count presentation — retained
 
 Change-group counts no longer use capsule backgrounds or emphasized weight. They remain secondary
 monospace numbers with the same size, padding, color and values. Titles, statuses, Git summary,
@@ -767,11 +767,61 @@ listing, selection and navigation are unchanged. Files has no equivalent capsule
 14/2 UI fixture before and after, identical counter bounds, dark styling and narrow detail selection.
 The rebuilt assets independently resolve the count style to weight 400, transparent background and
 zero radius. Comparisons are in `output/playwright/change-counts/`. The shared frontend rebuild also
-includes the delegated empty-state slice; both slices await retention review.
+includes the delegated empty-state slice; the user retained both slices. Commit: `ff4d740`.
+
+## Session search parent context — awaiting retention review
+
+Project groups reveal the existing secondary parent context when a query matches the immediate
+parent but not the project basename. The user selected `project @parent` to distinguish the
+secondary location from the main name; both query-hit and colliding-name hints use this annotation.
+Cross-project
+Pinned/Hidden captions show `parent/project` only when neither title nor basename matches; location
+context replaces age during this search state so the primary title keeps space. Clearing the query
+restores ordinary captions/age. No filter, sort, group order, row height or curation changes.
+
+24 navigation/presentation tests cover Unix/Windows parents, quoted/case-folded hits, ordinary and
+basename-only queries, existing collision hints, cross-project context/age restoration, title
+matches, and preserved regex behavior. Chromium verifies the same query in light/dark and 390px,
+unchanged group/session row heights and query clearing; captures are in
+`output/playwright/session-parent-matches/`. Ordinary-row title and parent-query captures are in
+`output/playwright/ordinary-session-search/`; the same-query before/after `@` follow-up is in
+`output/playwright/context-at/`. All 24 tests, scoped lint/format, build and light/dark/390px checks
+also pass after adding the marker; only parent text receives match emphasis. Prior type-checking
+evidence remains applicable to this text-only follow-up.
+
+## File-picker directory cue — ready for review
+
+Composer and Welcome file-picker directory captions now have a visual `@` prefix to separate
+same-line filenames from locations. Root files remain caption-free; file values, full-path titles
+and accessibility labels, matches, ordering, selection/addition and focus behavior are unchanged.
+44 Composer/style-contract tests, scoped lint/format and build pass. Chromium verifies identical
+row heights/order/labels, click-to-add, root-file caption absence, Escape focus restoration,
+light/dark and 390px rendering. Captures: `output/playwright/picker-directory-marker/`.
+The search boundary now belongs to the entire controls row rather than stopping before the
+hidden-files toggle. Seven style-contract tests, scoped lint/format and build pass; Chromium
+verifies full inner-width coverage, zero input border, unchanged popup height, toggle operation,
+light/dark and 390px. Boundary comparisons: `output/playwright/picker-search-line/`.
+
+## Cross-project location captions — withdrawn
+
+The user preferred the original Pinned/Hidden project capsules. Their neutral background,
+control radius and horizontal inset are restored, without the experimental `@` prefix; this
+boundary separates project identity from the session title and age. Parent-query captions and
+matches remain. Group-level `project @parent`, file-picker `@directory`, and the corrected
+full-width picker search boundary are retained independently.
+
+Navigation CSS matches the pre-trial `3274e2e` baseline exactly. The 31 navigation/search/style
+contract tests, scoped lint/format and build pass; still-valid pre-trial light/dark/narrow evidence
+is in `output/playwright/nav-location-captions/before*.png`. The comparison images in that folder
+show a withdrawn experiment, not current implementation.
 
 ## Next actions
 
-Review the empty-state consistency and Changes group-count presentations. The Welcome and topbar-glyph visual experiments are withdrawn.
+Continue local refinement batches, then holistic review. Preserve the original cross-project
+capsules. The attachment file picker has another
+same-line name/directory pairing: its approved `@directory` cue is now implemented.
+Recent already has a middle-dot separator, search/completion separate fields, and full paths retain
+native separators; no extra marker is proposed there. The Welcome and topbar-glyph visual experiments are withdrawn.
 Group related refinements by topic rather than individual micro-adjustments; implement each batch
 and show its net changes for retention review, with holistic review after the local batches. Straightforward image copying and reverse-input ordering when copying multiple
 images separately remain independent, unimplemented capability directions.
@@ -782,7 +832,7 @@ Terminal, main Settings and Models controls; do not reintroduce rejected reading
 layout or session-row overflow changes.
 
 Use an independent `gpt-6.1-sol` / high Pi implementation session when delegating, as requested.
-Keep auxiliary sessions persistent and user-visible during work; clean them up when their tasks
-finish. On 2026-10-09, the user requested cleanup and the 12 completed assistant-created execution
+Keep auxiliary sessions persistent and user-visible; completion does not automatically authorize
+deletion. Cleanup follows the user’s specific request. On 2026-10-09, the user requested cleanup and the 12 completed assistant-created execution
 sessions were deleted through the Host into desktop Trash. The two user-facing frontend sessions
 remain; code, documents and visual evidence are retained.

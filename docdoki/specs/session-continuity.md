@@ -132,6 +132,18 @@ Let the user move between existing terminal Pi and inspire without losing histor
   chronological catalog order with authoritative totals and explicit pagination, not a filter over
   the browser's already-loaded rows.
 
+  Search presentation reveals the immediate parent directory beside a project group when that
+  parent has a visible token/phrase match but the project basename does not. Existing context for
+  colliding basenames remains. Both group contexts use `project @parent`, with the `@` marker in
+  the secondary style and excluded from search emphasis. Cross-project Pinned/Hidden locations
+  retain their neutral capsule background, control radius and horizontal inset, separating project
+  identity from the session title and age; they do not use an `@` prefix. Location normally means
+  the project basename; it becomes `parent/project` only when the parent matches and neither the
+  title nor project basename does. This expanded location temporarily
+  replaces age metadata to preserve title space. Ordinary browsing restores basename and age.
+  All rows stay single-line; native filtering/order, curation, and unhighlighted regex behavior
+  are unchanged.
+
   Search reads one session's complete admitted JSONL prefix at a time without retaining a
   whole-catalog conversation cache. Same-inode append may continue while that prefix is read under
   Pi's one-writer rule; equal-size observations require an unchanged stat version, and truncation,

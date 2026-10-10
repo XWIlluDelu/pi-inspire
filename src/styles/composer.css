@@ -914,6 +914,15 @@
   flex: 0 0 auto;
 }
 
+.picker > .file-search-controls {
+  border-bottom: 1px solid var(--hairline);
+  transition: border-color var(--dur-micro) var(--ease-standard);
+}
+
+.picker > .file-search-controls:has(.picker__input:focus) {
+  border-bottom-color: var(--accent);
+}
+
 @keyframes float-in {
   from {
     opacity: 0;
@@ -927,16 +936,10 @@
 
 .picker__input {
   border: 0;
-  border-bottom: 1px solid var(--hairline);
   background: transparent;
   padding: var(--space-2) var(--space-3);
   font-size: var(--text-sm);
   outline: none;
-  transition: border-color var(--dur-micro) var(--ease-standard);
-}
-
-.picker__input:focus {
-  border-bottom-color: var(--accent);
 }
 
 .picker__list {
@@ -1004,6 +1007,7 @@
 }
 
 .picker__path {
+  display: flex;
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -1011,6 +1015,11 @@
   white-space: nowrap;
   color: var(--faint);
   font-size: var(--text-xs);
+}
+
+.picker__path::before {
+  content: "@";
+  flex: 0 0 auto;
 }
 
 .picker__empty {

@@ -59,6 +59,24 @@ describe("static asset contracts", () => {
     expect(taskSkin).toMatch(/opacity:\s*1/);
   });
 
+  it("puts the file-picker search boundary on the complete controls row", async () => {
+    const css = await readStylesheet();
+    expect(css).toMatch(
+      /\.picker > \.file-search-controls\s*\{[^}]*border-bottom:\s*1px solid var\(--hairline\)/,
+    );
+    expect(css).toMatch(
+      /\.picker > \.file-search-controls:has\(\.picker__input:focus\)\s*\{[^}]*border-bottom-color:\s*var\(--accent\)/,
+    );
+    const input = css.match(/\.picker__input\s*\{([^}]*)\}/)?.[1];
+    expect(input).not.toMatch(/border-bottom:/);
+  });
+
+  it("marks file-picker directory captions without adding to path values", async () => {
+    const css = await readStylesheet();
+    expect(css).toMatch(/\.picker__path\s*\{[^}]*display:\s*flex/);
+    expect(css).toMatch(/\.picker__path::before\s*\{[^}]*content:\s*"@"/);
+  });
+
   it("does not reference undeclared project CSS variables", async () => {
     const css = await readStylesheet();
     const controls = await readFile(

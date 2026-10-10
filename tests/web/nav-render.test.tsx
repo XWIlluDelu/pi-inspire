@@ -9,6 +9,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Nav } from "../../src/components/Nav";
+import { ProjectGroup, SessionRow } from "../../src/components/NavSessions";
 import { store } from "../../src/store";
 import {
   activeSnapshot,
@@ -247,6 +248,76 @@ describe("session navigation controls", () => {
     expect(
       screen.queryByRole("region", { name: "Workspace files" }),
     ).not.toBeInTheDocument();
+  });
+
+  it.each(["/work/alpha", "C:\\work\\alpha"])(
+    "reveals a matched parent directory without a basename collision: %s",
+    (cwd) => {
+      const props = {
+        group: { cwd, name: "alpha", sessions: [{ ...alpha, cwd }] },
+        headingId: "parent-match-group",
+        searching: true,
+        searchQuery: '"WORK"',
+        showContext: false,
+        selectedSessionId: null,
+        onSelectSession: vi.fn(),
+      };
+      const { container, rerender } = render(<ProjectGroup {...props} />);
+      expect(container.querySelector(".nav__group-context")).toHaveTextContent(
+        /^@work$/,
+      );
+      expect(
+        container.querySelector(".nav__group-context .search-match"),
+      ).toHaveTextContent(/^work$/);
+      rerender(<ProjectGroup {...props} searchQuery="alpha" />);
+      expect(container.querySelector(".nav__group-context")).toBeNull();
+      rerender(<ProjectGroup {...props} searchQuery="" searching={false} />);
+      expect(container.querySelector(".nav__group-context")).toBeNull();
+      // Existing basename disambiguation survives regardless of the query.
+      rerender(<ProjectGroup {...props} searchQuery="alpha" showContext />);
+      expect(container.querySelector(".nav__group-context")).toHaveTextContent(
+        "work",
+      );
+    },
+  );
+
+  it("keeps matched parent context in cross-project session captions only during search", () => {
+    const props = {
+      session: alpha,
+      selectedSessionId: null,
+      showProject: true,
+      onSelect: vi.fn(),
+    };
+    const { container, rerender } = render(
+      <SessionRow {...props} searchQuery="work" />,
+    );
+    expect(container.querySelector(".nav__row-project")).toHaveTextContent(
+      "work/alpha",
+    );
+    expect(
+      container.querySelector(".nav__row-project .search-match"),
+    ).toHaveTextContent("work");
+    expect(container.querySelector(".nav__row-age")).toBeNull();
+    rerender(<SessionRow {...props} searchQuery="" />);
+    expect(container.querySelector(".nav__row-age")).not.toBeNull();
+    expect(container.querySelector(".nav__row-project")).toHaveTextContent(
+      /^alpha$/,
+    );
+    rerender(
+      <SessionRow
+        {...props}
+        session={{ ...alpha, title: "Work plan" }}
+        searchQuery="work"
+      />,
+    );
+    expect(container.querySelector(".nav__row-project")).toHaveTextContent(
+      /^alpha$/,
+    );
+    expect(container.querySelector(".nav__row-age")).not.toBeNull();
+    rerender(<SessionRow {...props} searchQuery="re:work" />);
+    expect(container.querySelector(".nav__row-project")).toHaveTextContent(
+      /^alpha$/,
+    );
   });
 
   it("collapses folders, exposes search matches, and pins without selecting", async () => {

@@ -89,9 +89,12 @@ later directory change cannot retarget them.
 The explicit project-file picker (Composer and Welcome) keeps its compact single-line rows and
 existing placement/keyboard behavior. Each result uses the shared 13px monochrome file-type icon,
 filename at weight 500, and parent directory without repeating the filename; root files have no
-directory caption. Literal query-term matches use weight 600 and inherited colors with no background.
+directory caption. Same-line directory captions have a secondary `@` cue; it is visual only,
+not part of path values, titles, accessibility labels, or search matches. Literal query-term matches
+use weight 600 and inherited colors with no background.
 Full relative paths remain in titles/accessibility labels. Long filenames elide without overflowing;
-other picker surfaces and referenced-file chips are unchanged.
+other picker surfaces and referenced-file chips are unchanged. The search row owns its full-width
+bottom boundary across the input and hidden-files toggle; only input focus applies the accent color.
 
 Both searches offer default-off Show hidden files for dot names and native hidden attributes,
 independently of Git ignore. Incomplete scans are reported; Git failure does not block discovery.
