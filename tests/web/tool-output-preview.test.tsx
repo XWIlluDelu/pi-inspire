@@ -15,10 +15,10 @@ import {
 import {
   type ChatMessage,
   type EventSlice,
-  type ToolCallContent,
-  type WireEvent,
   emptyEventSlice,
   reduceEvent,
+  type ToolCallContent,
+  type WireEvent,
 } from "../../src/events";
 import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
 
@@ -28,10 +28,10 @@ const call: ToolCallContent = {
   name: "bash",
   arguments: { command: "npm run build" },
 };
-const update = (text: string): WireEvent => ({
+const update = (text: string, truncated = false): WireEvent => ({
   type: "tool_execution_update",
   toolCallId: call.id,
-  partialResult: { content: [{ type: "text", text }] },
+  ...(text ? { outputPreview: { text, truncated } } : {}),
 });
 const reduce = (state: EventSlice, event: WireEvent) =>
   reduceEvent(state, new Set(), event).slice;
@@ -57,17 +57,16 @@ function card(state: EventSlice, toolCall = call, result?: ChatMessage) {
 afterEach(() => configureToolPresentationRegistry());
 
 describe("execution output previews", () => {
-  it("replaces cumulative updates, bounds the latest text, and clears empty replacements", () => {
+  it("retains Host-authored bounded tails, replaces cumulative previews, and clears empty replacements", () => {
     let state = reduce(running(), update("old output"));
     state = reduce(state, update("replacement"));
     expect(state.tools[call.id]?.outputPreview).toEqual({
       text: "replacement",
       truncated: false,
     });
-    state = reduce(
-      state,
-      update("discarded prefix" + "x".repeat(20_000) + "newest"),
-    );
+    const projected = update("x".repeat(15_994) + "newest", true);
+    state = reduce(state, projected);
+    expect(state.tools[call.id]?.outputPreview).toBe(projected.outputPreview);
     expect(state.tools[call.id]?.outputPreview?.text).toHaveLength(16_000);
     expect(state.tools[call.id]?.outputPreview?.text.endsWith("newest")).toBe(
       true,
@@ -75,7 +74,10 @@ describe("execution output previews", () => {
     expect(state.tools[call.id]?.outputPreview?.truncated).toBe(true);
     state = reduce(
       state,
-      update(Array.from({ length: 500 }, (_, i) => `line ${i}`).join("\n")),
+      update(
+        Array.from({ length: 400 }, (_, i) => `line ${i + 100}`).join("\n"),
+        true,
+      ),
     );
     expect(state.tools[call.id]?.outputPreview?.text.split("\n")).toHaveLength(
       400,
@@ -86,11 +88,8 @@ describe("execution output previews", () => {
     state = reduce(state, update(""));
     expect(state.tools[call.id]?.outputPreview).toBeUndefined();
     state = reduce(state, {
-      ...update("ignored"),
-      partialResult: {
-        details: { progress: 90 },
-        content: [null, { type: "image", data: "abc" }],
-      },
+      ...update(""),
+      partialResult: { details: { progress: 90 } },
     });
     expect(state.tools[call.id]?.outputPreview).toBeUndefined();
   });
@@ -162,10 +161,7 @@ describe("execution output previews", () => {
     const patch = "--- src/a.ts\n+++ src/a.ts\n@@ -1 +1 @@\n-before\n+after\n";
     const state = reduce(running(), {
       ...update(patch),
-      partialResult: {
-        content: [{ type: "text", text: patch }],
-        details: { patch },
-      },
+      partialResult: { details: { patch } },
     });
     const { container } = render(card(state, edit));
     expect(screen.getByText("Requested replacement")).toBeInTheDocument();
@@ -270,7 +266,7 @@ describe("execution output previews", () => {
       configurable: true,
       value: { writeText },
     });
-    let state = reduce(running(), update("old".repeat(8_000) + "latest"));
+    let state = reduce(running(), update(`${"old".repeat(5_331)}latest`, true));
     const strip = (result?: ChatMessage) => (
       <CollapsedActivityStrip
         live

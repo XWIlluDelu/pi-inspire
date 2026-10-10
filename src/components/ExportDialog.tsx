@@ -82,6 +82,7 @@ export function ExportDialog({
           <label>
             <input
               type="radio"
+              className="choice-input"
               name="export-format"
               value="html"
               checked={format === "html"}
@@ -93,6 +94,7 @@ export function ExportDialog({
           <label>
             <input
               type="radio"
+              className="choice-input"
               name="export-format"
               value="jsonl"
               checked={format === "jsonl"}
@@ -109,7 +111,7 @@ export function ExportDialog({
         ) : null}
         <footer className="dialog__actions">
           <button
-            className="button"
+            className="button button--quiet"
             type="button"
             disabled={busy}
             onClick={onClose}

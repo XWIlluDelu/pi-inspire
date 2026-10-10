@@ -116,6 +116,11 @@ export function toolResultImage(
 
 export type ToolPresentationBlock =
   | {
+      /** Native-only result view; not part of the declarative configuration schema. */
+      type: "codemode-result";
+      result: ChatMessage;
+    }
+  | {
       type: "properties";
       label?: string;
       items: ToolProperty[];

@@ -33,7 +33,7 @@ test("Pending image thumbnails open the shared viewer and wrap at narrow widths"
     "tests/browser/fixtures/file-previews/training curve.png",
   );
   const attachments: UploadedAttachment[] = [];
-  for (let index = 0; index < 5; index++) {
+  for (let index = 0; index < 6; index++) {
     const response = await request.post("/api/attachments", {
       headers: { Authorization: `Bearer ${token}` },
       multipart: {
@@ -56,14 +56,14 @@ test("Pending image thumbnails open the shared viewer and wrap at narrow widths"
       {
         id: "thumbnail-caption",
         ...pendingTextSummary("Compare these charts"),
-        imageCount: 4,
-        imageAttachmentIds: attachments.slice(0, 4).map((item) => item.id),
+        imageCount: 5,
+        imageAttachmentIds: attachments.slice(0, 5).map((item) => item.id),
       },
       {
         id: "thumbnail-image-only",
         ...pendingTextSummary(""),
         imageCount: 1,
-        imageAttachmentIds: [attachments[4]!.id],
+        imageAttachmentIds: [attachments[5]!.id],
       },
       { id: "thumbnail-unknown", ...pendingTextSummary("") },
     ],
@@ -88,7 +88,7 @@ test("Pending image thumbnails open the shared viewer and wrap at narrow widths"
   try {
     const { pending } = await openPendingSession(page);
     const images = pending.locator(".pending-group__image img");
-    await expect(images).toHaveCount(5);
+    await expect(images).toHaveCount(6);
     await expect
       .poll(() =>
         images.evaluateAll((values) =>
@@ -155,7 +155,7 @@ test("Pending image thumbnails open the shared viewer and wrap at narrow widths"
         (box) => box.width === 44 && box.height === 44 && box.right <= 320,
       ),
     ).toBe(true);
-    expect(boxes[3]!.top).toBeGreaterThan(boxes[0]!.top);
+    expect(boxes[4]!.top).toBeGreaterThan(boxes[0]!.top);
     await page.screenshot({
       path: "output/playwright/pending-thumbnails/narrow.png",
       animations: "disabled",

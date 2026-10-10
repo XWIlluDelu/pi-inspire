@@ -365,6 +365,14 @@ function indexSessionEntries(
  * rows. Keep the SDK's original per-entry index for stable message identities,
  * including summaries returned after a compaction's system checkpoint. */
 function transcriptEntryMessages(entry: SessionEntry) {
+  const source =
+    entry.type === "compaction" &&
+    entry.details &&
+    typeof entry.details === "object" &&
+    "source" in entry.details &&
+    typeof entry.details.source === "string"
+      ? entry.details.source
+      : undefined;
   return sessionEntryToContextMessages(entry).flatMap((message, index) =>
     message.role === "system"
       ? []
@@ -373,6 +381,9 @@ function transcriptEntryMessages(entry: SessionEntry) {
             ...message,
             __inspireMessageId: `${entry.id}:${index}`,
             __inspireEntryId: entry.id,
+            ...(source && message.role === "compactionSummary"
+              ? { __inspireCompactionSource: source }
+              : {}),
           },
         ],
   );

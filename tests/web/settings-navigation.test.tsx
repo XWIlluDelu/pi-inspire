@@ -44,7 +44,7 @@ describe("Settings component UX and navigation", () => {
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
   });
 
-  it("marks and scrolls to the selected category", () => {
+  it("shows only the selected category and lands at its content top", () => {
     render(<Settings onClose={() => undefined} />);
     const navigation = screen.getByRole("navigation", {
       name: "Settings categories",
@@ -53,17 +53,21 @@ describe("Settings component UX and navigation", () => {
       name: "Conversation",
     });
 
+    const content = screen.getByRole("main");
+    content.scrollTop = 240;
     fireEvent.click(conversation);
-    const section = screen.getByRole("region", { name: "Conversation" });
-    expect(section).toBeVisible();
+    expect(screen.getByRole("region", { name: "Conversation" })).toBeVisible();
     expect(conversation).toHaveAttribute("aria-current", "location");
-    expect(section.scrollIntoView).toHaveBeenCalledWith({
-      block: "start",
-      behavior: "instant",
-    });
+    expect(content.scrollTop).toBe(0);
+    expect(screen.queryByRole("region", { name: "Display" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "On launch" })).toBeNull();
+
+    content.scrollTop = 80;
+    fireEvent.click(conversation);
+    expect(content.scrollTop).toBe(0);
   });
 
-  it("keeps all categories in one continuous settings document", () => {
+  it("keeps category selection independent of content scrolling", () => {
     render(<Settings onClose={() => undefined} />);
     const navigation = screen.getByRole("navigation", {
       name: "Settings categories",
@@ -72,31 +76,60 @@ describe("Settings component UX and navigation", () => {
     fireEvent.click(system);
     expect(system).toHaveAttribute("aria-current", "location");
     expect(screen.getByRole("region", { name: "Versions" })).toBeVisible();
-    expect(screen.getByRole("region", { name: "Conversation" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Conversation" })).toBeNull();
+    fireEvent.scroll(screen.getByRole("main"), { target: { scrollTop: 120 } });
+    expect(system).toHaveAttribute("aria-current", "location");
+    expect(
+      document.querySelectorAll(".settings__page:not([hidden])"),
+    ).toHaveLength(1);
   });
 
   it("presents the complete settings contract in its owning groups", () => {
     render(<Settings onClose={() => undefined} />);
 
-    for (const name of [
-      "Theme",
-      "Color palette",
-      "Content text size",
-      "Reading width",
-      "Project location",
-      "Reasoning detail",
-      "Tool activity",
-      "Activity groups",
-      "Assistant turn details",
-      "Send key",
-      "On launch",
-      "Completion alerts",
-      "Steering delivery",
-      "Follow-up delivery",
-      "Automatic context compaction",
-      "Automatic retry",
-    ])
-      expect(screen.getAllByText(name).length).toBeGreaterThan(0);
+    const navigation = screen.getByRole("navigation", {
+      name: "Settings categories",
+    });
+    for (const [category, fields] of [
+      [
+        "Display",
+        [
+          "Theme",
+          "Color palette",
+          "Content text size",
+          "Reading width",
+          "Project location",
+        ],
+      ],
+      [
+        "Conversation",
+        [
+          "Reasoning detail",
+          "Tool activity",
+          "Activity groups",
+          "Assistant turn details",
+          "Send key",
+        ],
+      ],
+      [
+        "Behavior",
+        [
+          "On launch",
+          "Completion alerts",
+          "Steering delivery",
+          "Follow-up delivery",
+          "Automatic context compaction",
+          "Automatic retry",
+        ],
+      ],
+    ] as const) {
+      fireEvent.click(
+        within(navigation).getByRole("button", { name: category }),
+      );
+      const section = screen.getByRole("region", { name: category });
+      for (const name of fields)
+        expect(within(section).getAllByText(name).length).toBeGreaterThan(0);
+    }
   });
 
   it("explains every Activity groups density in the selector", () => {

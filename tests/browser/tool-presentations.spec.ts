@@ -120,7 +120,185 @@ for (const mobile of [false, true]) {
           }
         : { viewport: { width: 1365, height: 950 } },
     );
-    test("keeps a reading position through live settlement and reopens result-first", async ({
+    test("separates CodeMode calls from readable output and preserves whole-block copy", async ({
+      page,
+    }) => {
+      const send = await openReview(page, { palette: "teal" });
+      const call = tool("codemode", {
+        code: "text(await tools.edit({path: 'src/components/transcript-cards.tsx', edits: []})); text({i: 1, result: await tools.bash({command: 'npm run typecheck'})}); await tools.ctx_reduce({drop: '1'});",
+      });
+      const stdout = [
+        "npm notice run inspire-pi-gui@0.4.0 typecheck",
+        "npm notice run tsc -b",
+        ...Array.from(
+          { length: 70 },
+          (_, index) => `Checked fixture module ${index + 1}`,
+        ),
+      ].join("\n");
+      const rawOutput = JSON.stringify({
+        i: 1,
+        result: {
+          output: stdout,
+          truncated: false,
+          exit_code: 0,
+          wall_time_seconds: 3.7,
+        },
+      });
+      const result = {
+        role: "toolResult",
+        toolCallId: call.id,
+        toolName: "codemode",
+        isError: false,
+        __inspireMessageId: "small-codemode-result",
+        content: [
+          {
+            type: "text",
+            text: "Script completed\nWall time 4.2 seconds\nOutput:\n",
+          },
+          {
+            type: "text",
+            text: "Successfully replaced 2 blocks in src/components/transcript-cards.tsx.",
+          },
+          { type: "text", text: rawOutput },
+        ],
+        details: {
+          calls: [
+            {
+              id: "small/1",
+              name: "edit",
+              args: JSON.stringify({
+                path: "src/components/transcript-cards.tsx",
+                edits: [
+                  {
+                    oldText: "source\n".repeat(100),
+                    newText: "updated source",
+                  },
+                ],
+              }).slice(0, 200),
+              status: "ok",
+            },
+            {
+              id: "small/2",
+              name: "bash",
+              args: '{"command":"npm run typecheck"}',
+              status: "ok",
+              durationMs: 3700,
+            },
+            {
+              id: "small/3",
+              name: "ctx_reduce",
+              args: '{"drop":"1"}',
+              status: "ok",
+            },
+          ],
+        },
+      };
+      send(
+        { type: "agent_start" },
+        { type: "message_start", message: assistant([call]) },
+        {
+          type: "tool_execution_start",
+          toolCallId: call.id,
+          toolName: "codemode",
+          args: call.arguments,
+        },
+        {
+          type: "tool_execution_end",
+          toolCallId: call.id,
+          toolName: "codemode",
+          isError: false,
+          result,
+        },
+        { type: "message_end", message: result },
+      );
+      const card = toolCard(page, "codemode");
+      await expect(
+        card.getByRole("group", { name: "Child calls" }).locator(".child-call"),
+      ).toHaveCount(3);
+      await expect(card.getByRole("button", { name: /^Calls / })).toHaveCount(
+        0,
+      );
+      await expect(
+        card.getByText(
+          "Successfully replaced 2 blocks in src/components/transcript-cards.tsx.",
+        ),
+      ).toBeVisible();
+      await expect(card.getByText("Script", { exact: true })).toBeVisible();
+      await expect(card.getByText("Calls", { exact: true })).toHaveCount(0);
+      await expect(card.getByText("Output", { exact: true })).toBeVisible();
+      await expect(card.locator(".child-call__summary").first()).toHaveText(
+        /src\/components\/transcript-cards\.tsx/,
+      );
+      await expect(
+        card.locator(".child-call__summary").first(),
+      ).not.toContainText("oldText");
+      const output = card.getByRole("group", { name: "Result output" });
+      const text = await output.locator("pre").last().textContent();
+      expect(text).toMatch(/typecheck\n\s+npm notice run tsc -b/);
+      expect(text).toContain('"truncated": false');
+      expect(text).toContain('"result": {');
+      await expect(
+        card.getByRole("button", { name: "Copy codemode tool block" }),
+      ).toHaveCount(1);
+      await expect(
+        card.getByRole("group", { name: "Result display" }),
+      ).toHaveCount(0);
+      await expect(
+        card.getByText("Result details", { exact: true }),
+      ).toHaveCount(0);
+      expect(
+        await card.evaluate((element) => {
+          const calls = element
+            .querySelector(".tool-call-list")!
+            .getBoundingClientRect();
+          const result = element
+            .querySelector(".codemode-result")!
+            .getBoundingClientRect();
+          return result.top >= calls.bottom;
+        }),
+      ).toBe(true);
+      expect(
+        await output.evaluate(
+          (element) => element.scrollHeight > element.clientHeight,
+        ),
+      ).toBe(true);
+      await output.focus();
+      await page.keyboard.press("ArrowDown");
+      await expect
+        .poll(() => output.evaluate((element) => element.scrollTop))
+        .toBeGreaterThan(0);
+      await output.evaluate((element) => {
+        element.scrollTop = 0;
+      });
+      await output.evaluate((element) => (element as HTMLElement).blur());
+      await card
+        .getByRole("button", { name: "Copy codemode tool block" })
+        .click();
+      await expect(card).not.toHaveClass(/card--failed/);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      const accessibility = await new AxeBuilder({ page })
+        .include(".card--tool")
+        .analyze();
+      expect(accessibility.violations).toEqual([]);
+      await card.screenshot({
+        path: `output/playwright/child-calls/${mobile ? "mobile" : "desktop"}-small.png`,
+        animations: "disabled",
+      });
+      await card
+        .getByRole("button", { name: "Collapse CodeMode tool" })
+        .click();
+      await expect(card.getByText("3 calls", { exact: true })).toBeVisible();
+      await card.screenshot({
+        path: `output/playwright/child-calls/${mobile ? "mobile" : "desktop"}-small-collapsed.png`,
+        animations: "disabled",
+      });
+    });
+
+    test("keeps the conversation reading position through live settlement and reopens calls before output", async ({
       page,
     }) => {
       const errors: string[] = [];
@@ -171,7 +349,16 @@ for (const mobile of [false, true]) {
           type: "tool_execution_update",
           toolCallId: "script",
           toolName: "codemode",
-          partialResult: { content: [], details: { calls } },
+          childCalls: {
+            source: "codemode",
+            complete: true,
+            calls: calls.map((call, index) => ({
+              key: `codemode:${index}`,
+              name: call.name,
+              argumentsPreview: call.args,
+              status: call.status,
+            })),
+          },
         },
         {
           type: "tool_execution_start",
@@ -191,10 +378,31 @@ for (const mobile of [false, true]) {
       const parentCard = toolCard(page, "orchestrator");
       const list = scriptCard.getByRole("group", { name: "Child calls" });
       await expect(list.locator(".child-call")).toHaveCount(80);
+      const conversation = page.getByRole("log");
       expect(
         await list.evaluate((element) => element.clientHeight),
-      ).toBeLessThanOrEqual(320);
-      const row = list.locator(".child-call > summary").nth(6);
+      ).toBeGreaterThan(
+        await conversation.evaluate((element) => element.clientHeight),
+      );
+      expect(
+        await list.evaluate(
+          (element) => element.scrollHeight - element.clientHeight,
+        ),
+      ).toBeLessThanOrEqual(1);
+      await expect
+        .poll(() => conversation.evaluate((element) => element.scrollTop))
+        .toBeGreaterThan(0);
+      const latestPosition = await conversation.evaluate(
+        (element) => element.scrollTop,
+      );
+      await conversation.hover();
+      await page.mouse.wheel(0, -500);
+      await expect
+        .poll(() => conversation.evaluate((element) => element.scrollTop))
+        .toBeLessThan(latestPosition);
+      const row = list
+        .locator(".child-call > summary")
+        .filter({ hasText: "src/report-40.txt" });
       await row.scrollIntoViewIfNeeded();
       if (mobile) await row.tap();
       else {
@@ -204,8 +412,30 @@ for (const mobile of [false, true]) {
       await expect(row.locator("..")).toHaveAttribute("open", "");
       await expect(
         row.locator("..").getByRole("group", { name: "Arguments preview" }),
-      ).toContainText("report-7.txt");
-      const position = await list.evaluate((element) => element.scrollTop);
+      ).toContainText("report-40.txt");
+      await expect(row).toBeInViewport();
+      const readingPosition = () =>
+        row.evaluate((element) => {
+          const scroller = element.closest(".transcript")!;
+          return {
+            scrollTop: scroller.scrollTop,
+            offset:
+              element.getBoundingClientRect().top -
+              scroller.getBoundingClientRect().top,
+          };
+        });
+      const position = await readingPosition();
+      expect(position.scrollTop).toBeGreaterThan(0);
+      const expectReadingPosition = () =>
+        expect
+          .poll(async () => {
+            const current = await readingPosition();
+            return Math.max(
+              Math.abs(current.scrollTop - position.scrollTop),
+              Math.abs(current.offset - position.offset),
+            );
+          })
+          .toBeLessThan(1);
       await page.screenshot({
         path: `output/playwright/child-calls/${mobile ? "mobile" : "desktop"}-running.png`,
         animations: "disabled",
@@ -213,9 +443,9 @@ for (const mobile of [false, true]) {
       const finalCalls = calls.map((call, index) => ({
         ...call,
         id: `script/${index + 1}`,
-        status: index === 7 ? "error" : "ok",
-        durationMs: index === 7 ? 1600 : 10,
-        ...(index === 7 ? { error: "Report is unavailable" } : {}),
+        status: index === 40 ? "error" : "ok",
+        durationMs: index === 40 ? 1600 : 10,
+        ...(index === 40 ? { error: "Report is unavailable" } : {}),
       }));
       const scriptResult = {
         role: "toolResult",
@@ -263,6 +493,18 @@ for (const mobile of [false, true]) {
           toolName: "codemode",
           isError: false,
           result: scriptResult,
+          childCalls: {
+            source: "codemode",
+            complete: true,
+            calls: finalCalls.map((call, index) => ({
+              key: `codemode:${index}`,
+              name: call.name,
+              argumentsPreview: call.args,
+              status: call.status,
+              durationMs: call.durationMs,
+              ...(call.error ? { error: call.error } : {}),
+            })),
+          },
         },
         { type: "message_end", message: scriptResult },
         {
@@ -279,23 +521,8 @@ for (const mobile of [false, true]) {
       ).toContainText("Report is unavailable");
       await expect(row.locator("..")).toHaveAttribute("open", "");
       if (!mobile) await expect(row).toBeFocused();
-      expect(await list.evaluate((element) => element.scrollTop)).toBe(
-        position,
-      );
-      // The parent owns its own Adaptive completion deadline. Inspect it
-      // deliberately even if it closed while the script result was rendered.
-      const parentDisclosure = parentCard.getByRole("button", {
-        name: /^(Expand|Collapse) orchestrator tool$/,
-      });
-      if ((await parentDisclosure.getAttribute("aria-expanded")) === "false")
-        await parentDisclosure.click();
-      await expect(
-        parentCard.getByText("Independent parent completed"),
-      ).toBeVisible();
-      await expect(
-        parentCard.getByRole("button", { name: "Calls 1" }),
-      ).toHaveAttribute("aria-expanded", "false");
-      await expect(page.locator(".card--failed")).toHaveCount(0);
+      await expect(row).toBeInViewport();
+      await expectReadingPosition();
       send({
         type: "message_start",
         message: {
@@ -307,17 +534,32 @@ for (const mobile of [false, true]) {
       // Cross Adaptive card and band close delays after the next native boundary.
       await page.waitForTimeout(3_200);
       await expect(
-        scriptCard.getByRole("button", { name: "Collapse codemode tool" }),
+        scriptCard.getByRole("button", { name: "Collapse CodeMode tool" }),
       ).toBeVisible();
       await expect(row.locator("..")).toHaveAttribute("open", "");
       if (!mobile) await expect(row).toBeFocused();
-      expect(await list.evaluate((element) => element.scrollTop)).toBe(
-        position,
-      );
+      await expect(row).toBeInViewport();
+      await expectReadingPosition();
       await page.screenshot({
         path: `output/playwright/child-calls/${mobile ? "mobile" : "desktop"}-settled-reading.png`,
         animations: "disabled",
       });
+      // The parent owns its own Adaptive completion deadline. Inspect it
+      // deliberately even if it closed while the script result was rendered.
+      const parentDisclosure = parentCard.getByRole("button", {
+        name: /^(Expand|Collapse) orchestrator tool$/,
+      });
+      if ((await parentDisclosure.getAttribute("aria-expanded")) === "false")
+        await parentDisclosure.click();
+      await expect(
+        parentCard.getByText("Independent parent completed"),
+      ).toBeVisible();
+      await expect(
+        parentCard
+          .getByRole("group", { name: "Child calls" })
+          .locator(".child-call"),
+      ).toHaveCount(1);
+      await expect(page.locator(".card--failed")).toHaveCount(0);
       await page.route("**/api/bootstrap**", async (route) => {
         const response = await route.fetch();
         const body = await response.json();
@@ -339,10 +581,12 @@ for (const mobile of [false, true]) {
         page.getByText("Actual script result: 79 reports collected"),
       ).toBeVisible();
       await expect(
-        page.getByRole("button", { name: "Calls 80" }),
-      ).toHaveAttribute("aria-expanded", "false");
+        scriptCard
+          .getByRole("group", { name: "Child calls" })
+          .locator(".child-call"),
+      ).toHaveCount(80);
       await expect(
-        page.getByRole("group", { name: "Child calls" }),
+        scriptCard.getByRole("button", { name: /^Calls / }),
       ).toHaveCount(0);
       await expect(page.getByText("Script", { exact: true })).toBeVisible();
       expect(
@@ -354,15 +598,14 @@ for (const mobile of [false, true]) {
         path: `output/playwright/child-calls/${mobile ? "mobile" : "desktop"}-reopened.png`,
         animations: "disabled",
       });
-      await page.getByRole("button", { name: "Calls 80" }).click();
       const order = await toolCard(page, "codemode").evaluate((card) => {
         const result = card
           .querySelector(".tool-call-result")!
           .getBoundingClientRect();
         const calls = card
-          .querySelector(".tool-call-disclosure")!
+          .querySelector(".tool-call-list")!
           .getBoundingClientRect();
-        return calls.top - result.bottom;
+        return result.top - calls.bottom;
       });
       expect(order).toBeGreaterThanOrEqual(0);
       const accessibility = await new AxeBuilder({ page })
@@ -439,7 +682,7 @@ function toolCard(page: Page, name: string) {
     .locator(".card--tool")
     .filter({
       has: page.locator(".card__tool-name", {
-        hasText: new RegExp(`^${name}$`),
+        hasText: new RegExp(`^${name === "codemode" ? "CodeMode" : name}$`),
       }),
     })
     .last();
@@ -465,9 +708,7 @@ test("execution output streams in place without settling the adaptive card", asy
       type: "tool_execution_update",
       toolCallId: call.id,
       toolName: call.name,
-      partialResult: {
-        content: [{ type: "text", text: "Preparing browser assets…" }],
-      },
+      outputPreview: { text: "Preparing browser assets…", truncated: false },
     },
   );
   const card = toolCard(page, "bash");
@@ -477,9 +718,7 @@ test("execution output streams in place without settling the adaptive card", asy
     type: "tool_execution_update",
     toolCallId: call.id,
     toolName: call.name,
-    partialResult: {
-      content: [{ type: "text", text: "Bundling 140 of 260 modules…" }],
-    },
+    outputPreview: { text: "Bundling 140 of 260 modules…", truncated: false },
   });
   await expect(card).toContainText("Bundling 140 of 260 modules…");
   await expect(card).not.toContainText("Preparing browser assets…");
@@ -498,7 +737,7 @@ test("execution output streams in place without settling the adaptive card", asy
     type: "tool_execution_update",
     toolCallId: call.id,
     toolName: call.name,
-    partialResult: { content: [{ type: "text", text }] },
+    outputPreview: { text, truncated: false },
   });
   send(progress(log));
   const output = card.locator(".tool-terminal--live");

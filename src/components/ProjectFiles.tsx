@@ -1,5 +1,6 @@
 import { FolderSearch, X } from "lucide-react";
 import {
+  type KeyboardEvent,
   type RefObject,
   useCallback,
   useEffect,
@@ -10,14 +11,17 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
+import { rankProjectFiles } from "../composer-completion";
+import { fileIconForPath } from "../file-icons";
 import {
   type FloatingMenuConstraints,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
 import { useModalPortal } from "../use-modal-focus";
+import { useSearchFocus } from "../use-search-focus";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
-import { rankProjectFiles } from "../composer-completion";
-import { ResourcePathLabel } from "./ResourcePathLabel";
+import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
+import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 
 export function ProjectFileChips({
   paths,
@@ -91,6 +95,7 @@ export function ProjectFilePicker({
   const listId = useId();
   const listRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const resolveTarget = useCallback(() => {
     const anchor = anchorRef.current;
     return anchor
@@ -107,6 +112,7 @@ export function ProjectFilePicker({
     PICKER_CONSTRAINTS,
   );
   useModalPortal(Boolean(placement), anchorRef, menuRef);
+  useSearchFocus(Boolean(placement), inputRef, menuRef);
 
   useEffect(() => {
     if (!placement) return;
@@ -195,13 +201,29 @@ export function ProjectFilePicker({
       option.scrollIntoView({ block: "nearest" });
   }, [activeIndex, keyboardActive, listId, results]);
 
+  const navigate = (event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.nativeEvent.isComposing) return;
+    if (event.key === "Enter" || (event.key === "Tab" && activeOption)) {
+      event.preventDefault();
+      if (activeOption) onAdd(activeOption);
+      return;
+    }
+    if (availableIndexes.length === 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      setKeyboardActive(true);
+      moveActive(event.key === "ArrowDown" ? 1 : -1);
+    }
+  };
+
   if (!placement) return null;
   return createPortal(
     <div
       ref={menuRef}
-      className="picker"
+      className="picker picker--files"
       role="dialog"
       aria-label="Add project files"
+      tabIndex={-1}
       data-placement={placement.direction}
       data-keyboard-active={keyboardActive}
       style={{
@@ -212,38 +234,29 @@ export function ProjectFilePicker({
         maxHeight: placement.maxHeight,
       }}
       onKeyDown={(event) => {
-        if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
-        event.preventDefault();
-        event.stopPropagation();
-        onClose();
-        anchorRef.current?.focus({ preventScroll: true });
+        if (event.nativeEvent.isComposing) return;
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+          anchorRef.current?.focus({ preventScroll: true });
+        } else if (
+          event.target === event.currentTarget &&
+          event.key !== "Tab"
+        ) {
+          navigate(event);
+        }
       }}
     >
       <div className="file-search-controls">
         <input
+          ref={inputRef}
           className="picker__input"
           type="search"
           role="combobox"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) return;
-            if (
-              event.key === "Enter" ||
-              (event.key === "Tab" && activeOption)
-            ) {
-              event.preventDefault();
-              if (activeOption) onAdd(activeOption);
-              return;
-            }
-            if (availableIndexes.length === 0) return;
-            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-              event.preventDefault();
-              setKeyboardActive(true);
-              moveActive(event.key === "ArrowDown" ? 1 : -1);
-              return;
-            }
-          }}
+          onKeyDown={navigate}
           placeholder="Search project files…"
           aria-label="Search project files"
           aria-autocomplete="list"
@@ -254,7 +267,6 @@ export function ProjectFilePicker({
               ? `${listId}-option-${activeIndex}`
               : undefined
           }
-          autoFocus
         />
         <HiddenFilesToggle
           showHidden={showHidden}
@@ -278,6 +290,12 @@ export function ProjectFilePicker({
         }}
       >
         {results.map((file, index) => {
+          const Icon = fileIconForPath(file.path);
+          const directory = parentPath(file.path);
+          const matches = searchMatchRanges(
+            file.path,
+            query.trim().split(/\s+/),
+          );
           const added = selected.includes(file.path);
           const unavailable = disabled || added;
           return (
@@ -286,6 +304,7 @@ export function ProjectFilePicker({
               id={`${listId}-option-${index}`}
               role="option"
               aria-label={`${file.name}, ${file.path}`}
+              title={file.path}
               aria-selected={added}
               disabled={unavailable}
               tabIndex={-1}
@@ -298,8 +317,22 @@ export function ProjectFilePicker({
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => onAdd(file)}
             >
-              <span className="picker__name">{file.name}</span>
-              <ResourcePathLabel path={file.path} className="picker__path" />
+              <Icon size={13} aria-hidden />
+              <span className="picker__name">
+                <SearchMatchText
+                  text={file.name}
+                  ranges={matches}
+                  offset={file.path.length - file.name.length}
+                />
+              </span>
+              {directory ? (
+                <ResourcePathLabel
+                  path={directory}
+                  title={file.path}
+                  className="picker__path"
+                  matches={matches}
+                />
+              ) : null}
             </button>
           );
         })}

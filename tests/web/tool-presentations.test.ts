@@ -384,10 +384,13 @@ describe("shipped Pi tool rules", () => {
     expect(presentation?.blocks()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          type: "image",
-          data: "cG5n",
-          mimeType: "image/png",
-          alt: "Script result image",
+          type: "codemode-result",
+          result: expect.objectContaining({
+            content: [
+              { type: "text", text: "Script output" },
+              { type: "image", data: "cG5n", mimeType: "image/png" },
+            ],
+          }),
         }),
         {
           type: "notice",

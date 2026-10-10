@@ -5,6 +5,7 @@ import {
   mkdir,
   rename as renamePath,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -12,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   GIT_DIFF_OUTPUT_BYTES,
   GIT_STATUS_OUTPUT_BYTES,
@@ -25,6 +26,11 @@ import {
   parseUnifiedDiff,
   type GitRunner,
 } from "../../server/git-inspection.js";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...fs, stat: vi.fn(fs.stat) };
+});
 
 const exec = promisify(execFile);
 const hash = "0123456789012345678901234567890123456789";
@@ -754,9 +760,21 @@ describe("bounded diff contract", () => {
         128,
       );
     };
-    await expect(
-      new GitInspectionService(nonrepo).status(tmpdir()),
-    ).resolves.toEqual({ kind: "not-repository" });
+    const metadata = vi
+      .mocked(stat)
+      .mockResolvedValueOnce({
+        isDirectory: () => true,
+      } as Awaited<ReturnType<typeof stat>>)
+      .mockRejectedValue(
+        Object.assign(new Error("absent"), { code: "ENOENT" }),
+      );
+    try {
+      await expect(
+        new GitInspectionService(nonrepo).status("/synthetic/nonrepo"),
+      ).resolves.toEqual({ kind: "not-repository" });
+    } finally {
+      metadata.mockReset();
+    }
     expect({
       GIT_TIMEOUT_MS,
       GIT_STATUS_OUTPUT_BYTES,

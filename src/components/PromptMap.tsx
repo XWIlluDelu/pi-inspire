@@ -64,7 +64,7 @@ export function PromptMap({
   onLoad,
   onNavigate,
 }: {
-  container?: React.RefObject<HTMLElement | null>;
+  container?: HTMLElement | null;
   mobileActive?: boolean;
   onDismissMobile?: () => void;
   turns: readonly UserTurnAnchor[];
@@ -135,7 +135,7 @@ export function PromptMap({
 
   useLayoutEffect(() => {
     const nav = navRef.current;
-    const root = container?.current;
+    const root = container;
     if (!nav || !root) return;
     if (mobileActive) {
       nav.style.removeProperty("left");

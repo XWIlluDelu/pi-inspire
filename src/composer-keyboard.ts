@@ -1,6 +1,6 @@
 import type { DesktopSendKeyPreference } from "../shared/contracts";
 
-const TOUCH_COMPOSER_QUERY = "(hover: none) and (pointer: coarse)";
+import { isTouchFirstDevice } from "./input-device";
 
 type ComposerKeyEvent = Pick<
   KeyboardEvent,
@@ -23,8 +23,7 @@ export function shouldSubmitComposerEnter(
     event.isComposing
   )
     return false;
-  const touchFirst = window.matchMedia(TOUCH_COMPOSER_QUERY).matches;
-  if (touchFirst) return false;
+  if (isTouchFirstDevice()) return false;
   const modifier = event.ctrlKey || event.metaKey;
   return desktopSendKey === "mod-enter" ? modifier : !modifier;
 }

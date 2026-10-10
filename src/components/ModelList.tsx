@@ -18,8 +18,53 @@ import {
   type ModelOption,
   modelIdentityKey,
 } from "../../shared/contracts";
+import { useSearchFocus } from "../use-search-focus";
+
+import {
+  fuzzySearchMatchRanges,
+  mergeSearchMatchRanges,
+  SearchMatchText,
+} from "./SearchMatchText";
 
 const EMPTY_IDENTITIES: readonly ModelIdentity[] = [];
+
+function modelSearchHighlights(model: ModelOption, query: string) {
+  const name = model.name ?? model.id;
+  const nameOffset = model.provider.length + model.id.length + 2;
+  const identityOffset = nameOffset + (model.name ?? "").length + 1;
+  const matches = fuzzySearchMatchRanges(
+    modelSearchText(model),
+    query,
+    (value) => value.toLocaleLowerCase(),
+  );
+  const project = (text: string, offsets: number[]) =>
+    mergeSearchMatchRanges(
+      offsets.flatMap((offset) =>
+        matches
+          .map((range) => ({
+            start: Math.max(0, range.start - offset),
+            end: Math.min(text.length, range.end - offset),
+          }))
+          .filter((range) => range.end > range.start),
+      ),
+    );
+  const idOffsets = [
+    model.provider.length + 1,
+    identityOffset + model.provider.length + 1,
+  ];
+  return {
+    provider: project(model.provider, [0, identityOffset]),
+    id: project(model.id, idOffsets),
+    name: project(
+      name,
+      model.name == null
+        ? idOffsets
+        : name === model.id
+          ? [nameOffset, ...idOffsets]
+          : [nameOffset],
+    ),
+  };
+}
 function fuzzyCategory(value: string, queryValue: string): number | null {
   const query = queryValue.trim().toLocaleLowerCase();
   if (!query) return 0;
@@ -117,6 +162,7 @@ export interface ModelListHandle {
     model: ModelIdentity,
     canFocus: () => boolean,
     complete: () => void,
+    options?: { action: string; preserveQuery: boolean },
   ) => void;
 }
 
@@ -173,21 +219,24 @@ export function ModelList({
   const prepared = useMemo(() => prepareModelOptions(models), [models]);
   const pendingFocus = useRef<{
     key: string;
+    action?: string;
+    preserveQuery?: boolean;
+    select?: boolean;
     canFocus: () => boolean;
     complete: () => void;
   } | null>(null);
   useImperativeHandle(
     controllerRef,
     () => ({
-      focusModel(model, canFocus, complete) {
+      focusModel(model, canFocus, complete, options) {
         pendingFocus.current?.complete();
         const key = modelIdentityKey(model);
         if (!prepared.some((option) => modelIdentityKey(option) === key)) {
           complete();
           return;
         }
-        pendingFocus.current = { key, canFocus, complete };
-        setQuery("");
+        pendingFocus.current = { key, canFocus, complete, ...options };
+        if (!options?.preserveQuery) setQuery("");
         setActiveModelKey(key);
       },
     }),
@@ -282,9 +331,7 @@ export function ModelList({
     items.push(item);
     visibleGroups.set(group, items);
   }
-  useEffect(() => {
-    if (autoFocus) inputRef.current?.focus({ preventScroll: true });
-  }, [autoFocus]);
+  useSearchFocus(autoFocus, inputRef, listRef);
   useEffect(() => {
     fallbackActiveIndex.current = active;
     const key = options[active] ? modelIdentityKey(options[active]) : null;
@@ -306,15 +353,28 @@ export function ModelList({
       return;
     }
     const index = indexes.get(request.key);
+    if (index === undefined && request.preserveQuery) {
+      pendingFocus.current = null;
+      request.complete();
+      inputRef.current?.focus();
+      return;
+    }
     if (index === undefined || activeModelKey !== request.key) return;
     const target = document
       .getElementById(`${id}-option-${index}`)
-      ?.querySelector<HTMLButtonElement>(
-        ".models-row-actions button:not(:disabled)",
+      ?.querySelector<HTMLElement>(
+        request.action === "edit"
+          ? ".models-name-action:not(:disabled)"
+          : request.action
+            ? `[data-model-action="${request.action}"]:not(:disabled)`
+            : ".models-row-actions [data-model-action]:not(:disabled)",
       );
+    // A just-revealed list may not have measured and mounted this row yet.
+    if (!target) return;
     pendingFocus.current = null;
     request.complete();
-    target?.focus();
+    target.focus();
+    if (request.select) target.click();
   });
   const navigate = (event: KeyboardEvent) => {
     if (event.defaultPrevented || event.nativeEvent.isComposing) return;
@@ -342,6 +402,53 @@ export function ModelList({
       event.preventDefault();
       onSelect(options[active]!);
     } else onKeyDown?.(event);
+  };
+  const navigateAction = (event: KeyboardEvent, index: number) => {
+    const target = event.target;
+    if (
+      event.defaultPrevented ||
+      event.nativeEvent.isComposing ||
+      !(target instanceof HTMLElement) ||
+      !target.dataset.modelAction ||
+      target.matches(":disabled")
+    )
+      return;
+    const radio = target instanceof HTMLInputElement && target.type === "radio";
+    const previous =
+      event.key === "ArrowUp" || (radio && event.key === "ArrowLeft");
+    const next =
+      event.key === "ArrowDown" || (radio && event.key === "ArrowRight");
+    if (!previous && !next && !["Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const destination =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? options.length - 1
+          : radio
+            ? (index + (previous ? -1 : 1) + options.length) % options.length
+            : Math.max(
+                0,
+                Math.min(index + (previous ? -1 : 1), options.length - 1),
+              );
+    const model = options[destination];
+    if (!model) return;
+    if (destination === index) {
+      if (radio) target.click();
+      return;
+    }
+    // Native radio navigation only sees mounted rows. Route through the full
+    // filtered grid, mount/scroll the destination, then focus and select it.
+    pendingFocus.current?.complete();
+    pendingFocus.current = {
+      key: modelIdentityKey(model),
+      action: target.dataset.modelAction,
+      select: radio,
+      canFocus: () => true,
+      complete: () => {},
+    };
+    setKeyboardActive(true);
+    activate(destination);
   };
   return (
     <>
@@ -385,9 +492,14 @@ export function ModelList({
         data-keyboard-active={keyboardActive}
         id={`${id}-list`}
         tabIndex={grid ? undefined : -1}
+        onKeyDown={grid ? undefined : navigate}
         {...{
           role: grid ? "grid" : "listbox",
           "aria-label": "Available models",
+          "aria-activedescendant":
+            !grid && keyboardActive && options[active]
+              ? `${id}-option-${active}`
+              : undefined,
           "aria-rowcount": grid ? options.length : undefined,
         }}
         className={`model-picker__list ${options.length ? "" : "model-picker__list--empty"}`}
@@ -426,11 +538,22 @@ export function ModelList({
                       aria-hidden
                       style={style}
                     >
-                      {group.provider}
+                      <SearchMatchText
+                        text={group.provider}
+                        ranges={
+                          group.common
+                            ? []
+                            : modelSearchHighlights(group.models[0]!, query)
+                                .provider
+                        }
+                      />
                     </div>
                   );
                 const { model, index, key } = row;
                 const selected = key === currentKey;
+                const name = model.name ?? model.id;
+                const showId = !grid || name !== model.id;
+                const matches = modelSearchHighlights(model, query);
                 return (
                   <div
                     key={key}
@@ -459,6 +582,9 @@ export function ModelList({
                       activate(index);
                     }}
                     onFocus={grid ? () => activate(index) : undefined}
+                    onKeyDown={
+                      grid ? (event) => navigateAction(event, index) : undefined
+                    }
                     onClick={grid ? undefined : () => onSelect?.(model)}
                   >
                     <span
@@ -467,7 +593,7 @@ export function ModelList({
                     >
                       <span className="model-picker__name">
                         <span className="model-picker__name-text">
-                          {model.name ?? model.id}
+                          <SearchMatchText text={name} ranges={matches.name} />
                         </span>
                         {model.virtual ? (
                           <span className="model-picker__badge model-picker__badge--neutral">
@@ -476,10 +602,25 @@ export function ModelList({
                         ) : null}
                         {renderNameAction?.(model, index === active)}
                       </span>
-                      <span className="model-picker__id">
-                        {group.common || grid ? `${model.provider}/` : ""}
-                        {model.id}
-                      </span>
+                      {group.common || showId ? (
+                        <span className="model-picker__id">
+                          {group.common ? (
+                            <>
+                              <SearchMatchText
+                                text={model.provider}
+                                ranges={matches.provider}
+                              />
+                              {showId ? "/" : ""}
+                            </>
+                          ) : null}
+                          {showId ? (
+                            <SearchMatchText
+                              text={model.id}
+                              ranges={matches.id}
+                            />
+                          ) : null}
+                        </span>
+                      ) : null}
                     </span>
                     {renderActions ? (
                       <div

@@ -15,8 +15,8 @@ import { highlightSource, languageForFile } from "../syntax-highlighting";
 import { useCopied } from "../use-copied";
 import { ContextPaneState } from "./ContextPaneState";
 import type { ContextPaneView } from "./context-pane-view";
-import { ImagePreview } from "./ImagePreview";
 import { DocumentPreview } from "./DocumentPreview";
+import { ImagePreview } from "./ImagePreview";
 import { NotebookPreview } from "./NotebookPreview";
 import { PdfPreview } from "./PdfPreview";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
@@ -99,7 +99,7 @@ function SourceCodePreview({
   }, [jump]);
   return (
     <div
-      className="source-view"
+      className="source-view source-reader"
       ref={rootRef}
       tabIndex={0}
       role="region"
@@ -127,11 +127,9 @@ type FileViewMode = "preview" | "source";
 
 function FileViewControl({
   mode,
-  canToggle,
   onChange,
 }: {
   mode: FileViewMode;
-  canToggle: boolean;
   onChange: (mode: FileViewMode) => void;
 }) {
   const target = mode === "preview" ? "source" : "preview";
@@ -139,7 +137,6 @@ function FileViewControl({
     <button
       type="button"
       className="file-detail-header__view"
-      disabled={!canToggle}
       onClick={() => onChange(target)}
     >
       {target === "source" ? "Source" : "Preview"}
@@ -345,7 +342,7 @@ export function ResourcePreviewContent({
         {!invalid ? (
           <button
             type="button"
-            className="res__more res__state-action"
+            className="res__more button--quiet res__state-action"
             onClick={() =>
               void store.openResource(
                 preview.reference,
@@ -399,11 +396,14 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
     descriptor?.kind === "text" &&
     preview?.status === "ready" &&
     preview.text !== undefined;
-  const referencedLine = state.selectedResourceWorkspacePath
-    ? null
-    : resourceReferenceLine(
-        preview?.reference ?? state.selectedResourceReference ?? "",
-      );
+  // An exact workspace filename may literally end in ":12"; a resolved
+  // path for a citation is not a reason to discard its line navigation.
+  const referencedLine =
+    state.selectedResourceWorkspacePath === state.selectedResourceReference
+      ? null
+      : resourceReferenceLine(
+          preview?.reference ?? state.selectedResourceReference ?? "",
+        );
   const defaultView: FileViewMode =
     sourceOnly || (canToggle && referencedLine) ? "source" : "preview";
   const viewMode =
@@ -540,13 +540,15 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
                 : "Enable interaction"}
             </button>
           ) : null}
-          <FileViewControl
-            mode={viewMode}
-            canToggle={canToggle}
-            onChange={(mode) => {
-              if (descriptor) setFileView({ resourceId: descriptor.id, mode });
-            }}
-          />
+          {canToggle ? (
+            <FileViewControl
+              mode={viewMode}
+              onChange={(mode) => {
+                if (descriptor)
+                  setFileView({ resourceId: descriptor.id, mode });
+              }}
+            />
+          ) : null}
         </div>
       </div>
       <div className="file-preview__content">

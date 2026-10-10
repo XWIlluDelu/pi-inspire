@@ -637,7 +637,18 @@ describe("Files pane", () => {
     expect(
       within(pane).getByRole("heading", { name: "proj" }),
     ).toBeInTheDocument();
-    fireEvent.click(await within(pane).findByRole("button", { name: "src" }));
+    expect(
+      pane.querySelector('.recent-file[title="demo.html"] > svg'),
+    ).toHaveClass("lucide-file-code-corner");
+    const directory = await within(pane).findByRole("button", { name: "src" });
+    expect(directory.querySelector(".lucide-folder")).not.toBeNull();
+    fireEvent.click(directory);
+    const fileIcon = (
+      await within(pane).findByRole("button", { name: "long.ts" })
+    ).querySelector("svg");
+    expect(fileIcon).toHaveClass("lucide-file-code-corner");
+    expect(fileIcon).toHaveAttribute("width", "13");
+    expect(fileIcon).toHaveAttribute("aria-hidden", "true");
     const browserScroller = pane.querySelector<HTMLElement>(
       ".files-browser__scroll",
     )!;
@@ -655,9 +666,7 @@ describe("Files pane", () => {
     expect(
       await within(pane).findByRole("region", { name: "File source" }),
     ).toHaveAttribute("data-pane-scroll-active", "true");
-    expect(
-      within(pane).getByRole("button", { name: "Preview" }),
-    ).toBeDisabled();
+    expect(within(pane).queryByRole("button", { name: "Preview" })).toBeNull();
     expect(
       within(pane).getByRole("link", { name: "Download long.ts" }),
     ).toHaveAttribute(
@@ -690,9 +699,24 @@ describe("Files pane", () => {
       name: "Search workspace files",
     });
     fireEvent.change(search, { target: { value: "main" } });
+    const match = await within(pane).findByRole("button", {
+      name: /main\.ts.*src\/main\.ts/,
+    });
+    expect(match).toBeInTheDocument();
+    expect(match.querySelector("svg")).toHaveClass("lucide-file-code-corner");
+    expect(match.querySelector(".workspace-tree__path")).toHaveAttribute(
+      "title",
+      "src/main.ts",
+    );
+    expect(match.querySelector(".resource-path__visible")).toHaveTextContent(
+      /^src$/,
+    );
+    expect(match).toHaveAttribute("title", "src/main.ts");
+    expect(match.querySelector(".search-match")).toHaveTextContent(/^main$/);
+    fireEvent.click(match);
     expect(
       await within(pane).findByRole("button", {
-        name: /main\.ts.*src\/main\.ts/,
+        name: "Copy path src/main.ts",
       }),
     ).toBeInTheDocument();
   });
@@ -879,6 +903,17 @@ describe("Files pane", () => {
       });
       const pane = await screen.findByRole("complementary", {
         name: "Context panel",
+      });
+      expect(
+        await within(pane).findByRole("region", { name: "File source" }),
+      ).toHaveTextContent("# Previewed notes");
+      act(() => {
+        FakeWebSocket.instances.at(-1)?.emit({
+          type: "snapshot",
+          data: activeSnapshot({
+            transcriptPage: { revision: 2, appendFromRevision: 2 },
+          }),
+        });
       });
       expect(
         await within(pane).findByRole("region", { name: "File source" }),
@@ -1222,6 +1257,44 @@ describe("Files pane", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("reauthorizes a selected HTML file without inheriting its execution lease", async () => {
+    render(<App />);
+    await act(async () => {
+      await store.openResource("demo.html");
+    });
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Enable interaction" }),
+    );
+    await waitFor(() =>
+      expect(within(pane).getByTitle("Preview demo.html")).toHaveAttribute(
+        "sandbox",
+        "allow-scripts",
+      ),
+    );
+    act(() => {
+      FakeWebSocket.instances.at(-1)?.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          transcriptPage: {
+            revision: 2,
+            appendFromRevision: 2,
+            incarnation: "projection-2",
+          },
+        }),
+      });
+    });
+    await waitFor(() => expect(htmlReleases).toHaveLength(1));
+    expect(await within(pane).findByTitle("Preview demo.html")).toHaveAttribute(
+      "sandbox",
+      "",
+    );
+    expect(store.getState().fileBrowserView).toBe("preview");
+    expect(htmlStarts).toBe(1);
+  });
+
   it("keeps failed or truncated HTML static, with a retryable explicit start", async () => {
     render(<App />);
     await act(async () => {
@@ -1336,6 +1409,11 @@ describe("Files pane", () => {
       pane.querySelector(".notebook-preview__cell--code code"),
     ).toHaveTextContent("print('hello')");
     expect(within(pane).getByText("hello")).toBeInTheDocument();
+    expect(
+      pane.querySelector(
+        ".notebook-preview__cell--markdown .notebook-preview__prompt",
+      ),
+    ).toBeEmptyDOMElement();
     fireEvent.click(within(pane).getByRole("button", { name: "Source" }));
     expect(
       within(pane).getByRole("region", { name: "File source" }),

@@ -15,6 +15,7 @@ import { ActivityBar } from "../../src/components/ActivityBar";
 import { Composer } from "../../src/components/Composer";
 import { deleteSessionDraft, sessionDraft } from "../../src/session-drafts";
 import { store } from "../../src/store";
+import { mockTouchFirstDevice } from "./fixtures/touch-device";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -223,9 +224,8 @@ describe("composer attachments", () => {
     clearLeftovers();
     render(<Composer />);
     await attachFile();
-    // chip appears with name/type/size once the upload resolves
-    expect(await screen.findByText("notes.txt")).toBeInTheDocument();
-    expect(screen.getByText(/text\/plain · 5 B/)).toBeInTheDocument();
+    const attachment = (await screen.findByText("notes.txt")).closest("li");
+    expect(attachment).toHaveAttribute("title", "notes.txt\ntext/plain · 5 B");
 
     typeDraft("check this");
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
@@ -654,7 +654,7 @@ describe("composer-adjacent status and queued controls", () => {
     const socket = FakeWebSocket.instances.at(-1)!;
     act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
 
-    render(<ActivityBar />);
+    render(<ActivityBar onJumpToPending={() => undefined} />);
     act(() =>
       socket.emit({
         type: "tool_execution_start",
@@ -1001,6 +1001,16 @@ describe("caret completion", () => {
     const fileOption = await screen.findByRole("option", {
       name: /index\.ts.*src\/index\.ts/,
     });
+    expect(fileOption.querySelector("svg")).toHaveClass(
+      "lucide-file-code-corner",
+    );
+    expect(fileOption.querySelector(".search-match")).toHaveTextContent(
+      /^ind$/,
+    );
+    expect(
+      fileOption.querySelector(".resource-path__visible"),
+    ).toHaveTextContent(/^src$/);
+    expect(fileOption).toHaveAttribute("title", "src/index.ts");
     const fileList = screen.getByRole("listbox", {
       name: "Project file completions",
     });
@@ -1086,6 +1096,12 @@ describe("caret completion", () => {
     const commandOption = await screen.findByRole("option", {
       name: /\/compact.*Compact the current context/,
     });
+    expect(
+      commandOption.querySelector(".completion__arguments"),
+    ).toHaveTextContent("[instructions]");
+    expect(commandOption.querySelector(".completion__title")).toHaveTextContent(
+      "/compact [instructions]",
+    );
     const commandList = screen.getByRole("listbox", {
       name: "Slash command completions",
     });
@@ -1409,6 +1425,32 @@ describe("session-owned composer surfaces", () => {
 });
 
 describe("project file picker", () => {
+  it("opens on touch without focusing search and keeps input focus through result updates", async () => {
+    const touch = mockTouchFirstDevice();
+    try {
+      clearLeftovers();
+      render(<Composer />);
+      const trigger = screen.getByRole("button", { name: "Add project files" });
+      fireEvent.click(trigger);
+      const dialog = await screen.findByRole("dialog", {
+        name: "Add project files",
+      });
+      const input = screen.getByRole("combobox", {
+        name: "Search project files",
+      });
+      expect(dialog).toHaveFocus();
+      input.focus();
+      fireEvent.change(input, { target: { value: "index" } });
+      await screen.findByRole("option", { name: /index\.ts/ });
+      expect(input).toHaveFocus();
+      fireEvent.keyDown(input, { key: "Escape" });
+      expect(trigger).toHaveFocus();
+      clearLeftovers();
+    } finally {
+      touch.mockRestore();
+    }
+  });
+
   it("adds a searched project file and sends it with the prompt", async () => {
     clearLeftovers();
     render(<Composer />);
@@ -1418,6 +1460,16 @@ describe("project file picker", () => {
     });
 
     const row = await screen.findByRole("option", { name: /index\.ts/ });
+    expect(row.querySelector("svg")).toHaveClass("lucide-file-code-corner");
+    expect(row.querySelector(".search-match")).toHaveTextContent(/^index$/);
+    expect(row.querySelector(".resource-path__visible")).toHaveTextContent(
+      /^src$/,
+    );
+    expect(row.querySelector(".picker__path")).toHaveAttribute(
+      "title",
+      "src/index.ts",
+    );
+    expect(row).toHaveAttribute("title", "src/index.ts");
     fireEvent.click(row);
     expect(screen.getByLabelText("Remove src/index.ts")).toBeInTheDocument();
 

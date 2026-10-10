@@ -255,12 +255,14 @@ test("hidden inline references send unchanged text; only explicit picker selecti
     .getByRole("button", { name: "Show hidden files" })
     .click();
   await expect(input).toBeFocused();
-  await completion
-    .getByRole("option", {
-      name: "config.txt .settings/config.txt",
-      exact: true,
-    })
-    .click();
+  const hiddenOption = completion.getByRole("option", {
+    name: "config.txt, .settings/config.txt",
+    exact: true,
+  });
+  await expect(
+    hiddenOption.locator(".completion__hint .resource-path__visible"),
+  ).toHaveText(".settings");
+  await hiddenOption.click();
   const text = 'Read @".settings/config.txt" ';
   await expect(input).toHaveValue(text);
   const chips = page.getByRole("list", { name: "Referenced project files" });

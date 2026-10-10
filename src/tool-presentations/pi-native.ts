@@ -1,6 +1,6 @@
 import { stripTerminalSequences } from "../ansi";
 import { parseUnifiedDiff } from "../diff";
-import { toolResultText } from "../events";
+import { type ChatMessage, toolResultText } from "../events";
 import type {
   ToolImageMimeType,
   ToolListItem,
@@ -801,6 +801,22 @@ function lsRule(): ToolPresentationRule {
   };
 }
 
+/** Result-only imports use the same native output and recorded-file reader. */
+export function codeModeResultBlocks(
+  result: ChatMessage,
+): ToolPresentationBlock[] {
+  const blocks: ToolPresentationBlock[] = [{ type: "codemode-result", result }];
+  const fullOutputPath = record(result.details)?.fullOutputPath;
+  if (typeof fullOutputPath === "string" && fullOutputPath)
+    blocks.push({
+      type: "notice",
+      text: "Output truncated",
+      tone: "warning",
+      action: { label: "View full output", reference: fullOutputPath },
+    });
+  return blocks;
+}
+
 function codemodeRule(): ToolPresentationRule {
   return {
     id: `${PI_RULE_PREFIX}.codemode`,
@@ -809,38 +825,7 @@ function codemodeRule(): ToolPresentationRule {
       if (!args || typeof args.code !== "string") return null;
       return presentation(
         summary([{ kind: "text", text: "JavaScript" }]),
-        () => {
-          if (!input.result) return [];
-          const blocks: ToolPresentationBlock[] = [];
-          const output = resultTextBlock(input);
-          if (output) blocks.push(output);
-          if (Array.isArray(input.result.content)) {
-            input.result.content.forEach((part, index) => {
-              if (record(part)?.type !== "image") return;
-              const image = toolResultImage(
-                input.result!,
-                index,
-                "Script result image",
-              );
-              blocks.push(
-                image ?? {
-                  type: "notice",
-                  text: "Image unavailable (unsupported or invalid image data)",
-                  tone: "warning",
-                },
-              );
-            });
-          }
-          const fullOutputPath = detailsOf(input)?.fullOutputPath;
-          if (typeof fullOutputPath === "string" && fullOutputPath)
-            blocks.push({
-              type: "notice",
-              text: "Output truncated",
-              tone: "warning",
-              action: { label: "View full output", reference: fullOutputPath },
-            });
-          return blocks;
-        },
+        () => (input.result ? codeModeResultBlocks(input.result) : []),
       );
     },
   };

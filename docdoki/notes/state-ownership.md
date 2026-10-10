@@ -389,7 +389,7 @@ restored the opener on Linux / Node 22.23.2. Source: `src/use-modal-focus.ts` an
 
 ## Maintainability review
 
-Pi behavior was checked against the public 1.0.0 compatibility dependency and upstream
+The Pi 1.0 review checked native behavior. Pi behavior was checked against the public 1.0.0 compatibility dependency and upstream
 [`031b24a`](https://github.com/earendil-works/pi/tree/031b24aa6425067253cb94095fb806a9df9d619c).
 
 ### Consolidated responsibilities

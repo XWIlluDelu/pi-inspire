@@ -180,6 +180,55 @@ afterEach(() => {
 });
 
 describe("new-session start surface", () => {
+  it("keeps directory Enter from creating a session without taking message autofocus or submission", async () => {
+    act(() => {
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: { active: null, runState: "idle", sessionStatuses: {} },
+      });
+    });
+    render(<Welcome />);
+    const browse = screen.getByRole("button", {
+      name: "Browse host directories",
+    });
+    const directory = screen.getByRole("textbox", {
+      name: "Project directory",
+    });
+    const message = screen.getByRole("textbox", { name: "First message" });
+    expect(message).toHaveFocus();
+    expect(browse).toHaveAttribute("type", "button");
+
+    fireEvent.change(directory, { target: { value: "/proj" } });
+    fireEvent.change(message, { target: { value: "Review calibration" } });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Start session" }),
+      ).toBeEnabled(),
+    );
+
+    const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
+    try {
+      directory.focus();
+      expect(fireEvent.keyDown(directory, { key: "Enter" })).toBe(false);
+      expect(start).not.toHaveBeenCalled();
+      expect(message).toHaveValue("Review calibration");
+      expect(
+        fireEvent.keyDown(directory, { key: "Enter", isComposing: true }),
+      ).toBe(true);
+      expect(fireEvent.keyDown(directory, { key: "Enter", keyCode: 229 })).toBe(
+        true,
+      );
+      message.focus();
+      fireEvent.keyDown(message, {
+        key: "Enter",
+        ctrlKey: store.getState().prefs.desktopSendKey === "mod-enter",
+      });
+      await waitFor(() => expect(start).toHaveBeenCalledWith("/proj", {}));
+    } finally {
+      start.mockRestore();
+    }
+  });
+
   it("expands with the first message and sends explicit model/effort startup choices", async () => {
     render(<Welcome />);
     const message = screen.getByLabelText(

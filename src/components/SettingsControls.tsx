@@ -6,28 +6,22 @@ export interface SettingsChoice<T extends string> {
   icon?: ReactNode;
 }
 
-/** A scalar setting stays inline; wide controls may use the row's full width. */
+/** Fields wrap their control below the label when the available space is too small. */
 export function SettingField({
   label,
   description,
   children,
-  wide = false,
   status,
   className,
 }: {
   label: string;
   description?: ReactNode;
   children: ReactNode;
-  wide?: boolean;
   status?: ReactNode;
   className?: string;
 }) {
   return (
-    <div
-      className={`settings__field${wide ? " settings__field--wide" : ""}${
-        className ? ` ${className}` : ""
-      }`}
-    >
+    <div className={`settings__field${className ? ` ${className}` : ""}`}>
       <div className="settings__field-info">
         <span className="settings__field-label">{label}</span>
         {description ? (

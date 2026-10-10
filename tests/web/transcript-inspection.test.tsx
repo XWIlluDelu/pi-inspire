@@ -7,11 +7,16 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ExtensionDisplayDock } from "../../src/components/ExtensionDisplays";
-import { Transcript } from "../../src/components/Transcript";
+import {
+  Transcript,
+  type TranscriptNavigation,
+} from "../../src/components/Transcript";
 import { findLiteralMatches } from "../../src/components/transcript-search";
 import { store } from "../../src/store";
+import { pendingQueues } from "./pending-fixtures";
 
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -24,6 +29,55 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+describe("Pending navigation", () => {
+  it("targets and focuses the current queue without using latest-follow", () => {
+    const ref = createRef<TranscriptNavigation>();
+    const props = {
+      ref,
+      messages: [],
+      streaming: false,
+      thinkingVisibility: "collapsed" as const,
+      toolVisibility: "collapsed" as const,
+    };
+    const view = render(
+      <Transcript
+        {...props}
+        sessionId="first"
+        queue={pendingQueues(["First queue"])}
+      />,
+    );
+    const first = screen.getByRole("region", { name: "Pending input" });
+    const scroller = screen.getByRole("log");
+    scroller.style.scrollPaddingTop = "56px";
+    scroller.scrollTop = 20;
+    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue({
+      top: 50,
+    } as DOMRect);
+    vi.spyOn(first, "getBoundingClientRect").mockReturnValue({
+      top: 200,
+    } as DOMRect);
+    act(() => ref.current!.jumpToPending());
+    expect(scroller.scrollTop).toBe(114);
+    expect(first.scrollIntoView).not.toHaveBeenCalled();
+    expect(first).toHaveFocus();
+
+    view.rerender(
+      <Transcript
+        {...props}
+        sessionId="second"
+        queue={pendingQueues(["Second queue"])}
+      />,
+    );
+    const second = screen.getByRole("region", { name: "Pending input" });
+    expect(second).not.toBe(first);
+    act(() => ref.current!.jumpToPending());
+    expect(second).toHaveFocus();
+    view.rerender(<Transcript {...props} sessionId="second" />);
+    expect(screen.queryByRole("region", { name: "Pending input" })).toBeNull();
+    act(() => ref.current!.jumpToPending());
+  });
 });
 
 describe("settled transcript search", () => {
@@ -51,9 +105,6 @@ describe("settled transcript search", () => {
     const input = screen.getByRole("searchbox", {
       name: "Search conversation",
     });
-    const log = screen.getByRole("log");
-    expect(search.parentElement).toHaveClass("transcript-wrap");
-    expect(search.nextElementSibling).toBe(log);
     expect(search).not.toHaveClass("transcript-search--active");
 
     fireEvent.change(input, { target: { value: "shared" } });
@@ -89,6 +140,35 @@ describe("settled transcript search", () => {
 
     fireEvent.change(input, { target: { value: "" } });
     expect(search).not.toHaveClass("transcript-search--active");
+  });
+
+  it("desktop Escape releases input focus without clearing search ownership", () => {
+    render(
+      <Transcript
+        sessionId="desktop-escape"
+        messages={[{ role: "user", content: "find this prompt", timestamp: 1 }]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+    const input = screen.getByRole("searchbox", {
+      name: "Search conversation",
+    });
+    fireEvent.change(input, { target: { value: "find" } });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Next transcript match" }),
+    );
+    input.focus();
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(input).not.toHaveFocus();
+    expect(input).toHaveValue("find");
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("1 of 1");
+    expect(
+      screen.getByRole("button", { name: "Jump to latest" }),
+    ).toBeInTheDocument();
   });
 
   it("opens and closes mobile search explicitly without hiding an active query", async () => {

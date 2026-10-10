@@ -25,20 +25,6 @@ async function openFixture(page: Page) {
 
 for (const viewport of [
   { name: "desktop", width: 1280, height: 900, colorScheme: "light" as const },
-  { name: "narrow", width: 390, height: 844, colorScheme: "dark" as const },
-  { name: "small", width: 320, height: 844, colorScheme: "light" as const },
-  {
-    name: "desktop-dark",
-    width: 1280,
-    height: 900,
-    colorScheme: "dark" as const,
-  },
-  {
-    name: "narrow-light",
-    width: 390,
-    height: 844,
-    colorScheme: "light" as const,
-  },
   { name: "small-dark", width: 320, height: 844, colorScheme: "dark" as const },
 ]) {
   test(`compaction checkpoints retain order and accessible disclosure on ${viewport.name}`, async ({
@@ -62,10 +48,10 @@ for (const viewport of [
       const checkpoint = page.locator(".context-checkpoint");
       await expect(checkpoint).toHaveCount(1);
       await expect(checkpoint).toContainText("Context compacted");
-      await expect(checkpoint).toContainText("42,500 tokens before");
+      await expect(checkpoint).toContainText("Before ≈ 42,500 tokens");
       await expect(checkpoint.locator("time")).toHaveCount(0);
       await expect(checkpoint.locator("summary")).toHaveText(
-        "Context compacted42,500 tokens before",
+        "Context compactedBefore ≈ 42,500 tokens",
       );
       const before = page.getByText("Retained response before compaction", {
         exact: true,

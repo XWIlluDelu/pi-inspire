@@ -1,0 +1,45 @@
+.choice-input {
+  appearance: none;
+  display: inline-block;
+  position: relative;
+  box-sizing: border-box;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-xs);
+  background: var(--bg-control);
+  color: var(--accent-fill);
+  cursor: inherit;
+}
+.choice-input[type=radio] { border-radius: var(--radius-pill); }
+.choice-input:checked {
+  border-color: var(--accent-fill);
+  background: var(--accent-tint);
+}
+.choice-input:checked::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+}
+.choice-input[type=checkbox]:checked::before {
+  width: 7px;
+  height: 4px;
+  border-left: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-1px) rotate(-45deg);
+}
+.choice-input[type=radio]:checked::before {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+}
+@media (forced-colors: active) {
+  .choice-input { appearance: auto; }
+  .choice-input:checked::before { content: none; }
+}
+.choice-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.choice-input:disabled { opacity: 0.45; cursor: default; }

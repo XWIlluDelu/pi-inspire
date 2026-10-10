@@ -129,6 +129,91 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("terminal creation controls", () => {
+  const profiles = [
+    { id: "bash", label: "Bash", available: true, isDefault: true },
+    { id: "zsh", label: "Zsh", available: true, isDefault: false },
+  ];
+
+  it("opens profile selection on compact New without creating until a profile is chosen", async () => {
+    vi.spyOn(window, "matchMedia").mockReturnValue({
+      matches: true,
+    } as MediaQueryList);
+    api.terminals.mockResolvedValue({ ...catalog([]), profiles });
+    api.createTerminal.mockResolvedValue(terminal("new zsh"));
+    render(<TerminalPane cwd="/A" />);
+    const empty = await screen.findByText("Project terminal", { exact: true });
+    fireEvent.click(
+      within(empty.closest(".terminal-empty")!).getByRole("button", {
+        name: "New terminal",
+      }),
+    );
+    const picker = screen
+      .getByLabelText("Choose terminal profile")
+      .closest("details")!;
+    expect(picker.open).toBe(true);
+    expect(screen.getByLabelText("Choose terminal profile")).toHaveFocus();
+    expect(api.createTerminal).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByLabelText("Choose terminal profile"), {
+      key: "Escape",
+    });
+    expect(picker.open).toBe(false);
+    fireEvent.click(
+      within(empty.closest(".terminal-empty")!).getByRole("button", {
+        name: "New terminal",
+      }),
+    );
+    fireEvent.click(within(picker).getByRole("button", { name: "Zsh" }));
+    await screen.findByRole("button", { name: "new zsh", pressed: true });
+    expect(api.createTerminal).toHaveBeenCalledWith({
+      cwd: "/A",
+      profileId: "zsh",
+    });
+  });
+
+  it.each([false, true])(
+    "creates directly when only one available profile exists (compact=%s)",
+    async (compact) => {
+      vi.spyOn(window, "matchMedia").mockReturnValue({
+        matches: compact,
+      } as MediaQueryList);
+      api.terminals.mockResolvedValue({
+        ...catalog([]),
+        profiles: [profiles[0], { ...profiles[1], available: false }],
+      });
+      api.createTerminal.mockResolvedValue(terminal("new bash"));
+      render(<TerminalPane cwd="/A" />);
+      await screen.findByText("Project terminal", { exact: true });
+      expect(screen.queryByLabelText("Choose terminal profile")).toBeNull();
+      fireEvent.click(
+        within(
+          screen
+            .getByText("Project terminal", { exact: true })
+            .closest(".terminal-empty")!,
+        ).getByRole("button", { name: "New terminal" }),
+      );
+      await screen.findByRole("button", { name: "new bash", pressed: true });
+      expect(api.createTerminal).toHaveBeenCalledWith({ cwd: "/A" });
+    },
+  );
+
+  it("keeps desktop New as default creation while retaining explicit profile choice", async () => {
+    api.terminals.mockResolvedValue({ ...catalog([]), profiles });
+    api.createTerminal.mockResolvedValue(terminal("new bash"));
+    render(<TerminalPane cwd="/A" />);
+    await screen.findByLabelText("Choose terminal profile");
+    fireEvent.click(
+      within(
+        screen
+          .getByText("Project terminal", { exact: true })
+          .closest(".terminal-empty")!,
+      ).getByRole("button", { name: "New terminal" }),
+    );
+    await screen.findByRole("button", { name: "new bash", pressed: true });
+    expect(api.createTerminal).toHaveBeenCalledWith({ cwd: "/A" });
+  });
+});
+
 describe("terminal project ownership", () => {
   it("restores the selected tab after the initial catalog loads", async () => {
     sessionStorage.setItem("inspire:terminal-active:/A", "A second");
@@ -163,9 +248,7 @@ describe("terminal project ownership", () => {
     const dialog = await screen.findByRole("dialog", {
       name: "Terminal settings",
     });
-    await within(dialog).findByRole("switch", {
-      name: "Persist terminal output",
-    });
+    await within(dialog).findByRole("group", { name: "Terminal font size" });
     expect(view.container).not.toContainElement(dialog);
     const close = within(dialog).getByRole("button", {
       name: "Close terminal settings",
@@ -206,6 +289,121 @@ describe("terminal project ownership", () => {
     fireEvent.click(within(projects).getByRole("button", { name: /B shell/ }));
     await screen.findByRole("button", { name: "B shell", pressed: true });
     expect(more).not.toHaveAttribute("open");
+  });
+
+  it("emphasizes literal case-insensitive hits across project, terminal and command without changing catalog order", async () => {
+    const values = [
+      {
+        ...terminal("Dev server", "/DevLab"),
+        currentCommand: "npm run dev -- --host",
+      },
+      {
+        ...terminal("Dev worker", "/DevLab"),
+        currentCommand: "node worker.js",
+      },
+      {
+        ...terminal("Trainer", "/ModelLab"),
+        currentCommand: "python train.py",
+      },
+    ];
+    api.terminals.mockImplementation(async (cwd?: string) =>
+      catalog(cwd ? values.filter((t) => t.projectCwd === cwd) : values),
+    );
+    render(<TerminalPane cwd="/DevLab" />);
+    await screen.findByRole("button", { name: "Dev server", pressed: true });
+    screen.getByLabelText("Terminal actions").closest("details")!.open = true;
+    const projects = screen
+      .getByLabelText("Terminals in all projects")
+      .closest("details")!;
+    projects.open = true;
+    fireEvent(projects, new Event("toggle"));
+    await within(projects).findByRole("button", { name: /Trainer/ });
+    fireEvent.change(screen.getByLabelText("Find terminal or project"), {
+      target: { value: "DEV" },
+    });
+    expect(
+      Array.from(
+        projects.querySelectorAll(".search-match"),
+        (n) => n.textContent,
+      ),
+    ).toEqual(["Dev", "Dev", "dev", "Dev"]);
+    expect(
+      within(projects).queryByRole("button", { name: /Trainer/ }),
+    ).toBeNull();
+    expect(
+      within(projects)
+        .getAllByRole("button")
+        .map((n) => n.textContent),
+    ).toEqual(["Dev servernpm run dev -- --host", "Dev workernode worker.js"]);
+    fireEvent.change(screen.getByLabelText("Find terminal or project"), {
+      target: { value: "" },
+    });
+    expect(projects.querySelector(".search-match")).toBeNull();
+    expect(projects.querySelectorAll(".terminal-menu__project")).toHaveLength(
+      2,
+    );
+    expect(within(projects).getByText("Current")).toBeVisible();
+  });
+
+  it("shows stable parent cues for colliding projects and parent-only search hits", async () => {
+    const values = [
+      terminal("Atlas dev", "/Clients/Atlas"),
+      terminal("Atlas logs", "/Clients/Atlas"),
+      terminal("Atlas demo", "C:\\Samples\\Atlas\\"),
+      terminal("Orion dev", "/Clients/Orion"),
+      terminal("Orion logs", "/Clients/Orion"),
+    ];
+    api.terminals.mockImplementation(async (cwd?: string) =>
+      catalog(cwd ? values.filter((t) => t.projectCwd === cwd) : values),
+    );
+    render(<TerminalPane cwd="/Clients/Atlas" />);
+    await screen.findByRole("button", { name: "Atlas dev", pressed: true });
+    screen.getByLabelText("Terminal actions").closest("details")!.open = true;
+    const projects = screen
+      .getByLabelText("Terminals in all projects")
+      .closest("details")!;
+    projects.open = true;
+    fireEvent(projects, new Event("toggle"));
+    await within(projects).findByRole("button", { name: /Orion logs/ });
+    const contexts = () =>
+      Array.from(
+        projects.querySelectorAll(".terminal-menu__project-context"),
+        (n) => n.textContent,
+      );
+    expect(contexts()).toEqual(["@Clients", "@Samples"]);
+    const input = screen.getByLabelText("Find terminal or project");
+    fireEvent.change(input, { target: { value: "CLIENTS" } });
+    expect(contexts()).toEqual(["@Clients", "@Clients"]);
+    expect(
+      Array.from(
+        projects.querySelectorAll(
+          ".terminal-menu__project-context .search-match",
+        ),
+        (n) => n.textContent,
+      ),
+    ).toEqual(["Clients", "Clients"]);
+    expect(
+      within(projects).queryByRole("button", { name: /Atlas demo/ }),
+    ).toBeNull();
+    expect(within(projects).getByText("Current")).toBeVisible();
+    fireEvent.change(input, { target: { value: "Orion" } });
+    expect(contexts()).toEqual([]);
+    expect(
+      Array.from(
+        projects.querySelectorAll(".search-match"),
+        (n) => n.textContent,
+      ),
+    ).toEqual(["Orion", "Orion", "Orion"]);
+    fireEvent.change(input, { target: { value: "" } });
+    expect(contexts()).toEqual(["@Clients", "@Samples"]);
+    expect(projects.querySelector(".search-match")).toBeNull();
+    fireEvent.click(
+      within(projects).getByRole("button", { name: /Atlas demo/ }),
+    );
+    await screen.findByRole("button", { name: "Atlas demo", pressed: true });
+    expect(screen.getByTestId("shell-cwd")).toHaveTextContent(
+      "C:\\Samples\\Atlas\\",
+    );
   });
 
   it("references a terminal panel only after its lazy view exists", async () => {

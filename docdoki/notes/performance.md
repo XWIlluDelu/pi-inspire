@@ -2,9 +2,25 @@
 
 ## Performance evidence
 
+### Release-round check
+
+Linux, Node 26.10.0, production Chromium build; local mock Host and installed-Pi fixtures.
+
+- **Live tool output:** a 325,013-character cumulative text fixture exceeded the generic head cap.
+  Moving tail selection ahead of that cap preserved the latest marker. Uncompressed event JSON
+  decreased from 269,420 to 5,780 bytes; event and reconnect snapshot carry the same bounded preview.
+  Character/line-bound cases in `runtime-projection.test.ts` retain this regression.
+- **Session switching:** three browser switches issued six Git status requests before the topbar
+  subscription repair and three afterward. The repair removes the cancel/restart pair instead of
+  adding a cache. The repository/non-repository transition case is in `git-store.test.ts`.
+- **Rich text:** the maintained production benchmark's 256,338-byte mixed document had median
+  immediate commit 0.4 ms, layout 2.5 ms, full rich-format availability 228.9 ms and frame gap 26.5 ms.
+  Output equivalence passed. The formatting work remains asynchronous; these observations did not
+  justify an additional renderer redesign.
+
 ### Draft and History work
 
-Linux / Node 26.10.0, baseline `34b796bb444a`. Initial draft hydration plus 200 edits changed
+Linux / Node 26.10.0, pre-optimization sources preserved at `34b796bb444a`. Initial draft hydration plus 200 edits changed
 sessionStorage reads from 201 to one. Composer history over 5,000 distinct user messages retained
 the same newest 100 entries while reducing counted content-property reads from 10,000 to 202.
 Sources: `src/session-drafts.ts`, `server/composer-history.ts` and their focused regression tests.

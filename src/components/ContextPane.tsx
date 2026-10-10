@@ -19,7 +19,7 @@ import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { recoverModalFocus } from "../use-modal-focus";
 import { BranchTree } from "./BranchTree";
-import { ChangesPane } from "./ChangesPane";
+import { ChangesPane, type ChangesReadingPositions } from "./ChangesPane";
 import { selectContextPaneView } from "./context-pane-view";
 import { FilesPane } from "./FilesPane";
 
@@ -45,6 +45,7 @@ export const ContextPane = memo(function ContextPane({
   const [resourceError, setResourceError] = useState<string | null>(null);
   const [terminalReloadKey, setTerminalReloadKey] = useState(0);
   const resourceRequest = useRef<AbortController | null>(null);
+  const changesReadings = useRef<ChangesReadingPositions>(new Map());
   const recentRows = useMemo(
     () =>
       resourcePage?.sessionId === state.sessionId &&
@@ -281,7 +282,7 @@ export const ContextPane = memo(function ContextPane({
           onRetry={() => void loadResources()}
         />
       ) : state.contextMode === "changes" ? (
-        <ChangesPane state={state} />
+        <ChangesPane state={state} readingPositions={changesReadings.current} />
       ) : state.contextMode === "branches" ? (
         <div className="res__body res__body--branches">
           <BranchTree onContextChange={isModal ? onClose : undefined} />

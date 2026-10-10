@@ -52,6 +52,7 @@ function focusableElements(entry: ModalEntry): HTMLElement[] {
 }
 
 function initialFocus(entry: ModalEntry): HTMLElement {
+  if (entry.dialog.hasAttribute("data-modal-autofocus")) return entry.dialog;
   const elements = focusableElements(entry);
   return (
     elements.find((element) => element.hasAttribute("data-modal-autofocus")) ??

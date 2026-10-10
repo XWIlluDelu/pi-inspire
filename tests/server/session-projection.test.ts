@@ -1697,6 +1697,7 @@ describe("chronological compaction projection", () => {
       timestamp: new Date(0).toISOString(),
       summary: id,
       tokensBefore: 1000,
+      details: { source: "magic-context", lastCompactedOrdinal: 2 },
       systemMessage: {
         role: "system",
         content: "host-only compaction checkpoint",
@@ -1723,6 +1724,12 @@ describe("chronological compaction projection", () => {
       const reopened = await SessionProjection.open(record);
       try {
         expect(ids(reopened.messages)).toEqual(ids(projection.messages));
+        expect(reopened.messages[2]).toMatchObject({
+          role: "compactionSummary",
+          __inspireCompactionSource: "magic-context",
+          tokensBefore: 1000,
+        });
+        expect(reopened.messages[2]).not.toHaveProperty("details");
         expect(await readFile(path, "utf8")).toBe(bytes);
       } finally {
         await reopened.close();

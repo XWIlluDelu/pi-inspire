@@ -29,7 +29,7 @@ configuration editing and login remain independent.
 
 The Models category has three sections:
 
-1. **Models:** a searchable available-model list with Common and Default actions, followed by the saved
+1. **Models:** a searchable available-model list with Common and Default choices, followed by the saved
    default model, Clear action and default-thinking dropdown. “Model default” clears the explicit
    thinking setting. Common order and rules expand below the list. Declared models offer an edit action.
 2. **Login & API keys:** saved providers with credential status and Manage, plus Connect provider.
@@ -39,8 +39,22 @@ The Models category has three sections:
    Add provider. Each provider owns its connection fields and a collapsible model list with Add model.
 
 Available-model and provider lists window large result sets while keeping every result reachable by
-search and keyboard. Provider headings span the list; compact rows give Common and Default equal-width
-columns. The picker marks its selected model with one checkmark and `aria-selected`, and offers one
+search and keyboard. Provider headings are quiet, unboxed labels within the Models card; compact
+rows give Common and Default equal-width columns. Common uses a checkbox for independent membership;
+Default uses a radio for the single saved startup choice. Their indicators share Settings control
+surfaces, hairlines and accent tint/mark roles while retaining native input behavior. Reselecting
+Default leaves it set; the saved-default summary's Clear action removes it. Action-row Up/Down and
+Home/End navigation reaches the full filtered list, including unmounted rows. Default also supports Left/Right and wraps between
+the first and last result, focusing and selecting the destination after it mounts. Common navigation
+moves focus without toggling membership. Search navigation remains neutral until explicitly used.
+The shared picker and Settings list show display names first. Provider-group captions omit the
+provider already named by the heading; Common captions retain it. The picker always retains its
+second-line ID, including identical names and IDs, and shows provider/ID in Common. Settings
+shows identical names and IDs once. Both retain full-identity row tooltips.
+Search emphasizes original-text matches in names, IDs and provider labels, tracing the existing
+locale-folded literal-first/greedy-subsequence rule, including provider/ID-spanning queries.
+Identity deduplication and emphasis preserve fixed row heights, capacity, ordering and badges.
+The picker marks its selected model with one checkmark and `aria-selected`, and offers one
 Manage models destination. From New, that destination keeps the prospective project directory; an
 open session keeps its session owner. General control and focus styling follows [[design-system]].
 
@@ -50,7 +64,9 @@ Settings edits global Pi preferences and displays effective project overrides al
 identities and patterns remain visible when unavailable. A failed read has its own error state.
 
 Common choices use Pi's ordered model-cycle patterns. Exact entries, including thinking-effort
-suffixes, toggle directly; rule-covered rows expose their source rules in expanded details. Editing
+suffixes, toggle directly. Rule-covered rows show a separate “Via rule” edit action instead of a
+checkbox, including when an exact entry also matches. Its tooltip attributes the source rules; the
+action opens the existing rule editor, where the pattern remains explicit. Editing
 retains pattern syntax, order, unmatched entries and unrelated settings. Common matches appear first
 in the picker; without a configured common scope, the picker has no Common group.
 
@@ -95,7 +111,18 @@ Forms retain untouched providers, model metadata, overrides and advanced fields 
 Removing a declaration affects `models.json`, independently of built-in catalog entries and saved
 login credentials. Configured declarations remain editable when their models are unavailable.
 
-Drafts belong to their provider/model and creation mode. Errors remain in the form. Creating a
+Provider/model creation and editing open a focused subview inside the Models category, replacing
+the browsing sections without unmounting their state. The header identifies the edit target and
+offers Back to models; the form body scrolls separately from the always-reachable Save/Cancel
+actions. Existing field contents, advanced disclosures and declaration semantics remain unchanged.
+Back and Cancel discard that editor's draft and restore the originating list context, including
+search, disclosure state, scroll and focus. Saving an existing model preserves the search; if its
+new identity no longer matches, focus returns to search. A newly created model still receives focus
+in the ordinary available list. Virtualized return targets receive focus after their row mounts.
+
+Drafts belong to their provider/model and creation mode and survive Settings category switches.
+Model search and loaded data retain the same Settings owner while its category is hidden; hidden
+content does not take focus or apply destination scrolling. Errors remain in the form. Creating a
 provider continues at Add model; a newly available model appears in the ordinary model list. Cancel
 returns to the entry point, and Common/Default saves retain row focus unless the user has moved it.
 
@@ -114,14 +141,22 @@ Provider methods come from the installed Pi, including native and extension API-
 `/login` opens provider selection and may reveal an unambiguous provider's methods; authorization
 starts only after selecting a method. Loading, errors and empty results are separate states.
 
-Login operates on the connected Host's Pi credentials. The browser displays native links, codes,
+The Connect provider directory uses regular-weight names and semibold literal search matches.
+Search keeps its existing case-insensitive substring filter over provider ID and name. When only the
+ID matches, the row also shows that ID as secondary monospace text with the matching fragment emphasized.
+Names matching the query need no extra ID. Connected-provider and method-page titles retain their
+stronger hierarchy, with no directory match emphasis; returning from methods preserves query and focus.
+
+Login operates on the connected Host's Pi credentials. Switching Settings categories leaves the
+attempt running and preserves entered responses. The browser displays native links, codes,
 prompts and outcomes. Supported methods offer Remote login help on demand, following the selected
 method's device-code, pasted-code or redirect interaction.
 
 Attempts retain their originating worker. Cancellation or supersession prevents an older attempt
 from replacing a newer credential choice. Status-read failures resume observation; failed cancellation
-also resumes observation. The Host briefly retains settled outcomes so clients can recover a lost
-final response.
+also resumes observation. Once an attempt settles, its outcome supersedes earlier request errors;
+late answer, cancellation or status responses cannot replace it or add stale errors. The Host briefly
+retains settled outcomes so clients can recover a lost final response.
 
 Stored or resolved keys/tokens are omitted from ordinary model/status payloads and logs. Logout removes
 Pi's saved credential; environment and `models.json` credentials are managed separately.

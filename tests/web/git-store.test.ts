@@ -1,6 +1,9 @@
-// @vitest-environment jsdom
+import { act, render, waitFor } from "@testing-library/react";
+import { createElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AppStore } from "../../src/store";
+import type { GitStatusResponse } from "../../shared/contracts";
+import { AppTopbar } from "../../src/components/AppTopbar";
+import { AppStore, store as appStore } from "../../src/store";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -62,6 +65,52 @@ const cleanStatus = {
 
 describe("Git inspection ownership and freshness", () => {
   beforeEach(() => installFakeWebSocket());
+
+  it("keeps one topbar Git observation across session identity remounts", async () => {
+    let statusCalls = 0;
+    let status: GitStatusResponse = cleanStatus;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/git/status")) {
+        statusCalls += 1;
+        return { body: status };
+      }
+      if (url === "/api/sessions/open")
+        return {
+          body: activeSnapshot({ sessionId: jsonBody(init).id as string }),
+        };
+      return baseRoutes(url, init);
+    });
+    await act(async () => appStore.init("token"));
+    const noop = () => {};
+    render(
+      createElement(AppTopbar, {
+        narrowViewport: false,
+        mobileNavOpen: false,
+        settingsOpen: false,
+        onToggleNavigation: noop,
+        onOpenCommandPalette: noop,
+        onExportSession: noop,
+        onToggleSettings: noop,
+        onToggleResources: noop,
+      }),
+    );
+    await waitFor(() =>
+      expect(appStore.getState().gitStatus).toEqual(cleanStatus),
+    );
+    expect(statusCalls).toBe(1);
+
+    for (const [index, id] of ["s2", "s3", "s4"].entries()) {
+      status = id === "s3" ? { kind: "not-repository" } : cleanStatus;
+      await act(async () => {
+        await appStore.openSession(id);
+      });
+      await waitFor(() =>
+        expect(appStore.getState().gitStatus).toEqual(status),
+      );
+      expect(appStore.getState().sessionId).toBe(id);
+      expect(statusCalls).toBe(index + 2);
+    }
+  });
 
   it.each(["files", "changes"] as const)(
     "keeps a newer deleted-file Git selection when a %s preview resolves late",

@@ -1,9 +1,15 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
-import type { GitStatusResponse } from "../../shared/contracts";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type {
+  GitDiffResponse,
+  GitStatusResponse,
+} from "../../shared/contracts";
 import { createInitialAppState } from "../../src/app-state";
-import { ChangesPane } from "../../src/components/ChangesPane";
+import {
+  ChangesPane,
+  type ChangesReadingPositions,
+} from "../../src/components/ChangesPane";
 import { selectContextPaneView } from "../../src/components/context-pane-view";
 
 const clean: GitStatusResponse = {
@@ -29,7 +35,156 @@ const changed: GitStatusResponse = {
 const staleNotice = "Refresh failed; showing the last known status.";
 const initial = selectContextPaneView(createInitialAppState());
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+describe("Changes source rendering", () => {
+  it("renders highlighted source without changing line text or row geometry", () => {
+    const result: GitDiffResponse = {
+      kind: "text",
+      path: changed.files[0].path,
+      side: "unstaged",
+      additions: 1,
+      deletions: 1,
+      truncated: true,
+      encodingLossy: false,
+      lines: [
+        { kind: "delete", text: "-# Old heading", oldLine: 1, newLine: null },
+        { kind: "add", text: "+# New heading", oldLine: null, newLine: 1 },
+        {
+          kind: "context",
+          text: " <script>&</script>",
+          oldLine: 2,
+          newLine: 2,
+        },
+      ],
+    };
+    const { container } = render(
+      <ChangesPane
+        state={{
+          ...initial,
+          gitStatus: changed,
+          selectedGitPathId: "notes",
+          selectedGitSide: "unstaged",
+          gitDiff: { status: "ready", result },
+        }}
+      />,
+    );
+    const rowIcon = screen
+      .getByRole("button", { name: "notes.md, unstaged modified" })
+      .querySelector("svg");
+    expect(rowIcon).toHaveClass("lucide-file-text");
+    expect(rowIcon).toHaveAttribute("aria-hidden", "true");
+    expect(rowIcon).toHaveAttribute("width", "13");
+    const rows = container.querySelectorAll(".source-diff__line");
+    expect(rows).toHaveLength(3);
+    expect(
+      [...rows].map((row) => row.querySelector("code")?.textContent),
+    ).toEqual(["# Old heading", "# New heading", "<script>&</script>"]);
+    expect(rows[0].querySelector(".hljs-section")).not.toBeNull();
+    expect(rows[1].querySelector(".hljs-section")).not.toBeNull();
+    const gutter = rows[0].querySelector(".source-diff__gutter");
+    expect(gutter).toHaveAttribute("aria-hidden", "true");
+    expect(gutter?.querySelectorAll(".source-diff__number")).toHaveLength(2);
+    expect(gutter?.querySelector(".source-diff__mark")).toHaveTextContent("−");
+    expect(rows[1].querySelector(".source-diff__mark")).toHaveTextContent("+");
+    expect(rows[2].querySelector("script")).toBeNull();
+    expect(screen.getByText("Source truncated")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Next change" }),
+    ).not.toBeDisabled();
+  });
+});
+
+describe("Changes reading continuity", () => {
+  it("restores offsets and navigation across reloads and pane remounts without mixing scopes or sides", () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: () => void) => {
+      callback();
+      return 0;
+    });
+    const result: GitDiffResponse = {
+      kind: "text",
+      path: changed.files[0].path,
+      side: "unstaged",
+      additions: 2,
+      deletions: 2,
+      truncated: false,
+      encodingLossy: false,
+      lines: [
+        { kind: "delete", text: "-old", oldLine: 1, newLine: null },
+        { kind: "add", text: "+new", oldLine: null, newLine: 1 },
+        { kind: "context", text: " same", oldLine: 2, newLine: 2 },
+        { kind: "delete", text: "-old", oldLine: 3, newLine: null },
+        { kind: "add", text: "+new", oldLine: null, newLine: 3 },
+      ],
+    };
+    const state = {
+      ...initial,
+      sessionId: "session",
+      cwd: "/project",
+      gitStatus: changed,
+      selectedGitPathId: "notes",
+      selectedGitSide: "unstaged" as const,
+      gitDiff: { status: "ready" as const, result },
+    };
+    const positions: ChangesReadingPositions = new Map();
+    const view = render(
+      <ChangesPane state={state} readingPositions={positions} />,
+    );
+    const source = () =>
+      screen.getByRole("region", { name: "Source changes for notes.md" });
+    source().scrollTop = 300;
+    source().scrollLeft = 20;
+    fireEvent.scroll(source());
+    fireEvent.click(screen.getByRole("button", { name: "Next change" }));
+    view.rerender(
+      <ChangesPane
+        state={{
+          ...state,
+          gitDiff: { status: "loading", pathId: "notes", side: "unstaged" },
+        }}
+        readingPositions={positions}
+      />,
+    );
+    view.rerender(<ChangesPane state={state} readingPositions={positions} />);
+    expect(source().scrollTop).toBe(300);
+    expect(source().scrollLeft).toBe(20);
+    expect(
+      source().querySelectorAll(".source-diff__line--active"),
+    ).toHaveLength(2);
+
+    for (const scope of [
+      { sessionId: "another session" },
+      { cwd: "/another project" },
+      { transportGeneration: state.transportGeneration + 1 },
+      {
+        gitDiff: {
+          status: "ready" as const,
+          result: { ...result, side: "staged" as const },
+        },
+      },
+    ]) {
+      view.rerender(
+        <ChangesPane
+          state={{ ...state, ...scope }}
+          readingPositions={positions}
+        />,
+      );
+      expect(source().scrollTop).toBe(0);
+      expect(source().scrollLeft).toBe(0);
+      expect(source().querySelector(".source-diff__line--active")).toBeNull();
+    }
+    view.unmount();
+    render(<ChangesPane state={state} readingPositions={positions} />);
+    expect(source().scrollTop).toBe(300);
+    expect(source().scrollLeft).toBe(20);
+    expect(
+      source().querySelectorAll(".source-diff__line--active"),
+    ).toHaveLength(2);
+  });
+});
 
 describe("Changes status observation", () => {
   it("distinguishes initial loading and failure from retained results", () => {

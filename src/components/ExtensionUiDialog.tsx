@@ -146,7 +146,7 @@ function DialogBody({
         <div className="dialog__actions">
           <button
             type="button"
-            className="button"
+            className="button button--quiet"
             disabled={responding}
             onClick={() => cancel(request)}
           >
@@ -229,7 +229,7 @@ function DialogBody({
       <div className="dialog__actions">
         <button
           type="button"
-          className="button"
+          className="button button--quiet"
           disabled={responding}
           onClick={() => cancel(request)}
         >

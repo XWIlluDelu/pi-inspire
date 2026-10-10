@@ -31,6 +31,7 @@ import {
   isTextareaCaretOnVisualEdge,
   textareaCaretLineBounds,
 } from "../composer-history";
+import { fileIconForPath } from "../file-icons";
 import {
   type FloatingMenuConstraints,
   type FloatingMenuPlacement,
@@ -38,6 +39,8 @@ import {
 } from "../use-floating-menu";
 import { useModalPortal } from "../use-modal-focus";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
+import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
+import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 
 const COMPLETION_MENU_CONSTRAINTS: FloatingMenuConstraints = {
   gap: 8,
@@ -141,36 +144,83 @@ function CompletionMenu({
     if (virtualized) virtualizer.scrollToIndex(active, { align: "auto" });
     else refs.current[active]?.scrollIntoView({ block: "nearest" });
   }, [active, items, keyboardActive, virtualized, virtualizer]);
-  const renderItem = (item: CompletionItem, index: number) => (
-    <>
-      {hasHeading(index) ? (
-        <div className="completion__heading" aria-hidden>
-          {item.group}
-        </div>
-      ) : null}
-      <div
-        ref={(element) => {
-          refs.current[index] = element;
-        }}
-        id={`${id}-option-${index}`}
-        role="option"
-        aria-selected={keyboardActive && index === active}
-        aria-posinset={index + 1}
-        aria-setsize={items.length}
-        className={`completion__option ${keyboardActive && index === active ? "completion__option--active" : ""}`}
-        onMouseDown={(event) => event.preventDefault()}
-        onPointerMove={(event) => {
-          if (event.pointerType !== "touch") onActive(index);
-        }}
-        onClick={() => onPick(item)}
-      >
-        <span className="completion__title">{item.title}</span>
-        {item.hint ? (
-          <span className="completion__hint">{item.hint}</span>
+  const renderItem = (item: CompletionItem, index: number) => {
+    const Icon = item.file ? fileIconForPath(item.file.path) : null;
+    const directory = item.file ? parentPath(item.file.path) : null;
+    const matches = item.file
+      ? searchMatchRanges(item.file.path, token.query.trim().split(/\s+/))
+      : [];
+    return (
+      <>
+        {hasHeading(index) ? (
+          <div className="completion__heading" aria-hidden>
+            {item.group}
+          </div>
         ) : null}
-      </div>
-    </>
-  );
+        <div
+          ref={(element) => {
+            refs.current[index] = element;
+          }}
+          id={`${id}-option-${index}`}
+          role="option"
+          aria-selected={keyboardActive && index === active}
+          aria-posinset={index + 1}
+          aria-setsize={items.length}
+          className={`completion__option ${item.file ? "completion__option--file" : ""} ${keyboardActive && index === active ? "completion__option--active" : ""}`}
+          title={item.file?.path}
+          aria-label={
+            item.file ? `${item.title}, ${item.file.path}` : undefined
+          }
+          onMouseDown={(event) => event.preventDefault()}
+          onPointerMove={(event) => {
+            if (event.pointerType !== "touch") onActive(index);
+          }}
+          onClick={() => onPick(item)}
+        >
+          <span
+            className={`completion__title ${item.file ? "completion__title--file" : ""}`}
+          >
+            {item.file && Icon ? (
+              <>
+                <Icon size={13} aria-hidden />
+                <span>
+                  <SearchMatchText
+                    text={item.title}
+                    ranges={matches}
+                    offset={item.file.path.length - item.title.length}
+                  />
+                </span>
+              </>
+            ) : item.command ? (
+              <>
+                /{item.command.name}
+                {item.command.argumentHint ? (
+                  <span className="completion__arguments">
+                    {" "}
+                    {item.command.argumentHint}
+                  </span>
+                ) : null}
+              </>
+            ) : (
+              item.title
+            )}
+          </span>
+          {item.file ? (
+            directory ? (
+              <ResourcePathLabel
+                path={directory}
+                title={item.file.path}
+                className="completion__hint"
+                matches={matches}
+              />
+            ) : null
+          ) : item.hint ? (
+            <span className="completion__hint">{item.hint}</span>
+          ) : null}
+        </div>
+      </>
+    );
+  };
   return (
     <div
       ref={menuRef}

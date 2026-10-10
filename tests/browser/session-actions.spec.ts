@@ -59,6 +59,12 @@ for (const touch of [false, true]) {
       await input.fill("Reviewed calibration notes");
       await input.press("Enter");
       await expect(title).toContainText("Reviewed calibration notes");
+      await expect(title).toBeFocused();
+      await expect(title).toHaveCSS("outline-style", "none");
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Shift+Tab");
+      await expect(title).toBeFocused();
+      await expect(title).toHaveCSS("outline-style", "solid");
       await expect(composer).toHaveValue("Keep the unfinished comparison");
 
       await title.click();

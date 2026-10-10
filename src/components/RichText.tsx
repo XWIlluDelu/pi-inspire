@@ -90,6 +90,14 @@ const CodeBlock = memo(function CodeBlock({
 // These renderers consume only sanitized HAST. Local references stay delegated
 // to the owning session/document; external images never load automatically.
 const components: Components = {
+  input: ({ checked }) => (
+    <input
+      type="checkbox"
+      className="choice-input"
+      checked={checked}
+      disabled
+    />
+  ),
   pre: ({ node, children }) => {
     const code = node?.children[0];
     if (code?.type !== "element" || code.tagName !== "code")

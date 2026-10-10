@@ -293,9 +293,9 @@ export function NotebookPreview({ text }: { text: string }) {
               ? cell.executionCount
                 ? `In [${cell.executionCount}]`
                 : "In [ ]"
-              : cell.kind === "markdown"
-                ? "Markdown"
-                : "Raw"}
+              : cell.kind === "raw"
+                ? "Raw"
+                : null}
           </div>
           <div className="notebook-preview__cell-body">
             {cell.kind === "markdown" ? (

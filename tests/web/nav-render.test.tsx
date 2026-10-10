@@ -9,6 +9,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Nav } from "../../src/components/Nav";
+import { ProjectGroup, SessionRow } from "../../src/components/NavSessions";
 import { store } from "../../src/store";
 import {
   activeSnapshot,
@@ -249,6 +250,76 @@ describe("session navigation controls", () => {
     ).not.toBeInTheDocument();
   });
 
+  it.each(["/work/alpha", "C:\\work\\alpha"])(
+    "reveals a matched parent directory without a basename collision: %s",
+    (cwd) => {
+      const props = {
+        group: { cwd, name: "alpha", sessions: [{ ...alpha, cwd }] },
+        headingId: "parent-match-group",
+        searching: true,
+        searchQuery: '"WORK"',
+        showContext: false,
+        selectedSessionId: null,
+        onSelectSession: vi.fn(),
+      };
+      const { container, rerender } = render(<ProjectGroup {...props} />);
+      expect(container.querySelector(".nav__group-context")).toHaveTextContent(
+        /^@work$/,
+      );
+      expect(
+        container.querySelector(".nav__group-context .search-match"),
+      ).toHaveTextContent(/^work$/);
+      rerender(<ProjectGroup {...props} searchQuery="alpha" />);
+      expect(container.querySelector(".nav__group-context")).toBeNull();
+      rerender(<ProjectGroup {...props} searchQuery="" searching={false} />);
+      expect(container.querySelector(".nav__group-context")).toBeNull();
+      // Existing basename disambiguation survives regardless of the query.
+      rerender(<ProjectGroup {...props} searchQuery="alpha" showContext />);
+      expect(container.querySelector(".nav__group-context")).toHaveTextContent(
+        "work",
+      );
+    },
+  );
+
+  it("keeps matched parent context in cross-project session captions only during search", () => {
+    const props = {
+      session: alpha,
+      selectedSessionId: null,
+      showProject: true,
+      onSelect: vi.fn(),
+    };
+    const { container, rerender } = render(
+      <SessionRow {...props} searchQuery="work" />,
+    );
+    expect(container.querySelector(".nav__row-project")).toHaveTextContent(
+      "work/alpha",
+    );
+    expect(
+      container.querySelector(".nav__row-project .search-match"),
+    ).toHaveTextContent("work");
+    expect(container.querySelector(".nav__row-age")).toBeNull();
+    rerender(<SessionRow {...props} searchQuery="" />);
+    expect(container.querySelector(".nav__row-age")).not.toBeNull();
+    expect(container.querySelector(".nav__row-project")).toHaveTextContent(
+      /^alpha$/,
+    );
+    rerender(
+      <SessionRow
+        {...props}
+        session={{ ...alpha, title: "Work plan" }}
+        searchQuery="work"
+      />,
+    );
+    expect(container.querySelector(".nav__row-project")).toHaveTextContent(
+      /^alpha$/,
+    );
+    expect(container.querySelector(".nav__row-age")).not.toBeNull();
+    rerender(<SessionRow {...props} searchQuery="re:work" />);
+    expect(container.querySelector(".nav__row-project")).toHaveTextContent(
+      /^alpha$/,
+    );
+  });
+
   it("collapses folders, exposes search matches, and pins without selecting", async () => {
     const onSelect = vi.fn();
     render(
@@ -274,7 +345,15 @@ describe("session navigation controls", () => {
     });
     expect(searchAlphaGroup).toHaveAttribute("aria-expanded", "true");
     expect(searchAlphaGroup).toBeDisabled();
-    expect(screen.getByText("Alpha session")).toBeInTheDocument();
+    expect(searchAlphaGroup.querySelector(".search-match")).toHaveTextContent(
+      "alpha",
+    );
+    expect(
+      document.querySelector(".nav__row-name .search-match"),
+    ).toHaveTextContent("Alpha");
+    expect(
+      screen.getByRole("button", { name: /^Alpha session/ }),
+    ).toBeInTheDocument();
 
     fireEvent.change(
       screen.getByRole("searchbox", { name: "Search sessions" }),
@@ -333,7 +412,9 @@ describe("session navigation controls", () => {
       ".nav__group--hidden",
     ) as HTMLElement;
     expect(
-      await within(hiddenSection).findByText("Alpha session"),
+      await within(hiddenSection).findByRole("button", {
+        name: /^Alpha session/,
+      }),
     ).toBeInTheDocument();
     fireEvent.change(
       screen.getByRole("searchbox", { name: "Search sessions" }),
@@ -478,16 +559,18 @@ describe("session navigation controls", () => {
     searchPageSize = 2;
     await user.click(search);
     await user.type(search, "session");
-    await screen.findByText("Beta session");
+    await screen.findByRole("button", { name: /^Beta session/ });
     await user.keyboard("{ArrowDown}");
-    expect(screen.getByText("Alpha session").closest(".nav__row")).toHaveClass(
-      "nav__row--highlighted",
-    );
+    expect(
+      screen
+        .getByRole("button", { name: /^Alpha session/ })
+        .closest(".nav__row"),
+    ).toHaveClass("nav__row--highlighted");
     expect(search).toHaveFocus();
     expect(store.getState().sessionListNextOffset).toBe(2);
     expect(screen.queryByText("Gamma session")).not.toBeInTheDocument();
     await store.loadOlderSessions();
-    await screen.findByText("Gamma session");
+    await screen.findByRole("button", { name: /^Gamma session/ });
     expect(store.getState().sessionListNextOffset).toBe(3);
     await user.keyboard("{Enter}");
     expect(onSelect).toHaveBeenLastCalledWith("alpha");
@@ -495,9 +578,11 @@ describe("session navigation controls", () => {
       screen.getByRole("button", { name: 'Pin "Alpha session"' }),
     );
     await user.click(search);
-    expect(screen.getByText("Alpha session").closest(".nav__row")).toHaveClass(
-      "nav__row--highlighted",
-    );
+    expect(
+      screen
+        .getByRole("button", { name: /^Alpha session/ })
+        .closest(".nav__row"),
+    ).toHaveClass("nav__row--highlighted");
     await user.keyboard("{ArrowDown}{Enter}");
     expect(onSelect).toHaveBeenLastCalledWith("beta");
     await user.keyboard("{ArrowUp}");
@@ -507,7 +592,9 @@ describe("session navigation controls", () => {
     await user.click(search);
     const hidden = document.querySelector(".nav__group--hidden") as HTMLElement;
     expect(
-      within(hidden).getByText("Alpha session").closest(".nav__row"),
+      within(hidden)
+        .getByRole("button", { name: /^Alpha session/ })
+        .closest(".nav__row"),
     ).toHaveClass("nav__row--highlighted");
     await user.keyboard("{ArrowUp}{Enter}");
     expect(onSelect).toHaveBeenLastCalledWith("gamma");
@@ -516,7 +603,7 @@ describe("session navigation controls", () => {
     onSelect.mockClear();
     fireEvent.keyDown(search, { key: "Enter" });
     expect(onSelect).not.toHaveBeenCalled();
-    await screen.findByText("Beta session");
+    await screen.findByRole("button", { name: /^Beta session/ });
     await user.keyboard("{Enter}");
     expect(onSelect).toHaveBeenCalledWith("beta");
   });
@@ -534,7 +621,7 @@ describe("session navigation controls", () => {
     const search = screen.getByRole("searchbox", { name: "Search sessions" });
     await user.click(search);
     await user.type(search, "session");
-    await screen.findByText("Beta session");
+    await screen.findByRole("button", { name: /^Beta session/ });
     const highlighted = () =>
       document.querySelector(".nav__row--highlighted .nav__row-name")
         ?.textContent;

@@ -12,6 +12,7 @@ import type {
   ProviderLoginOption,
 } from "../../shared/model-settings";
 import { store } from "../store";
+import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 
 type Owner = { sessionId?: string; cwd?: string };
 type ProviderView = { kind: "saved" | "connect"; provider?: string };
@@ -130,8 +131,16 @@ function AuthenticationPanel({
   const mutationRevision = useRef(0);
   const attemptRef = useRef<ProviderLoginAttempt | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const ownsPendingAttempt = useCallback(
+    (id: string) =>
+      mounted.current &&
+      attemptRef.current?.id === id &&
+      attemptRef.current.status === "pending",
+    [],
+  );
   const update = useCallback((next: ProviderLoginAttempt | null) => {
     attemptRef.current = next;
+    if (next?.status !== "pending") setError(null);
     setAttempt(next);
   }, []);
   const attemptId = attempt?.id;
@@ -166,7 +175,7 @@ function AuthenticationPanel({
           operation: "status",
           id: attemptId,
         })) as ProviderLoginAttempt;
-        if (!observing) return;
+        if (!observing || !ownsPendingAttempt(attemptId)) return;
         // A pending read started before a prompt mutation must not restore its
         // old prompt. Terminal receipts are authoritative and always settle it.
         if (
@@ -181,12 +190,11 @@ function AuthenticationPanel({
           setError((error) => (error === recovered ? null : error));
           pollError = null;
         }
-        if (next.status !== "pending") setError(null);
         update(next);
         if (next.status === "pending")
           timer = setTimeout(() => void poll(), 750);
       } catch (error) {
-        if (!observing) return;
+        if (!observing || !ownsPendingAttempt(attemptId)) return;
         pollError = messageOf(error);
         setError(pollError);
         timer = setTimeout(() => void poll(), 750);
@@ -197,7 +205,7 @@ function AuthenticationPanel({
       observing = false;
       clearTimeout(timer);
     };
-  }, [attemptId, attemptStatus, owner, update]);
+  }, [attemptId, attemptStatus, owner, update, ownsPendingAttempt]);
   useEffect(() => {
     if (attemptStatus !== "completed" && attemptStatus !== "failed") return;
     void onRefresh()
@@ -240,6 +248,13 @@ function AuthenticationPanel({
     if (!attempt?.prompt || busy) return;
     ++mutationRevision.current;
     const promptId = attempt.prompt.id;
+    const ownsPrompt = () => {
+      const livePrompt = attemptRef.current?.prompt;
+      return (
+        ownsPendingAttempt(attempt.id) &&
+        (!livePrompt || livePrompt.id === promptId)
+      );
+    };
     setBusy(true);
     setError(null);
     try {
@@ -249,18 +264,12 @@ function AuthenticationPanel({
         promptId,
         value,
       })) as ProviderLoginAttempt;
-      const live = attemptRef.current;
-      if (
-        mounted.current &&
-        live?.id === attempt.id &&
-        live.status === "pending" &&
-        (!live.prompt || live.prompt.id === promptId)
-      ) {
+      if (ownsPrompt()) {
         update(next);
         setInput("");
       }
     } catch (error) {
-      if (mounted.current) setError(messageOf(error));
+      if (ownsPrompt()) setError(messageOf(error));
     } finally {
       ++mutationRevision.current;
       if (mounted.current) setBusy(false);
@@ -276,9 +285,9 @@ function AuthenticationPanel({
         operation: "cancel",
         id: attempt.id,
       })) as ProviderLoginAttempt | null;
-      if (mounted.current) update(next);
+      if (ownsPendingAttempt(attempt.id)) update(next);
     } catch (error) {
-      if (mounted.current) setError(messageOf(error));
+      if (ownsPendingAttempt(attempt.id)) setError(messageOf(error));
     } finally {
       ++mutationRevision.current;
       if (mounted.current) setBusy(false);
@@ -315,14 +324,28 @@ function AuthenticationPanel({
     if (selected) backRef.current?.focus();
     else searchRef.current?.focus();
   }, [discovering, selected, attempt]);
-  const providerRow = (provider: ProviderLoginOption, forceOpen = false) => {
+  const providerRow = (
+    provider: ProviderLoginOption,
+    forceOpen = false,
+    searchQuery = "",
+  ) => {
+    const nameMatches = searchMatchRanges(provider.name, [searchQuery]);
+    const idMatches = searchMatchRanges(provider.id, [searchQuery]);
+    const showMatchedId = !nameMatches.length && Boolean(idMatches.length);
     const open = forceOpen || view.provider === provider.id;
     const disclosureId = `${inputId}-provider-${provider.id}`;
     return (
       <div className="models-provider-login" key={provider.id}>
         <div className="models-provider-login__heading">
           <div className="models-provider-login__copy">
-            <strong>{provider.name}</strong>
+            <strong>
+              <SearchMatchText text={provider.name} ranges={nameMatches} />
+            </strong>
+            {showMatchedId ? (
+              <code className="models-provider-login__matched-id">
+                <SearchMatchText text={provider.id} ranges={idMatches} />
+              </code>
+            ) : null}
             {provider.stored ? (
               <span className="settings__field-help">
                 {provider.stored === "api_key"
@@ -404,7 +427,7 @@ function AuthenticationPanel({
                     Remove saved credentials
                   </button>
                   <button
-                    className="button"
+                    className="button button--quiet"
                     type="button"
                     disabled={busy}
                     onClick={() => setRemoving(null)}
@@ -440,7 +463,7 @@ function AuthenticationPanel({
       {loadError ? (
         <button
           type="button"
-          className="button"
+          className="button button--quiet"
           onClick={() =>
             void onRefresh().catch((error) => setError(messageOf(error)))
           }
@@ -587,7 +610,7 @@ function AuthenticationPanel({
           ) : null}
           <button
             type="button"
-            className="button"
+            className={`button${attempt.status === "pending" ? "" : " button--quiet"}`}
             disabled={busy}
             onClick={() => {
               if (attempt.status === "pending") void cancel();
@@ -669,7 +692,9 @@ function AuthenticationPanel({
                 <>
                   {available.length ? (
                     <div className="models-auth__providers">
-                      {available.map((provider) => providerRow(provider))}
+                      {available.map((provider) =>
+                        providerRow(provider, false, query.trim()),
+                      )}
                     </div>
                   ) : null}
                   {!available.length ? (

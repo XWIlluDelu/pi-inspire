@@ -860,9 +860,9 @@ export class AppStore {
       this.selectionGeneration += 1;
       if (sessionChanged) this.pendingActionRequest += 1;
       this.branches.invalidateForViewChange();
-      // Conversation-derived previews and transcript requests are authorized
-      // against one branch lineage, not merely a session id. A same-view
-      // compaction/rewrite invalidates them even when the owner ids survive.
+      // Retire old content authority even when the same session survives.
+      // The lifecycle patch separately retains named-file selection intent
+      // so compaction/rewrite can reauthorize it instead of returning to Browse.
       this.resources.invalidate();
       this.transcriptData.invalidate();
       if (sessionChanged) this.git.cancelAll();
@@ -891,6 +891,11 @@ export class AppStore {
     const extensionStatuses =
       parseExtensionStatuses(snapshot.extensionStatuses) ?? {};
     this.runtimeEvents.reconcileAttentionArms(sessionStatuses);
+    const lifecyclePatch = snapshotLifecyclePatch(
+      this.state,
+      transition,
+      sessionOwnerPatch,
+    );
     this.set({
       sessionId: active?.sessionId ?? null,
       sessionName: active?.sessionName ?? "",
@@ -1003,8 +1008,18 @@ export class AppStore {
           : this.state.extensionUiRespondingId,
       extensionDisplays: parseExtensionDisplays(snapshot.extensionDisplays),
       statuses: extensionStatuses,
-      ...snapshotLifecyclePatch(this.state, transition, sessionOwnerPatch),
+      ...lifecyclePatch,
     });
+    if (
+      lifecyclePatch.resourcePreview?.status === "loading" &&
+      this.state.selectedResourceReference ===
+        lifecyclePatch.selectedResourceReference
+    )
+      void this.resources.openResource(
+        lifecyclePatch.resourcePreview.reference,
+        "files",
+        lifecyclePatch.selectedResourceWorkspacePath ?? undefined,
+      );
     // Snapshots restore projection only. Attention is armed exclusively by
     // live lifecycle events, never by bootstrap/reconnect status.
     if (nextSessionId) this.runtimeEvents.acknowledgeVisibleSession();
