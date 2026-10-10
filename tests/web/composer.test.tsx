@@ -654,7 +654,7 @@ describe("composer-adjacent status and queued controls", () => {
     const socket = FakeWebSocket.instances.at(-1)!;
     act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
 
-    render(<ActivityBar />);
+    render(<ActivityBar onJumpToPending={() => undefined} />);
     act(() =>
       socket.emit({
         type: "tool_execution_start",

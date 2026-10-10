@@ -35,7 +35,11 @@ function RetryStatus({
  * Tool execution remains in its chronological Transcript cards instead
  * of being duplicated here.
  */
-export const ActivityBar = memo(function ActivityBar() {
+export const ActivityBar = memo(function ActivityBar({
+  onJumpToPending,
+}: {
+  onJumpToPending: () => void;
+}) {
   const state = useAppState(
     (source) => ({
       runState: source.runState,
@@ -103,7 +107,15 @@ export const ActivityBar = memo(function ActivityBar() {
         </div>
       ) : null}
       {pending > 0 ? (
-        <span className="chip chip--info">{pending} Pending</span>
+        <button
+          type="button"
+          className="chip chip--info activity__pending"
+          onClick={onJumpToPending}
+          aria-label={`Jump to ${pending} pending ${pending === 1 ? "item" : "items"}`}
+          title="Jump to Pending input"
+        >
+          {pending} Pending
+        </button>
       ) : null}
     </div>
   );

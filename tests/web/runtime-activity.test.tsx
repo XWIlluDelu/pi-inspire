@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
-import { act, render, screen, waitFor } from "@testing-library/react";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActivityBar } from "../../src/components/ActivityBar";
 import { CommandActivity } from "../../src/components/CommandActivity";
 import { emptyEventSlice, reduceEvent } from "../../src/events";
@@ -13,6 +19,7 @@ import {
   installFakeWebSocket,
   installFetch,
 } from "./helpers";
+import { pendingQueues } from "./pending-fixtures";
 
 let snapshot = activeSnapshot();
 let nativeResult = deferred<unknown>();
@@ -26,7 +33,7 @@ const renderActivity = () =>
   render(
     <>
       <CommandActivity />
-      <ActivityBar />
+      <ActivityBar onJumpToPending={() => undefined} />
     </>,
   );
 
@@ -80,6 +87,27 @@ function finish(reason: string, extra: Record<string, unknown> = {}) {
 const retry = { attempt: 2, maxAttempts: 3, message: "Provider overloaded" };
 
 describe("runtime-owned activity", () => {
+  it("uses the existing Pending count as a queue navigation control", () => {
+    act(() =>
+      socket().emit({
+        type: "snapshot",
+        data: { ...snapshot, pendingQueues: pendingQueues(["Queued prompt"]) },
+      }),
+    );
+    const navigate = vi.fn();
+    render(<ActivityBar onJumpToPending={navigate} />);
+    const button = screen.getByRole("button", {
+      name: "Jump to 1 pending item",
+    });
+    expect(button).toHaveTextContent("1 Pending");
+    fireEvent.click(button);
+    expect(navigate).toHaveBeenCalledOnce();
+    act(() => socket().emit({ type: "snapshot", data: snapshot }));
+    expect(
+      screen.queryByRole("button", { name: /Jump to .* pending/ }),
+    ).toBeNull();
+  });
+
   it.each(["threshold", "overflow", "manual"] as const)(
     "shows identical %s compaction regardless of the trigger",
     async (reason) => {

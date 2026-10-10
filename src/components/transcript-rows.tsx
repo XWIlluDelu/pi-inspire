@@ -9,7 +9,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { memo, useEffect, useState } from "react";
+import { memo, type Ref, useEffect, useState } from "react";
 import type {
   AssistantRoundDisplayPreference,
   GenericExtensionDisplay,
@@ -605,12 +605,14 @@ function PendingImage({ id, alt }: { id: string; alt: string }) {
 }
 
 export function PendingQueueGroups({
+  ref,
   queue,
   pendingAction,
   onClear,
   onRecover,
   getText,
 }: {
+  ref?: Ref<HTMLElement>;
   queue: PendingQueues;
   pendingAction: "clear" | "recover" | null;
   onClear: () => Promise<boolean>;
@@ -673,7 +675,12 @@ export function PendingQueueGroups({
   if (queue.totalCount === 0) return null;
 
   return (
-    <section className="pending-groups" aria-label="Pending input">
+    <section
+      ref={ref}
+      className="pending-groups"
+      aria-label="Pending input"
+      tabIndex={-1}
+    >
       <div className="pending-groups__head">
         <div className="pending-groups__lead">
           <span className="pending-groups__title">

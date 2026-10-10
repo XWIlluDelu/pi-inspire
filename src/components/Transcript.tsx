@@ -1,8 +1,10 @@
 import { Loader2 } from "lucide-react";
 import {
   memo,
+  type Ref,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -34,20 +36,25 @@ import { EmbeddedImageOwnerContext } from "./ImagePreview";
 import { PromptMap } from "./PromptMap";
 import { handleRichTextCopy } from "./rich-text-copy";
 import { ScrollRail } from "./ScrollRail";
-import { useTranscriptRows } from "./transcript-row-projection";
-import { ExtensionDisplaySurface, PendingQueueGroups } from "./transcript-rows";
-import { useTranscriptSearch } from "./transcript-search";
 import {
   type MobileTranscriptTool,
   TranscriptUtilities,
 } from "./TranscriptUtilities";
+import { useTranscriptRows } from "./transcript-row-projection";
+import { ExtensionDisplaySurface, PendingQueueGroups } from "./transcript-rows";
+import { useTranscriptSearch } from "./transcript-search";
 import { useTranscriptViewport } from "./transcript-viewport";
 
 // --- Transcript with pinned auto-scroll ---
 
 const EMPTY_TOOL_ACTIVITY: Record<string, ActivityTool> = {};
 
+export interface TranscriptNavigation {
+  jumpToPending: () => void;
+}
+
 export const Transcript = memo(function Transcript({
+  ref,
   messages,
   activityRanges = [],
   promptMapTurns = [],
@@ -79,6 +86,7 @@ export const Transcript = memo(function Transcript({
   extensionDisplays = [],
   viewingEarlierBranch = false,
 }: {
+  ref?: Ref<TranscriptNavigation>;
   messages: ChatMessage[];
   activityRanges?: TranscriptActivityRangeState[];
   promptMapTurns?: UserTurnAnchor[];
@@ -117,6 +125,7 @@ export const Transcript = memo(function Transcript({
   const genericExtensionDisplays = extensionDisplays.filter(
     (display): display is GenericExtensionDisplay => display.kind === "raw",
   );
+  const pendingRef = useRef<HTMLElement>(null);
   const searchOwnsViewportRef = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const promptLauncherRef = useRef<HTMLButtonElement>(null);
@@ -429,6 +438,25 @@ export const Transcript = memo(function Transcript({
     viewport.scrollRef,
   ]);
 
+  useImperativeHandle(ref, () => ({
+    jumpToPending() {
+      const pending = pendingRef.current;
+      const scroller = viewport.scrollRef.current;
+      if (!pending || !scroller) return;
+      promptNavigationOverrideRef.current = null;
+      search.clearCurrentMatch();
+      viewport.markUserScrollIntent();
+      viewport.releaseLatestFollow();
+      const topPadding =
+        Number.parseFloat(getComputedStyle(scroller).scrollPaddingTop) || 0;
+      scroller.scrollTop +=
+        pending.getBoundingClientRect().top -
+        scroller.getBoundingClientRect().top -
+        topPadding;
+      pending.focus({ preventScroll: true });
+    },
+  }));
+
   const jumpToLatest = () => {
     promptNavigationOverrideRef.current = null;
     search.clearCurrentMatch();
@@ -610,6 +638,7 @@ export const Transcript = memo(function Transcript({
           {queue.totalCount > 0 || genericExtensionDisplays.length > 0 ? (
             <div className="transcript__column transcript__pending">
               <PendingQueueGroups
+                ref={pendingRef}
                 key={sessionId}
                 queue={queue}
                 pendingAction={pendingAction}

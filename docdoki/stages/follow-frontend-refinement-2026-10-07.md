@@ -879,9 +879,31 @@ Measured result order/text and row heights match at desktop/light and 390px/dark
 removes emphasis; Enter opens Terminal from the first result. Captures:
 `output/playwright/palette-hint-matches/`. The complete-shortcut correction above was accepted.
 
+## Composer Pending navigation — ready for review
+
+The original review's Pending jump recommendation is implemented without adding another control.
+The existing ActivityBar count capsule is a native button with hover/focus feedback; baseline
+dimensions, font and resting colors are preserved. It aligns the current queue's start below the
+floating utilities, focuses its region and releases latest-follow. Only the transcript scrolls;
+the editor does not receive focus. Leaving the region restores the existing 0.75 idle opacity.
+Clear, Return, Copy, delivery modes and the red Stop are unchanged.
+
+72 focused runtime/Pending/transcript tests, type checking, scoped lint/format and build pass.
+The regression checks count activation/removal, scroller coordinates and padding, current-session
+focus ownership and an empty queue. Chromium verifies a 12-item queue at desktop/light and
+390px/dark, pointer and Enter activation, unchanged capsule metrics, outside scroll ownership and
+idle-focus transitions. Captures: `output/playwright/pending-navigation/`.
+The comparison shows the new version before and after activation, since its resting appearance
+is unchanged.
+
 ## Next actions
 
-Review the palette hint feedback, then continue local refinement batches and holistic review.
+Continue one original-review topic group at a time, not one incidental visual detail per batch.
+Five candidate groups still need reconciliation: History disclosure/shell presentation,
+Files/Changes leaf alignment and first-change landing, Terminal toolbar/profile/touch keys,
+Settings field/reference/status hierarchy, and Models focused editor views. These are historical
+recommendations to check, not five mandatory redesigns; close already-satisfied or rejected items
+and implement useful related changes together. Holistic review follows the local groups.
 Preserve the original cross-project capsules. The attachment file picker has another
 same-line name/directory pairing: its approved `@directory` cue is now implemented.
 Recent already has a middle-dot separator, search/completion separate fields, and full paths retain

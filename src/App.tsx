@@ -39,7 +39,7 @@ import { PaneResizeHandle } from "./components/PaneResizeHandle";
 import { RenderErrorBoundary } from "./components/RenderErrorBoundary";
 import type { SettingsCategoryId } from "./components/Settings";
 import { SettingsDialog, SettingsLoading } from "./components/SettingsDialog";
-import { Transcript } from "./components/Transcript";
+import { Transcript, type TranscriptNavigation } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
 import { BrandLogo, Wordmark } from "./components/Wordmark";
 import type { Notice } from "./events";
@@ -502,6 +502,11 @@ function useMediaQuery(query: string): boolean {
 }
 
 const ConversationStage = memo(function ConversationStage() {
+  const transcriptRef = useRef<TranscriptNavigation>(null);
+  const jumpToPending = useCallback(
+    () => transcriptRef.current?.jumpToPending(),
+    [],
+  );
   const state = useAppState(
     (source) => ({
       sessionId: source.sessionId,
@@ -538,6 +543,7 @@ const ConversationStage = memo(function ConversationStage() {
 
   const transcript = (
     <Transcript
+      ref={transcriptRef}
       messages={state.messages}
       activityRanges={state.transcriptActivityRanges}
       promptMapTurns={state.promptMapTurns}
@@ -573,7 +579,7 @@ const ConversationStage = memo(function ConversationStage() {
   const composer = (
     <div className="composer-dock">
       <CommandActivity />
-      <ActivityBar />
+      <ActivityBar onJumpToPending={jumpToPending} />
       <ExtensionDisplayDock
         displays={state.extensionDisplays}
         placement="aboveEditor"

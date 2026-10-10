@@ -234,7 +234,11 @@ additional button-level dimming. [[design-system]] owns the shared presentation 
 single-mode queue names its mode in that header; mixed queues use quiet group labels without group
 counts or per-row S/Q badges. Bounded previews with omitted entries retain a generic header and visible
 group labels, since the supplied groups cannot establish the whole queue's mode. ActivityBar keeps its
-compact count. Text previews preserve beginning and end, up to three leading lines and one trailing
+compact count capsule as a native Jump to Pending button. Activation aligns the current queue's
+start below the floating reading controls, scrolls only the transcript and focuses the Pending
+region without focusing the editor. It releases latest-follow; keyboard and pointer activation
+share the same action. The region adds no ordinary Tab stop and retains the existing focus-within
+emphasis and idle dimming. The count disappears when the queue is empty. Text previews preserve beginning and end, up to three leading lines and one trailing
 line within 512 characters, with explicit middle ellipsis.
 Short text stays whole; omitted rows retain total and omitted counts. Known images have wrapping,
 clickable thumbnails from retained handles through the attachment endpoint. Until handles arrive,
