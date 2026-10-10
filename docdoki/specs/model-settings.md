@@ -111,6 +111,15 @@ Forms retain untouched providers, model metadata, overrides and advanced fields 
 Removing a declaration affects `models.json`, independently of built-in catalog entries and saved
 login credentials. Configured declarations remain editable when their models are unavailable.
 
+Provider/model creation and editing open a focused subview inside the Models category, replacing
+the browsing sections without unmounting their state. The header identifies the edit target and
+offers Back to models; the form body scrolls separately from the always-reachable Save/Cancel
+actions. Existing field contents, advanced disclosures and declaration semantics remain unchanged.
+Back and Cancel discard that editor's draft and restore the originating list context, including
+search, disclosure state, scroll and focus. Saving an existing model preserves the search; if its
+new identity no longer matches, focus returns to search. A newly created model still receives focus
+in the ordinary available list. Virtualized return targets receive focus after their row mounts.
+
 Drafts belong to their provider/model and creation mode and survive Settings category switches.
 Model search and loaded data retain the same Settings owner while its category is hidden; hidden
 content does not take focus or apply destination scrolling. Errors remain in the form. Creating a

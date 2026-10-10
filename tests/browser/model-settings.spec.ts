@@ -344,6 +344,136 @@ for (const touch of [false, true]) {
           : { width: 1280, height: 900 },
         hasTouch: touch,
       });
+
+      test("focused editors keep actions reachable and restore their browsing context", async ({
+        page,
+      }) => {
+        const scenario = await modelSettingsScenario(
+          page,
+          touch ? "dark" : "light",
+        );
+        scenario.snapshot().models.push(
+          ...Array.from({ length: 40 }, (_, index) => ({
+            ...scenario.snapshot().models[0]!,
+            id: `catalog-${index}`,
+            name: `Catalog model ${index}`,
+          })),
+        );
+        await pairAndOpen(page);
+        await page
+          .getByRole("button", { name: "Settings", exact: true })
+          .click();
+        const settings = page.getByRole("dialog", {
+          name: "Settings",
+          exact: true,
+        });
+        const nav = settings.getByRole("navigation", {
+          name: "Settings categories",
+        });
+        await nav.getByRole("button", { name: "Models", exact: true }).click();
+        const search = settings.getByRole("combobox", {
+          name: "Search available models",
+        });
+        await search.fill("local");
+        const opener = settings.getByRole("button", {
+          name: "Edit model custom/local",
+          exact: true,
+        });
+        const content = settings.locator(".settings__content");
+        await opener.scrollIntoViewIfNeeded();
+        const position = await content.evaluate((el) => el.scrollTop);
+        await opener.click();
+        const editor = settings.getByRole("region", {
+          name: "Edit model",
+          exact: true,
+        });
+        const body = editor.locator(".models-form__body");
+        await expect(search).toBeHidden();
+        await expect(
+          editor.getByLabel("Model ID", { exact: true }),
+        ).toBeFocused();
+        expect(await body.evaluate((el) => el.scrollTop)).toBe(0);
+        await editor.getByLabel("Display name").fill("Retained draft");
+        await nav.getByRole("button", { name: "Display", exact: true }).click();
+        await nav.getByRole("button", { name: "Models", exact: true }).click();
+        await expect(editor.getByLabel("Display name")).toHaveValue(
+          "Retained draft",
+        );
+        await editor.getByText("Connection overrides", { exact: true }).click();
+        await page.setViewportSize({ width: touch ? 320 : 1280, height: 460 });
+        await expect(
+          editor.getByRole("button", { name: "Save model", exact: true }),
+        ).toBeInViewport();
+        await expect(
+          editor.getByRole("button", { name: "Cancel", exact: true }),
+        ).toBeInViewport();
+        await body.evaluate((el) => {
+          el.scrollTop = el.scrollHeight;
+        });
+        await expect(editor.getByLabel("Base URL override")).toBeInViewport();
+        await expect(
+          editor.getByRole("button", { name: "Back to models" }),
+        ).toBeInViewport();
+        await settings.screenshot({
+          path: `output/playwright/models-editor-refinement/editor-short-${touch ? "touch-dark" : "desktop"}.png`,
+        });
+        await page.setViewportSize({
+          width: touch ? 390 : 1280,
+          height: touch ? 844 : 900,
+        });
+        await editor.getByRole("button", { name: "Back to models" }).click();
+        await expect(search).toHaveValue("local");
+        await expect(opener).toBeFocused();
+        await expect
+          .poll(() => content.evaluate((el) => el.scrollTop))
+          .toBeCloseTo(position, 0);
+        const providers = settings.getByRole("region", {
+          name: "Custom providers",
+          exact: true,
+        });
+        await expect(
+          providers.getByRole("button", { name: "Show", exact: true }),
+        ).toBeVisible();
+        await providers
+          .getByRole("button", { name: "Show", exact: true })
+          .click();
+        const declaration = providers.getByRole("region", {
+          name: "Custom provider custom",
+          exact: true,
+        });
+        const disclosure = declaration.locator("details");
+        await disclosure.locator("summary").click();
+        const editDeclared = declaration.getByRole("button", {
+          name: "Edit declared model custom/local",
+          exact: true,
+        });
+        await editDeclared.click();
+        await expect(editor.getByLabel("Display name")).toHaveValue(
+          "Local model",
+        );
+        await editor
+          .getByRole("button", { name: "Cancel", exact: true })
+          .click();
+        await expect(editDeclared).toBeFocused();
+        await expect(disclosure).toHaveAttribute("open", "");
+        await search.fill("");
+        const grid = settings.getByRole("grid", { name: "Available models" });
+        const gridPosition = await grid.evaluate((el) => {
+          el.scrollTop = 200;
+          return el.scrollTop;
+        });
+        await settings
+          .getByRole("button", { name: "Add provider", exact: true })
+          .click();
+        await settings
+          .getByRole("button", { name: "Cancel", exact: true })
+          .click();
+        await expect
+          .poll(() => grid.evaluate((el) => el.scrollTop))
+          .toBe(gridPosition);
+        expect(scenario.errors).toEqual([]);
+      });
+
       test("provider -> model -> common/default retains row focus, current model and composer draft", async ({
         page,
       }) => {

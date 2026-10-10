@@ -73,6 +73,17 @@ test("category switches retain model browsing, provider drafts and a login arriv
   await settings
     .getByLabel("Base URL", { exact: true })
     .fill("https://draft.invalid/v1");
+  await nav.getByRole("button", { name: "Display", exact: true }).click();
+  await nav.getByRole("button", { name: "Models", exact: true }).click();
+  await expect(settings.getByLabel("Provider ID", { exact: true })).toHaveValue(
+    "draft-provider",
+  );
+  await expect(settings.getByLabel("Base URL", { exact: true })).toHaveValue(
+    "https://draft.invalid/v1",
+  );
+  await settings
+    .getByRole("button", { name: "Back to models", exact: true })
+    .click();
   const credentials = settings.getByRole("region", {
     name: "Login & API keys",
   });
@@ -109,12 +120,7 @@ test("category switches retain model browsing, provider drafts and a login arriv
   await nav.getByRole("button", { name: "Models", exact: true }).click();
   await expect(search).toHaveValue("catalog-079");
   await expect(grid.getByRole("row")).toContainText("Catalog model 79");
-  await expect(settings.getByLabel("Provider ID", { exact: true })).toHaveValue(
-    "draft-provider",
-  );
-  await expect(settings.getByLabel("Base URL", { exact: true })).toHaveValue(
-    "https://draft.invalid/v1",
-  );
+
   const secret = credentials.getByLabel("API key", { exact: true });
   await secret.fill("SYNTHETIC_CATEGORY_KEY");
   await nav.getByRole("button", { name: "Conversation", exact: true }).click();

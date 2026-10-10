@@ -40,94 +40,95 @@ export function ProviderForm({
   };
   return (
     <form className="models-form" onSubmit={(event) => void submit(event)}>
-      <h4>{value ? `Edit ${value.id}` : "Add provider"}</h4>
-      <div className="models-form__grid">
-        <label>
-          Provider ID
-          <input
-            required
-            value={id}
-            disabled={Boolean(value) || busy}
-            onChange={(event) => setId(event.target.value)}
-            placeholder="my-provider"
-            autoFocus={!value}
-          />
-        </label>
-        <label>
-          Base URL
-          <input
-            value={baseUrl}
-            disabled={busy}
-            onChange={(event) => setBaseUrl(event.target.value)}
-            placeholder="https://api.example.com/v1"
-            autoFocus={Boolean(value)}
-          />
-        </label>
-        <label>
-          API type
-          <input
-            aria-label="API type"
-            value={api}
-            disabled={busy}
-            onChange={(event) => setApi(event.target.value)}
-            placeholder={
-              hasNativeApi ? "Use default" : "Set here or on the model"
-            }
-          />
-        </label>
-        <label className="models-form__wide">
-          API key
-          <div className="models-secret-input">
+      <div className="models-form__body">
+        <div className="models-form__grid">
+          <label>
+            Provider ID
             <input
-              type={showKey ? "text" : "password"}
-              value={key}
+              required
+              value={id}
+              disabled={Boolean(value) || busy}
+              onChange={(event) => setId(event.target.value)}
+              placeholder="my-provider"
+              autoFocus={!value}
+            />
+          </label>
+          <label>
+            Base URL
+            <input
+              value={baseUrl}
               disabled={busy}
-              autoComplete="new-password"
-              onChange={(event) => {
-                setKey(event.target.value);
-                setRemoveKey(false);
-              }}
+              onChange={(event) => setBaseUrl(event.target.value)}
+              placeholder="https://api.example.com/v1"
+              autoFocus={Boolean(value)}
+            />
+          </label>
+          <label>
+            API type
+            <input
+              aria-label="API type"
+              value={api}
+              disabled={busy}
+              onChange={(event) => setApi(event.target.value)}
               placeholder={
-                value?.apiKeyConfigured
-                  ? "Leave blank to keep the existing key"
-                  : "Optional"
+                hasNativeApi ? "Use default" : "Set here or on the model"
               }
             />
-            <button
-              type="button"
-              className="models-icon-button"
-              disabled={busy}
-              aria-label={showKey ? "Hide API key" : "Show API key"}
-              aria-pressed={showKey}
-              onClick={() => setShowKey((value) => !value)}
-            >
-              {showKey ? (
-                <EyeOff size={16} aria-hidden />
-              ) : (
-                <Eye size={16} aria-hidden />
-              )}
-            </button>
-          </div>
-        </label>
+          </label>
+          <label className="models-form__wide">
+            API key
+            <div className="models-secret-input">
+              <input
+                type={showKey ? "text" : "password"}
+                value={key}
+                disabled={busy}
+                autoComplete="new-password"
+                onChange={(event) => {
+                  setKey(event.target.value);
+                  setRemoveKey(false);
+                }}
+                placeholder={
+                  value?.apiKeyConfigured
+                    ? "Leave blank to keep the existing key"
+                    : "Optional"
+                }
+              />
+              <button
+                type="button"
+                className="models-icon-button"
+                disabled={busy}
+                aria-label={showKey ? "Hide API key" : "Show API key"}
+                aria-pressed={showKey}
+                onClick={() => setShowKey((value) => !value)}
+              >
+                {showKey ? (
+                  <EyeOff size={16} aria-hidden />
+                ) : (
+                  <Eye size={16} aria-hidden />
+                )}
+              </button>
+            </div>
+          </label>
+        </div>
+        {value?.apiKeyConfigured ? (
+          <label className="models-checkbox">
+            <input
+              type="checkbox"
+              className="choice-input"
+              checked={removeKey}
+              disabled={busy || Boolean(key)}
+              onChange={(event) => setRemoveKey(event.target.checked)}
+            />
+            Remove API key
+          </label>
+        ) : null}
+        {error ? (
+          <p className="settings__error" role="alert" tabIndex={-1}>
+            {error}
+          </p>
+        ) : null}
       </div>
-      {value?.apiKeyConfigured ? (
-        <label className="models-checkbox">
-          <input
-            type="checkbox"
-            className="choice-input"
-            checked={removeKey}
-            disabled={busy || Boolean(key)}
-            onChange={(event) => setRemoveKey(event.target.checked)}
-          />
-          Remove API key
-        </label>
-      ) : null}
-      {error ? (
-        <p className="settings__error" role="alert" tabIndex={-1}>
-          {error}
-        </p>
-      ) : null}
-      <div className="models-actions">
+      <div className="models-actions models-form__actions">
         <button
           className="button button--primary"
           disabled={busy || !id.trim()}
@@ -201,137 +202,136 @@ export function ModelForm({
   };
   return (
     <form className="models-form" onSubmit={(event) => void submit(event)}>
-      <h4>
-        {value ? "Edit model" : "Add model"} · {provider}
-      </h4>
-      <div className="models-form__grid">
-        <label>
-          Model ID
-          <input
-            required
-            value={id}
-            disabled={busy}
-            onChange={(event) => setId(event.target.value)}
-            autoFocus
-            placeholder="model-id"
-          />
-        </label>
-        <label>
-          Display name
-          <input
-            value={name}
-            disabled={busy}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="Optional"
-          />
-        </label>
-        {!hasInheritedApi ? (
+      <div className="models-form__body">
+        <div className="models-form__grid">
           <label>
-            API type
+            Model ID
             <input
               required
-              value={api}
+              value={id}
               disabled={busy}
-              onChange={(event) => setApi(event.target.value)}
-              placeholder="e.g. openai-completions"
+              onChange={(event) => setId(event.target.value)}
+              autoFocus
+              placeholder="model-id"
             />
           </label>
-        ) : null}
-      </div>
-      <fieldset className="models-capabilities">
-        <legend>Capabilities</legend>
-        <div className="models-actions">
-          <label className="models-checkbox">
+          <label>
+            Display name
             <input
-              type="checkbox"
-              className="choice-input"
-              checked={reasoning}
+              value={name}
               disabled={busy}
-              onChange={(event) => setReasoning(event.target.checked)}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Optional"
             />
-            Thinking supported
           </label>
-          {(["text", "image"] as const).map((type) => (
-            <label className="models-checkbox" key={type}>
-              <input
-                type="checkbox"
-                className="choice-input"
-                checked={input.includes(type)}
-                disabled={busy}
-                onChange={(event) =>
-                  setInput((current) =>
-                    event.target.checked
-                      ? [...current, type]
-                      : current.filter((item) => item !== type),
-                  )
-                }
-              />
-              {type === "text" ? "Text" : "Image"} input
-            </label>
-          ))}
-        </div>
-      </fieldset>
-      <div className="models-form__grid">
-        <label>
-          Context window
-          <input
-            type="number"
-            step="any"
-            value={contextWindow}
-            disabled={busy}
-            onChange={(event) => setContextWindow(event.target.value)}
-            placeholder="Pi default"
-          />
-        </label>
-        <label>
-          Maximum output tokens
-          <input
-            type="number"
-            step="any"
-            value={maxTokens}
-            disabled={busy}
-            onChange={(event) => setMaxTokens(event.target.value)}
-            placeholder="Pi default"
-          />
-        </label>
-      </div>
-      <details
-        className="models-form__optional"
-        open={
-          Boolean((hasInheritedApi && value?.api) || value?.baseUrl) ||
-          undefined
-        }
-      >
-        <summary>Connection overrides</summary>
-        <div className="models-form__grid">
-          {hasInheritedApi ? (
+          {!hasInheritedApi ? (
             <label>
-              API override
+              API type
               <input
+                required
                 value={api}
                 disabled={busy}
                 onChange={(event) => setApi(event.target.value)}
-                placeholder="Use default"
+                placeholder="e.g. openai-completions"
               />
             </label>
           ) : null}
+        </div>
+        <fieldset className="models-capabilities">
+          <legend>Capabilities</legend>
+          <div className="models-actions">
+            <label className="models-checkbox">
+              <input
+                type="checkbox"
+                className="choice-input"
+                checked={reasoning}
+                disabled={busy}
+                onChange={(event) => setReasoning(event.target.checked)}
+              />
+              Thinking supported
+            </label>
+            {(["text", "image"] as const).map((type) => (
+              <label className="models-checkbox" key={type}>
+                <input
+                  type="checkbox"
+                  className="choice-input"
+                  checked={input.includes(type)}
+                  disabled={busy}
+                  onChange={(event) =>
+                    setInput((current) =>
+                      event.target.checked
+                        ? [...current, type]
+                        : current.filter((item) => item !== type),
+                    )
+                  }
+                />
+                {type === "text" ? "Text" : "Image"} input
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <div className="models-form__grid">
           <label>
-            Base URL override
+            Context window
             <input
-              value={baseUrl}
+              type="number"
+              step="any"
+              value={contextWindow}
               disabled={busy}
-              onChange={(event) => setBaseUrl(event.target.value)}
-              placeholder="Use provider URL"
+              onChange={(event) => setContextWindow(event.target.value)}
+              placeholder="Pi default"
+            />
+          </label>
+          <label>
+            Maximum output tokens
+            <input
+              type="number"
+              step="any"
+              value={maxTokens}
+              disabled={busy}
+              onChange={(event) => setMaxTokens(event.target.value)}
+              placeholder="Pi default"
             />
           </label>
         </div>
-      </details>
-      {error ? (
-        <p className="settings__error" role="alert" tabIndex={-1}>
-          {error}
-        </p>
-      ) : null}
-      <div className="models-actions">
+        <details
+          className="models-form__optional"
+          open={
+            Boolean((hasInheritedApi && value?.api) || value?.baseUrl) ||
+            undefined
+          }
+        >
+          <summary>Connection overrides</summary>
+          <div className="models-form__grid">
+            {hasInheritedApi ? (
+              <label>
+                API override
+                <input
+                  value={api}
+                  disabled={busy}
+                  onChange={(event) => setApi(event.target.value)}
+                  placeholder="Use default"
+                />
+              </label>
+            ) : null}
+            <label>
+              Base URL override
+              <input
+                value={baseUrl}
+                disabled={busy}
+                onChange={(event) => setBaseUrl(event.target.value)}
+                placeholder="Use provider URL"
+              />
+            </label>
+          </div>
+        </details>
+        {error ? (
+          <p className="settings__error" role="alert" tabIndex={-1}>
+            {error}
+          </p>
+        ) : null}
+      </div>
+      <div className="models-actions models-form__actions">
         <button
           className="button button--primary"
           disabled={busy || !id.trim()}

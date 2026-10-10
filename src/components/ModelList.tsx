@@ -162,6 +162,7 @@ export interface ModelListHandle {
     model: ModelIdentity,
     canFocus: () => boolean,
     complete: () => void,
+    options?: { action: string; preserveQuery: boolean },
   ) => void;
 }
 
@@ -219,6 +220,7 @@ export function ModelList({
   const pendingFocus = useRef<{
     key: string;
     action?: string;
+    preserveQuery?: boolean;
     select?: boolean;
     canFocus: () => boolean;
     complete: () => void;
@@ -226,15 +228,15 @@ export function ModelList({
   useImperativeHandle(
     controllerRef,
     () => ({
-      focusModel(model, canFocus, complete) {
+      focusModel(model, canFocus, complete, options) {
         pendingFocus.current?.complete();
         const key = modelIdentityKey(model);
         if (!prepared.some((option) => modelIdentityKey(option) === key)) {
           complete();
           return;
         }
-        pendingFocus.current = { key, canFocus, complete };
-        setQuery("");
+        pendingFocus.current = { key, canFocus, complete, ...options };
+        if (!options?.preserveQuery) setQuery("");
         setActiveModelKey(key);
       },
     }),
@@ -351,18 +353,28 @@ export function ModelList({
       return;
     }
     const index = indexes.get(request.key);
+    if (index === undefined && request.preserveQuery) {
+      pendingFocus.current = null;
+      request.complete();
+      inputRef.current?.focus();
+      return;
+    }
     if (index === undefined || activeModelKey !== request.key) return;
     const target = document
       .getElementById(`${id}-option-${index}`)
       ?.querySelector<HTMLElement>(
-        request.action
-          ? `[data-model-action="${request.action}"]:not(:disabled)`
-          : ".models-row-actions [data-model-action]:not(:disabled)",
+        request.action === "edit"
+          ? ".models-name-action:not(:disabled)"
+          : request.action
+            ? `[data-model-action="${request.action}"]:not(:disabled)`
+            : ".models-row-actions [data-model-action]:not(:disabled)",
       );
+    // A just-revealed list may not have measured and mounted this row yet.
+    if (!target) return;
     pendingFocus.current = null;
     request.complete();
-    target?.focus();
-    if (request.select) target?.click();
+    target.focus();
+    if (request.select) target.click();
   });
   const navigate = (event: KeyboardEvent) => {
     if (event.defaultPrevented || event.nativeEvent.isComposing) return;

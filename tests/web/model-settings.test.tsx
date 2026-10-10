@@ -434,6 +434,7 @@ describe("Models settings configuration and ownership", () => {
     });
     expect(screen.getByLabelText("Remove API key")).toHaveClass("choice-input");
     fireEvent.click(screen.getByLabelText("Remove API key"));
+    fireEvent.click(screen.getByRole("button", { name: "Back to models" }));
     fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
     expect(screen.getByLabelText("Provider ID")).toHaveValue("");
     expect(screen.getByLabelText("Provider ID")).not.toBeDisabled();
@@ -451,6 +452,7 @@ describe("Models settings configuration and ownership", () => {
     fireEvent.change(screen.getByLabelText("API key"), {
       target: { value: "unsaved-secret" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     fireEvent.click(screen.getByRole("button", { name: "Edit provider new" }));
     expect(screen.getByLabelText("Provider ID")).toHaveValue("new");
     expect(screen.getByLabelText("Provider ID")).toBeDisabled();
@@ -478,9 +480,9 @@ describe("Models settings configuration and ownership", () => {
 
   it("prioritizes startup defaults and keeps custom connection fields behind their disclosure", async () => {
     render(<ModelsSettings />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Add provider" }),
-    );
+    const addProvider = await screen.findByRole("button", {
+      name: "Add provider",
+    });
     expect(
       screen
         .getAllByRole("heading", { level: 3 })
@@ -493,6 +495,11 @@ describe("Models settings configuration and ownership", () => {
       screen.getByRole("region", { name: "Login & API keys" })
         .nextElementSibling,
     ).toBe(screen.getByRole("region", { name: "Custom providers" }));
+    fireEvent.click(addProvider);
+    expect(screen.getByRole("region", { name: "Add provider" })).toBeVisible();
+    expect(
+      screen.queryByRole("region", { name: "Models" }),
+    ).not.toBeInTheDocument();
     const inputs = [...document.querySelectorAll(".models-form input")];
     for (const [index, name] of [
       "Provider ID",
@@ -502,6 +509,7 @@ describe("Models settings configuration and ownership", () => {
     ].entries())
       expect(inputs[index]).toHaveAccessibleName(name);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await openDeclarations();
     fireEvent.click(
       screen.getByRole("button", { name: "Add model to custom" }),
     );
@@ -891,6 +899,7 @@ describe("Models settings configuration and ownership", () => {
     fireEvent.change(screen.getByLabelText("Display name"), {
       target: { value: "Unsaved embedding edit" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Back to models" }));
     fireEvent.click(
       screen.getByRole("button", { name: "Edit declared model custom/same" }),
     );

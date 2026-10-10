@@ -988,7 +988,7 @@ scroll offsets. Touch-drag simulation also settles on complete keys at 320/390px
 wide widths without overflow cues. Light/dark checks preserve the 53px height and fixed arrows.
 The correction comparison is `output/playwright/terminal-refinement/snap-comparison.png`.
 
-## Settings field layout and status hierarchy — ready for review
+## Settings field layout and status hierarchy — accepted
 
 General and Terminal Settings now share space-based field wrapping instead of per-field wide flags.
 At intermediate narrow widths, dropdowns no longer squeeze their descriptions into a small side
@@ -1009,12 +1009,33 @@ continuity. Herdr recheck and navigation to Restart were checked without issuing
 Light/dark and 320/390/540/1280px captures are in
 `output/playwright/settings-refinement/`; ordinary terminal fields have no horizontal overflow.
 
+## Models focused editors — ready for review
+
+Provider/model editing now replaces the Models browsing sections with a focused in-category view.
+The header names the operation and target and offers Back to models; only the form body scrolls,
+leaving Save/Cancel reachable at desktop, narrow and short viewport sizes. The existing field
+order, capabilities, inherited API behavior, credentials, validation and saving semantics remain.
+
+Browsing stays mounted but hidden. Back/Cancel restores the original search, outer and virtual-list
+scroll, disclosure state and entry-point focus. Existing-model saves retain the query; a renamed
+model outside that query returns focus to search. The virtual list waits for a return row to mount
+before delivering focus. Drafts survive category switching; login remains independent. Creating a
+provider still returns to its Add model action, and a newly available model receives ordinary-list
+focus. Custom provider grouping remains: it communicates ownership; moving the form removes the
+redundant nested edit box without flattening that relationship. Common/Default semantics, rule
+attribution and provider-heading refinements were already implemented and remain unchanged.
+
+41 focused component tests, 13 related browser cases, type/lint/format checks and build pass.
+Checks cover desktop/touch creation, focus and query return, retained drafts/login, a scrolled
+virtual list, 320px/460px action reachability, declaration disclosure restoration and light/dark
+presentation. Baseline and final comparisons are in
+`output/playwright/models-editor-refinement/`.
+
 ## Next actions
 
-Continue one original-review topic group at a time, not one incidental visual detail per batch.
-One candidate group remains: Models focused editor views. This is a historical recommendation to
-check, not a mandatory redesign; close already-satisfied or rejected items and implement useful
-related changes together. Holistic review follows the local groups.
+The original proposal's local topic groups are reconciled; no local candidate group remains.
+Review retention of the focused Models editor, then proceed to holistic review of the retained
+interface rather than adding another stream of incidental micro-batches.
 Preserve the original cross-project capsules. The attachment file picker has another
 same-line name/directory pairing: its approved `@directory` cue is now implemented.
 Recent already has a middle-dot separator, search/completion separate fields, and full paths retain
