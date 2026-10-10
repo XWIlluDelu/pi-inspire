@@ -956,7 +956,7 @@ change at line 147, outside the old initial viewport. Desktop tree row height re
 Dark and 390px captures were inspected. Previously rejected Files/Changes structural layout
 recommendations stay closed, not reopened by this batch.
 
-## Terminal compact controls — ready for review
+## Terminal compact controls — accepted
 
 The original Terminal toolbar/profile/touch recommendations are implemented as one group. Focus
 moves into More at pane widths through 480px. Multiple available profiles use one Plus chooser
@@ -988,13 +988,33 @@ scroll offsets. Touch-drag simulation also settles on complete keys at 320/390px
 wide widths without overflow cues. Light/dark checks preserve the 53px height and fixed arrows.
 The correction comparison is `output/playwright/terminal-refinement/snap-comparison.png`.
 
+## Settings field layout and status hierarchy — ready for review
+
+General and Terminal Settings now share space-based field wrapping instead of per-field wide flags.
+At intermediate narrow widths, dropdowns no longer squeeze their descriptions into a small side
+column; controls wrap below when they need more space. Desktop rows stay inline, while switches,
+font-size steppers and model identity summaries retain their compact layouts. Narrow wrapping may
+increase row height; category framing, control sizes, footer, saving and navigation remain unchanged.
+
+Herdr status messages and their associated Recheck or restart-navigation actions wrap as separate
+items. Availability and pending-restart messages have separate lines when both exist; no new box or
+action is added. Pi Docs/Changelog already use distinct secondary typography on the label line, so
+that recommendation is closed without changing the version/reference layout. Category views and
+draft/login preservation were already completed.
+
+22 focused component tests, type/lint/format checks and the frontend build pass. Nine desktop/touch
+browser cases cover Settings and Terminal Settings, including the 390px intermediate layout,
+readable description widths, wrapping, category focus, saved preferences, model drafts and login
+continuity. Herdr recheck and navigation to Restart were checked without issuing a restart.
+Light/dark and 320/390/540/1280px captures are in
+`output/playwright/settings-refinement/`; ordinary terminal fields have no horizontal overflow.
+
 ## Next actions
 
 Continue one original-review topic group at a time, not one incidental visual detail per batch.
-Two candidate groups still need reconciliation: Settings field/reference/status hierarchy and
-Models focused editor views. These are historical recommendations to check, not two mandatory
-redesigns; close already-satisfied or rejected items
-and implement useful related changes together. Holistic review follows the local groups.
+One candidate group remains: Models focused editor views. This is a historical recommendation to
+check, not a mandatory redesign; close already-satisfied or rejected items and implement useful
+related changes together. Holistic review follows the local groups.
 Preserve the original cross-project capsules. The attachment file picker has another
 same-line name/directory pairing: its approved `@directory` cue is now implemented.
 Recent already has a middle-dot separator, search/completion separate fields, and full paths retain

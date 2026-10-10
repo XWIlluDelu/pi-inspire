@@ -283,7 +283,7 @@ export function TerminalSettingsDialog({
                       </button>
                     </div>
                   </SettingField>
-                  <SettingField label="Line height" wide>
+                  <SettingField label="Line height">
                     <SegmentedControl
                       label="Terminal line height"
                       value={String(settings.lineHeight)}
@@ -297,7 +297,7 @@ export function TerminalSettingsDialog({
                       }
                     />
                   </SettingField>
-                  <SettingField label="Cursor" wide>
+                  <SettingField label="Cursor">
                     <SegmentedControl
                       label="Terminal cursor shape"
                       value={settings.cursorStyle}
@@ -351,7 +351,6 @@ export function TerminalSettingsDialog({
                   </SettingField>
                   <SettingField
                     label="Shortcut priority"
-                    wide
                     description="Which side receives search, copy and paste shortcuts."
                   >
                     <SegmentedControl
@@ -483,7 +482,6 @@ export function TerminalSettingsDialog({
                       <SettingField
                         label="Clear saved output"
                         description="Active terminals stay open."
-                        wide
                       >
                         <button
                           type="button"

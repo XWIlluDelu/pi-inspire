@@ -50,8 +50,12 @@ settings, update observations, navigation curation, pane state, recent models, a
 state unchanged.
 
 Settings and Terminal settings share field, switch, stepper and segmented-control styling: 32px
-controls for a mouse, 40px for touch. Card width determines when wide controls move below their
-labels; switches stay inline. Segment labels do not wrap. Terminal settings uses the same category
+controls for a mouse, 40px for touch. Ordinary fields wrap their controls according to the available
+space and intrinsic control width, rather than per-field wide flags; descriptions retain a readable
+column. Narrow cards let wrapped controls fill the row. Switches, font-size steppers and model
+identity summaries keep their compact layouts. Segment labels do not wrap. Herdr availability and
+pending-restart notes remain unboxed, with each message and its associated action wrapping as
+separate items rather than running together. Terminal settings uses the same category
 navigation for Appearance, Interaction and Saved output under [[terminal]]. Category and subsection
 navigation scroll only dialog content, keeping the header, navigation and utility footer in place.
 The narrow horizontal category strip uses one accent underline for selection, with visible keyboard focus and

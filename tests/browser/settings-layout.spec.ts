@@ -150,10 +150,11 @@ test("category switches retain model browsing, provider drafts and a login arriv
   expect(scenario.errors).toEqual([]);
 });
 
-for (const touch of [false, true]) {
-  test.describe(touch ? "touch settings" : "desktop settings", () => {
+for (const width of [540, 390, 320]) {
+  const touch = width < 540;
+  test.describe(`${touch ? "touch" : "desktop"} settings · ${width}px`, () => {
     test.use({
-      viewport: { width: touch ? 320 : 540, height: 900 },
+      viewport: { width, height: 900 },
       hasTouch: touch,
       serviceWorkers: "block",
     });
@@ -219,6 +220,19 @@ for (const touch of [false, true]) {
           const height = (await label.boundingBox())!.height;
           expect(height).toBeLessThan(24);
         }
+      }
+      await nav.getByRole("button", { name: "Behavior", exact: true }).click();
+      const launch = settings.getByRole("combobox", { name: "On launch" });
+      const launchInfo = launch.locator(
+        "xpath=ancestor::*[contains(@class, 'settings__field-control')]/preceding-sibling::*",
+      );
+      const infoBox = (await launchInfo.boundingBox())!;
+      const controlBox = (await launch.boundingBox())!;
+      expect(infoBox.width).toBeGreaterThanOrEqual(180);
+      if (touch) {
+        expect(controlBox.y).toBeGreaterThanOrEqual(infoBox.y + infoBox.height);
+      } else {
+        expect(controlBox.x).toBeGreaterThan(infoBox.x + infoBox.width);
       }
       const system = nav.getByRole("button", { name: "System", exact: true });
       await system.focus();

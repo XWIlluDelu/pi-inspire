@@ -299,7 +299,6 @@ export const SettingsContent = memo(function SettingsContent({
 
               <SettingField
                 label="Content text size"
-                wide
                 description="Applies to messages, input, code, and previews."
               >
                 <SegmentedControl
@@ -312,7 +311,6 @@ export const SettingsContent = memo(function SettingsContent({
 
               <SettingField
                 label="Reading width"
-                wide
                 description="Maximum width for conversation and input."
               >
                 <SegmentedControl
@@ -325,7 +323,6 @@ export const SettingsContent = memo(function SettingsContent({
 
               <SettingField
                 label="Project location"
-                wide
                 description="How the project appears in the title bar."
               >
                 <SegmentedControl
@@ -412,7 +409,6 @@ export const SettingsContent = memo(function SettingsContent({
 
               <SettingField
                 label="Send key"
-                wide
                 description="On touch keyboards, Return adds a new line."
               >
                 <SegmentedControl

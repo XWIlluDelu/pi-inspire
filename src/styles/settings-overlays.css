@@ -374,10 +374,10 @@
 }
 
 .settings__field {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 2px var(--space-3);
+  gap: var(--space-2) var(--space-3);
   min-height: var(--set-row-min-h);
   padding: var(--set-row-pad);
   border-bottom: 1px solid var(--hairline);
@@ -389,7 +389,21 @@
 }
 
 .settings__field > .settings__field-info {
-  grid-column: 1;
+  flex: 1 1 180px;
+}
+
+.settings__field:not(:has(.settings__field-help)) > .settings__field-info {
+  flex-basis: auto;
+}
+
+/* Compact actions and identity summaries retain their inline layouts. */
+.settings__field:has(.settings-switch),
+.settings__field.models-default-row,
+.settings__field.models-default-row--empty,
+.settings__field.terminal-settings__font {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--space-3);
 }
 
 .settings__field-label {
@@ -423,6 +437,8 @@
 }
 
 .settings__field > .settings__field-control {
+  flex: 0 1 auto;
+  max-width: 100%;
   grid-column: 2;
   grid-row: 1;
   justify-self: end;
@@ -444,6 +460,15 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
+}
+
+.settings__field-control > .segmented,
+.settings__field-control > .dropdown--field {
+  flex: 1;
+}
+
+.settings__field-control > .dropdown--field .dropdown__trigger {
+  width: 100%;
 }
 
 .settings__field .dropdown--field .dropdown__trigger {
@@ -475,26 +500,11 @@
 }
 
 @container settings-card (max-width: 439px) {
-  .settings__field--wide {
-    grid-template-columns: minmax(0, 1fr);
+  .settings__field > .settings__field-control {
+    flex-grow: 1;
   }
 
-  .settings__field--wide > .settings__field-control {
-    grid-column: 1;
-    grid-row: auto;
-    justify-self: stretch;
-    width: 100%;
-    margin-top: var(--space-2);
-  }
-
-  .settings__field--wide .settings__field-control,
-  .settings__field--wide .segmented,
-  .settings__field--wide .dropdown,
-  .settings__field--wide .dropdown__trigger {
-    width: 100%;
-  }
-
-  .models-default-row {
+  .settings__field.models-default-row {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -506,26 +516,6 @@
     margin-top: var(--space-1);
   }
 
-}
-
-@container settings-card (max-width: 339px) {
-  .settings__field:not(:has(.settings-switch)) {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .settings__field:not(:has(.settings-switch)) > .settings__field-control {
-    grid-column: 1;
-    grid-row: auto;
-    justify-self: stretch;
-    width: 100%;
-    margin-top: var(--space-2);
-  }
-
-  .settings__field:not(:has(.settings-switch)) .dropdown,
-  .settings__field:not(:has(.settings-switch)) .dropdown__trigger,
-  .settings__field:not(:has(.settings-switch)) .segmented {
-    width: 100%;
-  }
 }
 
 .settings__action-button {
