@@ -72,7 +72,9 @@ at `d712e24`: same-session summary settings precede Edit / Continue, retaining t
 and separate Fork/Clone group. The current History slice shortens turn disclosures to Activity and
 presents known Shell details as a single framed record with a status/Copy header, separate literal
 command/output and an optional full-log footer. The user accepted this agy-designed composition;
-ordinary rich content remains unchanged.
+ordinary rich content remains unchanged. The next Files/Changes batch aligns workspace tree leaves
+and lands new diffs at their first change while preserving reading positions across revisits and
+refreshes. Its matched comparison is ready for retention review.
 Welcome's directory-first visual experiment is withdrawn; the
 original bordered path input below the toolbar and hero spacing are restored. Its independent
 Enter repair remains, preserving message autofocus and preventing implicit creation from directory

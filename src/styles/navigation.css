@@ -575,6 +575,12 @@
     color var(--dur-micro) var(--ease-standard);
 }
 
+/* Leaf rows reserve the same disclosure slot as sibling folders, not search results. */
+.workspace-tree__row--file:not(.workspace-tree__row--result)::before {
+  content: "";
+  flex: 0 0 11px;
+}
+
 .workspace-tree__row:hover {
   background: var(--bg-inset);
   color: var(--ink);

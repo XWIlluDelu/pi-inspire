@@ -77,6 +77,15 @@ describe("static asset contracts", () => {
     expect(css).toMatch(/\.picker__path::before\s*\{[^}]*content:\s*"@"/);
   });
 
+  it("reserves tree disclosure space for file leaves without indenting search results", async () => {
+    const css = await readStylesheet();
+    const slot = css.match(
+      /\.workspace-tree__row--file:not\(\.workspace-tree__row--result\)::before\s*\{([^}]*)\}/,
+    )?.[1];
+    expect(slot).toMatch(/content:\s*""/);
+    expect(slot).toMatch(/flex:\s*0 0 11px/);
+  });
+
   it("does not reference undeclared project CSS variables", async () => {
     const css = await readStylesheet();
     const controls = await readFile(

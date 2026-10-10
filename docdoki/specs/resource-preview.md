@@ -54,6 +54,8 @@ headers, and narrow drawer layout, with no internal splitter.
 The lower-left explorer shares the same lazy tree, expansion, selection, hidden visibility, and Git
 decoration state, but omits search. Both trees use the project basename as their heading. Opening a
 workspace file expands its ancestors and emits one reveal request; unrelated updates do not scroll it.
+Leaf rows reserve the folder disclosure slot, aligning sibling file/folder icons and names in Files
+and Explorer. Recent and flat search results retain their existing alignment.
 
 Filesystem membership is independent of Git. Browse includes ignored non-hidden files and empty
 directories. **Show hidden files** defaults off and covers dot names plus native filesystem hidden
@@ -264,6 +266,12 @@ in the existing rows. Deletions use the old revision and its original filename f
 and shared context use the selected new revision. Unknown languages and oversized revisions remain
 escaped plain text. Highlighting does not change source text, selection/copying or row/navigation
 geometry.
+
+A newly encountered text diff positions its first change inside the source viewport without
+scrolling the outer page or changing focus. Within the mounted context pane, vertical/horizontal
+reading offsets and manually navigated change selection survive file/side changes, tab switches
+and diff reloads. Memory is scoped by transport, session, workspace, path identity and side; it is
+not persisted across app reloads.
 
 - Working comparisons use working-tree source; staged comparisons use index source. An empty
   comparison reports no diff rather than substituting disk content for index source.

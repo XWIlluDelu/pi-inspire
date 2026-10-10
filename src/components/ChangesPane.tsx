@@ -12,7 +12,7 @@ import {
   memo,
   type ReactNode,
   type RefObject,
-  useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -49,16 +49,23 @@ function pathName(change: GitFileChange): string {
   return change.path.utf8Path ?? change.path.display;
 }
 
+export type ChangesReadingPositions = Map<
+  string,
+  { top: number; left: number; activeChange: number | null }
+>;
+
 function SourceDiffView({
   diff,
   projection,
   activeChange,
   containerRef,
+  onScroll,
 }: {
   diff: Extract<GitDiffResponse, { kind: "text" }>;
   projection: SourceDiffProjection;
   activeChange: number | null;
   containerRef: RefObject<HTMLDivElement | null>;
+  onScroll: (node: HTMLDivElement) => void;
 }) {
   return (
     <div
@@ -67,6 +74,7 @@ function SourceDiffView({
       aria-label={`Source changes for ${diff.path.display}`}
       tabIndex={0}
       ref={containerRef}
+      onScroll={(event) => onScroll(event.currentTarget)}
       data-pane-scroll-active="true"
     >
       <div className="source-diff__lines">
@@ -373,7 +381,13 @@ function ChangesIndexHeader({ state }: { state: ContextPaneView }) {
   );
 }
 
-function ChangesDetail({ state }: { state: ContextPaneView }) {
+function ChangesDetail({
+  state,
+  readingPositions,
+}: {
+  state: ContextPaneView;
+  readingPositions: ChangesReadingPositions;
+}) {
   const sourceRef = useRef<HTMLDivElement>(null);
   const [activeChange, setActiveChange] = useState<number | null>(null);
   const change = selectedChange(state.gitStatus, state.selectedGitPathId);
@@ -409,9 +423,53 @@ function ChangesDetail({ state }: { state: ContextPaneView }) {
       ? (preview.descriptor.workspacePath ?? preview.descriptor.reference)
       : state.selectedResourceReference);
 
-  useEffect(() => {
-    setActiveChange(null);
-  }, [result?.path.id, result?.side]);
+  const readingKey = textResult
+    ? JSON.stringify([
+        state.transportGeneration,
+        state.sessionId,
+        state.cwd,
+        textResult.path.id,
+        textResult.side,
+      ])
+    : null;
+  useLayoutEffect(() => {
+    const root = sourceRef.current;
+    if (!root || !projection || readingKey === null) return;
+    const saved = readingPositions.get(readingKey);
+    const active =
+      saved?.activeChange != null && saved.activeChange < projection.changes
+        ? saved.activeChange
+        : null;
+    setActiveChange(active);
+    if (saved) {
+      root.scrollTop = saved.top;
+      root.scrollLeft = saved.left;
+    } else {
+      root.scrollTop = 0;
+      root.scrollLeft = 0;
+      const first = root.querySelector<HTMLElement>('[data-change-index="0"]');
+      if (first) {
+        root.scrollTop +=
+          first.getBoundingClientRect().top -
+          root.getBoundingClientRect().top -
+          (root.clientHeight - first.getBoundingClientRect().height) / 2;
+      }
+    }
+    readingPositions.set(readingKey, {
+      top: root.scrollTop,
+      left: root.scrollLeft,
+      activeChange: active,
+    });
+  }, [readingPositions, readingKey, projection]);
+
+  const rememberPosition = (node: HTMLDivElement) => {
+    if (readingKey === null) return;
+    const reading = readingPositions.get(readingKey);
+    if (reading) {
+      reading.top = node.scrollTop;
+      reading.left = node.scrollLeft;
+    }
+  };
 
   const moveChange = (direction: -1 | 1) => {
     if (!projection || projection.changes === 0) return;
@@ -425,6 +483,9 @@ function ChangesDetail({ state }: { state: ContextPaneView }) {
             Math.max(0, activeChange + direction),
           );
     setActiveChange(next);
+    const reading =
+      readingKey === null ? null : readingPositions.get(readingKey);
+    if (reading) reading.activeChange = next;
     requestAnimationFrame(() => {
       sourceRef.current
         ?.querySelector<HTMLElement>(`[data-change-index="${next}"]`)
@@ -481,6 +542,7 @@ function ChangesDetail({ state }: { state: ContextPaneView }) {
         projection={projection}
         activeChange={activeChange}
         containerRef={sourceRef}
+        onScroll={rememberPosition}
       />
     );
   } else if (result) {
@@ -540,7 +602,14 @@ function ChangesDetail({ state }: { state: ContextPaneView }) {
   );
 }
 
-export function ChangesPane({ state }: { state: ContextPaneView }) {
+export function ChangesPane({
+  state,
+  readingPositions,
+}: {
+  state: ContextPaneView;
+  readingPositions?: ChangesReadingPositions;
+}) {
+  const localReadings = useRef<ChangesReadingPositions>(new Map());
   return (
     <ContextSplitBody
       mode="changes"
@@ -555,7 +624,12 @@ export function ChangesPane({ state }: { state: ContextPaneView }) {
           <ChangesIndex state={state} />
         </>
       }
-      detail={<ChangesDetail state={state} />}
+      detail={
+        <ChangesDetail
+          state={state}
+          readingPositions={readingPositions ?? localReadings.current}
+        />
+      }
     />
   );
 }

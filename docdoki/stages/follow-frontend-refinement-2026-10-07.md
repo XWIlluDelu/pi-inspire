@@ -938,13 +938,30 @@ The final implementation captures are `integrated-shell{,-dark,-narrow-dark}.png
 `integrated-comparison.png`; the prior compact layout is superseded. The quiet disclosure and stable
 inspector layout satisfy the remaining original History recommendations.
 
+## Files and Changes reading navigation — ready for review
+
+The original file-tree leaf alignment and first-change landing recommendations are implemented.
+Files and Explorer share an empty disclosure slot for leaf rows so sibling icons and names align;
+Recent and flat search rows remain unchanged. New text diffs locate the first change inside the
+source viewport. The context pane keeps vertical/horizontal offsets and manual change selection
+across file/side changes, tab switches and diff reloads, scoped to connection/session/workspace/path/
+side. Existing change-navigation semantics and add/delete colors remain intact.
+
+36 focused component/style cases, type checking, scoped lint/format and web build pass. Three
+browser cases cover desktop/touch tree alignment, first-change visibility, refresh and tab-return
+positions, navigation and unchanged add/delete colors. Same-content captures are under
+`output/playwright/files-changes-navigation/`; `tree-comparison.png` and `changes-comparison.png`
+compare the batch baseline with the final state. Native browser fixture content has its first
+change at line 147, outside the old initial viewport. Desktop tree row height remains 26px.
+Dark and 390px captures were inspected. Previously rejected Files/Changes structural layout
+recommendations stay closed, not reopened by this batch.
+
 ## Next actions
 
 Continue one original-review topic group at a time, not one incidental visual detail per batch.
-Four candidate groups still need reconciliation: Files/Changes leaf alignment and first-change
-landing, Terminal toolbar/profile/touch keys, Settings field/reference/status hierarchy, and Models
-focused editor views. These are historical
-recommendations to check, not four mandatory redesigns; close already-satisfied or rejected items
+Three candidate groups still need reconciliation: Terminal toolbar/profile/touch keys,
+Settings field/reference/status hierarchy, and Models focused editor views. These are historical
+recommendations to check, not three mandatory redesigns; close already-satisfied or rejected items
 and implement useful related changes together. Holistic review follows the local groups.
 Preserve the original cross-project capsules. The attachment file picker has another
 same-line name/directory pairing: its approved `@directory` cue is now implemented.
