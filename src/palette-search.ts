@@ -1,24 +1,24 @@
-import { fuzzyScore } from "./composer-completion";
 import {
   fuzzySearchMatchRanges,
   mergeSearchMatchRanges,
 } from "./components/SearchMatchText";
+import { fuzzyScore } from "./composer-completion";
 
 const paletteSearchQuery = (query: string) =>
   query.trim().toLocaleLowerCase().replace(/^\//u, "");
 
-/** Emphasize visible title matches; aliases and hints still rank independently. */
-export function paletteTitleMatchRanges(title: string, query: string) {
+/** Emphasize a visible field without changing cross-field ranking. */
+export function paletteTextMatchRanges(text: string, query: string) {
   const needle = paletteSearchQuery(query);
   if (!needle) return [];
   const fold = (value: string) => value.toLocaleLowerCase();
-  const whole = fuzzySearchMatchRanges(title, needle, fold);
+  const whole = fuzzySearchMatchRanges(text, needle, fold);
   return whole.length
     ? whole
     : mergeSearchMatchRanges(
         needle
           .split(/\s+/u)
-          .flatMap((word) => fuzzySearchMatchRanges(title, word, fold)),
+          .flatMap((word) => fuzzySearchMatchRanges(text, word, fold)),
       );
 }
 

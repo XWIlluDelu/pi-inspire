@@ -2,7 +2,7 @@
 scope:
   - src/components/
   - src/styles/
-  - src/{source-diff,file-icons,syntax-highlighting}.ts
+  - src/{source-diff,file-icons,syntax-highlighting,palette-search}.ts
   - shared/contracts.ts
   - tests/web/
   - tests/browser/
@@ -816,7 +816,7 @@ contract tests, scoped lint/format and build pass; still-valid pre-trial light/d
 is in `output/playwright/nav-location-captions/before*.png`. The comparison images in that folder
 show a withdrawn experiment, not current implementation.
 
-## All-terminal project location cues — ready for review
+## All-terminal project location cues — retained
 
 The global terminal navigator adds secondary `@parent` headings for duplicate project basenames
 or immediate-parent-only query hits. Unique project headings remain unchanged without such a
@@ -831,9 +831,57 @@ and parent-query states, query clearing and basename-match suppression. Headers 
 desktop rows 30px; dark/390px checks fit the viewport. Keyboard activation switches to the real
 Samples/Atlas terminal and closes More. Captures: `output/playwright/terminal-parent-context/`.
 
+## Release-note status presentation — retained
+
+Pi release-note loading and failures now use the existing shared centered status presentation,
+with a plain spinner/warning icon, weight-500 title, secondary error reason and quiet Retry. Generic
+unavailable text is not duplicated. The state owns its padding instead of nesting both document and
+state insets. Loading/error dialogs grow to accommodate the stack; ordinary document layout,
+version heading, installed-source notice and shortcut-help layout are unchanged.
+
+10 focused component/style-contract tests, type checking, scoped lint/format and build pass.
+Chromium compares held loading and explicit failure before/after, retries into the same real
+RichText document, checks Escape and unchanged shortcut content, and fits the error state at
+390px/dark. Ready-dialog geometry is identical to baseline. Captures:
+`output/playwright/release-note-states/`. The terminal location cues above were accepted by the user.
+
+## Shortcut-help notation — retained
+
+Help keycaps show simultaneous presses with `+` and use `Ctrl/⌘` only for platform substitution.
+User review rejected mixing that relation with action-key alternatives such as `C/V`.
+Different operations now have separate complete keycaps: `Ctrl/⌘+C` and `Ctrl/⌘+V`,
+`Alt+Shift+M` and `Alt+Shift+P`, and paired terminal/search navigation likewise.
+Completion uses explicit navigation and confirmation groups with a middle-dot separator.
+Keys use conventional `Esc` and `PgUp/PgDn` names to fit compact columns.
+Actual bindings, section grouping, keycap skin, release-note states and desktop send preference
+are unchanged. Alt+Enter/Ctrl+C description references and the Settings mod-enter option label
+use the same notation; the preference value remains `mod-enter`.
+
+5 focused tests cover both desktop send modes, complete action chords, completion steps and the
+existing release-note states. Type checking, scoped lint/format and build pass. Chromium checks
+desktop/light and 390px/320px dark, every keycap within its cell, scroll width, steps and Escape.
+Captures in `output/playwright/shortcut-keycaps/` compare this correction against the compressed
+notation on the same content and viewport. The earlier `shortcut-notation/` captures show the
+pre-batch baseline. The release-note status batch above was accepted by the user.
+The user reiterated direct implementation of useful improvements without per-change approval;
+continue to present concrete net changes afterward.
+
+## Command Palette hint matches — ready for review
+
+The earlier title-only search slice now extends to visible secondary hints. Query matches in
+command descriptions, shortcut hints and session context use weight 500; titles remain weight 600.
+Colors, sizes, matching/ranking, aliases, Results grouping, row layout and activation are unchanged.
+The existing range helper now has a field-neutral name and is reused rather than duplicated.
+
+24 focused range/overlay tests, type checking, scoped lint/format and build pass. Chromium compares
+shell-only, title-plus-hint and branch queries against the baseline with a fixed browser date.
+Measured result order/text and row heights match at desktop/light and 390px/dark. Query clearing
+removes emphasis; Enter opens Terminal from the first result. Captures:
+`output/playwright/palette-hint-matches/`. The complete-shortcut correction above was accepted.
+
 ## Next actions
 
-Review the all-terminal location cues, then continue local refinement batches and holistic review.
+Review the palette hint feedback, then continue local refinement batches and holistic review.
 Preserve the original cross-project capsules. The attachment file picker has another
 same-line name/directory pairing: its approved `@directory` cue is now implemented.
 Recent already has a middle-dot separator, search/completion separate fields, and full paths retain

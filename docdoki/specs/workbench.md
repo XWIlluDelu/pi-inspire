@@ -295,7 +295,13 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 
 - Keyboard shortcuts open one focus-contained, scrollable browser help dialog. It reflects the
   chosen desktop send chord, touch-first Return and IME boundaries, completion/history, palette and
-  picker keys, conversation search, and scoped project-terminal shortcuts. `/changelog` opens that
+  picker keys, conversation search, and scoped project-terminal shortcuts. Each keycap shows a
+  complete shortcut chord, with `+` for simultaneous presses. `Ctrl/⌘` denotes only the platform
+  modifier substitution; different action keys never share an internal slash (`C/V`, `M/P`, etc.).
+  Paired operations have separate complete keycaps in the same row. Navigation followed by
+  confirmation uses explicit chord groups separated by a middle dot. Keycaps wrap at group/chord
+  boundaries as space permits and use conventional `Esc` and `PgUp/PgDn` key names.
+  This notation does not change bindings, keycap styling, grouping or send-key preferences. `/changelog` opens that
   help surface in release-note mode, showing the installed Pi version's shipped changelog entry
   with loading, failure, and retry states. It is not an update/settings destination and performs no
   network lookup. Markdown follows the existing deferred safe renderer; documentation links are

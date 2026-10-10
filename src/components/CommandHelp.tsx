@@ -1,8 +1,32 @@
-import { X } from "lucide-react";
+import { AlertTriangle, Loader2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
+import { ContextPaneState } from "./ContextPaneState";
 import { ProgressiveRichText } from "./ProgressiveRichText";
+
+type Shortcut = string | string[] | { steps: (string | string[])[] };
+
+function ShortcutKeys({ shortcut }: { shortcut: Shortcut }) {
+  const steps =
+    typeof shortcut === "object" && "steps" in shortcut
+      ? shortcut.steps
+      : [shortcut];
+  return (
+    <>
+      {steps.map((step, index) => (
+        <span className="command-help__key-step" key={index}>
+          {index > 0 ? <span>·</span> : null}
+          <span className="command-help__key-chords">
+            {(typeof step === "string" ? [step] : step).map((chord) => (
+              <kbd key={chord}>{chord}</kbd>
+            ))}
+          </span>
+        </span>
+      ))}
+    </>
+  );
+}
 
 export function CommandHelp({
   mode,
@@ -40,72 +64,89 @@ export function CommandHelp({
       cancelled = true;
     };
   }, [mode, attempt]);
-  const sections = [
+  const sections: { title: string; rows: [Shortcut, string][] }[] = [
     {
       title: "Workbench",
       rows: [
-        ["Ctrl / ⌘ K", "Open the command palette"],
-        ["Ctrl / ⌘ B", "Toggle session navigation"],
-        ["Ctrl / ⌘ .", "Toggle Files / Changes / History / Terminal"],
-        ["Escape", "Dismiss a menu or dialog; otherwise Stop active work"],
+        ["Ctrl/⌘+K", "Open the command palette"],
+        ["Ctrl/⌘+B", "Toggle session navigation"],
+        ["Ctrl/⌘+.", "Toggle Files / Changes / History / Terminal"],
+        ["Esc", "Dismiss a menu or dialog; otherwise Stop active work"],
       ],
     },
     {
       title: "Composer",
       rows: [
         [
-          sendKey === "mod-enter" ? "Ctrl / ⌘ Enter" : "Enter",
+          sendKey === "mod-enter" ? "Ctrl/⌘+Enter" : "Enter",
           "Send with the selected delivery mode (desktop)",
         ],
         [
-          sendKey === "mod-enter" ? "Enter / Shift Enter" : "Shift Enter",
-          "Insert a line break (Alt Enter also works)",
+          sendKey === "mod-enter" ? ["Enter", "Shift+Enter"] : "Shift+Enter",
+          "Insert a line break (Alt+Enter also works)",
         ],
-        ["↑ / ↓", "Browse prompt history at the first / last visual line"],
-        ["↑ / ↓ · Enter / Tab", "Choose and insert a completion"],
-        ["Escape", "Dismiss completion without stopping Pi"],
+        [["↑", "↓"], "Browse prompt history at the first / last visual line"],
+        [
+          {
+            steps: [
+              ["↑", "↓"],
+              ["Enter", "Tab"],
+            ],
+          },
+          "Choose and insert a completion",
+        ],
+        ["Esc", "Dismiss completion without stopping Pi"],
       ],
     },
     {
       title: "Palette and pickers",
       rows: [
-        ["↑ / ↓ · Enter", "Choose an action, session, or candidate"],
-        ["Home / End", "First / last model candidate in the model picker"],
-        ["Escape", "Back to search, then close the palette"],
-        ["Ctrl / ⌘ Enter", "Run a prepared command (desktop)"],
-        ["Tab / Shift Tab", "Move among controls in the current dialog"],
+        [
+          { steps: [["↑", "↓"], "Enter"] },
+          "Choose an action, session, or candidate",
+        ],
+        [["Home", "End"], "First / last model candidate in the model picker"],
+        ["Esc", "Back to search, then close the palette"],
+        ["Ctrl/⌘+Enter", "Run a prepared command (desktop)"],
+        [["Tab", "Shift+Tab"], "Move among controls in the current dialog"],
       ],
     },
     {
       title: "Conversation",
       rows: [
-        ["Ctrl / ⌘ F", "Find in the focused transcript"],
-        ["Enter / Shift Enter", "Next / previous match in conversation search"],
-        ["Escape", "Dismiss search or prompt navigation"],
+        ["Ctrl/⌘+F", "Find in the focused transcript"],
+        [
+          ["Enter", "Shift+Enter"],
+          "Next / previous match in conversation search",
+        ],
+        ["Esc", "Dismiss search or prompt navigation"],
       ],
     },
     {
       title: "Models",
       rows: [
-        ["Alt Shift M / P", "Next / previous common model"],
-        ["Alt Shift R", "Cycle supported thinking levels"],
+        [["Alt+Shift+M", "Alt+Shift+P"], "Next / previous common model"],
+        ["Alt+Shift+R", "Cycle supported thinking levels"],
       ],
     },
     {
       title: "Project terminal",
       rows: [
-        ["Ctrl / ⌘ F", "Find terminal output (Workbench shortcut mode)"],
-        ["Ctrl / ⌘ PageUp / PageDown", "Previous / next terminal"],
-        ["Alt 1–9", "Select a terminal tab"],
-        ["Ctrl / ⌘ Shift `", "Create a terminal"],
-        ["← / →", "Move focus among terminal tabs"],
-        ["Ctrl / ⌘ Shift ← / →", "Reorder the focused terminal tab"],
-        ["Ctrl Shift Escape", "Release terminal keyboard focus"],
+        ["Ctrl/⌘+F", "Find terminal output (Workbench shortcut mode)"],
+        [["Ctrl/⌘+PgUp", "Ctrl/⌘+PgDn"], "Previous / next terminal"],
+        ["Alt+1–9", "Select a terminal tab"],
+        ["Ctrl/⌘+Shift+`", "Create a terminal"],
+        [["←", "→"], "Move focus among terminal tabs"],
         [
-          "Ctrl / ⌘ C / V",
-          "Copy selection / paste; Ctrl C without a selection interrupts",
+          ["Ctrl/⌘+Shift+←", "Ctrl/⌘+Shift+→"],
+          "Reorder the focused terminal tab",
         ],
-        ["Enter / Shift Enter", "Next / previous match in terminal search"],
+        ["Ctrl+Shift+Esc", "Release terminal keyboard focus"],
+        [
+          ["Ctrl/⌘+C", "Ctrl/⌘+V"],
+          "Copy selection / paste; Ctrl+C without a selection interrupts",
+        ],
+        [["Enter", "Shift+Enter"], "Next / previous match in terminal search"],
       ],
     },
   ];
@@ -154,9 +195,9 @@ export function CommandHelp({
                         ) : null}
                         <dl>
                           {section.rows.map(([key, value]) => (
-                            <div key={key}>
-                              <dt>
-                                <kbd>{key}</kbd>
+                            <div key={value}>
+                              <dt className="command-help__keys">
+                                <ShortcutKeys shortcut={key} />
                               </dt>
                               <dd>{value}</dd>
                             </div>
@@ -175,16 +216,20 @@ export function CommandHelp({
               ))}
             </div>
           ) : error ? (
-            <div role="alert">
-              <p>{error}</p>
+            <ContextPaneState
+              icon={<AlertTriangle size={17} aria-hidden />}
+              title="Release notes unavailable"
+              hint={error === "Release notes unavailable" ? undefined : error}
+              role="alert"
+            >
               <button
                 type="button"
-                className="button button--quiet"
+                className="button button--quiet res__state-action"
                 onClick={() => setAttempt((value) => value + 1)}
               >
                 Retry
               </button>
-            </div>
+            </ContextPaneState>
           ) : release ? (
             <>
               <p className="palette__hint">
@@ -197,7 +242,10 @@ export function CommandHelp({
               />
             </>
           ) : (
-            <p role="status">Loading installed release notes…</p>
+            <ContextPaneState
+              icon={<Loader2 size={17} className="spin" aria-hidden />}
+              title="Loading installed release notes…"
+            />
           )}
         </div>
       </div>

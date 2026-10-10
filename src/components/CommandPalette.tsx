@@ -25,8 +25,7 @@ import {
 } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import { isTouchFirstDevice } from "../input-device";
-import { paletteTitleMatchRanges, rankPaletteItems } from "../palette-search";
-import { SearchMatchText } from "./SearchMatchText";
+import { paletteTextMatchRanges, rankPaletteItems } from "../palette-search";
 import { preferenceChoiceLabel } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
 import {
@@ -37,6 +36,7 @@ import { useModalFocus } from "../use-modal-focus";
 import { useSearchFocus } from "../use-search-focus";
 import { sessionHeading } from "./AppTopbar";
 import { ComposerInput } from "./ComposerInput";
+import { SearchMatchText } from "./SearchMatchText";
 import { relativeTime } from "./transcript-rows";
 
 interface PaletteItem {
@@ -896,7 +896,7 @@ export const CommandPalette = memo(function CommandPalette({
                         <span className="palette__title">
                           <SearchMatchText
                             text={item.title}
-                            ranges={paletteTitleMatchRanges(
+                            ranges={paletteTextMatchRanges(
                               item.title,
                               searchQuery,
                             )}
@@ -904,7 +904,13 @@ export const CommandPalette = memo(function CommandPalette({
                         </span>
                         {item.hint ? (
                           <span className="palette__hint-inline">
-                            {item.hint}
+                            <SearchMatchText
+                              text={item.hint}
+                              ranges={paletteTextMatchRanges(
+                                item.hint,
+                                searchQuery,
+                              )}
+                            />
                           </span>
                         ) : null}
                       </button>

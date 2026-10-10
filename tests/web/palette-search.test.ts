@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import {
-  paletteTitleMatchRanges,
+  paletteTextMatchRanges,
   rankPaletteItems,
 } from "../../src/palette-search";
 
@@ -10,11 +10,14 @@ it.each([
   ["Session information", "session cost", ["Session"]],
   ["Settings", "preferences", []],
   ["Settings", "", []],
+  ["Project shell", "SHELL", ["shell"]],
+  ["Project shell", "terminal shell", ["shell"]],
+  ["Branch navigation", "/BRANCH", ["Branch"]],
 ])(
-  "emphasizes title %s matching %s without inventing alias or hint text",
+  "emphasizes visible text %s matching %s without inventing hidden matches",
   (title, query, expected) => {
     expect(
-      paletteTitleMatchRanges(title, query).map((range) =>
+      paletteTextMatchRanges(title, query).map((range) =>
         title.slice(range.start, range.end),
       ),
     ).toEqual(expected);

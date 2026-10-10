@@ -122,6 +122,31 @@ describe("overlay ownership", () => {
     }
   });
 
+  it("emphasizes visible hint matches without changing title or query-clear behavior", async () => {
+    render(<App />);
+    await openPalette();
+    const search = screen.getByRole("combobox", { name: "Filter commands" });
+    fireEvent.change(search, { target: { value: "shell" } });
+    const row = screen.getByRole("option", {
+      name: /^Open Terminal/,
+    });
+    expect(
+      row.querySelector(".palette__hint-inline .search-match"),
+    ).toHaveTextContent("shell");
+    expect(row.querySelector(".palette__title .search-match")).toBeNull();
+    fireEvent.change(search, { target: { value: "terminal shell" } });
+    expect(
+      row.querySelector(".palette__title .search-match"),
+    ).toHaveTextContent("Terminal");
+    expect(
+      row.querySelector(".palette__hint-inline .search-match"),
+    ).toHaveTextContent("shell");
+    fireEvent.change(search, { target: { value: "" } });
+    expect(
+      document.querySelector(".palette__hint-inline .search-match"),
+    ).toBeNull();
+  });
+
   it("keeps pointer hover separate from keyboard selection without dismissing the palette", async () => {
     render(<App />);
     await openPalette();

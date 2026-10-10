@@ -86,7 +86,7 @@ const PROJECT_DISPLAYS: Choice<ProjectDisplayPreference>[] = [
 
 const DESKTOP_SEND_KEYS: Choice<DesktopSendKeyPreference>[] = [
   { value: "enter", label: "Enter" },
-  { value: "mod-enter", label: "Ctrl/⌘ Enter" },
+  { value: "mod-enter", label: "Ctrl/⌘+Enter" },
 ];
 
 const MESSAGE_DELIVERY_MODES: Choice<PiMessageDeliveryMode>[] = [

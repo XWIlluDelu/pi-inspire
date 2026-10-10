@@ -232,7 +232,10 @@ keep their existing behavior. Embedded documents retain their own styles.
   Settings preserves its columns/navigation strip, card geometry, and footer with inert skeletons.
   Context and History reuse `ContextPaneState` for centered status and recovery actions. Skeletons
   stay outside the accessibility tree and tab order; loading has a concise status, and failure an
-  alert and styled recovery action.
+  alert and styled recovery action. The Pi release-note dialog also reuses this centered state
+  presentation: loading spinner, unavailable title with the actual error as a secondary hint, and
+  quiet Retry. State content owns its padding; the normal document and shortcut-help body retain
+  their existing layout. The generic unavailable message is not repeated as a hint.
 
 ## Native choice controls
 
@@ -270,9 +273,10 @@ subsequence matching (including its letter/digit swap); quoted phrases preserve 
 normalization. Regex queries retain native worker filtering without browser-side regex execution
 or match emphasis. Matches in hidden search fields do not require a visible hit.
 
-Command Palette emphasizes visible title matches, retaining aliases/hints as search inputs without
-bolding the right-hand hints. Ranking, search-time Results grouping, shortcuts, focus and keyboard
-selection remain unchanged. Its category headings stay transparent with a shared `--line` bottom
+Command Palette emphasizes visible title matches at weight 600 and secondary hint matches at
+weight 500. Hints retain their secondary color, size and placement; aliases and cross-field matches
+remain search inputs without requiring invented visible text. Ranking, search-time Results grouping,
+shortcuts, focus and keyboard selection remain unchanged. Its category headings stay transparent with a shared `--line` bottom
 rule; the rule replaces one pixel of bottom padding, preserving heading height and text position.
 
 ## Searchable-surface focus
