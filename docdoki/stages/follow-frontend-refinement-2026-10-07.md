@@ -879,7 +879,7 @@ Measured result order/text and row heights match at desktop/light and 390px/dark
 removes emphasis; Enter opens Terminal from the first result. Captures:
 `output/playwright/palette-hint-matches/`. The complete-shortcut correction above was accepted.
 
-## Composer Pending navigation — ready for review
+## Composer Pending navigation — accepted
 
 The original review's Pending jump recommendation is implemented without adding another control.
 The existing ActivityBar count capsule is a native button with hover/focus feedback; baseline
@@ -913,13 +913,38 @@ keeps the image loaded after typing, confirmation and completion.
 Before/after captures: `output/playwright/preview-continuity/`.
 This is a functional repair, not a new visual refinement proposal.
 
+## History disclosure and Shell preview — accepted
+
+Turn disclosures now display the shorter Activity caption while retaining the existing complete
+accessible name, expansion state, height and quiet styling. No partial-page counts are introduced.
+
+Known Shell details decode the existing Host-generated command/output fences as data, without
+changing stored Pi records or the Host projection. The user accepted agy's coherent record design:
+a single frame, a compact identity/outcome/context/Copy header, distinct monospaced command and output
+regions with a dashed boundary, and an optional truncation/full-log footer. Status markers reuse
+theme-aware semantic colors; success uses the existing readable activity-success text color.
+Complete retained text still loads in bounded pages. The separate full-output metadata becomes an
+authorized View full output action once complete, never inferred from stdout; the full path remains
+in its tooltip and copy. Assistant/tool Markdown, images, outline pagination, search and the fixed
+branch-action dock stay unchanged.
+
+31 focused component cases, type checking, scoped lint/format and web build pass. Cases cover
+literal Markdown/HTML/backticks, whitespace, ANSI display versus copied text, partial/complete
+content, non-promoted stdout paths and canonical role dispatch. The two desktop/touch native-shaped
+History browser cases pass, including excluded/included context, saved-image focus and opening the
+complete shell log through ordinary resource resolution. Matched light captures and dark/390px
+checks are in `output/playwright/history-refinement/`; keyboard opening of the full-log link also passes.
+The final implementation captures are `integrated-shell{,-dark,-narrow-dark}.png` and
+`integrated-comparison.png`; the prior compact layout is superseded. The quiet disclosure and stable
+inspector layout satisfy the remaining original History recommendations.
+
 ## Next actions
 
 Continue one original-review topic group at a time, not one incidental visual detail per batch.
-Five candidate groups still need reconciliation: History disclosure/shell presentation,
-Files/Changes leaf alignment and first-change landing, Terminal toolbar/profile/touch keys,
-Settings field/reference/status hierarchy, and Models focused editor views. These are historical
-recommendations to check, not five mandatory redesigns; close already-satisfied or rejected items
+Four candidate groups still need reconciliation: Files/Changes leaf alignment and first-change
+landing, Terminal toolbar/profile/touch keys, Settings field/reference/status hierarchy, and Models
+focused editor views. These are historical
+recommendations to check, not four mandatory redesigns; close already-satisfied or rejected items
 and implement useful related changes together. Holistic review follows the local groups.
 Preserve the original cross-project capsules. The attachment file picker has another
 same-line name/directory pairing: its approved `@directory` cue is now implemented.

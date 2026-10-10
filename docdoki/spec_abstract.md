@@ -69,7 +69,11 @@ Copy/Return/Clear is retained at `1013f42`. Quiet secondary buttons are accepted
 existing History, earlier-branch Clone and Terminal recovery buttons keep readable labels and
 interaction feedback without enabled resting fills/borders. History configuration order is accepted
 at `d712e24`: same-session summary settings precede Edit / Continue, retaining the fixed action dock
-and separate Fork/Clone group. Welcome's directory-first visual experiment is withdrawn; the
+and separate Fork/Clone group. The current History slice shortens turn disclosures to Activity and
+presents known Shell details as a single framed record with a status/Copy header, separate literal
+command/output and an optional full-log footer. The user accepted this agy-designed composition;
+ordinary rich content remains unchanged.
+Welcome's directory-first visual experiment is withdrawn; the
 original bordered path input below the toolbar and hero spacing are restored. Its independent
 Enter repair remains, preserving message autofocus and preventing implicit creation from directory
 editing. Content-action presentation is also ready for review:

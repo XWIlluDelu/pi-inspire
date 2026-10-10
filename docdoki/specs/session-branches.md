@@ -44,11 +44,24 @@ Independent copies do not replace the active source worker. Durable trust comes 
   role labels and the existing three-line clamp. History matches the whole trimmed query as a
   case-insensitive literal phrase, unlike Files' whitespace-separated terms. The shared text renderer
   preserves snippet text and accessible labels; ordinary outline entries remain unaccented.
+  Turn disclosures use a quiet `Activity` caption, retain their complete accessible names and
+  expanded state, and add no counts or ordinals inferred from a bounded route page.
   No search matches use the shared pane state with a search icon and `No matching history`;
   the query remains in its input rather than being repeated in the state title.
   Complete retained text is read in bounded chunks. Native shell records expose the command, output,
-  status and context inclusion as shell activity, not system bodies or storage JSON. Exact image
-  coordinates remain Host-resolved and cancellable; saved images use the shared image viewer, with
+  status and context inclusion as shell activity, not system bodies or storage JSON. Known Shell
+  details decode the Host-generated fences into one framed Shell record with a compact header,
+  separate wrapping monospaced command/output regions, and an optional truncation/full-log footer.
+  The header groups identity, outcome, context inclusion and one constant Copy. Exit success/failure
+  and cancellation use the existing semantic colors with a quiet tinted status marker; a dashed
+  ordinary-line boundary distinguishes command from output. Stdout remains literal, without Markdown
+  interpretation, syntax highlighting or terminal-insertion controls. Copy preserves all loaded
+  content without transport fences. Read more retains the bounded entry reader; the History body
+  owns scrolling rather than a nested output viewport. Once complete, the Host's separate full-output
+  metadata becomes a `View full output` action for authorized file preview; its path remains in the
+  tooltip and copied record. Text printed inside stdout never becomes that metadata. Ordinary
+  assistant/tool content remains rich.
+  Exact image coordinates remain Host-resolved and cancellable; saved images use the shared image viewer, with
   pointer/keyboard opening, fit/zoom, close and focus return. Retiring a read also retires its progress,
   while an older completion cannot clear a newer read's progress. Entry/image reads bind to their
   immutable entry and current transcript view, not the advancing branch revision: ordinary appends

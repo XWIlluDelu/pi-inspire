@@ -144,6 +144,72 @@
   font-size: var(--text-xs);
   font-weight: 500;
 }
+.history-shell {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-surface);
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+.history-shell__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-stage);
+  color: var(--muted);
+  font: var(--text-xs)/var(--leading-ui) var(--font-sans);
+}
+.history-shell__facts {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+}
+.history-shell__kind { color: var(--ink); font-weight: 500; }
+.history-shell__status {
+  padding: 1px 6px;
+  border-radius: var(--radius-control);
+  font-weight: 500;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+.history-shell__status[data-outcome="success"] { color: var(--activity-success); }
+.history-shell__status[data-outcome="error"] { color: var(--error); }
+.history-shell__status[data-outcome="warning"] { color: var(--warning); }
+.history-shell__command,
+.history-shell__output {
+  margin: 0;
+  padding: var(--space-2) 10px;
+  color: var(--body);
+  font: var(--text-sm)/1.6 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.history-shell__command { color: var(--ink); }
+.history-shell__output {
+  padding-block: 10px;
+  border-top: 1px dashed var(--line);
+  background: var(--bg-file-canvas);
+}
+.history-shell__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-2);
+  padding: 6px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-stage);
+  color: var(--muted);
+  font: var(--text-xs)/var(--leading-ui) var(--font-sans);
+}
+.history-shell__footer .tool-notice__action {
+  min-height: 24px;
+  margin-left: 0;
+  white-space: nowrap;
+}
 .history-image-error {
   display: flex;
   align-items: center;
@@ -216,6 +282,7 @@
   .history-image-error .button { min-height: 44px; }
   .history-summary label { min-height: 36px; align-items: center; }
   .history-summary input { margin-top: 0; }
+  .history-shell__footer .tool-notice__action { min-height: 44px; }
   .history-detail__body { padding-inline: var(--space-3); }
   .history-detail__actions { padding-inline: var(--space-3); }
 }

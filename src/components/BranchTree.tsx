@@ -26,6 +26,7 @@ import { resourceReferenceFromEventTarget } from "../resources";
 import { sessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { ContextPaneState } from "./ContextPaneState";
+import { HistoryShellPreview } from "./HistoryShellPreview";
 import { ImagePreview } from "./ImagePreview";
 import { RichText } from "./RichText";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
@@ -745,6 +746,11 @@ export function BranchTree({
                       type="button"
                       className="history-disclosure"
                       aria-expanded={open}
+                      aria-label={
+                        turn.prompt
+                          ? "Replies and activity"
+                          : "Conversation activity"
+                      }
                       onClick={() =>
                         setExpanded((value) => {
                           const next = new Set(value);
@@ -759,9 +765,7 @@ export function BranchTree({
                       ) : (
                         <ChevronRight size={13} aria-hidden />
                       )}
-                      {turn.prompt
-                        ? "Replies and activity"
-                        : "Conversation activity"}
+                      Activity
                     </button>
                   ) : null}
                   {open ? (
@@ -852,13 +856,22 @@ export function BranchTree({
               void store.openResource(reference);
             }}
           >
-            <div className="history-detail__kind">{pointKind(selected)}</div>
+            {detail?.node.role !== "shell" ? (
+              <div className="history-detail__kind">{pointKind(selected)}</div>
+            ) : null}
             {detail ? (
               <>
-                <RichText
-                  text={detail.text}
-                  variant={selected.role === "user" ? "user" : "assistant"}
-                />
+                {detail.node.role === "shell" ? (
+                  <HistoryShellPreview
+                    text={detail.text}
+                    complete={detail.nextOffset === null}
+                  />
+                ) : (
+                  <RichText
+                    text={detail.text}
+                    variant={selected.role === "user" ? "user" : "assistant"}
+                  />
+                )}
                 {detail.nextOffset !== null ? (
                   <button
                     type="button"

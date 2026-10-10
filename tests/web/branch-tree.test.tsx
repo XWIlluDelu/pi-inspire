@@ -69,6 +69,7 @@ let fixture: {
   imageFailures?: number;
   images?: boolean;
   detailText?: string;
+  detailRole?: BranchTreeNode["role"];
   outline?: BranchTreeNode[];
 };
 const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
@@ -171,7 +172,10 @@ beforeEach(async () => {
         return Response.json({
           sessionId: "s1",
           revision: fixture.revision,
-          node: nodes.find((node) => node.id === id),
+          node: {
+            ...nodes.find((node) => node.id === id)!,
+            ...(fixture.detailRole ? { role: fixture.detailRole } : {}),
+          },
           text: text.slice(offset, end),
           nextOffset: end < text.length ? end : null,
           totalChars: text.length,
@@ -251,6 +255,44 @@ async function previewAnswer() {
 }
 
 describe("read-only History inspection", () => {
+  it.each(["shell", "tool", "assistant"] as const)(
+    "uses the canonical %s role to select plain shell or rich content",
+    async (role) => {
+      fixture.detailRole = role;
+      fixture.detailText =
+        role === "shell"
+          ? "\`\`\`\n!echo log\n\`\`\`\n\n\`\`\`\n# Literal output\n\`\`\`\n\nExit 0"
+          : "# Rich output";
+      render(<BranchTree />);
+      const disclosure = within(history()).getAllByRole("button", {
+        name: "Replies and activity",
+      })[0]!;
+      expect(disclosure).toHaveTextContent("Activity");
+      expect(disclosure).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(disclosure);
+      expect(disclosure).toHaveAttribute("aria-expanded", "true");
+      fireEvent.click(
+        within(history()).getByRole("button", {
+          name: "Response Earlier answer",
+        }),
+      );
+      if (role === "shell") {
+        const preview = await screen.findByRole("region", {
+          name: "Shell record preview",
+        });
+        expect(preview).toHaveTextContent("# Literal output");
+        expect(within(preview).queryByRole("heading")).toBeNull();
+      } else {
+        expect(
+          await screen.findByRole("heading", { name: "Rich output" }),
+        ).toBeVisible();
+        expect(
+          screen.queryByRole("region", { name: "Shell record preview" }),
+        ).toBeNull();
+      }
+    },
+  );
+
   it("keeps first-input alternatives reachable through Other starts when their branch point is metadata", async () => {
     const setting: BranchTreeNode = {
       ...point("thinking", "model", "assistant", "off"),
