@@ -359,9 +359,14 @@ describe("markdown constructs", () => {
     const text = "| A | B |\n| - | - |\n| 1 | 2 |\n\n- [x] done\n- [ ] todo";
     const { container } = render(<RichText text={text} />);
     expect(container.querySelector("table")).toBeTruthy();
-    expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(
-      2,
-    );
+    const tasks = container.querySelectorAll('input[type="checkbox"]');
+    expect(tasks).toHaveLength(2);
+    for (const task of tasks) {
+      expect(task).toHaveClass("choice-input");
+      expect(task).toBeDisabled();
+    }
+    expect(tasks[0]).toBeChecked();
+    expect(tasks[1]).not.toBeChecked();
   });
 
   it("renders fenced code with a language label and copy control", () => {

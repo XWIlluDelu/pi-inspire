@@ -252,9 +252,11 @@ export function ResponseActivityFold({
     if (!target) return;
     focusAfterToggle.current = null;
     const control =
-      target === "upper" ? topControlRef.current : lowerControlRef.current;
+      target === "upper" || !open
+        ? topControlRef.current
+        : lowerControlRef.current;
     control?.focus({ preventScroll: true });
-  }, [presentation]);
+  }, [open, presentation]);
 
   const choosePresentation = (
     next: ActivityFoldPresentation,
@@ -283,10 +285,7 @@ export function ResponseActivityFold({
       ? "compact"
       : "collapsed";
 
-  const rail = (edge: "upper" | "lower") => {
-    const expanding = presentation === "collapsed";
-    const compacting =
-      presentation === "expanded" && !compactEquivalentToExpanded;
+  const railContents = (edge: "upper" | "lower") => {
     const arrowDirection = open
       ? edge === "upper"
         ? "down"
@@ -294,26 +293,8 @@ export function ResponseActivityFold({
       : edge === "upper"
         ? "up"
         : "down";
-    const action = expanding ? "Expand" : compacting ? "Compact" : "Collapse";
-
     return (
-      <button
-        ref={edge === "upper" ? topControlRef : lowerControlRef}
-        type="button"
-        className={`activity-fold__rail activity-fold__rail--${edge}`}
-        aria-controls={contentId}
-        aria-expanded={open}
-        aria-label={`${action} assistant activity from the ${edge} boundary`}
-        title={`${action} activity`}
-        data-activity-fold-anchor={edge === "upper" ? "start" : "end"}
-        onClick={() => {
-          if (expanding) {
-            expandToCompact(edge, edge === "upper" ? "start" : "end");
-          } else {
-            choosePresentation(collapseTarget, edge);
-          }
-        }}
-      >
+      <>
         <span className="activity-fold__track" aria-hidden>
           {displayTelemetry.length > 0 ? (
             <span className="activity-fold__telemetry">
@@ -346,6 +327,25 @@ export function ResponseActivityFold({
             )}
           </svg>
         </span>
+      </>
+    );
+  };
+
+  const rail = (edge: "upper" | "lower") => {
+    const action = collapseTarget === "compact" ? "Compact" : "Collapse";
+    return (
+      <button
+        ref={edge === "upper" ? topControlRef : lowerControlRef}
+        type="button"
+        className={`activity-fold__rail activity-fold__rail--${edge}`}
+        aria-controls={contentId}
+        aria-expanded="true"
+        aria-label={`${action} assistant activity from the ${edge} boundary`}
+        title={`${action} activity`}
+        data-activity-fold-anchor={edge === "upper" ? "start" : "end"}
+        onClick={() => choosePresentation(collapseTarget, edge)}
+      >
+        {railContents(edge)}
       </button>
     );
   };
@@ -376,7 +376,39 @@ export function ResponseActivityFold({
           setInspectionHeld(false);
       }}
     >
-      {rail("upper")}
+      {open ? (
+        rail("upper")
+      ) : (
+        <button
+          ref={topControlRef}
+          type="button"
+          className={`activity-fold__disclosure ${deferredError ? "activity-fold__disclosure--error" : ""}`}
+          aria-controls={contentId}
+          aria-expanded="false"
+          aria-label="Expand assistant activity"
+          title={deferredError?.error ?? "Show recent assistant activity"}
+          data-activity-fold-anchor="center"
+          onClick={() => expandToCompact("upper", "center")}
+        >
+          <span
+            className="activity-fold__rail activity-fold__rail--upper"
+            aria-hidden
+          >
+            {railContents("upper")}
+          </span>
+          <span className="activity-fold__summary" aria-hidden>
+            <span className="activity-fold__summary-badge">
+              <ActivityFoldDots active={lifecycleActive && !deferredError} />
+            </span>
+          </span>
+          <span
+            className="activity-fold__rail activity-fold__rail--lower"
+            aria-hidden
+          >
+            {railContents("lower")}
+          </span>
+        </button>
+      )}
       <div id={contentId} className="activity-fold__content" hidden={!open}>
         {showOmission ? (
           <ActivityFoldOmission
@@ -398,23 +430,7 @@ export function ResponseActivityFold({
           {materialized || open ? children : null}
         </ActivityItemVisibilityProvider>
       </div>
-      {!open ? (
-        <button
-          type="button"
-          className={`activity-fold__summary ${deferredError ? "activity-fold__summary--error" : ""}`}
-          aria-controls={contentId}
-          aria-expanded="false"
-          aria-label="Expand assistant activity"
-          title={deferredError?.error ?? "Show recent assistant activity"}
-          data-activity-fold-anchor="center"
-          onClick={() => expandToCompact("upper", "center")}
-        >
-          <span className="activity-fold__summary-badge" aria-hidden>
-            <ActivityFoldDots active={lifecycleActive && !deferredError} />
-          </span>
-        </button>
-      ) : null}
-      {rail("lower")}
+      {open ? rail("lower") : null}
     </section>
   );
 }

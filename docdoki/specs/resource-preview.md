@@ -4,18 +4,19 @@ covers:
   - shared/{contracts,resource-references}.ts
   - server/{resources,resource-http,html-preview,image-content,project-files,git-inspection,app,runtime,runtime-reads,mock}.ts
   - shared/html-preview.ts
-  - src/{api,resources,resource-preview,document-resources,diff,store,pdf-renderer}.ts
+  - src/{api,resources,resource-preview,document-resources,diff,source-diff,file-icons,syntax-highlighting,store,pdf-renderer}.ts
   - scripts/vite-pdf-assets.ts
   - server/static-asset-cache.mjs
   - src/controllers/{resource,git,workspace}-controller.ts
-  - src/components/{ContextPane,ContextPaneState,ContextSplitBody,FilesPane,FilePreview,PdfPreview,DocumentPreview,ChangesPane,WorkspaceBrowser,NotebookPreview,PaneResizeHandle,RichText,Transcript}.tsx
+  - src/components/{ContextPane,ContextPaneState,ContextSplitBody,FilesPane,FilePreview,PdfPreview,DocumentPreview,ChangesPane,WorkspaceBrowser,ResourcePathLabel,SearchMatchText,NotebookPreview,PaneResizeHandle,RichText,Transcript}.tsx
   - src/components/context-pane-view.ts
   - src/App.tsx
   - src/styles.css
   - src/styles/*.css
   - tests/server/{app,resources,resources-windows-paths,runtime-reads,git-inspection,runtime}.test.ts
   - tests/web/{resources,document-resources,document-image-controller,git-controller,workspace-controller,store-resources}.test.ts
-  - tests/web/{document-preview,pdf-preview,resources-pane,pane-resize,rich-text}.test.tsx
+  - tests/web/{document-preview,pdf-preview,resources-pane,search-match-text,changes-pane,pane-resize,rich-text}.test.tsx
+  - tests/web/{source-diff,file-icons,syntax-highlighting}.test.ts
   - tests/server/html-preview.test.ts
   - tests/browser/{workbench,html-preview}.spec.ts
 ---
@@ -32,7 +33,17 @@ preview; Changes owns Git comparisons. [[composer]] owns file attachment and the
 With no file selected, Files shows up to five deduplicated **Recent in this chat** references from
 one 16-reference Host page, followed by the workspace filesystem tree. Search replaces both sections
 while a query is present. Recent rows use an icon, filename, subdued parent path, and fixed trailing
-Git state on one line.
+Git state on one line. Recent, workspace-tree and search file rows reuse Changes' filename-based
+monochrome Lucide icon mapping at 13px, including the shared lower-left explorer. Directory icons,
+Git decorations, file labels and row geometry are unchanged. Search results show the filename above
+its parent directory, without repeating the filename; root-level files have no directory caption.
+Both the row and directory caption keep the full file path in their hover title, while the row's
+accessible name and open target also retain the full path. Workspace search keeps its themed clear
+button and suppresses the duplicate WebKit-native cancel button. Other search fields keep their
+native clear controls; the transcript search close action remains distinct. Search-only text matches
+use weight 600 with inherited foreground and no background. Matching follows Host lowercase,
+whitespace-separated substring terms on the full path; ranges project into the filename and
+parent-directory fields, including path-spanning terms, without changing titles or bidi isolation.
 
 Selecting a recent, search, or tree entry opens a fixed index/detail stack: the workspace tree stays
 above the preview, while Search and Recent yield space. **← project-folder** returns to Browse with
@@ -43,6 +54,8 @@ headers, and narrow drawer layout, with no internal splitter.
 The lower-left explorer shares the same lazy tree, expansion, selection, hidden visibility, and Git
 decoration state, but omits search. Both trees use the project basename as their heading. Opening a
 workspace file expands its ancestors and emits one reveal request; unrelated updates do not scroll it.
+Leaf rows reserve the folder disclosure slot, aligning sibling file/folder icons and names in Files
+and Explorer. Recent and flat search results retain their existing alignment.
 
 Filesystem membership is independent of Git. Browse includes ignored non-hidden files and empty
 directories. **Show hidden files** defaults off and covers dot names plus native filesystem hidden
@@ -120,6 +133,15 @@ previous rows until success; a visible preview keeps its reader mounted and does
 Selection replacement, pane close, session/view change, or API/transport replacement retires affected
 requests and object URLs. Cancellation closes the exact opened file even if it arrives during open.
 
+Ordinary prompt confirmation and compatible transcript appends leave the current preview mounted.
+Within the same session and workspace, a changed branch view or replaced projection retains a visible
+Files selection while resolving and loading it again under the new authority. A recovered workspace
+path remains the exact target, rather than repeating a bare-name search. Failed reauthorization stays
+in the selected-file detail with its error; it does not navigate to Browse. Session/workspace changes
+and positional `pi-embedded://` references still clear selection, because rewritten coordinates may
+identify a different image. Reauthorization does not reopen a preview the user has already left for
+Browse or another context mode, and interactive HTML never inherits its retired execution lease.
+
 ## Readers
 
 | File type | Default and available views |
@@ -130,10 +152,13 @@ requests and object URLs. Cancellation closes the exact opened file even if it a
 | Unsupported binary | File information. |
 
 The selected-file header stays above scrolling content. Its path copies the path, Download streams
-through the authenticated attachment route, and the reciprocal view action keeps a fixed trailing
-slot, disabled when unavailable. Source uses highlighting and line numbers; `:line` and `#Lline`
+through the authenticated attachment route, and dual-view files retain one reciprocal view action
+in a fixed trailing slot. Files with no alternative view omit that action. Source uses highlighting and line numbers; `:line` and `#Lline`
 open Source at that position, including for files that normally open in Preview. Files does not
-duplicate Changes with a Diff mode or add file-editing controls. Source, Markdown code blocks and
+duplicate Changes with a Diff mode or add file-editing controls. Files Source and Changes share an unframed, full-width source canvas below the fixed header, without
+outer card padding; inner text spacing remains. Their line-number gutters stay visible during
+horizontal scrolling. Rendered document/media previews and loading/error states retain their padding.
+Source, Markdown code blocks and
 Notebook cells highlight recognized languages up to 64 Ki characters per leaf; larger leaves retain
 text and copying without highlighting.
 
@@ -150,8 +175,9 @@ resolve-time size estimate.
 
 Notebook Preview statically renders Markdown cells, highlighted code, execution counts, text/error
 output, and images. Highlighting uses notebook language metadata, with common kernel-name recovery;
-error traces retain line breaks and omit ANSI escapes. Notebook code is not executed. Markdown raw
-HTML is disabled.
+error traces retain line breaks and omit ANSI escapes. Markdown cells leave the prompt gutter empty
+while retaining the common cell-body alignment. Notebook code is not executed. Markdown raw HTML is
+disabled.
 
 Local document images load inline through independently authorized resource requests and document-owned
 blob URLs. Reading a document does not authorize linked files. Each mounted document deduplicates at
@@ -228,7 +254,24 @@ and non-repository results. Initial failure does not claim a Git result.
 Switching to Changes preserves the canonical selected workspace file whether or not it appears in
 Git status. The upper region shows repository identity, staged/working/conflict counts, and grouped
 paths. The lower region shows Source with the selected comparison's inline additions/deletions,
-counts, and non-wrapping previous/next change controls.
+counts, and non-wrapping previous/next change controls. The current change uses an edge marker
+without replacing the addition/deletion background colors. The old/new line numbers and change sign
+share a sticky gutter with an opaque matching row tint, keeping code from showing beneath it;
+the active edge marker stays visible during horizontal scrolling. Changed-file rows use filename-appropriate
+monochrome Lucide icons with a generic document fallback, retaining their size and Git decoration.
+
+Source comparisons reuse the Source highlighting palette and 64 Ki-character bound per revision.
+Highlight old and new source independently with full Git context, then render balanced token spans
+in the existing rows. Deletions use the old revision and its original filename for renames; additions
+and shared context use the selected new revision. Unknown languages and oversized revisions remain
+escaped plain text. Highlighting does not change source text, selection/copying or row/navigation
+geometry.
+
+A newly encountered text diff positions its first change inside the source viewport without
+scrolling the outer page or changing focus. Within the mounted context pane, vertical/horizontal
+reading offsets and manually navigated change selection survive file/side changes, tab switches
+and diff reloads. Memory is scoped by transport, session, workspace, path identity and side; it is
+not persisted across app reloads.
 
 - Working comparisons use working-tree source; staged comparisons use index source. An empty
   comparison reports no diff rather than substituting disk content for index source.

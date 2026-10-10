@@ -36,6 +36,7 @@ covers:
   - src/components/AppTopbar.tsx
   - src/components/EarlierBranchBanner.tsx
   - src/components/Nav.tsx
+  - src/components/NavSessions.tsx
   - src/components/Welcome.tsx
   - src/components/DirectoryPicker.tsx
   - src/components/CommandPalette.tsx
@@ -142,8 +143,8 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   persistent pin state, while putting their smaller session count in that same right-hand column, so
   the panel reads down one rule. The exact timestamp and the message count stay in tooltips rather
   than becoming a second number. The pin and hide actions take over that column on hover or focus
-  without moving anything, and where there is no hover to reveal them they take their own space
-  beside the age.
+  without moving anything. On phone-width layouts or without hover they remain visible beside the
+  age. Pin and Hide are frequent actions and stay directly accessible, not behind an overflow menu.
 
 - Project groups expose native expand/collapse controls; a collapsed group containing the visible
   session carries the active highlight on its header, and active search results remain visible
@@ -233,7 +234,11 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   machine sessions run on, and entry paths arrive joined with the host's own separators. Root
   discovery is host-owned too: POSIX exposes `/`, while Windows exposes every currently readable
   drive root so a user can cross from `C:\` to `D:\` without inventing a nonexistent common parent.
-  A missing or relative starting point falls back to the host home.
+  A missing or relative starting point falls back to the host home. The picker path is editable,
+  automatically wraps long text and grows/shrinks with content and available width. Enter browses the typed path without selecting it. Use this directory validates an edited path
+  against the Host before selection instead of choosing the old listing. Errors retain the draft;
+  editing clears the error for retry. While browsing, the path is temporarily read-only but retains
+  keyboard focus, and stale or dismissed requests cannot select a directory.
 
 - The directory picker places an eye-icon `Show hidden folders` toggle button immediately after
   the `Choose project directory` heading, with an accessible label, tooltip, and `aria-pressed`
@@ -288,7 +293,13 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 
 - Keyboard shortcuts open one focus-contained, scrollable browser help dialog. It reflects the
   chosen desktop send chord, touch-first Return and IME boundaries, completion/history, palette and
-  picker keys, conversation search, and scoped project-terminal shortcuts. `/changelog` opens that
+  picker keys, conversation search, and scoped project-terminal shortcuts. Each keycap shows a
+  complete shortcut chord, with `+` for simultaneous presses. `Ctrl/⌘` denotes only the platform
+  modifier substitution; different action keys never share an internal slash (`C/V`, `M/P`, etc.).
+  Paired operations have separate complete keycaps in the same row. Navigation followed by
+  confirmation uses explicit chord groups separated by a middle dot. Keycaps wrap at group/chord
+  boundaries as space permits and use conventional `Esc` and `PgUp/PgDn` key names.
+  This notation does not change bindings, keycap styling, grouping or send-key preferences. `/changelog` opens that
   help surface in release-note mode, showing the installed Pi version's shipped changelog entry
   with loading, failure, and retry states. It is not an update/settings destination and performs no
   network lookup. Markdown follows the existing deferred safe renderer; documentation links are

@@ -168,19 +168,27 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
           .getByRole("button", { name: "Toggle resources panel" })
           .click();
       await page.getByRole("button", { name: "Terminal", exact: true }).click();
+      await page.locator(`#terminal-tab-${terminal.id}`).click();
       await expect(
-        page.locator(".xterm-helper-textarea").first(),
+        page.locator(".terminal-view--active .xterm-helper-textarea"),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("status", { name: "Controlling", exact: true }),
       ).toBeVisible();
 
       const centers = await page
         .locator(
-          ".terminal-tabs__new > .icon-button, .terminal-tabs-shell .terminal-menu > summary, .terminal-view-controls > .icon-button, .terminal-tabs__focus",
+          ".terminal-tabs__new > .icon-button, .terminal-tabs-shell .terminal-menu > summary, .terminal-view-controls > .icon-button, .terminal-view__keyboard, .terminal-tabs__focus",
         )
         .evaluateAll((controls) =>
-          controls.map((control) => {
-            const icon = control.querySelector("svg")!.getBoundingClientRect();
-            return icon.top + icon.height / 2;
-          }),
+          controls
+            .filter((control) => control.getClientRects().length > 0)
+            .map((control) => {
+              const icon = [...control.querySelectorAll("svg")]
+                .find((svg) => svg.getBoundingClientRect().width > 0)!
+                .getBoundingClientRect();
+              return icon.top + icon.height / 2;
+            }),
         );
       expect(centers.length).toBeGreaterThanOrEqual(4);
       expect(Math.max(...centers) - Math.min(...centers)).toBeLessThanOrEqual(
@@ -237,9 +245,12 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
       await expect(actions).toBeFocused();
 
       for (const shortcut of ["Control+Shift+Escape", "Meta+Shift+Escape"]) {
-        await page
-          .getByRole("button", { name: "Focus terminal", exact: true })
-          .click();
+        const focus = page.getByRole("button", {
+          name: "Focus terminal",
+          exact: true,
+        });
+        if (!(await focus.isVisible())) await actions.click();
+        await focus.click();
         await expect(page.locator(".terminal-pane--focused")).toBeVisible();
         await page.locator(".xterm-helper-textarea").first().focus();
         await page.keyboard.press(shortcut);
@@ -560,6 +571,7 @@ test.describe("touch terminal", () => {
     try {
       await page.getByRole("button", { name: "Toggle resources panel" }).tap();
       await page.getByRole("button", { name: "Terminal", exact: true }).tap();
+      await page.locator(`#terminal-tab-${terminal.id}`).tap();
       await expect(
         page.getByRole("status", { name: "Controlling", exact: true }),
       ).toBeVisible();
@@ -571,6 +583,79 @@ test.describe("touch terminal", () => {
         exact: true,
       });
       const ctrl = keys.getByRole("button", { name: "Ctrl", exact: true });
+      const scroll = keys.locator(".terminal-touch-keys__scroller");
+      for (const width of [320, 390]) {
+        await page.setViewportSize({ width, height: 844 });
+        const arrows = keys
+          .getByRole("group", { name: "Arrow keys", exact: true })
+          .getByRole("button");
+        for (const arrow of await arrows.all())
+          await expect(arrow).toBeInViewport({ ratio: 1 });
+        const position = await arrows.first().boundingBox();
+        const expectCompleteKeys = async () => {
+          await expect
+            .poll(() =>
+              scroll.evaluate((node) => {
+                const viewport = node.getBoundingClientRect();
+                const visible = [...node.querySelectorAll("button")]
+                  .map((button) => button.getBoundingClientRect())
+                  .filter(
+                    (rect) =>
+                      rect.right > viewport.left + 1 &&
+                      rect.left < viewport.right - 1,
+                  );
+                return {
+                  count: visible.length,
+                  complete: visible.every(
+                    (rect) =>
+                      rect.left >= viewport.left - 1 &&
+                      rect.right <= viewport.right + 1,
+                  ),
+                };
+              }),
+            )
+            .toEqual({ count: width === 320 ? 2 : 3, complete: true });
+        };
+        await expectCompleteKeys();
+        // An arbitrary drag offset must settle on whole keys, not clipped labels.
+        await scroll.evaluate((node) => {
+          node.scrollLeft += 83;
+        });
+        await expectCompleteKeys();
+        await scroll.evaluate((node) => {
+          node.scrollLeft = node.scrollWidth;
+        });
+        await expect(
+          keys.locator(".terminal-touch-keys__extras"),
+        ).toHaveAttribute("data-scroll-end", "false");
+        await expect(
+          keys.getByRole("button", { name: "PgDn", exact: true }),
+        ).toBeInViewport({ ratio: 1 });
+        await expectCompleteKeys();
+        expect(await arrows.first().boundingBox()).toEqual(position);
+        await scroll.evaluate((node) => {
+          node.scrollLeft = 0;
+        });
+        await expect(
+          keys.locator(".terminal-touch-keys__extras"),
+        ).toHaveAttribute("data-scroll-start", "false");
+        await expect(
+          keys.locator(".terminal-touch-keys__extras"),
+        ).toHaveAttribute("data-scroll-end", "true");
+      }
+      await input.evaluate((node) => node.blur());
+      for (const [name, final] of [
+        ["Arrow left", "D"],
+        ["Arrow up", "A"],
+        ["Arrow down", "B"],
+        ["Arrow right", "C"],
+      ]) {
+        await keys.getByRole("button", { name, exact: true }).tap();
+        await expect
+          .poll(() => inputs.at(-1))
+          .toMatch(new RegExp(String.raw`^\x1b(?:\[|O)${final}$`));
+        await expect(input).not.toBeFocused();
+      }
       await page.getByRole("button", { name: "Focus terminal input" }).tap();
       await expect(input).toBeFocused();
       await ctrl.tap();

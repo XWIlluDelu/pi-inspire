@@ -42,12 +42,35 @@ Files supports explicitly enabled interactive HTML alongside default static rend
 The user click authorizes script execution and resource loading; the preview retains opaque-origin
 isolation from Inspire. [[resource-preview]] defines the capability and lifecycle boundaries.
 
-## Current work
+## Implemented capabilities
 
-[[pi-capability-gaps]] owns the remaining native-capability backlog.
-The separate presentation questions are compact-success receipts in
- and Files layout in
-[[file-browsing]]. Per-surface specifications link implementation and review
-evidence; completed task records remain in the archive.
+- Native input, Steer/Queue with original-image recovery, shell execution, model/thinking controls,
+  provider configuration/login, compaction, History navigation, independent Fork/Clone and exports
+  use the installed Pi. [[pi-capability-gaps]] links their delivery evidence.
+- Conversations retain floating reading controls, activity rails and independent Thinking/tool
+  density. Files/Changes share source-reader styling and file identity without merging filesystem
+  and Git authority. [[conversation]], [[activity-presentation]] and [[resource-preview]] own the contracts.
+- Settings and Terminal settings use category views. Models uses native Common/Default choices and
+  focused provider/model editors, preserving browsing context, drafts and login across category
+  changes. [[interface-preferences]], [[model-settings]] and [[terminal]] define the behavior.
+- All retained frontend refinement groups, including the final Models editors, are accepted.
+  [[design-system]] owns shared search, focus, control and status presentation.
 
-Completed maintainability review and native CI repairs: [[state-ownership]].
+## Current work and gaps
+
+The Pi 1.0 core/native and frontend quality review is complete. It repaired bounded live output,
+duplicate Git observations and canonical file selection, reconciled tests and documentation, and
+consolidated the round's history.
+
+[[pi-capability-gaps]] owns remaining capability work. Known gaps include
+native setting-persistence feedback and scope disclosure, startup/resource diagnostics, extension
+dialog cancellation, complete loaded-extension names, fuller History controls and image copying.
+Generic extension argument completion and current-worker MCP management need supported public Pi
+interfaces; [[mcp]] retains the decided graphical design and distinguishes available file editing
+from blocked runtime controls. These obligations remain open.
+
+[[file-browsing]] retains the unimplemented Notebook kernel-name inference
+and separately deferred holistic Files design questions.
+
+Completed maintainability and cross-platform CI evidence is in [[state-ownership]].
+Measurements in [[performance]] describe their recorded workloads and environments.

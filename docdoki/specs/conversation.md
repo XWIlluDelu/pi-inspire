@@ -11,6 +11,8 @@ covers:
   - src/components/RichText.tsx
   - src/components/ScrollRail.tsx
   - src/components/Transcript.tsx
+  - src/components/TranscriptUtilities.tsx
+  - tests/browser/reading-navigation.spec.ts
   - src/components/PromptMap.tsx
   - src/components/transcript-activity.ts
   - src/components/transcript-cards.tsx
@@ -86,6 +88,7 @@ custom messages remain independent readable boundaries in this contract.
   complete source projection; completed-tool copies include the name, arguments, and result under
   the existing Host projection bounds, while a generating/interrupted call explicitly copies only
   its partial argument preview. Custom copies include the type, content, and details.
+  [[design-system]] defines the shared Copy/Fork presentation types and activation scopes.
 
 - User turns appear as compact bubbles while assistant answers use an open, left-aligned document
   flow suitable for long Markdown, mathematical notation, code, and structured activity. Unbroken
@@ -103,6 +106,12 @@ custom messages remain independent readable boundaries in this contract.
   and hidden thinking/tool payloads are excluded. An active selected match locks out geometric
   latest-follow across prepends and live appends until search is cleared or the user explicitly
   jumps to latest.
+
+  Desktop search floats at the top-right of the reading measure. Search and narrow navigation
+  surfaces do not reserve layout height; opening controls preserves the scrollport and reading
+  position. Desktop Escape blurs the search input without clearing its query or selected match.
+  When latest-follow is released, a bottom-centered floating text button, `Jump to latest`, restores
+  follow. Search and narrow launchers precede messages in keyboard order; Latest follows them.
 
   On a narrow workbench, Search is an explicit 44px launcher in an idle control with no shared
   backdrop that floats over Transcript without reserving layout height; activating it replaces the
@@ -167,8 +176,9 @@ custom messages remain independent readable boundaries in this contract.
   below the fold. Only an explicit wheel, touch, or keyboard gesture releases latest-follow
   outright.
 
-  A fold disclosure gesture owns its layout mutation before resizing and keeps the selected upper,
-  lower, or middle anchor fixed through ordinary and virtualized history; it retains latest-follow
+  A fold disclosure gesture owns its layout mutation before resizing. The unified collapsed
+  disclosure keeps the center anchor; open upper/lower controls keep their respective anchors through
+  ordinary and virtualized history. It retains latest-follow
   afterward only when the anchored result remains at the exact latest boundary. Input owns the
   viewport before its deferred scroll event, and once released, Markdown reflow, virtual-row
   measurement, scrollport resize, and other programmatic scroll events cannot silently reacquire
@@ -221,7 +231,14 @@ custom messages remain independent readable boundaries in this contract.
   surface.
 
 - Durable Pi `compaction` and `branch_summary` entries are projected as dedicated, collapsed
-  context-summary cards with retained token counts and searchable Markdown bodies. Like Thinking,
+  context-summary cards with recorded token counts and searchable Markdown bodies. Pi compaction
+  shows `Context compacted` and `Before ≈ … tokens` for its pre-compaction context estimate.
+  Magic Context shows `Magic Context compacted` and `History chunk ≈ … tokens`: its marker writes
+  the historian input chunk estimate into Pi's `tokensBefore` field. Source is read from the public
+  compaction entry's `details.source` and projected as `__inspireCompactionSource`; cached source-less
+  snapshots also recognize the extension's known marker prefix. Its redundant `Magic Context compacted:`
+  body prefix is omitted in display, while Copy retains the recorded summary. No savings ratio is derived.
+  Branch summaries have no compaction-before metric. Like Thinking,
   tool, and extension-message cards, their headers show no timestamp or elapsed-time metadata.
   Canonical timestamps and source content remain unchanged. They are not hidden behind a
   generic-message raw JSON fallback and remain distinct rows at their context boundaries.
@@ -266,13 +283,11 @@ history keep one result per native execution. [[pi-integration]] owns execution 
   gestures are idempotent; [[pi-integration]] owns Host request/worker validation, deadlines,
   reconnect retention and cleanup. Model settlement does not dismiss an independent command's dialog.
 
-- Pending appears at the end of Transcript with visible, bounded Steer/Queue previews, known image
-  counts and omission markers. Its header groups Return, complete Copy and Clear actions.
-  [[composer]] owns their behavior: Return and Stop recover unconsumed input; explicitly confirmed
-  Clear discards it. The projection does not create browser-owned queue authority.
-
-  The composer-adjacent activity surface shows state-owned retry/compaction feedback and a concise
-  `N Pending` count. Running and failed tools remain in their chronological cards.
+- Pending sits at the end of Transcript; the composer-adjacent activity surface provides a compact
+  count and Jump to Pending action. [[composer]] owns previews, visual emphasis, copying, recovery
+  and discard. Pending remains a projection of Pi/Host-owned input, not a browser-owned queue.
+  Retry/compaction feedback belongs to the activity surface; running and failed tools remain in
+  their chronological cards.
 
 - Running, retrying, compacting, queued, user-stopped, failed, and settled states remain
   distinguishable; a user-initiated abort is presented as neutral `Stopped`, not as a failed run.

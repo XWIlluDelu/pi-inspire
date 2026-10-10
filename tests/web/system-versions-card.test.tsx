@@ -55,7 +55,10 @@ function availableUpdates() {
     },
     extensions: {
       kind: "available",
-      updates: [{ displayName: "installed-package", type: "npm" }],
+      updates: [
+        { displayName: "@example/pi-tools", type: "npm" },
+        { displayName: "github.com/example/pi-tools", type: "git" },
+      ],
     },
   };
   fixture.state.inspireUpdateCheck = {
@@ -101,6 +104,31 @@ describe("System versions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
     expect(fixture.checkPiUpdate).toHaveBeenCalledOnce();
     expect(fixture.checkInspireUpdate).toHaveBeenCalledOnce();
+  });
+
+  it("summarizes extension updates separately from their package sources", () => {
+    availableUpdates();
+    render(<SystemVersionsCard />);
+    const extensions = row("Extensions");
+    const summary = extensions.getByText("2 package updates").parentElement;
+    const list = extensions.getByRole("list", {
+      name: "Packages with updates",
+    });
+    expect(summary).toContainElement(
+      extensions.getByRole("button", { name: "Copy pi update --extensions" }),
+    );
+    expect(summary).not.toContainElement(list);
+    const packages = within(list);
+    expect(packages.getAllByRole("listitem")).toHaveLength(2);
+    expect(
+      packages.getByRole("link", { name: "@example/pi-tools" }),
+    ).toHaveAttribute(
+      "href",
+      "https://www.npmjs.com/package/@example/pi-tools",
+    );
+    expect(
+      packages.getByRole("link", { name: "github.com/example/pi-tools" }),
+    ).toHaveAttribute("href", "https://github.com/example/pi-tools");
   });
 
   it("distinguishes request submission from execution and retains known versions", () => {

@@ -237,12 +237,16 @@ for (const touch of [false, true]) {
         .first();
       await expect(shell).toBeVisible();
       await shell.click();
-      await expect(
-        history.getByText("Included in context", { exact: true }),
-      ).toBeVisible();
-      await expect(history.locator(".rich-text")).toContainText(
+      const shellPreview = history.getByRole("region", {
+        name: "Shell record preview",
+      });
+      await expect(shellPreview).toContainText("Included in context");
+      await expect(shellPreview).toContainText(
         "!printf 'native-shell-history'",
       );
+      await expect(
+        shellPreview.getByRole("button", { name: /Insert.*terminal/ }),
+      ).toHaveCount(0);
       await expect(
         history.getByRole("button", { name: "Continue here", exact: true }),
       ).toBeEnabled();
@@ -259,12 +263,10 @@ for (const touch of [false, true]) {
           name: /Shell command.*native-shell-excluded-result/,
         })
         .click();
-      await expect(history.locator(".rich-text")).toContainText(
+      await expect(shellPreview).toContainText(
         "!!printf 'native-shell-history'",
       );
-      await expect(
-        history.getByText("Excluded from context", { exact: true }),
-      ).toBeVisible();
+      await expect(shellPreview).toContainText("Excluded from context");
       await page.screenshot({
         path: `output/playwright/history/${size}-shell-detail.png`,
       });
@@ -309,6 +311,28 @@ for (const touch of [false, true]) {
         path: `output/playwright/history/${size}-image-escape.png`,
       });
       await history.getByRole("button", { name: "Back to history" }).click();
+      await search.fill("COMPLETE_NATIVE_SHELL_LOG_END");
+      await history
+        .getByRole("button", { name: /Shell command.*native-shell-history/ })
+        .click();
+      const fullLog = shellPreview.getByRole("button", {
+        name: "View full shell output",
+      });
+      const reference = (await fullLog.getAttribute("data-file-path"))!;
+      const resolvedLog = page.waitForRequest(
+        (request) =>
+          new URL(request.url()).pathname === "/api/resources/resolve",
+      );
+      await fullLog.click();
+      expect((await resolvedLog).postDataJSON()).toMatchObject({
+        sessionId: "mock-calibration-history",
+        reference,
+      });
+      const source = page.getByRole("region", { name: "File source" });
+      await expect(source).toBeVisible();
+      expect(await source.locator("code").textContent()).toBe(
+        await readFile(reference, "utf8"),
+      );
     });
 
     test("clears a pending search and retries the selected failed detail without losing its place", async ({

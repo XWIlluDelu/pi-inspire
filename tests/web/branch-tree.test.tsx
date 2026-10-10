@@ -69,6 +69,7 @@ let fixture: {
   imageFailures?: number;
   images?: boolean;
   detailText?: string;
+  detailRole?: BranchTreeNode["role"];
   outline?: BranchTreeNode[];
 };
 const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
@@ -171,7 +172,10 @@ beforeEach(async () => {
         return Response.json({
           sessionId: "s1",
           revision: fixture.revision,
-          node: nodes.find((node) => node.id === id),
+          node: {
+            ...nodes.find((node) => node.id === id)!,
+            ...(fixture.detailRole ? { role: fixture.detailRole } : {}),
+          },
           text: text.slice(offset, end),
           nextOffset: end < text.length ? end : null,
           totalChars: text.length,
@@ -251,6 +255,44 @@ async function previewAnswer() {
 }
 
 describe("read-only History inspection", () => {
+  it.each(["shell", "tool", "assistant"] as const)(
+    "uses the canonical %s role to select plain shell or rich content",
+    async (role) => {
+      fixture.detailRole = role;
+      fixture.detailText =
+        role === "shell"
+          ? "\`\`\`\n!echo log\n\`\`\`\n\n\`\`\`\n# Literal output\n\`\`\`\n\nExit 0"
+          : "# Rich output";
+      render(<BranchTree />);
+      const disclosure = within(history()).getAllByRole("button", {
+        name: "Replies and activity",
+      })[0]!;
+      expect(disclosure).toHaveTextContent("Activity");
+      expect(disclosure).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(disclosure);
+      expect(disclosure).toHaveAttribute("aria-expanded", "true");
+      fireEvent.click(
+        within(history()).getByRole("button", {
+          name: "Response Earlier answer",
+        }),
+      );
+      if (role === "shell") {
+        const preview = await screen.findByRole("region", {
+          name: "Shell record preview",
+        });
+        expect(preview).toHaveTextContent("# Literal output");
+        expect(within(preview).queryByRole("heading")).toBeNull();
+      } else {
+        expect(
+          await screen.findByRole("heading", { name: "Rich output" }),
+        ).toBeVisible();
+        expect(
+          screen.queryByRole("region", { name: "Shell record preview" }),
+        ).toBeNull();
+      }
+    },
+  );
+
   it("keeps first-input alternatives reachable through Other starts when their branch point is metadata", async () => {
     const setting: BranchTreeNode = {
       ...point("thinking", "model", "assistant", "off"),
@@ -307,6 +349,7 @@ describe("read-only History inspection", () => {
     const match = await screen.findByRole("button", {
       name: "Your input Root question",
     });
+    expect(match.querySelector(".search-match")).toHaveTextContent(/^Root$/);
     const rows = history().querySelector(".branch-tree__rows")!;
     rows.scrollTop = 81;
     fireEvent.click(match);
@@ -406,6 +449,24 @@ describe("read-only History inspection", () => {
     expect(
       requests.filter((request) => request.url.includes("query=old")),
     ).toHaveLength(1);
+  });
+
+  it("shows a shared no-match state without duplicating the query and restores the outline on Escape", async () => {
+    render(<BranchTree />);
+    const search = screen.getByRole("searchbox", { name: "Find in history" });
+    const query = "no matching retained phrase";
+    fireEvent.change(search, { target: { value: query } });
+    const title = await screen.findByText("No matching history");
+    expect(title.closest(".res__state")).toHaveAttribute("role", "status");
+    expect(search).toHaveValue(query);
+    expect(screen.queryByText(query, { exact: false })).not.toBeInTheDocument();
+    fireEvent.keyDown(search, { key: "Escape" });
+    await screen.findByRole("button", { name: "Root question" });
+    expect(search).toHaveValue("");
+    expect(screen.queryByText("No matching history")).not.toBeInTheDocument();
+    expect(
+      requests.filter((request) => request.url === "/api/branches/navigate"),
+    ).toEqual([]);
   });
 
   it("retires a pending search when cleared without letting it retire the next read", async () => {
@@ -533,25 +594,36 @@ describe("explicit History actions", () => {
       name: "Edit in this session",
     });
     await waitFor(() => expect(edit).toBeEnabled());
+    const sameSession = screen.getByRole("group", { name: "This session" });
+    const summary = within(sameSession).getByRole("checkbox", {
+      name: "Carry branch summary",
+    });
+    expect(summary).toHaveClass("choice-input");
+    expect(summary).not.toBeChecked();
     expect(
-      screen.getByRole("checkbox", {
-        name: "Carry branch summary",
-      }),
-    ).not.toBeChecked();
+      Array.from(sameSession.querySelectorAll("input, textarea, button")),
+    ).toEqual([summary, edit]);
     fireEvent.click(edit);
     expect(
       requests.filter((request) => request.url === "/api/branches/navigate"),
     ).toHaveLength(0);
     expect(sessionDraft("s1")).toBe("existing draft");
-    fireEvent.click(
-      screen.getByRole("checkbox", {
-        name: "Carry branch summary",
-      }),
-    );
-    fireEvent.change(
-      screen.getByRole("textbox", { name: "Summary instructions" }),
-      { target: { value: "Keep the measurements" } },
-    );
+    fireEvent.click(summary);
+    const instructions = within(sameSession).getByRole("textbox", {
+      name: "Summary instructions",
+    });
+    expect(instructions).toHaveAttribute("maxlength", "2000");
+    expect(
+      Array.from(sameSession.querySelectorAll("input, textarea, button")),
+    ).toEqual([summary, instructions, edit]);
+    expect(
+      within(screen.getByRole("group", { name: "New session" })).queryByRole(
+        "checkbox",
+      ),
+    ).not.toBeInTheDocument();
+    fireEvent.change(instructions, {
+      target: { value: "Keep the measurements" },
+    });
     fireEvent.click(
       screen.getByRole("button", { name: "Edit in this session" }),
     );

@@ -101,7 +101,7 @@ function StateChip({
   return null;
 }
 
-function GitSummary({ sessionId }: { sessionId: string }) {
+function GitSummary() {
   const { gitStatus, gitStatusError } = useAppState(
     (state) => ({
       gitStatus: state.gitStatus,
@@ -109,18 +109,6 @@ function GitSummary({ sessionId }: { sessionId: string }) {
     }),
     shallowEqual,
   );
-  const observesRepository =
-    gitStatus === null || gitStatus.kind === "repository";
-  useEffect(() => {
-    // The compact topbar indicator is a first-class Git surface, so its branch
-    // and dirty count remain current even while the detailed Changes pane is closed.
-    // Once Git has authoritatively said this workspace is not a repository, do
-    // not leave a background poll running for an indicator that cannot render.
-    if (!observesRepository) return;
-    store.setGitSurfaceVisible("topbar-git", true);
-    return () => store.setGitSurfaceVisible("topbar-git", false);
-  }, [observesRepository, sessionId]);
-
   const branch = gitHeadLabel(gitStatus);
   const changes = gitChangeCount(gitStatus);
   if (!branch || changes === null) return null;
@@ -200,6 +188,7 @@ const SessionIdent = memo(function SessionIdent({
     };
   }, shallowEqual);
   const [editing, setEditing] = useState(false);
+  const [restoredTitleFocus, setRestoredTitleFocus] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [value, setValue] = useState("");
   const [renameWidth, setRenameWidth] = useState(240);
@@ -212,6 +201,7 @@ const SessionIdent = memo(function SessionIdent({
     restoreTitleFocus.current = Boolean(
       inputRef.current?.form?.contains(document.activeElement),
     );
+    setRestoredTitleFocus(restoreTitleFocus.current);
     editIncarnationRef.current += 1;
     setEditing(false);
   }, []);
@@ -300,12 +290,15 @@ const SessionIdent = memo(function SessionIdent({
             ref={titleRef}
             type="button"
             className="topbar__title-button"
+            data-restored-focus={restoredTitleFocus || undefined}
+            onBlur={() => setRestoredTitleFocus(false)}
             aria-label={`Session actions: ${heading}`}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             title={heading}
             onClick={() => setMenuOpen((open) => !open)}
             onKeyDown={(event) => {
+              setRestoredTitleFocus(false);
               if (event.key === "ArrowDown" && !event.nativeEvent.isComposing) {
                 event.preventDefault();
                 setMenuOpen(true);
@@ -366,7 +359,7 @@ const SessionIdent = memo(function SessionIdent({
             />
           </button>
         ) : null}
-        <GitSummary sessionId={sessionId} />
+        <GitSummary />
       </div>
     </div>
   );
@@ -399,9 +392,20 @@ export const AppTopbar = memo(function AppTopbar({
       connection: source.connection,
       connectionProblem: source.connectionProblem,
       resourcesOpen: source.resourcesOpen,
+      observesRepository:
+        Boolean(source.sessionId) &&
+        (source.gitStatus === null || source.gitStatus.kind === "repository"),
     }),
     shallowEqual,
   );
+  useEffect(() => {
+    // Observe from the stable topbar, not the session-keyed identity below.
+    // Session changes already refresh Git in the store; remounting that
+    // subscription would cancel and restart the same request.
+    if (!state.observesRepository) return;
+    store.setGitSurfaceVisible("topbar-git", true);
+    return () => store.setGitSurfaceVisible("topbar-git", false);
+  }, [state.observesRepository]);
   return (
     <header className="topbar">
       <button

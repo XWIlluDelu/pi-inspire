@@ -28,6 +28,7 @@ export function DirectoryPicker({
   onPick: (path: string) => void;
 }) {
   const [listing, setListing] = useState<HostDirListing | null>(null);
+  const [path, setPath] = useState(initial?.trim() ?? "");
   const [roots, setRoots] = useState<HostDirEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -60,6 +61,7 @@ export function DirectoryPicker({
   ) => {
     const mine = ++ticket.current;
     requested.current = { path, fallbackHome, discoverRoots };
+    setPath(path ?? "");
     setLoading(true);
     setError(null);
     const listing = store
@@ -73,12 +75,14 @@ export function DirectoryPicker({
     const availableRoots = discoverRoots
       ? store.browseHostRoots()
       : Promise.resolve(null);
-    void Promise.all([listing, availableRoots])
+    return Promise.all([listing, availableRoots])
       .then(([result, rootResult]) => {
         if (ticket.current !== mine) return;
         requested.current = { path: result.path };
         setListing(result);
+        setPath(result.path);
         if (rootResult) setRoots(rootResult.roots);
+        return result;
       })
       .catch((cause: unknown) => {
         if (ticket.current === mine)
@@ -95,7 +99,7 @@ export function DirectoryPicker({
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only initialization deliberately hands later navigation to the picker.
   useEffect(() => {
-    load(initial?.trim() || undefined, {
+    void load(initial?.trim() || undefined, {
       fallbackHome: true,
       discoverRoots: true,
     });
@@ -127,7 +131,7 @@ export function DirectoryPicker({
               const hidden = !showHidden;
               setShowHidden(hidden);
               const { path, ...options } = requested.current;
-              load(path, { ...options, hidden });
+              void load(path, { ...options, hidden });
             }}
           >
             {showHidden ? (
@@ -137,7 +141,32 @@ export function DirectoryPicker({
             )}
           </button>
         </div>
-        <div className="dirpicker__path">{listing?.path ?? "…"}</div>
+        <div className="dirpicker__path-field" data-path={path}>
+          <textarea
+            rows={1}
+            className="dirpicker__path"
+            aria-label="Project directory"
+            value={path}
+            placeholder="/path/to/project"
+            spellCheck={false}
+            readOnly={loading}
+            aria-busy={loading}
+            onChange={(event) => {
+              setPath(event.target.value);
+              setError(null);
+            }}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Enter" &&
+                !event.nativeEvent.isComposing &&
+                event.nativeEvent.keyCode !== 229
+              ) {
+                event.preventDefault();
+                if (path.trim() && !loading) void load(path.trim());
+              }
+            }}
+          />
+        </div>
         {roots.length > 1 ? (
           <div
             className="dirpicker__roots"
@@ -148,9 +177,9 @@ export function DirectoryPicker({
               <button
                 key={root.path}
                 type="button"
-                className="dirpicker__root"
+                className="dirpicker__root button--quiet"
                 title={`Browse ${root.path}`}
-                onClick={() => load(root.path)}
+                onClick={() => void load(root.path)}
               >
                 <HardDrive size={13} aria-hidden />
                 <span>{root.name}</span>
@@ -164,7 +193,7 @@ export function DirectoryPicker({
               type="button"
               className="dirpicker__row"
               disabled={loading}
-              onClick={() => load(listing.parent ?? undefined)}
+              onClick={() => void load(listing.parent ?? undefined)}
             >
               <CornerLeftUp size={13} aria-hidden />
               <span className="dirpicker__name">..</span>
@@ -176,7 +205,7 @@ export function DirectoryPicker({
               type="button"
               className="dirpicker__row"
               disabled={loading}
-              onClick={() => load(entry.path)}
+              onClick={() => void load(entry.path)}
             >
               <Folder size={13} aria-hidden />
               <span className="dirpicker__name">{entry.name}</span>
@@ -198,14 +227,24 @@ export function DirectoryPicker({
           ) : null}
         </div>
         <div className="dialog__actions">
-          <button type="button" className="button" onClick={onCancel}>
+          <button
+            type="button"
+            className="button button--quiet"
+            onClick={onCancel}
+          >
             Cancel
           </button>
           <button
             type="button"
             className="button button--primary"
-            disabled={!listing || loading || !!error}
-            onClick={() => listing && onPick(listing.path)}
+            disabled={!path.trim() || loading || !!error}
+            onClick={() => {
+              if (listing && path.trim() === listing.path) onPick(listing.path);
+              else
+                void load(path.trim()).then((result) => {
+                  if (result) onPick(result.path);
+                });
+            }}
           >
             Use this directory
           </button>

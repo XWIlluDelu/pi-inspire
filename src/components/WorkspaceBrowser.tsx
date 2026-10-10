@@ -1,7 +1,6 @@
 import {
   AlertTriangle,
   ChevronRight,
-  FileText,
   Folder,
   Loader2,
   RefreshCw,
@@ -17,6 +16,7 @@ import {
   useRef,
 } from "react";
 import type { GitFileChange } from "../../shared/contracts";
+import { fileIconForPath } from "../file-icons";
 import {
   gitDecorationForChange,
   gitDecorationForDirectory,
@@ -28,8 +28,9 @@ import {
   store,
   useAppState,
 } from "../store";
-import { ResourcePathLabel } from "./ResourcePathLabel";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
+import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
+import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 
 export function WorkspaceVisibilityToggle() {
   const showHidden = useAppState((source) => source.workspaceShowHidden);
@@ -43,7 +44,10 @@ export function WorkspaceVisibilityToggle() {
 
 type WorkspaceSelectionState = Pick<
   ReturnType<typeof store.getState>,
-  "selectedResourceReference" | "resourcePreview" | "resourceWorkspacePaths"
+  | "selectedResourceReference"
+  | "selectedResourceWorkspacePath"
+  | "resourcePreview"
+  | "resourceWorkspacePaths"
 >;
 
 export function selectedWorkspacePath(state: WorkspaceSelectionState) {
@@ -53,7 +57,12 @@ export function selectedWorkspacePath(state: WorkspaceSelectionState) {
     state.resourcePreview?.status === "ready"
       ? state.resourcePreview.descriptor.workspacePath
       : undefined;
-  return previewPath ?? state.resourceWorkspacePaths[selected] ?? selected;
+  return (
+    previewPath ??
+    state.selectedResourceWorkspacePath ??
+    state.resourceWorkspacePaths[selected] ??
+    selected
+  );
 }
 
 export function WorkspaceFileSearch() {
@@ -110,6 +119,7 @@ const WorkspaceFileRow = memo(function WorkspaceFileRow({
   change,
   depth = 0,
   showPath = false,
+  query = "",
 }: {
   path: string;
   name: string;
@@ -117,7 +127,11 @@ const WorkspaceFileRow = memo(function WorkspaceFileRow({
   change?: GitFileChange;
   depth?: number;
   showPath?: boolean;
+  query?: string;
 }) {
+  const Icon = fileIconForPath(path);
+  const directory = showPath ? parentPath(path) : null;
+  const matches = searchMatchRanges(path, query.trim().split(/\s+/));
   const selected = selectedPath === path;
   const decoration = gitDecorationForChange(change);
   const facet = presentGitFacet(change);
@@ -132,15 +146,24 @@ const WorkspaceFileRow = memo(function WorkspaceFileRow({
       data-workspace-path={path}
       onClick={() => void store.openWorkspaceFile(path)}
     >
-      <FileText size={13} aria-hidden />
+      <Icon size={13} aria-hidden />
       <span className="workspace-tree__file-label">
         <span
           className={`workspace-tree__name ${decoration ? `git-deco--${decoration}` : ""}`}
         >
-          {name}
+          <SearchMatchText
+            text={name}
+            ranges={matches}
+            offset={path.length - name.length}
+          />
         </span>
-        {showPath && path !== name ? (
-          <ResourcePathLabel path={path} className="workspace-tree__path" />
+        {directory ? (
+          <ResourcePathLabel
+            path={directory}
+            title={path}
+            className="workspace-tree__path"
+            matches={matches}
+          />
         ) : null}
       </span>
       {facet ? (
@@ -176,6 +199,7 @@ export function WorkspaceTree({
       workspaceTruncatedDirs: source.workspaceTruncatedDirs,
       workspaceRevealRequest: source.workspaceRevealRequest,
       selectedResourceReference: source.selectedResourceReference,
+      selectedResourceWorkspacePath: source.selectedResourceWorkspacePath,
       resourcePreview: source.resourcePreview,
       resourceWorkspacePaths: source.resourceWorkspacePaths,
       gitStatus: source.gitStatus,
@@ -344,6 +368,7 @@ export function WorkspaceSearchResults({
       workspaceMatches: source.workspaceMatches,
       workspaceSearchTruncated: source.workspaceSearchTruncated,
       selectedResourceReference: source.selectedResourceReference,
+      selectedResourceWorkspacePath: source.selectedResourceWorkspacePath,
       resourcePreview: source.resourcePreview,
       resourceWorkspacePaths: source.resourceWorkspacePaths,
       gitStatus: source.gitStatus,
@@ -391,6 +416,7 @@ export function WorkspaceSearchResults({
             selectedPath={selectedPath}
             change={gitChangeForWorkspacePath(state.gitStatus, file.path)}
             showPath
+            query={state.workspaceQuery}
           />
         ))
       )}

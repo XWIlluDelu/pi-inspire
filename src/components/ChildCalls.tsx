@@ -8,6 +8,8 @@ import {
 import { useLayoutEffect, useRef, useState } from "react";
 import type { ChildCall, ChildCallList } from "../../shared/tool-activity";
 import { stripTerminalSequences } from "../ansi";
+import { childCallSummary, isModelCall } from "../child-call-summary";
+import { ResourcePathLabel } from "./ResourcePathLabel";
 
 const statusLabels: Record<ChildCall["status"], string> = {
   running: "Running",
@@ -17,39 +19,18 @@ const statusLabels: Record<ChildCall["status"], string> = {
   unfinished: "Unfinished",
 };
 
-function argumentSummary(value: unknown): string {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    return typeof value === "string" ? value : "";
-  const args = value as Record<string, unknown>;
-  for (const key of ["path", "file", "command", "pattern", "query", "url"]) {
-    if (typeof args[key] === "string" && args[key]) return args[key];
-  }
-  return Object.entries(args)
-    .filter(
-      ([, value]) =>
-        typeof value === "string" ||
-        typeof value === "number" ||
-        typeof value === "boolean",
-    )
-    .slice(0, 3)
-    .map(([key, value]) => `${key}: ${String(value)}`)
-    .join(" · ");
-}
-
-function callSummary(call: ChildCall): string {
-  if (call.arguments !== undefined) return argumentSummary(call.arguments);
-  if (!call.argumentsPreview) return "";
-  try {
-    return argumentSummary(JSON.parse(call.argumentsPreview));
-  } catch {
-    return call.argumentsPreview;
-  }
+/** Describe observed calls, not inferred script intent or the parent's outcome. */
+export function childCallsSummary(list?: ChildCallList): string {
+  if (!list?.calls.length) return "";
+  const failed = list.calls.filter((call) => call.status === "error").length;
+  const count = list.calls.length;
+  const summary = `${count} call${count === 1 ? "" : "s"}`;
+  return failed ? `${failed} failed · ${summary}` : summary;
 }
 
 function CallRow({ call }: { call: ChildCall }) {
   const [open, setOpen] = useState(false);
-  const model =
-    call.name === "models.classify" || call.name === "models.generateImages";
+  const model = isModelCall(call.name);
   const duration =
     call.durationMs !== undefined && call.durationMs >= 1_000
       ? `${(call.durationMs / 1_000).toFixed(1)} s`
@@ -60,7 +41,7 @@ function CallRow({ call }: { call: ChildCall }) {
     call.argumentsOmitted ||
     call.error ||
     duration;
-  const summary = stripTerminalSequences(callSummary(call)).slice(0, 160);
+  const summary = childCallSummary(call);
   const icon =
     call.status === "running" ? (
       <Loader2 size={12} className="spin" aria-hidden />
@@ -81,7 +62,15 @@ function CallRow({ call }: { call: ChildCall }) {
         <span className="sr-only">{statusLabels[call.status]}</span>
       </span>
       <code className="child-call__name">{call.name}</code>
-      {summary ? <span className="child-call__summary">{summary}</span> : null}
+      {summary.text ? (
+        <span className="child-call__summary">
+          {summary.path ? (
+            <ResourcePathLabel path={summary.text} />
+          ) : (
+            summary.text
+          )}
+        </span>
+      ) : null}
     </>
   );
   return detail ? (

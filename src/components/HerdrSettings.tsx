@@ -71,34 +71,41 @@ export function HerdrSettings({
   let statusNode: ReactNode = null;
   if (loading || error || issue || pending) {
     statusNode = (
-      <span className="settings__field-status" role="status">
-        {loading ? "Checking Herdr availability…" : null}
-        {!loading && error ? "Herdr status is unavailable on this Host." : null}
-        {!loading && !error && issue ? issue : null}
-        {error || (status && !status.ready) ? (
-          <>
-            {" "}
-            <button
-              type="button"
-              className="models-text-button"
-              aria-label="Recheck availability"
-              disabled={loading}
-              onClick={() => void refresh()}
-            >
-              <RefreshCw
-                size={12}
-                className={loading ? "spin" : undefined}
-                aria-hidden
-              />{" "}
-              Recheck
-            </button>
-          </>
+      <div role="status">
+        {loading || error || issue ? (
+          <div className="settings__field-status-block">
+            <span>
+              {loading ? "Checking Herdr availability…" : null}
+              {!loading && error
+                ? "Herdr status is unavailable on this Host."
+                : null}
+              {!loading && !error && issue ? issue : null}
+            </span>
+            {error || (status && !status.ready) ? (
+              <button
+                type="button"
+                className="models-text-button"
+                aria-label="Recheck availability"
+                disabled={loading}
+                onClick={() => void refresh()}
+              >
+                <RefreshCw
+                  size={12}
+                  className={loading ? "spin" : undefined}
+                  aria-hidden
+                />{" "}
+                Recheck
+              </button>
+            ) : null}
+          </div>
         ) : null}
         {pending ? (
-          <>
-            {saved
-              ? "Saved. Restart Host to turn on Herdr enhancement. "
-              : "Saved. Restart Host to turn off Herdr enhancement. "}
+          <div className="settings__field-status-block">
+            <span>
+              {saved
+                ? "Saved. Restart Host to turn on Herdr enhancement. "
+                : "Saved. Restart Host to turn off Herdr enhancement. "}
+            </span>
             <button
               type="button"
               className="settings__utility"
@@ -115,9 +122,9 @@ export function HerdrSettings({
             >
               Restart Host…
             </button>
-          </>
+          </div>
         ) : null}
-      </span>
+      </div>
     );
   }
 

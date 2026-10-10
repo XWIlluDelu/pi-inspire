@@ -9,7 +9,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { memo, useEffect, useState } from "react";
+import { memo, type Ref, useEffect, useState } from "react";
 import type {
   AssistantRoundDisplayPreference,
   GenericExtensionDisplay,
@@ -462,10 +462,19 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
 }) {
   const compacted = message.role === "compactionSummary";
   const summary = typeof message.summary === "string" ? message.summary : "";
+  const magicContext =
+    compacted &&
+    (message.__inspireCompactionSource === "magic-context" ||
+      (!message.__inspireCompactionSource &&
+        /^Magic Context compacted(?:[:\s]|$)/.test(summary)));
+  const displaySummary = magicContext
+    ? summary.replace(/^Magic Context compacted:\s*/, "")
+    : summary;
   const tokens =
+    compacted &&
     typeof message.tokensBefore === "number" &&
     Number.isFinite(message.tokensBefore)
-      ? `${Math.round(message.tokensBefore).toLocaleString()} tokens before`
+      ? `${magicContext ? "History chunk" : "Before"} ≈ ${Math.round(message.tokensBefore).toLocaleString()} tokens`
       : null;
   const [open, setOpen] = useState(false);
   return (
@@ -485,10 +494,23 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
               aria-hidden
             />
             <span className="context-checkpoint__title">
-              {compacted ? "Context compacted" : "Branch context"}
+              {compacted
+                ? magicContext
+                  ? "Magic Context compacted"
+                  : "Context compacted"
+                : "Branch context"}
             </span>
             {tokens ? (
-              <span className="context-checkpoint__metric">{tokens}</span>
+              <span
+                className="context-checkpoint__metric"
+                title={
+                  magicContext
+                    ? "Estimated tokens in the history chunk sent to Magic Context for processing."
+                    : "Estimated context size before compaction."
+                }
+              >
+                {tokens}
+              </span>
             ) : null}
             <span className="context-checkpoint__spacer" aria-hidden />
             {summary ? (
@@ -503,7 +525,7 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
           {open ? (
             <div className="context-checkpoint__body">
               {summary ? (
-                <RichText text={summary} />
+                <RichText text={displaySummary} />
               ) : (
                 <p>No summary was recorded.</p>
               )}
@@ -583,12 +605,14 @@ function PendingImage({ id, alt }: { id: string; alt: string }) {
 }
 
 export function PendingQueueGroups({
+  ref,
   queue,
   pendingAction,
   onClear,
   onRecover,
   getText,
 }: {
+  ref?: Ref<HTMLElement>;
   queue: PendingQueues;
   pendingAction: "clear" | "recover" | null;
   onClear: () => Promise<boolean>;
@@ -604,14 +628,12 @@ export function PendingQueueGroups({
     {
       key: "steering",
       label: "Steer",
-      mark: "S",
       start: 0,
       items: queue.steering,
     },
     {
       key: "follow-up",
       label: "Queue",
-      mark: "Q",
       start: queue.steering.length,
       items: queue.followUp,
     },
@@ -649,13 +671,21 @@ export function PendingQueueGroups({
   }
 
   const omitted = queue.totalCount - entries.length;
+  const singleMode = omitted === 0 && groups.length === 1;
   if (queue.totalCount === 0) return null;
 
   return (
-    <section className="pending-groups" aria-label="Pending input">
+    <section
+      ref={ref}
+      className="pending-groups"
+      aria-label="Pending input"
+      tabIndex={-1}
+    >
       <div className="pending-groups__head">
         <div className="pending-groups__lead">
-          <span className="pending-groups__title">Pending input</span>
+          <span className="pending-groups__title">
+            {singleMode ? `Pending · ${groups[0]!.label}` : "Pending input"}
+          </span>
           <span
             className="pending-groups__count"
             title={`${queue.totalCount} pending items`}
@@ -667,6 +697,13 @@ export function PendingQueueGroups({
           </span>
         </div>
         <div className="pending-groups__actions">
+          {entries.some((entry) => entry.textLength > 0) || omitted > 0 ? (
+            <CopyAction
+              getText={() => getText(queue.revision)}
+              label="all pending input"
+              className="pending-group__copy"
+            />
+          ) : null}
           <button
             type="button"
             className="icon-button pending-group__control"
@@ -681,13 +718,6 @@ export function PendingQueueGroups({
               <CornerUpLeft size={13} aria-hidden />
             )}
           </button>
-          {entries.some((entry) => entry.textLength > 0) || omitted > 0 ? (
-            <CopyAction
-              getText={() => getText(queue.revision)}
-              label="all pending input"
-              className="pending-group__copy"
-            />
-          ) : null}
           {confirmClear ? (
             <span className="pending-groups__confirm">
               <span className="pending-groups__confirm-label">Clear all?</span>
@@ -738,20 +768,9 @@ export function PendingQueueGroups({
           className={`pending-group pending-group--${group.key}`}
           aria-label={`Pending ${group.label.toLowerCase()}`}
         >
-          <div className="pending-group__head">
-            <div className="pending-group__head-lead">
-              <span className="pending-group__label">{group.label}</span>
-            </div>
-            <span className="pending-group__head-count">
-              <span aria-hidden>
-                {group.items.length}{" "}
-                {group.items.length === 1 ? "item" : "items"}
-              </span>
-              <span className="visually-hidden">
-                {group.items.length} items
-              </span>
-            </span>
-          </div>
+          {!singleMode ? (
+            <div className="pending-group__head">{group.label}</div>
+          ) : null}
           <ol className="pending-group__list" start={group.start + 1}>
             {group.items.map((entry, index) => {
               const number = group.start + index + 1;
@@ -761,16 +780,6 @@ export function PendingQueueGroups({
                   <span className="pending-group__number" aria-hidden>
                     {number}.
                   </span>
-                  <div className="pending-group__mark-col">
-                    <span
-                      className={`pending-group__mark pending-group__mark--${group.key}`}
-                      title={group.label}
-                    >
-                      <span className="pending-group__mark-text">
-                        {group.mark}
-                      </span>
-                    </span>
-                  </div>
                   <div className="pending-group__content">
                     {entry.textPreview || !entry.imageCount ? (
                       <pre

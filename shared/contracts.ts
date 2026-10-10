@@ -285,6 +285,12 @@ export function projectNameFromCwd(cwd: string): string {
   return normalized.split(/[\\/]/).pop() || cwd || "Unknown project";
 }
 
+/** Immediate parent folder used for concise project location cues. */
+export function parentSegment(cwd: string): string {
+  const parts = cwd.replace(/[\\/]+$/, "").split(/[\\/]/);
+  return parts.length > 1 ? parts[parts.length - 2]! : "";
+}
+
 export interface SessionSummary {
   id: string;
   cwd: string;

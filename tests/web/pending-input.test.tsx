@@ -172,8 +172,26 @@ describe("pending input visibility and actions", () => {
         .getAllByRole("listitem")
         .map((item) => item.querySelector("pre")?.textContent),
     ).toEqual(["follow first", "follow second\ncontinued"]);
-    expect(within(steering).getAllByText("S")).toHaveLength(2);
-    expect(within(followUp).getAllByText("Q")).toHaveLength(2);
+    expect(within(pending).getByText("Pending input")).toBeVisible();
+    expect(
+      within(pending.querySelector<HTMLElement>(".pending-groups__actions")!)
+        .getAllByRole("button")
+        .map((button) => button.getAttribute("aria-label")),
+    ).toEqual([
+      "Copy all pending input",
+      "Return all Pending input to composer",
+      "Clear all Pending input",
+    ]);
+    expect(within(steering).getByText("Steer")).toBeVisible();
+    expect(within(followUp).getByText("Queue")).toBeVisible();
+    expect(within(pending).getAllByText("4 pending items")).toHaveLength(1);
+    expect(within(pending).queryByText(/^[SQ]$/)).toBeNull();
+    expect(within(pending).queryByText(/^\d+ items?$/)).toBeNull();
+    expect(
+      [...pending.querySelectorAll(".pending-group__number")].map(
+        (number) => number.textContent,
+      ),
+    ).toEqual(["1.", "2.", "3.", "4."]);
     expect(
       screen.queryByRole("button", { name: /pause|resume|delete|move/i }),
     ).not.toBeInTheDocument();
@@ -268,6 +286,37 @@ describe("pending input visibility and actions", () => {
     },
   );
 
+  it.each(["Steer", "Queue"])(
+    "consolidates a fully supplied %s queue into one header",
+    (mode) => {
+      const queue =
+        mode === "Steer"
+          ? pendingQueues(["first", "second"])
+          : pendingQueues([], ["first", "second"]);
+      const { container } = render(
+        <PendingQueueGroups
+          queue={queue}
+          pendingAction="recover"
+          onClear={async () => true}
+          onRecover={async () => true}
+          getText={async () => "first"}
+        />,
+      );
+      expect(screen.getByText(`Pending · ${mode}`)).toBeVisible();
+      expect(screen.getAllByText("2 pending items")).toHaveLength(1);
+      expect(container.querySelector(".pending-group__head")).toBeNull();
+      expect(screen.queryByText(/^[SQ]$/)).toBeNull();
+      expect(
+        screen.getByRole("button", {
+          name: "Return all Pending input to composer",
+        }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "Clear all Pending input" }),
+      ).toBeDisabled();
+    },
+  );
+
   it("hides an empty Pending panel", () => {
     render(
       <PendingQueueGroups
@@ -301,6 +350,10 @@ describe("pending input visibility and actions", () => {
       />,
     );
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getByText("Pending input")).toBeVisible();
+    expect(screen.getByText("Steer")).toBeVisible();
+    expect(screen.queryByText("Pending · Steer")).toBeNull();
+    expect(screen.getAllByText("3 pending items")).toHaveLength(1);
     expect(screen.getByText("2 more pending items not shown.")).toBeVisible();
     fireEvent.click(
       screen.getByRole("button", { name: "Copy all pending input" }),

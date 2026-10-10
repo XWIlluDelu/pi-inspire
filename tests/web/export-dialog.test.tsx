@@ -22,6 +22,8 @@ it("retains the selected format on failure and downloads for the captured sessio
     .mockResolvedValueOnce();
   const onClose = vi.fn();
   const view = render(<ExportDialog sessionId="s1" active onClose={onClose} />);
+  for (const input of screen.getAllByRole("radio"))
+    expect(input).toHaveClass("choice-input");
   expect(
     screen.getByRole("radio", { name: "HTML Whole session" }),
   ).toBeChecked();

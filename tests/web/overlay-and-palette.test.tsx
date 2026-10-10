@@ -12,6 +12,7 @@ import { App } from "../../src/App";
 import { ExtensionStatus } from "../../src/components/ExtensionDisplays";
 import { ExtensionUiDialog } from "../../src/components/ExtensionUiDialog";
 import { store } from "../../src/store";
+import { mockTouchFirstDevice } from "./fixtures/touch-device";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -88,6 +89,64 @@ async function openPalette() {
 }
 
 describe("overlay ownership", () => {
+  it("keeps the touch palette search opt-in but focuses an explicitly requested rename", async () => {
+    const touch = mockTouchFirstDevice();
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    try {
+      render(<App />);
+      const dialog = await openPalette();
+      const search = screen.getByRole("combobox", { name: "Filter commands" });
+      expect(dialog).toHaveFocus();
+      expect(focus.mock.contexts).not.toContain(search);
+      fireEvent.keyDown(dialog, { key: "ArrowDown" });
+      expect(search).toHaveAttribute("aria-activedescendant");
+      search.focus();
+      fireEvent.change(search, { target: { value: "rename" } });
+      expect(search).toHaveFocus();
+      fireEvent.click(screen.getByRole("option", { name: /Rename session/ }));
+      expect(screen.getByLabelText("New session name")).toHaveFocus();
+      fireEvent.keyDown(screen.getByLabelText("New session name"), {
+        key: "Escape",
+      });
+      expect(dialog).toHaveFocus();
+      expect(screen.getByLabelText("Filter commands")).toHaveValue("rename");
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: "Command palette" }),
+        ).toBeNull(),
+      );
+    } finally {
+      focus.mockRestore();
+      touch.mockRestore();
+    }
+  });
+
+  it("emphasizes visible hint matches without changing title or query-clear behavior", async () => {
+    render(<App />);
+    await openPalette();
+    const search = screen.getByRole("combobox", { name: "Filter commands" });
+    fireEvent.change(search, { target: { value: "shell" } });
+    const row = screen.getByRole("option", {
+      name: /^Open Terminal/,
+    });
+    expect(
+      row.querySelector(".palette__hint-inline .search-match"),
+    ).toHaveTextContent("shell");
+    expect(row.querySelector(".palette__title .search-match")).toBeNull();
+    fireEvent.change(search, { target: { value: "terminal shell" } });
+    expect(
+      row.querySelector(".palette__title .search-match"),
+    ).toHaveTextContent("Terminal");
+    expect(
+      row.querySelector(".palette__hint-inline .search-match"),
+    ).toHaveTextContent("shell");
+    fireEvent.change(search, { target: { value: "" } });
+    expect(
+      document.querySelector(".palette__hint-inline .search-match"),
+    ).toBeNull();
+  });
+
   it("keeps pointer hover separate from keyboard selection without dismissing the palette", async () => {
     render(<App />);
     await openPalette();
@@ -324,6 +383,9 @@ describe("shared extension interaction", () => {
     expect(
       screen.getAllByRole("button").map((button) => button.textContent),
     ).toEqual(["No", "Yes"]);
+    expect(screen.getByRole("button", { name: "No" })).not.toHaveClass(
+      "button--quiet",
+    );
     fireEvent.click(screen.getByRole("button", { name: "No" }));
     expect(respond).toHaveBeenLastCalledWith({
       id: "confirm",
@@ -345,6 +407,9 @@ describe("shared extension interaction", () => {
         .emit({ type: "extension_ui_clear", reason: "stopped" }),
     );
     request({ id: "input", method: "input", title: "Name" });
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass(
+      "button--quiet",
+    );
     fireEvent.change(screen.getByRole("textbox"), {
       target: { value: "A name" },
     });

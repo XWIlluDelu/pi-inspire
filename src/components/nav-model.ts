@@ -95,11 +95,7 @@ export function splitNavSections(
   };
 }
 
-/** Second-to-last path segment, shown inline only when folder names collide. */
-export function parentSegment(cwd: string): string {
-  const parts = cwd.replace(/[\\/]+$/, "").split(/[\\/]/);
-  return parts.length > 1 ? parts[parts.length - 2]! : "";
-}
+export { parentSegment } from "../../shared/contracts";
 
 /** Activity age compressed for the dense row's right column; the exact
  * timestamp stays available as that column's tooltip. */

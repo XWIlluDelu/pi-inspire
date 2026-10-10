@@ -1,10 +1,17 @@
 // @vitest-environment jsdom
-import { cleanup, render, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  MAX_ATTACHMENTS,
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENT_UPLOAD_BYTES,
+  MAX_ATTACHMENTS,
   MAX_PROMPT_IMAGE_BYTES,
 } from "../../shared/contracts";
 import { selectAttachmentFiles } from "../../src/attachment-selection";
@@ -15,6 +22,92 @@ import { store } from "../../src/store";
 afterEach(() => cleanup());
 
 describe("attachment presentation", () => {
+  it("keeps filenames and status visible while moving file details into tooltips", () => {
+    const fileName = "calibration-notes-with-a-long-descriptive-filename.md";
+    const file: PendingAttachment = {
+      localId: "file",
+      fileName,
+      mimeType: "text/markdown",
+      size: 32,
+      kind: "file",
+      status: "ready",
+    };
+    const onRemove = vi.fn();
+    const items: PendingAttachment[] = [
+      file,
+      {
+        ...file,
+        localId: "uploading",
+        fileName: "results.csv",
+        status: "uploading",
+      },
+      {
+        ...file,
+        localId: "error",
+        fileName: "failed.csv",
+        status: "error",
+        error: "File upload failed. Remove it and add it again.",
+      },
+      ...(["attachment", "project"] as const).map((fileKind) => ({
+        ...file,
+        localId: fileKind,
+        fileName: `${fileKind}.md`,
+        recalledArtifact: {
+          type: "file" as const,
+          preview: true,
+          scopeKey: "history-scope",
+          viewId: "history-view",
+          incarnation: null,
+          effectiveLeafId: null,
+          reference: `pi-file://${fileKind}`,
+          fileKind,
+        },
+      })),
+    ];
+    const { rerender } = render(
+      <AttachmentList
+        sessionId="session-a"
+        items={items}
+        onRemove={onRemove}
+      />,
+    );
+    const rows = screen.getAllByRole("listitem");
+    expect(within(rows[0]!).getByText(fileName)).toBeVisible();
+    expect(rows[0]).toHaveAttribute(
+      "title",
+      `${fileName}\ntext/markdown · 32 B`,
+    );
+    expect(
+      screen.queryByText(/text\/markdown|32 B|project file|recalled file/),
+    ).toBeNull();
+    expect(within(rows[1]!).getByLabelText("Uploading")).toBeVisible();
+    expect(rows[2]).toHaveAttribute(
+      "title",
+      `failed.csv\ntext/markdown · 32 B\n${items[2]!.error}`,
+    );
+    expect(within(rows[2]!).getByLabelText("Upload failed")).toHaveAttribute(
+      "aria-description",
+      items[2]!.error,
+    );
+    expect(rows[3]).toHaveAttribute("title", "attachment.md\nrecalled file");
+    expect(rows[4]).toHaveAttribute("title", "project.md\nproject file");
+    fireEvent.click(screen.getByRole("button", { name: `Remove ${fileName}` }));
+    expect(onRemove).toHaveBeenCalledExactlyOnceWith("file");
+    rerender(
+      <AttachmentList
+        sessionId="session-a"
+        items={items}
+        disabled
+        onRemove={onRemove}
+      />,
+    );
+    expect(
+      screen
+        .getAllByRole("button")
+        .every((button) => button.hasAttribute("disabled")),
+    ).toBe(true);
+  });
+
   it("normalizes a recalled image without a projection incarnation", async () => {
     const originalLoad = store.loadEmbeddedImage;
     const load = vi.fn(async () => new Blob(["png"], { type: "image/png" }));

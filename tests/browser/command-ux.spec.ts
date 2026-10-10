@@ -169,13 +169,16 @@ test("file completions keep full filenames readable beside or above their paths"
     await page.setViewportSize({ width, height: 900 });
     await commandSession.input.fill("@TerminalSettingsDialog");
     const option = page.getByRole("option", {
-      name: "TerminalSettingsDialog.tsx src/components/TerminalSettingsDialog.tsx",
+      name: "TerminalSettingsDialog.tsx, src/components/TerminalSettingsDialog.tsx",
       exact: true,
     });
     await expect(option).toBeVisible();
     await expect(option.locator(".completion__title")).toHaveText(
       "TerminalSettingsDialog.tsx",
     );
+    await expect(
+      option.locator(".completion__hint .resource-path__visible"),
+    ).toHaveText("src/components");
     await expect
       .poll(() =>
         option.evaluate((element) => {
@@ -290,7 +293,9 @@ for (const touch of [false, true]) {
       await filter.fill("mdl");
       await palette.getByRole("option").first().click();
       await expect(
-        page.getByRole("combobox", { name: "Search models" }),
+        touch
+          ? page.getByRole("listbox", { name: "Available models" })
+          : page.getByRole("combobox", { name: "Search models" }),
       ).toBeFocused();
       await assertDraft();
       await page.keyboard.press("Escape");

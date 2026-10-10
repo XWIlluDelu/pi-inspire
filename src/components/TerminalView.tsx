@@ -72,6 +72,7 @@ import {
 import type { TerminalUiSettings } from "../terminal-settings";
 import { useCopied } from "../use-copied";
 import { TerminalTextDialog } from "./TerminalTextDialog";
+import { TerminalTouchKeys } from "./TerminalTouchKeys";
 
 interface TerminalViewProps {
   api: Api;
@@ -1254,88 +1255,17 @@ export const TerminalView = memo(function TerminalView({
           </div>
         ) : null}
       </div>
-      <fieldset
-        className="terminal-touch-keys"
+      <TerminalTouchKeys
         disabled={!writable || !ready || descriptor.status !== "running"}
-        onPointerDown={(event) => event.preventDefault()}
-      >
-        <legend className="sr-only">Terminal keys</legend>
-        <button type="button" onClick={() => sendTouchKey("Escape")}>
-          Esc
-        </button>
-        <button type="button" onClick={() => sendTouchKey("Interrupt")}>
-          Ctrl+C
-        </button>
-        <button
-          type="button"
-          className={modifiers.ctrl ? "is-active" : ""}
-          aria-pressed={modifiers.ctrl}
-          onClick={() =>
-            updateModifiers({
-              ...modifiersRef.current,
-              ctrl: !modifiersRef.current.ctrl,
-            })
-          }
-        >
-          Ctrl
-        </button>
-        <button
-          type="button"
-          className={modifiers.alt ? "is-active" : ""}
-          aria-pressed={modifiers.alt}
-          onClick={() =>
-            updateModifiers({
-              ...modifiersRef.current,
-              alt: !modifiersRef.current.alt,
-            })
-          }
-        >
-          Alt
-        </button>
-        <button type="button" onClick={() => sendTouchKey("Tab")}>
-          Tab
-        </button>
-        <button
-          type="button"
-          aria-label="Arrow up"
-          onClick={() => sendTouchKey("ArrowUp")}
-        >
-          ↑
-        </button>
-        <button
-          type="button"
-          aria-label="Arrow down"
-          onClick={() => sendTouchKey("ArrowDown")}
-        >
-          ↓
-        </button>
-        <button
-          type="button"
-          aria-label="Arrow left"
-          onClick={() => sendTouchKey("ArrowLeft")}
-        >
-          ←
-        </button>
-        <button
-          type="button"
-          aria-label="Arrow right"
-          onClick={() => sendTouchKey("ArrowRight")}
-        >
-          →
-        </button>
-        <button type="button" onClick={() => sendTouchKey("Home")}>
-          Home
-        </button>
-        <button type="button" onClick={() => sendTouchKey("End")}>
-          End
-        </button>
-        <button type="button" onClick={() => sendTouchKey("PageUp")}>
-          PgUp
-        </button>
-        <button type="button" onClick={() => sendTouchKey("PageDown")}>
-          PgDn
-        </button>
-      </fieldset>
+        modifiers={modifiers}
+        onToggleModifier={(modifier) =>
+          updateModifiers({
+            ...modifiersRef.current,
+            [modifier]: !modifiersRef.current[modifier],
+          })
+        }
+        onKey={sendTouchKey}
+      />
       {active && textSnapshot
         ? createPortal(
             <TerminalTextDialog

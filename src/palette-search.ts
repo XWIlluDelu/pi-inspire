@@ -1,4 +1,26 @@
+import {
+  fuzzySearchMatchRanges,
+  mergeSearchMatchRanges,
+} from "./components/SearchMatchText";
 import { fuzzyScore } from "./composer-completion";
+
+const paletteSearchQuery = (query: string) =>
+  query.trim().toLocaleLowerCase().replace(/^\//u, "");
+
+/** Emphasize a visible field without changing cross-field ranking. */
+export function paletteTextMatchRanges(text: string, query: string) {
+  const needle = paletteSearchQuery(query);
+  if (!needle) return [];
+  const fold = (value: string) => value.toLocaleLowerCase();
+  const whole = fuzzySearchMatchRanges(text, needle, fold);
+  return whole.length
+    ? whole
+    : mergeSearchMatchRanges(
+        needle
+          .split(/\s+/u)
+          .flatMap((word) => fuzzySearchMatchRanges(text, word, fold)),
+      );
+}
 
 interface PaletteSearchItem {
   title: string;
@@ -11,7 +33,7 @@ export function rankPaletteItems<T extends PaletteSearchItem>(
   items: readonly T[],
   query: string,
 ): T[] {
-  const needle = query.trim().toLocaleLowerCase().replace(/^\//u, "");
+  const needle = paletteSearchQuery(query);
   if (!needle) return [...items];
   const words = needle.split(/\s+/u);
   return items

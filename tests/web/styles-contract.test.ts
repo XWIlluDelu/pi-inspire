@@ -17,18 +17,40 @@ async function readStylesheet(
 }
 
 describe("static asset contracts", () => {
+  it("keeps stroke compatibility names as single aliases of canonical colors", async () => {
+    const css = await readStylesheet();
+    expect([...css.matchAll(/--hairline\s*:/g)]).toHaveLength(1);
+    expect([...css.matchAll(/--hairline-strong\s*:/g)]).toHaveLength(1);
+    expect(css).toMatch(/--hairline\s*:\s*var\(--line\)/);
+    expect(css).toMatch(/--hairline-strong\s*:\s*var\(--line-strong\)/);
+    expect(css).not.toMatch(
+      /--(?:line|hairline)(?:-strong)?\s*:\s*\d+(?:\.\d+)?px/,
+    );
+  });
+
+  it("loads the opt-in native choice skin with keyboard focus and high-contrast recovery", async () => {
+    const css = await readStylesheet();
+    expect(css).toMatch(/\.choice-input\s*\{[^}]*appearance:\s*none/);
+    expect(css).toMatch(/\.choice-input:focus-visible\s*\{[^}]*outline:/);
+    expect(css).toMatch(
+      /@media\s*\(forced-colors:\s*active\)\s*\{\s*\.choice-input\s*\{\s*appearance:\s*auto/,
+    );
+  });
+
   it("does not reference undeclared project CSS variables", async () => {
     const css = await readStylesheet();
-    const controls = await readFile(
-      new URL("../../src/components/SettingsControls.tsx", import.meta.url),
-      "utf8",
-    );
     const declared = new Set(
       [...css.matchAll(/--([a-z0-9-]+)\s*:/gi)].map((match) => match[1]),
     );
-    // Choice controls supply their option count as an inline CSS property.
-    for (const match of controls.matchAll(/["']--([a-z0-9-]+)["']\s*:/gi))
-      declared.add(match[1]);
+    // These controls supply their option/visible-key counts inline.
+    for (const owner of ["SettingsControls", "TerminalTouchKeys"]) {
+      const source = await readFile(
+        new URL(`../../src/components/${owner}.tsx`, import.meta.url),
+        "utf8",
+      );
+      for (const match of source.matchAll(/["']--([a-z0-9-]+)["']\s*:/gi))
+        declared.add(match[1]);
+    }
     const referenced = new Set(
       [...css.matchAll(/var\(--([a-z0-9-]+)/gi)].map((match) => match[1]),
     );

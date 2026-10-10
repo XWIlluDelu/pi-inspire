@@ -49,7 +49,11 @@ function RestartConfirmation({
               : "The page will briefly disconnect."}
         </p>
         <div className="host-restart__actions">
-          <button type="button" className="button" onClick={onClose}>
+          <button
+            type="button"
+            className="button button--quiet"
+            onClick={onClose}
+          >
             Cancel
           </button>
           <button
@@ -231,7 +235,7 @@ export function HostRestartSettings() {
             <div className="host-restart__status-actions">
               <button
                 type="button"
-                className="button button--text"
+                className="button button--quiet"
                 onClick={() => void hostRestartClient.refresh()}
               >
                 Recheck status
@@ -239,7 +243,7 @@ export function HostRestartSettings() {
               {unobserved ? (
                 <button
                   type="button"
-                  className="button button--text"
+                  className="button"
                   disabled={state.sending || state.blocked || !!active}
                   onClick={() => void hostRestartClient.retry()}
                 >

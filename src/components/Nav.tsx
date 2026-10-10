@@ -470,6 +470,7 @@ export const Nav = memo(function Nav({
               <SessionRow
                 key={session.id}
                 session={session}
+                searchQuery={sessionQuery}
                 selectedSessionId={visibleSessionId}
                 highlightedSessionId={highlightedSessionId}
                 showProject
@@ -485,6 +486,7 @@ export const Nav = memo(function Nav({
               group={group}
               headingId={`nav-group-title-${groupIndex}`}
               searching={searching}
+              searchQuery={sessionQuery}
               showContext={(nameCounts.get(group.name) ?? 0) > 1}
               selectedSessionId={visibleSessionId}
               highlightedSessionId={highlightedSessionId}
@@ -585,6 +587,7 @@ export const Nav = memo(function Nav({
                     group={group}
                     headingId={`nav-hidden-group-title-${groupIndex}`}
                     searching={searching}
+                    searchQuery={sessionQuery}
                     showContext={(nameCounts.get(group.name) ?? 0) > 1}
                     selectedSessionId={visibleSessionId}
                     highlightedSessionId={highlightedSessionId}
@@ -597,6 +600,7 @@ export const Nav = memo(function Nav({
                   <SessionRow
                     key={session.id}
                     session={session}
+                    searchQuery={sessionQuery}
                     selectedSessionId={visibleSessionId}
                     highlightedSessionId={highlightedSessionId}
                     showProject

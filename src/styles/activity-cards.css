@@ -737,7 +737,8 @@
 
 .tool-code,
 .tool-terminal,
-.tool-text {
+.tool-text,
+.codemode-result {
   max-width: 100%;
   margin: 0;
   border: 1px solid var(--hairline);
@@ -788,20 +789,16 @@
   display: none;
 }
 
-.tool-call-disclosure__button {
+.tool-call-list__heading {
   display: flex;
   align-items: center;
   gap: var(--space-1);
   padding: 4px 0;
-  border: 0;
-  background: transparent;
   color: var(--muted);
-  font: inherit;
   font-size: var(--text-xs);
-  cursor: pointer;
 }
 
-.tool-call-disclosure__count {
+.tool-call-list__count {
   font-variant-numeric: tabular-nums;
 }
 
@@ -824,6 +821,11 @@
 
 summary.child-call__row {
   cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+
+summary.child-call__row:hover {
+  background: var(--bg-inset);
 }
 
 .child-call__row::-webkit-details-marker {
@@ -886,7 +888,6 @@ summary.child-call__row {
 
 @media (pointer: coarse) {
   .child-call__row,
-  .tool-call-disclosure__button,
   .tool-call-script > details > summary {
     min-height: 44px;
   }
@@ -966,6 +967,39 @@ span.card__file-arg {
   padding: var(--space-2);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.codemode-duration {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-call-layout--codemode {
+  gap: var(--space-3);
+}
+
+.tool-call-layout--codemode .child-calls {
+  max-height: none;
+  overflow: visible;
+  overscroll-behavior: auto;
+}
+
+.codemode-result {
+  padding: var(--space-2);
+  max-height: min(24rem, 40vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.codemode-result__text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+
+.codemode-result > * + * {
+  margin-top: var(--space-3);
 }
 
 .tool-terminal--error,
@@ -1284,14 +1318,15 @@ span.card__file-arg {
   padding-left: var(--space-2);
 }
 
-/* GFM task lists render disabled native checkboxes; pull them into the
-   control language instead of leaving the browser default. */
+/* Task markers share the choice skin, but remain normal-weight document
+   content rather than faded unavailable form actions. */
 .rich-text .contains-task-list input[type="checkbox"] {
   width: 13px;
   height: 13px;
   margin: 0 var(--space-2) 0 var(--space-1);
   vertical-align: -0.15em;
-  accent-color: var(--accent-fill);
+  opacity: 1;
+  cursor: default;
 }
 
 .inline-code {

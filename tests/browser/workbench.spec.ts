@@ -291,7 +291,7 @@ test("composer expansion follows real wrapping and preserves the same editor, ar
   await expand.click();
   await input.fill("@TerminalSettingsDialog");
   const option = page.getByRole("option", {
-    name: "TerminalSettingsDialog.tsx src/components/TerminalSettingsDialog.tsx",
+    name: "TerminalSettingsDialog.tsx, src/components/TerminalSettingsDialog.tsx",
     exact: true,
   });
   await expect(option).toBeVisible();

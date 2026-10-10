@@ -169,8 +169,8 @@ body.srail-dragging {
     display: inline-flex;
   }
 
-  .app--narrow .file-preview__content,
-  .app--narrow .changes__content {
+  .app--narrow .file-preview__content:not(:has(> .source-reader)),
+  .app--narrow .changes__content:not(:has(> .source-reader)) {
     padding: var(--space-2);
   }
 
@@ -728,7 +728,8 @@ body.srail-dragging {
       max(var(--space-2), var(--safe-left));
   }
 
-  .dialog.settings {
+  .dialog.settings,
+  .dialog.terminal-settings {
     width: 100%;
     height: calc(
       100dvh - var(--safe-top) - var(--safe-bottom) - 2 * var(--space-2)
@@ -780,6 +781,13 @@ body.srail-dragging {
     font-size: var(--text-xs);
     white-space: nowrap;
     scroll-snap-align: nearest;
+  }
+
+  .settings__nav-item--active,
+  .settings__nav-item--active:hover {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
   }
 
   .settings__nav-item--active::before {
@@ -870,12 +878,12 @@ body.srail-dragging {
     display: flex;
     flex: 1 0 100%;
     align-items: center;
-    gap: var(--space-1);
+    gap: var(--space-2);
     min-width: 0;
   }
 
   .composer__meta .model-picker {
-    flex: 1 1 auto;
+    flex: 0 1 auto;
     max-width: none;
   }
 }

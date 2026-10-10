@@ -541,6 +541,9 @@ describe("welcome flow", () => {
 
   it("shows the project location and copies the absolute path on click", async () => {
     render(<App />);
+    await act(async () => {
+      await store.openSession("s1");
+    });
     const writeText = vi
       .fn<(text: string) => Promise<void>>()
       .mockResolvedValue(undefined);

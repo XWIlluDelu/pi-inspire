@@ -360,6 +360,10 @@
 
 /* Ellipsis lives on the inner text span so the dot's halo is not clipped
    by the truncation box. */
+.nav__list .search-match {
+  font-weight: 600;
+}
+
 .nav__row-name {
   min-width: 0;
   overflow: hidden;
@@ -444,8 +448,8 @@
   background: var(--bg-inset);
 }
 
-/* Shared empty-state stack: a faint icon, a short title, one hint line.
-   Used by the session list, the command palette, and the files pane. */
+/* Compact empty-state stack for lists and search results.
+   Conversation-specific spacing and type use an explicit variant. */
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -571,6 +575,12 @@
     color var(--dur-micro) var(--ease-standard);
 }
 
+/* Leaf rows reserve the same disclosure slot as sibling folders, not search results. */
+.workspace-tree__row--file:not(.workspace-tree__row--result)::before {
+  content: "";
+  flex: 0 0 11px;
+}
+
 .workspace-tree__row:hover {
   background: var(--bg-inset);
   color: var(--ink);
@@ -618,6 +628,10 @@
 .workspace-tree__path {
   color: var(--faint);
   font: var(--text-xs)/var(--leading-ui) var(--font-mono);
+}
+
+.workspace-tree--results .search-match {
+  font-weight: 600;
 }
 
 .workspace-tree__row--result {
@@ -705,6 +719,11 @@ button.workspace-tree__status:hover {
   padding: var(--space-2) 0;
   color: var(--ink);
   font: var(--text-sm)/var(--leading-ui) var(--font-sans);
+}
+
+/* This field already provides a themed clear button. */
+.workspace-search input::-webkit-search-cancel-button {
+  display: none;
 }
 
 .workspace-search input::placeholder {

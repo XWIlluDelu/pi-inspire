@@ -45,7 +45,11 @@ browser snapshot and cross-domain commit authority. Append-only transcript updat
 active textarea, focus and selection.
 
 The compact input keeps its padding, control order and icon-only send button. Controls wrap only as
-needed; phone Steer/Queue buttons split their delivery row equally. The textarea grows with content.
+needed; phone Steer/Queue buttons split their delivery row equally. At widths up to 420px, Model and
+Thinking sit together with an 8px token gap on the selector row. Model shrinks without growing into
+spare space; long labels truncate while Thinking keeps its full width. Stop retains its existing
+filled error-color treatment and delivery-row placement. Desktop controls are unchanged.
+The textarea grows with content.
 Expand appears at the top right only when actual compact layout requires internal scrolling. The same
 input expands within the main column, preserving text, artifacts, focus and selection. Collapse
 remains available even after text becomes shorter and restores compact layout; no hidden control
@@ -82,12 +86,29 @@ creating a session. Picker selections bind to its canonical root; changing the d
 and creation uses that root. New's inline selections use absolute canonical-workspace paths so a
 later directory change cannot retarget them.
 
+The explicit project-file picker (Composer and Welcome) keeps its compact single-line rows and
+existing placement/keyboard behavior. Each result uses the shared 13px monochrome file-type icon,
+filename at weight 500, and parent directory without repeating the filename; root files have no
+directory caption. Same-line directory captions have a secondary `@` cue; it is visual only,
+not part of path values, titles, accessibility labels, or search matches. Literal query-term matches
+use weight 600 and inherited colors with no background.
+Full relative paths remain in titles/accessibility labels. Long filenames elide without overflowing;
+other picker surfaces and referenced-file chips are unchanged. The search row owns its full-width
+bottom boundary across the input and hidden-files toggle; only input focus applies the accent color.
+
 Both searches offer default-off Show hidden files for dot names and native hidden attributes,
 independently of Git ignore. Incomplete scans are reported; Git failure does not block discovery.
 Picker chips are deduplicated and removable. Search results confer no delivery authority: the Host
 revalidates canonical regular files within the workspace at the prompt boundary and before delivery.
 Selected paths become JSON string literals under an explicit context heading, so filename newlines
 and list markers cannot manufacture instructions.
+
+Inline `@` completion shares the picker/Files file-type icons, parent-only directory captions and
+literal-term emphasis. Full relative paths remain in titles and accessible option labels; root files
+omit directory captions. Its existing desktop two-column/narrow stacked layout and virtualized
+candidate handling are retained. Slash command titles keep the command name in the primary color
+and render native argument hints at weight 400 in the muted color; descriptions and model/thinking
+argument candidates are unchanged.
 
 `@` insertion replaces only the active token, preserving sentence position and repeated references.
 Paths with spaces are quoted; unfinished and quoted queries accept spaces. Committed references stay
@@ -117,7 +138,10 @@ proofing is disabled for technical input.
 ## Attachments and image inspection
 
 Images accept paste, drop and file selection. Staged images are separate thumbnail tiles with overlay
-removal, not metadata chips. Ordinary files show name, MIME, size and submission meaning. Clipboard
+removal, not metadata chips. Ordinary file chips emphasize the filename, upload/error state and
+removal. Full filenames, MIME/size or recalled-file provenance stay in native tooltips rather than
+repeating inline; errors retain their diagnostic and removal guidance. Filenames truncate without
+squeezing status/removal controls, and file chips do not stretch to adjacent image-tile height. Clipboard
 `files` is the complete source when non-empty; only an empty list falls back to file-kind `items`.
 Do not combine these projections or deduplicate distinct files by coincident metadata.
 
@@ -201,9 +225,21 @@ reconnect. Available attempt/reason details enrich the label; missing details ne
 Ordinary, compaction and summary retry keep short status separate from wrapping reasons. Executing
 and failed tools remain in chronological cards.
 
-Pending sits at Transcript's end, immediately showing ordered S/Q rows. Its header groups count,
-Return, Copy and Clear; ActivityBar keeps a compact count. Text previews preserve beginning and end,
-up to three leading lines and one trailing line within 512 characters, with explicit middle ellipsis.
+Pending sits at Transcript's end, immediately showing ordered Steer/Queue input. As secondary
+information, the panel deliberately uses 0.75 overall opacity, a transparent background and a quiet
+border at rest; hover or focus within restores full opacity, the shared surface and normal hairline.
+One header contains the total and actions ordered Copy, Return, Clear. All header and item actions
+use emphasized presentation: they remain visible and inherit the panel's 0.75-to-1 opacity without
+additional button-level dimming. [[design-system]] owns the shared presentation model. A fully supplied
+single-mode queue names its mode in that header; mixed queues use quiet group labels without group
+counts or per-row S/Q badges. Bounded previews with omitted entries retain a generic header and visible
+group labels, since the supplied groups cannot establish the whole queue's mode. ActivityBar keeps its
+compact count capsule as a native Jump to Pending button. Activation aligns the current queue's
+start below the floating reading controls, scrolls only the transcript and focuses the Pending
+region without focusing the editor. It releases latest-follow; keyboard and pointer activation
+share the same action. The region adds no ordinary Tab stop and retains the existing focus-within
+emphasis and idle dimming. The count disappears when the queue is empty. Text previews preserve beginning and end, up to three leading lines and one trailing
+line within 512 characters, with explicit middle ellipsis.
 Short text stays whole; omitted rows retain total and omitted counts. Known images have wrapping,
 clickable thumbnails from retained handles through the attachment endpoint. Until handles arrive,
 count-only rows show Image / N images; unknown empty rows imply no image. Consumed image admissions
@@ -286,7 +322,10 @@ unless a newer query/pointer/key choice intervenes. Cached choices appear immedi
 owning worker refreshes without interruption or selection change; failure keeps cache and local
 status. Changes commit selection/recency only on success; failed thinking rolls back and both warn.
 
-New uses the same editor/artifacts, with a full-width directory address/browser below the toolbar.
+New uses the same editor/artifacts, with a full-width editable directory address/browser below the
+toolbar. Its filled bordered input expresses path editability and remains separate from the message.
+The first-message editor receives initial autofocus. Directory Enter does not implicitly submit
+creation; IME confirmation remains native.
 Readiness distinguishes pending/failed model resolution and in-flight creation; errors offer Retry
 and Pi's `unknown/unknown` means no model. While cwd matches, the inherited worker supplies model and
 resource completion; changing directory clears its commands until the new worker loads. Existing-

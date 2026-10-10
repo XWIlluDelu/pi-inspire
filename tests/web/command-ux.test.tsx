@@ -1,14 +1,12 @@
-// @vitest-environment jsdom
 import {
   act,
-  cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { App } from "../../src/App";
 import {
   deleteSessionDraft,
@@ -144,7 +142,6 @@ beforeEach(async () => {
     store.removeProjectFile(path);
   FakeWebSocket.instances.at(-1)?.open();
 });
-afterEach(() => cleanup());
 
 async function palette(query?: string) {
   fireEvent.keyDown(window, { key: "k", ctrlKey: true });
@@ -213,7 +210,9 @@ describe("command discovery and preparation", () => {
           }),
         );
       render(<App />);
-      expect(screen.queryByText("Unloaded catalog result")).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: /^Unloaded catalog result/ }),
+      ).toBeNull();
       await palette("/resume");
       fireEvent.click(screen.getByRole("option", { name: /Find a session/ }));
       expect(
@@ -223,7 +222,7 @@ describe("command discovery and preparation", () => {
       await waitFor(() => expect(search).toHaveFocus());
       fireEvent.change(search, { target: { value: "unloaded catalog" } });
       expect(
-        await screen.findByText("Unloaded catalog result"),
+        await screen.findByRole("button", { name: /^Unloaded catalog result/ }),
       ).toBeInTheDocument();
       expect(catalogQueries).toContain("unloaded catalog");
       expect(sessionDraft("s1")).toBe("UNFINISHED DRAFT");

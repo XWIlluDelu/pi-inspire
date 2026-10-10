@@ -126,6 +126,10 @@ Installed icons keep the Open Reticle geometry and carbon tile but replace orang
 
 The tab/favicon now keeps its 16px pixel geometry, fully transparent background and original alpha coverage while replacing orange ticks/aperture with quartz gray `#63676C` in light browser chrome and the existing installed-icon silver `#B9C0C7` in dark browser chrome. Ink/white brackets remain unchanged; this does not recolor the in-app logo or alter installed-icon PNGs. `index.html` advances the favicon URL to `v=3`. The service worker handles the favicon like the other mutable browser/PWA icons rather than serving an unversioned shell-cache copy; a color-only asset update need not change the hashed JavaScript entry.
 
+### Launcher sizing
+
+Ordinary launcher icons now apply the transparent inset specified in [[design-system]]. At an equal 64px canvas, the previous tile occupied 64×64px while the local Papirus Chrome and VS Code icons occupied 56×56px. Scaling the complete tile and mark to 81.25% gives Inspire a 52×52px visible tile, compensating for the solid background's greater visual weight without changing internal proportions or palette. Only the ordinary manifest icon URLs advance to `v=6`; maskable, Apple touch, and favicon assets remain unchanged.
+
 ### Browser boundary
 
 [MDN's PWA color guide](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/How_to/Customize_your_app_colors) describes page `theme-color` overriding the manifest fallback in supporting browsers. It is a browser hint, not CSS ownership of OS window borders. Installed icons are manifest/OS assets rather than live theme components; [Chrome's manifest update guide](https://web.dev/articles/manifest-updates) documents browser-controlled delayed update behavior. Versioned URLs do not promise immediate replacement of already installed launcher icons. Platform/browser differences remain; restarting the installed app or reinstalling may be necessary to see a cached icon change.

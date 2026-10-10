@@ -216,6 +216,32 @@ export function SystemVersionsCard() {
               </span>
             )}
           </div>
+          {!piActivity && extensions?.kind === "available" ? (
+            <ul
+              className="system-versions__packages"
+              aria-label="Packages with updates"
+            >
+              {extensions.updates.map(({ displayName, type }) => (
+                <li key={`${type}:${displayName}`}>
+                  <a
+                    href={
+                      type === "npm"
+                        ? `https://www.npmjs.com/package/${displayName}`
+                        : `https://${displayName}`
+                    }
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    title={
+                      type === "npm" ? "Open npm package" : "Open repository"
+                    }
+                  >
+                    {displayName}
+                    <span aria-hidden>&nbsp;↗</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </VersionRow>
 
         <VersionRow label="INSΠRE">

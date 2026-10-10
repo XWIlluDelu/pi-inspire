@@ -22,12 +22,14 @@ import type {
   BranchTreeQuery,
   BranchTreeResponse,
 } from "../../shared/contracts";
-import { sessionDraft } from "../session-drafts";
 import { resourceReferenceFromEventTarget } from "../resources";
+import { sessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { ContextPaneState } from "./ContextPaneState";
+import { HistoryShellPreview } from "./HistoryShellPreview";
 import { ImagePreview } from "./ImagePreview";
 import { RichText } from "./RichText";
+import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 
 interface Turn {
   id: string;
@@ -541,7 +543,7 @@ export function BranchTree({
         {!state.loading ? (
           <button
             type="button"
-            className="button"
+            className="button button--quiet"
             onClick={() => void store.loadBranchTree()}
           >
             Retry
@@ -685,11 +687,23 @@ export function BranchTree({
                     onClick={(event) => void preview(node, event.currentTarget)}
                   >
                     <small>{pointKind(node)}</small>{" "}
-                    <span>{node.snippet || node.label}</span>
+                    <span>
+                      <SearchMatchText
+                        text={node.snippet || node.label}
+                        ranges={searchMatchRanges(
+                          node.snippet || node.label,
+                          [query.trim()],
+                          (value) => value.toLocaleLowerCase(),
+                        )}
+                      />
+                    </span>
                   </button>
                 ))
             ) : (
-              <p className="history-empty">No history matches “{query}”.</p>
+              <ContextPaneState
+                icon={<Search size={17} aria-hidden />}
+                title="No matching history"
+              />
             )
           ) : turns.length ? (
             turns.map((turn, index) => {
@@ -732,6 +746,11 @@ export function BranchTree({
                       type="button"
                       className="history-disclosure"
                       aria-expanded={open}
+                      aria-label={
+                        turn.prompt
+                          ? "Replies and activity"
+                          : "Conversation activity"
+                      }
                       onClick={() =>
                         setExpanded((value) => {
                           const next = new Set(value);
@@ -746,9 +765,7 @@ export function BranchTree({
                       ) : (
                         <ChevronRight size={13} aria-hidden />
                       )}
-                      {turn.prompt
-                        ? "Replies and activity"
-                        : "Conversation activity"}
+                      Activity
                     </button>
                   ) : null}
                   {open ? (
@@ -839,13 +856,22 @@ export function BranchTree({
               void store.openResource(reference);
             }}
           >
-            <div className="history-detail__kind">{pointKind(selected)}</div>
+            {detail?.node.role !== "shell" ? (
+              <div className="history-detail__kind">{pointKind(selected)}</div>
+            ) : null}
             {detail ? (
               <>
-                <RichText
-                  text={detail.text}
-                  variant={selected.role === "user" ? "user" : "assistant"}
-                />
+                {detail.node.role === "shell" ? (
+                  <HistoryShellPreview
+                    text={detail.text}
+                    complete={detail.nextOffset === null}
+                  />
+                ) : (
+                  <RichText
+                    text={detail.text}
+                    variant={selected.role === "user" ? "user" : "assistant"}
+                  />
+                )}
                 {detail.nextOffset !== null ? (
                   <button
                     type="button"
@@ -904,30 +930,12 @@ export function BranchTree({
                   aria-label="This session"
                 >
                   <h3>This session</h3>
-                  <button
-                    type="button"
-                    className="button"
-                    disabled={
-                      Boolean(sameSessionBlocked) || !detail || selected.leaf
-                    }
-                    title={
-                      selected.canEdit
-                        ? "Move before this input and prepare it in Composer"
-                        : "Continue after this point"
-                    }
-                    onClick={() =>
-                      void navigate(carrySummary && !tree.skipSummaryPrompt)
-                    }
-                  >
-                    {selected.canEdit
-                      ? "Edit in this session"
-                      : "Continue here"}
-                  </button>
                   {!tree.skipSummaryPrompt && !selected.leaf ? (
                     <div className="history-summary">
                       <label title="Carry a summary of the conversation being left">
                         <input
                           type="checkbox"
+                          className="choice-input"
                           checked={carrySummary}
                           disabled={Boolean(sameSessionBlocked) || !detail}
                           onChange={(event) =>
@@ -949,6 +957,25 @@ export function BranchTree({
                       ) : null}
                     </div>
                   ) : null}
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={
+                      Boolean(sameSessionBlocked) || !detail || selected.leaf
+                    }
+                    title={
+                      selected.canEdit
+                        ? "Move before this input and prepare it in Composer"
+                        : "Continue after this point"
+                    }
+                    onClick={() =>
+                      void navigate(carrySummary && !tree.skipSummaryPrompt)
+                    }
+                  >
+                    {selected.canEdit
+                      ? "Edit in this session"
+                      : "Continue here"}
+                  </button>
                   {sameSessionBlocked ? (
                     <p className="history-detail__blocked">
                       {sameSessionBlocked}

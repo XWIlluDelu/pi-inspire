@@ -1,7 +1,7 @@
-import { AlertTriangle, ArrowLeft, FileText, Loader2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Loader2 } from "lucide-react";
 import {
-  memo,
   type MutableRefObject,
+  memo,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -10,13 +10,14 @@ import {
   projectNameFromCwd,
   type ResourceProbeResult,
 } from "../../shared/contracts";
-import type { ResourceRow } from "../resources";
+import { fileIconForPath } from "../file-icons";
 import { gitDecorationForChange, presentGitFacet } from "../git-presentation";
+import type { ResourceRow } from "../resources";
 import { gitChangeForWorkspacePath, store } from "../store";
 import { ContextSplitBody } from "./ContextSplitBody";
 import type { ContextPaneView } from "./context-pane-view";
 import { FilePreview } from "./FilePreview";
-import { ResourcePathLabel } from "./ResourcePathLabel";
+import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
 import {
   selectedWorkspacePath,
   WorkspaceFileSearch,
@@ -29,11 +30,6 @@ type ResourceStanding = ResourceProbeResult | undefined;
 
 function workspaceLabel(cwd: string | null): string {
   return cwd ? projectNameFromCwd(cwd) : "Project files";
-}
-
-function parentPath(path: string): string | null {
-  const end = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return end > 0 ? path.slice(0, end) : null;
 }
 
 const RecentFileRow = memo(function RecentFileRow({
@@ -55,6 +51,7 @@ const RecentFileRow = memo(function RecentFileRow({
   availability: ResourceStanding;
   change: ReturnType<typeof gitChangeForWorkspacePath>;
 }) {
+  const Icon = fileIconForPath(workspacePath ?? row.name);
   const parent = parentPath(displayPath);
   const selected = workspacePath
     ? selectedPath === workspacePath
@@ -80,7 +77,7 @@ const RecentFileRow = memo(function RecentFileRow({
       title={availability?.message ?? displayPath}
       onClick={() => void store.openResource(reference)}
     >
-      <FileText size={13} aria-hidden />
+      <Icon size={13} aria-hidden />
       <span
         className={`recent-file__name ${decoration ? `git-deco--${decoration}` : ""}`}
       >
