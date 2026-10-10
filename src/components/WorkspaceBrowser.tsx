@@ -44,7 +44,10 @@ export function WorkspaceVisibilityToggle() {
 
 type WorkspaceSelectionState = Pick<
   ReturnType<typeof store.getState>,
-  "selectedResourceReference" | "resourcePreview" | "resourceWorkspacePaths"
+  | "selectedResourceReference"
+  | "selectedResourceWorkspacePath"
+  | "resourcePreview"
+  | "resourceWorkspacePaths"
 >;
 
 export function selectedWorkspacePath(state: WorkspaceSelectionState) {
@@ -54,7 +57,12 @@ export function selectedWorkspacePath(state: WorkspaceSelectionState) {
     state.resourcePreview?.status === "ready"
       ? state.resourcePreview.descriptor.workspacePath
       : undefined;
-  return previewPath ?? state.resourceWorkspacePaths[selected] ?? selected;
+  return (
+    previewPath ??
+    state.selectedResourceWorkspacePath ??
+    state.resourceWorkspacePaths[selected] ??
+    selected
+  );
 }
 
 export function WorkspaceFileSearch() {
@@ -191,6 +199,7 @@ export function WorkspaceTree({
       workspaceTruncatedDirs: source.workspaceTruncatedDirs,
       workspaceRevealRequest: source.workspaceRevealRequest,
       selectedResourceReference: source.selectedResourceReference,
+      selectedResourceWorkspacePath: source.selectedResourceWorkspacePath,
       resourcePreview: source.resourcePreview,
       resourceWorkspacePaths: source.resourceWorkspacePaths,
       gitStatus: source.gitStatus,
@@ -359,6 +368,7 @@ export function WorkspaceSearchResults({
       workspaceMatches: source.workspaceMatches,
       workspaceSearchTruncated: source.workspaceSearchTruncated,
       selectedResourceReference: source.selectedResourceReference,
+      selectedResourceWorkspacePath: source.selectedResourceWorkspacePath,
       resourcePreview: source.resourcePreview,
       resourceWorkspacePaths: source.resourceWorkspacePaths,
       gitStatus: source.gitStatus,

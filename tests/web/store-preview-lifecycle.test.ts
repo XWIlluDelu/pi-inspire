@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { selectedWorkspacePath } from "../../src/components/WorkspaceBrowser";
 import {
   activeSnapshot,
   installFakeWebSocket,
@@ -117,6 +118,7 @@ describe("selected file preview lifecycle", () => {
         selectedResourceWorkspacePath: "plots/chart.png",
         resourcePreview: { status: "loading" },
       });
+      expect(selectedWorkspacePath(store.getState())).toBe("plots/chart.png");
       expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:chart");
       await waitFor(() =>
         expect(store.getState().resourcePreview?.status).toBe("ready"),
@@ -149,6 +151,7 @@ describe("selected file preview lifecycle", () => {
     );
     expect(store.getState().fileBrowserView).toBe("preview");
     expect(store.getState().selectedResourceReference).toBe("chart.png");
+    expect(selectedWorkspacePath(store.getState())).toBe("plots/chart.png");
   });
 
   it("does not reopen a preview the user has left for Browse", async () => {
