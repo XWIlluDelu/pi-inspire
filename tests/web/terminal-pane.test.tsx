@@ -260,6 +260,67 @@ describe("terminal project ownership", () => {
     expect(within(projects).getByText("Current")).toBeVisible();
   });
 
+  it("shows stable parent cues for colliding projects and parent-only search hits", async () => {
+    const values = [
+      terminal("Atlas dev", "/Clients/Atlas"),
+      terminal("Atlas logs", "/Clients/Atlas"),
+      terminal("Atlas demo", "C:\\Samples\\Atlas\\"),
+      terminal("Orion dev", "/Clients/Orion"),
+      terminal("Orion logs", "/Clients/Orion"),
+    ];
+    api.terminals.mockImplementation(async (cwd?: string) =>
+      catalog(cwd ? values.filter((t) => t.projectCwd === cwd) : values),
+    );
+    render(<TerminalPane cwd="/Clients/Atlas" />);
+    await screen.findByRole("button", { name: "Atlas dev", pressed: true });
+    screen.getByLabelText("Terminal actions").closest("details")!.open = true;
+    const projects = screen
+      .getByLabelText("Terminals in all projects")
+      .closest("details")!;
+    projects.open = true;
+    fireEvent(projects, new Event("toggle"));
+    await within(projects).findByRole("button", { name: /Orion logs/ });
+    const contexts = () =>
+      Array.from(
+        projects.querySelectorAll(".terminal-menu__project-context"),
+        (n) => n.textContent,
+      );
+    expect(contexts()).toEqual(["@Clients", "@Samples"]);
+    const input = screen.getByLabelText("Find terminal or project");
+    fireEvent.change(input, { target: { value: "CLIENTS" } });
+    expect(contexts()).toEqual(["@Clients", "@Clients"]);
+    expect(
+      Array.from(
+        projects.querySelectorAll(
+          ".terminal-menu__project-context .search-match",
+        ),
+        (n) => n.textContent,
+      ),
+    ).toEqual(["Clients", "Clients"]);
+    expect(
+      within(projects).queryByRole("button", { name: /Atlas demo/ }),
+    ).toBeNull();
+    expect(within(projects).getByText("Current")).toBeVisible();
+    fireEvent.change(input, { target: { value: "Orion" } });
+    expect(contexts()).toEqual([]);
+    expect(
+      Array.from(
+        projects.querySelectorAll(".search-match"),
+        (n) => n.textContent,
+      ),
+    ).toEqual(["Orion", "Orion", "Orion"]);
+    fireEvent.change(input, { target: { value: "" } });
+    expect(contexts()).toEqual(["@Clients", "@Samples"]);
+    expect(projects.querySelector(".search-match")).toBeNull();
+    fireEvent.click(
+      within(projects).getByRole("button", { name: /Atlas demo/ }),
+    );
+    await screen.findByRole("button", { name: "Atlas demo", pressed: true });
+    expect(screen.getByTestId("shell-cwd")).toHaveTextContent(
+      "C:\\Samples\\Atlas\\",
+    );
+  });
+
   it("references a terminal panel only after its lazy view exists", async () => {
     render(<TerminalPane cwd="/A" />);
     const unopened = await screen.findByRole("button", {

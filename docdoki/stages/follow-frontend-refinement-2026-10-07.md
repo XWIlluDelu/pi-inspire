@@ -3,6 +3,7 @@ scope:
   - src/components/
   - src/styles/
   - src/{source-diff,file-icons,syntax-highlighting}.ts
+  - shared/contracts.ts
   - tests/web/
   - tests/browser/
   - docdoki/specs/{workbench,conversation,workspace-layout,activity-presentation,resource-preview,model-settings,interface-preferences,design-system,terminal,composer,session-branches}.md
@@ -815,10 +816,25 @@ contract tests, scoped lint/format and build pass; still-valid pre-trial light/d
 is in `output/playwright/nav-location-captions/before*.png`. The comparison images in that folder
 show a withdrawn experiment, not current implementation.
 
+## All-terminal project location cues — ready for review
+
+The global terminal navigator adds secondary `@parent` headings for duplicate project basenames
+or immediate-parent-only query hits. Unique project headings remain unchanged without such a
+query. Matching, catalog order, casing, separators, Current, status dots, terminal/command rows,
+menu ownership and switching are unchanged. The existing Navigation parent-segment helper now
+lives beside the shared project-basename helper; Navigation re-exports it without behavior changes.
+
+42 focused Terminal/Navigation/menu tests, type checking, scoped lint/format and build pass.
+Chromium uses four real PTYs in three private fixture directories: duplicate Atlas projects under
+Clients and Samples, and unique Orion under Clients. Matched before/after captures verify empty
+and parent-query states, query clearing and basename-match suppression. Headers remain 20px and
+desktop rows 30px; dark/390px checks fit the viewport. Keyboard activation switches to the real
+Samples/Atlas terminal and closes More. Captures: `output/playwright/terminal-parent-context/`.
+
 ## Next actions
 
-Continue local refinement batches, then holistic review. Preserve the original cross-project
-capsules. The attachment file picker has another
+Review the all-terminal location cues, then continue local refinement batches and holistic review.
+Preserve the original cross-project capsules. The attachment file picker has another
 same-line name/directory pairing: its approved `@directory` cue is now implemented.
 Recent already has a middle-dot separator, search/completion separate fields, and full paths retain
 native separators; no extra marker is proposed there. The Welcome and topbar-glyph visual experiments are withdrawn.

@@ -352,6 +352,24 @@
   font: 500 10px / 1.2 var(--font-sans);
 }
 
+.terminal-menu__project-identity {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.terminal-menu__project-context {
+  min-width: 0;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+  flex-shrink: 2;
+}
+
 .terminal-menu__project-name {
   min-width: 0;
   overflow: hidden;

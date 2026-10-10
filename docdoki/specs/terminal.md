@@ -138,6 +138,12 @@ names, terminal names and current commands use the shared unfilled semibold emph
 catalog order remain unchanged. Rows stay single-line; command hints can use up to 42% of the available
 row width, shrink for short values, and ellipsize within their track instead of a fixed 72px limit.
 Terminal names retain the larger share of the row; status dots and switching behavior are unchanged.
+Project headings append a secondary `@parent` cue when distinct catalog projects share a basename,
+or when the query matches the immediate parent name but not the project basename. Collision counts
+use unique project CWDs from the complete catalog, so multiple terminals in one project do not add
+context and filtering does not remove an existing disambiguation cue. Only matched parent text is
+emphasized, not `@`; clearing search removes query-only context. Ordinary unique headings remain
+unchanged. The identity stays single-line and ellipsizes within the space left by Current.
 
 Terminal Settings is a body-level modal, above the pane's stacking context. Its header/footer remain
 visible around the scrolling body. Appearance, Interaction and Saved output are separate category views,

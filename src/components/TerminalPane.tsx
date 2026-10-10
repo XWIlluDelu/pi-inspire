@@ -33,6 +33,10 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  parentSegment,
+  projectNameFromCwd as projectLabel,
+} from "../../shared/contracts";
+import {
   type TerminalCatalogResponse,
   type TerminalDescriptor,
   type TerminalProfile,
@@ -110,11 +114,6 @@ function notificationTerminalLabel(terminal: TerminalDescriptor): string {
   return terminal.titleSource === "user"
     ? terminalLabel(terminal)
     : terminal.shellLabel || "Terminal";
-}
-
-function projectLabel(cwd: string): string {
-  const normalized = cwd.replace(/[\\/]+$/u, "");
-  return normalized.split(/[\\/]/u).at(-1) || cwd;
 }
 
 export const TerminalPane = memo(function TerminalPane({
@@ -915,8 +914,14 @@ export const TerminalPane = memo(function TerminalPane({
 
   const terminalMatches = (text: string) =>
     searchMatchRanges(text, [terminalFilter], (value) => value.toLowerCase());
+  const allTerminals = globalCatalog?.terminals ?? EMPTY_TERMINALS;
+  const projectNameCounts = new Map<string, number>();
+  for (const projectCwd of new Set(allTerminals.map((t) => t.projectCwd))) {
+    const name = projectLabel(projectCwd);
+    projectNameCounts.set(name, (projectNameCounts.get(name) ?? 0) + 1);
+  }
   const globalGroups = new Map<string, TerminalDescriptor[]>();
-  for (const terminal of globalCatalog?.terminals ?? []) {
+  for (const terminal of allTerminals) {
     if (
       terminalFilter &&
       !`${terminal.title} ${terminal.currentCommand} ${terminal.projectCwd}`
@@ -1257,46 +1262,70 @@ export const TerminalPane = memo(function TerminalPane({
                     {terminalFilter ? "No matching terminals" : "No terminals"}
                   </div>
                 ) : (
-                  [...globalGroups].map(([projectCwd, projectTerminals]) => (
-                    <div className="terminal-menu__project" key={projectCwd}>
-                      <div title={projectCwd}>
-                        <span className="terminal-menu__project-name">
-                          <SearchMatchText
-                            text={projectLabel(projectCwd)}
-                            ranges={terminalMatches(projectLabel(projectCwd))}
-                          />
-                        </span>
-                        {projectCwd === cwd ? <small>Current</small> : null}
-                      </div>
-                      {projectTerminals.map((terminal) => (
-                        <button
-                          type="button"
-                          key={terminal.id}
-                          onClick={() => {
-                            setActiveId(terminal.id);
-                            setCwd(projectCwd);
-                          }}
-                        >
-                          <span
-                            className={`terminal-tab__status terminal-tab__status--${terminal.status}`}
-                            aria-hidden
-                          />
-                          <span>
-                            <SearchMatchText
-                              text={terminalLabel(terminal)}
-                              ranges={terminalMatches(terminalLabel(terminal))}
-                            />
+                  [...globalGroups].map(([projectCwd, projectTerminals]) => {
+                    const name = projectLabel(projectCwd);
+                    const parent = parentSegment(projectCwd);
+                    const showParent =
+                      parent &&
+                      ((projectNameCounts.get(name) ?? 0) > 1 ||
+                        (terminalMatches(parent).length > 0 &&
+                          terminalMatches(name).length === 0));
+                    return (
+                      <div className="terminal-menu__project" key={projectCwd}>
+                        <div title={projectCwd}>
+                          <span className="terminal-menu__project-identity">
+                            <span className="terminal-menu__project-name">
+                              <SearchMatchText
+                                text={name}
+                                ranges={terminalMatches(name)}
+                              />
+                            </span>
+                            {showParent ? (
+                              <span className="terminal-menu__project-context">
+                                @
+                                <SearchMatchText
+                                  text={parent}
+                                  ranges={terminalMatches(parent)}
+                                />
+                              </span>
+                            ) : null}
                           </span>
-                          <small>
-                            <SearchMatchText
-                              text={terminal.currentCommand}
-                              ranges={terminalMatches(terminal.currentCommand)}
+                          {projectCwd === cwd ? <small>Current</small> : null}
+                        </div>
+                        {projectTerminals.map((terminal) => (
+                          <button
+                            type="button"
+                            key={terminal.id}
+                            onClick={() => {
+                              setActiveId(terminal.id);
+                              setCwd(projectCwd);
+                            }}
+                          >
+                            <span
+                              className={`terminal-tab__status terminal-tab__status--${terminal.status}`}
+                              aria-hidden
                             />
-                          </small>
-                        </button>
-                      ))}
-                    </div>
-                  ))
+                            <span>
+                              <SearchMatchText
+                                text={terminalLabel(terminal)}
+                                ranges={terminalMatches(
+                                  terminalLabel(terminal),
+                                )}
+                              />
+                            </span>
+                            <small>
+                              <SearchMatchText
+                                text={terminal.currentCommand}
+                                ranges={terminalMatches(
+                                  terminal.currentCommand,
+                                )}
+                              />
+                            </small>
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </details>
