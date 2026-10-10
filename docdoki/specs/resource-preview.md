@@ -131,6 +131,15 @@ previous rows until success; a visible preview keeps its reader mounted and does
 Selection replacement, pane close, session/view change, or API/transport replacement retires affected
 requests and object URLs. Cancellation closes the exact opened file even if it arrives during open.
 
+Ordinary prompt confirmation and compatible transcript appends leave the current preview mounted.
+Within the same session and workspace, a changed branch view or replaced projection retains a visible
+Files selection while resolving and loading it again under the new authority. A recovered workspace
+path remains the exact target, rather than repeating a bare-name search. Failed reauthorization stays
+in the selected-file detail with its error; it does not navigate to Browse. Session/workspace changes
+and positional `pi-embedded://` references still clear selection, because rewritten coordinates may
+identify a different image. Reauthorization does not reopen a preview the user has already left for
+Browse or another context mode, and interactive HTML never inherits its retired execution lease.
+
 ## Readers
 
 | File type | Default and available views |

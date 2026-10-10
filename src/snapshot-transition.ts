@@ -142,6 +142,37 @@ export function deriveSnapshotTransition(
   };
 }
 
+/** Retire content authority without discarding a user's named-file intent.
+ * Positional embedded references cannot survive a rewritten transcript because
+ * the same coordinates may name a different image. */
+function renewedResourceInspection(
+  previous: AppState,
+  transition: SnapshotTransition,
+): Partial<AppState> {
+  const empty = emptyResourceInspectionState();
+  const reference = previous.selectedResourceReference;
+  if (
+    !previous.resourcesOpen ||
+    previous.contextMode !== "files" ||
+    previous.fileBrowserView !== "preview" ||
+    previous.cwd !== transition.cwd ||
+    !reference ||
+    reference.startsWith("pi-embedded://")
+  )
+    return empty;
+  return {
+    ...empty,
+    fileBrowserView: "preview",
+    selectedResourceReference: reference,
+    selectedResourceWorkspacePath:
+      previous.selectedResourceWorkspacePath ??
+      (previous.resourcePreview?.status === "ready"
+        ? (previous.resourcePreview.descriptor.workspacePath ?? null)
+        : null),
+    resourcePreview: { status: "loading", reference },
+  };
+}
+
 /** Keep the lifecycle reset matrix explicit and separate from snapshot field
  * decoding. Session-owned controller slices are supplied by AppStore. */
 export function snapshotLifecyclePatch(
@@ -178,10 +209,10 @@ export function snapshotLifecyclePatch(
           ? "Branch history is stale — refresh to use branch actions"
           : null,
         branchActionId: null,
-        ...emptyResourceInspectionState(),
+        ...renewedResourceInspection(previous, transition),
       };
     case "projection-replaced":
-      return emptyResourceInspectionState();
+      return renewedResourceInspection(previous, transition);
     case "append":
     case "same-projection":
       return {};

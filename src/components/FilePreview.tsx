@@ -396,11 +396,14 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
     descriptor?.kind === "text" &&
     preview?.status === "ready" &&
     preview.text !== undefined;
-  const referencedLine = state.selectedResourceWorkspacePath
-    ? null
-    : resourceReferenceLine(
-        preview?.reference ?? state.selectedResourceReference ?? "",
-      );
+  // An exact workspace filename may literally end in ":12"; a resolved
+  // path for a citation is not a reason to discard its line navigation.
+  const referencedLine =
+    state.selectedResourceWorkspacePath === state.selectedResourceReference
+      ? null
+      : resourceReferenceLine(
+          preview?.reference ?? state.selectedResourceReference ?? "",
+        );
   const defaultView: FileViewMode =
     sourceOnly || (canToggle && referencedLine) ? "source" : "preview";
   const viewMode =

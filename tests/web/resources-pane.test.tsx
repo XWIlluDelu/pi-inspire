@@ -907,6 +907,17 @@ describe("Files pane", () => {
       expect(
         await within(pane).findByRole("region", { name: "File source" }),
       ).toHaveTextContent("# Previewed notes");
+      act(() => {
+        FakeWebSocket.instances.at(-1)?.emit({
+          type: "snapshot",
+          data: activeSnapshot({
+            transcriptPage: { revision: 2, appendFromRevision: 2 },
+          }),
+        });
+      });
+      expect(
+        await within(pane).findByRole("region", { name: "File source" }),
+      ).toHaveTextContent("# Previewed notes");
       fireEvent.click(within(pane).getByRole("button", { name: "Preview" }));
       expect(
         await within(pane).findByRole("heading", { name: "Previewed notes" }),
@@ -1244,6 +1255,44 @@ describe("Files pane", () => {
     expect(
       within(pane).queryByTitle("Preview demo.html"),
     ).not.toBeInTheDocument();
+  });
+
+  it("reauthorizes a selected HTML file without inheriting its execution lease", async () => {
+    render(<App />);
+    await act(async () => {
+      await store.openResource("demo.html");
+    });
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Enable interaction" }),
+    );
+    await waitFor(() =>
+      expect(within(pane).getByTitle("Preview demo.html")).toHaveAttribute(
+        "sandbox",
+        "allow-scripts",
+      ),
+    );
+    act(() => {
+      FakeWebSocket.instances.at(-1)?.emit({
+        type: "snapshot",
+        data: activeSnapshot({
+          transcriptPage: {
+            revision: 2,
+            appendFromRevision: 2,
+            incarnation: "projection-2",
+          },
+        }),
+      });
+    });
+    await waitFor(() => expect(htmlReleases).toHaveLength(1));
+    expect(await within(pane).findByTitle("Preview demo.html")).toHaveAttribute(
+      "sandbox",
+      "",
+    );
+    expect(store.getState().fileBrowserView).toBe("preview");
+    expect(htmlStarts).toBe(1);
   });
 
   it("keeps failed or truncated HTML static, with a retryable explicit start", async () => {

@@ -2,7 +2,7 @@
 scope:
   - src/components/
   - src/styles/
-  - src/{source-diff,file-icons,syntax-highlighting,palette-search}.ts
+  - src/{source-diff,file-icons,syntax-highlighting,palette-search,store,snapshot-transition}.ts
   - shared/contracts.ts
   - tests/web/
   - tests/browser/
@@ -895,6 +895,23 @@ focus ownership and an empty queue. Chromium verifies a 12-item queue at desktop
 idle-focus transitions. Captures: `output/playwright/pending-navigation/`.
 The comparison shows the new version before and after activation, since its resting appearance
 is unchanged.
+
+## Reported bug: file preview continuity (2026-10-10)
+
+Fixed the reported image preview returning to Browse after sending a prompt.
+Snapshot lifecycle handling conflated retiring transcript-owned content authority
+with clearing the user's selected file. Same-session/workspace view and projection
+changes now reauthorize the visible named file, using its resolved workspace path
+when available; errors remain in file detail. Ordinary confirmations/appends leave
+the reader intact. Session/workspace changes and positional embedded-image references
+still clear selection. HTML reloads release the old execution lease and stay static,
+and explicit source-line citations keep their Source landing after reauthorization.
+
+Store and Files component regressions cover these transitions. Chromium against the
+mock Host reproduced the old prompt-send fallback and verifies the rebuilt version
+keeps the image loaded after typing, confirmation and completion.
+Before/after captures: `output/playwright/preview-continuity/`.
+This is a functional repair, not a new visual refinement proposal.
 
 ## Next actions
 

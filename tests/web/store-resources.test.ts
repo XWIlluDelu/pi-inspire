@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+
+import { waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   injectHtmlPreviewCsp,
@@ -482,11 +484,28 @@ describe("resource previews", () => {
     });
   });
 
-  it("clears conversation-derived resource selection on a same-session branch-view boundary", async () => {
-    installFetch(resourceRoutes());
-    stubContent("# Notes body");
+  it("clears positional embedded-image selection on a same-session branch-view boundary", async () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:embedded");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    installFetch((url, init) => {
+      if (url.startsWith("/api/resources/resolve"))
+        return {
+          body: {
+            id: "embedded",
+            sessionId: "s1",
+            viewId: "view-s1",
+            reference: "pi-embedded://0/0",
+            name: "image.png",
+            mimeType: "image/png",
+            size: 5,
+            kind: "image",
+          },
+        };
+      return resourceRoutes()(url, init);
+    });
+    stubContent("image");
     const { store, socket } = await initStore();
-    await store.openResource("notes/result.md");
+    await store.openResource("pi-embedded://0/0");
     expect(store.getState().resourcePreview).toMatchObject({ status: "ready" });
 
     socket.emit({
@@ -1013,7 +1032,7 @@ describe("resource previews", () => {
     expect(revoked).toEqual(["blob:preview-0"]);
   });
 
-  it("clears a selected resource when the same view projection is replaced", async () => {
+  it("keeps a named file selected while reauthorizing a replaced projection", async () => {
     installFetch(resourceRoutes());
     stubContent("# Notes body");
     const { store, socket } = await initStore();
@@ -1037,11 +1056,14 @@ describe("resource previews", () => {
     });
 
     expect(store.getState()).toMatchObject({
-      fileBrowserView: "browse",
-      selectedResourceReference: null,
-      resourcePreview: null,
+      fileBrowserView: "preview",
+      selectedResourceReference: "notes/result.md",
+      resourcePreview: { status: "loading" },
       resourceAvailability: {},
       resourceWorkspacePaths: {},
     });
+    await waitFor(() =>
+      expect(store.getState().resourcePreview?.status).toBe("ready"),
+    );
   });
 });
