@@ -129,6 +129,91 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("terminal creation controls", () => {
+  const profiles = [
+    { id: "bash", label: "Bash", available: true, isDefault: true },
+    { id: "zsh", label: "Zsh", available: true, isDefault: false },
+  ];
+
+  it("opens profile selection on compact New without creating until a profile is chosen", async () => {
+    vi.spyOn(window, "matchMedia").mockReturnValue({
+      matches: true,
+    } as MediaQueryList);
+    api.terminals.mockResolvedValue({ ...catalog([]), profiles });
+    api.createTerminal.mockResolvedValue(terminal("new zsh"));
+    render(<TerminalPane cwd="/A" />);
+    const empty = await screen.findByText("Project terminal", { exact: true });
+    fireEvent.click(
+      within(empty.closest(".terminal-empty")!).getByRole("button", {
+        name: "New terminal",
+      }),
+    );
+    const picker = screen
+      .getByLabelText("Choose terminal profile")
+      .closest("details")!;
+    expect(picker.open).toBe(true);
+    expect(screen.getByLabelText("Choose terminal profile")).toHaveFocus();
+    expect(api.createTerminal).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByLabelText("Choose terminal profile"), {
+      key: "Escape",
+    });
+    expect(picker.open).toBe(false);
+    fireEvent.click(
+      within(empty.closest(".terminal-empty")!).getByRole("button", {
+        name: "New terminal",
+      }),
+    );
+    fireEvent.click(within(picker).getByRole("button", { name: "Zsh" }));
+    await screen.findByRole("button", { name: "new zsh", pressed: true });
+    expect(api.createTerminal).toHaveBeenCalledWith({
+      cwd: "/A",
+      profileId: "zsh",
+    });
+  });
+
+  it.each([false, true])(
+    "creates directly when only one available profile exists (compact=%s)",
+    async (compact) => {
+      vi.spyOn(window, "matchMedia").mockReturnValue({
+        matches: compact,
+      } as MediaQueryList);
+      api.terminals.mockResolvedValue({
+        ...catalog([]),
+        profiles: [profiles[0], { ...profiles[1], available: false }],
+      });
+      api.createTerminal.mockResolvedValue(terminal("new bash"));
+      render(<TerminalPane cwd="/A" />);
+      await screen.findByText("Project terminal", { exact: true });
+      expect(screen.queryByLabelText("Choose terminal profile")).toBeNull();
+      fireEvent.click(
+        within(
+          screen
+            .getByText("Project terminal", { exact: true })
+            .closest(".terminal-empty")!,
+        ).getByRole("button", { name: "New terminal" }),
+      );
+      await screen.findByRole("button", { name: "new bash", pressed: true });
+      expect(api.createTerminal).toHaveBeenCalledWith({ cwd: "/A" });
+    },
+  );
+
+  it("keeps desktop New as default creation while retaining explicit profile choice", async () => {
+    api.terminals.mockResolvedValue({ ...catalog([]), profiles });
+    api.createTerminal.mockResolvedValue(terminal("new bash"));
+    render(<TerminalPane cwd="/A" />);
+    await screen.findByLabelText("Choose terminal profile");
+    fireEvent.click(
+      within(
+        screen
+          .getByText("Project terminal", { exact: true })
+          .closest(".terminal-empty")!,
+      ).getByRole("button", { name: "New terminal" }),
+    );
+    await screen.findByRole("button", { name: "new bash", pressed: true });
+    expect(api.createTerminal).toHaveBeenCalledWith({ cwd: "/A" });
+  });
+});
+
 describe("terminal project ownership", () => {
   it("restores the selected tab after the initial catalog loads", async () => {
     sessionStorage.setItem("inspire:terminal-active:/A", "A second");

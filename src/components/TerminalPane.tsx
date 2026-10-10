@@ -25,6 +25,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -173,6 +174,8 @@ export const TerminalPane = memo(function TerminalPane({
   const autoCreateInsertionRef = useRef<string | null>(null);
   const draggedId = useRef<string | null>(null);
   const paneRef = useRef<HTMLDivElement>(null);
+  const profileMenuRef = useRef<HTMLDetailsElement>(null);
+  const menuGroupName = useId();
   const renamePendingRef = useRef(false);
   const terminalActionHandlerRef = useRef<
     (action: TerminalUiAction) => boolean
@@ -419,24 +422,8 @@ export const TerminalPane = memo(function TerminalPane({
         if (!menu.contains(event.target as Node)) menu.open = false;
       }
     };
-    const closeOtherMenus = (event: Event) => {
-      const current = event.target;
-      if (
-        !(current instanceof HTMLDetailsElement) ||
-        !current.open ||
-        !current.matches(TERMINAL_MENU_SELECTOR)
-      )
-        return;
-      for (const menu of openMenus()) {
-        if (menu !== current) menu.open = false;
-      }
-    };
-    // Only the two top-level menus participate in mutual exclusion; inline
-    // disclosure groups remain inside their owning menu.
-    pane.addEventListener("toggle", closeOtherMenus, true);
     document.addEventListener("pointerdown", dismissMenus, true);
     return () => {
-      pane.removeEventListener("toggle", closeOtherMenus, true);
       document.removeEventListener("pointerdown", dismissMenus, true);
     };
   }, [cwd]);
@@ -525,6 +512,25 @@ export const TerminalPane = memo(function TerminalPane({
     },
     [api, creating, cwd, catalogController, commitDescriptor],
   );
+
+  const availableProfiles =
+    catalog?.profiles.filter((profile) => profile.available) ?? [];
+  const hasProfileChoice = availableProfiles.length > 1;
+  const createFromControl = () => {
+    if (
+      hasProfileChoice &&
+      window.matchMedia("(hover: none), (pointer: coarse), (max-width: 720px)")
+        .matches
+    ) {
+      const menu = profileMenuRef.current;
+      if (menu) {
+        menu.open = true;
+        menu.querySelector("summary")?.focus();
+      }
+    } else {
+      void createTerminal();
+    }
+  };
 
   useEffect(() => {
     if (!cwd || !catalog || loading || creating || !hasTerminalInsertion(cwd))
@@ -1048,7 +1054,9 @@ export const TerminalPane = memo(function TerminalPane({
             </div>
           ))}
         </div>
-        <div className="terminal-tabs__new">
+        <div
+          className={`terminal-tabs__new${hasProfileChoice ? " terminal-tabs__new--profiles" : ""}`}
+        >
           <button
             type="button"
             className="icon-button"
@@ -1060,8 +1068,10 @@ export const TerminalPane = memo(function TerminalPane({
           >
             <Plus size={15} aria-hidden />
           </button>
-          {(catalog?.profiles.length ?? 0) > 1 ? (
+          {hasProfileChoice ? (
             <details
+              ref={profileMenuRef}
+              name={menuGroupName}
               className="terminal-menu terminal-menu--profiles"
               data-terminal-menu
             >
@@ -1069,23 +1079,35 @@ export const TerminalPane = memo(function TerminalPane({
                 className="terminal-tabs__profile"
                 aria-label="Choose terminal profile"
                 title="Choose terminal profile"
+                aria-disabled={creating}
+                onClick={(event) => {
+                  if (creating) event.preventDefault();
+                }}
               >
-                <ChevronDown size={12} aria-hidden />
+                <Plus
+                  className="terminal-tabs__profile-new"
+                  size={15}
+                  aria-hidden
+                />
+                <ChevronDown
+                  className="terminal-tabs__profile-chevron"
+                  size={12}
+                  aria-hidden
+                />
               </summary>
               <div className="terminal-menu__popover terminal-menu__popover--profiles">
-                {catalog?.profiles
-                  .filter((profile) => profile.available)
-                  .map((profile) => (
-                    <button
-                      type="button"
-                      key={profile.id}
-                      data-terminal-focus-trigger
-                      onClick={() => void createTerminal(profile)}
-                    >
-                      <span>{profile.label}</span>
-                      {profile.isDefault ? <small>Default</small> : null}
-                    </button>
-                  ))}
+                {availableProfiles.map((profile) => (
+                  <button
+                    type="button"
+                    key={profile.id}
+                    data-terminal-focus-trigger
+                    disabled={creating}
+                    onClick={() => void createTerminal(profile)}
+                  >
+                    <span>{profile.label}</span>
+                    {profile.isDefault ? <small>Default</small> : null}
+                  </button>
+                ))}
               </div>
             </details>
           ) : null}
@@ -1106,6 +1128,7 @@ export const TerminalPane = memo(function TerminalPane({
         </button>
         <details
           className="terminal-menu terminal-menu--more"
+          name={menuGroupName}
           data-terminal-menu
           onToggle={(event) => {
             if (
@@ -1358,7 +1381,7 @@ export const TerminalPane = memo(function TerminalPane({
             type="button"
             className="button button--primary"
             data-terminal-focus-trigger
-            onClick={() => void createTerminal()}
+            onClick={createFromControl}
             disabled={creating}
           >
             <Plus size={14} aria-hidden />

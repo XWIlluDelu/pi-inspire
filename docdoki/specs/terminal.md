@@ -118,16 +118,22 @@ Diagnostics omit terminal input, output, and internal path-bearing failures.
 The lazy Terminal mode provides profile choice, creation, rename, drag/keyboard ordering, restart,
 close/force-close confirmation, recent-close recreation, status/unread/bell indicators, and an
 all-project navigator. One header owns tabs, new/profile, connection/control state, search, focus, and
-More. At pane widths up to 360px, Focus moves into More to leave room for the active tab and its close
+More. At pane widths up to 480px, Focus moves into More to leave room for the active tab and its close
 control. Focus remains available with an empty catalog. Focus mode and a same-origin focused window
-attach the existing terminal.
+attach the existing terminal. With multiple available profiles, compact/touch creation presents
+one Plus control that opens profile choice; the empty-state New button does the same without
+creating prematurely. A single available profile creates directly. Wider desktop layouts keep default
+New plus a separate chooser; command/keyboard New continues to create the default profile. The
+input-focus icon uses neutral action color; process dots and connecting/reconnecting indicators
+retain their state colors.
 
 Selected tabs are revealed on selection or strip resize without stealing focus. Catalog reconciliation
 restores saved selection before persisting a new value. Automatic focus belongs to a fresh activation
 and yields if another control takes focus; font loading, replay, reconnect, and writer-state changes do
 not reclaim it. Explicit Take control retains its user-gesture focus behavior.
 
-Profile and More menus share one pane owner. More contains clipboard/output actions, inline display
+Profile and More menus share one pane owner and a native named disclosure group for synchronous
+mutual exclusion; inner groups remain independent. More contains clipboard/output actions, inline display
 and management groups, the navigator, and settings. Escape closes the innermost group first and restores
 its summary, without also closing a narrow drawer. A newer modal has priority. Menus fit and scroll
 within the pane; header controls align across desktop/touch layouts, and hidden views publish no controls.
@@ -170,8 +176,14 @@ paste, and terminal search; shell mode yields those keys to the PTY. `Ctrl+Shift
 focus when the event belongs to that pane. Shell history remains native; the view adds neither command
 reruns nor a separate history interface.
 
-Touch keys preserve input focus. Navigation and direct Ctrl+C also work with the software keyboard
-closed; the header keyboard button explicitly focuses input. Ctrl/Alt are one-shot modifiers for user
+The non-wrapping touch bar keeps four 44px arrows fixed in a compact trailing group. Esc, Ctrl+C,
+one-shot Ctrl/Alt, Tab, Home/End, and Page Up/Down scroll independently in equal-width slots sized
+to fit complete buttons (two at 320px, three at 390px). Scrolling snaps to whole-key boundaries,
+including the final position. Small directional cues use the existing bottom padding only on sides
+with hidden keys; no fade covers button labels. The bar keeps its single-row height.
+Input ownership, readiness and process state
+gate every key. Touch keys preserve input focus. Navigation and direct Ctrl+C also work with the
+software keyboard closed; the header keyboard button explicitly focuses input. Ctrl/Alt are one-shot modifiers for user
 keystrokes, cleared by blur, loss of control, or paste. They do not modify pasted text or terminal replies.
 
 Pending menu paste belongs to its originating activation and control epoch. Switching views, losing

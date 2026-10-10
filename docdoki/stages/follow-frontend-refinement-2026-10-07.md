@@ -938,7 +938,7 @@ The final implementation captures are `integrated-shell{,-dark,-narrow-dark}.png
 `integrated-comparison.png`; the prior compact layout is superseded. The quiet disclosure and stable
 inspector layout satisfy the remaining original History recommendations.
 
-## Files and Changes reading navigation — ready for review
+## Files and Changes reading navigation — retained
 
 The original file-tree leaf alignment and first-change landing recommendations are implemented.
 Files and Explorer share an empty disclosure slot for leaf rows so sibling icons and names align;
@@ -956,12 +956,44 @@ change at line 147, outside the old initial viewport. Desktop tree row height re
 Dark and 390px captures were inspected. Previously rejected Files/Changes structural layout
 recommendations stay closed, not reopened by this batch.
 
+## Terminal compact controls — ready for review
+
+The original Terminal toolbar/profile/touch recommendations are implemented as one group. Focus
+moves into More at pane widths through 480px. Multiple available profiles use one Plus chooser
+in compact/touch layouts, including creation from the empty state; a single available profile,
+wider desktop default New and command/keyboard creation keep direct default creation. The input-focus
+icon is a neutral action rather than a green state marker. Existing process dots, transport warnings,
+ownership, Search, focus mode and terminal protocols remain unchanged.
+
+The touch strip keeps all four 44px arrows visible in a trailing joined group. Other keys scroll
+independently in complete, equal-width slots with whole-key snap points. This replaces the initial
+fade treatment, which obscured clipped keys: 320px fits two complete keys, 390px fits three, and
+small cues in the bottom padding indicate remaining scroll directions without covering labels.
+The original 53px bar height is unchanged. At 390px the one-tab strip gains 88px (115 to 203px);
+at 320px it gains 44px (89 to 133px). During keyboard checks, delayed native toggle events exposed
+a race in the old JavaScript menu exclusion. Profile and More now use one pane-scoped native
+disclosure name, so switching is synchronous while inner groups and Escape ownership stay intact.
+
+42 focused component cases and type/lint/format/build checks pass. Existing desktop menu and touch
+input/selection browser flows pass with first/last scroll cues, fully visible arrows at 320/390px,
+unchanged arrow positions while the other keys scroll, exact modifier bytes and focus preservation.
+The scoped selection/search/output browser case also passes. Real multi-profile creation, Focus
+and Search were checked against the mock Host; light/dark and same-content baseline captures are
+under `output/playwright/terminal-refinement/`. The comparison crops preserve the full toolbar/key
+rows while omitting the unchanged blank terminal middle. No key or terminal capability was added.
+
+The complete-key correction passes 29 focused component tests, type/lint/format checks and the
+frontend build. The touch browser regression now checks whole buttons at arbitrary and final
+scroll offsets. Touch-drag simulation also settles on complete keys at 320/390px; all keys fit at
+wide widths without overflow cues. Light/dark checks preserve the 53px height and fixed arrows.
+The correction comparison is `output/playwright/terminal-refinement/snap-comparison.png`.
+
 ## Next actions
 
 Continue one original-review topic group at a time, not one incidental visual detail per batch.
-Three candidate groups still need reconciliation: Terminal toolbar/profile/touch keys,
-Settings field/reference/status hierarchy, and Models focused editor views. These are historical
-recommendations to check, not three mandatory redesigns; close already-satisfied or rejected items
+Two candidate groups still need reconciliation: Settings field/reference/status hierarchy and
+Models focused editor views. These are historical recommendations to check, not two mandatory
+redesigns; close already-satisfied or rejected items
 and implement useful related changes together. Holistic review follows the local groups.
 Preserve the original cross-project capsules. The attachment file picker has another
 same-line name/directory pairing: its approved `@directory` cue is now implemented.
