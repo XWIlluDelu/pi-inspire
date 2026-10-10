@@ -76,7 +76,8 @@ User rule IDs must be namespaced, such as `user.example.search`. Shipped `inspir
 CodeMode and nested tools show child calls inside the parent card. CodeMode headers summarize the
 observed tools and any child failures; the native tool name stays `codemode`. CodeMode keeps Calls,
 Output and Script in that order during execution and afterward. Calls lists always appear directly
-inside an open parent card; long lists scroll rather than collapse. Script remains behind its own
+inside an open parent card; long CodeMode call lists use conversation scrolling rather than a nested
+list viewport. Other nested call lists retain their bounded scrolling. Script remains behind its own
 disclosure. Open a call to inspect available parameters, errors and duration. Parameter previews
 remain labelled. Inspecting Calls or Script
 keeps the card open through completion; child failures do not change the parent's recorded outcome.

@@ -64,5 +64,6 @@ credentials or external accounts.
 
 The user approved the compact design on 2026-10-05 and clarified that missing Pi capabilities remain
 deferred rather than prompting Pi modifications. Associated code paths are planned; interface
-availability and implementation evidence belong in [[follow-codemode-mcp-adaptation-2026-10-05]].
+evidence is recorded in [[follow-codemode-mcp-adaptation-2026-10-05]]; remaining implementation and
+interface work belongs to [[follow-pi-native-capability-review-2026-10-02]].
 Related contracts: [[pi-integration]], [[interface-preferences]], [[tool-presentations]].

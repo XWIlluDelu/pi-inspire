@@ -36,8 +36,8 @@ position. **Current conversation** returns to the active conversation's outline,
   Inspire honors Pi's skip-summary-prompt setting. A draft-replacement confirmation appears only when
   an edit would replace an existing message draft. Text or attachments added while a summary is
   pending stay in your draft.
-- **Fork into new session** copies the conversation before the selected input and prepares that input
-  as the new session's draft.
+- **Fork into new session** copies the conversation before the selected input and prepares its text
+  and saved images as an editable draft in the new session.
 - **Clone into new session** copies through the selected response or other point and opens an empty
   draft. **Clone current branch** in the title's action menu, `/clone`, and the palette share this action;
   the earlier-conversation notice offers **Clone from here**.
@@ -86,8 +86,9 @@ Provider/model declaration controls edit Pi's native `models.json`, not an Inspi
 fields are graphical; unedited metadata, headers, costs, compatibility overrides and other advanced
 fields remain intact. Existing config symlinks are followed. Invalid files and external-change
 conflicts are reported rather than overwritten. Removing a declaration neither removes a built-in
-model nor logs out. Configuration saves refresh availability without replacing the active worker;
-a refresh warning does not mean that a committed file save failed.
+model nor logs out. Provider/model edits open a focused view with Save/Cancel always reachable;
+Back or Cancel restores the list's search, position and focus. Configuration saves refresh availability
+without replacing the active worker; a refresh warning does not mean that a committed file save failed.
 
 Login saves credentials in Pi on the **connected Host**. **Connect provider** opens provider search;
 **Manage** on a saved provider reveals its methods and credential removal. Choose a method, then
@@ -97,6 +98,13 @@ or tap. Other methods remain available without that label. Completion is reporte
 accepts the result; existing keys and tokens are not displayed. **Remove saved credential** removes
 Host storage only: it does not revoke provider-side access or remove environment/model-file sources.
 Configuration remains usable independently of login availability.
+
+## Runtime behavior settings
+
+Settings → Behavior applies Pi delivery, automatic-compaction and retry changes to the selected
+session's worker. Pi's setters also update global settings, subject to project overrides; other running
+workers keep their own loaded values. Pi's acknowledgment confirms the applied value, not a successful
+settings-file save. These controls are separate from Inspire's interface preferences.
 
 ## Direct shell input
 
@@ -136,9 +144,9 @@ Deleting a session never removes original project files. Images remain embedded 
 
 While Pi runs, select **Steer** to redirect its next turn or **Queue** to follow the current task.
 Pending entries appear at the end of the conversation, with previews and Return, Copy and Clear
-actions in the header. The activity bar also shows their count. **Return all** removes all unconsumed
-input without stopping Pi: Steer texts come first, then Queue texts, separated by blank lines and followed by your current
-draft. Edit this as one draft; sending uses the currently selected delivery mode.
+actions in the header. Activate their count in the activity bar to jump to and focus Pending without
+moving focus into the editor. **Return all** removes all unconsumed input without stopping Pi:
+Steer texts come first, then Queue texts, separated by blank lines and followed by your current draft. Edit this as one draft; sending uses the currently selected delivery mode.
 
 When stopping a model task, **Stop** and Escape use the same recovery, so pending work does not restart the task.
 An open modal, completion menu, or context-detail hint keeps first ownership of Escape. Pending's single/all copy actions

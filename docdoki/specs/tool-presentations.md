@@ -123,7 +123,8 @@ card/activity preferences still choose initial disclosure; no separate density s
   Parameter previews are not labelled complete. Truncated JSON previews may contribute complete
   top-level fields, never partial strings or nested lookalikes. Omit unusable summaries instead of
   displaying broken JSON; retain the original preview in row details. Paths preserve their leaf name
-  when shortened visually. Keep order and row identity stable and long lists bounded.
+  when shortened visually. Keep order and row identity stable; bounded call projections are distinct
+  from the CodeMode viewport's unconstrained height.
 - Select native sources rather than merging unrelated schemas: Codemode `details.calls` for its tool
   and model calls; parented execution events for generic live calls; top-level result-message
   `nestedCalls` for generic history. A parent has one displayed call list.

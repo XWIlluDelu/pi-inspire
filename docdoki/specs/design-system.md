@@ -254,7 +254,7 @@ alignment. Check/dot markers are absolutely centered inside each input, outside 
 calculation; checked state must not change box position or line height. They remain
 disabled/noninteractive but keep opacity 1: a recorded task state is not an unavailable form action.
 
-## Model-list hierarchy trial
+## Model-list hierarchy
 
 The shared model picker uses transparent provider/group headings with a thin bottom rule for distinct groups,
 retaining heading typography, spacing and 28px virtual-row height. The bottom rule uses the shared
@@ -263,7 +263,7 @@ Settings' provider headings
 already use transparent surfaces and retain their existing typography. Recent, Router and
 No thinking labels use muted, normal-weight text without a filled badge, retaining their placement
 and padding. Model identity, match emphasis, row heights, selection marks and Settings choices
-are unchanged. This is an approved visual trial awaiting review.
+are unchanged.
 
 ## Session and command search presentation
 
@@ -322,7 +322,7 @@ quiet border. All its actions stay locally opaque and inherit the panel's 0.75-t
 add a second opacity layer to individual buttons. Content roles, disclosure structure, clipboard
 payloads and operation guards remain unchanged. [[conversation]] and [[composer]] own their behavior.
 
-The user-approved project-wide quiet-button trial assigns presentation by a control's role,
+Project-wide quiet buttons assign presentation by a control's role,
 not its label alone. `.button--quiet` uses constant presentation: enabled text buttons keep body-color
 text and a transparent resting fill/border; transparent borders retain layout space. Hover and press
 use standard inset/control surfaces without a visible border. Shared keyboard focus and disabled
@@ -347,7 +347,7 @@ picker's editable path uses the same canvas fill, line border, small radius and 
 mark as Welcome's directory field, with mono text, soft wrapping and content-sized height at the
 current viewport width. It remains above
 the bordered directory list. Welcome's editable directory input is unchanged.
-These secondary actions stay directly available; this trial changes presentation, not event handling,
+These secondary actions stay directly available; quiet styling changes presentation, not event handling,
 keyboard order, focus ownership or operation guards.
 
 Content availability is a capability concern, not a fourth presentation type. Design straightforward

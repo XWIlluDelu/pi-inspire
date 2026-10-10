@@ -209,6 +209,12 @@ and explicit re-open, cancelled-response/401 ownership, and the unconfirmed-crea
   projection, publish that bounded replacement rather than replaying the pre-clipping argument
   patch against a browser that still holds the larger tree.
 
+- Live tool execution updates carry one Host-authored `outputPreview`, computed from the original
+  cumulative result before general projection: at most 16,000 characters and 400 lines from the tail.
+  The browser uses that same projection as reconnect snapshots. Live `partialResult.content` is not
+  sent a second time; projected details and child-call metadata remain. Completed results retain
+  their ordinary transcript representation.
+
 - Each active tool's Host-only parser consumes public Pi argument JSON once, emits immutable
   path-based display updates, and retains no cumulative raw JSON. Sensitive keyed values use the
   same redaction policy as ordinary projections; escaped keys and nested secret containers cannot

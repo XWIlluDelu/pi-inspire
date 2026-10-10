@@ -4,8 +4,8 @@ purpose: Evidence and responsibility boundaries from the 2026-10-06 code and doc
 
 # Maintainability review
 
-Reviewed the full tree at `3106c0a`, with priority on changes after `01a5b03`.
-Pi behavior was checked against the public 1.0.0 compatibility dependency and upstream
+Reviewed the Pi 1.0 implementation on 2026-10-06, prioritizing changes after `01a5b03`.
+The consolidated repairs are in `945f2a8`. Pi behavior was checked against the public 1.0.0 compatibility dependency and upstream
 [`031b24a`](https://github.com/earendil-works/pi/tree/031b24aa6425067253cb94095fb806a9df9d619c).
 
 ## Consolidated responsibilities

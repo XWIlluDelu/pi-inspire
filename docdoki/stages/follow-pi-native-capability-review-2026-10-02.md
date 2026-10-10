@@ -69,7 +69,7 @@ cold-start defects are repaired, not current limitations. [[model-settings]] own
   successful file save. An isolated malformed-settings probe returned success without saving or
   warning. Investigate a supported setter/flush result before claiming saved state.
 - **Setting scope:** global saves address one worker; other live workers and project overrides may
-  differ. Explain that scope in the controls.
+  differ. The command guide explains that scope; the controls do not yet disclose it.
 - **Usage readability:** context/path fact cells can clip without keyboard/touch access. Current
   context and cumulative usage are different measures; this is not an incorrect-total finding.
 - **Startup diagnostics:** a broken extension closes RPC with its useful load diagnostic remaining
@@ -79,10 +79,14 @@ cold-start defects are repaired, not current limitations. [[model-settings]] own
 - **Dialog cancellation:** Pi 1.0 extension-owned AbortSignal resolution sends no dismissal event.
   The native probe emitted request and completion only, leaving the Host request retained. Timeout
   and Host Stop cleanup work; model idleness or generic command completion is not a safe substitute.
+- **Image copying:** content Copy actions currently write text only. [[design-system]] retains the
+  decided image-only copying direction; if multiple images are copied separately, write them in
+  reverse input order so the earliest image is first in clipboard history. Implementation and
+  effective paste behavior remain open. Sources: `src/use-copied.ts` and `src/store.ts`.
 
-Sources: `server/{runtime,runtime-slot,pi-rpc,pi-update-checker}.ts`, settings/command/trust/startup
-native probes, and desktop/narrow Settings, usage and Reload checks. Persistence-result and loading
-interfaces need further investigation.
+Native-gap sources: `server/{runtime,runtime-slot,pi-rpc,pi-update-checker}.ts`,
+settings/command/trust/startup probes, and desktop/narrow Settings, usage and Reload checks.
+Persistence-result and loading interfaces need further investigation.
 
 ## Remaining coverage and interface boundaries
 
