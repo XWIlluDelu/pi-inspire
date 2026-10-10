@@ -153,7 +153,9 @@ for (const touch of [false, true]) {
         await frame(page);
         measurements.pickerOpenMs = Date.now() - opened;
         const search = page.getByRole("combobox", { name: "Search models" });
-        await expect(search).toBeFocused();
+        const list = page.getByRole("listbox", { name: "Available models" });
+        const navigation = touch ? list : search;
+        await expect(navigation).toBeFocused();
         measurements.pickerMounted = await page.getByRole("option").count();
         expect(measurements.pickerMounted).toBeLessThan(25);
         const menu = page.locator(".model-picker__menu");
@@ -167,21 +169,21 @@ for (const touch of [false, true]) {
           touch ? 844 : 900,
         );
         const navigated = Date.now();
-        await search.press("End");
+        await navigation.press("End");
         await frame(page);
         measurements.pickerEndMs = Date.now() - navigated;
         const last = page.locator(
-          `[id="${await search.getAttribute("aria-activedescendant")}"]`,
+          `[id="${await navigation.getAttribute("aria-activedescendant")}"]`,
         );
         await expect(last).toHaveAttribute(
           "aria-posinset",
           String(available.length),
         );
         await expect(last).toBeInViewport();
-        await search.press("ArrowUp");
+        await navigation.press("ArrowUp");
         await expect(
           page.locator(
-            `[id="${await search.getAttribute("aria-activedescendant")}"]`,
+            `[id="${await navigation.getAttribute("aria-activedescendant")}"]`,
           ),
         ).toHaveAttribute("aria-posinset", String(available.length - 1));
         const target = [...available]
@@ -197,6 +199,9 @@ for (const touch of [false, true]) {
                     : 0,
           )
           .at(-1)!;
+        if (touch) await search.tap();
+        else await search.click();
+        await expect(search).toBeFocused();
         const typed = Date.now();
         await search.pressSequentially(`${target.provider} ${target.id}`);
         await frame(page);

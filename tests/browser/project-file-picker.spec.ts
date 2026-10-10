@@ -34,7 +34,7 @@ for (const touch of [false, true]) {
       });
       const list = menu.getByRole("listbox", { name: "Project files" });
       await expect(list.getByRole("option").first()).toBeVisible();
-      await expect(search).toBeFocused();
+      await expect(touch ? menu : search).toBeFocused();
       await expect(menu).toHaveAttribute("data-placement", "up");
       const anchor = (await trigger.boundingBox())!;
       const bounds = (await menu.boundingBox())!;
@@ -74,6 +74,8 @@ for (const touch of [false, true]) {
         animations: "disabled",
       });
 
+      if (touch) await search.tap();
+      await expect(search).toBeFocused();
       await search.press("ArrowUp");
       await search.press("ArrowUp");
       await search.press("ArrowUp");
@@ -100,60 +102,3 @@ for (const touch of [false, true]) {
     });
   });
 }
-
-test("settings dropdown escapes a clipped scroller and keeps pointer hover separate from keyboard selection", async ({
-  page,
-}, testInfo) => {
-  await page.goto("/");
-  await page.getByLabel("Access token").fill("inspire-browser-test-token");
-  await page.getByRole("button", { name: "Pair", exact: true }).click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  const trigger = page.getByRole("combobox", {
-    name: "Steering delivery",
-    exact: true,
-  });
-  await trigger.evaluate((el) => {
-    const content = el.closest(".settings__content")!;
-    const row = el.getBoundingClientRect();
-    content.scrollTop +=
-      row.bottom - (content.getBoundingClientRect().bottom - 12);
-  });
-  await trigger.click();
-  const menu = page.getByRole("listbox", {
-    name: "Steering delivery",
-    exact: true,
-  });
-  const last = menu.getByRole("option").last();
-  await expect(menu).toBeVisible();
-  expect(
-    await menu.evaluate((el) => Boolean(el.closest(".settings__content"))),
-  ).toBe(false);
-  expect(
-    await last.evaluate((el) => {
-      const rect = el.getBoundingClientRect();
-      return el.contains(
-        document.elementFromPoint(
-          rect.x + rect.width / 2,
-          rect.y + rect.height / 2,
-        ),
-      );
-    }),
-  ).toBe(true);
-  await last.hover();
-  await page.mouse.move(100, 100);
-  await expect(menu.locator(".dropdown__option--active")).toHaveCount(0);
-  await expect(last).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  await expect(trigger).toBeFocused();
-  await last.hover();
-  await trigger.press("Home");
-  await expect(last).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  await expect(menu.getByRole("option").first()).toHaveClass(
-    /dropdown__option--active/,
-  );
-  await page.screenshot({
-    path: testInfo.outputPath("dropdown-unclipped.png"),
-    animations: "disabled",
-  });
-  await trigger.press("Escape");
-  await expect(menu).toHaveCount(0);
-});

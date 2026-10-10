@@ -22,6 +22,15 @@ async function openTerminal(page: Page, pair: boolean) {
       "Review extension event lifecycle",
     )
   ) {
+    const toggle = page.getByRole("button", {
+      name: "Toggle navigation",
+      exact: true,
+    });
+    if (
+      (await toggle.getAttribute("aria-expanded")) === "false" ||
+      (await page.locator(".nav--rail").count())
+    )
+      await toggle.click();
     await page
       .getByRole("button", { name: /^Review extension event lifecycle/ })
       .first()
@@ -73,6 +82,11 @@ for (const viewport of [
         .getByRole("button", { name: "New terminal", exact: true })
         .last()
         .click();
+      const profiles = page.locator(".terminal-menu--profiles[open]");
+      if (await profiles.isVisible()) {
+        expect(identities).toHaveLength(0);
+        await profiles.getByRole("button", { name: /Default$/ }).click();
+      }
       const recovery = page.getByRole("button", {
         name: "Retry same operation",
         exact: true,

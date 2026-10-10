@@ -24,6 +24,79 @@ test("Tab from a Settings dropdown skips collapsed content and reaches its discl
   ).toHaveCount(0);
 });
 
+test("settings dropdown escapes a clipped scroller and keeps pointer hover separate from keyboard selection", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 460 });
+  await modelSettingsScenario(page);
+  await pairAndOpen(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await settings.getByRole("button", { name: "Behavior", exact: true }).click();
+  const trigger = settings.getByRole("combobox", {
+    name: "Steering delivery",
+    exact: true,
+  });
+  const content = settings.locator(".settings__content");
+  // Leave viewport room beyond the scroller so the menu must escape its clip.
+  await content.evaluate((el) => {
+    el.style.maxHeight = "180px";
+  });
+  expect(
+    await content.evaluate((el) => el.scrollHeight > el.clientHeight),
+  ).toBe(true);
+  await trigger.evaluate((el) => {
+    const content = el.closest(".settings__content")!;
+    const row = el.getBoundingClientRect();
+    content.scrollTop +=
+      row.bottom - (content.getBoundingClientRect().bottom - 12);
+  });
+  await trigger.click();
+  const menu = page.getByRole("listbox", {
+    name: "Steering delivery",
+    exact: true,
+  });
+  const last = menu.getByRole("option").last();
+  await expect(menu).toBeVisible();
+  const clipBounds = (await content.boundingBox())!;
+  const menuBounds = (await menu.boundingBox())!;
+  expect(
+    menuBounds.y < clipBounds.y ||
+      menuBounds.y + menuBounds.height > clipBounds.y + clipBounds.height,
+  ).toBe(true);
+  expect(
+    await menu.evaluate((el) => Boolean(el.closest(".settings__content"))),
+  ).toBe(false);
+  expect(
+    await last.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return el.contains(
+        document.elementFromPoint(
+          rect.x + rect.width / 2,
+          rect.y + rect.height / 2,
+        ),
+      );
+    }),
+  ).toBe(true);
+  await last.hover();
+  await page.mouse.move(100, 100);
+  await expect(menu.locator(".dropdown__option--active")).toHaveCount(0);
+  await expect(last).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(trigger).toBeFocused();
+  await last.hover();
+  await trigger.press("Home");
+  await expect(last).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(menu.getByRole("option").first()).toHaveClass(
+    /dropdown__option--active/,
+  );
+  await page.screenshot({
+    path: testInfo.outputPath("dropdown-unclipped.png"),
+    animations: "disabled",
+  });
+  await trigger.press("Escape");
+  await expect(menu).toHaveCount(0);
+});
+
 test("category switches retain model browsing, provider drafts and a login arriving while hidden", async ({
   page,
 }) => {

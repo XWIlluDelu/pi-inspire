@@ -1,4 +1,8 @@
 import { expect, test } from "@playwright/test";
+import {
+  type ActiveSnapshot,
+  emptyPendingQueues,
+} from "../../shared/contracts";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { openCommandPalette, pairedPage } from "./support/navigation";
 
@@ -16,14 +20,49 @@ for (const viewport of [
       colorScheme: viewport.colorScheme,
       reducedMotion: "reduce",
     });
+    let emptyCatalog = true;
+    const projectSnapshot = (snapshot: ActiveSnapshot): ActiveSnapshot =>
+      emptyCatalog
+        ? {
+            active: null,
+            runState: "idle",
+            sessionStatuses: {},
+            pendingQueues: emptyPendingQueues(),
+          }
+        : snapshot;
     await page.route("**/api/sessions?**", (route) =>
-      route.fulfill({
-        json: { sessions: [], total: 0, offset: 0, limit: 40 },
-      }),
+      emptyCatalog
+        ? route.fulfill({
+            json: { sessions: [], total: 0, offset: 0, limit: 40 },
+          })
+        : route.continue(),
     );
+    await page.route("**/api/bootstrap**", async (route) => {
+      const response = await route.fetch();
+      if (!response.ok()) return route.fulfill({ response });
+      const body = await response.json();
+      body.snapshot = projectSnapshot(body.snapshot);
+      if (emptyCatalog)
+        body.preferences = {
+          ...body.preferences,
+          pinnedSessionIds: [],
+          hiddenSessionIds: [],
+          pinnedProjectCwds: [],
+          hiddenProjectCwds: [],
+        };
+      await route.fulfill({ response, json: body });
+    });
+    await page.routeWebSocket("**/events**", (client) => {
+      const upstream = client.connectToServer();
+      upstream.onMessage((message) => {
+        const event = JSON.parse(String(message));
+        if (event.type === "snapshot") event.data = projectSnapshot(event.data);
+        else if (emptyCatalog && typeof event.sessionId === "string") return;
+        client.send(JSON.stringify(event));
+      });
+      client.onMessage((message) => upstream.send(message));
+    });
     await pairedPage(page);
-    await page.request.post("/api/sessions/deselect");
-    await page.reload();
     const narrow = viewport.name === "narrow";
     const toggleNav = page.getByRole("button", { name: "Toggle navigation" });
     if (narrow) await toggleNav.click();
@@ -74,12 +113,20 @@ for (const viewport of [
     );
     if (narrow)
       await page.getByRole("button", { name: "Close context pane" }).click();
+    else
+      await page
+        .getByRole("button", { name: "Toggle resources panel" })
+        .click();
 
+    emptyCatalog = false;
     const created = await page.request.post("/api/sessions/new", {
-      data: { cwd: browserWorkspace },
+      data: { cwd: browserWorkspace, name: "Empty-state fixture" },
     });
     expect(created.ok()).toBe(true);
     await page.reload();
+    await expect(
+      page.getByRole("button", { name: /^Session actions:/ }),
+    ).toHaveText("Empty-state fixture");
     const conversationState = page.locator(".empty-state--conversation");
     await expect(conversationState).toContainText("Empty session");
     await expect(conversationState).toHaveCSS("padding", "64px 0px");
