@@ -28,7 +28,6 @@ import {
   type ActivityTool,
   type ChildCallList,
   codemodeCalls,
-  toolOutputPreview,
   updateChildActivity,
 } from "../shared/tool-activity";
 import type { ToolCallPreview } from "../shared/tool-argument-updates";
@@ -658,7 +657,10 @@ export function reduceEvent(
               : (existing?.name ?? "tool"),
           phase: "running",
           ...(event.type === "tool_execution_update"
-            ? { outputPreview: toolOutputPreview(event.partialResult) }
+            ? {
+                outputPreview:
+                  event.outputPreview as ActivityTool["outputPreview"],
+              }
             : {}),
           calls:
             typeof event.toolName === "string" && event.toolName === "codemode"

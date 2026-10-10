@@ -459,7 +459,7 @@ describe("message reconciliation", () => {
       type: "tool_execution_update",
       toolCallId: "queued",
       toolName: "write",
-      partialResult: { content: [{ type: "text", text: "Writing…" }] },
+      outputPreview: { text: "Writing…", truncated: false },
     });
     expect(executing.slice.tools.queued?.phase).toBe("running");
     const replayed = reduce(executing.slice, new Set(), {
@@ -676,9 +676,7 @@ describe("transient tool/retry/queue activity", () => {
       toolCallId: "t1",
       toolName: "read",
       args: {},
-      partialResult: {
-        content: [{ type: "text", text: "reading lines 1-40" }],
-      },
+      outputPreview: { text: "reading lines 1-40", truncated: false },
     });
     expect(updated.slice.tools.t1).toMatchObject({
       phase: "running",

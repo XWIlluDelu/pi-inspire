@@ -181,7 +181,11 @@ it("uses Codemode's snapshot positions, not temporary ids or generic receipts, a
     type: "tool_execution_update",
     toolCallId: "script",
     toolName: "codemode",
-    partialResult: { content: [], details: { calls: records } },
+    partialResult: { details: { calls: records } },
+    childCalls: resultChildCalls({
+      toolName: "codemode",
+      details: { calls: records },
+    }),
   });
   event({
     type: "tool_execution_start",
@@ -216,6 +220,10 @@ it("uses Codemode's snapshot positions, not temporary ids or generic receipts, a
     toolCallId: "script",
     toolName: "codemode",
     partialResult: { details: { calls: records } },
+    childCalls: resultChildCalls({
+      toolName: "codemode",
+      details: { calls: records },
+    }),
   });
   expect(slice.tools.script?.phase).toBe("done");
   expect(slice.tools.script?.calls?.calls[0]?.status).toBe("error");

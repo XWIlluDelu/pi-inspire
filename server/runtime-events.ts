@@ -423,7 +423,20 @@ export class RuntimeEventController {
       case "tool_execution_start":
       case "tool_execution_update":
       case "tool_execution_end": {
-        const safe = this.host.safeProjection(record) as Record<
+        const rootUpdate =
+          record.type === "tool_execution_update" &&
+          typeof record.parentToolCallId !== "string";
+        const outputPreview = rootUpdate
+          ? toolOutputPreview(record.partialResult)
+          : undefined;
+        let projectedEvent = record;
+        if (rootUpdate) {
+          const { content: _content, ...partialResult } =
+            (record.partialResult ?? {}) as Record<string, unknown>;
+          projectedEvent = { ...record, partialResult, outputPreview };
+          forwardedEvent = projectedEvent;
+        }
+        const safe = this.host.safeProjection(projectedEvent) as Record<
           string,
           unknown
         >;
@@ -481,9 +494,7 @@ export class RuntimeEventController {
               name: record.toolName,
               phase: ended ? (record.isError ? "error" : "done") : "running",
               calls: calls ?? existing?.calls,
-              ...(!ended
-                ? { outputPreview: toolOutputPreview(safe.partialResult) }
-                : {}),
+              ...(!ended ? { outputPreview } : {}),
             },
           };
         }

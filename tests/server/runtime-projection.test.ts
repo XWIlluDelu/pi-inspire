@@ -416,7 +416,53 @@ afterEach(async () => {
   );
 });
 
-describe("RuntimeController live child activity", () => {
+describe("RuntimeController live tool activity", () => {
+  it.each(["character", "line"] as const)(
+    "keeps the latest output beyond general projection (%s bound)",
+    async (bound) => {
+      const { runtime, workers } = await setup();
+      const events: Array<Record<string, unknown>> = [];
+      runtime.on("event", (event) => events.push(event));
+      try {
+        const older =
+          bound === "line"
+            ? "older output\n".repeat(25_000)
+            : "older".repeat(65_000);
+        const text = `${older}LATEST_OUTPUT`;
+        workers[0]!.emit("event", {
+          type: "tool_execution_update",
+          toolCallId: "long-output",
+          toolName: "bash",
+          partialResult: {
+            content: [{ type: "text", text }],
+            details: { progress: "native metadata" },
+          },
+        });
+        const tool = (await runtime.snapshot()).active?.toolActivity?.[
+          "long-output"
+        ];
+        expect(tool?.outputPreview?.text).toMatch(/LATEST_OUTPUT$/);
+        expect(tool?.outputPreview?.truncated).toBe(true);
+        expect(tool!.outputPreview!.text.length).toBeLessThanOrEqual(16_000);
+        expect(
+          tool!.outputPreview!.text.split("\n").length,
+        ).toBeLessThanOrEqual(400);
+        const update = events.findLast(
+          (event) => event.type === "tool_execution_update",
+        )!;
+        expect(update.outputPreview).toEqual(tool?.outputPreview);
+        expect(update.partialResult).toEqual({
+          details: { progress: "native metadata" },
+        });
+        expect(Buffer.byteLength(JSON.stringify(update))).toBeLessThan(
+          bound === "line" ? 6_000 : 17_000,
+        );
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
+
   it("bounds Codemode's own snapshot before transport without duplicating generic receipts", async () => {
     const { runtime, workers } = await setup();
     const events: Array<Record<string, unknown>> = [];
