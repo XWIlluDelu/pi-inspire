@@ -1,9 +1,9 @@
 import { expect, type Page, type Route, test } from "@playwright/test";
 import { DEFAULT_TERMINAL_UI_SETTINGS } from "../../src/terminal-settings";
-import { modelSettingsScenario, pairAndOpen } from "./fixtures/model-settings";
-import { openCommandPalette } from "./support/navigation";
+import { modelSettingsScenario } from "./fixtures/model-settings";
+import { openCommandPalette, pairAndOpen } from "./support/navigation";
 
-function receiptHeaders(route: Route) {
+function receiptHeaders(route: Route): Record<string, string> {
   const identity = route.request().headers()["x-terminal-operation"];
   return identity
     ? {
@@ -305,10 +305,7 @@ for (const width of [1280, 320]) {
       await settings
         .locator(".terminal-settings__body")
         .evaluate((el) => (el.scrollTop = el.scrollHeight));
-      await page.screenshot({
-        path: `output/playwright/terminal-settings-output-${width}.png`,
-        animations: "disabled",
-      });
+
       page.once("dialog", (dialog) => dialog.accept());
       await settings
         .getByRole("switch", { name: "Persist terminal output" })
@@ -350,10 +347,7 @@ for (const width of [1280, 320]) {
           .locator(".terminal-settings__body")
           .evaluate((el) => el.scrollWidth > el.clientWidth + 1),
       ).toBe(false);
-      await page.screenshot({
-        path: `output/playwright/terminal-settings-${width}.png`,
-        animations: "disabled",
-      });
+
       await reopened
         .getByRole("navigation")
         .getByRole("button", { name: "Saved output", exact: true })

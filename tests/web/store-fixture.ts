@@ -1,4 +1,5 @@
 import { AppStore } from "../../src/store";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -12,8 +13,7 @@ export const baseRoutes: RouteHandler = (url) => {
   if (url.startsWith("/api/snapshot")) return { body: activeSnapshot() };
   if (url === "/api/pending/recover" || url === "/api/control/abort")
     return { body: { steering: [], followUp: [] } };
-  if (url.startsWith("/api/sessions"))
-    return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+  if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
   return undefined;
 };
 

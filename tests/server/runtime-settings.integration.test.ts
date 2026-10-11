@@ -1,5 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
@@ -10,6 +9,11 @@ import type {
   SessionCatalogLike,
   SessionRecord,
 } from "../../server/session-catalog.js";
+
+import {
+  nativePiWorkspace,
+  stubNativePiEnvironment,
+} from "./fixtures/native-pi.js";
 
 const directories: string[] = [];
 const IDS = [
@@ -27,24 +31,10 @@ afterEach(async () => {
 });
 
 async function fixture(trust: "always" | "never", enabled?: boolean) {
-  const root = await mkdtemp(join(tmpdir(), "inspire-native-retry-"));
+  const workspace = await nativePiWorkspace("inspire-native-retry-", {});
+  const { root, agent, sessions } = workspace;
   directories.push(root);
-  const agent = join(root, "agent");
-  const sessions = join(root, "sessions");
-  for (const [key, value] of Object.entries({
-    HOME: join(root, "home"),
-    PI_CODING_AGENT_DIR: agent,
-    PI_CODING_AGENT_SESSION_DIR: sessions,
-    PI_OFFLINE: "1",
-    PI_SKIP_VERSION_CHECK: "1",
-    PI_TELEMETRY: "0",
-    XDG_CONFIG_HOME: join(root, "config"),
-    XDG_CACHE_HOME: join(root, "cache"),
-    XDG_STATE_HOME: join(root, "state"),
-  }))
-    vi.stubEnv(key, value);
-  await mkdir(agent, { recursive: true });
-  await mkdir(sessions, { recursive: true });
+  stubNativePiEnvironment(workspace.env);
   const globalPath = join(agent, "settings.json");
   await writeFile(
     globalPath,
@@ -58,7 +48,6 @@ async function fixture(trust: "always" | "never", enabled?: boolean) {
       followUpMode: "one-at-a-time",
     }),
   );
-  await writeFile(join(agent, "auth.json"), "{}");
   const records: SessionRecord[] = [];
   for (const [index, id] of IDS.entries()) {
     const cwd = join(root, `project-${index}`);

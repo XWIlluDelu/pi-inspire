@@ -1,165 +1,47 @@
-import { randomUUID } from "node:crypto";
-import {
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  realpath,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
-import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+
 import { dirname, join, resolve } from "node:path";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { WebSocket } from "ws";
-import { accessCookieName, createInspireServer } from "../../server/app.js";
-import { AttachmentStore } from "../../server/attachments.js";
-import type { GitInspectionLike } from "../../server/git-inspection.js";
-import { MockCatalog, MockRuntime } from "../../server/mock.js";
-import { PreferencesStore } from "../../server/preferences.js";
-import { ResourceStore } from "../../server/resources.js";
-import {
-  MAX_JOINING_EVENT_BYTES,
-  MAX_RUNTIME_EVENT_BYTES,
-} from "../../server/runtime-event-sockets.js";
-import { ToolArgumentStream } from "../../server/tool-argument-stream.js";
-import { ToolPresentationConfigStore } from "../../server/tool-presentation-config.js";
-import {
-  applyAssistantMessageDelta,
-  assistantStreamTextLength,
-} from "../../shared/assistant-stream.js";
-import {
-  type ActiveSnapshot,
-  MAX_ATTACHMENT_FILE_BYTES,
-  type SessionRuntimeStatus,
-} from "../../shared/contracts.js";
 
-type DetailFrame = Record<string, unknown> & {
-  data?: ActiveSnapshot;
-  snapshotDigest?: string;
-  sessionStatus?: SessionRuntimeStatus;
-};
+import { MockCatalog } from "../../server/mock.js";
 
-const token = "test-local-token";
+import {
+  closeHostApiFixture,
+  hostApiFixture,
+  token,
+} from "./fixtures/host-api.js";
+
 const mockWorkspace = resolve("/home/demo/research");
-const fixtureModel = {
-  provider: "anthropic",
-  id: "claude-sonnet-4",
-  name: "Claude Sonnet 4",
-  reasoning: true,
-};
 
-describe("local host API", () => {
-  let temporary: string;
-  let application: ReturnType<typeof createInspireServer>;
-  let resources: ResourceStore;
-  let runtime: MockRuntime;
-  let attachments: AttachmentStore;
-  let git: GitInspectionLike;
-  let shutdown: ReturnType<typeof vi.fn<() => void>>;
-  let baseUrl: string;
-
-  function promptDelivery<T extends Record<string, unknown>>(body: T) {
-    return {
-      ...body,
-      operationId: randomUUID(),
-      authorityId: application.authorityId,
-    };
-  }
-
+describe("typed Host API", () => {
+  let temporary: Awaited<ReturnType<typeof hostApiFixture>>["temporary"];
+  let application: Awaited<ReturnType<typeof hostApiFixture>>["application"];
+  let resources: Awaited<ReturnType<typeof hostApiFixture>>["resources"];
+  let runtime: Awaited<ReturnType<typeof hostApiFixture>>["runtime"];
+  let attachments: Awaited<ReturnType<typeof hostApiFixture>>["attachments"];
+  let shutdown: Awaited<ReturnType<typeof hostApiFixture>>["shutdown"];
+  let baseUrl: Awaited<ReturnType<typeof hostApiFixture>>["baseUrl"];
+  let api: Awaited<ReturnType<typeof hostApiFixture>>["api"];
+  let promptDelivery: Awaited<
+    ReturnType<typeof hostApiFixture>
+  >["promptDelivery"];
+  let fixture: Awaited<ReturnType<typeof hostApiFixture>>;
   beforeEach(async () => {
-    temporary = await realpath(await mkdtemp(join(tmpdir(), "inspire-test-")));
-    resources = new ResourceStore();
-    attachments = new AttachmentStore(join(temporary, "uploads"));
-    runtime = new MockRuntime({ attachments });
-    git = {
-      status: vi.fn(async () => ({ kind: "not-repository" as const })),
-      diff: vi.fn(async (_cwd, pathId, side) => ({
-        kind: "empty" as const,
-        path: {
-          id: pathId,
-          display: "file.txt",
-          utf8Path: "file.txt",
-          workspacePath: "file.txt",
-        },
-        side,
-        reason: "no-changes" as const,
-      })),
-    };
-    shutdown = vi.fn<() => void>();
-    application = createInspireServer({
-      token,
-      runtime,
-      catalog: new MockCatalog(),
-      attachments,
-      preferences: new PreferencesStore(join(temporary, "preferences.json")),
-      toolPresentations: new ToolPresentationConfigStore(
-        join(temporary, "tool-presentations.json"),
-      ),
+    fixture = await hostApiFixture();
+    ({
+      temporary,
+      application,
       resources,
-      git,
-      mock: true,
-      version: "0.1.0-test",
-      piVersion: "0.80.10",
-      updateChecker: {
-        check: async () => ({
-          kind: "available",
-          update: {
-            currentVersion: "0.1.0-test",
-            latestVersion: "0.2.0",
-            releaseUrl:
-              "https://github.com/example/inspire/releases/tag/v0.2.0",
-          },
-        }),
-      },
-      piUpdateChecker: {
-        check: async () => ({
-          currentVersion: "0.80.10",
-          pi: {
-            kind: "available",
-            latestVersion: "0.84.3",
-            releaseUrl: "https://pi.dev/changelog",
-          },
-          extensions: {
-            kind: "available",
-            updates: [
-              {
-                displayName: "pi-web-access",
-                type: "npm",
-              },
-            ],
-          },
-        }),
-      },
-      bootstrapModels: () => [fixtureModel],
-      availableModels: async () => [fixtureModel],
-      modelMetadata: async (cwd) => ({
-        models: [fixtureModel],
-        virtualModels: [],
-        defaults: { cwd, model: fixtureModel, thinkingLevel: "high" },
-      }),
-      distDir: join(temporary, "missing-dist"),
+      runtime,
+      attachments,
       shutdown,
-    });
-    await new Promise<void>((resolve) =>
-      application.server.listen(0, "127.0.0.1", resolve),
-    );
-    const address = application.server.address() as AddressInfo;
-    baseUrl = `http://127.0.0.1:${address.port}`;
+      baseUrl,
+      api,
+      promptDelivery,
+    } = fixture);
   });
-
-  afterEach(async () => {
-    await application.close();
-    await rm(temporary, { recursive: true, force: true });
-  });
-
-  const api = () =>
-    request(application.server)
-      .get("/api/bootstrap")
-      .set("Authorization", `Bearer ${token}`);
+  afterEach(async () => closeHostApiFixture(fixture));
 
   it("sets production HTTP behavior without overriding the user's NODE_ENV", () => {
     expect(application.app.get("env")).toBe("production");
@@ -211,13 +93,25 @@ describe("local host API", () => {
     expect(response.body.toolPresentationsWarning).toBeUndefined();
   });
 
-  it("keeps Host shutdown behind authentication and acknowledges before dispatch", async () => {
+  it("finishes the authenticated shutdown acknowledgement before dispatching teardown", async () => {
+    const sequence: string[] = [];
+    application.server.prependListener("request", (_request, response) => {
+      response.once("finish", () => {
+        if (response.statusCode === 202) sequence.push("acknowledged");
+      });
+    });
+    shutdown.mockImplementation(() => {
+      sequence.push("shutdown");
+    });
+
     await request(application.server).post("/api/host/shutdown").expect(401);
+    expect(shutdown).not.toHaveBeenCalled();
     await request(application.server)
       .post("/api/host/shutdown")
       .set("Authorization", `Bearer ${token}`)
       .expect(202);
-    await vi.waitFor(() => expect(shutdown).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(shutdown).toHaveBeenCalledOnce());
+    expect(sequence).toEqual(["acknowledged", "shutdown"]);
   });
 
   it("keeps maintenance restart coordination behind local authentication", async () => {
@@ -289,150 +183,6 @@ describe("local host API", () => {
       updateStatus: { piUpdateChecking: false },
     });
   });
-
-  it("broadcasts one update acknowledgement to every connected view", async () => {
-    await request(application.server)
-      .get("/api/update")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    const observed = await request(application.server)
-      .get("/api/pi-update")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    const identity = observed.body.updateStatus
-      .availableUpdateIdentity as string;
-    expect(identity).toBeTruthy();
-
-    const connect = async (): Promise<WebSocket> => {
-      const socket = new WebSocket(
-        `${baseUrl.replace("http", "ws")}/events?token=${token}`,
-      );
-      await new Promise<void>((resolveSnapshot, rejectSnapshot) => {
-        const onMessage = (data: WebSocket.RawData) => {
-          const frame = JSON.parse(data.toString()) as { type?: string };
-          if (frame.type !== "snapshot") return;
-          socket.off("message", onMessage);
-          resolveSnapshot();
-        };
-        socket.on("message", onMessage);
-        socket.once("error", rejectSnapshot);
-      });
-      return socket;
-    };
-    const [localView, remoteView] = await Promise.all([connect(), connect()]);
-    try {
-      const nextUpdate = (socket: WebSocket) =>
-        new Promise<Record<string, unknown>>((resolveUpdate, rejectUpdate) => {
-          const onMessage = (data: WebSocket.RawData) => {
-            const frame = JSON.parse(data.toString()) as Record<
-              string,
-              unknown
-            >;
-            if (frame.type !== "update_status") return;
-            socket.off("message", onMessage);
-            resolveUpdate(frame);
-          };
-          socket.on("message", onMessage);
-          socket.once("error", rejectUpdate);
-        });
-      const localEvent = nextUpdate(localView);
-      const remoteEvent = nextUpdate(remoteView);
-
-      const dismissed = await request(application.server)
-        .post("/api/update/snooze")
-        .set("Authorization", `Bearer ${token}`)
-        .send({ identity })
-        .expect(200);
-      const [localFrame, remoteFrame] = await Promise.all([
-        localEvent,
-        remoteEvent,
-      ]);
-      expect(localFrame.updateStatus).toMatchObject({
-        updateSnoozedUntil: dismissed.body.updateSnoozedUntil,
-      });
-      expect(remoteFrame.updateStatus).toEqual(localFrame.updateStatus);
-    } finally {
-      localView.close();
-      remoteView.close();
-    }
-  });
-
-  // Multiple HTTP requests run real native hidden-attribute commands on the
-  // host. This checks behavior, not a 5-second budget for the whole scenario.
-  it("keeps file visibility and resource authority independent of Git through the HTTP API", async () => {
-    await mkdir(join(temporary, "dist"));
-    await mkdir(join(temporary, "empty"));
-    await mkdir(join(temporary, ".git"));
-    await writeFile(join(temporary, ".git", "index"), "corrupt Git fixture");
-    await writeFile(join(temporary, ".gitignore"), "dist/\n");
-    await writeFile(join(temporary, "dist", "report.md"), "# Ignored output\n");
-    await writeFile(join(temporary, ".env"), "SYNTHETIC_CONFIG=true\n");
-    const opened = await request(application.server)
-      .post("/api/sessions/new")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ cwd: temporary })
-      .expect(200);
-    const sessionId = opened.body.active.sessionId as string;
-    const listing = await request(application.server)
-      .get("/api/files/list")
-      .query({ sessionId })
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(listing.body).toMatchObject({
-      entries: [
-        { name: "dist", type: "dir" },
-        { name: "empty", type: "dir" },
-      ],
-      truncated: false,
-    });
-    const hidden = await request(application.server)
-      .get("/api/files/list")
-      .query({ sessionId, showHidden: "1" })
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(hidden.body.entries).toContainEqual({ name: ".env", type: "file" });
-    for (const endpoint of ["/api/files", "/api/new-session/files"]) {
-      const query =
-        endpoint === "/api/files" ? { sessionId } : { cwd: temporary };
-      const visible = await request(application.server)
-        .get(endpoint)
-        .query({ ...query, q: "report" })
-        .set("Authorization", `Bearer ${token}`)
-        .expect(200);
-      expect(visible.body.files).toEqual([
-        { name: "report.md", path: "dist/report.md" },
-      ]);
-      const excluded = await request(application.server)
-        .get(endpoint)
-        .query({ ...query, q: ".env" })
-        .set("Authorization", `Bearer ${token}`)
-        .expect(200);
-      expect(excluded.body.files).toEqual([]);
-      const included = await request(application.server)
-        .get(endpoint)
-        .query({ ...query, q: ".env", showHidden: "1" })
-        .set("Authorization", `Bearer ${token}`)
-        .expect(200);
-      expect(included.body.files).toEqual([{ name: ".env", path: ".env" }]);
-      await request(application.server)
-        .get(endpoint)
-        .query({ ...query, showHidden: "yes" })
-        .set("Authorization", `Bearer ${token}`)
-        .expect(400);
-    }
-    // Visibility is not access control, including when the file was never searched.
-    const resolved = await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId, reference: ".env", workspacePath: ".env" })
-      .expect(200);
-    const downloaded = await request(application.server)
-      .get(`/api/resources/${resolved.body.id}/content`)
-      .query({ sessionId, download: "1" })
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(downloaded.text).toBe("SYNTHETIC_CONFIG=true\n");
-  }, 30_000);
 
   it("preflights Pi defaults and project files against one canonical prospective workspace", async () => {
     await writeFile(join(temporary, "app.ts"), "export {};\n");
@@ -520,425 +270,6 @@ describe("local host API", () => {
     expect(resourceClose).toHaveBeenCalledOnce();
     expect(attachmentClose).toHaveBeenCalledOnce();
     runtimeClose.mockRestore();
-  });
-
-  it("requires the launch token and rejects foreign origins", async () => {
-    await request(application.server).get("/api/bootstrap").expect(401);
-    await api().set("Origin", "https://example.invalid").expect(403);
-    await api()
-      .set("Origin", `https://${new URL(baseUrl).host}`)
-      .expect(403);
-    await request(application.server)
-      .post("/api/auth/pair")
-      .set("Origin", "https://example.invalid")
-      .send({ token })
-      .expect(403);
-    await request(application.server)
-      .post("/api/auth/pair")
-      .set("Origin", `https://${new URL(baseUrl).host}`)
-      .send({ token })
-      .expect(403);
-    const health = await request(application.server)
-      .get("/api/health")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(health.body).toEqual({ appName: "inspire", mock: true });
-    const response = await api().expect(200);
-    expect(response.body).toMatchObject({
-      appName: "inspire",
-      mock: true,
-      piVersion: "0.80.10",
-      availableModels: [
-        { provider: "anthropic", id: "claude-sonnet-4", reasoning: true },
-      ],
-    });
-    expect(response.headers["cache-control"]).toBe("no-store");
-    expect(response.headers["content-security-policy"]).toContain(
-      "default-src 'self'",
-    );
-    // Remote images are barred so untrusted transcript content cannot fire
-    // network requests just by rendering.
-    expect(response.headers["content-security-policy"]).toContain(
-      "img-src 'self' data: blob:",
-    );
-    expect(response.headers["content-security-policy"]).not.toMatch(
-      /img-src[^;]*https:/,
-    );
-    expect(response.headers["content-security-policy"]).toContain(
-      "media-src 'self' blob:",
-    );
-  });
-
-  it("pairs a browser once with an HttpOnly same-site cookie for HTTP and WebSocket access", async () => {
-    const agent = request.agent(application.server);
-    await agent
-      .post("/api/auth/pair")
-      .set("Origin", baseUrl)
-      .send({ token: "wrong" })
-      .expect(401);
-    const paired = await agent
-      .post("/api/auth/pair")
-      .set("Origin", baseUrl)
-      .send({ token })
-      .expect(204);
-    const setCookie = paired.headers["set-cookie"] as unknown as string[];
-    expect(setCookie[0]).toContain(
-      `${accessCookieName(new URL(baseUrl).host)}=`,
-    );
-    expect(setCookie[0]).toContain("HttpOnly");
-    expect(setCookie[0]).toContain("SameSite=Strict");
-    expect(setCookie[0]).toContain("Path=/");
-    await agent.get("/api/bootstrap").expect(200);
-
-    const cookieName = accessCookieName(new URL(baseUrl).host);
-    const cookie = setCookie[0]!.split(";", 1)[0]!;
-    await request(application.server)
-      .get("/api/bootstrap")
-      .set("Cookie", `${cookieName}=stale; ${cookie}`)
-      .expect(200);
-    const expired = await request(application.server)
-      .get("/api/bootstrap")
-      .set("Cookie", `${cookieName}=stale`)
-      .expect(401);
-    expect(String(expired.headers["set-cookie"])).toContain(`${cookieName}=`);
-    expect(String(expired.headers["set-cookie"])).toContain(
-      "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
-    );
-
-    const socket = new WebSocket(`${baseUrl.replace("http", "ws")}/events`, {
-      headers: { Cookie: cookie },
-      origin: baseUrl,
-    });
-    try {
-      const firstFrame = await new Promise<Record<string, unknown>>(
-        (resolveFrame, reject) => {
-          socket.once("message", (data) =>
-            resolveFrame(
-              JSON.parse(data.toString()) as Record<string, unknown>,
-            ),
-          );
-          socket.once("error", reject);
-        },
-      );
-      expect(firstFrame.type).toBe("snapshot");
-    } finally {
-      socket.close();
-    }
-  });
-
-  it("keeps pairing cookies independent across Host ports", async () => {
-    const otherToken = "other-local-token";
-    const other = createInspireServer({
-      token: otherToken,
-      runtime: new MockRuntime(),
-      catalog: new MockCatalog(),
-      attachments: new AttachmentStore(join(temporary, "other-uploads")),
-      preferences: new PreferencesStore(
-        join(temporary, "other-preferences.json"),
-      ),
-      resources: new ResourceStore(),
-      git,
-      mock: true,
-      version: "0.1.0-test",
-      piVersion: "0.80.10",
-    });
-    await new Promise<void>((resolve) =>
-      other.server.listen(0, "127.0.0.1", resolve),
-    );
-    const firstHost = "127.0.0.1:4587";
-    const secondHost = "127.0.0.1:4588";
-    try {
-      const first = await request(application.server)
-        .post("/api/auth/pair")
-        .set("Host", firstHost)
-        .set("Origin", `http://${firstHost}`)
-        .send({ token })
-        .expect(204);
-      const second = await request(other.server)
-        .post("/api/auth/pair")
-        .set("Host", secondHost)
-        .set("Origin", `http://${secondHost}`)
-        .send({ token: otherToken })
-        .expect(204);
-      const firstCookie = String(first.headers["set-cookie"]).split(";", 1)[0]!;
-      const secondCookie = String(second.headers["set-cookie"]).split(
-        ";",
-        1,
-      )[0]!;
-      expect(firstCookie).toContain(`${accessCookieName(firstHost)}=`);
-      expect(secondCookie).toContain(`${accessCookieName(secondHost)}=`);
-      expect(accessCookieName(firstHost)).not.toBe(
-        accessCookieName(secondHost),
-      );
-      const cookies = `${firstCookie}; ${secondCookie}`;
-
-      await request(application.server)
-        .get("/api/bootstrap")
-        .set("Host", firstHost)
-        .set("Origin", `http://${firstHost}`)
-        .set("Cookie", cookies)
-        .expect(200);
-      await request(other.server)
-        .get("/api/bootstrap")
-        .set("Host", secondHost)
-        .set("Origin", `http://${secondHost}`)
-        .set("Cookie", cookies)
-        .expect(200);
-    } finally {
-      await other.close();
-    }
-  });
-
-  it("sets a Secure pairing cookie through a trusted loopback HTTPS proxy", async () => {
-    const proxied = createInspireServer({
-      token,
-      runtime: new MockRuntime(),
-      catalog: new MockCatalog(),
-      attachments: new AttachmentStore(join(temporary, "proxy-uploads")),
-      preferences: new PreferencesStore(
-        join(temporary, "proxy-preferences.json"),
-      ),
-      resources: new ResourceStore(),
-      git,
-      mock: true,
-      version: "0.1.0-test",
-      piVersion: "0.80.10",
-    });
-    await new Promise<void>((resolve) =>
-      proxied.server.listen(0, "127.0.0.1", resolve),
-    );
-    try {
-      const paired = await request(proxied.server)
-        .post("/api/auth/pair")
-        .set("Host", "inspire.example.test")
-        .set("Origin", "https://inspire.example.test")
-        .set("X-Forwarded-Proto", "https")
-        .send({ token })
-        .expect(204);
-      expect(String(paired.headers["set-cookie"])).toContain("Secure");
-    } finally {
-      await proxied.close();
-    }
-  });
-
-  it("serves current and retained hashed assets without using the SPA fallback", async () => {
-    const dist = await mkdtemp(join(tmpdir(), ".inspire-dist-"));
-    const retainedAssets = await mkdtemp(
-      join(tmpdir(), "inspire-retained-assets-"),
-    );
-    await mkdir(join(dist, "assets"));
-    await writeFile(
-      join(dist, "assets", "index-abc123.js"),
-      "console.log(1)\n",
-    );
-    await writeFile(
-      join(retainedAssets, "index-abc123.js"),
-      "console.log('stale duplicate')\n",
-    );
-    await writeFile(
-      join(retainedAssets, "ContextPane-old123.js"),
-      "export const ContextPane = {}\n",
-    );
-    await writeFile(join(dist, "theme-init.js"), "/* theme */\n");
-    await writeFile(
-      join(dist, "index.html"),
-      "<!doctype html><title>INSΠRE</title>",
-    );
-    const served = createInspireServer({
-      token,
-      runtime: new MockRuntime(),
-      catalog: new MockCatalog(),
-      attachments: new AttachmentStore(join(dist, "uploads")),
-      preferences: new PreferencesStore(join(dist, "preferences.json")),
-      resources: new ResourceStore(),
-      git,
-      mock: true,
-      version: "0.1.0-test",
-      piVersion: "0.80.10",
-      distDir: dist,
-      staticAssetCacheDirs: [retainedAssets],
-    });
-    await new Promise<void>((resolve) =>
-      served.server.listen(0, "127.0.0.1", resolve),
-    );
-    try {
-      const hashed = await request(served.server)
-        .get("/assets/index-abc123.js")
-        .expect(200);
-      expect(hashed.headers["cache-control"]).toContain("immutable");
-      expect(hashed.headers["cache-control"]).toContain("max-age=31536000");
-      expect(hashed.text).toBe("console.log(1)\n");
-      const retained = await request(served.server)
-        .get("/assets/ContextPane-old123.js")
-        .expect(200);
-      expect(retained.text).toBe("export const ContextPane = {}\n");
-      expect(retained.headers["cache-control"]).toContain("immutable");
-      const missingAsset = await request(served.server)
-        .get("/assets/ContextPane-missing.js")
-        .expect(404);
-      expect(missingAsset.headers["content-type"]).toMatch(/^text\/plain/u);
-      expect(missingAsset.headers["cache-control"]).toBe("no-store");
-      expect(missingAsset.text).toBe("Static asset not found");
-      expect(missingAsset.text).not.toContain("<title>INSΠRE</title>");
-      // Unhashed root script must revalidate, never inherit the 1y policy.
-      const theme = await request(served.server)
-        .get("/theme-init.js")
-        .expect(200);
-      expect(theme.headers["cache-control"]).not.toContain("immutable");
-      expect(theme.headers["cache-control"]).toContain("max-age=0");
-      // The SPA shell is always revalidated so a new bundle hash is picked up.
-      for (const path of ["/", "/some/deep/route"]) {
-        const shell = await request(served.server).get(path).expect(200);
-        expect(shell.text).toContain("<title>INSΠRE</title>");
-        expect(shell.headers["cache-control"]).toBe("no-cache");
-      }
-
-      const browser = request.agent(served.server);
-      const launch = await browser
-        .get(`/?token=${encodeURIComponent(token)}`)
-        .redirects(0)
-        .expect(303);
-      expect(launch.headers.location).toBe("/");
-      expect(String(launch.headers["set-cookie"])).toContain("inspire_access_");
-      await browser.get("/api/bootstrap").expect(200);
-      const missingApi = await browser.get("/api/not-a-route").expect(404);
-      expect(missingApi.body).toEqual({ error: "API route not found" });
-    } finally {
-      await served.close();
-      await rm(dist, { recursive: true, force: true });
-      await rm(retainedAssets, { recursive: true, force: true });
-    }
-  });
-
-  it("keeps direct token URLs local and rejects them through forwarded HTTPS", async () => {
-    const dist = await mkdtemp(join(tmpdir(), "inspire-relay-dist-"));
-    await writeFile(
-      join(dist, "index.html"),
-      "<!doctype html><title>INSΠRE</title>",
-    );
-    const relay = createInspireServer({
-      token,
-      runtime: new MockRuntime(),
-      catalog: new MockCatalog(),
-      attachments: new AttachmentStore(join(dist, "uploads")),
-      preferences: new PreferencesStore(join(dist, "preferences.json")),
-      resources: new ResourceStore(),
-      git,
-      mock: true,
-      version: "0.1.0-test",
-      piVersion: "0.80.10",
-      distDir: dist,
-    });
-    await new Promise<void>((resolve) =>
-      relay.server.listen(0, "127.0.0.1", resolve),
-    );
-    const address = relay.server.address() as AddressInfo;
-    const forwardedOrigin = `https://127.0.0.1:${address.port}`;
-    try {
-      const direct = request.agent(relay.server);
-      const directLaunch = await direct
-        .get(`/?token=${encodeURIComponent(token)}`)
-        .redirects(0)
-        .expect(303);
-      expect(directLaunch.headers.location).toBe("/");
-      expect(String(directLaunch.headers["set-cookie"])).toContain(
-        "inspire_access_",
-      );
-      expect(String(directLaunch.headers["set-cookie"])).not.toContain(
-        "Secure",
-      );
-      await direct.get("/api/bootstrap").expect(200);
-
-      const forwardedLaunch = await request(relay.server)
-        .get(`/?token=${encodeURIComponent(token)}`)
-        .set("X-Forwarded-Proto", "https")
-        .redirects(0)
-        .expect(303);
-      expect(forwardedLaunch.headers.location).toBe("/");
-      expect(String(forwardedLaunch.headers["set-cookie"])).not.toContain(
-        "inspire_access_",
-      );
-
-      await request(relay.server)
-        .post("/api/auth/pair")
-        .set("Origin", forwardedOrigin.replace("https:", "http:"))
-        .set("X-Forwarded-Proto", "https")
-        .send({ token })
-        .expect(403);
-
-      const paired = await request(relay.server)
-        .post("/api/auth/pair")
-        .set("Origin", forwardedOrigin)
-        .set("X-Forwarded-Proto", "https")
-        .send({ token })
-        .expect(204);
-      const cookie = String(paired.headers["set-cookie"]).split(";", 1)[0]!;
-      expect(String(paired.headers["set-cookie"])).toContain("Secure");
-
-      const rejected = new WebSocket(
-        `ws://127.0.0.1:${address.port}/events?token=${encodeURIComponent(token)}`,
-        {
-          headers: { "X-Forwarded-Proto": "https" },
-          origin: forwardedOrigin,
-        },
-      );
-      await new Promise<void>((resolveRejected, rejectRejected) => {
-        rejected.once("open", () =>
-          rejectRejected(new Error("forwarded query-token socket opened")),
-        );
-        rejected.once("close", () => resolveRejected());
-        rejected.once("error", () => resolveRejected());
-      });
-
-      // Forwarded query credentials remain ineligible, but a stale page may
-      // still append one after it has a valid pairing cookie. Ignore that
-      // parameter rather than vetoing the independently authenticated cookie.
-      const stalePageSocket = new WebSocket(
-        `ws://127.0.0.1:${address.port}/events?token=stale-page-token`,
-        {
-          headers: { Cookie: cookie, "X-Forwarded-Proto": "https" },
-          origin: forwardedOrigin,
-        },
-      );
-      try {
-        const firstFrame = await new Promise<Record<string, unknown>>(
-          (resolveFrame, rejectFrame) => {
-            stalePageSocket.once("message", (data) =>
-              resolveFrame(
-                JSON.parse(data.toString()) as Record<string, unknown>,
-              ),
-            );
-            stalePageSocket.once("error", rejectFrame);
-          },
-        );
-        expect(firstFrame.type).toBe("snapshot");
-      } finally {
-        stalePageSocket.close();
-      }
-
-      const socket = new WebSocket(`ws://127.0.0.1:${address.port}/events`, {
-        headers: { Cookie: cookie, "X-Forwarded-Proto": "https" },
-        origin: forwardedOrigin,
-      });
-      try {
-        const firstFrame = await new Promise<Record<string, unknown>>(
-          (resolveFrame, rejectFrame) => {
-            socket.once("message", (data) =>
-              resolveFrame(
-                JSON.parse(data.toString()) as Record<string, unknown>,
-              ),
-            );
-            socket.once("error", rejectFrame);
-          },
-        );
-        expect(firstFrame.type).toBe("snapshot");
-      } finally {
-        socket.close();
-      }
-    } finally {
-      await relay.close();
-      await rm(dist, { recursive: true, force: true });
-    }
   });
 
   it("lists and opens Pi sessions through the typed API", async () => {
@@ -1049,63 +380,113 @@ describe("local host API", () => {
     }
   });
 
-  it("executes typed Pi native commands and runtime settings behind authentication", async () => {
-    await request(application.server)
-      .post("/api/sessions/open")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ id: "mock-active" })
-      .expect(200);
+  it("dispatches a validated native command only to its authenticated explicit target", async () => {
+    await runtime.openSession("mock-active");
+    await runtime.openSession("mock-history");
+    const native = vi.spyOn(runtime, "nativeCommand");
 
     await request(application.server)
       .post("/api/control/native-command")
       .send({ sessionId: "mock-active", command: "compact" })
       .expect(401);
+    await request(application.server)
+      .post("/api/control/native-command")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", command: "unknown" })
+      .expect(400);
+    expect(native).not.toHaveBeenCalled();
+
+    const command = {
+      sessionId: "mock-active",
+      command: "compact",
+      argument: "preserve decisions",
+    };
     const compacted = await request(application.server)
       .post("/api/control/native-command")
       .set("Authorization", `Bearer ${token}`)
-      .send({
-        sessionId: "mock-active",
-        command: "compact",
-        argument: "preserve decisions",
-      })
+      .send(command)
       .expect(200);
     expect(compacted.headers["cache-control"]).toContain("no-store");
     expect(compacted.body).toMatchObject({
       command: "compact",
       outcome: "completed",
     });
-
-    await request(application.server)
-      .post("/api/control/auto-compaction")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId: "mock-active", enabled: false })
-      .expect(200, { ok: true });
-    await request(application.server)
-      .post("/api/control/steering-mode")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId: "mock-active", mode: "one-at-a-time" })
-      .expect(200, { ok: true });
-    await request(application.server)
-      .post("/api/control/follow-up-mode")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId: "mock-active", mode: "all" })
-      .expect(200, { ok: true });
-    const snapshot = await request(application.server)
-      .get("/api/snapshot")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(snapshot.body.active.runtimeSettings).toMatchObject({
-      autoCompactionEnabled: false,
-      steeringMode: "one-at-a-time",
-      followUpMode: "all",
-    });
-
-    await request(application.server)
-      .post("/api/control/native-command")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId: "mock-active", command: "unknown" })
-      .expect(400);
+    expect(native).toHaveBeenCalledExactlyOnceWith(command);
+    expect(runtime.activeSessionId).toBe("mock-history");
   });
+
+  it.each([
+    {
+      route: "auto-compaction",
+      method: "setAutoCompaction",
+      field: "enabled",
+      value: false,
+      invalid: "false",
+      stateKey: "autoCompactionEnabled",
+    },
+    {
+      route: "auto-retry",
+      method: "setAutoRetry",
+      field: "enabled",
+      value: false,
+      invalid: "false",
+      stateKey: "autoRetryEnabled",
+    },
+    {
+      route: "steering-mode",
+      method: "setSteeringMode",
+      field: "mode",
+      value: "one-at-a-time",
+      invalid: "invalid",
+      stateKey: "steeringMode",
+    },
+    {
+      route: "follow-up-mode",
+      method: "setFollowUpMode",
+      field: "mode",
+      value: "all",
+      invalid: "invalid",
+      stateKey: "followUpMode",
+    },
+  ] as const)(
+    "$route changes only the named session's field after authentication and validation",
+    async ({ route, method, field, value, invalid, stateKey }) => {
+      await runtime.openSession("mock-active");
+      await runtime.openSession("mock-history");
+      const targetBefore = (await runtime.snapshot("mock-active")).active!
+        .runtimeSettings;
+      const selectedBefore = (await runtime.snapshot()).active!.runtimeSettings;
+      const change = vi.spyOn(runtime, method);
+      const path = `/api/control/${route}`;
+      const body = { sessionId: "mock-active", [field]: value };
+
+      await request(application.server).post(path).send(body).expect(401);
+      for (const invalidBody of [
+        { [field]: value },
+        { sessionId: "mock-active", [field]: invalid },
+      ])
+        await request(application.server)
+          .post(path)
+          .set("Authorization", `Bearer ${token}`)
+          .send(invalidBody)
+          .expect(400);
+      expect(change).not.toHaveBeenCalled();
+
+      await request(application.server)
+        .post(path)
+        .set("Authorization", `Bearer ${token}`)
+        .send(body)
+        .expect(200, { ok: true });
+      expect(change).toHaveBeenCalledExactlyOnceWith("mock-active", value);
+      expect(
+        (await runtime.snapshot("mock-active")).active?.runtimeSettings,
+      ).toEqual({ ...targetBefore, [stateKey]: value });
+      expect((await runtime.snapshot()).active?.runtimeSettings).toEqual(
+        selectedBefore,
+      );
+      expect(runtime.activeSessionId).toBe("mock-history");
+    },
+  );
 
   it("clears host selection when the browser opens New session", async () => {
     await request(application.server)
@@ -1514,9 +895,12 @@ describe("local host API", () => {
     await request(application.server)
       .patch("/api/preferences")
       .set("Authorization", `Bearer ${token}`)
-      .send({ theme: "dark" })
-      .expect(200)
-      .expect((response) => expect(response.body.theme).toBe("dark"));
+      .send({
+        theme: "dark",
+        projectDisplay: "path",
+        pinnedSessionIds: ["session-a"],
+      })
+      .expect(200);
     // Two patches racing on different fields must both survive.
     const racing = await Promise.all([
       request(application.server)
@@ -1564,43 +948,14 @@ describe("local host API", () => {
       toolVisibility: "hidden",
       activityFoldVisibility: "compact",
       assistantRoundDisplay: "divider",
-      projectDisplay: "folder",
+      projectDisplay: "path",
       completionAttention: "off",
       recentModelIds: [],
-      pinnedSessionIds: [],
+      pinnedSessionIds: ["session-a"],
       pinnedProjectCwds: [],
       hiddenProjectCwds: [],
       hiddenSessionIds: [],
       navCollapsedGroups: ["/home/demo/older"],
-    });
-  });
-
-  it("keeps unpatched defaulted fields intact across field-scoped patches", async () => {
-    // Start from non-default values for every field the schema defaults:
-    // a later patch must not resurrect those defaults over stored state.
-    await request(application.server)
-      .patch("/api/preferences")
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        projectDisplay: "path",
-        pinnedSessionIds: ["session-a"],
-        navCollapsedGroups: ["/project/a"],
-      })
-      .expect(200);
-    await request(application.server)
-      .patch("/api/preferences")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ theme: "dark" })
-      .expect(200);
-    const stored = await request(application.server)
-      .get("/api/preferences")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(stored.body).toMatchObject({
-      theme: "dark",
-      projectDisplay: "path",
-      pinnedSessionIds: ["session-a"],
-      navCollapsedGroups: ["/project/a"],
     });
   });
 
@@ -1629,81 +984,6 @@ describe("local host API", () => {
       .get("/api/files/list?sessionId=not-open")
       .set("Authorization", `Bearer ${token}`)
       .expect(409);
-  });
-
-  it("serves only authenticated session-addressed Git status and diff inspection", async () => {
-    await request(application.server)
-      .get("/api/git/status?sessionId=mock-active")
-      .expect(401);
-    await request(application.server)
-      .get("/api/git/status?sessionId=not-open")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(409);
-    await request(application.server)
-      .post("/api/sessions/open")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ id: "mock-active" })
-      .expect(200);
-    const status = await request(application.server)
-      .get("/api/git/status?sessionId=mock-active")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(status.body).toEqual({ kind: "not-repository" });
-    expect(git.status).toHaveBeenCalledWith(
-      mockWorkspace,
-      expect.any(AbortSignal),
-    );
-
-    await request(application.server)
-      .post("/api/git/diff")
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        sessionId: "mock-active",
-        pathId: "not base64!",
-        side: "unstaged",
-      })
-      .expect(400);
-    await request(application.server)
-      .post("/api/git/diff")
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        sessionId: "mock-active",
-        pathId: "ZmlsZS50eHQ",
-        side: "working",
-      })
-      .expect(400);
-    const diff = await request(application.server)
-      .post("/api/git/diff")
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        sessionId: "mock-active",
-        pathId: "ZmlsZS50eHQ",
-        side: "unstaged",
-      })
-      .expect(200);
-    expect(diff.body).toMatchObject({ kind: "empty", side: "unstaged" });
-    expect(git.diff).toHaveBeenCalledWith(
-      mockWorkspace,
-      "ZmlsZS50eHQ",
-      "unstaged",
-      expect.any(AbortSignal),
-    );
-
-    for (const route of [
-      "add",
-      "commit",
-      "restore",
-      "checkout",
-      "history",
-      "blame",
-      "push",
-    ]) {
-      await request(application.server)
-        .post(`/api/git/${route}`)
-        .set("Authorization", `Bearer ${token}`)
-        .send({ sessionId: "mock-active" })
-        .expect(404);
-    }
   });
 
   it("browses host roots and directories without a session and rejects relative paths", async () => {
@@ -1831,1017 +1111,14 @@ describe("local host API", () => {
       });
   });
 
-  it("isolates two socket detail interests while retaining global outcomes and needs-input", async () => {
+  it("refuses missing or unopened write targets instead of falling back to the selected session", async () => {
     await runtime.openSession("mock-active");
-    await runtime.openSession("mock-older");
-    const connect = async (id: string, digest?: string) => {
-      const frames: DetailFrame[] = [];
-      const socket = new WebSocket(
-        `${baseUrl.replace("http", "ws")}/events?token=${token}&detail=${id}${digest ? `&snapshot=${digest}` : ""}`,
-      );
-      socket.on("message", (data) => frames.push(JSON.parse(data.toString())));
-      await vi.waitFor(() => expect(frames[0]?.type).toBe("snapshot"));
-      return { socket, frames };
-    };
-    const a = await connect("mock-active");
-    const b = await connect("mock-older");
-    try {
-      expect(a.frames[0]?.data?.active?.sessionId).toBe("mock-active");
-      expect(b.frames[0]?.data?.active?.sessionId).toBe("mock-older");
-      const resumed = await connect("mock-active", a.frames[0]?.snapshotDigest);
-      expect(resumed.frames[0]).toMatchObject({
-        unchanged: true,
-        detailSessionId: "mock-active",
-        detailRevision: 0,
-      });
-      resumed.socket.close();
-      const changed = await connect("mock-active", "0".repeat(64));
-      expect(changed.frames[0]?.unchanged).toBeUndefined();
-      expect(changed.frames[0]?.data?.active?.sessionId).toBe("mock-active");
-      changed.socket.close();
-      a.frames.length = 0;
-      b.frames.length = 0;
-      // No connection owns this body: even an unserializable detail must not
-      // disconnect unrelated viewers or enter the encoded-event path.
-      runtime.emit("event", {
-        type: "message_update",
-        sessionId: "unobserved",
-        message: 1n,
-        sessionStatus: { runState: "running" },
-      });
-      for (const sessionId of ["mock-active", "mock-older"]) {
-        runtime.emit("event", {
-          type: "agent_start",
-          sessionId,
-          sessionStatus: { runState: "running" },
-        });
-        for (let index = 0; index < 10; index++)
-          runtime.emit("event", {
-            type: "message_update",
-            sessionId,
-            streamDelta: true,
-            streamMessageKey: `${sessionId}-assistant`,
-            streamTextLength: index + 1,
-            assistantMessageEvent: {
-              type: "text_delta",
-              contentIndex: 0,
-              delta: "x",
-            },
-            message: {
-              role: "assistant",
-              content: [{ type: "text", text: "x".repeat(index + 1) }],
-            },
-            sessionStatus: { runState: "running" },
-          });
-        runtime.emit("event", {
-          type: "extension_ui_request",
-          sessionId,
-          title: "private dialog body",
-          sessionStatus: { runState: "running", needsInput: true },
-        });
-        runtime.emit("event", {
-          type: "agent_settled",
-          sessionId,
-          messages: ["private settled body"],
-          sessionStatus: { runState: "idle", indicator: "completed" },
-        });
-        runtime.emit("event", {
-          type: "runtime_error",
-          sessionId,
-          message: "private error detail",
-          sessionStatus: { runState: "failed", indicator: "failed" },
-        });
-      }
-      await vi.waitFor(() =>
-        expect(
-          a.frames.filter((frame) => frame.type === "runtime_error"),
-        ).toHaveLength(2),
-      );
-      await vi.waitFor(() =>
-        expect(
-          b.frames.filter((frame) => frame.type === "runtime_error"),
-        ).toHaveLength(2),
-      );
-      for (const [viewer, selected, background] of [
-        [a, "mock-active", "mock-older"],
-        [b, "mock-older", "mock-active"],
-      ] as const) {
-        expect(
-          viewer.frames
-            .filter((frame) => frame.type === "message_update_batch")
-            .map((frame) => frame.sessionId),
-        ).toEqual([selected]);
-        const global = viewer.frames.filter(
-          (frame) => frame.sessionId === background,
-        );
-        expect(global.map((frame) => frame.type)).toEqual([
-          "agent_start",
-          "session_status",
-          "agent_settled",
-          "runtime_error",
-        ]);
-        expect(global[1]?.sessionStatus?.needsInput).toBe(true);
-        expect(JSON.stringify(global)).not.toContain("private");
-        expect(JSON.stringify(global)).not.toContain("assistantMessageEvents");
-      }
-    } finally {
-      a.socket.close();
-      b.socket.close();
-    }
-  });
+    const before = await runtime.snapshot();
+    const prompt = vi.spyOn(runtime, "prompt");
+    const abort = vi.spyOn(runtime, "abort");
+    const events: Array<Record<string, unknown>> = [];
+    runtime.on("event", (event) => events.push(event));
 
-  it("fences changed interest snapshots and queues global and new-owner changes across the read", async () => {
-    await runtime.openSession("mock-active");
-    await runtime.openSession("mock-older");
-    const originalSnapshot = runtime.snapshot.bind(runtime);
-    let release!: () => void;
-    let releaseNew!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const newGate = new Promise<void>((resolve) => {
-      releaseNew = resolve;
-    });
-    const snapshotSpy = vi
-      .spyOn(runtime, "snapshot")
-      .mockImplementation(async (sessionId) => {
-        const snapshot = await originalSnapshot(sessionId);
-        await (sessionId === "mock-active" ? gate : newGate);
-        return snapshot;
-      });
-    const frames: DetailFrame[] = [];
-    const socket = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}&detail=mock-active`,
-    );
-    socket.on("message", (data) => frames.push(JSON.parse(data.toString())));
-    try {
-      await new Promise<void>((resolve) => socket.once("open", resolve));
-      runtime.emit("event", {
-        type: "agent_start",
-        sessionId: "mock-active",
-        sessionStatus: { runState: "running" },
-      });
-      socket.send(
-        JSON.stringify({
-          type: "detail_interest",
-          sessionId: "mock-older",
-          revision: 1,
-        }),
-      );
-      await vi.waitFor(() =>
-        expect(snapshotSpy).toHaveBeenCalledWith("mock-older"),
-      );
-      runtime.emit("event", {
-        type: "message_update",
-        sessionId: "mock-older",
-        streamDelta: true,
-        streamMessageKey: "new-assistant",
-        streamTextLength: 9,
-        assistantMessageEvent: {
-          type: "text_delta",
-          contentIndex: 0,
-          delta: "new-owner",
-        },
-        message: { role: "assistant", content: "new-owner" },
-      });
-      expect(frames).toHaveLength(0);
-      releaseNew();
-      await vi.waitFor(() => expect(frames[0]?.detailRevision).toBe(1));
-      release();
-      runtime.emit("event", {
-        type: "agent_settled",
-        sessionId: "mock-active",
-        messages: ["old-owner-body"],
-        sessionStatus: { runState: "idle" },
-      });
-      await vi.waitFor(() =>
-        expect(frames.some((frame) => frame.type === "agent_settled")).toBe(
-          true,
-        ),
-      );
-      expect(frames.filter((frame) => frame.type === "snapshot")).toHaveLength(
-        1,
-      );
-      expect(frames[0]?.data?.active?.sessionId).toBe("mock-older");
-      expect(frames.map((frame) => frame.type)).toEqual([
-        "snapshot",
-        "agent_start",
-        "message_update",
-        "agent_settled",
-      ]);
-      expect(JSON.stringify(frames)).not.toContain("old-owner-body");
-      expect(snapshotSpy).toHaveBeenCalledWith("mock-older");
-    } finally {
-      release();
-      releaseNew();
-      socket.close();
-    }
-  });
-
-  it("delivers the snapshot before any live event on a new socket", async () => {
-    let releaseSnapshot!: () => void;
-    const gate = new Promise<void>((resolveGate) => {
-      releaseSnapshot = resolveGate;
-    });
-    class GatedRuntime extends MockRuntime {
-      override async snapshot() {
-        await gate;
-        return super.snapshot();
-      }
-    }
-    const runtime = new GatedRuntime();
-    const gatedApp = createInspireServer({
-      token,
-      runtime,
-      catalog: new MockCatalog(),
-      attachments: new AttachmentStore(join(temporary, "uploads-gated")),
-      preferences: new PreferencesStore(
-        join(temporary, "preferences-gated.json"),
-      ),
-      resources: new ResourceStore(),
-      git,
-      mock: true,
-      version: "0.1.0-test",
-      piVersion: "0.80.10",
-      distDir: join(temporary, "missing-dist"),
-    });
-    await new Promise<void>((resolve) =>
-      gatedApp.server.listen(0, "127.0.0.1", resolve),
-    );
-    const address = gatedApp.server.address() as AddressInfo;
-    const socket = new WebSocket(
-      `ws://127.0.0.1:${address.port}/events?token=${token}&detail=mock-active`,
-    );
-    const frames: Array<Record<string, unknown>> = [];
-    socket.on("message", (data) =>
-      frames.push(JSON.parse(data.toString()) as Record<string, unknown>),
-    );
-    try {
-      await new Promise<void>((resolve, reject) => {
-        socket.once("open", resolve);
-        socket.once("error", reject);
-      });
-
-      // A live event lands while the snapshot is still loading; it must not
-      // overtake the snapshot frame.
-      runtime.emit("event", {
-        type: "message_update",
-        sessionId: "mock-active",
-      });
-      releaseSnapshot();
-
-      await new Promise<void>((resolve, reject) => {
-        let poll: ReturnType<typeof setInterval>;
-        const timeout = setTimeout(() => {
-          clearInterval(poll);
-          reject(new Error("socket frames did not arrive"));
-        }, 2_000);
-        poll = setInterval(() => {
-          if (frames.length < 2) return;
-          clearInterval(poll);
-          clearTimeout(timeout);
-          resolve();
-        }, 10);
-      });
-      expect(frames[0]?.type).toBe("snapshot");
-      expect(frames[1]?.type).toBe("message_update");
-    } finally {
-      releaseSnapshot();
-      socket.close();
-      await gatedApp.close();
-    }
-  });
-
-  it("confirms an unchanged bootstrap snapshot without retransmitting it", async () => {
-    const bootstrap = await request(application.server)
-      .get("/api/bootstrap")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    const socket = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}&snapshot=${bootstrap.body.snapshotDigest}`,
-    );
-    try {
-      const firstFrame = await new Promise<Record<string, unknown>>(
-        (resolve, reject) => {
-          socket.once("message", (data) =>
-            resolve(JSON.parse(data.toString()) as Record<string, unknown>),
-          );
-          socket.once("error", reject);
-        },
-      );
-      expect(firstFrame).toEqual({
-        type: "snapshot",
-        authorityId: application.authorityId,
-        snapshotDigest: bootstrap.body.snapshotDigest,
-        updateStatus: bootstrap.body.updateStatus,
-        detailSessionId: null,
-        detailRevision: 0,
-        unchanged: true,
-      });
-    } finally {
-      socket.close();
-    }
-  });
-
-  it("streams a large write as compact bounded argument batches only to detail viewers", async () => {
-    await runtime.openSession("mock-active");
-    const detail = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}&detail=mock-active`,
-    );
-    const background = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}`,
-    );
-    const frames: Array<Record<string, unknown> & { type: string }> = [];
-    const backgroundFrames: Array<Record<string, unknown> & { type: string }> =
-      [];
-    detail.on("message", (data) => frames.push(JSON.parse(data.toString())));
-    background.on("message", (data) =>
-      backgroundFrames.push(JSON.parse(data.toString())),
-    );
-    try {
-      await vi.waitFor(() => {
-        expect(frames[0]?.type).toBe("snapshot");
-        expect(backgroundFrames[0]?.type).toBe("snapshot");
-      });
-      let message: unknown = {
-        role: "assistant",
-        timestamp: 20,
-        content: [],
-        __inspireLiveId: "wire-write",
-        __inspireStreamRevision: 0,
-      };
-      let revision = 0;
-      let cumulativeBytes = 0;
-      const emit = (event: unknown) =>
-        runtime.emit("event", {
-          sessionId: "mock-active",
-          ...(event as Record<string, unknown>),
-        });
-      emit({ type: "message_start", message });
-      const project = (assistantMessageEvent: Record<string, unknown>) => {
-        message = {
-          ...applyAssistantMessageDelta(message, assistantMessageEvent),
-          __inspireStreamRevision: ++revision,
-        };
-        const event = {
-          type: "message_update",
-          streamDelta: true,
-          streamMessageKey: "live:wire-write",
-          streamRevision: revision,
-          streamTextLength: assistantStreamTextLength(message),
-          assistantMessageEvent,
-          message,
-        };
-        cumulativeBytes += Buffer.byteLength(JSON.stringify(event));
-        emit(event);
-      };
-      project({
-        type: "toolcall_start",
-        contentIndex: 0,
-        id: "write-1",
-        toolName: "write",
-      });
-      const parser = new ToolArgumentStream();
-      const source = JSON.stringify({
-        path: "src/large.ts",
-        content: Array.from(
-          { length: 5000 },
-          (_, n) => `export const value${n} = ${n};`,
-        ).join("\n"),
-      });
-      for (let offset = 0; offset < source.length; offset += 128) {
-        const before = parser.truncated;
-        const argumentUpdates = parser.feed(source.slice(offset, offset + 128));
-        if (argumentUpdates.length || parser.truncated !== before)
-          project({
-            type: "toolcall_delta",
-            contentIndex: 0,
-            argumentUpdates,
-            argumentChars: parser.characters,
-            argumentsTruncated: parser.truncated,
-          });
-        if (offset % 2048 === 0 && !parser.truncated)
-          await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-      // A following ordinary event flushes all pending deltas in order.
-      emit({
-        type: "tool_execution_start",
-        toolCallId: "write-1",
-        toolName: "write",
-        args: {},
-      });
-      await vi.waitFor(() =>
-        expect(frames.at(-1)?.type).toBe("tool_execution_start"),
-      );
-      const batches = frames.filter(
-        (frame) => frame.type === "message_update_batch",
-      );
-      expect(batches.length).toBeGreaterThan(1);
-      expect(batches.every((frame) => frame.message === undefined)).toBe(true);
-      expect(
-        batches.some(
-          (frame) =>
-            Number(frame.sourceEventCount) >
-            (frame.assistantMessageEvents as unknown[]).length,
-        ),
-      ).toBe(true);
-      let reconstructed: unknown;
-      let previousRevision = 0;
-      for (const frame of frames.filter((frame) =>
-        frame.type.startsWith("message_"),
-      )) {
-        if (frame.type === "message_start") reconstructed = frame.message;
-        else {
-          expect(frame.streamRevision).toBe(
-            previousRevision + Number(frame.sourceEventCount),
-          );
-          previousRevision = Number(frame.streamRevision);
-          for (const delta of frame.assistantMessageEvents as unknown[])
-            reconstructed = applyAssistantMessageDelta(reconstructed, delta);
-          expect(assistantStreamTextLength(reconstructed)).toBe(
-            frame.streamTextLength,
-          );
-          reconstructed = {
-            ...(reconstructed as Record<string, unknown>),
-            __inspireStreamRevision: frame.streamRevision,
-          };
-        }
-      }
-      expect(reconstructed).toEqual(message);
-      expect(
-        backgroundFrames.filter(
-          (frame) =>
-            frame.type.startsWith("message_") ||
-            frame.type.startsWith("tool_execution"),
-        ),
-      ).toEqual([]);
-      const deltaBytes = batches.reduce(
-        (sum, frame) => sum + Buffer.byteLength(JSON.stringify(frame)),
-        0,
-      );
-      expect(deltaBytes).toBeLessThan(48_000);
-      expect(cumulativeBytes).toBeGreaterThan(deltaBytes * 30);
-      console.info(
-        "Large-write WebSocket JSON bytes (before optional compression):",
-        {
-          sourceBytes: Buffer.byteLength(source),
-          previewCharacters: parser.characters,
-          batches: batches.length,
-          deltaBytes,
-          cumulativeBytes,
-        },
-      );
-    } finally {
-      detail.close();
-      background.close();
-    }
-  });
-
-  it("batches ordered assistant deltas without retransmitting cumulative messages", async () => {
-    await runtime.openSession("mock-active");
-    const socket = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}&detail=mock-active`,
-    );
-    try {
-      await new Promise<void>((resolve, reject) => {
-        socket.once("message", () => resolve());
-        socket.once("error", reject);
-      });
-      const batchFrame = new Promise<Record<string, unknown>>(
-        (resolve, reject) => {
-          const timeout = setTimeout(
-            () => reject(new Error("stream batch did not arrive")),
-            2_000,
-          );
-          socket.on("message", (data) => {
-            const frame = JSON.parse(data.toString()) as Record<
-              string,
-              unknown
-            >;
-            if (frame.type !== "message_update_batch") return;
-            clearTimeout(timeout);
-            resolve(frame);
-          });
-        },
-      );
-      runtime.emit("event", {
-        type: "message_update",
-        sessionId: "mock-active",
-        streamDelta: true,
-        streamMessageKey: "live:assistant-1",
-        streamTextLength: 1,
-        assistantMessageEvent: {
-          type: "text_delta",
-          contentIndex: 0,
-          delta: "a",
-        },
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "a" }],
-        },
-      });
-      runtime.emit("event", {
-        type: "message_update",
-        sessionId: "mock-active",
-        streamDelta: true,
-        streamMessageKey: "live:assistant-1",
-        streamTextLength: 2,
-        assistantMessageEvent: {
-          type: "text_delta",
-          contentIndex: 0,
-          delta: "b",
-        },
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "ab" }],
-        },
-      });
-      const frame = await batchFrame;
-      expect(frame).toMatchObject({
-        type: "message_update_batch",
-        sessionId: "mock-active",
-        streamMessageKey: "live:assistant-1",
-        streamTextLength: 2,
-        assistantMessageEvents: [
-          { type: "text_delta", delta: "a" },
-          { type: "text_delta", delta: "b" },
-        ],
-      });
-      expect(frame).not.toHaveProperty("message");
-    } finally {
-      socket.close();
-    }
-  });
-
-  it("keeps joined sockets observable and terminates clients that stop answering pings", async () => {
-    const heartbeatApp = createInspireServer({
-      token,
-      runtime: new MockRuntime(),
-      catalog: new MockCatalog(),
-      attachments: new AttachmentStore(join(temporary, "uploads-heartbeat")),
-      preferences: new PreferencesStore(
-        join(temporary, "preferences-heartbeat.json"),
-      ),
-      resources: new ResourceStore(),
-      git,
-      mock: true,
-      version: "0.1.0-test",
-      piVersion: "0.80.10",
-      distDir: join(temporary, "missing-dist"),
-      websocketHeartbeatIntervalMs: 20,
-    });
-    await new Promise<void>((resolve) =>
-      heartbeatApp.server.listen(0, "127.0.0.1", resolve),
-    );
-    const address = heartbeatApp.server.address() as AddressInfo;
-    const url = `ws://127.0.0.1:${address.port}/events?token=${token}`;
-    const responsive = new WebSocket(url);
-    try {
-      const ping = new Promise<void>((resolve) =>
-        responsive.once("ping", resolve),
-      );
-      const heartbeat = new Promise<void>((resolve, reject) => {
-        responsive.on("message", (data) => {
-          try {
-            const frame = JSON.parse(data.toString()) as { type?: unknown };
-            if (frame.type === "heartbeat") resolve();
-          } catch (error) {
-            reject(error);
-          }
-        });
-        responsive.once("error", reject);
-      });
-      await Promise.race([
-        Promise.all([ping, heartbeat]),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error("heartbeat was not observed")),
-            1_000,
-          ),
-        ),
-      ]);
-      responsive.close();
-
-      const unresponsive = new WebSocket(url, { autoPong: false });
-      const closed = new Promise<number>((resolve, reject) => {
-        unresponsive.once("close", resolve);
-        unresponsive.once("error", () => undefined);
-        setTimeout(
-          () => reject(new Error("unresponsive socket remained open")),
-          1_000,
-        );
-      });
-      expect(await closed).toBe(1006);
-    } finally {
-      responsive.close();
-      await heartbeatApp.close();
-    }
-  });
-
-  it("closes joined sockets before broadcasting one oversized runtime event", async () => {
-    const socket = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}`,
-    );
-    try {
-      await new Promise<void>((resolve, reject) => {
-        socket.once("message", () => resolve());
-        socket.once("error", reject);
-      });
-      const closed = new Promise<number>((resolve) =>
-        socket.once("close", resolve),
-      );
-      runtime.emit("event", {
-        type: "extension_display",
-        payload: "x".repeat(MAX_RUNTIME_EVENT_BYTES + 1),
-      });
-      expect(await closed).toBe(1013);
-    } finally {
-      socket.close();
-    }
-  });
-
-  it("contains an unserializable runtime event instead of failing its emitter", async () => {
-    const socket = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}`,
-    );
-    try {
-      await new Promise<void>((resolve, reject) => {
-        socket.once("message", () => resolve());
-        socket.once("error", reject);
-      });
-      const closed = new Promise<number>((resolve) =>
-        socket.once("close", resolve),
-      );
-      expect(() =>
-        runtime.emit("event", { type: "runtime_event", data: 1n }),
-      ).not.toThrow();
-      expect(await closed).toBe(1013);
-    } finally {
-      socket.close();
-    }
-  });
-
-  it("closes a joining socket whose pre-snapshot event backlog exceeds the bound", async () => {
-    let releaseSnapshot!: () => void;
-    const gate = new Promise<void>(
-      (resolveGate) => (releaseSnapshot = resolveGate),
-    );
-    class GatedRuntime extends MockRuntime {
-      override async snapshot() {
-        await gate;
-        return super.snapshot();
-      }
-    }
-    const runtime = new GatedRuntime();
-    const gatedApp = createInspireServer({
-      token,
-      runtime,
-      catalog: new MockCatalog(),
-      attachments: new AttachmentStore(join(temporary, "uploads-backlog")),
-      preferences: new PreferencesStore(
-        join(temporary, "preferences-backlog.json"),
-      ),
-      resources: new ResourceStore(),
-      git,
-      mock: true,
-      version: "0.1.0-test",
-      piVersion: "0.80.10",
-      distDir: join(temporary, "missing-dist"),
-    });
-    await new Promise<void>((resolve) =>
-      gatedApp.server.listen(0, "127.0.0.1", resolve),
-    );
-    const address = gatedApp.server.address() as AddressInfo;
-    const socket = new WebSocket(
-      `ws://127.0.0.1:${address.port}/events?token=${token}`,
-    );
-    try {
-      await new Promise<void>((resolve, reject) => {
-        socket.once("open", resolve);
-        socket.once("error", reject);
-      });
-      const closed = new Promise<number>((resolve) =>
-        socket.once("close", resolve),
-      );
-      const payload = "x".repeat(64 * 1024);
-      for (
-        let sent = 0;
-        sent <= MAX_JOINING_EVENT_BYTES;
-        sent += payload.length
-      ) {
-        runtime.emit("event", { type: "message_update", payload });
-      }
-      expect(await closed).toBe(1013);
-    } finally {
-      releaseSnapshot();
-      socket.close();
-      await gatedApp.close();
-    }
-  });
-
-  it("deduplicates prompt delivery within one Host authority", async () => {
-    const prompt = vi.spyOn(runtime, "prompt").mockResolvedValue({
-      text: "deliver once",
-      images: [],
-      files: [],
-    });
-    const delivery = promptDelivery({
-      sessionId: "mock-active",
-      message: "deliver once",
-    });
-    const first = await request(application.server)
-      .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
-      .send(delivery)
-      .expect(202);
-    const duplicate = await request(application.server)
-      .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
-      .send(delivery)
-      .expect(202);
-    expect(duplicate.body).toEqual(first.body);
-    expect(prompt).toHaveBeenCalledTimes(1);
-
-    await request(application.server)
-      .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ ...delivery, message: "changed payload" })
-      .expect(409)
-      .expect((response) =>
-        expect(response.body.code).toBe("PROMPT_OPERATION_MISMATCH"),
-      );
-    await request(application.server)
-      .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        ...delivery,
-        operationId: randomUUID(),
-        authorityId: randomUUID(),
-      })
-      .expect(409)
-      .expect((response) =>
-        expect(response.body.code).toBe("HOST_AUTHORITY_CHANGED"),
-      );
-    expect(prompt).toHaveBeenCalledTimes(1);
-
-    const refused = promptDelivery({
-      sessionId: "mock-active",
-      message: "refuse once",
-    });
-    prompt.mockRejectedValueOnce(
-      Object.assign(new Error("Prompt was refused"), {
-        status: 409,
-        code: "PROMPT_REFUSED_FOR_TEST",
-      }),
-    );
-    for (let attempt = 0; attempt < 2; attempt += 1)
-      await request(application.server)
-        .post("/api/prompt")
-        .set("Authorization", `Bearer ${token}`)
-        .send(refused)
-        .expect("X-Inspire-Authority", application.authorityId)
-        .expect(409)
-        .expect((response) =>
-          expect(response.body.code).toBe("PROMPT_REFUSED_FOR_TEST"),
-        );
-    expect(prompt).toHaveBeenCalledTimes(2);
-  });
-
-  it("observes a slow prompt by identity without redelivering its payload", async () => {
-    let finish!: () => void;
-    const prompt = vi.spyOn(runtime, "prompt").mockImplementation(
-      () =>
-        new Promise<null>((resolve) => {
-          finish = () => resolve(null);
-        }),
-    );
-    const observed = createInspireServer({
-      token,
-      runtime,
-      catalog: new MockCatalog(),
-      attachments,
-      resources,
-      git,
-      mock: true,
-      version: "0.4.0-test",
-      piVersion: "0.85.1",
-      preferences: new PreferencesStore(
-        join(temporary, "observed-preferences.json"),
-      ),
-      distDir: join(temporary, "missing-dist"),
-      promptObservationWindowMs: 5,
-    });
-    await new Promise<void>((resolve) =>
-      observed.server.listen(0, "127.0.0.1", resolve),
-    );
-    const delivery = {
-      ...promptDelivery({
-        sessionId: "mock-active",
-        message: "slow synthetic preflight",
-      }),
-      authorityId: observed.authorityId,
-    };
-    const poll = () =>
-      request(observed.server)
-        .get(`/api/prompt/${delivery.operationId}`)
-        .query({ authorityId: observed.authorityId })
-        .set("Authorization", `Bearer ${token}`);
-    try {
-      const first = await request(observed.server)
-        .post("/api/prompt")
-        .set("Authorization", `Bearer ${token}`)
-        .send(delivery)
-        .expect(202);
-      expect(first.body).toEqual({
-        accepted: false,
-        pending: true,
-        authorityId: observed.authorityId,
-        operationId: delivery.operationId,
-      });
-      expect((await poll().expect(202)).body).toEqual(first.body);
-      expect(
-        (
-          await request(observed.server)
-            .post("/api/prompt")
-            .set("Authorization", `Bearer ${token}`)
-            .send(delivery)
-            .expect(202)
-        ).body,
-      ).toEqual(first.body);
-      expect(prompt).toHaveBeenCalledTimes(1);
-      await request(observed.server)
-        .get(`/api/prompt/${delivery.operationId}`)
-        .query({ authorityId: observed.authorityId })
-        .expect(401);
-      await request(observed.server)
-        .get(`/api/prompt/${randomUUID()}`)
-        .query({ authorityId: observed.authorityId })
-        .set("Authorization", `Bearer ${token}`)
-        .expect(409)
-        .expect(({ body }) => expect(body.outcomeUnknown).toBe(true));
-      await request(observed.server)
-        .get(`/api/prompt/${delivery.operationId}`)
-        .query({ authorityId: randomUUID() })
-        .set("Authorization", `Bearer ${token}`)
-        .expect(409)
-        .expect(({ body }) => expect(body.code).toBe("HOST_AUTHORITY_CHANGED"));
-      finish();
-      expect((await poll().expect(202)).body).toEqual({
-        accepted: true,
-        historyEntry: null,
-      });
-      expect((await poll().expect(202)).body).toEqual({
-        accepted: true,
-        historyEntry: null,
-      });
-      expect(prompt).toHaveBeenCalledTimes(1);
-    } finally {
-      finish?.();
-      await observed.close();
-    }
-  });
-
-  it("does not cancel or redeliver a prompt when its HTTP observer disconnects", async () => {
-    let finish!: () => void;
-    let began!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      began = resolve;
-    });
-    const prompt = vi.spyOn(runtime, "prompt").mockImplementation(
-      () =>
-        new Promise<null>((resolve) => {
-          finish = () => resolve(null);
-          began();
-        }),
-    );
-    const delivery = promptDelivery({
-      sessionId: "mock-active",
-      message: "disconnect synthetic observer",
-    });
-    const observer = new AbortController();
-    const response = fetch(`${baseUrl}/api/prompt`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(delivery),
-      signal: observer.signal,
-    });
-    const disconnected = expect(response).rejects.toThrow();
-    await entered;
-    observer.abort();
-    await disconnected;
-    finish();
-    const recovered = await request(application.server)
-      .get(`/api/prompt/${delivery.operationId}`)
-      .query({ authorityId: application.authorityId })
-      .set("Authorization", `Bearer ${token}`)
-      .expect(202);
-    expect(recovered.body).toEqual({ accepted: true, historyEntry: null });
-    expect(prompt).toHaveBeenCalledTimes(1);
-  });
-
-  it("marks only retained prompt rejections with operation-owned refusal proof", async () => {
-    const prompt = vi
-      .spyOn(runtime, "prompt")
-      .mockRejectedValue(
-        Object.assign(new Error("Synthetic rejection"), { status: 409 }),
-      );
-    const delivery = promptDelivery({
-      sessionId: "mock-active",
-      message: "Synthetic refused prompt",
-    });
-    await request(application.server)
-      .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
-      .send(delivery)
-      .expect(409)
-      .expect("X-Inspire-Prompt-Operation", delivery.operationId)
-      .expect("X-Inspire-Prompt-Outcome", "rejected");
-    await request(application.server)
-      .get(`/api/prompt/${delivery.operationId}`)
-      .query({ authorityId: application.authorityId })
-      .set("Authorization", `Bearer ${token}`)
-      .expect(409)
-      .expect("X-Inspire-Prompt-Operation", delivery.operationId)
-      .expect("X-Inspire-Prompt-Outcome", "rejected");
-    await request(application.server)
-      .get(`/api/prompt/${delivery.operationId}`)
-      .query({ authorityId: application.authorityId })
-      .expect(401)
-      .expect(({ headers }) =>
-        expect(headers["x-inspire-prompt-outcome"]).toBeUndefined(),
-      );
-    expect(prompt).toHaveBeenCalledTimes(1);
-  });
-
-  it("retains unknown outcomes for both prompt retry and read-only observation", async () => {
-    const prompt = vi.spyOn(runtime, "prompt").mockRejectedValue(
-      Object.assign(new Error("Synthetic lost receipt"), {
-        code: "PI_RPC_OUTCOME_UNKNOWN",
-        status: 504,
-        outcomeUnknown: true,
-      }),
-    );
-    const delivery = promptDelivery({
-      sessionId: "mock-active",
-      message: "unknown synthetic outcome",
-    });
-    for (let attempt = 0; attempt < 2; attempt += 1)
-      await request(application.server)
-        .post("/api/prompt")
-        .set("Authorization", `Bearer ${token}`)
-        .send(delivery)
-        .expect(504)
-        .expect(({ body }) =>
-          expect(body).toMatchObject({
-            code: "PI_RPC_OUTCOME_UNKNOWN",
-            outcomeUnknown: true,
-          }),
-        );
-    await request(application.server)
-      .get(`/api/prompt/${delivery.operationId}`)
-      .query({ authorityId: application.authorityId })
-      .set("Authorization", `Bearer ${token}`)
-      .expect(504)
-      .expect("X-Inspire-Prompt-Operation", delivery.operationId)
-      .expect("X-Inspire-Prompt-Outcome", "unknown")
-      .expect(({ body }) => expect(body.outcomeUnknown).toBe(true));
-    expect(prompt).toHaveBeenCalledTimes(1);
-  });
-
-  it("fails closed after a prompt response receipt retires", async () => {
-    const prompt = vi.spyOn(runtime, "prompt").mockResolvedValue(null);
-    const delivery = promptDelivery({
-      sessionId: "mock-active",
-      message: "retain the identity",
-    });
-    await request(application.server)
-      .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
-      .send(delivery)
-      .expect(202);
-
-    const clock = vi
-      .spyOn(Date, "now")
-      .mockReturnValue(Date.now() + 15 * 60 * 1_000 + 1);
-    try {
-      await request(application.server)
-        .post("/api/prompt")
-        .set("Authorization", `Bearer ${token}`)
-        .send(delivery)
-        .expect(409)
-        .expect((response) =>
-          expect(response.body.code).toBe("PROMPT_OPERATION_RESULT_RETIRED"),
-        );
-    } finally {
-      clock.mockRestore();
-    }
-    expect(prompt).toHaveBeenCalledOnce();
-  });
-
-  it("rejects session-scoped writes that do not name their session", async () => {
     await request(application.server)
       .post("/api/prompt")
       .set("Authorization", `Bearer ${token}`)
@@ -2852,524 +1129,23 @@ describe("local host API", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({})
       .expect(400);
-    // An addressed write to a session the host has not opened is refused,
-    // never redirected to the current selection.
+    expect(prompt).not.toHaveBeenCalled();
+    expect(abort).not.toHaveBeenCalled();
+
     await request(application.server)
       .post("/api/prompt")
       .set("Authorization", `Bearer ${token}`)
       .send(promptDelivery({ sessionId: "never-opened", message: "hello" }))
       .expect(409);
-  });
-
-  it("serves workspace files independently of discovery while keeping session and outside-path boundaries", async () => {
-    const quotedName =
-      process.platform === "win32" ? "quoted'(x).md" : "quoted'(*).md";
-    await writeFile(join(temporary, "preview.md"), "# Host preview\n");
-    await writeFile(join(temporary, "notes.txt"), "workspace note\n");
-    await writeFile(join(temporary, quotedName), "quoted\n");
-    await mkdir(join(temporary, "node_modules"));
-    await writeFile(
-      join(temporary, "node_modules", "mentioned.txt"),
-      "vendored but cited\n",
-    );
-    await writeFile(
-      join(temporary, "node_modules", "hidden.txt"),
-      "vendored\n",
-    );
-    const opened = await request(application.server)
-      .post("/api/sessions/new")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ cwd: temporary })
-      .expect(200);
-    const sessionId = opened.body.active.sessionId as string;
-    await request(application.server)
-      .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
-      .send(
-        promptDelivery({
-          sessionId,
-          message:
-            "Open [the preview](preview.md), [the vendored note](node_modules/mentioned.txt), and `missing.md`.",
-        }),
-      )
-      .expect(202);
-
-    const listed = await request(application.server)
-      .post("/api/resources/list")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId })
-      .expect(200);
-    expect(listed.body).toMatchObject({ sessionId });
-    expect(listed.body.resources).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ reference: "preview.md" }),
-        expect.objectContaining({ reference: "node_modules/mentioned.txt" }),
-        expect.objectContaining({ reference: "missing.md" }),
-      ]),
-    );
-
-    const probed = await request(application.server)
-      .post("/api/resources/probe")
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        sessionId,
-        references: ["preview.md", "missing.md", "node_modules/hidden.txt"],
-      })
-      .expect(200);
-    expect(probed.body).toMatchObject({
-      sessionId,
-      revision: expect.any(Number),
-      results: [
-        { reference: "preview.md", availability: "available" },
-        { reference: "missing.md", availability: "missing" },
-        { reference: "node_modules/hidden.txt", availability: "available" },
-      ],
+    expect(prompt).toHaveBeenCalledExactlyOnceWith({
+      sessionId: "never-opened",
+      message: "hello",
     });
-
-    const resolved = await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId, reference: "preview.md" })
-      .expect(200);
-    expect(resolved.body).toMatchObject({
-      name: "preview.md",
-      kind: "markdown",
-    });
-
-    const content = await request(application.server)
-      .get(
-        `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
-      )
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(content.text).toBe("# Host preview\n");
-    expect(content.headers["accept-ranges"]).toBe("bytes");
-    expect(content.headers["content-disposition"]).toBe(
-      "inline; filename*=UTF-8''preview.md",
+    expect(runtime.activeSessionId).toBe("mock-active");
+    expect((await runtime.snapshot()).active?.transcriptPage).toEqual(
+      before.active?.transcriptPage,
     );
-
-    const download = await request(application.server)
-      .get(
-        `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}&download=1`,
-      )
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(download.text).toBe("# Host preview\n");
-    expect(download.headers["content-disposition"]).toBe(
-      "attachment; filename*=UTF-8''preview.md",
-    );
-
-    // A head-slice Range (how the client caps text previews) yields 206.
-    const ranged = await request(application.server)
-      .get(
-        `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
-      )
-      .set("Authorization", `Bearer ${token}`)
-      .set("Range", "bytes=0-5")
-      .expect(206);
-    expect(ranged.headers["content-range"]).toBe("bytes 0-5/15");
-    expect(ranged.text).toBe("# Host");
-    // Invalid ranges must not fall back to serving the complete file.
-    await request(application.server)
-      .get(
-        `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
-      )
-      .set("Authorization", `Bearer ${token}`)
-      .set("Range", "bytes=999-1000")
-      .expect(416);
-
-    // Indexed workspace files preview without a transcript mention — the
-    // explorer's click path.
-    await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        sessionId,
-        reference: "notes.txt",
-        workspacePath: "notes.txt",
-      })
-      .expect(200);
-    const quoted = await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        sessionId,
-        reference: quotedName,
-        workspacePath: quotedName,
-      })
-      .expect(200);
-    const quotedContent = await request(application.server)
-      .get(
-        `/api/resources/${quoted.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
-      )
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(quotedContent.headers["content-disposition"]).toBe(
-      process.platform === "win32"
-        ? "inline; filename*=UTF-8''quoted%27%28x%29.md"
-        : "inline; filename*=UTF-8''quoted%27%28%2A%29.md",
-    );
-    // A transcript mention still reaches files the index ignores.
-    await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId, reference: "node_modules/mentioned.txt" })
-      .expect(200);
-    // Workspace containment, not Git/search membership, authorizes this file.
-    await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId, reference: "node_modules/hidden.txt" })
-      .expect(200);
-    await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId, reference: "unmentioned.txt" })
-      .expect(404);
-    await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId, reference: "../outside.txt" })
-      .expect(403);
-
-    // A second browser selecting another session does not revoke this
-    // browser's addressed resource operations or existing handles.
-    await request(application.server)
-      .post("/api/sessions/open")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ id: "mock-active" })
-      .expect(200);
-    await request(application.server)
-      .get(
-        `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
-      )
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    for (const [operation, body] of [
-      ["list", { sessionId }],
-      ["probe", { sessionId, references: ["preview.md"] }],
-      ["resolve", { sessionId, reference: "preview.md" }],
-    ] as const) {
-      await request(application.server)
-        .post(`/api/resources/${operation}`)
-        .set("Authorization", `Bearer ${token}`)
-        .send(body)
-        .expect(200);
-    }
-    await request(application.server)
-      .get(`/api/resources/${resolved.body.id}/content?sessionId=mock-active`)
-      .set("Authorization", `Bearer ${token}`)
-      .expect(404);
-  });
-
-  it("uses the current resource size after resolve when a file grows or shrinks", async () => {
-    const resourcePath = join(temporary, "changing.md");
-    await writeFile(resourcePath, "old\n");
-    const opened = await request(application.server)
-      .post("/api/sessions/new")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ cwd: temporary })
-      .expect(200);
-    const sessionId = opened.body.active.sessionId as string;
-    await request(application.server)
-      .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
-      .send(
-        promptDelivery({
-          sessionId,
-          message: "Open [changing](changing.md).",
-        }),
-      )
-      .expect(202);
-    const resolved = await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId, reference: "changing.md" })
-      .expect(200);
-    expect(resolved.body.size).toBe(4);
-
-    const grown = "grown-content\n";
-    await writeFile(resourcePath, grown);
-    const grownResponse = await request(application.server)
-      .get(
-        `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
-      )
-      .set("Authorization", `Bearer ${token}`)
-      .set("Range", "bytes=0-262143")
-      .expect(206);
-    expect(grownResponse.headers["content-range"]).toBe(
-      `bytes 0-${grown.length - 1}/${grown.length}`,
-    );
-    expect(grownResponse.text).toBe(grown);
-
-    const shrunk = "new\n";
-    await writeFile(resourcePath, shrunk);
-    const shrunkResponse = await request(application.server)
-      .get(
-        `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
-      )
-      .set("Authorization", `Bearer ${token}`)
-      .set("Range", "bytes=0-262143")
-      .expect(206);
-    expect(shrunkResponse.headers["content-range"]).toBe(
-      `bytes 0-${shrunk.length - 1}/${shrunk.length}`,
-    );
-    expect(shrunkResponse.text).toBe(shrunk);
-  });
-
-  it("closes an opened file when the client aborts during authorization", async () => {
-    await writeFile(join(temporary, "slow.md"), "slow preview\n");
-    const openedSession = await request(application.server)
-      .post("/api/sessions/new")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ cwd: temporary })
-      .expect(200);
-    const sessionId = openedSession.body.active.sessionId as string;
-    await request(application.server)
-      .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
-      .send(promptDelivery({ sessionId, message: "Open [slow](slow.md)." }))
-      .expect(202);
-    const resolved = await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId, reference: "slow.md" })
-      .expect(200);
-
-    let releaseOpen!: () => void;
-    const gate = new Promise<void>(
-      (resolveGate) => (releaseOpen = resolveGate),
-    );
-    let opened!: () => void;
-    const openedHandle = new Promise<void>(
-      (resolveOpened) => (opened = resolveOpened),
-    );
-    let handle:
-      | Awaited<ReturnType<ResourceStore["openForServing"]>>["handle"]
-      | null = null;
-    const openForServing = resources.openForServing.bind(resources);
-    resources.openForServing = async (resource) => {
-      const result = await openForServing(resource);
-      handle = result.handle;
-      opened();
-      await gate;
-      return result;
-    };
-
-    const controller = new AbortController();
-    const fetching = fetch(
-      `${baseUrl}/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: controller.signal,
-      },
-    ).catch((error: Error) => error);
-    await openedHandle;
-    controller.abort();
-    const failure = await fetching;
-    expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).name).toBe("AbortError");
-    releaseOpen();
-
-    await vi.waitFor(async () => {
-      await expect(handle!.stat()).rejects.toMatchObject({ code: "EBADF" });
-    });
-  });
-
-  it("honors byte ranges for embedded resources as well as filesystem files", async () => {
-    const sessionId = "embedded-session";
-    class EmbeddedRuntime extends MockRuntime {
-      override get activeSessionId(): string {
-        return sessionId;
-      }
-      override async resourceContext(requestedSessionId: string) {
-        if (requestedSessionId !== sessionId)
-          throw Object.assign(new Error("Wrong session"), { status: 409 });
-        return {
-          sessionId,
-          viewId: "embedded-view",
-          revision: 1,
-          cwd: temporary,
-          messages: [
-            {
-              role: "toolResult",
-              content: [
-                {
-                  type: "image",
-                  data: Buffer.from("image-bytes").toString("base64"),
-                  mimeType: "image/png",
-                },
-              ],
-            },
-          ],
-        };
-      }
-    }
-    const served = createInspireServer({
-      token,
-      runtime: new EmbeddedRuntime(),
-      catalog: new MockCatalog(),
-      attachments: new AttachmentStore(join(temporary, "embedded-uploads")),
-      preferences: new PreferencesStore(
-        join(temporary, "embedded-preferences.json"),
-      ),
-      resources: new ResourceStore(),
-      git,
-      mock: true,
-      version: "0.1.0-test",
-      piVersion: "0.80.10",
-      distDir: join(temporary, "missing-embedded-dist"),
-    });
-    await new Promise<void>((resolve) =>
-      served.server.listen(0, "127.0.0.1", resolve),
-    );
-    try {
-      const resolved = await request(served.server)
-        .post("/api/resources/resolve")
-        .set("Authorization", `Bearer ${token}`)
-        .send({ sessionId, reference: "pi-embedded://0/0" })
-        .expect(200);
-      const ranged = await request(served.server)
-        .get(
-          `/api/resources/${resolved.body.id}/content?sessionId=${sessionId}`,
-        )
-        .set("Authorization", `Bearer ${token}`)
-        .set("Range", "bytes=0-4")
-        .expect(206);
-      expect(ranged.headers["content-range"]).toBe("bytes 0-4/11");
-      expect(Buffer.from(ranged.body).toString()).toBe("image");
-    } finally {
-      await served.close();
-    }
-  });
-
-  it("deletes withdrawn attachments from the host cache", async () => {
-    const uploaded = await request(application.server)
-      .post("/api/attachments")
-      .set("Authorization", `Bearer ${token}`)
-      .attach("files", Buffer.from("draft"), {
-        filename: "draft.txt",
-        contentType: "text/plain",
-      })
-      .expect(200);
-    const id = uploaded.body.attachments[0].id as string;
-    await request(application.server)
-      .delete(`/api/attachments/${id}`)
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200, { ok: true });
-    // Idempotent: a second delete of the same id still succeeds.
-    await request(application.server)
-      .delete(`/api/attachments/${id}`)
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200, { ok: true });
-    await request(application.server)
-      .delete("/api/attachments/not-a-uuid")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(400);
-  });
-
-  it("rejects multipart batches at the aggregate streaming budget and removes partial files", async () => {
-    await request(application.server)
-      .post("/api/attachments")
-      .set("Authorization", `Bearer ${token}`)
-      .attach("files", Buffer.alloc(MAX_ATTACHMENT_FILE_BYTES), {
-        filename: "one.bin",
-      })
-      .attach("files", Buffer.alloc(MAX_ATTACHMENT_FILE_BYTES), {
-        filename: "two.bin",
-      })
-      .attach("files", Buffer.alloc(1), { filename: "overflow.bin" })
-      .expect(413);
-    expect(await readdir(join(temporary, "uploads"))).toEqual([]);
-  }, 15_000);
-
-  it("accepts bounded attachments and streams prompt events over an authenticated socket", async () => {
-    await request(application.server)
-      .post("/api/sessions/open")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ id: "mock-active" })
-      .expect(200);
-
-    const uploaded = await request(application.server)
-      .post("/api/attachments")
-      .set("Authorization", `Bearer ${token}`)
-      .attach("files", Buffer.from("research notes"), {
-        filename: "notes.txt",
-        contentType: "text/plain",
-      })
-      .expect(200);
-    expect(uploaded.body.attachments[0]).toMatchObject({
-      fileName: "notes.txt",
-      kind: "file",
-      size: 14,
-    });
-    expect(uploaded.body.attachments[0]).not.toHaveProperty("path");
-    const storedFiles = await readdir(join(temporary, "uploads"));
-    const id = uploaded.body.attachments[0].id;
-    expect(storedFiles.sort()).toEqual(
-      [`${id}-notes.txt`, `${id}.json`].sort(),
-    );
-    const ownership = JSON.parse(
-      await readFile(join(temporary, "uploads", `${id}.json`), "utf8"),
-    );
-    expect(ownership).toMatchObject({
-      id,
-      kind: "file",
-      fileName: "notes.txt",
-      path: join(temporary, "uploads", `${id}-notes.txt`),
-    });
-    if (process.platform !== "win32") {
-      expect(
-        (await stat(join(temporary, "uploads", `${id}-notes.txt`))).mode &
-          0o777,
-      ).toBe(0o600);
-    }
-
-    const events: Array<Record<string, unknown>> = [];
-    const socket = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}&detail=mock-active`,
-    );
-    await new Promise<void>((resolve, reject) => {
-      socket.once("open", resolve);
-      socket.once("error", reject);
-    });
-    socket.on("message", (data) =>
-      events.push(JSON.parse(data.toString()) as Record<string, unknown>),
-    );
-
-    await request(application.server)
-      .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
-      .send(
-        promptDelivery({
-          sessionId: "mock-active",
-          message: "Integrate this note",
-          attachmentIds: [uploaded.body.attachments[0].id],
-        }),
-      )
-      .expect(202, {
-        accepted: true,
-        historyEntry: {
-          text: "Integrate this note",
-          images: [],
-          files: [],
-        },
-      });
-
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error("mock stream did not settle")),
-        2_000,
-      );
-      const poll = setInterval(() => {
-        if (!events.some((event) => event.type === "agent_settled")) return;
-        clearInterval(poll);
-        clearTimeout(timeout);
-        resolve();
-      }, 10);
-    });
-    expect(events.some((event) => event.type === "message_update")).toBe(true);
-    socket.close();
+    expect(events).toEqual([]);
   });
 
   it("clears individually hidden sessions and complete Hidden folders in one reviewed batch", async () => {

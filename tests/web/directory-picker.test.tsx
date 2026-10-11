@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HostDirListing } from "../../shared/contracts";
 import { DirectoryPicker } from "../../src/components/DirectoryPicker";
 import { store } from "../../src/store";
+import { deferred } from "./helpers";
 
 const home: HostDirListing = {
   path: "/home/demo",
@@ -27,15 +28,6 @@ const project: HostDirListing = {
   parent: home.path,
   dirs: [],
 };
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: Error) => void;
-  const promise = new Promise<T>((accept, refuse) => {
-    resolve = accept;
-    reject = refuse;
-  });
-  return { promise, resolve, reject };
-}
 
 beforeEach(() => {
   vi.spyOn(store, "browseHostRoots").mockResolvedValue({

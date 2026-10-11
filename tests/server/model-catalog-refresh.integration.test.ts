@@ -1,20 +1,20 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { refreshWorkerCatalog } from "../../server/model-catalog-refresh.js";
-import { PiRpcProcess } from "../../server/pi-rpc.js";
-import { newBridgeIdentity } from "../../server/runtime-branch-bridge.js";
-import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
+import { nativePiWorkspace, nativeBridgeWorker } from "./fixtures/native-pi.js";
 
 it("refreshes usable models in the same active Pi worker and retains extension providers/dialogs/session selection", async () => {
-  const root = await mkdtemp(join(tmpdir(), "inspire-catalog-"));
-  const config = join(root, "agent");
-  const cwd = join(root, "workspace");
-  const sessions = join(root, "sessions");
-  await Promise.all([config, cwd, sessions].map((path) => mkdir(path)));
+  const workspace = await nativePiWorkspace("inspire-catalog-", {
+    defaultProvider: "fixture",
+    defaultModel: "original",
+    defaultThinkingLevel: "high",
+    defaultProjectTrust: "never",
+    compaction: { enabled: false },
+  });
+  const { root, agent: config } = workspace;
   let release!: () => void;
   const gate = new Promise<void>((resolveGate) => {
     release = resolveGate;
@@ -56,40 +56,10 @@ it("refreshes usable models in the same active Pi worker and retains extension p
       }),
     );
   await writeModels(["original"]);
-  await writeFile(join(config, "auth.json"), "{}");
-  await writeFile(
-    join(config, "settings.json"),
-    JSON.stringify({
-      defaultProvider: "fixture",
-      defaultModel: "original",
-      defaultThinkingLevel: "high",
-      defaultProjectTrust: "never",
-      compaction: { enabled: false },
-    }),
+  const { bridge, rpc } = nativeBridgeWorker(
+    workspace,
+    "tests/fixtures/pi-model-catalog-extension.ts",
   );
-  const bridge = newBridgeIdentity();
-  const env = isolatedTestEnvironment(root, {
-    INSPIRE_BRANCH_COMMAND: bridge.command,
-    INSPIRE_BRANCH_STATUS_KEY: bridge.statusKey,
-    INSPIRE_BRANCH_WORKER_ID: bridge.workerId,
-  });
-  const rpc = new PiRpcProcess({
-    cwd,
-    env,
-    args: [
-      "--no-extensions",
-      "--no-skills",
-      "--no-context-files",
-      "--no-prompt-templates",
-      "--no-themes",
-      "--no-tools",
-      "--no-approve",
-      "--extension",
-      resolve("server/extensions/inspire-branch-bridge.ts"),
-      "--extension",
-      resolve("tests/fixtures/pi-model-catalog-extension.ts"),
-    ],
-  });
   const events: Array<Record<string, unknown>> = [];
   rpc.on("event", (event) => events.push(event));
   try {

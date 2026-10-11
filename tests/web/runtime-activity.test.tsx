@@ -11,6 +11,7 @@ import { ActivityBar } from "../../src/components/ActivityBar";
 import { CommandActivity } from "../../src/components/CommandActivity";
 import { emptyEventSlice, reduceEvent } from "../../src/events";
 import { store } from "../../src/store";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -45,8 +46,7 @@ beforeAll(async () => {
     if (url.startsWith("/api/snapshot")) return { body: snapshot };
     if (url.startsWith("/api/control/native-command"))
       return nativeResult.promise.then((body) => ({ body }));
-    if (url.startsWith("/api/sessions"))
-      return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+    if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
     return undefined;
   });
   await store.init("token");
@@ -505,4 +505,49 @@ describe("summary retry and command receipts", () => {
     expect(result.slice.runState).toBe("compacting");
     expect(result.slice.summarizationRetry).toBeNull();
   });
+});
+
+it("keeps retry status without duplicating live or failed tools", () => {
+  const ws = socket();
+  act(() => ws.emit({ type: "snapshot", data: activeSnapshot() }));
+
+  render(<ActivityBar onJumpToPending={() => undefined} />);
+  act(() =>
+    ws.emit({
+      type: "tool_execution_start",
+      sessionId: store.getState().sessionId!,
+      toolCallId: "tool-1",
+      toolName: "bash",
+      args: { command: "pwd" },
+    }),
+  );
+  expect(screen.queryByText(/bash/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+  act(() =>
+    ws.emit({
+      type: "tool_execution_end",
+      sessionId: store.getState().sessionId!,
+      toolCallId: "tool-1",
+      toolName: "bash",
+      result: "failed",
+      isError: true,
+    }),
+  );
+  expect(screen.queryByText(/bash/)).not.toBeInTheDocument();
+
+  act(() =>
+    ws.emit({
+      type: "auto_retry_start",
+      sessionId: store.getState().sessionId!,
+      attempt: 2,
+      maxAttempts: 3,
+      errorMessage: "rate limited",
+    }),
+  );
+  expect(
+    screen.getByRole("status", { name: "Retry status" }),
+  ).toHaveTextContent("Retry 2/3 — rate limited");
+
+  act(() => ws.emit({ type: "snapshot", data: activeSnapshot() }));
 });

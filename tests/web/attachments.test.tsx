@@ -15,11 +15,17 @@ import {
   MAX_PROMPT_IMAGE_BYTES,
 } from "../../shared/contracts";
 import { selectAttachmentFiles } from "../../src/attachment-selection";
+import { clipboardFiles } from "../../src/clipboard-files";
 import { AttachmentList } from "../../src/components/AttachmentList";
+import { Transcript } from "../../src/components/Transcript";
 import type { PendingAttachment } from "../../src/controllers/composer-controller";
 import { store } from "../../src/store";
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe("attachment presentation", () => {
   it("keeps filenames and status visible while moving file details into tooltips", () => {
@@ -205,5 +211,136 @@ describe("attachment selection budgets", () => {
       accepted: [],
       warning: expect.stringMatching(/At most/),
     });
+  });
+});
+
+it("uses one clipboard projection without duplicating one paste or merging distinct files", () => {
+  const primary = new File(["png"], "image.png", {
+    type: "image/png",
+    lastModified: 7,
+  });
+  const duplicateProjection = new File(["png"], "image.png", {
+    type: "image/png",
+    lastModified: 8,
+  });
+  const fallbackItem = {
+    kind: "file",
+    getAsFile: () => duplicateProjection,
+  } as DataTransferItem;
+  expect(
+    clipboardFiles({
+      files: [] as unknown as FileList,
+      items: [fallbackItem] as unknown as DataTransferItemList,
+    }),
+  ).toEqual([duplicateProjection]);
+  expect(
+    clipboardFiles({
+      files: [primary] as unknown as FileList,
+      items: [fallbackItem] as unknown as DataTransferItemList,
+    }),
+  ).toEqual([primary]);
+
+  const sameMetadataA = new File(["one"], "image.png", {
+    type: "image/png",
+    lastModified: 9,
+  });
+  const sameMetadataB = new File(["two"], "image.png", {
+    type: "image/png",
+    lastModified: 9,
+  });
+  expect(
+    clipboardFiles({
+      files: [sameMetadataA, sameMetadataB] as unknown as FileList,
+      items: [] as unknown as DataTransferItemList,
+    }),
+  ).toEqual([sameMetadataA, sameMetadataB]);
+});
+
+describe("persisted user images", () => {
+  it("loads a stable embedded-image reference and opens a keyboard-accessible preview", async () => {
+    const originalLoad = store.loadEmbeddedImage;
+    const load = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
+    store.loadEmbeddedImage = load;
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:persisted-image"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    try {
+      render(
+        <Transcript
+          sessionId="s-images"
+          viewId="view-images"
+          messages={[
+            {
+              role: "user",
+              content: [
+                { type: "image", mimeType: "image/png" },
+                { type: "text", text: "caption" },
+              ],
+              timestamp: 1,
+              __inspireMessageIndex: 4,
+            },
+          ]}
+          streaming={false}
+          thinkingVisibility="collapsed"
+          toolVisibility="collapsed"
+        />,
+      );
+      const thumbnail = await screen.findByRole("button", {
+        name: "Preview attached image",
+      });
+      expect(load).toHaveBeenCalledWith(
+        "s-images",
+        "view-images",
+        "view-images\u0000",
+        "pi-embedded://4/0",
+        expect.any(AbortSignal),
+      );
+      expect(screen.getByText("caption")).toBeInTheDocument();
+      const thumbnailImage = within(thumbnail).getByRole("img", {
+        name: "Attached image",
+      });
+      expect(thumbnailImage).toHaveAttribute("draggable", "false");
+      expect(fireEvent.dragStart(thumbnailImage)).toBe(false);
+
+      fireEvent.click(thumbnail);
+      const preview = screen.getByRole("dialog", { name: "Image preview" });
+      const previewImage = within(preview).getByRole("img", {
+        name: "Attached image",
+      });
+      expect(previewImage).toHaveAttribute("draggable", "false");
+      expect(fireEvent.dragStart(previewImage)).toBe(false);
+
+      const zoom = within(preview).getByRole("button", { name: "Zoom image" });
+      fireEvent.click(zoom);
+      expect(
+        within(preview).getByRole("button", { name: "Fit image to window" }),
+      ).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.pointerDown(zoom, {
+        pointerId: 1,
+        button: 0,
+        clientX: 10,
+        clientY: 10,
+      });
+      fireEvent.pointerMove(zoom, { pointerId: 1, clientX: 20, clientY: 10 });
+      expect(zoom).toHaveClass("image-lightbox__canvas--panning");
+      fireEvent.pointerUp(zoom, { pointerId: 1, clientX: 20, clientY: 10 });
+      fireEvent.click(zoom);
+      expect(zoom).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.keyDown(window, { key: "Escape" });
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: "Image preview" }),
+        ).not.toBeInTheDocument(),
+      );
+    } finally {
+      store.loadEmbeddedImage = originalLoad;
+    }
   });
 });

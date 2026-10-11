@@ -247,3 +247,67 @@ describe("Changes status observation", () => {
     },
   );
 });
+
+describe("filesystem selection is not Git evidence", () => {
+  it.each([
+    [null, null, "Git status unavailable"],
+    [clean, "failed", "Git status unavailable"],
+    [{ kind: "not-repository" }, null, "Not in a Git repository"],
+    [{ ...clean, truncated: true, total: 1001 }, null, "Git status incomplete"],
+    [clean, null, "No Git comparison"],
+  ] as const)(
+    "does not turn an absent status entry into zero changes (%s, %s)",
+    (gitStatus, gitStatusError, label) => {
+      render(
+        <ChangesPane
+          state={{
+            ...initial,
+            selectedResourceReference: "output/report.txt",
+            gitStatus,
+            gitStatusError,
+            selectedGitPathId: null,
+            selectedGitSide: null,
+            gitDiff: null,
+          }}
+        />,
+      );
+      expect(screen.getByLabelText(label)).toHaveTextContent("——");
+      expect(screen.queryByText("+0")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /Copy path/ }),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("does not substitute filesystem source for a vanished staged comparison", () => {
+    const path = {
+      id: "file",
+      display: "source.ts",
+      utf8Path: "source.ts",
+      workspacePath: "source.ts",
+    };
+    render(
+      <ChangesPane
+        state={{
+          ...initial,
+          gitStatus: {
+            ...clean,
+            files: [{ path, untracked: false, staged: { kind: "modified" } }],
+          },
+          selectedGitPathId: path.id,
+          selectedGitSide: "staged",
+          gitDiff: {
+            status: "ready",
+            result: {
+              path,
+              side: "staged",
+              kind: "empty",
+              reason: "no-changes",
+            },
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText("No diff available")).toBeInTheDocument();
+  });
+});

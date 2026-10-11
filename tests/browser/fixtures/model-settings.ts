@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
 import type {
   ModelPreferencesPatch,
   ProviderLoginAttempt,
@@ -178,26 +178,4 @@ export async function modelSettingsScenario(page: Page, theme = "light") {
     authOperations,
     errors,
   };
-}
-
-export async function pairAndOpen(page: Page) {
-  await page.goto("/");
-  await page.getByLabel("Access token").fill("inspire-browser-test-token");
-  await page.getByRole("button", { name: "Pair", exact: true }).click();
-  const toggle = page.getByRole("button", {
-    name: "Toggle navigation",
-    exact: true,
-  });
-  if (
-    (await toggle.getAttribute("aria-expanded")) === "false" ||
-    (await page.locator(".nav--rail").count())
-  )
-    await toggle.click();
-  await page
-    .getByRole("button", { name: /Review extension event lifecycle/ })
-    .first()
-    .click();
-  await expect(
-    page.getByRole("textbox", { name: "Message", exact: true }),
-  ).toBeVisible();
 }

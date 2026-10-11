@@ -2,7 +2,9 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderLoginAttempt } from "../../shared/model-settings";
+import { ProviderAuthentication } from "../../src/components/ProviderAuthentication";
 import { loginProviders, pendingLogin } from "./fixtures/model-settings";
+import { deferred } from "./helpers";
 
 const host = vi.hoisted(() => ({
   providerAuth: vi.fn(),
@@ -10,17 +12,6 @@ const host = vi.hoisted(() => ({
 }));
 vi.mock("../../src/store", () => ({ store: host }));
 
-import { ProviderAuthentication } from "../../src/components/ProviderAuthentication";
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((done, fail) => {
-    resolve = done;
-    reject = fail;
-  });
-  return { promise, resolve, reject };
-}
 const refresh = vi.fn(async () => {});
 const panel = (owner = { sessionId: "one" }) => (
   <ProviderAuthentication

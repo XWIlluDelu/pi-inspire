@@ -76,7 +76,7 @@ covers:
   - scripts/verify-release-package.mjs
   - scripts/web-build-output.mjs
   - scripts/write-build-stamp.mjs
-  - tests/server/app.test.ts
+  - tests/server/app*.test.ts
   - tests/server/preferences.test.ts
   - tests/portable/file-lock.test.mjs
   - tests/server/host-dirs.test.ts
@@ -89,7 +89,7 @@ covers:
   - tests/portable/web-build-output.test.mjs
   - tests/server/pi-update-checker.test.ts
   - tests/web/app.test.tsx
-  - tests/web/composer.test.tsx
+  - tests/web/composer-*.test.tsx
   - tests/web/notices.test.tsx
   - tests/web/settings-navigation.test.tsx
   - tests/web/settings-loading.test.tsx

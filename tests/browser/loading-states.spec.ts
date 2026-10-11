@@ -1,20 +1,21 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+import { openMockSession, pairedPage } from "./support/navigation";
+
+// The same deferred boundary is served as a source module by Vite and as a
+// hashed chunk by a packaged Host.
+const settingsModule =
+  /\/(?:assets\/Settings-[^/]+\.js|src\/components\/Settings\.tsx)(?:\?|$)/;
+const contextModule =
+  /\/(?:assets\/ContextPane-[^/]+\.js|src\/components\/ContextPane\.tsx)(?:\?|$)/;
 
 // Exercise actual deferred imports with deterministic network holds/failures,
 // rather than letting the service-worker cache bypass page route interception.
 test.use({ serviceWorkers: "block" });
 
-async function pairedPage(page: Page) {
-  await page.goto("/");
-  await page.getByLabel("Access token").fill("inspire-browser-test-token");
-  await page.getByRole("button", { name: "Pair" }).click();
-  await expect(page.getByRole("main")).toBeVisible();
-}
-
 async function holdRequests(
   page: Page,
-  pattern: string,
+  pattern: string | RegExp,
   outcome: "continue" | "abort" = "continue",
 ) {
   let release!: () => void;
@@ -42,7 +43,7 @@ for (const viewport of [
       reducedMotion: "reduce",
     });
     await pairedPage(page);
-    const release = await holdRequests(page, "**/assets/Settings-*.js");
+    const release = await holdRequests(page, settingsModule);
     try {
       await page.getByRole("button", { name: "Settings", exact: true }).click();
       const dialog = page.getByRole("dialog", {
@@ -101,7 +102,7 @@ test("Settings deferred failure has a styled recovery action and remains dismiss
   page,
 }) => {
   await pairedPage(page);
-  await page.route("**/assets/Settings-*.js", (route) => route.abort());
+  await page.route(settingsModule, (route) => route.abort());
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
   await expect(dialog.getByRole("alert")).toContainText(
@@ -114,7 +115,7 @@ test("Settings deferred failure has a styled recovery action and remains dismiss
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.unroute("**/assets/Settings-*.js");
+  await page.unroute(settingsModule);
   await dialog.getByRole("button", { name: "Reload" }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(
@@ -128,12 +129,8 @@ test("Context and History deferred states preserve pane identity and focus", asy
   await page.setViewportSize({ width: 390, height: 844 });
   await pairedPage(page);
   // Use an existing session so History can fetch real bounded mock data.
-  await page.getByRole("button", { name: "Toggle navigation" }).click();
-  await page
-    .locator(".nav__row-main")
-    .filter({ hasText: "Review extension event lifecycle" })
-    .click();
-  const release = await holdRequests(page, "**/assets/ContextPane-*.js");
+  await openMockSession(page, /Review extension event lifecycle/);
+  const release = await holdRequests(page, contextModule);
   try {
     await page.getByRole("button", { name: "Toggle resources panel" }).click();
     const pane = page.getByRole("dialog", { name: "Context panel" });
@@ -195,7 +192,7 @@ test("Context deferred failure preserves its shell, focus and recovery", async (
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await pairedPage(page);
-  const pattern = "**/assets/ContextPane-*.js";
+  const pattern = contextModule;
   const release = await holdRequests(page, pattern, "abort");
   const toggle = page.getByRole("button", { name: "Toggle resources panel" });
   const pane = page.getByRole("dialog", { name: "Context panel" });

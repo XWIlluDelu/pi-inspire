@@ -8,7 +8,7 @@ covers:
   - server/{tool-argument-stream,tool-argument-batches,runtime-stream-budget}.ts
   - src/{api,events,store,snapshot-transition,transport-performance}.ts
   - src/controllers/{connection,session-selection,runtime-event,transcript-data}-controller.ts
-  - tests/server/app.test.ts
+  - tests/server/{app-events,app-prompt-operations}.test.ts
   - tests/web/{events,store,store-transcript,store-navigation,store-async-ownership}.test.ts
 ---
 

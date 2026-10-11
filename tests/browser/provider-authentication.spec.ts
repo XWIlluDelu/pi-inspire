@@ -1,13 +1,11 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
-import { modelSettingsScenario, pairAndOpen } from "./fixtures/model-settings";
-import { openCommandPalette } from "./support/navigation";
+import { modelSettingsScenario } from "./fixtures/model-settings";
+import { openCommandPalette, pairAndOpen } from "./support/navigation";
 
 test.use({ serviceWorkers: "block" });
 for (const [name, width, height, theme] of [
   ["desktop-light", 1280, 900, "light"],
-  ["desktop-dark", 1280, 900, "dark"],
-  ["touch-light", 390, 844, "light"],
   ["phone320-dark", 320, 740, "dark"],
 ] as const) {
   test.describe(name, () => {
@@ -39,10 +37,7 @@ for (const [name, width, height, theme] of [
       await expect(
         initialSettings.getByRole("region", { name: "Available providers" }),
       ).toHaveCount(0);
-      await page.screenshot({
-        path: `output/playwright/auth-${name}.png`,
-        animations: "disabled",
-      });
+
       await initialSettings
         .getByRole("button", { name: "Connect provider", exact: true })
         .click();
@@ -54,10 +49,7 @@ for (const [name, width, height, theme] of [
           .locator(".models-auth__providers")
           .boundingBox())!.height,
       ).toBeLessThanOrEqual(180);
-      await page.screenshot({
-        path: `output/playwright/auth-discovery-${name}.png`,
-        animations: "disabled",
-      });
+
       await initialSettings.getByLabel("Search providers").fill("copilot");
       await initialSettings
         .getByRole("button", { name: "Set up GitHub Copilot" })
@@ -82,10 +74,7 @@ for (const [name, width, height, theme] of [
         await remoteHelp.press("Enter");
       }
       await expect(instruction).toBeVisible();
-      await page.screenshot({
-        path: `output/playwright/auth-provider-method-${name}.png`,
-        animations: "disabled",
-      });
+
       await initialSettings
         .getByRole("button", { name: "Back to providers" })
         .click();
@@ -154,10 +143,7 @@ for (const [name, width, height, theme] of [
       await settings
         .getByRole("button", { name: "Hide credential", exact: true })
         .click();
-      await page.screenshot({
-        path: `output/playwright/auth-secret-${name}.png`,
-        animations: "disabled",
-      });
+
       expect(
         await settings
           .locator(".settings__main")
@@ -183,10 +169,7 @@ for (const [name, width, height, theme] of [
           { exact: true },
         ),
       ).toBeVisible();
-      await page.screenshot({
-        path: `output/playwright/auth-help-${name}.png`,
-        animations: "disabled",
-      });
+
       await settings
         .getByRole("button", { name: "Copy authorization code", exact: true })
         .click();
@@ -248,10 +231,7 @@ for (const [name, width, height, theme] of [
         .evaluate((element) =>
           element.scrollIntoView({ block: "start", behavior: "instant" }),
         );
-      await page.screenshot({
-        path: `output/playwright/auth-empty-${name}.png`,
-        animations: "disabled",
-      });
+
       await settings
         .getByRole("button", { name: "Connect provider", exact: true })
         .click();

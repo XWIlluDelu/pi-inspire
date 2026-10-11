@@ -22,7 +22,7 @@ scope:
   - src/styles.css
   - tests/web/resources-pane.test.tsx
   - tests/web/workspace-controller.test.ts
-  - tests/browser/workbench.spec.ts
+  - tests/browser/filesystem-files.spec.ts
 ---
 
 # File browsing experience

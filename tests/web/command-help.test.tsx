@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CommandHelp } from "../../src/components/CommandHelp";
+import { deferred } from "./helpers";
 
 const installedPiChangelog = vi.hoisted(() => vi.fn());
 const preferences = vi.hoisted(() => ({
@@ -22,15 +23,7 @@ vi.mock("../../src/store", () => ({
 vi.mock("../../src/components/ProgressiveRichText", () => ({
   ProgressiveRichText: ({ text }: { text: string }) => <div>{text}</div>,
 }));
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((yes, no) => {
-    resolve = yes;
-    reject = no;
-  });
-  return { promise, resolve, reject };
-}
+
 beforeEach(() => {
   installedPiChangelog.mockReset();
   preferences.desktopSendKey = "enter";

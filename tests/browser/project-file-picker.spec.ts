@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { pairedPage } from "./support/navigation";
 
 for (const touch of [false, true]) {
   test.describe(touch ? "touch file picker" : "desktop file picker", () => {
@@ -12,10 +13,8 @@ for (const touch of [false, true]) {
 
     test("anchors to its toolbar button, preserves navigation/scroll, and dismisses only on interaction", async ({
       page,
-    }, testInfo) => {
-      await page.goto("/");
-      await page.getByLabel("Access token").fill("inspire-browser-test-token");
-      await page.getByRole("button", { name: "Pair", exact: true }).click();
+    }) => {
+      await pairedPage(page);
       if (touch)
         await page.getByRole("button", { name: "Toggle navigation" }).tap();
       await page
@@ -69,10 +68,6 @@ for (const touch of [false, true]) {
           /picker__row--active/,
         );
       }
-      await page.screenshot({
-        path: testInfo.outputPath("picker-open.png"),
-        animations: "disabled",
-      });
 
       if (touch) await search.tap();
       await expect(search).toBeFocused();

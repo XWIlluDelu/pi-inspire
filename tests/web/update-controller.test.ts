@@ -9,6 +9,7 @@ import {
 } from "../../shared/contracts";
 import { UpdateController } from "../../src/controllers/update-controller";
 import { AppStore } from "../../src/store";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -357,8 +358,7 @@ describe("Host update projection", () => {
           }),
         };
       }
-      if (url.startsWith("/api/sessions"))
-        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+      if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
       return undefined;
     });
 

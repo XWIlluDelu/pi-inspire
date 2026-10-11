@@ -14,7 +14,7 @@ covers:
   - tests/web/child-call-summary.test.ts
   - src/styles/activity-cards.css
   - tests/browser/{tool-presentations,custom-message}.spec.ts
-  - tests/server/app.test.ts
+  - tests/server/{app,app-events}.test.ts
   - tests/server/tool-presentation-config.test.ts
   - tests/web/{tool-cards,tool-card-fallbacks,streaming-edit-cards,child-calls,codemode-result}.test.tsx
   - tests/server/pi-child-calls.integration.test.ts

@@ -15,7 +15,7 @@ covers:
   - src/styles.css
   - src/styles/{terminal,responsive,workbench}.css
   - tests/{server,shared,web}/**/*terminal*
-  - tests/browser/{workbench,operation-lifecycles,terminal-settings}.spec.ts
+  - tests/browser/{project-terminals,operation-lifecycles,terminal-settings}.spec.ts
   - tests/deploy/systemd-control.test.mjs
   - tests/launcher.test.ts
   - vite.config.ts

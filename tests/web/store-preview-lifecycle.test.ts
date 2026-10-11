@@ -71,7 +71,7 @@ describe("selected file preview lifecycle", () => {
     socket.emit({
       type: "snapshot",
       data: activeSnapshot({
-        transcriptPage: { revision: 2, appendFromRevision: 1 },
+        transcriptPage: { revision: 2 },
       }),
     });
     expect(store.getState().fileBrowserView).toBe("preview");

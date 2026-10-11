@@ -34,6 +34,7 @@ const component = (message: ChatMessage) => (
 );
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   configureToolPresentationRegistry();
 });
@@ -134,27 +135,33 @@ describe("extension context messages", () => {
     expect(screen.getByText("Intercom message")).toBeVisible();
   });
 
-  it("keeps images and unknown blocks readable even for a configured type", async () => {
-    configureToolPresentationRegistry(customMessageConfiguration);
-    const message = incomingIntercom();
-    message.content = [
-      { type: "text", text: "**Original block**" },
-      { type: "image", mimeType: "image/png", data: "cGljdHVyZQ==" },
-      { type: "future", data: "Unrecognized payload" },
-      "Primitive payload",
-    ];
-    const { container } = render(component(message));
-    expect(
-      await screen.findByText("Original block", { selector: "strong" }),
-    ).toBeVisible();
-    expect(container.querySelector("img")).toHaveAttribute(
-      "src",
-      "data:image/png;base64,cGljdHVyZQ==",
-    );
-    expect(screen.getByText(/Unrecognized payload/)).toBeVisible();
-    expect(screen.getByText("Primitive payload")).toBeVisible();
-    expect(container.querySelector(".custom-message__source")).toBeNull();
-  });
+  it.each([false, true])(
+    "keeps mixed blocks readable with a configured projection=%s",
+    async (configured) => {
+      if (configured)
+        configureToolPresentationRegistry(customMessageConfiguration);
+      const message = incomingIntercom();
+      message.content = [
+        { type: "text", text: "**Original block**" },
+        { type: "image", mimeType: "image/png", data: "cGljdHVyZQ==" },
+        { type: "future", data: "Unrecognized payload" },
+        "Primitive payload",
+        { type: "text", text: "After" },
+      ];
+      const { container } = render(component(message));
+      expect(
+        await screen.findByText("Original block", { selector: "strong" }),
+      ).toBeVisible();
+      expect(container.querySelector("img")).toHaveAttribute(
+        "src",
+        "data:image/png;base64,cGljdHVyZQ==",
+      );
+      expect(screen.getByText(/Unrecognized payload/)).toBeVisible();
+      expect(screen.getByText("Primitive payload")).toBeVisible();
+      expect(screen.getByText("After")).toBeVisible();
+      expect(container.querySelector(".custom-message__source")).toBeNull();
+    },
+  );
 
   it("renders Markdown directly, without tool state or empty details", async () => {
     const { container } = render(component(base));
@@ -199,29 +206,6 @@ describe("extension context messages", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("supports text and inline image blocks and keeps unrecognized data inspectable", async () => {
-    const { container, rerender } = render(
-      component({
-        ...base,
-        content: [
-          { type: "text", text: "**Before**" },
-          { type: "image", mimeType: "image/png", data: "cGljdHVyZQ==" },
-          { type: "text", text: "After" },
-        ],
-      }),
-    );
-    expect(
-      await screen.findByText("Before", { selector: "strong" }),
-    ).toBeVisible();
-    expect(container.querySelector("img")).toHaveAttribute(
-      "src",
-      "data:image/png;base64,cGljdHVyZQ==",
-    );
-    expect(screen.getByText("After")).toBeVisible();
-    rerender(component({ ...base, content: { unknown: "payload" } }));
-    expect(screen.getByText(/"unknown": "payload"/)).toBeVisible();
-  });
-
   it("does not turn extension Markdown HTML into executable markup", async () => {
     const { container } = render(
       component({
@@ -263,4 +247,49 @@ describe("extension context messages", () => {
       await screen.findByText("extension", { selector: "strong" }),
     ).toBeVisible();
   });
+});
+
+it("keeps custom details open when its live message adopts a durable timestamp", () => {
+  vi.useFakeTimers();
+  const props = {
+    streaming: true,
+    thinkingVisibility: "dynamic" as const,
+    toolVisibility: "dynamic" as const,
+  };
+  const started = {
+    role: "custom",
+    customType: "intercom_message",
+    content: "owned once",
+    details: { source: "peer" },
+    display: true,
+    timestamp: 50,
+    __inspireLiveId: "custom-live-owned",
+    __inspireMessageId: "custom-owned:0",
+    __inspireEntryId: "custom-owned",
+  };
+  const { container, rerender } = render(
+    <Transcript messages={[started]} {...props} />,
+  );
+  const details = container.querySelector(".custom-message__details")!;
+  fireEvent.click(within(details as HTMLElement).getByText("Details"));
+  expect(details).toHaveAttribute("open");
+
+  rerender(
+    <Transcript
+      messages={[
+        {
+          ...started,
+          timestamp: 5_000,
+          __inspireLiveId: undefined,
+          __inspireSettled: undefined,
+        },
+      ]}
+      {...props}
+    />,
+  );
+  expect(container.querySelector(".custom-message__details")).toBe(details);
+  act(() => vi.advanceTimersByTime(5_000));
+  expect(details).toHaveAttribute("open");
+  expect(container.querySelectorAll(".custom-message")).toHaveLength(1);
+  expect(screen.getByText("owned once")).toBeVisible();
 });

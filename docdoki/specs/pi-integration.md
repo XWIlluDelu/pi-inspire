@@ -12,7 +12,7 @@ covers:
   - src/components/{AppTopbar,ExportDialog,ExtensionDisplays,ExtensionUiDialog}.tsx
   - tests/server/pi-*.test.ts
   - tests/server/runtime*.test.ts
-  - tests/web/{app,transcript-inspection}.test.tsx
+  - tests/web/{app,extension-displays,overlay-and-palette}.test.tsx
   - tests/web/{store*,events}.test.ts
 ---
 

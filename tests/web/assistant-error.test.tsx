@@ -206,3 +206,65 @@ describe("Pi assistant errors", () => {
     expect(screen.queryByText("Request aborted")).not.toBeInTheDocument();
   });
 });
+
+it("shows settled empty Pi errors without treating them as the active empty call", () => {
+  const settled = [
+    { role: "user", content: "question", timestamp: 1 },
+    { role: "assistant", content: [], stopReason: "error", timestamp: 2 },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "recovered answer" }],
+      timestamp: 3,
+    },
+  ];
+  const { container, rerender } = render(
+    <Transcript
+      messages={settled}
+      streaming={false}
+      thinkingVisibility="dynamic"
+      toolVisibility="dynamic"
+    />,
+  );
+  expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(3);
+  expect(screen.getAllByRole("group", { name: "PI error" })).toHaveLength(1);
+  expect(container.querySelectorAll(".turn--assistant")).toHaveLength(1);
+
+  const settledRetry = {
+    role: "assistant",
+    content: [],
+    stopReason: "error",
+    timestamp: 4,
+    __inspireLiveId: "settled-retry",
+    __inspireSettled: true,
+  };
+  rerender(
+    <Transcript
+      messages={[...settled, settledRetry]}
+      streaming
+      activeAssistantMessageKey="live:settled-retry"
+      thinkingVisibility="dynamic"
+      toolVisibility="dynamic"
+    />,
+  );
+  expect(screen.queryByText("Working…")).not.toBeInTheDocument();
+  expect(screen.getAllByRole("group", { name: "PI error" })).toHaveLength(2);
+  expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(4);
+
+  const activeRetry = {
+    role: "assistant",
+    content: [],
+    timestamp: 5,
+    __inspireLiveId: "retry-call",
+  };
+  rerender(
+    <Transcript
+      messages={[...settled, activeRetry]}
+      streaming
+      activeAssistantMessageKey="live:retry-call"
+      thinkingVisibility="dynamic"
+      toolVisibility="dynamic"
+    />,
+  );
+  expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(4);
+  expect(screen.getByText("Working…")).toBeInTheDocument();
+});

@@ -1275,3 +1275,65 @@ describe("response activity folds", () => {
     expect(fold).toHaveAttribute("data-activity-fold", "closed");
   });
 });
+
+it("keeps trailing custom messages separate from the preceding final tool strip", () => {
+  const toolBatch = {
+    role: "assistant",
+    timestamp: 25,
+    content: [
+      {
+        type: "toolCall",
+        id: "merged-read",
+        name: "read",
+        arguments: { path: "a.ts" },
+      },
+      {
+        type: "toolCall",
+        id: "merged-bash",
+        name: "bash",
+        arguments: { command: "npm test" },
+      },
+    ],
+  };
+  const { container } = render(
+    <Transcript
+      messages={[
+        toolBatch,
+        {
+          role: "toolResult",
+          toolCallId: "merged-read",
+          content: "read",
+          timestamp: 26,
+        },
+        {
+          role: "toolResult",
+          toolCallId: "merged-bash",
+          content: "tested",
+          timestamp: 27,
+        },
+        {
+          role: "custom",
+          customType: "intercom_message",
+          content: "delivered",
+          display: true,
+          timestamp: 28,
+        },
+      ]}
+      streaming={false}
+      thinkingVisibility="collapsed"
+      toolVisibility="collapsed"
+    />,
+  );
+
+  const strips = container.querySelectorAll(".activity-strip");
+  expect(strips).toHaveLength(1);
+  const items = strips[0]!.querySelectorAll(".activity-strip__item");
+  expect(items).toHaveLength(2);
+  expect(screen.getByText("delivered")).toBeVisible();
+  const custom = container.querySelector(".turn--custom")!;
+  expect(custom.closest("[data-activity-fold]")).toBeNull();
+  expect(
+    strips[0]!.compareDocumentPosition(custom) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+});

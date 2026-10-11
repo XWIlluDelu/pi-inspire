@@ -10,6 +10,7 @@ import {
   catalog,
   trackedAttachmentStore,
   deferredSignal,
+  schedulingRuntime,
   initializeRuntimeFixture,
   disposeRuntimeFixture,
 } from "./fixtures/runtime.js";
@@ -19,23 +20,15 @@ afterEach(disposeRuntimeFixture);
 
 describe("RuntimeController compaction lifecycle", () => {
   it("retains bounded summarization retry detail without changing compaction ownership", async () => {
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
+    const f = schedulingRuntime();
+    const { runtime } = f;
     const events: Array<Record<string, unknown>> = [];
     runtime.on("event", (event) => events.push(event));
     try {
       await runtime.openSession("a");
       await runtime.setAutoRetry("a", true);
-      worker.emit("event", { type: "compaction_start", reason: "manual" });
-      worker.emit("event", {
+      f.worker.emit("event", { type: "compaction_start", reason: "manual" });
+      f.worker.emit("event", {
         type: "summarization_retry_scheduled",
         attempt: 2,
         maxAttempts: 3,
@@ -69,20 +62,20 @@ describe("RuntimeController compaction lifecycle", () => {
         "summarization_retry_attempt_start",
         "summarization_retry_finished",
       ]) {
-        worker.emit("event", { type });
+        f.worker.emit("event", { type });
         await new Promise<void>((done) => setImmediate(done));
         expect(await runtime.snapshot("a")).toMatchObject({
           runState: "compacting",
           summarizationRetry: null,
         });
-        worker.emit("event", {
+        f.worker.emit("event", {
           type: "summarization_retry_scheduled",
           attempt: 2,
           maxAttempts: 3,
           errorMessage: "retry",
         });
       }
-      worker.emit("event", {
+      f.worker.emit("event", {
         type: "compaction_end",
         reason: "manual",
         aborted: true,
@@ -102,16 +95,8 @@ describe("RuntimeController compaction lifecycle", () => {
   });
 
   it("classifies native standalone cancellation from Pi's event and recovers Pending without replacing its worker", async () => {
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
+    const f = schedulingRuntime();
+    const { runtime } = f;
     const events: Array<Record<string, unknown>> = [];
     runtime.on("event", (event) => events.push(event));
     const { promise: compactStarted, resolve: started } = deferredSignal();
@@ -119,14 +104,14 @@ describe("RuntimeController compaction lifecycle", () => {
     try {
       await runtime.openSession("a");
       await waitForReady(runtime);
-      worker.responseOverrides.set("compact", () => {
+      f.worker.responseOverrides.set("compact", () => {
         started();
         return new Promise((_resolve, reject) => {
           cancelCompact = reject;
         });
       });
-      worker.responseOverrides.set("abort", () => {
-        worker.emit("event", {
+      f.worker.responseOverrides.set("abort", () => {
+        f.worker.emit("event", {
           type: "compaction_end",
           reason: "manual",
           aborted: true,
@@ -158,18 +143,17 @@ describe("RuntimeController compaction lifecycle", () => {
         command: "compact",
         outcome: "cancelled",
       });
-      expect(worker.stops).toBe(0);
-      expect(worker.commands.slice(-2).map((command) => command.type)).toEqual([
-        "clear_queue",
-        "abort",
-      ]);
+      expect(f.worker.stops).toBe(0);
+      expect(
+        f.worker.commands.slice(-2).map((command) => command.type),
+      ).toEqual(["clear_queue", "abort"]);
       expect(
         events.filter((event) => event.type === "compaction_end"),
       ).toHaveLength(1);
       expect((await runtime.snapshot()).runState).toBe("aborted");
       await runtime.prompt({ sessionId: "a", message: "new post-Stop input" });
-      expect(worker.starts).toBe(1);
-      expect(worker.stops).toBe(0);
+      expect(f.worker.starts).toBe(1);
+      expect(f.worker.stops).toBe(0);
     } finally {
       await runtime.close();
     }

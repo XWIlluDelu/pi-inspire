@@ -1,34 +1,48 @@
 ---
-purpose: Optional connection modules add independently managed local ingress paths to one loopback INSΠRE host without becoming host, Pi, session, or browser-authentication authority.
+purpose: Independently managed connection modules provide remote ingress to one authenticated loopback Host.
 covers:
   - inspire
   - connections/**
   - deploy/systemd/**
   - docs/ssh-reverse.md
-  - server/app.ts
-  - server/index.ts
+  - server/{app,index}.ts
   - server/instance-state.*
   - tests/connections/**
-  - tests/server/app.test.ts
-  - tests/server/instance-state.test.ts
+  - tests/server/{app-auth,instance-state}.test.ts
 ---
 
 # Connection modules
 
-## Goal
+## Responsibilities
 
-Provide detachable local connection modules while retaining one loopback INSΠRE host as the sole Pi, session, credential, and browser-authentication authority.
+The core launcher dispatches named modules through checked manifests. Each module owns its
+configuration, control socket, process state and service lifecycle under its own identifier.
+Stopping or removing one cannot stop or replace the Host or another module.
 
-## Checks
+The Host remains the Pi, session, credential and browser-authentication authority, listening on
+loopback. Remote traffic follows [[host-lifecycle]] authentication. The browser and terminal use
+the same ingress and tunnel; a module owns neither PTYs nor a separate terminal port.
 
-- The core launcher dispatches a named connection module through a checked manifest and does not embed a module's transport configuration, companion-process lifecycle, or server setup.
-- A module stores its configuration, control socket, process state, and user-service integration under its own identifier, so stopping or removing it cannot stop, replace, or corrupt the host or another module.
-- The host continues to bind only to loopback. Direct loopback browser launches retain one-time token pairing, while an HTTPS request forwarded from a trusted loopback hop strips token URLs without pairing, emits a `Secure` cookie through Pair, and rejects WebSocket query-token authentication. The dedicated terminal WebSocket uses this same HTTP ingress and reverse tunnel; a connection module opens no second terminal port and owns neither the PTY nor its lifetime.
-- The `ssh-reverse` module validates a small non-executable private configuration, establishes only `-R 127.0.0.1:<remote-port>:127.0.0.1:<local-port>`, verifies the SSH process it manages before stopping it, and offers an independently restartable user service. The managed command bounds initial connection to 10 seconds and detects an unanswered established server after three 15-second SSH server-alive probes; it leaves SSH compression at its default because compression of bootstrap, asset, and other HTTP bytes on the encrypted reverse hop is a deployment-specific CPU/throughput trade-off and can duplicate WebSocket per-message compression when the proxy preserves that negotiation. Startup and service diagnostics distinguish local-host absence, SSH authentication, server-identity verification, relay DNS/reachability, remote-port rejection, and an interrupted established connection while preserving SSH's final diagnostic. Service lifecycle commands compare the installed unit with the current module, runtime, and installation root; an active stale or foreign unit is never reported or controlled as this installation. Its status is explicitly local to the host listener and managed SSH control connection; public DNS, TLS, proxy, authentication, and WebSocket delivery require an independently owned paired-client monitor when operationally necessary.
-- Server-side setup remains documentation and static examples. The Caddy example compresses phone-facing HTTP responses, marks tunnel-originated 502/503/504 responses so the browser can distinguish a reachable public edge from an unavailable reverse path, and documents optional UDP 443 for Caddy's phone-facing HTTP/3 hop. The module never creates remote accounts, keys, DNS records, proxy configuration, or firewall rules.
-- The release package contains the dispatcher, connection module, user-service templates, and its setup guide.
+## Reverse SSH
 
-## Non-goals
+The `ssh-reverse` module reads a private, non-executable configuration and establishes only
+`-R 127.0.0.1:<remote-port>:127.0.0.1:<local-port>`. It verifies its managed SSH process before
+stopping it and offers an independently restartable user service.
 
-- A connection module is not a second host, a Pi runtime, a session store, or a browser state authority.
-- A module does not make server-specific identity, topology, or edge configuration part of the core host contract.
+- Initial connection has a ten-second limit. Three unanswered fifteen-second server-alive probes
+  detect an interrupted established connection.
+- Diagnostics distinguish Host absence, authentication, server identity, DNS/reachability,
+  remote-port rejection and connection loss, retaining SSH's final diagnostic.
+- Service commands compare the installed unit with the current module, runtime and installation
+  root before control. A stale or foreign unit is not this installation's service.
+- Status describes the local listener and managed SSH connection. An operational end-to-end check
+  must use a paired client through the public DNS, TLS and proxy path.
+- SSH compression stays at its default. Compression on the encrypted hop trades CPU for traffic
+  and may duplicate negotiated WebSocket compression.
+
+Server setup is documentation and static examples. The Caddy example compresses browser-facing
+responses, marks tunnel-originated 502/503/504 failures, and describes optional UDP 443 for HTTP/3.
+The module does not provision remote accounts, keys, DNS, proxies or firewalls.
+
+The release includes the dispatcher, module, service templates and [setup guide](../../docs/ssh-reverse.md).
+[[remote-relay-options]] compares alternatives.

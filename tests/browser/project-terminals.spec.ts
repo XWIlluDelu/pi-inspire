@@ -152,6 +152,30 @@ test("project terminals survive browser detach and keep multiple tabs", async ({
 test("terminal menus share alignment, mutual exclusion, and nested Escape ownership", async ({
   page,
 }) => {
+  await page.route(/\/api\/terminals(?:\?|$)/, async (route) => {
+    const response = await route.fetch();
+    const catalog = await response.json();
+    await route.fulfill({
+      response,
+      json: {
+        ...catalog,
+        profiles: [
+          {
+            id: "menu-default",
+            label: "Default profile",
+            available: true,
+            isDefault: true,
+          },
+          {
+            id: "menu-alternate",
+            label: "Alternate profile",
+            available: true,
+            isDefault: false,
+          },
+        ],
+      },
+    });
+  });
   await pairedPage(page);
   await openMockSession(page, /Review extension event lifecycle/);
   const created = await page.request.post("/api/terminals", {
@@ -194,9 +218,6 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
       expect(Math.max(...centers) - Math.min(...centers)).toBeLessThanOrEqual(
         0.5,
       );
-      await page.locator(".terminal-tabs-shell").screenshot({
-        path: `output/playwright/terminal-toolbar-${width}.png`,
-      });
 
       const actions = page.getByLabel("Terminal actions", { exact: true });
       const profiles = page.getByLabel("Choose terminal profile", {
@@ -208,16 +229,15 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
       await actions.focus();
       await actions.press("Enter");
       await expect(openMenus).toHaveCount(1);
-      // Profile discovery is platform-specific; exercise mutual exclusion when
-      // this Host exposes more than one profile, without inventing a shell.
-      if (await profiles.count()) {
-        await profiles.focus();
-        await profiles.press("Enter");
-        await expect(openMenus).toHaveCount(1);
-        await expect(profiles.locator("..")).toHaveAttribute("open", "");
-        await actions.focus();
-        await actions.press("Enter");
-      }
+      await profiles.focus();
+      await profiles.press("Enter");
+      await expect(openMenus).toHaveCount(1);
+      await expect(profiles.locator("..")).toHaveAttribute("open", "");
+      await expect(actions.locator("..")).not.toHaveAttribute("open");
+      await actions.focus();
+      await actions.press("Enter");
+      await expect(actions.locator("..")).toHaveAttribute("open", "");
+      await expect(profiles.locator("..")).not.toHaveAttribute("open");
       const projects = page.getByLabel("Terminals in all projects", {
         exact: true,
       });
@@ -492,9 +512,7 @@ test("compact terminal controls keep selection, search, and output scoped to the
   expect(menuBounds!.y + menuBounds!.height).toBeLessThanOrEqual(
     paneBounds!.y + paneBounds!.height,
   );
-  await page
-    .locator(".terminal-pane")
-    .screenshot({ path: "output/playwright/terminal-compact-menu.png" });
+
   await more.click();
   await page
     .locator(".terminal-pane")
@@ -517,9 +535,7 @@ test("compact terminal controls keep selection, search, and output scoped to the
     await expect(searchInput).toHaveCount(0);
     await expect(page.locator(".ctx")).toBeVisible();
     await expect(visibleInput).toBeFocused();
-    await page.locator(".terminal-pane").screenshot({
-      path: `output/playwright/terminal-compact-${width}.png`,
-    });
+
     const overflow = await page
       .locator(".terminal-tabs-shell")
       .evaluate((element) => element.scrollWidth - element.clientWidth);
@@ -783,9 +799,7 @@ test.describe("touch terminal", () => {
               (element) => element.scrollWidth - element.clientWidth,
             ),
           ).toBeLessThanOrEqual(1);
-          await page.screenshot({
-            path: `output/playwright/terminal-text-${width}-${theme}.png`,
-          });
+
           const accessibility = await new AxeBuilder({ page })
             .include(".terminal-text-dialog")
             .analyze();

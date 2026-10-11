@@ -17,6 +17,7 @@ import { Composer } from "../../src/components/Composer";
 import { EarlierBranchBanner } from "../../src/components/EarlierBranchBanner";
 import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
 import { store } from "../../src/store";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -138,7 +139,7 @@ beforeEach(async () => {
           }),
         );
       if (url.startsWith("/api/sessions"))
-        return Response.json({ sessions: [], total: 0, offset: 0, limit: 40 });
+        return Response.json(sessionPage([], 0));
       if (url.startsWith("/api/branches/tree")) {
         if (new URL(url, "http://fixture").searchParams.has("query"))
           await fixture.searchGate;
@@ -196,13 +197,10 @@ beforeEach(async () => {
             durableLeafId: "a2",
             effectiveLeafId: fixture.effective,
             transcriptPage: {
-              sessionId: "s1",
               revision: fixture.revision,
               viewId: fixture.cancelled ? "view-1" : "changed-view",
               effectiveLeafId: fixture.effective,
               messages: [],
-              hasOlder: false,
-              olderCursor: null,
             },
           }),
           ...(fixture.cancelled

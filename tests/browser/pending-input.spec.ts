@@ -1,8 +1,10 @@
 import { readFile } from "node:fs/promises";
+import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import type { UploadedAttachment } from "../../shared/contracts";
 import { pendingTextSummary } from "../../shared/pending-preview";
 import { clipboardLines } from "./support/clipboard";
+import { openMockSession, pairedPage } from "./support/navigation";
 
 const token = "inspire-browser-test-token";
 const pixel = Buffer.from(
@@ -11,9 +13,7 @@ const pixel = Buffer.from(
 );
 
 async function openPendingSession(page: Page) {
-  await page.goto("/");
-  await page.getByLabel("Access token").fill(token);
-  await page.getByRole("button", { name: "Pair", exact: true }).click();
+  await pairedPage(page);
   await page
     .locator(".nav__row-main")
     .filter({ hasText: /Formula rendering and spectral analysis/ })
@@ -100,10 +100,7 @@ test("Pending image thumbnails open the shared viewer and wrap at narrow widths"
     await expect(rows.nth(0)).toContainText("Compare these charts");
     await expect(rows.nth(1).locator("pre")).toHaveCount(0);
     await expect(rows.nth(2)).toContainText("No text");
-    await page.screenshot({
-      path: "output/playwright/pending-thumbnails/desktop.png",
-      animations: "disabled",
-    });
+
     const preview = pending.getByRole("button", {
       name: "Preview Pending steer item 1 image 1",
     });
@@ -111,10 +108,7 @@ test("Pending image thumbnails open the shared viewer and wrap at narrow widths"
     await page.keyboard.press("Enter");
     const viewer = page.getByRole("dialog", { name: "Image preview" });
     await expect(viewer).toBeVisible();
-    await page.screenshot({
-      path: "output/playwright/pending-thumbnails/viewer.png",
-      animations: "disabled",
-    });
+
     await viewer.getByRole("button", { name: "Zoom image" }).click();
     await expect(
       viewer.getByRole("button", { name: "Fit image to window" }),
@@ -156,10 +150,6 @@ test("Pending image thumbnails open the shared viewer and wrap at narrow widths"
       ),
     ).toBe(true);
     expect(boxes[4]!.top).toBeGreaterThan(boxes[0]!.top);
-    await page.screenshot({
-      path: "output/playwright/pending-thumbnails/narrow.png",
-      animations: "disabled",
-    });
   } finally {
     for (const item of attachments)
       await request.delete(`/api/attachments/${item.id}`, {
@@ -193,10 +183,6 @@ test("Pending Clear all keeps its explicit two-step confirmation and leaves the 
   expect(delivery.groupWidth).toBeCloseTo(delivery.rowWidth, 0);
   expect(delivery.buttons[0]!.width).toBeCloseTo(delivery.buttons[1]!.width, 0);
   expect(delivery.buttons.every(({ height }) => height >= 34)).toBe(true);
-  await composer.screenshot({
-    path: "output/playwright/pending-thumbnails/mobile-delivery.png",
-    animations: "disabled",
-  });
 
   await input.fill("first pending instruction");
   await composer.getByRole("button", { name: "Send as steer" }).click();
@@ -433,9 +419,7 @@ for (const action of ["Return all", "Escape"] as const) {
           ),
       )
       .toBe(count);
-    await page.screenshot({
-      path: `output/playwright/pending-images-${action === "Return all" ? "return" : "escape"}.png`,
-    });
+
     await composer
       .getByRole("button", { name: "Remove attached image" })
       .last()
@@ -502,10 +486,7 @@ test("Pending text preserves visible head and tail while copying and returning t
   await expect(pending).toContainText("…");
   await expect(pending).not.toContainText("Middle detail 10");
   await expect(pending).not.toContainText("Display previews only");
-  await page.screenshot({
-    path: "output/playwright/pending-head-tail.png",
-    animations: "disabled",
-  });
+
   await pending
     .getByRole("button", { name: "Copy steer item 1", exact: true })
     .click();
@@ -516,4 +497,47 @@ test("Pending text preserves visible head and tail while copying and returning t
   await expect(input).toHaveValue(text);
   await expect(pending).toHaveCount(0);
   await composer.getByRole("button", { name: "Abort running task" }).click();
+});
+
+test("running composer exposes steer, queue, and abort controls", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await pairedPage(page);
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+  const message = page.getByRole("textbox", { name: "Message" });
+  await message.fill("start a run for delivery controls");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(
+    page.getByRole("button", { name: "Steer", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Queue", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Abort running task", exact: true }),
+  ).toBeVisible();
+
+  const queue = page.getByRole("button", {
+    name: "Queue",
+    exact: true,
+  });
+  await queue.click();
+  await expect(queue).toHaveAttribute("aria-pressed", "true");
+  await expect(message).toHaveAttribute(
+    "placeholder",
+    "Add a follow-up for after this task…",
+  );
+
+  const results = await new AxeBuilder({ page })
+    .include(".topbar")
+    .include(".composer")
+    .analyze();
+  expect(results.violations).toEqual([]);
+
+  await page.getByRole("button", { name: "Abort running task" }).click();
+  await expect(
+    page.getByRole("button", { name: "Abort running task" }),
+  ).toBeHidden();
 });

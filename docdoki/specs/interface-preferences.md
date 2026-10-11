@@ -9,7 +9,7 @@ covers:
   - src/styles/settings-overlays.css
   - tests/server/{preferences,update-checker,pi-update-checker,update-coordinator}.test.ts
   - tests/web/{settings-navigation,settings-loading,notices,update-controller,attention,modal-focus}.test.ts*
-  - tests/browser/{workbench,settings-layout}.spec.ts
+  - tests/browser/{settings-layout,loading-states}.spec.ts
 ---
 
 # Interface preferences and completion attention

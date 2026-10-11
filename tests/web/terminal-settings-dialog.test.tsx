@@ -6,17 +6,8 @@ import type { TerminalServiceSettings } from "../../shared/terminal-contracts";
 import type { createApi } from "../../src/api";
 import { TerminalSettingsDialog } from "../../src/components/TerminalSettingsDialog";
 import { DEFAULT_TERMINAL_UI_SETTINGS } from "../../src/terminal-settings";
-import { installLocalStorage } from "./helpers";
+import { deferred, installLocalStorage } from "./helpers";
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (error: Error) => void;
-  const promise = new Promise<T>((yes, no) => {
-    resolve = yes;
-    reject = no;
-  });
-  return { promise, resolve, reject };
-}
 const service = { persistOutput: true, historyRetentionDays: 30 };
 const api = {
   terminalSettings: vi.fn(),

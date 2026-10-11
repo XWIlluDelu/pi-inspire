@@ -7,8 +7,15 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Transcript } from "../../src/components/Transcript";
+import { deferred } from "./helpers";
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe("Transcript older-page anchor", () => {
   it("preserves an unpinned visible anchor when a retained history receives a live append", () => {
@@ -191,23 +198,204 @@ describe("Transcript older-page anchor", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows an explicit retry only after automatic loading fails", () => {
-    const onLoadOlder = vi.fn(async () => false);
-    render(
-      <Transcript
-        messages={[{ role: "user", content: "newest", timestamp: 2 }]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
-        hasOlder
-        olderError="network unavailable"
-        onLoadOlder={onLoadOlder}
-      />,
-    );
+  it("pauses automatic paging after failure and resumes only through an explicit retry", async () => {
+    const firstPage = deferred<boolean>();
+    const retryPage = deferred<boolean>();
+    const request = vi
+      .fn()
+      .mockReturnValueOnce(firstPage.promise)
+      .mockReturnValueOnce(retryPage.promise);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Retry loading earlier messages" }),
-    );
-    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+    function Harness() {
+      const [error, setError] = useState<string | null>(null);
+      const [hasOlder, setHasOlder] = useState(true);
+      const [messages, setMessages] = useState([
+        { role: "user", content: "newest", timestamp: 2 },
+      ]);
+      const loadOlder = async () => {
+        const loaded = await request();
+        if (loaded) {
+          setError(null);
+          setHasOlder(false);
+          setMessages((current) => [
+            { role: "user", content: "retried older page", timestamp: 1 },
+            ...current,
+          ]);
+        } else setError("network unavailable");
+        return loaded;
+      };
+      return (
+        <Transcript
+          messages={messages}
+          streaming={false}
+          thinkingVisibility="collapsed"
+          toolVisibility="collapsed"
+          hasOlder={hasOlder}
+          olderError={error}
+          onLoadOlder={loadOlder}
+        />
+      );
+    }
+
+    render(<Harness />);
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("Loading earlier messages…")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry loading earlier messages" }),
+    ).toBeNull();
+
+    await act(async () => firstPage.resolve(false));
+    const retry = screen.getByRole("button", {
+      name: "Retry loading earlier messages",
+    });
+    expect(retry).toHaveAttribute("title", "network unavailable");
+    expect(screen.queryByText("Loading earlier messages…")).toBeNull();
+    const log = screen.getByRole("log");
+    fireEvent.wheel(log, { deltaY: -200 });
+    fireEvent.scroll(log);
+    fireEvent.scroll(log);
+    expect(request).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(retry);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Loading earlier messages…")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry loading earlier messages" }),
+    ).toBeNull();
+    await act(async () => retryPage.resolve(true));
+    await screen.findByText("retried older page");
+    expect(
+      screen.queryByRole("button", { name: "Retry loading earlier messages" }),
+    ).toBeNull();
+    expect(screen.queryByText("Loading earlier messages…")).toBeNull();
+    expect(request).toHaveBeenCalledTimes(2);
   });
+});
+
+it("follows thinking and tool growth until the user deliberately scrolls away", () => {
+  vi.useFakeTimers();
+  const observed = new Map<Element, ResizeObserverCallback>();
+  class TestResizeObserver {
+    constructor(private readonly callback: ResizeObserverCallback) {}
+    observe(target: Element) {
+      observed.set(target, this.callback);
+    }
+    unobserve(target: Element) {
+      observed.delete(target);
+    }
+    disconnect() {
+      observed.clear();
+    }
+  }
+  vi.stubGlobal("ResizeObserver", TestResizeObserver);
+
+  const active = {
+    role: "assistant",
+    timestamp: 2,
+    __inspireLiveId: "growing-call",
+    content: [] as Array<Record<string, unknown>>,
+  };
+  const props = {
+    streaming: true,
+    activeAssistantMessageKey: "live:growing-call",
+    thinkingVisibility: "dynamic" as const,
+    toolVisibility: "dynamic" as const,
+  };
+  const { container, rerender } = render(
+    <Transcript
+      messages={[{ role: "user", content: "question", timestamp: 1 }, active]}
+      {...props}
+    />,
+  );
+  const log = screen.getByRole("log");
+  expect(
+    screen.getByText("Working…").closest(".assistant-activity"),
+  ).toHaveAttribute("role", "status");
+  let scrollHeight = 1_000;
+  Object.defineProperties(log, {
+    clientHeight: { configurable: true, get: () => 300 },
+    scrollHeight: { configurable: true, get: () => scrollHeight },
+    scrollTop: { configurable: true, writable: true, value: 700 },
+  });
+
+  rerender(
+    <Transcript
+      messages={[
+        { role: "user", content: "question", timestamp: 1 },
+        {
+          ...active,
+          content: [
+            { type: "thinking", thinking: "live reasoning" },
+            {
+              type: "toolCall",
+              id: "live-tool",
+              name: "read",
+              arguments: { path: "notes.md" },
+            },
+          ],
+        },
+      ]}
+      {...props}
+    />,
+  );
+  expect(log.scrollTop).toBe(700);
+  expect(screen.queryByText("Working…")).not.toBeInTheDocument();
+  expect(container.querySelector(".card--thinking")).not.toBeNull();
+  expect(container.querySelector(".card--tool")).not.toBeNull();
+
+  // A delayed Markdown/card/virtual-row measurement must not turn the
+  // programmatic follow scroll into apparent user intent.
+  scrollHeight = 1_400;
+  fireEvent.scroll(log);
+  expect(
+    screen.queryByRole("button", { name: "Jump to latest" }),
+  ).not.toBeInTheDocument();
+  const content = container.querySelector(".transcript__content")!;
+  act(() => observed.get(content)?.([], {} as ResizeObserver));
+  expect(log.scrollTop).toBe(1_100);
+  fireEvent.scroll(log);
+
+  // Input precedes its scroll event. A stream delta in that gap must not win
+  // the race and pull the viewport back to latest.
+  fireEvent.wheel(log, { deltaY: -200 });
+  scrollHeight = 1_450;
+  rerender(
+    <Transcript
+      messages={[
+        { role: "user", content: "question", timestamp: 1 },
+        {
+          ...active,
+          content: [
+            { type: "thinking", thinking: "live reasoning continues" },
+            {
+              type: "toolCall",
+              id: "live-tool",
+              name: "read",
+              arguments: { path: "notes.md" },
+            },
+          ],
+        },
+      ]}
+      {...props}
+    />,
+  );
+  expect(log.scrollTop).toBe(1_100);
+
+  // Even a small deliberate move inside the old 80px proximity band owns the
+  // viewport. Later layout-driven scroll events must not silently reacquire
+  // latest-follow after the input marker expires.
+  log.scrollTop = 1_090;
+  fireEvent.scroll(log);
+  expect(
+    screen.getByRole("button", { name: "Jump to latest" }),
+  ).toBeInTheDocument();
+  act(() => vi.advanceTimersByTime(401));
+  log.scrollTop = 1_120;
+  fireEvent.scroll(log);
+  scrollHeight = 1_700;
+  act(() => observed.get(content)?.([], {} as ResizeObserver));
+  expect(log.scrollTop).toBe(1_120);
+  expect(
+    screen.getByRole("button", { name: "Jump to latest" }),
+  ).toBeInTheDocument();
 });

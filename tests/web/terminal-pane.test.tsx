@@ -15,6 +15,7 @@ import type {
 import { TerminalPane } from "../../src/components/TerminalPane";
 import { terminalOperations } from "../../src/controllers/terminal-operation-controller";
 import { TerminalCatalogController } from "../../src/terminal-catalog";
+import { deferred } from "./helpers";
 
 const api = vi.hoisted(() => ({
   terminals: vi.fn(),
@@ -73,15 +74,7 @@ function catalog(
 ): TerminalCatalogResponse {
   return { terminals, revision, catalogEpoch, profiles: [] };
 }
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: Error) => void;
-  const promise = new Promise<T>((yes, no) => {
-    resolve = yes;
-    reject = no;
-  });
-  return { promise, resolve, reject };
-}
+
 function tabs() {
   return within(screen.getByRole("toolbar", { name: "Project terminals" }))
     .getAllByRole("button", { name: /^(A|B|new)/ })

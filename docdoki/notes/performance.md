@@ -9,7 +9,7 @@ Linux, Node 26.10.0, production Chromium build; local mock Host and installed-Pi
 - **Live tool output:** a 325,013-character cumulative text fixture exceeded the generic head cap.
   Moving tail selection ahead of that cap preserved the latest marker. Uncompressed event JSON
   decreased from 269,420 to 5,780 bytes; event and reconnect snapshot carry the same bounded preview.
-  Character/line-bound cases in `runtime-projection.test.ts` retain this regression.
+  Character/line-bound cases in `runtime-transcript.test.ts` retain this regression.
 - **Session switching:** three browser switches issued six Git status requests before the topbar
   subscription repair and three afterward. The repair removes the cancel/restart pair instead of
   adding a cache. The repository/non-repository transition case is in `git-store.test.ts`.

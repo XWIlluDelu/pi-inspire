@@ -6,6 +6,7 @@ import {
   SearchMatchText,
   searchMatchRanges,
 } from "../../src/components/SearchMatchText";
+import { sessionSearchMatchRanges } from "../../src/session-search-presentation";
 
 describe("fuzzy search match presentation", () => {
   it.each([
@@ -90,3 +91,25 @@ describe("file search match presentation", () => {
     expect(container.querySelector("button")).toHaveAccessibleName(path);
   });
 });
+
+it.each([
+  ["Alpha session", "ALPHA session", ["Alpha", "session"]],
+  ["a x ab", "ab", ["a", "b"]],
+  ["First   session plan", '"first session"', ["First   session"]],
+  ["First unrelated session", '"first session"', []],
+  ["Version 2", "2v", ["V", "2"]],
+  ["İmage", "ig", ["İ", "g"]],
+  ["Quoted session", '"session', []],
+  ["Alpha session", "re:(a+)+$", []],
+  ["Alpha session", "bodyOnly", []],
+  ["Alpha session", "  ", []],
+])(
+  "emphasizes visible %s matches for %s without filtering rows",
+  (text, query, expected) => {
+    expect(
+      sessionSearchMatchRanges(text, query).map((range) =>
+        text.slice(range.start, range.end),
+      ),
+    ).toEqual(expected);
+  },
+);

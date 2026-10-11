@@ -1,6 +1,13 @@
 import { EventEmitter } from "node:events";
 import { realpathSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { expect, vi } from "vitest";
@@ -9,7 +16,8 @@ import type {
   PiRpcOptions,
   PiRpcResponseFence,
 } from "../../../server/pi-rpc.js";
-import type { RuntimeController } from "../../../server/runtime.js";
+import { RuntimeController } from "../../../server/runtime.js";
+import type { PiRpcProcess } from "../../../server/pi-rpc.js";
 import type {
   SessionCatalogLike,
   SessionRecord,
@@ -42,13 +50,17 @@ export class FakeRpc extends EventEmitter {
     return true;
   }
 
-  constructor(readonly options: PiRpcOptions) {
+  constructor(
+    readonly options: PiRpcOptions,
+    sessionPath?: string,
+  ) {
     super();
     const marker = options.args?.indexOf("--session") ?? -1;
     this.sessionPath =
-      marker >= 0
+      sessionPath ??
+      (marker >= 0
         ? resolve(options.args![marker + 1]!)
-        : join(fixtureWorkspace, "new-id.jsonl");
+        : join(fixtureWorkspace, "new-id.jsonl"));
     this.sessionId = this.sessionPath
       ? basename(this.sessionPath, ".jsonl")
       : "new-id";
@@ -200,6 +212,44 @@ export function record(id: string, cwd: string): SessionRecord {
   };
 }
 
+export async function persistedRecord(
+  id: string,
+  cwd = fixtureWorkspace,
+): Promise<SessionRecord> {
+  const session = record(id, cwd);
+  session.path = join(fixtureWorkspace, `${id}.jsonl`);
+  await writeFile(
+    session.path,
+    `${[
+      {
+        type: "session",
+        version: 3,
+        id,
+        cwd: session.cwd,
+        timestamp: session.created.toISOString(),
+      },
+      {
+        type: "message",
+        id: "u1",
+        parentId: null,
+        timestamp: session.created.toISOString(),
+        message: { role: "user", content: `persisted:${id}`, timestamp: 1 },
+      },
+    ]
+      .map((entry) => JSON.stringify(entry))
+      .join("\n")}\n`,
+  );
+  const details = await stat(session.path, { bigint: true });
+  session.source = {
+    dev: details.dev,
+    ino: details.ino,
+    size: details.size,
+    mtimeNs: details.mtimeNs,
+    ctimeNs: details.ctimeNs,
+  };
+  return session;
+}
+
 export async function waitForReady(
   runtime: RuntimeController,
   sessionId = "a",
@@ -283,6 +333,37 @@ export function trackedAttachmentStore(): AttachmentStore {
   );
   attachments.push(store);
   return store;
+}
+
+/** Scheduling tests use an in-memory preview; persistence tests use real JSONL. */
+export function schedulingRuntime({
+  sessions = [record("a", "/tmp")],
+  attachments = trackedAttachmentStore(),
+  configure,
+}: {
+  sessions?: SessionRecord[];
+  attachments?: AttachmentStore;
+  configure?: (worker: FakeRpc) => void;
+} = {}) {
+  const workers: FakeRpc[] = [];
+  const runtime = new RuntimeController(
+    catalog(sessions),
+    attachments,
+    (options) => {
+      const worker = new FakeRpc(options);
+      configure?.(worker);
+      workers.push(worker);
+      return worker as unknown as PiRpcProcess;
+    },
+    preview,
+  );
+  return {
+    runtime,
+    workers,
+    get worker() {
+      return workers[0]!;
+    },
+  };
 }
 
 export function deferredSignal(): {

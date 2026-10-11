@@ -14,6 +14,7 @@ import {
   setSessionDraft,
 } from "../../src/session-drafts";
 import { store } from "../../src/store";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -105,30 +106,26 @@ beforeEach(async () => {
       catalogQueries.push(query);
       if (query === "unloaded catalog")
         return {
-          body: {
-            sessions: [
+          body: sessionPage(
+            [
               sessionSummary({
                 id: "unloaded",
                 title: "Unloaded catalog result",
               }),
             ],
-            total: 1,
-            offset: 0,
-            limit: 40,
-          },
+            1,
+          ),
         };
     }
     if (url.startsWith("/api/sessions"))
       return {
-        body: {
-          sessions: [
+        body: sessionPage(
+          [
             sessionSummary({ title: "Test session" }),
             sessionSummary({ id: "s2", title: "Other session" }),
           ],
-          total: 2,
-          offset: 0,
-          limit: 40,
-        },
+          2,
+        ),
       };
     if (url.startsWith("/api/preferences")) return { body: jsonBody(init) };
     if (url.startsWith("/api/git/status"))

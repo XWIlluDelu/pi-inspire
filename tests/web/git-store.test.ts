@@ -6,35 +6,13 @@ import { AppTopbar } from "../../src/components/AppTopbar";
 import { AppStore, store as appStore } from "../../src/store";
 import {
   activeSnapshot,
-  bootstrapPayload,
   deferred,
-  FakeWebSocket,
   installFakeWebSocket,
   installFetch,
   jsonBody,
-  type RouteHandler,
   type RouteResponse,
 } from "./helpers";
-
-const baseRoutes: RouteHandler = (url) => {
-  if (url.startsWith("/api/bootstrap"))
-    return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
-  if (url.startsWith("/api/snapshot")) return { body: activeSnapshot() };
-  if (url.startsWith("/api/sessions"))
-    return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
-  return undefined;
-};
-
-async function initStore(): Promise<{
-  store: AppStore;
-  socket: FakeWebSocket;
-}> {
-  const store = new AppStore();
-  await store.init("token");
-  const socket = FakeWebSocket.instances.at(-1)!;
-  socket.open();
-  return { store, socket };
-}
+import { baseRoutes, initStore } from "./store-fixture";
 
 const path = {
   id: "ZmlsZS50eHQ",

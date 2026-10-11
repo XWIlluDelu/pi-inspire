@@ -15,7 +15,6 @@ import {
   TEST_SNAPSHOT_DIGEST,
 } from "./helpers";
 import { pendingQueues } from "./pending-fixtures";
-
 import { baseRoutes, initStore, requestToken } from "./store-fixture";
 
 function installDeferredBootstrapRoutes(...tokens: string[]) {
@@ -972,15 +971,10 @@ describe("multi-session event routing", () => {
               { role: "assistant", content: "projected", timestamp: 8 },
             ],
             transcriptPage: {
-              sessionId: "s1",
               revision: 2,
-              incarnation: "projection-1",
-              appendFromRevision: 1,
               messages: [
                 { role: "assistant", content: "projected", timestamp: 8 },
               ],
-              hasOlder: false,
-              olderCursor: null,
             },
           }),
         };
@@ -1022,10 +1016,7 @@ describe("multi-session event routing", () => {
         return {
           body: activeSnapshot({
             transcriptPage: {
-              sessionId: "s1",
               revision: call === 1 ? 2 : 3,
-              incarnation: "projection-1",
-              appendFromRevision: 1,
               messages: [
                 {
                   role: "assistant",
@@ -1033,8 +1024,6 @@ describe("multi-session event routing", () => {
                   timestamp: call,
                 },
               ],
-              hasOlder: false,
-              olderCursor: null,
             },
           }),
         };
@@ -1102,13 +1091,9 @@ describe("multi-session event routing", () => {
             projectionHealth: { status: "ok" },
             projectionConflict: null,
             transcriptPage: {
-              sessionId: "s1",
               revision: 3,
-              incarnation: "projection-1",
               appendFromRevision: 2,
               messages: [],
-              hasOlder: false,
-              olderCursor: null,
             },
           }),
         };
@@ -1159,13 +1144,9 @@ describe("multi-session event routing", () => {
               incidentId: "incident-ownership",
             },
             transcriptPage: {
-              sessionId: "s1",
               revision: 2,
-              incarnation: "projection-1",
               appendFromRevision: 2,
               messages: [],
-              hasOlder: false,
-              olderCursor: null,
             },
           }),
         };
