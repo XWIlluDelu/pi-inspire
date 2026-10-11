@@ -1,6 +1,5 @@
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { createServer } from "node:http";
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import {
   chmod,
   mkdir,
@@ -9,6 +8,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -169,16 +169,29 @@ function runLauncher(args: string[], env: NodeJS.ProcessEnv): string {
   });
 }
 
-async function waitFor(
-  predicate: () => boolean,
-  timeoutMs = 60_000,
+async function waitForLauncher(
+  child: ChildProcess,
+  env: NodeJS.ProcessEnv,
+  output: Buffer[],
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+  const deadline = Date.now() + 60_000;
+  let lastStatus = "";
   while (Date.now() < deadline) {
-    if (predicate()) return;
+    if (child.exitCode !== null || child.signalCode !== null)
+      throw new Error(
+        `Isolated launcher exited before ready (code=${child.exitCode}, signal=${child.signalCode})\n${Buffer.concat(output)}`,
+      );
+    try {
+      lastStatus = runLauncher(["status"], env);
+      if (lastStatus.startsWith("INSΠRE is running.")) return;
+    } catch (error) {
+      lastStatus = String(error);
+    }
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
-  throw new Error("Timed out waiting for isolated launcher acceptance");
+  throw new Error(
+    `Timed out waiting for isolated launcher acceptance\n${lastStatus}\n${Buffer.concat(output)}`,
+  );
 }
 
 afterEach(async () => {
@@ -554,13 +567,7 @@ describe("production launcher", () => {
     child.stdout?.on("data", (chunk: Buffer) => output.push(chunk));
     child.stderr?.on("data", (chunk: Buffer) => output.push(chunk));
 
-    await waitFor(() => {
-      try {
-        return runLauncher(["status"], env).startsWith("INSΠRE is running.");
-      } catch {
-        return false;
-      }
-    });
+    await waitForLauncher(child, env, output);
     const firstState = JSON.parse(await readFile(statePath, "utf8")) as {
       schemaVersion: number;
       token: string;
@@ -639,13 +646,10 @@ describe("production launcher", () => {
     });
     activeEnvironment = env;
     children.push(restarted);
-    await waitFor(() => {
-      try {
-        return runLauncher(["status"], env).startsWith("INSΠRE is running.");
-      } catch {
-        return false;
-      }
-    });
+    const restartOutput: Buffer[] = [];
+    restarted.stdout!.on("data", (chunk: Buffer) => restartOutput.push(chunk));
+    restarted.stderr!.on("data", (chunk: Buffer) => restartOutput.push(chunk));
+    await waitForLauncher(restarted, env, restartOutput);
     const secondState = JSON.parse(await readFile(statePath, "utf8")) as {
       token: string;
     };

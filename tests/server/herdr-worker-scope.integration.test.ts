@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFailed, vi } from "vitest";
 import { HerdrClient } from "../../server/herdr-client.js";
 import { HerdrEnhancement } from "../../server/herdr-enhancement.js";
 import {
@@ -66,6 +66,7 @@ const registry = new HerdrWorkerRegistry(root + '/leases');
 let bridge;
 const rpc = new PiRpcProcess({
   cwd: root,
+  diagnostic(level, event, fields) { console.error(JSON.stringify({ level, event, ...fields })); },
   cliPath: ${JSON.stringify(piInstallation.cliPath)},
   args: ['--no-extensions', '--no-skills', '--no-prompt-templates', '--no-themes', '--no-session'],
   env: { HOME: root, PI_CODING_AGENT_DIR: root + '/agent', PI_OFFLINE: '1', PI_SKIP_VERSION_CHECK: '1' },
@@ -80,7 +81,9 @@ const rpc = new PiRpcProcess({
   },
 });
 process.on('message', async () => {
+  console.error('fixture: stop requested');
   await rpc.stop();
+  console.error('fixture: stopped');
   process.send({ stopped: true });
   process.disconnect();
 });
@@ -92,6 +95,7 @@ for (let i = 0; i < 200; i++) {
   await delay(25);
 }
 if (!toolPid) throw new Error('Bash did not start');
+console.error('fixture: ready');
 process.send({ ready: true, piPid: rpc.pid, bridgePid: bridge.pid, toolPid });
 `;
   const entry = join(root, "host.mjs");
@@ -107,22 +111,52 @@ process.send({ ready: true, piPid: rpc.pid, bridgePid: bridge.pid, toolPid });
   fixtures.push({ root, host, registry });
   let stderr = "";
   host.stderr!.on("data", (chunk) => {
-    stderr += String(chunk);
+    stderr = (stderr + String(chunk)).slice(-16_384);
   });
-  const ready = await new Promise<{
+  onTestFailed(() => console.error("Herdr fixture trace:\n" + stderr));
+  function message<T>(phase: "ready" | "stopped"): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        host.off("message", receive);
+        host.off("error", failed);
+        host.off("close", closed);
+      };
+      const failed = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+      const closed = (code: number | null, signal: string | null) =>
+        failed(
+          new Error(
+            `Fixture Host closed before ${phase} (code=${code}, signal=${signal})\n${stderr}`,
+          ),
+        );
+      const receive = (value: unknown) => {
+        if (
+          value &&
+          typeof value === "object" &&
+          phase in value &&
+          (value as Record<string, unknown>)[phase] === true
+        ) {
+          cleanup();
+          resolve(value as T);
+        }
+      };
+      host.on("message", receive);
+      host.once("error", failed);
+      host.once("close", closed);
+    });
+  }
+  // Observe shutdown before killing any child: an early Host exit must reject,
+  // not strand a waiter until the outer test deadline.
+  const stopped = message<void>("stopped");
+  void stopped.catch(() => {});
+  const ready = await message<{
     piPid: number;
     bridgePid: number;
     toolPid: number;
-  }>((resolve, reject) => {
-    host.once("error", reject);
-    host.once("exit", () =>
-      reject(new Error(stderr || "Fixture Host exited before ready")),
-    );
-    host.once("message", (message) =>
-      resolve(message as { piPid: number; bridgePid: number; toolPid: number }),
-    );
-  });
-  return { root, host, registry, ...ready };
+  }>("ready");
+  return { root, host, registry, stopped, ...ready };
 }
 
 async function processCanRun(pid: number): Promise<boolean> {
@@ -164,7 +198,7 @@ describe.skipIf(!supported)("Herdr real Pi detached Bash ownership", () => {
   it.each(["ordinary stop", "TERM escalation", "Pi SIGKILL", "bridge SIGKILL"])(
     "stops Bash after %s",
     async (mode) => {
-      const { root, host, registry, piPid, bridgePid, toolPid } =
+      const { root, host, registry, piPid, bridgePid, toolPid, stopped } =
         await harness();
       // This is the actual failure mechanism, not an assumed shared process group.
       const toolStat = await readFile(`/proc/${toolPid}/stat`, "utf8");
@@ -176,9 +210,6 @@ describe.skipIf(!supported)("Herdr real Pi detached Bash ownership", () => {
         process.kill(piPid, "SIGSTOP");
       if (mode === "Pi SIGKILL") process.kill(piPid, "SIGKILL");
       if (mode === "bridge SIGKILL") process.kill(bridgePid, "SIGKILL");
-      const stopped = new Promise<void>((resolve) =>
-        host.once("message", () => resolve()),
-      );
       host.send({ stop: true });
       await stopped;
       await assertStopped(root, piPid, bridgePid, toolPid);
