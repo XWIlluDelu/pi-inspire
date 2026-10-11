@@ -6,7 +6,15 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { ActivityBar } from "../../src/components/ActivityBar";
 import { CommandActivity } from "../../src/components/CommandActivity";
 import { emptyEventSlice, reduceEvent } from "../../src/events";
@@ -85,8 +93,51 @@ function finish(reason: string, extra: Record<string, unknown> = {}) {
 }
 
 const retry = { attempt: 2, maxAttempts: 3, message: "Provider overloaded" };
+afterEach(() => vi.useRealTimers());
 
 describe("runtime-owned activity", () => {
+  it.each([
+    { command: "session", duration: 30_000 },
+    { command: "name", duration: 15_000 },
+    { command: "quit", duration: 15_000 },
+  ])(
+    "renews one /$command card without remounting or evicting it on runtime progress",
+    async ({ command, duration }) => {
+      vi.useFakeTimers();
+      render(<CommandActivity />);
+      await act(() => store.sendPrompt(`/${command}`));
+      const card = screen.getByText(`/${command}`).closest("article")!;
+      act(() => vi.advanceTimersByTime(duration - 1_000));
+      await act(() => store.sendPrompt(`/${command}`));
+      expect(screen.getByText(`/${command}`).closest("article")).toBe(card);
+      act(() =>
+        socket().emit({
+          type: "agent_start",
+          sessionId: store.getState().sessionId,
+        }),
+      );
+      act(() => vi.advanceTimersByTime(duration - 1));
+      expect(card).not.toHaveClass("feedback--leaving");
+      act(() => vi.advanceTimersByTime(1));
+      expect(card).toHaveClass("feedback--leaving");
+      act(() => vi.advanceTimersByTime(150));
+      expect(screen.queryByText(`/${command}`)).not.toBeInTheDocument();
+    },
+  );
+
+  it("pauses readouts while keyboard focus is on the scrollable dock itself", async () => {
+    vi.useFakeTimers();
+    render(<CommandActivity />);
+    await act(() => store.sendPrompt("/session"));
+    const dock = screen.getByRole("region", { name: "Command activity" });
+    act(() => dock.focus());
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(screen.getByText("/session")).toBeInTheDocument();
+    act(() => dock.blur());
+    act(() => vi.advanceTimersByTime(30_150));
+    expect(screen.queryByText("/session")).not.toBeInTheDocument();
+  });
+
   it("uses the existing Pending count as a queue navigation control", () => {
     act(() =>
       socket().emit({
@@ -153,7 +204,7 @@ describe("runtime-owned activity", () => {
     expect(progress()).not.toBeInTheDocument();
   });
 
-  it("keeps local /compact receipts for results without owning or extending phase display", async () => {
+  it("confirms compact success without owning or extending its phase display", async () => {
     renderActivity();
     act(() => {
       void store.sendPrompt("/compact");
@@ -171,8 +222,8 @@ describe("runtime-owned activity", () => {
         message: "Context compacted.",
       }),
     );
-    await screen.findByText("Done");
-    expect(screen.getByText("/compact")).toBeInTheDocument();
+    expect(screen.queryByText("/compact")).not.toBeInTheDocument();
+    expect(store.getState().notices.at(-1)?.text).toBe("Context compacted.");
     start("threshold");
     expect(progress()).toHaveTextContent("Compacting context");
   });
@@ -191,7 +242,7 @@ describe("runtime-owned activity", () => {
         message: "Context compacted.",
       }),
     );
-    await screen.findByText("Done");
+    expect(store.getState().notices.at(-1)?.text).toBe("Context compacted.");
     expect(progress()).toHaveTextContent("Compacting context");
     snapshot.runState = "idle";
     finish("manual", { result: {} });
@@ -447,7 +498,7 @@ describe("summary retry and command receipts", () => {
     await waitFor(() => expect(store.getState().runState).toBe("failed"));
   });
 
-  it("keeps receipt times in data, not headings, and retires compact receipts when conversation continues", async () => {
+  it("keeps cancelled command results attributable, with times in data only", async () => {
     renderActivity();
     act(() => {
       void store.sendPrompt("/compact");
@@ -455,11 +506,11 @@ describe("summary retry and command receipts", () => {
     await act(async () =>
       nativeResult.resolve({
         command: "compact",
-        outcome: "completed",
-        message: "Context compacted.",
+        outcome: "cancelled",
+        message: "Compaction cancelled.",
       }),
     );
-    await screen.findByText("Done");
+    await screen.findByText("Cancelled");
     const receipt = screen.getByText("/compact").closest("article")!;
     expect(receipt.querySelector("time")).toBeNull();
     expect(
@@ -473,7 +524,7 @@ describe("summary retry and command receipts", () => {
         sessionStatus: { runState: "running" },
       }),
     );
-    expect(screen.queryByText("/compact")).not.toBeInTheDocument();
+    expect(screen.getByText("/compact")).toBeInTheDocument();
   });
 
   it.each([

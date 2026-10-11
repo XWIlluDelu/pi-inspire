@@ -36,16 +36,24 @@ describe("Pi native command dispatch", () => {
       native.resolve({
         body: { command, outcome: "completed", message: "Host result" },
       });
-      await vi.waitFor(() =>
-        expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
-          status: "success",
-          message: "Host result",
-        }),
-      );
+      await vi.waitFor(() => {
+        if (command === "export") {
+          expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
+            status: "success",
+            message: "Host result",
+          });
+        } else {
+          expect(store.getState().commandActivities.s1).toBeUndefined();
+          expect(store.getState().notices.at(-1)).toMatchObject({
+            kind: "info",
+            text: "Host result",
+          });
+        }
+      });
     },
   );
 
-  it("routes host commands away from the model and retains their result", async () => {
+  it("routes compact away from the model and confirms success without a pinned duplicate", async () => {
     const nativeBodies: Record<string, unknown>[] = [];
     let promptCount = 0;
     installFetch((url, init) => {
@@ -75,10 +83,9 @@ describe("Pi native command dispatch", () => {
       store.sendPrompt("/compact focus on decisions"),
     ).resolves.toEqual({ accepted: true, historyEntry: null });
     await vi.waitFor(() =>
-      expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
-        command: "compact",
-        status: "success",
-        message: "Context compacted from 12,640 to about 4,200 tokens.",
+      expect(store.getState().notices.at(-1)).toMatchObject({
+        kind: "info",
+        text: "Context compacted from 12,640 to about 4,200 tokens.",
       }),
     );
     expect(nativeBodies).toEqual([
@@ -181,11 +188,13 @@ describe("Pi native command dispatch", () => {
       },
     });
     await vi.waitFor(() =>
-      expect(store.getState().commandActivities.s1).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ command: "compact", status: "success" }),
-        ]),
-      ),
+      expect(
+        store
+          .getState()
+          .commandActivities.s1?.some(
+            (activity) => activity.command === "compact",
+          ),
+      ).toBe(false),
     );
   });
 
@@ -650,6 +659,85 @@ describe("Pi native command dispatch", () => {
     expect(store.getState().notices).toHaveLength(notices);
   });
 
+  it.each([
+    {
+      name: "known zero usage",
+      stats: {
+        totalMessages: 0,
+        tokens: { total: 0 },
+        cost: 0,
+        contextUsage: { tokens: 0, contextWindow: 1000, percent: 0 },
+      },
+      metrics: {
+        messages: "0",
+        tokens: "0",
+        cost: "$0.00",
+        context: "0 / 1,000 (0%)",
+      },
+    },
+    { name: "unavailable usage", stats: {}, metrics: {} },
+  ])("keeps $name distinct in session facts", async ({ stats, metrics }) => {
+    installFetch(baseRoutes);
+    const { store, socket } = await initStore();
+    socket.emit({
+      type: "snapshot",
+      data: activeSnapshot({ stats, sessionFile: "/sessions/retained.jsonl" }),
+    });
+    await store.sendPrompt("/session");
+    const details = store.getState().commandActivities.s1!.at(-1)!.details!;
+    expect(
+      Object.fromEntries(details.map((detail) => [detail.id, detail.value])),
+    ).toEqual(metrics);
+    expect(details.map((detail) => detail.value)).not.toContain(
+      "/sessions/retained.jsonl",
+    );
+  });
+
+  it("replaces local query readouts while preserving their place and clearing only queries on departure", async () => {
+    installFetch(baseRoutes);
+    const { store, socket } = await initStore();
+    await store.sendPrompt("/unknown-query-test");
+    for (const query of [
+      "/session",
+      "/name",
+      "/quit",
+      "/session",
+      "/name",
+      "/quit",
+    ]) {
+      await store.sendPrompt(query);
+    }
+    expect(
+      store.getState().commandActivities.s1?.map((item) => item.command),
+    ).toEqual(["unknown-query-test", "session", "name", "quit"]);
+    socket.emit({
+      type: "snapshot",
+      data: activeSnapshot({
+        stats: { totalMessages: 42, tokens: { total: 12345 }, cost: 0.02 },
+      }),
+    });
+    await store.sendPrompt("/session");
+    expect(store.getState().commandActivities.s1?.[1]?.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "messages", value: "42" }),
+      ]),
+    );
+    socket.emit({ type: "agent_start", sessionId: "s1" });
+    expect(store.getState().commandActivities.s1).toHaveLength(4);
+    socket.emit({
+      type: "snapshot",
+      data: activeSnapshot({ sessionId: "s2" }),
+    });
+    expect(
+      store.getState().commandActivities.s1?.map((item) => item.command),
+    ).toEqual(["unknown-query-test"]);
+    expect(store.getState().commandActivities.s2).toBeUndefined();
+    socket.emit({ type: "snapshot", data: activeSnapshot() });
+    expect(
+      store.getState().commandActivities.s1?.map((item) => item.command),
+    ).toEqual(["unknown-query-test"]);
+  });
+
   it("executes browser-native model and session information commands", async () => {
     const modelBodies: Record<string, unknown>[] = [];
     installFetch((url, init) => {
@@ -690,10 +778,13 @@ describe("Pi native command dispatch", () => {
     expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
       command: "session",
       status: "info",
-      details: expect.arrayContaining([
-        expect.objectContaining({ label: "Project" }),
-        expect.objectContaining({ label: "Model" }),
-      ]),
     });
+    const labels = store
+      .getState()
+      .commandActivities.s1!.at(-1)!
+      .details!.map((detail) => detail.label);
+    expect(labels).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/^(Project|Model|File)$/)]),
+    );
   });
 });

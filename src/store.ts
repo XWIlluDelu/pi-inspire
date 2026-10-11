@@ -61,6 +61,8 @@ import {
   type AppState,
   contextUsage,
   createInitialAppState,
+  isCommandQuery,
+  type NativeCommandActivity,
 } from "./app-state";
 import { type PiCommand, resolveCommandInventory } from "./composer-completion";
 import type { ComposerHistoryScope } from "./composer-history";
@@ -84,7 +86,7 @@ import { SessionSelectionController } from "./controllers/session-selection-cont
 import { TranscriptDataController } from "./controllers/transcript-data-controller";
 import { UpdateController } from "./controllers/update-controller";
 import { WorkspaceController } from "./controllers/workspace-controller";
-import { type Notice, parseExtensionDisplays } from "./events";
+import { appendNotice, type Notice, parseExtensionDisplays } from "./events";
 import { supportedThinkingLevels } from "./model-options";
 import {
   sessionDraft,
@@ -103,7 +105,6 @@ export type {
   TranscriptActivityRangeState,
 } from "./app-state";
 
-const NOTICE_TTL_MS = 8_000;
 const MAX_COMMAND_ACTIVITIES = 4;
 const ACCEPTED_NATIVE_COMMAND: PromptAcceptedResponse = {
   accepted: true,
@@ -351,8 +352,6 @@ export class AppStore {
     selectionGeneration: () => this.selectionGeneration,
     resync: (sessionId, generation, minimumRevision) =>
       this.resync(sessionId, generation, minimumRevision),
-    scheduleNoticeDismissal: (noticeId) =>
-      this.scheduleNoticeDismissal(noticeId),
   });
   private readonly transcriptData = new TranscriptDataController({
     state: () => this.state,
@@ -460,7 +459,6 @@ export class AppStore {
     },
     reconnect: (token) => void this.init(token),
   });
-  private noticeTimers = new Map<number, ReturnType<typeof setTimeout>>();
   private autoContinued = false;
   private selectionGeneration = 0;
   /** Explicit open, create, and deselect intent. Unlike selectionRequest, this
@@ -505,19 +503,9 @@ export class AppStore {
   private notify(kind: Notice["kind"], text: string): void {
     const id = this.state.nextNoticeId;
     this.set({
-      notices: [...this.state.notices, { id, kind, text }],
+      notices: appendNotice(this.state.notices, { id, kind, text }),
       nextNoticeId: id + 1,
     });
-    this.scheduleNoticeDismissal(id);
-  }
-
-  private scheduleNoticeDismissal(id: number): void {
-    const existing = this.noticeTimers.get(id);
-    if (existing) clearTimeout(existing);
-    this.noticeTimers.set(
-      id,
-      setTimeout(() => this.dismissNotice(id), NOTICE_TTL_MS),
-    );
   }
 
   private forgetSessions(
@@ -1191,24 +1179,33 @@ export class AppStore {
   ): number {
     const id = this.state.nextNativeCommandId;
     const existing = this.state.commandActivities[sessionId] ?? [];
+    const activity: NativeCommandActivity = {
+      id,
+      sessionId,
+      input,
+      command,
+      status,
+      title: nativeCommandTitle(command),
+      message,
+      createdAt: Date.now(),
+      ...options,
+    };
+    const replaced = isCommandQuery(activity)
+      ? existing.findIndex(
+          (item) => item.command === command && isCommandQuery(item),
+        )
+      : -1;
     this.set({
       nextNativeCommandId: id + 1,
       commandActivities: {
         ...this.state.commandActivities,
-        [sessionId]: boundedCommandActivities([
-          ...existing,
-          {
-            id,
-            sessionId,
-            input,
-            command,
-            status,
-            title: nativeCommandTitle(command),
-            message,
-            createdAt: Date.now(),
-            ...options,
-          },
-        ]),
+        [sessionId]: boundedCommandActivities(
+          replaced < 0
+            ? [...existing, activity]
+            : existing.map((item, index) =>
+                index === replaced ? activity : item,
+              ),
+        ),
       },
     });
     return id;
@@ -1406,28 +1403,37 @@ export class AppStore {
           });
           return;
         }
-        this.updateCommandActivity(sessionId, id, {
-          status: result.outcome === "cancelled" ? "cancelled" : "success",
-          message: result.message,
-          details: result.details,
-          ...(result.export?.downloadId && result.export.fileName
-            ? {
-                download: {
-                  id: result.export.downloadId,
-                  fileName: result.export.fileName,
-                },
-              }
-            : {}),
-          ...(command === "export" && result.details?.[0]?.value
-            ? {
-                action: {
-                  kind: "copy" as const,
-                  label: "Copy path",
-                  value: result.details[0].value,
-                },
-              }
-            : {}),
-        });
+        if (result.outcome !== "cancelled" && command !== "export") {
+          this.finishSimpleCommand(
+            sessionId,
+            id,
+            { status: "success" },
+            result.message,
+          );
+        } else {
+          this.updateCommandActivity(sessionId, id, {
+            status: result.outcome === "cancelled" ? "cancelled" : "success",
+            message: result.message,
+            details: result.details,
+            ...(result.export?.downloadId && result.export.fileName
+              ? {
+                  download: {
+                    id: result.export.downloadId,
+                    fileName: result.export.fileName,
+                  },
+                }
+              : {}),
+            ...(command === "export" && result.details?.[0]?.value
+              ? {
+                  action: {
+                    kind: "copy" as const,
+                    label: "Copy path",
+                    value: result.details[0].value,
+                  },
+                }
+              : {}),
+          });
+        }
         if (this.state.sessionId === sessionId)
           void this.resync(sessionId, this.selectionGeneration);
       })
@@ -1476,27 +1482,23 @@ export class AppStore {
     return ACCEPTED_NATIVE_COMMAND;
   }
 
-  private sessionCommandDetails(): Array<{ label: string; value: string }> {
+  private sessionCommandDetails(): NonNullable<
+    NativeCommandActivity["details"]
+  > {
     const stats = recordOf(this.state.sessionStats);
     const tokens = recordOf(stats?.tokens);
     const context = recordOf(stats?.contextUsage);
-    const model = this.state.model;
-    const details: Array<{ label: string; value: string }> = [];
-    if (this.state.sessionName)
-      details.push({ label: "Name", value: this.state.sessionName });
-    details.push({ label: "Project", value: this.state.cwd ?? "Unknown" });
-    if (this.state.sessionFile)
-      details.push({ label: "File", value: this.state.sessionFile });
-    if (model)
-      details.push({ label: "Model", value: `${model.provider}/${model.id}` });
+    const details: NonNullable<NativeCommandActivity["details"]> = [];
     const totalMessages = formattedInteger(stats?.totalMessages);
     if (totalMessages)
-      details.push({ label: "Messages", value: totalMessages });
+      details.push({ id: "messages", label: "Messages", value: totalMessages });
     const tokenTotal = formattedInteger(tokens?.total);
-    if (tokenTotal) details.push({ label: "Total tokens", value: tokenTotal });
+    if (tokenTotal)
+      details.push({ id: "tokens", label: "Total tokens", value: tokenTotal });
     const cost = finiteNumber(stats?.cost);
     if (cost !== null)
       details.push({
+        id: "cost",
         label: "Cost",
         value: new Intl.NumberFormat(undefined, {
           style: "currency",
@@ -1509,6 +1511,7 @@ export class AppStore {
     const percent = finiteNumber(context?.percent);
     if (used && window)
       details.push({
+        id: "context",
         label: "Context",
         value: `${used} / ${window}${percent === null ? "" : ` (${Math.round(percent)}%)`}`,
       });
@@ -1879,14 +1882,9 @@ export class AppStore {
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "session") {
-      this.presentCommandActivity(
-        sessionId,
-        input,
-        command.name,
-        "info",
-        "Current Pi session",
-        { details: this.sessionCommandDetails() },
-      );
+      this.presentCommandActivity(sessionId, input, command.name, "info", "", {
+        details: this.sessionCommandDetails(),
+      });
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "hotkeys") {
@@ -2820,11 +2818,6 @@ export class AppStore {
   snoozeUpdate = (): void => this.updates.snooze();
 
   dismissNotice = (id: number): void => {
-    const timer = this.noticeTimers.get(id);
-    if (timer) {
-      clearTimeout(timer);
-      this.noticeTimers.delete(id);
-    }
     if (!this.state.notices.some((notice) => notice.id === id)) return;
     this.set({
       notices: this.state.notices.filter((notice) => notice.id !== id),

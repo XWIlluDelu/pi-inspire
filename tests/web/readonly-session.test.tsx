@@ -39,6 +39,7 @@ it("keeps history and local queries available without an editor, then rechecks o
       cwd: summary.cwd,
       readOnlyReason: folderAvailable ? undefined : "workspace-unavailable",
       runtimeSettings: undefined,
+      stats: undefined,
       pageMessages: [
         { role: "user", content: "Saved project question", timestamp: 1 },
         {
@@ -99,10 +100,15 @@ it("keeps history and local queries available without an editor, then rechecks o
     within(palette).queryByRole("option", { name: /^Compact/ }),
   ).toBeNull();
   fireEvent.change(search, { target: { value: "/session" } });
+  fireEvent.click(
+    within(palette).getByRole("option", { name: /Session & usage/ }),
+  );
   expect(
-    within(palette).getByRole("option", { name: /Session information/ }),
-  ).toBeInTheDocument();
-  fireEvent.keyDown(palette, { key: "Escape" });
+    await screen.findByText("Usage information is unavailable."),
+  ).toBeVisible();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Dismiss /session result" }),
+  );
 
   expect(store.runPaletteNativeCommand("/reload")).toBe(false);
   expect(store.runPaletteNativeCommand("/thinking high")).toBe(false);

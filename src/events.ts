@@ -166,6 +166,16 @@ export interface Notice {
   text: string;
 }
 
+/** Repeated feedback renews one visible notice instead of building a log. */
+export function appendNotice(notices: Notice[], notice: Notice): Notice[] {
+  const index = notices.findIndex(
+    (item) => item.kind === notice.kind && item.text === notice.text,
+  );
+  return index < 0
+    ? [...notices, notice]
+    : notices.map((item, i) => (i === index ? notice : item));
+}
+
 /** Transient slice of app state reconciled from Pi wire events. */
 export interface EventSlice {
   messages: ChatMessage[];
@@ -275,7 +285,11 @@ function pushNotice(
   kind: Notice["kind"],
   text: string,
 ): void {
-  slice.notices = [...slice.notices, { id: slice.nextNoticeId, kind, text }];
+  slice.notices = appendNotice(slice.notices, {
+    id: slice.nextNoticeId,
+    kind,
+    text,
+  });
   slice.nextNoticeId += 1;
 }
 
