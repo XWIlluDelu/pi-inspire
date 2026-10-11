@@ -1,12 +1,14 @@
 /* --- Left navigation --- */
 
 .nav {
+  /* Shared 16px icon slot, 8px label gap and 4px inner inset. */
+  --nav-label-inset: calc(var(--space-1) + var(--space-4) + var(--space-2));
   width: var(--nav-w);
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   background: var(--bg-rail);
-  border-right: 1px solid var(--line);
+  border-right: 1px solid var(--line-subtle);
   transition: width var(--dur-panel) var(--ease-standard);
 }
 
@@ -14,14 +16,73 @@
   width: var(--nav-w-collapsed);
 }
 
-/* Header rows in all three regions share the topbar height; the seam under
-   them is carried by content fading out as it scrolls beneath, not a line. */
+@media (min-width: 901px) {
+  .nav {
+    border-right: 0;
+  }
+}
+
+.nav__top {
+  flex: 0 0 auto;
+}
+
+.nav__rail-toggle-icon {
+  display: none;
+}
+
+/* Overlay owns the app identity; desktop navigation starts with its actions. */
+@media (display-mode: window-controls-overlay) and (min-width: 901px) {
+  .nav__top {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: var(--topbar-h) auto;
+    gap: var(--space-1) var(--space-2);
+    padding: 0 var(--space-3) var(--space-3);
+  }
+
+  .nav__top .nav__header,
+  .nav__top .nav__controls {
+    display: contents;
+  }
+
+  .nav__top .nav__brand-lockup,
+  .nav__brand-icon--rail {
+    display: none;
+  }
+
+  .nav__rail-toggle-icon {
+    display: block;
+  }
+
+  .nav__top .nav__close {
+    grid-area: 1 / 2;
+    align-self: center;
+  }
+
+  .nav__top .nav__new-session {
+    grid-area: 1 / 1;
+    align-self: center;
+  }
+
+  .nav__top .nav__search {
+    grid-area: 2 / 1 / auto / -1;
+  }
+}
+
+/* Align the brand with the workbench header without enclosing the controls. */
 .nav__header {
   flex: 0 0 auto;
   height: var(--topbar-h);
   display: flex;
   align-items: center;
-  padding: 0 var(--space-2);
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+}
+
+.nav__header--rail {
+  justify-content: center;
+  padding: 0;
 }
 
 .nav__close {
@@ -30,44 +91,18 @@
   height: 36px;
 }
 
-.nav__brand-new {
-  width: 100%;
-  min-width: 0;
-  height: 38px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: 0 var(--space-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink);
-  cursor: pointer;
-  transition: background var(--dur-micro) var(--ease-standard);
-}
-
-.nav__brand-new:hover,
-.nav__brand-new:focus-visible {
-  background: var(--bg-control);
-}
-
-.nav__brand-new:active {
-  background: var(--accent-tint);
-}
-
 .nav__brand-lockup {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-1);
   user-select: none;
 }
 
 .nav__brand-icon {
   flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
 }
 
 .welcome__hero-icon {
@@ -78,36 +113,68 @@
 
 .nav__new-session {
   flex: 0 0 auto;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 4px;
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: 11.5px;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  height: 32px;
+  min-height: 32px;
+  padding: 0 var(--space-2) 0 calc(var(--space-1) - 1px);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
   font-weight: 500;
-  line-height: 1;
-  letter-spacing: 0.01em;
+  line-height: var(--leading-ui);
   white-space: nowrap;
-  transition: color var(--dur-micro) var(--ease-standard);
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease-standard);
 }
 
-.nav__brand-new:hover .nav__new-session {
-  color: var(--ink);
+.nav__new-session-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.nav__new-session:hover,
+.nav__new-session:focus-visible,
+.nav__brand-rail:hover,
+.nav__brand-rail:focus-visible {
+  background: var(--bg-control);
+}
+
+.nav__new-session:active,
+.nav__brand-rail:active {
+  background: var(--bg-inset);
+}
+
+.nav__new-session--rail {
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  margin: var(--space-1) auto 0;
+  padding: 0;
+  border-radius: var(--radius-sm);
 }
 
 .nav__new-session-icon {
   flex: 0 0 auto;
-  color: var(--brand-accent);
+  color: var(--muted);
 }
 
-.nav__new-session-label {
-  display: inline;
+.nav__new-session:is(:hover, :focus-visible) .nav__new-session-icon {
+  color: var(--ink);
 }
 
 .nav__brand-rail {
   flex: 0 0 auto;
-  width: 100%;
-  height: var(--topbar-h);
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-control);
   display: grid;
   place-items: center;
   padding: 0;
@@ -117,23 +184,35 @@
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
-.nav__brand-rail:hover,
-.nav__brand-rail:focus-visible {
-  background: var(--bg-inset);
-}
-
-.nav__brand-rail:active {
-  background: var(--accent-tint);
-}
-
 .nav__brand-icon--rail {
   width: 24px;
   height: 24px;
 }
 
+@media (max-width: 900px), (pointer: coarse) {
+  .nav__new-session,
+  .nav__search {
+    min-height: 36px;
+  }
+
+  .nav__brand-rail,
+  .nav__new-session--rail {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .nav__close {
+    flex-basis: 44px;
+    width: 44px;
+    height: 44px;
+  }
+}
+
 .nav__controls {
   display: flex;
   flex-direction: column;
+  gap: var(--space-1);
   padding: var(--space-1) var(--space-3) var(--space-3);
 }
 
@@ -152,25 +231,30 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  height: 34px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: var(--bg-surface);
+  height: 32px;
+  padding: 0 calc(var(--space-1) - 1px);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-control);
   color: var(--muted);
   box-shadow: none;
   transition:
+    background var(--dur-micro) var(--ease-standard),
     border-color var(--dur-micro) var(--ease-standard),
+    box-shadow var(--dur-micro) var(--ease-standard),
     color var(--dur-micro) var(--ease-standard);
 }
 
 .nav__search:hover {
-  border-color: var(--line-strong);
+  background: var(--bg-surface);
+  border-color: var(--line);
   color: var(--ink);
 }
 
 .nav__search:focus-within {
-  border-color: var(--accent);
+  background: var(--bg-surface);
+  border-color: var(--accent-deep);
+  box-shadow: 0 0 0 1px var(--accent-tint);
   color: var(--ink);
 }
 
@@ -179,9 +263,14 @@
   min-width: 0;
   border: 0;
   background: transparent;
-  padding: var(--space-2) 0;
-  font-size: var(--text-sm);
+  padding: 0;
+  font: 400 var(--text-sm)/var(--leading-ui) var(--font-sans);
   outline: none;
+}
+
+.nav__search input::placeholder {
+  color: var(--muted);
+  opacity: 1;
 }
 
 .nav__list {
@@ -195,9 +284,9 @@
   padding: 0 var(--space-3) var(--space-3);
 }
 
-/* Rows nest visually under their group header. */
+/* Align sessions with folder labels, leaving the icon column as hierarchy. */
 .nav__group .nav__row-main {
-  padding-left: var(--space-4);
+  padding-left: var(--nav-label-inset);
 }
 
 /* The row is a container: a main select button plus curation actions that
@@ -209,15 +298,16 @@
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
-.nav__row--active::before {
+.nav__row--active::before,
+.nav__group-title--active::before {
   content: "";
   position: absolute;
-  left: 0;
-  top: 4px;
-  bottom: 4px;
-  width: 2px;
+  left: 2px;
+  top: 6px;
+  bottom: 6px;
+  width: 2.5px;
   border-radius: 2px;
-  background: var(--accent);
+  background: var(--accent-deep);
   z-index: 1;
 }
 
@@ -233,18 +323,24 @@
   border-radius: var(--radius-sm);
   background: transparent;
   padding: 5px var(--space-2);
+  min-height: 32px;
   cursor: pointer;
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
-.nav__row:hover,
-.nav__row--active {
+.nav__row:hover {
   background: var(--bg-inset);
+}
+
+.nav__row--active,
+.nav__row--active:hover {
+  background: var(--nav-active-bg);
+  box-shadow: inset 0 0 0 1px var(--accent-soft);
 }
 
 .nav__row--highlighted {
   background: var(--accent-tint);
-  outline: 1px solid var(--accent);
+  outline: 1px solid var(--accent-deep);
   outline-offset: -1px;
 }
 
@@ -490,7 +586,7 @@
   min-width: 0;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
   border: 0;
   background: transparent;
   color: var(--muted);
@@ -557,18 +653,17 @@
   padding: 0 var(--space-3) var(--space-2);
 }
 
-/* Match direct session labels to the drawer label (14px icon + shared gap).
-   A hidden folder adds one more indentation level for its child sessions. */
-.nav__hidden-content > .nav__row > .nav__row-main {
-  padding-left: calc(14px + var(--space-2));
+.nav__hidden-content > .nav__group + .nav__group {
+  margin-top: var(--space-2);
 }
 
-.nav__hidden-content > .nav__group > .nav__group-title .nav__group-toggle {
-  padding-left: 0;
+/* Hidden's direct sessions share its label axis; nested folders add one step. */
+.nav__hidden-content > .nav__row > .nav__row-main {
+  padding-left: var(--nav-label-inset);
 }
 
 .nav__hidden-content > .nav__group > .nav__row > .nav__row-main {
-  padding-left: calc(14px + var(--space-2) + var(--space-4));
+  padding-left: calc(var(--nav-label-inset) + var(--space-4));
 }
 
 .nav__hidden-content .nav__row-project {
@@ -650,7 +745,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 var(--space-2) var(--space-2);
+  padding: 0 var(--space-3) var(--space-2);
 }
 
 .workspace-tree {
@@ -708,7 +803,7 @@
 }
 
 .workspace-tree__row--active > svg {
-  color: var(--accent);
+  color: var(--accent-deep);
 }
 
 .workspace-tree__file-label {
@@ -790,7 +885,7 @@ button.workspace-tree__status:hover {
   height: 34px;
   align-items: center;
   gap: var(--space-2);
-  border: 1px solid var(--line);
+  border: 1px solid color-mix(in srgb, var(--hairline) 75%, transparent);
   border-radius: var(--radius-control);
   background: var(--bg-surface);
   padding: 0 var(--space-3);
@@ -802,18 +897,18 @@ button.workspace-tree__status:hover {
 }
 
 .workspace-search:hover {
-  border-color: var(--line-strong);
+  border-color: var(--line);
   color: var(--ink);
 }
 
 .workspace-search:focus-within {
-  border-color: var(--accent);
+  border-color: var(--accent-deep);
   color: var(--ink);
 }
 
 .workspace-search svg {
   flex: 0 0 auto;
-  color: var(--muted);
+  color: inherit;
 }
 
 .workspace-search input {
@@ -833,7 +928,8 @@ button.workspace-tree__status:hover {
 }
 
 .workspace-search input::placeholder {
-  color: var(--faint);
+  color: var(--muted);
+  opacity: 1;
 }
 
 .workspace-search__clear {
@@ -882,7 +978,7 @@ button.workspace-tree__status:hover {
 }
 
 .nav__group + .nav__group {
-  margin-top: var(--space-2);
+  margin-top: var(--space-4);
 }
 
 .nav__pagination {
@@ -919,7 +1015,7 @@ button.workspace-tree__status:hover {
 
 .nav__pagination-button:hover:not(:disabled),
 .nav__pagination-button:focus-visible {
-  border-color: var(--accent);
+  border-color: var(--accent-deep);
   color: var(--accent-deep);
   background: var(--accent-tint);
 }
@@ -946,11 +1042,10 @@ button.workspace-tree__status:hover {
   height: 28px;
   font-size: var(--text-sm);
   font-weight: 600;
-  letter-spacing: 0.04em;
   color: var(--muted);
   overflow: hidden;
   white-space: nowrap;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-control);
 }
 
 .nav__group-title--folder:hover {
@@ -958,7 +1053,8 @@ button.workspace-tree__status:hover {
 }
 
 .nav__group--pinned > .nav__group-title {
-  padding: 0 var(--space-2);
+  gap: var(--space-2);
+  padding: 0 var(--space-2) 0 var(--space-1);
 }
 
 /* A collapsed folder hiding the active session carries the highlight. */
@@ -968,25 +1064,13 @@ button.workspace-tree__status:hover {
   color: var(--ink);
 }
 
-.nav__group-title--active::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 4px;
-  bottom: 4px;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--accent);
-  z-index: 1;
-}
-
 .nav__group--pinned + .nav__group {
-  margin-top: var(--space-3);
+  margin-top: var(--space-5);
 }
 
 /* Pinned folders sit above ordinary ones; a step marks where they end. */
 .nav__group--pinned-folder + .nav__group:not(.nav__group--pinned-folder) {
-  margin-top: var(--space-3);
+  margin-top: var(--space-5);
 }
 
 .nav__group-toggle {
@@ -995,15 +1079,20 @@ button.workspace-tree__status:hover {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
   border: 0;
   border-radius: inherit;
   background: transparent;
-  padding: 0 var(--space-2);
+  padding: 0 var(--space-2) 0 var(--space-1);
   font: inherit;
   color: inherit;
   cursor: pointer;
   text-align: left;
+}
+
+.nav__group-toggle:focus-visible {
+  /* The heading clips its contents; keep keyboard focus inside that contour. */
+  outline-offset: -2px;
 }
 
 .nav__group-toggle:disabled {
@@ -1085,7 +1174,7 @@ button.workspace-tree__status:hover {
 }
 
 .nav__group--hidden-folder > .nav__group-title {
-  margin-left: var(--space-2);
+  margin-left: var(--space-4);
 }
 
 .nav__row-main:disabled {
@@ -1099,6 +1188,6 @@ button.workspace-tree__status:hover {
 
 .nav__row--active .nav__row-main:disabled,
 .nav__row--active .nav__row-main:disabled:hover {
-  background: var(--accent-tint);
+  background: transparent;
   opacity: 1;
 }

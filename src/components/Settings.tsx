@@ -27,7 +27,7 @@ import {
   type ContentTextSizePreference,
   type DesktopSendKeyPreference,
   type LaunchPreference,
-  type PalettePreference,
+  PALETTE_PREFERENCES,
   type PiMessageDeliveryMode,
   type ProjectDisplayPreference,
   type ReadingWidthPreference,
@@ -43,7 +43,7 @@ import {
   requestInstall,
   subscribeInstallAvailability,
 } from "../install-app";
-import { preferenceChoiceLabel } from "../preference-labels";
+import { PALETTE_LABELS, preferenceChoiceLabel } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
 import { Dropdown } from "./Dropdown";
 import { HerdrSettings } from "./HerdrSettings";
@@ -63,11 +63,6 @@ const THEMES: Choice<ThemePreference>[] = [
   { value: "light", label: "Light", icon: <Sun size={13} aria-hidden /> },
   { value: "dark", label: "Dark", icon: <Moon size={13} aria-hidden /> },
   { value: "system", label: "System", icon: <Monitor size={13} aria-hidden /> },
-];
-
-const PALETTES: Choice<PalettePreference>[] = [
-  { value: "amber", label: "Amber" },
-  { value: "teal", label: "Jade" },
 ];
 
 const CONTENT_TEXT_SIZES: Choice<ContentTextSizePreference>[] = [
@@ -300,12 +295,25 @@ export const SettingsContent = memo(function SettingsContent({
               </SettingField>
 
               <SettingField label="Color palette">
-                <SegmentedControl
-                  label="Color palette"
-                  value={state.prefs.palette}
-                  options={PALETTES}
-                  onChange={store.setPalette}
-                />
+                <div
+                  className="palette-picker"
+                  role="group"
+                  aria-label="Color palette"
+                >
+                  {PALETTE_PREFERENCES.map((palette) => (
+                    <button
+                      type="button"
+                      key={palette}
+                      className="palette-picker__choice"
+                      data-palette-choice={palette}
+                      aria-pressed={state.prefs.palette === palette}
+                      onClick={() => store.setPalette(palette)}
+                    >
+                      <span className="palette-picker__swatch" aria-hidden />
+                      <span>{PALETTE_LABELS[palette]}</span>
+                    </button>
+                  ))}
+                </div>
               </SettingField>
 
               <SettingField
@@ -409,21 +417,6 @@ export const SettingsContent = memo(function SettingsContent({
                   onChange={(value) =>
                     store.setActivityFoldVisibility(
                       value as ActivityFoldVisibilityPreference,
-                    )
-                  }
-                />
-              </SettingField>
-
-              <SettingField
-                label="Assistant turn details"
-                description="Show model and elapsed time between replies."
-              >
-                <SettingsSwitch
-                  label="Assistant turn details"
-                  checked={state.prefs.assistantRoundDisplay === "details"}
-                  onChange={(checked) =>
-                    store.setAssistantRoundDisplay(
-                      checked ? "details" : "divider",
                     )
                   }
                 />

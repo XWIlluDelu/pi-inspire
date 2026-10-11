@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronRight, ChevronUp } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -92,6 +93,13 @@ function ActivityFoldOmission({
       onClick={onClick}
     >
       <ActivityFoldDots active={active && status !== "error"} />
+      <span>
+        {status === "loading"
+          ? "Loading earlier activity…"
+          : status === "error"
+            ? "Retry earlier activity"
+            : "Earlier activity"}
+      </span>
     </button>
   );
 }
@@ -180,24 +188,27 @@ export function ResponseActivityFold({
     (range) => range.status === "loading",
   );
 
-  const displayTelemetry = useMemo(() => {
-    if (telemetry.length === 0) return [];
-    if (lifecycleActive) {
-      return telemetry.slice(-COMPACT_ACTIVITY_CARD_LIMIT);
-    }
-    if (telemetry.length <= COMPACT_ACTIVITY_CARD_LIMIT) {
-      return telemetry;
-    }
-    const sampled: ActivityTelemetryItem[] = [];
-    const lastIndex = telemetry.length - 1;
-    for (let i = 0; i < COMPACT_ACTIVITY_CARD_LIMIT; i++) {
-      const index = Math.round(
-        (i * lastIndex) / (COMPACT_ACTIVITY_CARD_LIMIT - 1),
-      );
-      sampled.push(telemetry[index]!);
-    }
-    return sampled;
-  }, [telemetry, lifecycleActive]);
+  // Two compact cues: one item => one dot, same-kind plurality => two;
+  // mixed kinds => one of each, ordered by first appearance.
+  const kinds = [...new Set(telemetry.map((item) => item.kind))];
+  if (kinds.length === 1 && telemetry.length > 1) kinds.push(kinds[0]!);
+  const kindIndicators = (
+    <span className="activity-fold__kinds" aria-hidden>
+      {kinds.map((kind, index) => (
+        <span
+          key={`${kind}:${index}`}
+          title={kind === "thinking" ? "Thinking" : "Tools"}
+          className={`activity-fold__kind activity-fold__kind--${kind}${
+            lifecycleActive &&
+            !deferredError &&
+            telemetry.some((item) => item.kind === kind && item.live)
+              ? " activity-fold__kind--live"
+              : ""
+          }`}
+        />
+      ))}
+    </span>
+  );
 
   const requestMaterialization = useCallback(
     (mode: ActivityMaterializationMode, automatic: boolean) => {
@@ -285,59 +296,13 @@ export function ResponseActivityFold({
       ? "compact"
       : "collapsed";
 
-  const railContents = (edge: "upper" | "lower") => {
-    const arrowDirection = open
-      ? edge === "upper"
-        ? "down"
-        : "up"
-      : edge === "upper"
-        ? "up"
-        : "down";
-    return (
-      <>
-        <span className="activity-fold__track" aria-hidden>
-          {displayTelemetry.length > 0 ? (
-            <span className="activity-fold__telemetry">
-              {displayTelemetry.map((item) => (
-                <span
-                  key={item.id}
-                  className={`activity-fold__segment activity-fold__segment--${item.kind} ${lifecycleActive && item.live ? "activity-fold__segment--live" : ""}`}
-                  title={item.label}
-                />
-              ))}
-            </span>
-          ) : (
-            <span className="activity-fold__line" />
-          )}
-        </span>
-        <span
-          className={`activity-fold__handle activity-fold__handle--${arrowDirection}`}
-          aria-hidden
-        >
-          <svg
-            className={`activity-fold__glyph activity-fold__glyph--${arrowDirection}`}
-            viewBox="0 0 10 8"
-            width="8"
-            height="6"
-          >
-            {arrowDirection === "up" ? (
-              <polygon points="5,1 9,7 1,7" fill="currentColor" />
-            ) : (
-              <polygon points="1,1 9,1 5,7" fill="currentColor" />
-            )}
-          </svg>
-        </span>
-      </>
-    );
-  };
-
-  const rail = (edge: "upper" | "lower") => {
+  const boundary = (edge: "upper" | "lower") => {
     const action = collapseTarget === "compact" ? "Compact" : "Collapse";
     return (
       <button
         ref={edge === "upper" ? topControlRef : lowerControlRef}
         type="button"
-        className={`activity-fold__rail activity-fold__rail--${edge}`}
+        className={`activity-fold__boundary activity-fold__boundary--${edge}`}
         aria-controls={contentId}
         aria-expanded="true"
         aria-label={`${action} assistant activity from the ${edge} boundary`}
@@ -345,7 +310,13 @@ export function ResponseActivityFold({
         data-activity-fold-anchor={edge === "upper" ? "start" : "end"}
         onClick={() => choosePresentation(collapseTarget, edge)}
       >
-        {railContents(edge)}
+        {edge === "upper" ? (
+          <ChevronDown size={14} aria-hidden />
+        ) : (
+          <ChevronUp size={14} aria-hidden />
+        )}
+        <span>{edge === "upper" ? "Activity" : `${action} activity`}</span>
+        {edge === "upper" ? kindIndicators : null}
       </button>
     );
   };
@@ -377,7 +348,7 @@ export function ResponseActivityFold({
       }}
     >
       {open ? (
-        rail("upper")
+        boundary("upper")
       ) : (
         <button
           ref={topControlRef}
@@ -390,23 +361,9 @@ export function ResponseActivityFold({
           data-activity-fold-anchor="center"
           onClick={() => expandToCompact("upper", "center")}
         >
-          <span
-            className="activity-fold__rail activity-fold__rail--upper"
-            aria-hidden
-          >
-            {railContents("upper")}
-          </span>
-          <span className="activity-fold__summary" aria-hidden>
-            <span className="activity-fold__summary-badge">
-              <ActivityFoldDots active={lifecycleActive && !deferredError} />
-            </span>
-          </span>
-          <span
-            className="activity-fold__rail activity-fold__rail--lower"
-            aria-hidden
-          >
-            {railContents("lower")}
-          </span>
+          <ChevronRight size={14} aria-hidden />
+          <span>Activity</span>
+          {kindIndicators}
         </button>
       )}
       <div id={contentId} className="activity-fold__content" hidden={!open}>
@@ -430,7 +387,7 @@ export function ResponseActivityFold({
           {materialized || open ? children : null}
         </ActivityItemVisibilityProvider>
       </div>
-      {open ? rail("lower") : null}
+      {open ? boundary("lower") : null}
     </section>
   );
 }

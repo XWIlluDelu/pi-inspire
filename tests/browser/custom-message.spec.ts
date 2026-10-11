@@ -15,7 +15,7 @@ async function openReview(page: Page) {
     customMessageConfiguration,
     {
       theme: "light",
-      palette: "amber",
+      palette: "chimonanthus",
       toolVisibility: "hidden",
       thinkingVisibility: "hidden",
       activityFoldVisibility: "collapsed",

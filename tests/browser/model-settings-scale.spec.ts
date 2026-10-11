@@ -98,7 +98,7 @@ for (const touch of [false, true]) {
           .fill("inspire-browser-test-token");
         await page.getByRole("button", { name: "Pair", exact: true }).click();
         const nav = page.getByRole("button", {
-          name: "Toggle navigation",
+          name: /^(Toggle|Expand|Collapse) navigation$/,
           exact: true,
         });
         if (

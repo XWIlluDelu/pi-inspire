@@ -9,9 +9,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { memo, type Ref, useEffect, useState } from "react";
+import { memo, type Ref, useEffect, useId, useState } from "react";
 import type {
-  AssistantRoundDisplayPreference,
   GenericExtensionDisplay,
   PendingQueues,
   ToolVisibilityPreference,
@@ -58,14 +57,6 @@ export function relativeTime(timestamp: number | string): string {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}d ago`;
   return new Date(time).toLocaleDateString();
-}
-
-function clockTime(timestamp?: number): string {
-  if (timestamp == null) return "";
-  return new Date(timestamp).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 // --- Turns and activity ---
@@ -245,9 +236,6 @@ export const AssistantTurn = memo(function AssistantTurn({
   dynamicActive,
   thinkingVisibility,
   toolVisibility,
-  assistantRoundDisplay,
-  showLead = true,
-  roundActivityItemId,
   responseCopyText,
 }: {
   message: ChatMessage;
@@ -258,13 +246,6 @@ export const AssistantTurn = memo(function AssistantTurn({
   dynamicActive: boolean;
   thinkingVisibility: VisibilityPreference;
   toolVisibility: ToolVisibilityPreference;
-  assistantRoundDisplay: AssistantRoundDisplayPreference;
-  /** A projected assistant message carries its round lead exactly once: with
-   * its first response when present, otherwise with its first activity. */
-  showLead?: boolean;
-  /** Compact response folds hide a round lead when its owning first activity
-   * belongs to the omitted prefix. */
-  roundActivityItemId?: string;
   /** Empty suppresses actions; a full-message value keeps the existing one-copy
    * affordance on the message's final visible response fragment. */
   responseCopyText?: string;
@@ -408,35 +389,10 @@ export const AssistantTurn = memo(function AssistantTurn({
     index += 1;
   }
 
-  const divider = showLead && assistantRoundDisplay === "divider";
-  const roundLead = divider ? (
-    <span className="turn__divider" aria-hidden />
-  ) : !showLead ? null : (
-    /* Details deliberately remains the existing attribution row verbatim. */
-    <div className="turn__head">
-      <span className="turn__who">Pi</span>
-      {message.model ? (
-        <span className="turn__detail">{message.model}</span>
-      ) : null}
-      {message.timestamp != null ? (
-        <span className="turn__detail">{clockTime(message.timestamp)}</span>
-      ) : null}
-      {message.stopReason && message.stopReason !== "stop" ? (
-        <span className="turn__flag">{message.stopReason}</span>
-      ) : null}
-    </div>
-  );
   return (
     <div
-      className={`turn turn--assistant ${divider ? "turn--round-divider" : ""} ${streaming ? "turn--streaming" : ""}`}
+      className={`turn turn--assistant ${streaming ? "turn--streaming" : ""}`}
     >
-      {roundActivityItemId && roundLead ? (
-        <ActivityItemBoundary id={roundActivityItemId}>
-          {roundLead}
-        </ActivityItemBoundary>
-      ) : (
-        roundLead
-      )}
       <div className="assistant-doc">
         {streaming && !hasVisibleContent ? (
           <div className="assistant-activity" role="status">
@@ -502,70 +458,72 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
       ? `${magicContext ? "History chunk" : "Before"} ≈ ${Math.round(message.tokensBefore).toLocaleString()} tokens`
       : null;
   const [open, setOpen] = useState(false);
+  const bodyId = useId();
+  const metricId = `${bodyId}-metric`;
+  const title = compacted
+    ? magicContext
+      ? "Magic Context compacted"
+      : "Context compacted"
+    : "Branch context";
   return (
     <div className="turn turn--checkpoint">
       <div className="context-checkpoint">
-        <details
-          className="context-checkpoint__disclosure"
-          onToggle={(event) => {
-            if (event.target === event.currentTarget)
-              setOpen(event.currentTarget.open);
-          }}
-        >
-          <summary>
+        <div className="context-checkpoint__head">
+          <button
+            type="button"
+            className="context-checkpoint__toggle"
+            aria-label={title}
+            aria-expanded={open}
+            aria-controls={bodyId}
+            aria-describedby={tokens ? metricId : undefined}
+            onClick={() => setOpen(!open)}
+          >
+            <ChevronRight
+              className="context-checkpoint__chevron"
+              size={14}
+              aria-hidden
+            />
             <Archive
               size={14}
               className="context-checkpoint__icon"
               aria-hidden
             />
-            <span className="context-checkpoint__title">
-              {compacted
-                ? magicContext
-                  ? "Magic Context compacted"
-                  : "Context compacted"
-                : "Branch context"}
-            </span>
-            {tokens ? (
-              <span
-                className="context-checkpoint__metric"
-                title={
-                  magicContext
-                    ? "Estimated tokens in the history chunk sent to Magic Context for processing."
-                    : "Estimated context size before compaction."
-                }
-              >
-                {tokens}
-              </span>
-            ) : null}
-            <span className="context-checkpoint__spacer" aria-hidden />
-            {summary ? (
-              <span className="context-checkpoint__copy-slot" aria-hidden />
-            ) : null}
-            <ChevronRight
-              className="context-checkpoint__chevron"
-              size={13}
-              aria-hidden
-            />
-          </summary>
-          {open ? (
-            <div className="context-checkpoint__body">
-              {summary ? (
-                <RichText text={displaySummary} />
-              ) : (
-                <p>No summary was recorded.</p>
-              )}
+            <span className="context-checkpoint__title">{title}</span>
+          </button>
+          {tokens || (open && summary) ? (
+            <div className="context-checkpoint__details">
+              {tokens ? (
+                <span
+                  id={metricId}
+                  className="context-checkpoint__metric"
+                  title={
+                    magicContext
+                      ? "Estimated tokens in the history chunk sent to Magic Context for processing."
+                      : "Estimated context size before compaction."
+                  }
+                >
+                  {tokens}
+                </span>
+              ) : null}
+              {open && summary ? (
+                <CopyAction
+                  text={summary}
+                  label={compacted ? "Compaction summary" : "Branch summary"}
+                  className="context-checkpoint__copy"
+                />
+              ) : null}
             </div>
           ) : null}
-        </details>
-        {/* Keep the clipboard control outside the native disclosure so both
-            actions remain independently focusable even while collapsed. */}
-        {summary ? (
-          <CopyAction
-            text={summary}
-            label={compacted ? "Compaction summary" : "Branch summary"}
-            className="context-checkpoint__copy"
-          />
-        ) : null}
+        </div>
+        <div id={bodyId} className="context-checkpoint__body" hidden={!open}>
+          {open ? (
+            summary ? (
+              <RichText text={displaySummary} />
+            ) : (
+              <p>No summary was recorded.</p>
+            )
+          ) : null}
+        </div>
       </div>
     </div>
   );

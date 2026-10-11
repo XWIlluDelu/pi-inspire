@@ -82,7 +82,7 @@ for (const mobile of [false, true]) {
     test("separates CodeMode calls from readable output and preserves whole-block copy", async ({
       page,
     }) => {
-      const send = await openReview(page, { palette: "teal" });
+      const send = await openReview(page, { palette: "hydrangea" });
       const call = tool("codemode", {
         code: "text(await tools.edit({path: 'src/components/transcript-cards.tsx', edits: []})); text({i: 1, result: await tools.bash({command: 'npm run typecheck'})}); await tools.ctx_reduce({drop: '1'});",
       });
@@ -830,8 +830,8 @@ test("argument generation follows growing code without stealing the user's scrol
 // Layout/scroll behavior does not depend on palette. The two appearance modes
 // retain independent contrast coverage without replaying their Cartesian product.
 for (const [palette, theme] of [
-  ["amber", "light"],
-  ["teal", "dark"],
+  ["chimonanthus", "light"],
+  ["hydrangea", "dark"],
 ]) {
   test(`narrow tool content retains its geometry and contrast in ${palette}/${theme}`, async ({
     page,
@@ -1171,6 +1171,7 @@ test("saved tool images and full logs reopen through the authorized viewers on d
       ).toContainText("native line 2500");
       const content = await hostRequest(page).get(
         `${url}/api/resources/${descriptor.id}/content?sessionId=${fixture.record.id}`,
+        { headers: { Authorization: "Bearer tool-resources-test-token" } },
       );
       expect(content.ok()).toBe(true);
       expect(await content.text()).toBe(fixture.fullOutput);

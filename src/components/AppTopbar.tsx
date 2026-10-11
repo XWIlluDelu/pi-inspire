@@ -218,6 +218,15 @@ const SessionIdent = memo(function SessionIdent({
     }
   }, [editing]);
 
+  const startRename = () => {
+    const width = (titleRef.current?.getBoundingClientRect().width ?? 192) + 48;
+    setRenameWidth(Math.max(240, Math.min(560, width)));
+    closeMenu();
+    setValue(sessionName);
+    editIncarnationRef.current += 1;
+    setEditing(true);
+  };
+
   const saveRename = () => {
     const name = value.trim();
     const owner = sessionId;
@@ -312,21 +321,13 @@ const SessionIdent = memo(function SessionIdent({
             <span>{heading}</span>
           </button>
         </h1>
+
         {menuOpen && !readOnlyReason ? (
           <SessionActionsMenu
             anchorRef={titleRef}
             cloneDisabled={cloneBusy}
             onClose={closeMenu}
-            onRename={() => {
-              const width =
-                titleRef.current!.getBoundingClientRect().width + 48;
-              setRenameWidth(Math.max(240, Math.min(560, width)));
-              closeMenu();
-              // The first-prompt heading is a fallback, not Pi's saved name.
-              setValue(sessionName);
-              editIncarnationRef.current += 1;
-              setEditing(true);
-            }}
+            onRename={startRename}
             onClone={() => {
               closeMenu();
               titleRef.current?.focus({ preventScroll: true });
@@ -412,16 +413,18 @@ export const AppTopbar = memo(function AppTopbar({
   }, [state.observesRepository]);
   return (
     <header className="topbar">
-      <button
-        type="button"
-        className="icon-button"
-        onClick={onToggleNavigation}
-        aria-label="Toggle navigation"
-        aria-expanded={narrowViewport ? mobileNavOpen : undefined}
-        title="Toggle navigation (Ctrl+B)"
-      >
-        <PanelLeft size={15} aria-hidden />
-      </button>
+      {narrowViewport ? (
+        <button
+          type="button"
+          className="icon-button"
+          onClick={onToggleNavigation}
+          aria-label="Toggle navigation"
+          aria-expanded={mobileNavOpen}
+          title="Toggle navigation (Ctrl+B)"
+        >
+          <PanelLeft size={15} aria-hidden />
+        </button>
+      ) : null}
       <SessionIdent
         key={state.sessionId}
         show={Boolean(state.sessionId)}

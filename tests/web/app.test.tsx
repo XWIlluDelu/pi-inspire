@@ -37,7 +37,9 @@ async function openTitleRename() {
   fireEvent.click(
     await screen.findByRole("button", { name: /^Session actions:/ }),
   );
-  fireEvent.click(screen.getByRole("menuitem", { name: "Rename session" }));
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Rename session" }),
+  );
 }
 
 beforeAll(async () => {
@@ -360,14 +362,9 @@ describe("welcome flow", () => {
     }
   });
 
-  it("renames from the first title action", async () => {
+  it("renames from the title menu", async () => {
     render(<App />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: /^Session actions:/ }),
-    );
-    const rename = screen.getByRole("menuitem", { name: "Rename session" });
-    expect(rename).toHaveFocus();
-    fireEvent.click(rename);
+    await openTitleRename();
     const input = screen.getByLabelText("Session name");
     fireEvent.change(input, { target: { value: "Spectral analysis" } });
     fireEvent.click(screen.getByRole("button", { name: "Save session name" }));
@@ -1103,8 +1100,8 @@ describe("folder grouping and settings page", () => {
     ).not.toBeInTheDocument();
     fireEvent.change(filter, { target: { value: "Assistant" } });
     expect(
-      screen.getByRole("option", { name: /Assistant turn details: On/ }),
-    ).toBeInTheDocument();
+      screen.queryByRole("option", { name: /Assistant turn details/ }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("option", { name: /Assistant rounds/ }),
     ).not.toBeInTheDocument();

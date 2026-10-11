@@ -334,7 +334,6 @@ const ConversationStage = memo(function ConversationStage() {
       thinkingVisibility: source.prefs.thinkingVisibility,
       toolVisibility: source.prefs.toolVisibility,
       activityFoldVisibility: source.prefs.activityFoldVisibility,
-      assistantRoundDisplay: source.prefs.assistantRoundDisplay,
       hasOlderMessages: source.hasOlderMessages,
       loadingOlderMessages: source.loadingOlderMessages,
       olderMessagesError: source.olderMessagesError,
@@ -372,7 +371,6 @@ const ConversationStage = memo(function ConversationStage() {
       thinkingVisibility={state.thinkingVisibility}
       toolVisibility={state.toolVisibility}
       activityFoldVisibility={state.activityFoldVisibility}
-      assistantRoundDisplay={state.assistantRoundDisplay}
       hasOlder={state.hasOlderMessages}
       loadingOlder={state.loadingOlderMessages}
       olderError={state.olderMessagesError}
@@ -547,7 +545,14 @@ export function App() {
       if (!mobileNavOpen) store.setResourcesOpen(false);
       setMobileNavOpen(!mobileNavOpen);
     } else {
+      const focusWasInNav = Boolean(document.activeElement?.closest(".nav"));
       setNavCollapsed((value) => !value);
+      // The desktop toggle moves with the sidebar. Keep its keyboard position
+      // when collapsing/remounting nav content, but never take focus from the editor.
+      if (focusWasInNav)
+        requestAnimationFrame(() =>
+          document.querySelector<HTMLButtonElement>(".nav__toggle")?.focus(),
+        );
     }
   }, [mobileNavOpen, narrowViewport]);
 
@@ -657,9 +662,15 @@ export function App() {
     // in sync for subsequent first paints.
     if (!state.bootstrapped) return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const overlay = window.matchMedia(
+      "(display-mode: window-controls-overlay)",
+    );
     const apply = () => {
-      applyBrowserTheme(resolveTheme(state.prefs.theme, media.matches));
       document.documentElement.dataset.palette = state.prefs.palette;
+      applyBrowserTheme(
+        resolveTheme(state.prefs.theme, media.matches),
+        overlay.matches,
+      );
       document.documentElement.dataset.contentTextSize =
         state.prefs.contentTextSize;
       document.documentElement.dataset.readingWidth = state.prefs.readingWidth;
@@ -672,7 +683,11 @@ export function App() {
     };
     apply();
     media.addEventListener("change", apply);
-    return () => media.removeEventListener("change", apply);
+    overlay.addEventListener("change", apply);
+    return () => {
+      media.removeEventListener("change", apply);
+      overlay.removeEventListener("change", apply);
+    };
   }, [
     state.bootstrapped,
     state.prefs.theme,
@@ -810,6 +825,7 @@ export function App() {
         collapsed={narrowViewport ? false : navCollapsed}
         isModal={isNavModal}
         onClose={closeMobileNavigation}
+        onToggleNavigation={toggleNavigation}
         selectedSessionId={state.sessionId}
         searchInputRef={navSearchRef}
         onNewSession={newSession}

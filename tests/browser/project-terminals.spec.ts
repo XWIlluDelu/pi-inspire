@@ -786,7 +786,7 @@ test.describe("touch terminal", () => {
           await page.evaluate((value) => {
             document.documentElement.dataset.theme = value;
             document.documentElement.dataset.palette =
-              value === "dark" ? "teal" : "amber";
+              value === "dark" ? "hydrangea" : "chimonanthus";
           }, theme);
           await expect(dialog).toBeVisible();
           const bounds = await dialog.boundingBox();

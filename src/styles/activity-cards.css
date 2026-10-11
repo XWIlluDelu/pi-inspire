@@ -1,19 +1,13 @@
-/* --- Cards (thinking / tool / generic) ---
-   Every activity block declares its kind with a colored left edge:
-   violet reasoning, theme-accent tool work, red failure, gray unknown.
-   Surfaces stay neutral. Extension messages have their own message surface. */
+/* Activity items are disclosure rows, not stacked outer cards. Type/status
+   colors stay on icons; expanded data keeps its local reading surfaces.
+   The original framed skin is preserved in legacy-activity.css. */
 
 .card {
-  background: var(--bg-surface);
-  border: 1px solid var(--line);
-  border-left: 2px solid var(--line-strong);
-  border-radius: var(--radius-surface);
-  overflow: hidden;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-control);
   animation: card-in var(--dur-standard) var(--ease-standard);
-}
-
-.card--thinking {
-  border-left-color: var(--activity-think);
 }
 
 .card--thinking .card__icon {
@@ -21,26 +15,34 @@
 }
 
 .card--thinking .card__body {
-  background: var(--bg-activity);
-}
-
-.card--tool {
-  border-left-color: var(--activity-tool);
+  border: 0;
+  border-left: 2px solid color-mix(in srgb, var(--activity-think) 45%, transparent);
+  padding-inline: calc(var(--space-5) - 2px) var(--space-5);
+  border-radius: 0 var(--radius-control) var(--radius-control) 0;
+  background: var(--think-tint);
+  box-shadow: none;
+  color: var(--body);
+  font-size: var(--text-reading-small);
+  line-height: var(--leading-reading);
 }
 
 .card--tool .card__icon {
   color: var(--activity-tool);
 }
 
-.card--failed {
-  border-left-color: var(--activity-error);
-}
-
-.card--failed .card__icon {
-  color: var(--activity-error);
-}
-
 /* User-issued native shell commands remain readable independently of tools. */
+.shell-execution.card {
+  /* Each section owns its inset; do not add the generic turn's inter-item gap. */
+  gap: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-surface);
+  box-shadow: none;
+  overflow: hidden;
+}
+.shell-execution.card--failed .shell-execution__status {
+  color: var(--error);
+}
 .shell-execution__header {
   display: flex;
   align-items: center;
@@ -51,21 +53,39 @@
   font-size: var(--text-sm);
 }
 
-.shell-execution__status { color: var(--ink); }
-.shell-execution__context { margin-left: auto; }
-.shell-execution__copy { flex-shrink: 0; }
+.shell-execution__status {
+  color: var(--ink);
+}
+.shell-execution__context {
+  margin-left: auto;
+}
+.shell-execution__copy.icon-button {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+}
+@media (pointer: coarse) {
+  .shell-execution__copy.icon-button {
+    width: 32px;
+    height: 32px;
+    margin-block: calc(-1 * var(--space-1));
+  }
+}
 
 .shell-execution__command,
 .shell-execution__output {
   margin: 0;
   padding: var(--space-2) var(--space-3);
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  font-size: var(--text-reading-small);
+  line-height: var(--leading-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.shell-execution__command { border-top: 1px solid var(--line); }
+.shell-execution__command {
+  border-top: 1px solid var(--hairline);
+}
 .shell-execution__output {
   max-height: 24rem;
   overflow: auto;
@@ -79,8 +99,12 @@
   font-size: var(--text-sm);
   overflow-wrap: anywhere;
 }
-.shell-execution__note { color: var(--muted); }
-.shell-execution__error { color: var(--activity-error); }
+.shell-execution__note {
+  color: var(--muted);
+}
+.shell-execution__error {
+  color: var(--activity-error);
+}
 
 @keyframes card-in {
   from {
@@ -94,26 +118,43 @@
 }
 
 .card__header {
+  --activity-copy-size: 24px;
+  /* The full header is clickable without becoming a filled card. */
+  -webkit-tap-highlight-color: transparent;
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-2);
   width: 100%;
-  min-height: calc(var(--activity-row-h) - 2px);
-  padding: 2px 8px 2px 6px;
+  min-height: var(--activity-row-h);
+  padding: 2px 4px 2px 0;
+  border-radius: var(--radius-control);
   font-size: var(--text-sm);
   text-align: left;
   color: var(--muted);
   cursor: pointer;
-  transition: background var(--dur-micro) var(--ease-standard);
+  transition:
+    color var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
 }
 
-.card__header:hover {
-  background: var(--bg-inset);
+@media (hover: hover) {
+  .card__header:has(.card__disclosure:hover) .card__chevron {
+    color: var(--ink);
+  }
+  .card__header:has(.card__disclosure:hover) .card__summary {
+    color: var(--body);
+  }
+}
+
+.card__disclosure:active .card__chevron {
+  color: var(--ink);
 }
 
 .card__disclosure {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
+  max-width: min(100%, 32ch);
   min-height: 24px;
   display: inline-flex;
   align-items: center;
@@ -127,35 +168,64 @@
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
+.card__header:has(> .card__copy) .card__disclosure {
+  max-width: min(calc(100% - var(--activity-copy-size) - 12px), 32ch);
+}
+
+.card__disclosure::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-control);
+}
+
 .card__disclosure:focus-visible {
-  background: var(--bg-inset);
+  outline: none;
+  color: var(--ink);
 }
 
-/* A collapsed summary may consume only the space after the disclosure's
-   fixed affordances. Long labels truncate inside a bounded disclosure rather
-   than letting its icon or status overflow into the summary. */
-.card__disclosure:has(+ .card__summary) {
-  flex: 0 0 auto;
-  max-width: min(50%, 32ch);
+.card__disclosure:focus-visible::after {
+  outline: 2px solid var(--accent-deep);
+  outline-offset: -2px;
 }
 
-.card__header-spacer {
-  flex: 1 1 auto;
-  min-width: 0;
+.card__header :is(a, button, input, select, textarea, [role="button"], [role="link"]):not(.card__disclosure) {
+  position: relative;
+  z-index: 1;
 }
 
 .card__copy.icon-button {
-  width: 24px;
-  height: 24px;
+  width: var(--activity-copy-size);
+  height: var(--activity-copy-size);
   flex: 0 0 auto;
   color: var(--faint);
   opacity: 0;
-  transition: opacity var(--dur-micro) var(--ease-standard);
+  border-radius: var(--radius-sm);
+  transition:
+    opacity var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
 }
 
 .card__header:hover .card__copy,
 .card__header:focus-within .card__copy {
   opacity: 1;
+}
+
+@media (hover: hover) {
+  .card__copy.icon-button:hover {
+    color: var(--ink);
+    background: var(--bg-inset);
+  }
+}
+
+@media (pointer: coarse) {
+  .card__header {
+    --activity-copy-size: 32px;
+  }
+  .card__disclosure {
+    min-height: 32px;
+  }
 }
 
 @media (hover: none) {
@@ -172,6 +242,7 @@
 .card__label {
   flex: 0 1 auto;
   min-width: 0;
+  max-width: min(24ch, 50vw);
   overflow: hidden;
   color: var(--ink);
   font-size: var(--text-sm);
@@ -185,6 +256,9 @@
   font-size: var(--text-sm);
   font-weight: 500;
   color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .card__summary {
@@ -197,6 +271,10 @@
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
+}
+
+.card--generic .card__icon {
+  color: var(--muted);
 }
 
 .card__generic-title {
@@ -250,6 +328,7 @@
 }
 
 .activity-strip__item {
+  -webkit-tap-highlight-color: transparent;
   min-width: 56px;
   height: var(--activity-row-h);
   display: inline-flex;
@@ -257,10 +336,9 @@
   justify-content: center;
   gap: 6px;
   padding-inline: 8px 10px;
-  border: 1px solid var(--line);
-  border-left: 2px solid var(--activity-tool);
+  border: 1px solid transparent;
   border-radius: var(--radius-control);
-  background: var(--bg-surface);
+  background: transparent;
   color: var(--muted);
   cursor: pointer;
   transition:
@@ -269,7 +347,14 @@
     box-shadow var(--dur-micro) var(--ease-standard);
 }
 
-.activity-strip__item:hover,
+@media (hover: hover) {
+  .activity-strip__item:hover {
+    background: var(--bg-inset);
+    color: var(--ink);
+  }
+}
+
+.activity-strip__item:active,
 .activity-strip__item:focus-visible {
   background: var(--bg-inset);
   color: var(--ink);
@@ -277,15 +362,12 @@
 
 .activity-strip__item--active {
   background: var(--bg-inset);
-  border-color: var(--line-strong);
-  border-left-color: var(--activity-tool);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 5%, transparent);
+  border-color: var(--line);
 }
 
 .activity-strip__item--failed,
 .activity-strip__item--failed.activity-strip__item--active {
   color: var(--activity-error);
-  border-left-color: var(--activity-error);
 }
 
 .status-unknown {
@@ -413,12 +495,18 @@
 }
 
 .card__body {
-  border-top: 1px solid var(--hairline);
-  background: var(--bg-activity);
-  padding: var(--space-3);
+  min-width: 0;
+  margin: var(--space-1) 0 var(--space-2) 24px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-surface);
+  background: color-mix(in srgb, var(--bg-surface) 75%, var(--bg-activity));
+  box-shadow: none;
+  /* The content starts under the header title: 24px margin + 20px inner inset. */
+  padding: var(--space-2) calc(var(--space-5) - 1px);
   font-size: var(--text-reading-small);
   animation: body-in var(--dur-standard) var(--ease-standard);
 }
+
 
 @keyframes body-in {
   from {
@@ -453,6 +541,10 @@
   color: var(--muted);
   letter-spacing: 0.04em;
   margin: var(--space-2) 0 var(--space-1);
+}
+
+.card__body > .card__section-label:first-child {
+  margin-top: 0;
 }
 
 .card__mono {
@@ -545,7 +637,7 @@
   text-decoration: underline;
 }
 
-/* Tool presenters keep the established card shell and replace only its raw
+/* Tool presenters keep the shared disclosure shell and replace only its raw
    payload body with bounded, typed primitives. */
 .card__summary--tool {
   display: inline-flex;
@@ -761,7 +853,8 @@
 .tool-terminal,
 .tool-markdown,
 .tool-presentation .diff,
-.card--tool .card__mono {
+.card--tool .card__mono,
+.card--generic .card__mono {
   max-height: min(32rem, 65vh);
   overflow: auto;
   overscroll-behavior: contain;
@@ -769,6 +862,12 @@
 
 .tool-terminal--live {
   max-height: min(24rem, 45vh);
+}
+
+.tool-result-details > summary,
+.tool-call-script > details > summary {
+  border-radius: var(--radius-control);
+  -webkit-tap-highlight-color: transparent;
 }
 
 .tool-result-details > summary {
@@ -821,10 +920,17 @@
 
 summary.child-call__row {
   cursor: pointer;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
+  -webkit-tap-highlight-color: transparent;
 }
 
-summary.child-call__row:hover {
+@media (hover: hover) {
+  summary.child-call__row:hover {
+    background: var(--bg-inset);
+  }
+}
+
+summary.child-call__row:active {
   background: var(--bg-inset);
 }
 
@@ -889,15 +995,16 @@ summary.child-call__row:hover {
 @media (pointer: coarse) {
   .child-call__row,
   .tool-call-script > details > summary {
-    min-height: 44px;
+    min-height: 32px;
   }
 }
 
-.tool-result-details .card__mono {
-  margin-top: 8px;
-  padding: 8px;
+.tool-result-details .card__mono,
+.child-call__detail .card__mono {
+  margin-top: var(--space-1);
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--hairline);
-  border-radius: 2px;
+  border-radius: var(--radius-control);
   background: var(--bg-inset);
 }
 
@@ -985,10 +1092,13 @@ span.card__file-arg {
 }
 
 .codemode-result {
-  padding: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   max-height: min(24rem, 40vh);
   overflow: auto;
   overscroll-behavior: contain;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--bg-inset);
 }
 
 .codemode-result__text {
@@ -1191,7 +1301,7 @@ span.card__file-arg {
   padding: 0 var(--space-1);
   border: 0;
   background: transparent;
-  color: var(--accent);
+  color: var(--accent-deep);
   font: inherit;
   text-decoration: underline;
   text-underline-offset: 3px;

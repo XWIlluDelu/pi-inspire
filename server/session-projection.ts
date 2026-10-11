@@ -756,27 +756,47 @@ function projectedTimestamp(value: unknown): string | undefined {
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
-function deferredActivityKinds(value: unknown): TranscriptActivityKind[] {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-  const record = value as Record<string, unknown>;
-  if (record.role === "assistant") {
-    if (!Array.isArray(record.content)) return [];
-    let thinking = false;
-    let tool = false;
-    for (const part of record.content) {
-      if (!part || typeof part !== "object" || Array.isArray(part)) continue;
-      const type = (part as Record<string, unknown>).type;
-      if (type === "text") continue;
-      if (type === "thinking") thinking = true;
-      else tool = true;
-    }
-    return [
-      ...(thinking ? (["thinking"] as const) : []),
-      ...(tool ? (["tool"] as const) : []),
-    ];
+/** Bounded chronological hints retain one/many per kind, including when a
+ * reader hides the other kind. Paired results do not create extra tools. */
+function deferredActivityKinds(
+  source: readonly unknown[],
+  start: number,
+  end: number,
+): TranscriptActivityKind[] {
+  const cues: TranscriptActivityKind[] = [];
+  const calls = new Set<string>();
+  const add = (kind: TranscriptActivityKind) => {
+    if (cues.filter((cue) => cue === kind).length < 2) cues.push(kind);
+  };
+  for (let index = start; index < end; index += 1) {
+    const value = source[index];
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const record = value as Record<string, unknown>;
+    if (record.role === "assistant") {
+      if (!Array.isArray(record.content)) continue;
+      for (const part of record.content) {
+        if (!part || typeof part !== "object" || Array.isArray(part)) continue;
+        const item = part as Record<string, unknown>;
+        if (item.type === "text") continue;
+        if (
+          item.type === "toolCall" &&
+          typeof item.id === "string" &&
+          calls.size < 2
+        )
+          calls.add(item.id);
+        add(item.type === "thinking" ? "thinking" : "tool");
+      }
+    } else if (
+      !(record.role === "custom" && record.display === false) &&
+      !(
+        record.role === "toolResult" &&
+        typeof record.toolCallId === "string" &&
+        calls.has(record.toolCallId)
+      )
+    )
+      add("tool");
   }
-  if (record.role === "custom" && record.display === false) return [];
-  return ["tool"];
+  return cues;
 }
 
 function signedCursor(payloadValue: Record<string, unknown>): string {
@@ -2355,11 +2375,12 @@ export class SessionProjection
     rangeStart: number,
     rangeEnd: number,
     afterMessageId: string | null,
-    kinds: ReadonlySet<TranscriptActivityKind>,
+    source: readonly unknown[],
     effectiveLeafId: string | null,
     viewId: string,
   ): TranscriptActivityRange | null {
-    return kinds.size > 0
+    const kinds = deferredActivityKinds(source, rangeStart, rangeEnd);
+    return kinds.length > 0
       ? {
           cursor: activityCursorFor(
             this.sessionId,
@@ -2373,9 +2394,7 @@ export class SessionProjection
           ),
           afterMessageId,
           messageCount: rangeEnd - rangeStart,
-          kinds: (["thinking", "tool"] as const).filter((kind) =>
-            kinds.has(kind),
-          ),
+          kinds,
         }
       : null;
   }
@@ -2439,7 +2458,6 @@ export class SessionProjection
       break;
     }
     let pendingStart: number | null = null;
-    const pendingKinds = new Set<TranscriptActivityKind>();
     const shell = (
       nextMessages: unknown[],
       nextRanges: TranscriptActivityRange[],
@@ -2490,7 +2508,6 @@ export class SessionProjection
       const value = source[cursor];
       if (!isVisibleTranscriptBoundary(value)) {
         if (pendingStart === null) pendingStart = cursor;
-        for (const kind of deferredActivityKinds(value)) pendingKinds.add(kind);
         cursor += 1;
         continue;
       }
@@ -2502,7 +2519,7 @@ export class SessionProjection
               pendingStart,
               cursor,
               previousVisibleId,
-              pendingKinds,
+              source,
               effectiveLeafId,
               viewId,
             );
@@ -2521,7 +2538,6 @@ export class SessionProjection
       if (range) activityRanges.push(range);
       previousVisibleId = projectedMessageId(value);
       pendingStart = null;
-      pendingKinds.clear();
       cursor += 1;
       committedEnd = cursor;
     }
@@ -2531,7 +2547,7 @@ export class SessionProjection
         pendingStart,
         turnEnd,
         previousVisibleId,
-        pendingKinds,
+        source,
         effectiveLeafId,
         viewId,
       );
@@ -2629,7 +2645,6 @@ export class SessionProjection
   ): TranscriptPage {
     let start = before;
     let pendingActivityEnd: number | null = null;
-    const pendingKinds = new Set<TranscriptActivityKind>();
     const reversed: unknown[] = [];
     const ranges: TranscriptActivityRange[] = [];
     const shell = (
@@ -2665,8 +2680,6 @@ export class SessionProjection
       const sourceItem = source[index];
       if (!isVisibleTranscriptBoundary(sourceItem)) {
         if (pendingActivityEnd === null) pendingActivityEnd = start;
-        for (const kind of deferredActivityKinds(sourceItem))
-          pendingKinds.add(kind);
         start = index;
         continue;
       }
@@ -2679,7 +2692,7 @@ export class SessionProjection
               index + 1,
               pendingActivityEnd,
               projectedMessageId(sourceItem),
-              pendingKinds,
+              source,
               effectiveLeafId,
               viewId,
             );
@@ -2702,7 +2715,6 @@ export class SessionProjection
       if (nextRange) ranges.push(nextRange);
       start = index;
       pendingActivityEnd = null;
-      pendingKinds.clear();
     }
 
     if (start === 0 && pendingActivityEnd !== null) {
@@ -2710,7 +2722,7 @@ export class SessionProjection
         0,
         pendingActivityEnd,
         null,
-        pendingKinds,
+        source,
         effectiveLeafId,
         viewId,
       );

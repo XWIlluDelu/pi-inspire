@@ -81,6 +81,10 @@ test("session search paginates unloaded results and keyboard selection preserves
       return search;
     };
     let search = await findSession();
+    await expect(page.locator(".nav__row--highlighted")).toHaveCount(0);
+    await search.press("Enter");
+    await expect(first).toHaveValue("SESSION_SEARCH_START_DRAFT");
+    await expect(page.locator(".nav__row--active")).toHaveCount(0);
     await search.fill("bodyneedle");
     await expect(page.locator(".nav__row-name")).toHaveCount(2);
     await expect(first).toHaveValue("SESSION_SEARCH_START_DRAFT");
@@ -156,6 +160,12 @@ test("session search paginates unloaded results and keyboard selection preserves
     );
     await curate("Unpin");
     await search.fill("");
+    await search.focus();
+    await expect(page.locator(".nav__row--highlighted")).toHaveCount(0);
+    await search.press("Enter");
+    await expect(page.locator(".topbar__title-button")).toHaveText(
+      "Formula rendering and spectral analysis",
+    );
     await page
       .getByRole("button", { name: "New session", exact: true })
       .click();

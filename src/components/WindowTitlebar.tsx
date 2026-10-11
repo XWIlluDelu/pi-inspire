@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { store, useAppState } from "../store";
 import { BuffonNeedles } from "./BuffonNeedles";
-import { Wordmark } from "./Wordmark";
+import { BrandLogo, Wordmark } from "./Wordmark";
 
 /** Browser-owned controls remain native; this is only the overlay's drag surface. */
 export function WindowTitlebar() {
@@ -44,6 +44,9 @@ export function WindowTitlebar() {
     <div ref={titlebar} className="window-titlebar">
       <div className="window-titlebar__safe">
         {needlesActive ? <BuffonNeedles /> : null}
+        <div className="window-titlebar__corner-logo" aria-hidden="true">
+          <BrandLogo size={18} />
+        </div>
         <div className="window-titlebar__identity">
           <button
             type="button"

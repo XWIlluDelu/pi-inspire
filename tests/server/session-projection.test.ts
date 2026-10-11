@@ -1108,6 +1108,90 @@ describe("SessionProjection bounded paging", () => {
     }
   }, 30_000);
 
+  it.each([
+    [["tool"], ["tool"]],
+    [
+      ["tool", "tool"],
+      ["tool", "tool"],
+    ],
+    [["thinking"], ["thinking"]],
+    [
+      ["thinking", "thinking"],
+      ["thinking", "thinking"],
+    ],
+    [
+      ["tool", "thinking", "tool"],
+      ["tool", "thinking", "tool"],
+    ],
+    [
+      ["thinking", "tool"],
+      ["thinking", "tool"],
+    ],
+  ])(
+    "preserves deferred activity cues %j in both paging directions",
+    async (input, expected) => {
+      const lines = [message("cue-user", null, "user", "inspect activity", 1)];
+      let parent = "cue-user";
+      input.forEach((kind, index) => {
+        const id = `cue-${index}`;
+        const callId = `call-${index}`;
+        lines.push(
+          message(
+            id,
+            parent,
+            "assistant",
+            [
+              kind === "thinking"
+                ? { type: "thinking", thinking: "planning" }
+                : { type: "toolCall", id: callId, name: "read", arguments: {} },
+            ],
+            index + 2,
+          ),
+        );
+        parent = id;
+        if (kind === "tool") {
+          const result = message(
+            `result-${index}`,
+            parent,
+            "toolResult",
+            "done",
+            index + 2,
+          );
+          Object.assign(result.message, { toolCallId: callId });
+          lines.push(result);
+          parent = result.id;
+        }
+      });
+      // A whole latest page forces older paging to summarize the earlier range.
+      for (let index = 0; index < TRANSCRIPT_PAGE_MAX_MESSAGES; index += 1) {
+        const item = message(
+          `tail-${index}`,
+          parent,
+          "assistant",
+          "answer",
+          index + 100,
+        );
+        lines.push(item);
+        parent = item.id;
+      }
+      const { projection } = await fixture(lines);
+      try {
+        const userId = (
+          projection.messages[0] as { __inspireMessageId: string }
+        ).__inspireMessageId;
+        expect(
+          projection.userTurnTranscriptPage(userId).activityRanges?.[0]?.kinds,
+        ).toEqual(expected);
+        const older = projection.visiblePage(
+          projection.latestPage().olderCursor!,
+        );
+        expect(older.activityRanges?.[0]?.kinds).toEqual(expected);
+      } finally {
+        await projection.close();
+      }
+    },
+  );
+
   it("skips activity-only history during upward paging and materializes its opaque range on demand", async () => {
     const lines: unknown[] = [
       message("u0", null, "user", "old prompt", 1),
@@ -1148,7 +1232,7 @@ describe("SessionProjection bounded paging", () => {
       const range = older.activityRanges![0]!;
       expect(range).toMatchObject({
         messageCount: 20,
-        kinds: ["thinking", "tool"],
+        kinds: ["thinking", "tool", "thinking", "tool"],
       });
       expect(range.afterMessageId).toBe(
         (older.messages[1] as { __inspireMessageId?: string })

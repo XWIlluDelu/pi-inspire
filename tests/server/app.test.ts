@@ -925,6 +925,45 @@ describe("typed Host API", () => {
     expect(invalidate).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    ["amber", "chimonanthus"],
+    ["teal", "hydrangea"],
+  ])(
+    "bootstraps legacy %s palettes as %s and persists canonical patches",
+    async (legacy, palette) => {
+      const path = join(temporary, "preferences.json");
+      const raw = JSON.stringify({
+        palette: legacy,
+        theme: "dark",
+        launch: "continue",
+      });
+      await writeFile(path, raw);
+      const bootstrap = await request(application.server)
+        .get("/api/bootstrap")
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+      expect(bootstrap.body.preferences).toMatchObject({
+        palette,
+        theme: "dark",
+        launch: "continue",
+      });
+      expect(bootstrap.body.preferencesWarning).toBeUndefined();
+      expect(await readFile(path, "utf8")).toBe(raw);
+
+      const saved = await request(application.server)
+        .patch("/api/preferences")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ palette: legacy })
+        .expect(200);
+      expect(saved.body).toMatchObject({
+        palette,
+        theme: "dark",
+        launch: "continue",
+      });
+      expect(JSON.parse(await readFile(path, "utf8")).palette).toBe(palette);
+    },
+  );
+
   it("persists field-scoped preference patches without losing concurrent fields", async () => {
     await request(application.server)
       .patch("/api/preferences")
@@ -973,7 +1012,8 @@ describe("typed Host API", () => {
     expect(stored.body).toEqual({
       herdrEnabled: false,
       theme: "dark",
-      palette: "amber",
+      palette: "chimonanthus",
+      titlebarNeedles: false,
       contentTextSize: "comfortable",
       readingWidth: "comfortable",
       launch: "welcome",
@@ -981,7 +1021,6 @@ describe("typed Host API", () => {
       thinkingVisibility: "dynamic",
       toolVisibility: "hidden",
       activityFoldVisibility: "compact",
-      assistantRoundDisplay: "divider",
       projectDisplay: "path",
       completionAttention: "off",
       recentModelIds: [],

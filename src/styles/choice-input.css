@@ -10,12 +10,12 @@
   border: 1px solid var(--hairline-strong);
   border-radius: var(--radius-xs);
   background: var(--bg-control);
-  color: var(--accent-fill);
+  color: var(--accent-deep);
   cursor: inherit;
 }
 .choice-input[type=radio] { border-radius: var(--radius-pill); }
 .choice-input:checked {
-  border-color: var(--accent-fill);
+  border-color: var(--accent-deep);
   background: var(--accent-tint);
 }
 .choice-input:checked::before {
@@ -41,5 +41,5 @@
   .choice-input { appearance: auto; }
   .choice-input:checked::before { content: none; }
 }
-.choice-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.choice-input:focus-visible { outline: 2px solid var(--accent-deep); outline-offset: 2px; }
 .choice-input:disabled { opacity: 0.45; cursor: default; }

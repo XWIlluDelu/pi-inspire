@@ -12,7 +12,6 @@ import {
 } from "react";
 import {
   type ActivityFoldVisibilityPreference,
-  type AssistantRoundDisplayPreference,
   type ExtensionDisplay,
   emptyPendingQueues,
   type GenericExtensionDisplay,
@@ -70,7 +69,6 @@ export const Transcript = memo(function Transcript({
   thinkingVisibility,
   toolVisibility,
   activityFoldVisibility = "expanded",
-  assistantRoundDisplay = "details",
   hasOlder = false,
   loadingOlder = false,
   olderError = null,
@@ -102,7 +100,6 @@ export const Transcript = memo(function Transcript({
   thinkingVisibility: VisibilityPreference;
   toolVisibility: ToolVisibilityPreference;
   activityFoldVisibility?: ActivityFoldVisibilityPreference;
-  assistantRoundDisplay?: AssistantRoundDisplayPreference;
   hasOlder?: boolean;
   loadingOlder?: boolean;
   olderError?: string | null;
@@ -156,7 +153,6 @@ export const Transcript = memo(function Transcript({
     thinkingVisibility,
     toolVisibility,
     activityFoldVisibility,
-    assistantRoundDisplay,
     onMaterializeActivityRanges,
     preserveActivityAnchorRef,
   });

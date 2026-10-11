@@ -26,6 +26,93 @@ afterEach(async () => {
 });
 
 describe("PreferencesStore validation", () => {
+  it.each(["details", "divider"])(
+    "retires saved assistant turn %s without locking preferences",
+    async (value) => {
+      const { path, store } = await fixture();
+      const raw = JSON.stringify({
+        assistantRoundDisplay: value,
+        thinkingVisibility: "expanded",
+      });
+      await writeFile(path, raw);
+      const inspection = await store.inspect();
+      expect(inspection.warning).toBeUndefined();
+      expect(inspection.preferences.thinkingVisibility).toBe("expanded");
+      expect(inspection.preferences).not.toHaveProperty(
+        "assistantRoundDisplay",
+      );
+      expect(await readFile(path, "utf8")).toBe(raw);
+      await store.patch({ toolVisibility: "compact" });
+      const saved = JSON.parse(await readFile(path, "utf8"));
+      expect(saved).not.toHaveProperty("assistantRoundDisplay");
+      expect(saved).toMatchObject({
+        thinkingVisibility: "expanded",
+        toolVisibility: "compact",
+      });
+    },
+  );
+  it.each([
+    ["amber", "chimonanthus"],
+    ["teal", "hydrangea"],
+  ])(
+    "migrates saved %s to %s without invalidating other settings",
+    async (legacy, palette) => {
+      const { path, store } = await fixture();
+      const raw = JSON.stringify({
+        palette: legacy,
+        theme: "dark",
+        pinnedSessionIds: ["kept"],
+      });
+      await writeFile(path, raw);
+      const inspected = await store.inspect();
+      expect(inspected.warning).toBeUndefined();
+      expect(inspected.preferences).toMatchObject({
+        palette,
+        theme: "dark",
+        pinnedSessionIds: ["kept"],
+      });
+      // Observation is read-only; the next ordinary write saves canonical IDs.
+      expect(await readFile(path, "utf8")).toBe(raw);
+      await store.patch({ readingWidth: "wide" });
+      expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
+        palette,
+        theme: "dark",
+        readingWidth: "wide",
+        pinnedSessionIds: ["kept"],
+      });
+      expect(
+        (await new PreferencesStore(path).inspect()).warning,
+      ).toBeUndefined();
+    },
+  );
+
+  it.each([
+    "wisteria",
+    "hydrangea",
+    "lycoris",
+    "chimonanthus",
+    "classic-jade",
+    "classic-amber",
+  ])("persists the %s palette independently of luminosity", async (palette) => {
+    const { path, store } = await fixture();
+    await store.patch({ theme: "system" });
+    await store.patch({ palette });
+    expect(await new PreferencesStore(path).read()).toMatchObject({
+      palette,
+      theme: "system",
+    });
+  });
+
+  it("accepts legacy client patches but never writes legacy IDs", async () => {
+    const { path, store } = await fixture();
+    expect(await store.patch({ palette: "teal" })).toMatchObject({
+      palette: "hydrangea",
+    });
+    expect(JSON.parse(await readFile(path, "utf8")).palette).toBe("hydrangea");
+    await expect(store.patch({ palette: "jade" })).rejects.toBeDefined();
+    expect((await store.read()).palette).toBe("hydrangea");
+  });
+
   it("defaults titlebar needles off and persists the choice across reloads", async () => {
     const { path, store } = await fixture();
     await writeFile(path, JSON.stringify({ theme: "dark" }));

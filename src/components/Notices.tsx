@@ -20,11 +20,11 @@ function parseNoticeText(text: string): { tag: string | null; body: string } {
 function NoticeIcon({ kind }: { kind: Notice["kind"] }) {
   switch (kind) {
     case "warning":
-      return <AlertTriangle size={13} aria-hidden />;
+      return <AlertTriangle size={14} aria-hidden />;
     case "error":
-      return <XCircle size={13} aria-hidden />;
+      return <XCircle size={14} aria-hidden />;
     default:
-      return <Info size={13} aria-hidden />;
+      return <Info size={14} aria-hidden />;
   }
 }
 
@@ -143,7 +143,7 @@ function UpdateNotice({
     <div className="notice notice--info" role="status">
       <div className="notice__head">
         <span className="notice__title">
-          <Download size={13} aria-hidden />
+          <Download size={14} aria-hidden />
           <span>Updates available</span>
         </span>
         <div className="notice__actions">

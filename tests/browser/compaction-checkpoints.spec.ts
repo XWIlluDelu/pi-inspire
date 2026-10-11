@@ -8,7 +8,7 @@ async function openFixture(page: Page) {
   await expect(page.locator(".context-checkpoint")).toBeVisible();
 }
 
-test("compaction checkpoints retain native disclosure/copy order through responsive layout and reload", async ({
+test("compaction checkpoints retain independent disclosure/copy order through responsive layout and reload", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 844 });
@@ -44,8 +44,10 @@ test("compaction checkpoints retain native disclosure/copy order through respons
       return preceding.y < current.y && current.y < following.y;
     })
     .toBe(true);
-  const disclosure = checkpoint.locator("details");
-  const summary = disclosure.locator(":scope > summary");
+  const disclosure = checkpoint.getByRole("button", {
+    name: "Context compacted",
+    exact: true,
+  });
   const copy = checkpoint.locator(".context-checkpoint__copy");
   const expectAccessible = async () => {
     expect(
@@ -53,8 +55,12 @@ test("compaction checkpoints retain native disclosure/copy order through respons
         .violations,
     ).toEqual([]);
   };
-  await expect(disclosure).not.toHaveAttribute("open");
-  await summary.focus();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await expect(copy).toHaveCount(0);
+  await expectAccessible();
+  await disclosure.focus();
+  await page.keyboard.press("Enter");
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
   await page.keyboard.press("Tab");
   await expect(copy).toBeFocused();
   await page.keyboard.press("Enter");
@@ -64,10 +70,7 @@ test("compaction checkpoints retain native disclosure/copy order through respons
   expect(copied.replace(/\r\n/gu, "\n")).toBe(
     "## Preserved context\n\nKeep the parser decisions and remaining work.",
   );
-  await expect(disclosure).not.toHaveAttribute("open");
-  await expectAccessible();
-  await summary.focus();
-  await page.keyboard.press("Enter");
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
   await expect(
     checkpoint.getByText("Keep the parser decisions and remaining work."),
   ).toBeVisible();
@@ -91,24 +94,32 @@ test("compaction checkpoints retain native disclosure/copy order through respons
       current!.x + current!.width,
     );
   }
+  const copyGap = await copy.evaluate(
+    (element) =>
+      element.getBoundingClientRect().left -
+      element.previousElementSibling!.getBoundingClientRect().right,
+  );
+  expect(copyGap).toBeGreaterThanOrEqual(4);
+  expect(copyGap).toBeLessThanOrEqual(8);
   await expectAccessible();
   await copy.focus();
   await page.keyboard.press("Enter");
-  await expect(disclosure).toHaveAttribute("open", "");
-  await summary.focus();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  await disclosure.focus();
   await page.keyboard.press("Enter");
   await expect(
     checkpoint.getByText("Keep the parser decisions and remaining work."),
   ).toHaveCount(0);
+  await expect(copy).toHaveCount(0);
 
   await page.reload();
   await expect(page.getByRole("main")).toBeVisible();
   await openFixture(page);
   await expect(page.locator(".context-checkpoint")).toHaveCount(1);
-  await expect(page.locator(".context-checkpoint summary")).toContainText(
+  await expect(page.locator(".context-checkpoint__metric")).toContainText(
     "Before ≈ 42,500 tokens",
   );
-  await page.locator(".context-checkpoint summary").press("Enter");
+  await page.locator(".context-checkpoint__toggle").press("Enter");
   await expect(
     page.getByText("Keep the parser decisions and remaining work."),
   ).toBeVisible();

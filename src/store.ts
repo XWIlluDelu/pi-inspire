@@ -3,7 +3,6 @@ import { parseCommandInvocation, parseNativeCommand } from "../shared/commands";
 import {
   type ActiveSnapshot,
   type ActivityFoldVisibilityPreference,
-  type AssistantRoundDisplayPreference,
   type BranchNavigateRequest,
   type BranchTreeQuery,
   type CompletionAttentionPreference,
@@ -2871,8 +2870,6 @@ export class AppStore {
     this.preferences.setToolVisibility(value);
   setActivityFoldVisibility = (value: ActivityFoldVisibilityPreference): void =>
     this.preferences.setActivityFoldVisibility(value);
-  setAssistantRoundDisplay = (value: AssistantRoundDisplayPreference): void =>
-    this.preferences.setAssistantRoundDisplay(value);
   restoreDefaultSettings = (): void => this.preferences.restoreDefaults();
   toggleNavGroup = (cwd: string): void => this.preferences.toggleNavGroup(cwd);
   toggleSessionPin = (id: string): void =>

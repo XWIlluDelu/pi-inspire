@@ -79,6 +79,7 @@ describe("session pagination control", () => {
     const user = userEvent.setup();
     const { container } = render(
       <Nav
+        onToggleNavigation={() => undefined}
         collapsed={false}
         onNewSession={() => undefined}
         onSelectSession={() => undefined}

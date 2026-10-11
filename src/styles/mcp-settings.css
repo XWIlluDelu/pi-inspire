@@ -1,4 +1,7 @@
 .settings__card > .mcp-config { padding: var(--space-3); }
+/* Unlike Models rows, this shared component already has a padded container. */
+.mcp-config > .settings__error { padding: 0; }
+.mcp-config > .settings__error:not(:last-child) { margin-bottom: var(--space-2); }
 .mcp-settings .models-editor__header .models-subheading { margin: 0; }
 .mcp-config > .models-subheading { flex-wrap: wrap; }
 .mcp-config > .models-subheading > .models-actions { flex-wrap: nowrap; margin-left: auto; }

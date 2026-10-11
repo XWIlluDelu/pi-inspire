@@ -64,6 +64,24 @@ describe("preference persistence", () => {
     expect(saved.at(-1)).toEqual({ theme: "dark" });
   });
 
+  it.each([
+    "wisteria",
+    "hydrangea",
+    "lycoris",
+    "chimonanthus",
+    "classic-jade",
+    "classic-amber",
+  ] as const)(
+    "setPalette persists %s with a field-scoped patch",
+    async (palette) => {
+      const store = new AppStore();
+      await store.init("token");
+      store.setPalette(palette);
+      expect(store.getState().prefs.palette).toBe(palette);
+      await vi.waitFor(() => expect(saved.at(-1)).toEqual({ palette }));
+    },
+  );
+
   it("queues rapid changes in order, each patch carrying only its own field", async () => {
     const store = new AppStore();
     await store.init("token");
@@ -86,7 +104,7 @@ describe("settings reset", () => {
     const initial = {
       ...bootstrapPayload().preferences,
       theme: "dark" as const,
-      palette: "teal" as const,
+      palette: "hydrangea" as const,
       titlebarNeedles: true,
       contentTextSize: "large" as const,
       readingWidth: "wide" as const,
@@ -95,7 +113,6 @@ describe("settings reset", () => {
       thinkingVisibility: "hidden" as const,
       toolVisibility: "hidden" as const,
       activityFoldVisibility: "expanded" as const,
-      assistantRoundDisplay: "details" as const,
       projectDisplay: "path" as const,
       completionAttention: "title" as const,
       recentModelIds: [{ provider: "provider", id: "model" }],

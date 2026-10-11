@@ -204,20 +204,16 @@ export const SessionRow = memo(function SessionRow({
       <div className="nav__row-actions">
         {hidden ? (
           <>
-            {projectHidden ? (
-              <span className="nav__row-action-spacer" aria-hidden />
-            ) : (
-              <button
-                type="button"
-                className="nav__row-action"
-                aria-label={`Restore "${title}"`}
-                title="Move back out of Hidden"
-                disabled={clearingHidden}
-                onClick={() => store.toggleSessionHidden(session.id)}
-              >
-                <Eye size={12} aria-hidden />
-              </button>
-            )}
+            <button
+              type="button"
+              className="nav__row-action"
+              aria-label={`Restore "${title}"`}
+              title="Move back out of Hidden"
+              disabled={clearingHidden}
+              onClick={() => store.toggleSessionHidden(session.id)}
+            >
+              <Eye size={12} aria-hidden />
+            </button>
             <button
               type="button"
               className="nav__row-action nav__row-action--danger"
@@ -322,9 +318,9 @@ export function ProjectGroup({
           onClick={() => store.toggleNavGroup(group.cwd)}
         >
           {expanded ? (
-            <FolderOpen size={14} aria-hidden />
+            <FolderOpen size={16} aria-hidden />
           ) : (
-            <Folder size={14} aria-hidden />
+            <Folder size={16} aria-hidden />
           )}
           <span className="nav__group-name">
             <SearchMatchText

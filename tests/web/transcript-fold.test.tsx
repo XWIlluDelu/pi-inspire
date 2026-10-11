@@ -46,11 +46,10 @@ describe("response activity folds", () => {
     expect(control).toHaveAttribute("aria-expanded", "false");
     expect(control).toHaveAttribute("data-activity-fold-anchor", "center");
     expect(control.querySelector("button, [tabindex]")).toBeNull();
-    expect(
-      control.querySelectorAll(".activity-fold__rail[aria-hidden]"),
-    ).toHaveLength(2);
+    expect(control).toHaveTextContent("Activity");
+    expect(control.querySelector(".activity-fold__rail")).toBeNull();
 
-    fireEvent.click(control.querySelector(".activity-fold__rail--lower")!);
+    fireEvent.click(control);
     expect(fold).toHaveAttribute("data-activity-fold-presentation", "compact");
     const lower = screen.getByRole("button", {
       name: "Collapse assistant activity from the lower boundary",
@@ -69,8 +68,8 @@ describe("response activity folds", () => {
     focus.mockRestore();
   });
 
-  it.each(["collapsed", "compact"] as const)(
-    "animates only a live fold's existing %s dots and stops on settlement or error",
+  it.each(["compact"] as const)(
+    "animates only a live fold's %s omission dots and stops on settlement or error",
     (visibility) => {
       const props = {
         visibility,
@@ -154,9 +153,11 @@ describe("response activity folds", () => {
         ),
       );
 
-      const title = screen.getByText(label);
-      const checkpoint = title.closest("details") as HTMLDetailsElement;
-      expect(title).toBeVisible();
+      const disclosure = screen.getByRole("button", {
+        name: label,
+      });
+      const checkpoint = disclosure.closest(".context-checkpoint")!;
+      expect(disclosure).toBeVisible();
       if (role === "compactionSummary")
         expect(screen.getByText("Before ≈ 42,500 tokens")).toBeVisible();
       else
@@ -164,9 +165,6 @@ describe("response activity folds", () => {
           checkpoint.querySelector(".context-checkpoint__metric"),
         ).toBeNull();
       expect(checkpoint.querySelector("time")).toBeNull();
-      expect(title.closest("summary")?.textContent).toBe(
-        `${label}${role === "compactionSummary" ? "Before ≈ 42,500 tokens" : ""}`,
-      );
       expect(container.querySelector(".card__generic")).toBeNull();
       expect(
         container.querySelector(".context-checkpoint__icon"),
@@ -174,28 +172,24 @@ describe("response activity folds", () => {
       expect(
         container.querySelector(".context-checkpoint__chevron"),
       ).not.toBeNull();
-      expect(checkpoint).not.toHaveAttribute("open");
+      expect(disclosure).toHaveAttribute("aria-expanded", "false");
 
-      const copyBtn = screen.getByRole("button", {
-        name: copyLabel,
-      });
+      expect(screen.queryByRole("button", { name: copyLabel })).toBeNull();
+      fireEvent.click(disclosure);
+      const copyBtn = screen.getByRole("button", { name: copyLabel });
       expect(copyBtn).toBeVisible();
-      expect(copyBtn.closest("details")).toBeNull();
-      expect(checkpoint.closest(".context-checkpoint")).toContainElement(
-        copyBtn,
-      );
-      fireEvent.click(copyBtn);
-      expect(checkpoint).not.toHaveAttribute("open");
-
-      fireEvent.click(title.closest("summary")!);
-      expect(checkpoint).toHaveAttribute("open");
+      expect(disclosure).not.toContainElement(copyBtn);
+      expect(checkpoint).toContainElement(copyBtn);
+      expect(disclosure).toHaveAttribute("aria-expanded", "true");
       expect(
         await screen.findByText(/Preserve the parser decisions\./),
       ).toBeVisible();
       expect(container.textContent).not.toContain('"tokensBefore"');
 
       fireEvent.click(copyBtn);
-      expect(checkpoint).toHaveAttribute("open");
+      expect(disclosure).toHaveAttribute("aria-expanded", "true");
+      fireEvent.click(disclosure);
+      expect(screen.queryByRole("button", { name: copyLabel })).toBeNull();
     },
   );
 
@@ -220,7 +214,7 @@ describe("response activity folds", () => {
       const title = screen.getByText("Magic Context compacted");
       expect(screen.getByText("History chunk ≈ 5,757 tokens")).toBeVisible();
       expect(screen.queryByText(/Before/)).toBeNull();
-      fireEvent.click(title.closest("summary")!);
+      fireEvent.click(title.closest("button")!);
       expect(
         await screen.findByText("Band power and response interpretation"),
       ).toBeVisible();
@@ -233,7 +227,7 @@ describe("response activity folds", () => {
     },
   );
 
-  it("keeps the unchanged card state between two interactive rails", () => {
+  it("keeps individual card state between the group boundary controls", () => {
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -275,7 +269,9 @@ describe("response activity folds", () => {
     ) as HTMLButtonElement;
     fireEvent.click(toolDisclosure);
     expect(toolDisclosure).toHaveAttribute("aria-expanded", "true");
-    expect(toolFold.querySelectorAll(".activity-fold__rail")).toHaveLength(2);
+    expect(toolFold.querySelectorAll(".activity-fold__boundary")).toHaveLength(
+      2,
+    );
 
     const lowerRail = within(toolFold).getByRole("button", {
       name: "Collapse assistant activity from the lower boundary",
@@ -460,7 +456,7 @@ describe("response activity folds", () => {
     );
   });
 
-  it("omits the structural round leads owned by Compact's hidden prefix", () => {
+  it("omits older assistant activity rows without leaving attribution behind", () => {
     const { container } = render(
       transcript(
         Array.from({ length: 26 }, (_, index) => ({
@@ -478,7 +474,6 @@ describe("response activity folds", () => {
         })),
         "compact",
         {
-          assistantRoundDisplay: "divider",
           toolVisibility: "expanded",
         },
       ),
@@ -490,7 +485,7 @@ describe("response activity folds", () => {
         (element) => element.closest("[hidden]") === null,
       );
     expect(visiblyOwned(".turn--assistant")).toHaveLength(24);
-    expect(visiblyOwned(".turn__divider")).toHaveLength(24);
+    expect(fold.querySelector(".turn__divider, .turn__head")).toBeNull();
   });
 
   it("makes Compact identical to Expanded when at most 24 cards exist", () => {
@@ -523,88 +518,148 @@ describe("response activity folds", () => {
     ).toBe(true);
   });
 
-  it("projects activity kinds and pulses only the live edge on both rails", () => {
-    const active = {
-      role: "assistant",
-      timestamp: 3,
-      __inspireLiveId: "telemetry-run",
-      content: [
-        { type: "thinking", thinking: "planning" },
-        {
-          type: "toolCall",
-          id: "telemetry-tool",
-          name: "read",
-          arguments: { path: "src/a.ts" },
-        },
-      ],
-    };
-    const { container, rerender } = render(
-      transcript([active], "expanded", {
-        runState: "running",
-        activeAssistantMessageKey: "live:telemetry-run",
+  it("keeps deferred plurality after hiding the other kind", () => {
+    const { container } = render(
+      transcript([], "collapsed", {
+        toolVisibility: "hidden",
+        activityRanges: [
+          {
+            cursor: "kind-cues",
+            error: null,
+            afterMessageId: null,
+            messageCount: 4,
+            kinds: ["tool", "thinking", "tool", "thinking"],
+            status: "idle",
+          },
+        ],
       }),
     );
-    const rails = container.querySelectorAll(".activity-fold__rail");
-    expect(rails).toHaveLength(2);
-    for (const rail of rails) {
-      const segments = rail.querySelectorAll(".activity-fold__segment");
-      expect(segments).toHaveLength(2);
-      expect(segments[0]).toHaveClass("activity-fold__segment--thinking");
-      expect(segments[0]).not.toHaveClass("activity-fold__segment--live");
-      expect(segments[1]).toHaveClass("activity-fold__segment--tool");
-      expect(segments[1]).toHaveClass("activity-fold__segment--live");
-    }
-
-    rerender(
-      transcript([{ ...active, __inspireSettled: true }], "expanded", {
-        runState: "idle",
-        activeAssistantMessageKey: null,
-      }),
-    );
-    expect(
-      container.querySelectorAll(".activity-fold__segment--live"),
-    ).toHaveLength(0);
+    const dots = container.querySelectorAll(".activity-fold__kind");
+    expect(dots).toHaveLength(2);
+    for (const dot of dots)
+      expect(dot).toHaveClass("activity-fold__kind--thinking");
   });
 
-  it("points open controls inward and collapsed controls outward", () => {
+  it.each([
+    [["tool"], ["tool"]],
+    [
+      ["tool", "tool", "tool"],
+      ["tool", "tool"],
+    ],
+    [["thinking"], ["thinking"]],
+    [
+      ["thinking", "thinking"],
+      ["thinking", "thinking"],
+    ],
+    [
+      ["tool", "tool", "thinking", "tool"],
+      ["tool", "thinking"],
+    ],
+    [
+      ["thinking", "tool", "thinking"],
+      ["thinking", "tool"],
+    ],
+  ])("summarizes %j as chronological kind dots %j", (input, expected) => {
+    const content = input.map((kind, index) =>
+      kind === "thinking"
+        ? { type: "thinking", thinking: `thought ${index}` }
+        : {
+            type: "toolCall",
+            id: `dot-tool-${index}`,
+            name: "read",
+            arguments: {},
+          },
+    );
     const { container } = render(
+      transcript([{ role: "assistant", timestamp: 1, content }], "collapsed"),
+    );
+    const dots = container.querySelectorAll(".activity-fold__kind");
+    expect(dots).toHaveLength(expected.length);
+    expected.forEach((kind, index) =>
+      expect(dots[index]).toHaveClass(`activity-fold__kind--${kind}`),
+    );
+  });
+
+  it.each(["expanded", "collapsed"] as const)(
+    "shows kind presence once in a %s group and pulses only live kinds",
+    (density) => {
+      const active = {
+        role: "assistant",
+        timestamp: 3,
+        __inspireLiveId: "telemetry-run",
+        content: [
+          { type: "thinking", thinking: "planning" },
+          {
+            type: "toolCall",
+            id: "telemetry-tool",
+            name: "read",
+            arguments: { path: "src/a.ts" },
+          },
+          {
+            type: "toolCall",
+            id: "telemetry-tool-2",
+            name: "read",
+            arguments: { path: "src/b.ts" },
+          },
+        ],
+      };
+      const { container, rerender } = render(
+        transcript([active], density, {
+          runState: "running",
+          activeAssistantMessageKey: "live:telemetry-run",
+        }),
+      );
+      const kinds = container.querySelectorAll(".activity-fold__kind");
+      expect(kinds).toHaveLength(2);
+      expect(kinds[0]).toHaveClass("activity-fold__kind--thinking");
+      expect(kinds[0]).not.toHaveClass("activity-fold__kind--live");
+      expect(kinds[1]).toHaveClass(
+        "activity-fold__kind--tool",
+        "activity-fold__kind--live",
+      );
+      expect(container.querySelector(".activity-fold__kinds")).toHaveAttribute(
+        "aria-hidden",
+        "true",
+      );
+      expect(container.querySelector(".activity-fold__track")).toBeNull();
+      rerender(transcript([{ ...active, __inspireSettled: true }], density));
+      expect(container.querySelector(".activity-fold__kind--live")).toBeNull();
+    },
+  );
+
+  it("does not make group Expanded override individual Thinking and Tool preferences", () => {
+    render(
       transcript(
         [
           {
             role: "assistant",
             timestamp: 1,
-            content: [{ type: "thinking", thinking: "directional activity" }],
+            content: [
+              { type: "thinking", thinking: "Independent thought" },
+              {
+                type: "toolCall",
+                id: "independent-tool",
+                name: "bash",
+                arguments: { command: "pwd" },
+              },
+            ],
           },
         ],
         "expanded",
+        { thinkingVisibility: "collapsed", toolVisibility: "compact" },
       ),
     );
-    const fold = container.querySelector("[data-activity-fold]") as HTMLElement;
-    const expectDirection = (
-      edge: "upper" | "lower",
-      direction: "up" | "down",
-    ) => {
-      const rail = fold.querySelector(
-        `.activity-fold__rail--${edge}`,
-      ) as HTMLElement;
-      expect(rail.querySelector(".activity-fold__glyph")).toHaveClass(
-        `activity-fold__glyph--${direction}`,
-      );
-      expect(rail.querySelector(".activity-fold__handle")).toHaveClass(
-        `activity-fold__handle--${direction}`,
-      );
-    };
-
-    expectDirection("upper", "down");
-    expectDirection("lower", "up");
-
-    fireEvent.click(
-      within(fold).getByRole("button", {
+    expect(
+      screen.getByRole("button", { name: "Expand Thinking" }),
+    ).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.getByRole("button", { name: "Expand bash tool" }),
+    ).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.getByRole("button", {
         name: "Collapse assistant activity from the upper boundary",
       }),
-    );
-    expectDirection("upper", "up");
-    expectDirection("lower", "down");
+    ).toHaveAttribute("aria-expanded", "true");
   });
 
   it("opens a collapsed lazy range through Compact before Expanded", async () => {
@@ -1120,9 +1175,7 @@ describe("response activity folds", () => {
       name: "Expand assistant activity",
     });
     expect(summary).toBeVisible();
-    expect(
-      summary.querySelectorAll(".activity-fold__dots > span"),
-    ).toHaveLength(3);
+    expect(summary.querySelectorAll(".activity-fold__kind")).toHaveLength(2);
     expect(screen.getByText("opening response")).toBeVisible();
     expect(screen.getByText("closing response")).toBeVisible();
 

@@ -5,6 +5,7 @@ import {
   Inbox,
   Loader2,
   Pin,
+  PanelLeft,
   Plus,
   Search,
   SearchX,
@@ -73,7 +74,7 @@ const WorkspaceExplorer = memo(function WorkspaceExplorer({
           onClick={() => store.setWorkspaceExplorerOpen(!open)}
           title={cwd}
         >
-          <Folder size={14} aria-hidden />
+          <Folder size={16} aria-hidden />
           <span className="explorer__title nav__dock-title">
             {projectNameFromCwd(cwd)}
           </span>
@@ -100,6 +101,7 @@ export const Nav = memo(function Nav({
   selectedSessionId,
   isModal = false,
   onClose,
+  onToggleNavigation,
   onNewSession,
   onSelectSession,
   searchInputRef,
@@ -108,6 +110,7 @@ export const Nav = memo(function Nav({
   selectedSessionId?: string | null;
   isModal?: boolean;
   onClose?: () => void;
+  onToggleNavigation: () => void;
   onNewSession: () => void;
   onSelectSession: (id: string) => void;
   searchInputRef?: Ref<HTMLInputElement>;
@@ -220,24 +223,29 @@ export const Nav = memo(function Nav({
         : []),
     ];
   }, [sections, searching, hiddenExpanded, collapsedGroupCwds]);
+  const defaultHighlight = searching ? searchResults[0] : undefined;
   const highlighted = searchFocused
     ? searchSelection.query === sessionQuery
       ? (searchResults.find((session) => session.id === searchSelection.id) ??
-        searchResults[0])
-      : searchResults[0]
+        defaultHighlight)
+      : defaultHighlight
     : undefined;
   const highlightedSessionId = highlighted?.id ?? null;
   useEffect(() => {
     setSearchSelection((previous) => {
       if (
         previous.query === sessionQuery &&
-        (searchResults.length === 0 ||
+        ((!searching && previous.id === null) ||
+          searchResults.length === 0 ||
           searchResults.some((session) => session.id === previous.id))
       )
         return previous;
-      return { query: sessionQuery, id: searchResults[0]?.id ?? null };
+      return {
+        query: sessionQuery,
+        id: searching ? (searchResults[0]?.id ?? null) : null,
+      };
     });
-  }, [sessionQuery, searchResults]);
+  }, [sessionQuery, searchResults, searching]);
   useEffect(() => {
     if (!highlightedSessionId) return;
     navRef.current
@@ -254,14 +262,31 @@ export const Nav = memo(function Nav({
   if (collapsed) {
     return (
       <nav className="nav nav--rail" aria-label="Sessions">
+        <div className="nav__header nav__header--rail">
+          <button
+            type="button"
+            className="nav__brand-rail nav__toggle"
+            onClick={onToggleNavigation}
+            title="Expand navigation (Ctrl+B)"
+            aria-label="Expand navigation"
+            aria-expanded={false}
+          >
+            <BrandLogo size={24} className="nav__brand-icon--rail" />
+            <PanelLeft
+              size={16}
+              className="nav__rail-toggle-icon"
+              aria-hidden
+            />
+          </button>
+        </div>
         <button
           type="button"
-          className="nav__brand-rail"
+          className="nav__new-session nav__new-session--rail"
           onClick={onNewSession}
           title="New session"
           aria-label="New session"
         >
-          <BrandLogo size={22} className="nav__brand-icon--rail" />
+          <Plus size={16} className="nav__new-session-icon" aria-hidden />
         </button>
       </nav>
     );
@@ -349,106 +374,124 @@ export const Nav = memo(function Nav({
 
   const contents = (
     <>
-      <div className="nav__header">
-        <button
-          type="button"
-          className="nav__brand-new"
-          onClick={onNewSession}
-          aria-label="New session"
-          title="New session"
-        >
+      <div className="nav__top">
+        <div className="nav__header">
           <div className="nav__brand-lockup">
-            <BrandLogo size={20} className="nav__brand-icon" />
+            <BrandLogo size={24} className="nav__brand-icon" />
             <Wordmark />
           </div>
-          <span className="nav__new-session">
-            <Plus size={12} className="nav__new-session-icon" aria-hidden />
-            <span className="nav__new-session-label">New session</span>
-          </span>
-        </button>
-        {isModal && onClose ? (
+          {isModal && onClose ? (
+            <button
+              type="button"
+              className="icon-button nav__close"
+              aria-label="Close navigation"
+              title="Close navigation"
+              onClick={onClose}
+            >
+              <X size={15} aria-hidden />
+            </button>
+          ) : !isModal ? (
+            <button
+              type="button"
+              className="icon-button nav__close nav__toggle"
+              aria-label="Collapse navigation"
+              aria-expanded={true}
+              title="Collapse navigation (Ctrl+B)"
+              onClick={onToggleNavigation}
+            >
+              <PanelLeft size={16} aria-hidden />
+            </button>
+          ) : null}
+        </div>
+        <div className="nav__controls">
           <button
             type="button"
-            className="icon-button nav__close"
-            aria-label="Close navigation"
-            title="Close navigation"
-            onClick={onClose}
+            className="nav__new-session"
+            aria-label="New session"
+            onClick={onNewSession}
           >
-            <X size={15} aria-hidden />
+            <span className="nav__new-session-label">
+              <Plus size={16} className="nav__new-session-icon" aria-hidden />
+              <span>New session</span>
+            </span>
           </button>
-        ) : null}
-      </div>
-      <div className="nav__controls">
-        <label className="nav__search">
-          <Search size={13} aria-hidden />
-          <input
-            ref={searchInputRef}
-            type="search"
-            placeholder="Search sessions"
-            aria-label="Search sessions"
-            value={sessionQuery}
-            aria-describedby={selectionStatusId}
-            onFocus={() => setSearchFocused(true)}
-            onBlur={() => setSearchFocused(false)}
-            onCompositionStart={() => {
-              composing.current = true;
-            }}
-            onCompositionEnd={() => {
-              composing.current = false;
-            }}
-            onChange={(event) => store.searchSessions(event.target.value)}
-            onKeyDown={(event) => {
-              if (
-                event.nativeEvent.isComposing ||
-                composing.current ||
-                event.nativeEvent.keyCode === 229
-              ) {
+          <label className="nav__search">
+            <Search size={16} aria-hidden />
+            <input
+              ref={searchInputRef}
+              type="search"
+              placeholder="Search sessions"
+              aria-label="Search sessions"
+              value={sessionQuery}
+              aria-describedby={selectionStatusId}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => {
+                setSearchFocused(false);
+                if (!searching)
+                  setSearchSelection({ query: sessionQuery, id: null });
+              }}
+              onCompositionStart={() => {
+                composing.current = true;
+              }}
+              onCompositionEnd={() => {
+                composing.current = false;
+              }}
+              onChange={(event) => store.searchSessions(event.target.value)}
+              onKeyDown={(event) => {
+                if (
+                  event.nativeEvent.isComposing ||
+                  composing.current ||
+                  event.nativeEvent.keyCode === 229
+                ) {
+                  event.stopPropagation();
+                  return;
+                }
+                if (
+                  event.altKey ||
+                  event.ctrlKey ||
+                  event.metaKey ||
+                  event.shiftKey
+                )
+                  return;
+                if (
+                  !["ArrowUp", "ArrowDown", "Enter", "Escape"].includes(
+                    event.key,
+                  )
+                )
+                  return;
+                event.preventDefault();
                 event.stopPropagation();
-                return;
-              }
-              if (
-                event.altKey ||
-                event.ctrlKey ||
-                event.metaKey ||
-                event.shiftKey
-              )
-                return;
-              if (
-                !["ArrowUp", "ArrowDown", "Enter", "Escape"].includes(event.key)
-              )
-                return;
-              event.preventDefault();
-              event.stopPropagation();
-              if (event.key === "Escape") {
-                if (sessionQuery) store.searchSessions("");
-                else event.currentTarget.blur();
-              } else if (event.key === "Enter") {
-                if (highlighted && highlighted.id !== openingSessionId)
-                  onSelectSession(highlighted.id);
-              } else if (searchResults.length > 0) {
-                const index = searchResults.findIndex(
-                  (session) => session.id === highlightedSessionId,
-                );
-                const next = Math.max(
-                  0,
-                  Math.min(
-                    searchResults.length - 1,
-                    index + (event.key === "ArrowDown" ? 1 : -1),
-                  ),
-                );
-                setSearchSelection({
-                  query: sessionQuery,
-                  id: searchResults[next]!.id,
-                });
-              }
-            }}
-          />
-        </label>
-        <span id={selectionStatusId} className="sr-only" role="status">
-          {highlighted
-            ? `${highlighted.title}. Up and Down select a session; Enter opens it.`
-            : ""}
-        </span>
+                if (event.key === "Escape") {
+                  if (sessionQuery) store.searchSessions("");
+                  else event.currentTarget.blur();
+                } else if (event.key === "Enter") {
+                  if (highlighted && highlighted.id !== openingSessionId)
+                    onSelectSession(highlighted.id);
+                } else if (searchResults.length > 0) {
+                  const index = searchResults.findIndex(
+                    (session) => session.id === highlightedSessionId,
+                  );
+                  const next = Math.max(
+                    0,
+                    Math.min(
+                      searchResults.length - 1,
+                      index + (event.key === "ArrowDown" ? 1 : -1),
+                    ),
+                  );
+                  setSearchSelection({
+                    query: sessionQuery,
+                    id: searchResults[next]!.id,
+                  });
+                }
+              }}
+            />
+          </label>
+          <span id={selectionStatusId} className="sr-only" role="status">
+            {highlighted
+              ? `${highlighted.title}. Up and Down select a session; Enter opens it.`
+              : ""}
+          </span>
+        </div>
       </div>
       {sessionActionError ? (
         <p className="nav__error" role="alert">
@@ -462,7 +505,7 @@ export const Nav = memo(function Nav({
             aria-labelledby="nav-pinned-title"
           >
             <h2 className="nav__group-title" id="nav-pinned-title">
-              <Pin size={14} aria-hidden />
+              <Pin size={16} aria-hidden />
               <span className="nav__group-name">Pinned</span>
               <span className="nav__group-count" aria-hidden>
                 {pinned.length}
@@ -573,7 +616,7 @@ export const Nav = memo(function Nav({
               disabled={searching}
               onClick={() => setHiddenOpen((value) => !value)}
             >
-              <EyeOff size={14} aria-hidden />
+              <EyeOff size={16} aria-hidden />
               <span className="nav__group-name nav__dock-title">Hidden</span>
               <span className="nav__hidden-count" aria-hidden>
                 {hiddenCount}

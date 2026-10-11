@@ -54,7 +54,13 @@ export function BuffonNeedles() {
       const bounds = layer.getBoundingClientRect();
       width = bounds.width;
       height = bounds.height;
-      start = Math.min(12, width / 2);
+      const cornerLogo = layer.parentElement
+        ?.querySelector(".window-titlebar__corner-logo")
+        ?.getBoundingClientRect();
+      start = Math.min(
+        Math.max(12, cornerLogo ? cornerLogo.right - bounds.left + 28 : 12),
+        width / 2,
+      );
       const end = Math.max(start, width - 12);
       const brand = layer.parentElement
         ?.querySelector(".window-titlebar__identity")

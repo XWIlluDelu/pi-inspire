@@ -1,11 +1,106 @@
-import { hostRequest } from "./support/host-request";
 import { expect, test } from "@playwright/test";
 import { modelSettingsScenario } from "./fixtures/model-settings";
+import { hostRequest } from "./support/host-request";
 import {
   openCommandPalette,
   pairAndOpen,
   pairedPage,
 } from "./support/navigation";
+
+test("Settings headings sit outside their cards and nested fills follow the border", async ({
+  page,
+}) => {
+  await modelSettingsScenario(page);
+  await pairAndOpen(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await settings
+      .getByRole("button", { name: "Display", exact: true })
+      .click();
+    const section = settings.locator(".settings__section:visible").first();
+    const layout = await section.evaluate((el) => {
+      const header = el.querySelector(".settings__section-header")!;
+      const card = el.querySelector(".settings__card")!;
+      return {
+        gap:
+          card.getBoundingClientRect().top -
+          header.getBoundingClientRect().bottom,
+        headerFill: getComputedStyle(header).backgroundColor,
+        sectionBorder: getComputedStyle(el).borderWidth,
+        cardBorder: Number.parseFloat(getComputedStyle(card).borderWidth),
+        radius: Number.parseFloat(getComputedStyle(card).borderTopLeftRadius),
+      };
+    });
+    expect(layout.gap).toBeGreaterThan(0);
+    expect(layout.headerFill).toBe("rgba(0, 0, 0, 0)");
+    expect(layout.sectionBorder).toBe("0px");
+    expect(layout.cardBorder).toBeGreaterThan(0);
+    expect(layout.radius).toBeGreaterThan(layout.cardBorder);
+    // Card presentation must not add a clipping ancestor for menus or focus.
+    await expect(section).toHaveCSS("overflow", "visible");
+    await expect(section.locator(".settings__card")).toHaveCSS(
+      "overflow",
+      "visible",
+    );
+    if (width < 600) {
+      const picker = section.getByRole("group", {
+        name: "Color palette",
+        exact: true,
+      });
+      const geometry = await picker.evaluate((el) => {
+        const control = el.parentElement!.getBoundingClientRect();
+        const grid = el.getBoundingClientRect();
+        return {
+          start: grid.left - control.left,
+          end: control.right - grid.right,
+        };
+      });
+      expect(Math.abs(geometry.start)).toBeLessThanOrEqual(1);
+      expect(Math.abs(geometry.end)).toBeLessThanOrEqual(1);
+    }
+
+    await settings.getByRole("button", { name: "Models", exact: true }).click();
+    const providers = settings.getByRole("region", {
+      name: "Custom providers",
+      exact: true,
+    });
+    const show = providers.getByRole("button", { name: "Show", exact: true });
+    if (await show.isVisible()) await show.click();
+    const provider = settings.locator(".models-provider-config").first();
+    await expect(provider).toBeVisible();
+    const corner = await provider.evaluate((el) => {
+      const outer = getComputedStyle(el);
+      const inner = getComputedStyle(
+        el.querySelector(".models-provider__heading")!,
+      );
+      return [
+        outer.borderTopLeftRadius,
+        inner.borderTopLeftRadius,
+        outer.borderTopWidth,
+      ].map(Number.parseFloat);
+    });
+    expect(corner[1]).toBeCloseTo(corner[0]! - corner[2]!);
+
+    await settings.getByRole("button", { name: "System", exact: true }).click();
+    const status = settings.locator(".host-restart__status-row");
+    await expect(status).toBeVisible();
+    const statusCorner = await status.evaluate(el => {
+      const outer = getComputedStyle(el.closest(".settings__card")!);
+      const inner = getComputedStyle(el);
+      return [
+        Number.parseFloat(outer.borderBottomLeftRadius),
+        Number.parseFloat(outer.borderBottomWidth),
+        Number.parseFloat(inner.borderBottomLeftRadius),
+        Number.parseFloat(inner.borderTopWidth),
+      ];
+    });
+    expect(statusCorner[2]).toBeCloseTo(statusCorner[0]! - statusCorner[1]!);
+    expect(statusCorner[3]).toBe(0);
+  }
+});
 
 test("Tab from a Settings dropdown skips collapsed content and reaches its disclosure", async ({
   page,

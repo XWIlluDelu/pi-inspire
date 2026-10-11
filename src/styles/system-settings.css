@@ -70,7 +70,7 @@
 }
 
 .system-versions__value a {
-  color: var(--accent);
+  color: var(--accent-deep);
   font-weight: 500;
 }
 
@@ -90,7 +90,7 @@
   display: inline-block;
   max-width: 100%;
   padding: var(--space-1) 0;
-  color: var(--accent);
+  color: var(--accent-deep);
 }
 
 .system-versions__row a {
@@ -104,7 +104,7 @@
 
 .system-versions__row a:focus-visible,
 .system-versions__row .file-path-action:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-deep);
   outline-offset: 2px;
   border-radius: var(--radius-xs);
 }

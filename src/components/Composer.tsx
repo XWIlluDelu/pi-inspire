@@ -624,7 +624,31 @@ export const Composer = memo(function Composer() {
         </button>
         <span className="composer__spacer" />
         <ContextMeter />
-        {deliveryBusy || state.bashRunning ? (
+        {abortable ? (
+          <button
+            type="button"
+            className={`composer__send ${state.runState === "conflict" ? "composer__send--recover" : "composer__send--abort"}`}
+            disabled={sessionOpening}
+            onClick={() => void store.abort()}
+            aria-label={
+              state.runState === "conflict"
+                ? "Recover session"
+                : isCompacting
+                  ? "Cancel context compaction"
+                  : "Abort running task"
+            }
+            title={
+              state.runState === "conflict"
+                ? "Recover session"
+                : isCompacting
+                  ? "Cancel compaction"
+                  : "Stop"
+            }
+          >
+            <Square size={14} aria-hidden />
+          </button>
+        ) : null}
+        {!abortable || deliveryBusy || state.bashRunning ? (
           <button
             type="submit"
             className="composer__send"
@@ -651,40 +675,6 @@ export const Composer = memo(function Composer() {
             <Send size={14} aria-hidden />
           </button>
         ) : null}
-        {abortable ? (
-          <button
-            type="button"
-            className={`composer__send ${state.runState === "conflict" ? "composer__send--recover" : "composer__send--abort"}`}
-            disabled={sessionOpening}
-            onClick={() => void store.abort()}
-            aria-label={
-              state.runState === "conflict"
-                ? "Recover session"
-                : isCompacting
-                  ? "Cancel context compaction"
-                  : "Abort running task"
-            }
-            title={
-              state.runState === "conflict"
-                ? "Recover session"
-                : isCompacting
-                  ? "Cancel compaction"
-                  : "Stop"
-            }
-          >
-            <Square size={14} aria-hidden />
-          </button>
-        ) : (
-          <button
-            type="submit"
-            className="composer__send"
-            disabled={!canSend}
-            aria-label={shellInput ? "Run shell command" : "Send message"}
-            title={shellInput ? "Run shell command" : "Send"}
-          >
-            <Send size={14} aria-hidden />
-          </button>
-        )}
       </div>
       {pickerOpen && sessionId ? (
         <ProjectFilePicker

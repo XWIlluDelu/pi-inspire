@@ -4,14 +4,24 @@ import type { InspirePreferences } from "../shared/contracts";
  * source of truth after bootstrap. */
 export const VISUAL_PREFERENCES_STORAGE_KEY = "inspire.visual-preferences";
 
-/** Neutral installed-window chrome, independent of the in-app accent palette.
- * Keep the pre-CSS counterpart in public/theme-init.js in sync. */
-export function applyBrowserTheme(theme: "light" | "dark"): void {
+/** Overlay chrome continues the themed outer frame. Ordinary tabs retain the
+ * neutral browser hint. theme-init.js supplies the pre-CSS counterpart. */
+export function applyBrowserTheme(
+  theme: "light" | "dark",
+  overlay = false,
+): void {
   document.documentElement.dataset.theme = theme;
   const themeColor = document.querySelector<HTMLMetaElement>(
     'meta[name="theme-color"]',
   );
-  if (themeColor) themeColor.content = theme === "dark" ? "#14171A" : "#F4F5F6";
+  if (themeColor) {
+    const frame = overlay
+      ? getComputedStyle(document.documentElement)
+          .getPropertyValue("--bg-rail")
+          .trim()
+      : "";
+    themeColor.content = frame || (theme === "dark" ? "#14171A" : "#F4F5F6");
+  }
 }
 
 export function cacheVisualPreferences(

@@ -154,7 +154,10 @@ body.srail-dragging {
 
   .app--narrow .ctx__header {
     gap: var(--space-1);
-    padding-inline: var(--space-2);
+    height: auto;
+    min-height: var(--topbar-h);
+    /* Include the taller touch tabs and their frame instead of clipping it. */
+    padding: 2px var(--space-2);
   }
 
   .app--narrow .ctx__modes {
@@ -543,7 +546,7 @@ body.srail-dragging {
     padding: 2px 6px;
     white-space: nowrap;
     border-radius: var(--radius-xs);
-    background: color-mix(in srgb, var(--bg-inset) 70%, transparent);
+    background: transparent;
   }
 
   .topbar__git-branch {
@@ -608,7 +611,6 @@ body.srail-dragging {
 
   .composer {
     padding: 10px 12px;
-    border-radius: var(--radius-md);
   }
 
   .composer__input {
@@ -709,19 +711,29 @@ body.srail-dragging {
     transform: scale(0.99);
   }
 
-  .nav__brand-new {
-    height: 44px;
-    min-height: 44px;
-  }
-
-  .nav__search {
-    height: 44px;
-    min-height: 44px;
+  .nav__controls {
+    padding-bottom: var(--space-2);
   }
 
   .nav__search input {
-    height: 42px;
-    font-size: 16px;
+    height: 34px;
+    font-size: var(--text-base);
+  }
+
+  .nav__new-session {
+    font-size: var(--text-base);
+  }
+
+  @supports (-webkit-touch-callout: none) {
+    /* iOS keeps edit text at 16px to avoid focus zoom; the resting prompt
+       still shares the compact creation row's label size. */
+    .nav__search input {
+      font-size: 16px;
+    }
+
+    .nav__search input::placeholder {
+      font-size: var(--text-base);
+    }
   }
 
   .overlay {
@@ -800,12 +812,20 @@ body.srail-dragging {
     right: 4px;
     width: auto;
     height: 2px;
-    border-radius: 1px 1px 0 0;
+    border-radius: var(--radius-pill);
+  }
+
+  .settings__content,
+  .terminal-settings__body {
+    padding: var(--space-3) var(--space-3) var(--space-5);
   }
 
   .settings__content {
-    padding: var(--space-3) var(--space-3) var(--space-5);
     gap: var(--space-5);
+  }
+
+  .terminal-settings__footer {
+    padding: var(--space-2) var(--space-3);
   }
 
   .settings__field-help {

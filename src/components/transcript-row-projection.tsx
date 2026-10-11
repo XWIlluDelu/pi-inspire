@@ -8,7 +8,6 @@ import {
 } from "react";
 import {
   type ActivityFoldVisibilityPreference,
-  type AssistantRoundDisplayPreference,
   isBusyRunState,
   type RunState,
   type ToolVisibilityPreference,
@@ -122,7 +121,6 @@ interface TranscriptRowProjectionOptions {
   thinkingVisibility: VisibilityPreference;
   toolVisibility: ToolVisibilityPreference;
   activityFoldVisibility: ActivityFoldVisibilityPreference;
-  assistantRoundDisplay: AssistantRoundDisplayPreference;
   onMaterializeActivityRanges: (
     cursors: readonly string[],
     beforeCommit?: () => void,
@@ -144,7 +142,6 @@ export function useTranscriptRows({
   thinkingVisibility,
   toolVisibility,
   activityFoldVisibility,
-  assistantRoundDisplay,
   onMaterializeActivityRanges,
   preserveActivityAnchorRef,
 }: TranscriptRowProjectionOptions) {
@@ -436,14 +433,18 @@ export function useTranscriptRows({
           (range.kinds.includes("tool") && toolVisibility !== "hidden");
         if (visible) {
           const memberKey = `deferred:${range.cursor}`;
-          const deferredTelemetry: ActivityTelemetryItem[] = range.kinds.map(
-            (k) => ({
-              id: `${memberKey}:${k}`,
+          const deferredTelemetry: ActivityTelemetryItem[] = range.kinds
+            .filter((kind) =>
+              kind === "thinking"
+                ? thinkingVisibility !== "hidden"
+                : toolVisibility !== "hidden",
+            )
+            .map((k, index) => ({
+              id: `${memberKey}:${k}:${index}`,
               kind: k === "thinking" ? "thinking" : "tool",
               label: k === "thinking" ? "Thinking" : "Tool call",
               deferred: true,
-            }),
-          );
+            }));
           appendActivity(memberKey, null, false, [], range, deferredTelemetry);
         }
         index += 1;
@@ -647,19 +648,13 @@ export function useTranscriptRows({
           });
         }
 
-        let firstResponse = -1;
         let lastResponse = -1;
         let lastActivity = -1;
         segments.forEach((segment, segmentIndex) => {
           if (segment.kind === "response") {
-            if (firstResponse < 0) firstResponse = segmentIndex;
             lastResponse = segmentIndex;
           } else lastActivity = segmentIndex;
         });
-        // Attribution belongs with this call's first response when one exists.
-        // Otherwise a collapsed leading activity band would swallow the round
-        // marker and make equivalent responses look inconsistently unowned.
-        const leadSegment = firstResponse >= 0 ? firstResponse : 0;
         const fullResponseText = messageText(message);
 
         segments.forEach((segment, segmentIndex) => {
@@ -685,11 +680,6 @@ export function useTranscriptRows({
               dynamicActive={assistantDynamicActive}
               thinkingVisibility={thinkingVisibility}
               toolVisibility={toolVisibility}
-              assistantRoundDisplay={assistantRoundDisplay}
-              showLead={segmentIndex === leadSegment}
-              roundActivityItemId={
-                segment.kind === "activity" ? activityItemIds[0] : undefined
-              }
               responseCopyText={
                 segment.kind === "response" && segmentIndex === lastResponse
                   ? fullResponseText
@@ -867,7 +857,6 @@ export function useTranscriptRows({
     activityProjectionIdentities,
     thinkingVisibility,
     toolVisibility,
-    assistantRoundDisplay,
     toolResults,
     toolCallIds,
     toolActivity,

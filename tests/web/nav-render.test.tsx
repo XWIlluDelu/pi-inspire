@@ -113,6 +113,17 @@ describe("session navigation controls", () => {
           },
         };
       }
+      if (url.startsWith("/api/sessions/by-cwd")) {
+        const cwds = jsonBody(init).cwds as string[];
+        return {
+          body: {
+            sessions: [alpha, beta, ...extraSessions].filter(
+              (session) =>
+                cwds.includes(session.cwd) && !deletedSessions.has(session.id),
+            ),
+          },
+        };
+      }
       if (url.startsWith("/api/sessions/by-id"))
         return { body: { sessions: [] } };
       if (
@@ -207,6 +218,7 @@ describe("session navigation controls", () => {
     const onNewSession = vi.fn();
     const { container, rerender } = render(
       <Nav
+        onToggleNavigation={vi.fn()}
         collapsed={false}
         onNewSession={onNewSession}
         onSelectSession={() => undefined}
@@ -216,23 +228,35 @@ describe("session navigation controls", () => {
     expect(newSessionBtn).not.toHaveAttribute("aria-current");
     expect(container.querySelector(".nav__brand-icon")).not.toBeNull();
     expect(container.querySelector(".wordmark")).toHaveTextContent("INSΠRE");
+    expect(
+      container.querySelector(".nav__brand-lockup")?.closest("button"),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Collapse navigation" }),
+    ).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(newSessionBtn);
     expect(onNewSession).toHaveBeenCalledOnce();
 
     rerender(
       <Nav
+        onToggleNavigation={vi.fn()}
         collapsed
         onNewSession={onNewSession}
         onSelectSession={() => undefined}
       />,
     );
-    const railBrand = screen.getByRole("button", { name: "New session" });
+    const railBrand = screen.getByRole("button", { name: "Expand navigation" });
     expect(railBrand.querySelector(".nav__brand-icon--rail")).not.toBeNull();
+    fireEvent.click(railBrand);
+    expect(onNewSession).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    expect(onNewSession).toHaveBeenCalledTimes(2);
   });
 
   it("keeps the runtime owner unselected while the New session surface is visible", () => {
     render(
       <Nav
+        onToggleNavigation={vi.fn()}
         collapsed={false}
         selectedSessionId={null}
         onNewSession={() => undefined}
@@ -326,6 +350,7 @@ describe("session navigation controls", () => {
     const onSelect = vi.fn();
     render(
       <Nav
+        onToggleNavigation={vi.fn()}
         collapsed={false}
         onNewSession={() => undefined}
         onSelectSession={onSelect}
@@ -405,6 +430,7 @@ describe("session navigation controls", () => {
     const user = userEvent.setup();
     render(
       <Nav
+        onToggleNavigation={vi.fn()}
         collapsed={false}
         onNewSession={() => undefined}
         onSelectSession={() => undefined}
@@ -487,9 +513,80 @@ describe("session navigation controls", () => {
     expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
   });
 
+  it("restores a child from a hidden folder without revealing its other sessions", async () => {
+    extraSessions = [
+      { ...alpha, id: "alpha-sibling", title: "Other analysis" },
+    ];
+    await store.refreshSessions();
+    render(
+      <Nav
+        onToggleNavigation={vi.fn()}
+        collapsed={false}
+        onNewSession={() => undefined}
+        onSelectSession={() => undefined}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Hide folder alpha" }));
+    await waitFor(() =>
+      expect(store.getState().sessionListHydrating).toBe(false),
+    );
+    await store.loadSessions("Alpha session");
+    const hiddenSection = document.querySelector(
+      ".nav__group--hidden",
+    ) as HTMLElement;
+    const restore = within(hiddenSection).getByRole("button", {
+      name: 'Restore "Alpha session"',
+    });
+    expect(
+      within(hiddenSection).getByRole("button", {
+        name: 'Delete "Alpha session"',
+      }),
+    ).toBeInTheDocument();
+    fireEvent.click(restore);
+    await waitFor(() =>
+      expect(store.getState().prefs.hiddenProjectCwds).toEqual([]),
+    );
+    expect(store.getState().prefs.hiddenSessionIds).toEqual(["alpha-sibling"]);
+    await store.loadSessions("");
+    expect(
+      list().getByRole("button", { name: /^Alpha session/ }),
+    ).toBeInTheDocument();
+    expect(
+      list().queryByRole("button", { name: /^Other analysis/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps a hidden folder intact when its child restore lookup fails", async () => {
+    render(
+      <Nav
+        onToggleNavigation={vi.fn()}
+        collapsed={false}
+        onNewSession={() => undefined}
+        onSelectSession={() => undefined}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Hide folder alpha" }));
+    await waitFor(() =>
+      expect(store.getState().sessionListHydrating).toBe(false),
+    );
+    await store.loadSessions("Alpha session");
+    installFetch((url) => url.startsWith("/api/sessions/by-cwd")
+      ? { status: 503, body: { error: "Folder lookup failed" } }
+      : undefined);
+    fireEvent.click(screen.getByRole("button", {
+      name: 'Restore "Alpha session"',
+    }));
+    await waitFor(() => expect(store.getState().notices.some(
+      notice => notice.text === "Folder lookup failed",
+    )).toBe(true));
+    expect(store.getState().prefs.hiddenProjectCwds).toEqual([alpha.cwd]);
+    expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
+  });
+
   it("clears every session from the collapsed Hidden header without expanding it", async () => {
     render(
       <Nav
+        onToggleNavigation={vi.fn()}
         collapsed={false}
         onNewSession={() => undefined}
         onSelectSession={() => undefined}
@@ -546,6 +643,7 @@ describe("session navigation controls", () => {
   it("deletes only through Hidden after an explicit confirmation", async () => {
     render(
       <Nav
+        onToggleNavigation={vi.fn()}
         collapsed={false}
         onNewSession={() => undefined}
         onSelectSession={() => undefined}
@@ -604,11 +702,62 @@ describe("session navigation controls", () => {
     expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
   });
 
+  it("does not highlight or open a session just by focusing an empty search", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(
+      <Nav
+        onToggleNavigation={vi.fn()}
+        collapsed={false}
+        onNewSession={() => undefined}
+        onSelectSession={onSelect}
+      />,
+    );
+    const search = screen.getByRole("searchbox", { name: "Search sessions" });
+    const highlighted = () =>
+      document.querySelector(".nav__row--highlighted .nav__row-name")
+        ?.textContent;
+    await user.click(search);
+    expect(highlighted()).toBeUndefined();
+    expect(
+      document.getElementById(search.getAttribute("aria-describedby")!),
+    ).toBeEmptyDOMElement();
+    await user.keyboard("{Enter}");
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(store.getState().sessionId).toBe("alpha");
+
+    // Empty search still supports deliberate keyboard navigation.
+    await user.keyboard("{ArrowDown}");
+    expect(highlighted()).toBe("Beta session");
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(highlighted()).toBe("Alpha session");
+    expect(onSelect).toHaveBeenLastCalledWith("alpha");
+    await user.tab();
+    await user.click(search);
+    expect(highlighted()).toBeUndefined();
+    await user.keyboard("{ArrowUp}");
+    expect(highlighted()).toBe("Beta session");
+
+    await user.type(search, "session");
+    await screen.findByRole("button", { name: /^Beta session/ });
+    expect(highlighted()).toBe("Beta session");
+    await user.keyboard("{Escape}");
+    expect(search).toHaveValue("");
+    expect(search).toHaveFocus();
+    expect(highlighted()).toBeUndefined();
+    await screen.findByRole("button", { name: /^Alpha session/ });
+    expect(highlighted()).toBeUndefined();
+    onSelect.mockClear();
+    await user.keyboard("{Enter}");
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it("selects search results in visual order, retaining session identity across pages and curation", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
     render(
       <Nav
+        onToggleNavigation={vi.fn()}
         collapsed={false}
         onNewSession={() => undefined}
         onSelectSession={onSelect}
@@ -673,6 +822,7 @@ describe("session navigation controls", () => {
     const onSelect = vi.fn();
     render(
       <Nav
+        onToggleNavigation={vi.fn()}
         collapsed={false}
         onNewSession={() => undefined}
         onSelectSession={onSelect}
@@ -708,6 +858,7 @@ describe("session navigation controls", () => {
     const user = userEvent.setup();
     render(
       <Nav
+        onToggleNavigation={vi.fn()}
         collapsed={false}
         onNewSession={() => undefined}
         onSelectSession={() => undefined}
@@ -735,6 +886,7 @@ describe("session navigation controls", () => {
   it("decorates workspace rows by exact path without basename guessing", async () => {
     render(
       <Nav
+        onToggleNavigation={vi.fn()}
         collapsed={false}
         onNewSession={() => undefined}
         onSelectSession={() => undefined}
@@ -790,6 +942,7 @@ describe("session navigation controls", () => {
     const onSelect = vi.fn();
     render(
       <Nav
+        onToggleNavigation={vi.fn()}
         collapsed={false}
         onNewSession={() => undefined}
         onSelectSession={onSelect}
