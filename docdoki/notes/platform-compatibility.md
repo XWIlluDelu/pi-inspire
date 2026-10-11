@@ -50,7 +50,21 @@ Herdr scope cleanup opens the verified cgroup directory before killing or pollin
 removed after it is opened may return `ENODEV` rather than `ENOENT`; both mean that opened cgroup
 is gone. Re-resolving a reused pathname would inspect the wrong owner. See [[herdr-enhancement]].
 
-## PTY retirement
+## PTY backends and command markers
+
+The terminal uses `@lydell/node-pty` with prebuilt binaries. Windows selects bundled ConPTY through
+`useConptyDll: true`; the operating system's backend can deliver OSC markers before their enclosed
+text, breaking last-output copy. The selected package is a prerelease dependency, tracked in
+`package.json`.
+
+PowerShell emits its execution marker after `PSConsoleHostReadLine` returns the accepted command.
+Wrapping the reader preserves PSReadLine bindings and multiline input. Rebinding Enter would mark
+unfinished input as execution.
+
+Bash 4.4+ provides `PS0`. Older Bash uses a top-level DEBUG event composed with existing traps;
+standalone subshell-only lists may provide no such event and therefore no copyable output range.
+Bash 5.1+ supports array-valued `PROMPT_COMMAND`; earlier versions need newline-separated shell
+commands while retaining the original exit status.
 
 Close and restart wait for confirmed PTY exit. Windows kill calls take no POSIX signal argument.
 Interactive Bash exposes process-exit behavior that a non-interactive command may miss, so native

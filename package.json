@@ -121,7 +121,7 @@
     "test:portable": "node --test tests/portable/*.test.mjs"
   },
   "dependencies": {
-    "@lydell/node-pty": "^1.1.0",
+    "@lydell/node-pty": "1.2.0-beta.15",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
     "express": "^5.2.1",

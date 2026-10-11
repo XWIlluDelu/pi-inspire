@@ -46,7 +46,6 @@ describe("terminal shell integration", () => {
       "utf8",
     );
     expect(bash).toContain("6973;C1;");
-    expect(powershell).toContain("PSConsoleReadLine]::GetBufferState");
     expect(powershell).toContain("6973;C1;");
     expect(powershell).toContain("[char]27");
     expect(powershell).not.toContain('"`e]6973');
