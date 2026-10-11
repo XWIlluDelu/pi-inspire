@@ -74,9 +74,11 @@ export interface WelcomeInheritance {
 export const Welcome = memo(function Welcome({
   showRecent = true,
   inherited,
+  onDirectoryChange,
 }: {
   showRecent?: boolean;
   inherited?: WelcomeInheritance | null;
+  onDirectoryChange?: (directory: string) => void;
 }) {
   const state = useAppState(
     (source) => ({
@@ -160,6 +162,9 @@ export const Welcome = memo(function Welcome({
   attachmentsRef.current = attachments;
   const recent = state.sessions.slice(0, 6);
   const effectiveDirectory = directory.trim();
+  useEffect(() => {
+    onDirectoryChange?.(effectiveDirectory);
+  }, [effectiveDirectory, onDirectoryChange]);
   const [catalog, setCatalog] = useState<ModelOption[] | null>(null);
   const [pickedModel, setPickedModel] = useState<ModelOption | null>(null);
   const [commonModels, setCommonModels] = useState<ModelIdentity[]>([]);

@@ -1,0 +1,47 @@
+.settings__card > .mcp-config { padding: var(--space-3); }
+.mcp-settings .models-editor__header .models-subheading { margin: 0; }
+.mcp-config > .models-subheading { flex-wrap: wrap; }
+.mcp-config > .models-subheading > .models-actions { flex-wrap: nowrap; margin-left: auto; }
+.mcp-settings .models-form .settings-switch { flex-direction: row; align-self: flex-start; }
+.mcp-file { padding-block: var(--space-3); border-top: 1px solid var(--line); }
+.mcp-file__header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--space-2);
+}
+.mcp-file__scope {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.mcp-file__scope h4 {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--ink);
+}
+.mcp-file__hint {
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+.mcp-path {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+.mcp-fields { margin: var(--space-4) 0 0; padding: 0; min-width: 0; border: 0; }
+.mcp-fields legend { font-size: var(--text-sm); padding: 0; }
+.mcp-fields > .models-text-button { display: inline-flex; align-items: center; gap: var(--space-1); margin-right: var(--space-3); }
+.mcp-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: var(--space-2); margin-top: var(--space-2); }
+.mcp-pair .dropdown { width: 100%; min-width: 0; }
+.mcp-argument { display: flex; align-items: end; gap: var(--space-2); margin-top: var(--space-2); }
+.mcp-argument > label { flex: 1; min-width: 0; }
+.mcp-save-result { margin-bottom: var(--space-3); }
+.mcp-save-result p { margin: var(--space-1) 0; }
+@container settings-card (max-width: 400px) {
+  .mcp-pair { grid-template-columns: minmax(0, 1fr) auto; }
+  .mcp-pair > :first-child { grid-column: 1 / -1; }
+}

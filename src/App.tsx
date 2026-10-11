@@ -14,6 +14,7 @@ import {
   useDeferredValue,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -99,10 +100,12 @@ function DeferredContextPane({
 function DeferredSettings({
   initialCategory,
   modelDestination,
+  workspaceOwner,
   onClose,
 }: {
   initialCategory: SettingsCategoryId;
   modelDestination?: ModelSettingsDestination;
+  workspaceOwner: { sessionId?: string; cwd?: string };
   onClose: () => void;
 }) {
   const showContent = useDeferredValue(true, false);
@@ -117,6 +120,7 @@ function DeferredSettings({
             <DeferredSettingsSurface
               initialCategory={initialCategory}
               modelDestination={modelDestination}
+              workspaceOwner={workspaceOwner}
             />
           ) : (
             <SettingsLoading />
@@ -666,6 +670,14 @@ export function App() {
   const extensionOverlayOpen = state.extensionOverlayOpen;
   const [welcomeInheritance, setWelcomeInheritance] =
     useState<WelcomeInheritance | null>(null);
+  const [prospectiveDirectory, setProspectiveDirectory] = useState("");
+  const settingsOwner = useMemo(
+    () =>
+      state.sessionId
+        ? { sessionId: state.sessionId }
+        : { cwd: prospectiveDirectory || undefined },
+    [state.sessionId, prospectiveDirectory],
+  );
 
   const openSession = useCallback((id: string) => {
     setPaletteOpen(false);
@@ -1086,6 +1098,7 @@ export function App() {
           <DeferredSettings
             initialCategory={settingsCategory}
             modelDestination={modelDestination}
+            workspaceOwner={settingsOwner}
             onClose={closeSettings}
           />
         ) : null}
@@ -1095,6 +1108,7 @@ export function App() {
           <Welcome
             showRecent={narrowViewport ? !mobileNavOpen : navCollapsed}
             inherited={welcomeInheritance}
+            onDirectoryChange={setProspectiveDirectory}
           />
         )}
       </main>

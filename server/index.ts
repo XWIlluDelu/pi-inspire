@@ -31,6 +31,7 @@ import {
   inspectInspireSource,
   MaintenanceRestartController,
 } from "./maintenance-restart.js";
+import { McpConfigService } from "./mcp-config.js";
 import {
   MOCK_AVAILABLE_MODELS,
   MockCatalog,
@@ -337,6 +338,7 @@ const application = createInspireServer({
         }
       : modelMetadata.read(cwd, refresh),
   modelSettings: mock ? undefined : new ModelSettingsService(),
+  mcpConfig: mock ? undefined : new McpConfigService(),
   providerAuth: modelRuntime
     ? new ProviderAuthService(
         modelRuntime,

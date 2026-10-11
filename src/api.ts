@@ -53,6 +53,11 @@ import type {
 } from "../shared/host-restart";
 import type { HtmlPreviewResponse } from "../shared/html-preview";
 import type {
+  McpConfigEdit,
+  McpConfigSnapshot,
+  McpConfigWriteResult,
+} from "../shared/mcp";
+import type {
   ModelCatalogResponse,
   ModelConfigEdit,
   ModelPreferencesPatch,
@@ -747,6 +752,21 @@ export function createApi(token: string | null = null) {
           ...(cwd ? { cwd } : {}),
           ...(inherit ? { inherit: "1" } : {}),
         })}`,
+      ),
+    mcpConfig: (owner: { sessionId?: string; cwd?: string }) =>
+      request<McpConfigSnapshot>(
+        token,
+        `/api/mcp-config?${new URLSearchParams(owner)}`,
+      ),
+    editMcpConfig: (
+      owner: { sessionId?: string; cwd?: string },
+      edit: McpConfigEdit,
+    ) =>
+      request<McpConfigWriteResult>(
+        token,
+        `/api/mcp-config?${new URLSearchParams(owner)}`,
+        { method: "PATCH", body: JSON.stringify(edit) },
+        { mutation: true },
       ),
     modelSettings: (owner: { sessionId?: string; cwd?: string }) =>
       request<ModelSettingsSnapshot>(

@@ -16,6 +16,8 @@ import {
   it,
   vi,
 } from "vitest";
+import type { McpConfigSnapshot } from "../../shared/mcp";
+import { App } from "../../src/App";
 import { Composer } from "../../src/components/Composer";
 import { Welcome } from "../../src/components/Welcome";
 import {
@@ -25,6 +27,7 @@ import {
 } from "../../src/session-drafts";
 import { store, useAppState } from "../../src/store";
 import { mockModelMenuLayout } from "./fixtures/model-menu-layout";
+import { modelSettingsSnapshot } from "./fixtures/model-settings";
 import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
@@ -180,6 +183,89 @@ afterEach(() => {
 });
 
 describe("new-session start surface", () => {
+  it("addresses Models and MCP settings with New's selected directory before creating a session", async () => {
+    act(() =>
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: activeSnapshot({ sessionId: "source", cwd: "/source" }),
+      }),
+    );
+    const config: McpConfigSnapshot = {
+      cwd: "/prospective",
+      files: [
+        {
+          scope: "user",
+          path: "/agent/mcp.json",
+          revision: "a".repeat(64),
+          entries: [],
+        },
+        {
+          scope: "project",
+          path: "/prospective/.pi/mcp.json",
+          revision: "b".repeat(64),
+          entries: [],
+        },
+      ],
+    };
+    const models = vi
+      .spyOn(store, "readModelSettings")
+      .mockResolvedValue(modelSettingsSnapshot());
+    vi.spyOn(store, "providerAuth").mockResolvedValue([]);
+    const read = vi.spyOn(store, "readMcpConfig").mockResolvedValue(config);
+    const save = vi.spyOn(store, "editMcpConfig").mockResolvedValue({
+      saved: true,
+      snapshot: config,
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    fireEvent.change(
+      await screen.findByRole("textbox", { name: "Project directory" }),
+      { target: { value: " /prospective " } },
+    );
+    await waitFor(() => expect(defaultModelCwd).toBe("/prospective"));
+    expect(store.getState().sessionId).toBeNull();
+    expect(store.getState().cwd).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const navigation = await screen.findByRole("navigation", {
+      name: "Settings categories",
+    });
+    fireEvent.click(within(navigation).getByRole("button", { name: "Models" }));
+    await waitFor(() =>
+      expect(models).toHaveBeenLastCalledWith({ cwd: "/prospective" }),
+    );
+    fireEvent.click(within(navigation).getByRole("button", { name: "MCP" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add server" }));
+    expect(read).toHaveBeenLastCalledWith({ cwd: "/prospective" });
+    fireEvent.change(screen.getByLabelText("Server name"), {
+      target: { value: "project-tools" },
+    });
+    fireEvent.change(screen.getByLabelText("Server URL"), {
+      target: { value: "https://example.invalid/mcp" },
+    });
+    fireEvent.click(
+      screen.getByRole("combobox", { name: "Configuration target" }),
+    );
+    fireEvent.click(screen.getByRole("option", { name: "This project" }));
+    fireEvent.submit(
+      screen
+        .getByRole("button", { name: "Save configuration" })
+        .closest("form")!,
+    );
+    await waitFor(() =>
+      expect(save).toHaveBeenCalledWith(
+        { cwd: "/prospective" },
+        {
+          operation: "add",
+          scope: "project",
+          revision: "b".repeat(64),
+          name: "project-tools",
+          values: { url: "https://example.invalid/mcp" },
+        },
+      ),
+    );
+  });
+
   it("keeps directory Enter from creating a session without taking message autofocus or submission", async () => {
     act(() => {
       FakeWebSocket.instances.at(-1)!.emit({

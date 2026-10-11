@@ -1,6 +1,6 @@
 ---
 purpose: Present publicly supported Pi MCP configuration and session controls in compact Settings, deferring capabilities whose native interfaces are unavailable.
-progress: not-started
+progress: in-progress
 covers:
   - server/mcp*.ts
   - server/extensions/*mcp*.ts
@@ -39,8 +39,8 @@ management panel awaits public runtime interfaces.
 
 ## Interface boundary
 
-MCP tool execution and Codemode composition already work. File configuration editing is not
-interface-blocked, but its GUI is not implemented. The missing current-worker capabilities are:
+MCP tool execution, Codemode composition and file-configuration editing are implemented.
+The remaining current-worker capabilities require native runtime interfaces:
 
 | Capability | Required runtime information or action |
 | --- | --- |
@@ -63,5 +63,5 @@ credentials or external accounts.
 ## Related interfaces
 
 Missing Pi interfaces defer the corresponding GUI capabilities; Inspire does not modify Pi to
-supply them. Associated code paths describe planned ownership, not completed implementation.
+supply them. File-configuration editing is implemented; runtime controls remain deferred.
 Related contracts: [[pi-integration]], [[interface-preferences]], [[tool-presentations]].
