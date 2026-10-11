@@ -14,7 +14,7 @@ covers:
   - src/controllers/host-restart-controller.ts
   - src/components/HostRestartSettings.tsx
   - tests/restart-launcher.test.ts
-  - tests/server/{runtime,pi-startup-retirement.integration}.test.ts
+  - tests/server/{runtime-worker-lifecycle,runtime-worker-pool,runtime-maintenance-restart,pi-startup-retirement.integration}.test.ts
   - tests/{server,web}/host-restart*.{ts,tsx}
   - server/{file-lock,static-asset-cache}.mjs
   - server/*diagnostic*.ts

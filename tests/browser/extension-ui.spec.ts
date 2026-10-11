@@ -306,6 +306,7 @@ test("native dialog keyboard/pointer flow, deadline reconnect and content-first 
     exact: true,
   });
   await expect(editor).toHaveValue(noteLines.join("\n"));
+  await expect(editor).toBeEnabled();
   await moveCaretToEnd(editor);
   await editor.press("Enter");
   await editor.pressSequentially("Record the outcome.");

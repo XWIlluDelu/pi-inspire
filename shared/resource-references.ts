@@ -153,7 +153,7 @@ export function resourceReferenceLine(reference: string): number | null {
 
 const INLINE_CODE = /(?<!`)`([^`\n]+)`(?!`)/gu;
 const EXPLICIT_PATH =
-  /(?:^|[\s([])((?:file:\/\/)?\/(?:[^\s`<>()[\]{}"']+\/)*[^\s`<>()[\]{}"']+|(?:\.\.?\/|~\/)[^\s`<>()[\]{}"']+)/gmu;
+  /(?:^|[\s([])((?:(?:file:\/\/)?\/|\.\.?\/|~\/|[A-Za-z]:[\\/])[^\s`<>()[\]{}"']+)/gmu;
 const AT_PATH = /(?:^|\s)@((?:\.\.?\/)?[^\s`<>()[\]{}"']+)/gmu;
 
 type ResourceReferenceSource =
@@ -206,7 +206,7 @@ export function isLocalResourceReference(value: string): boolean {
   )
     return false;
   if (
-    /^(?:pi-embedded:\/\/|file:\/\/|vscode:\/\/file\/|\/|~\/|\.\.?\/)/i.test(
+    /^(?:pi-embedded:\/\/|file:\/\/|vscode:\/\/file\/|\/|~\/|\.\.?\/|[A-Za-z]:[\\/])/i.test(
       reference,
     )
   )

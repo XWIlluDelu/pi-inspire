@@ -7,7 +7,8 @@ covers:
   - src/components/Transcript.tsx
   - src/styles/{transcript,activity-cards}.css
   - server/session-projection.ts
-  - tests/web/transcript-{fold,paging,inspection}.test.tsx
+  - tests/web/transcript-{fold,paging}.test.tsx
+  - tests/web/activity-visibility.test.tsx
   - tests/web/events.test.ts
   - tests/server/runtime-transcript.test.ts
 ---
