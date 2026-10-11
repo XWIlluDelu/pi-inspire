@@ -126,6 +126,35 @@ function normalizeOutput(value: unknown): NotebookOutput {
   return { kind: "unsupported" };
 }
 
+/** Kernel identifiers are hints, not display names or executable commands. */
+function kernelLanguage(name: unknown): string | undefined {
+  if (typeof name !== "string") return undefined;
+  const kernel = name.trim().toLowerCase();
+  if (/^python(?:\d+(?:\.\d+)*)?$/.test(kernel)) return "python";
+  if (/^julia(?:-\d+(?:\.\d+)*)?$/.test(kernel)) return "julia";
+  const aliases: Record<string, string> = {
+    ir: "r",
+    r: "r",
+    javascript: "javascript",
+    nodejs: "javascript",
+    typescript: "typescript",
+    deno: "typescript",
+    bash: "bash",
+    zsh: "bash",
+    ruby: "ruby",
+    iruby: "ruby",
+    scala: "scala",
+    kotlin: "kotlin",
+    java: "java",
+    "c++": "cpp",
+    xeus_cling: "cpp",
+    xcpp11: "cpp",
+    xcpp14: "cpp",
+    xcpp17: "cpp",
+  };
+  return Object.hasOwn(aliases, kernel) ? aliases[kernel] : undefined;
+}
+
 function parseNotebook(text: string): NotebookDocument | null {
   let value: unknown;
   try {
@@ -141,7 +170,8 @@ function parseNotebook(text: string): NotebookDocument | null {
   const language =
     (typeof languageInfo?.name === "string" && languageInfo.name) ||
     (typeof kernelspec?.language === "string" && kernelspec.language) ||
-    "python";
+    kernelLanguage(kernelspec?.name) ||
+    "plaintext";
   let remainingText = MAX_NOTEBOOK_TEXT;
   let remainingOutputs = MAX_NOTEBOOK_OUTPUTS;
   let clipped = notebook.cells.length > MAX_NOTEBOOK_CELLS;

@@ -262,6 +262,49 @@ describe("document Markdown", () => {
     );
   });
 
+  it.each([
+    [{ kernelspec: { name: "python3" } }, "print(42)", "hljs-built_in"],
+    [
+      { kernelspec: { name: "julia-1.11" } },
+      "function f()\nend",
+      "hljs-keyword",
+    ],
+    [{ kernelspec: { name: "ir" } }, "TRUE", "hljs-literal"],
+    [{ kernelspec: { name: "deno" } }, "const x = 42", "hljs-keyword"],
+    [
+      { language_info: { name: "plaintext" }, kernelspec: { name: "python3" } },
+      "print(42)",
+      null,
+    ],
+    [
+      { kernelspec: { language: "plaintext", name: "python3" } },
+      "print(42)",
+      null,
+    ],
+    [{ kernelspec: { name: "custom-python-environment" } }, "print(42)", null],
+    [{ kernelspec: { name: "constructor" } }, "print(42)", null],
+    [{ kernelspec: { name: "__proto__" } }, "print(42)", null],
+    [{}, "print(42)", null],
+  ])(
+    "uses explicit language before recognized kernel names: %j",
+    (metadata, source, token) => {
+      const { container } = render(
+        <NotebookPreview
+          text={JSON.stringify({
+            metadata,
+            cells: [{ cell_type: "code", source }],
+          })}
+        />,
+      );
+      const code = container.querySelector(
+        ".notebook-preview__cell--code code",
+      )!;
+      expect(code.textContent).toBe(source);
+      if (token) expect(code.querySelector(`.${token}`)).not.toBeNull();
+      else expect(code.children).toHaveLength(0);
+    },
+  );
+
   it("renders Notebook Markdown/output file images and cell-local attachments without executing HTML", async () => {
     const text = JSON.stringify({
       cells: [

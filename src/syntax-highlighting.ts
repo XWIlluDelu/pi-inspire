@@ -1,4 +1,7 @@
 import hljs from "highlight.js/lib/common";
+import julia from "highlight.js/lib/languages/julia";
+
+hljs.registerLanguage("julia", julia);
 
 const MAX_HIGHLIGHTED_CHARACTERS = 64 * 1024;
 
