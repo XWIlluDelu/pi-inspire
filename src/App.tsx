@@ -514,6 +514,7 @@ const ConversationStage = memo(function ConversationStage() {
   const state = useAppState(
     (source) => ({
       sessionId: source.sessionId,
+      readOnlyReason: source.readOnlyReason,
       messages: source.messages,
       transcriptActivityRanges: source.transcriptActivityRanges,
       promptMapTurns: source.promptMapTurns,
@@ -588,7 +589,13 @@ const ConversationStage = memo(function ConversationStage() {
         displays={state.extensionDisplays}
         placement="aboveEditor"
       />
-      <Composer />
+      {state.readOnlyReason ? (
+        <p className="composer-readonly" role="status">
+          Project folder unavailable. This session is read-only.
+        </p>
+      ) : (
+        <Composer />
+      )}
       <ExtensionDisplayDock
         displays={state.extensionDisplays}
         placement="belowEditor"

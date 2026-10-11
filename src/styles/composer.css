@@ -5,6 +5,15 @@
   background: transparent;
 }
 
+.composer-readonly {
+  max-width: var(--composer-max);
+  margin: 0 auto;
+  padding: var(--space-2) 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
 .command-activity {
   width: 100%;
   max-width: var(--composer-max);

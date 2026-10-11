@@ -11,6 +11,7 @@ import {
   type PromptRequest,
   type RetryInfo,
   type RunState,
+  type SessionReadOnlyReason,
 } from "../shared/contracts.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
 import type { NativeBashExecution } from "./runtime-bash.js";
@@ -129,7 +130,9 @@ function emptyOperationQueue(): RuntimeOperationQueue {
 
 export interface RuntimeSlot {
   id: string;
+  /** Physical workspace root; the recorded path while that root is unavailable. */
   cwd: string;
+  readOnlyReason: SessionReadOnlyReason | null;
   sessionPath: string | null;
   /** An explicit `--thinking` startup intent stays visible until the Pi-owned
    * JSONL records its matching active-path setting. */
@@ -231,6 +234,7 @@ export interface RuntimeSlot {
 interface RuntimeSlotSeed {
   id: string;
   cwd: string;
+  readOnlyReason?: SessionReadOnlyReason | null;
   sessionPath: string | null;
   startupThinkingLevel?: string | null;
   process: PiRpcProcess | null;
@@ -251,6 +255,7 @@ interface RuntimeSlotSeed {
 export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
   return {
     ...seed,
+    readOnlyReason: seed.readOnlyReason ?? null,
     startupThinkingLevel: seed.startupThinkingLevel ?? null,
     startupPhase: "idle",
     startupError: null,

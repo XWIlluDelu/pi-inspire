@@ -37,6 +37,7 @@ export function McpSettings({
 }) {
   const state = useAppState(
     (source) => ({
+      readOnlyReason: source.readOnlyReason,
       transport: source.transportGeneration,
     }),
     shallowEqual,
@@ -46,15 +47,18 @@ export function McpSettings({
       key={JSON.stringify([owner, state.transport])}
       owner={owner}
       active={active}
+      canReload={Boolean(owner.sessionId && !state.readOnlyReason)}
     />
   );
 }
 function McpConfiguration({
   owner,
   active,
+  canReload,
 }: {
   owner: Owner;
   active: boolean;
+  canReload: boolean;
 }) {
   const [snapshot, setSnapshot] = useState<McpConfigSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -232,7 +236,7 @@ function McpConfiguration({
             {saved ? (
               <div className="mcp-save-result" role="status">
                 <p className="models-status">{saved}</p>
-                {owner.sessionId ? (
+                {canReload ? (
                   <button
                     type="button"
                     className="models-text-button"

@@ -10,6 +10,7 @@ import {
   type ProjectionConflict,
   type ProjectionHealth,
   type ResourceProbeResult,
+  type SessionReadOnlyReason,
   type SessionRuntimeStatus,
   type SessionSummary,
   type TranscriptActivityRange,
@@ -153,6 +154,7 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   sessionFile: string | null;
   sessionStats: unknown;
   runtimeSettings: PiRuntimeSettings | null;
+  readOnlyReason: SessionReadOnlyReason | null;
   cwd: string | null;
   model: ModelOption | null;
   modelDiscovery: "loading" | "unavailable" | null;
@@ -323,6 +325,7 @@ export function createInitialAppState(): AppState {
     sessionFile: null,
     sessionStats: null,
     runtimeSettings: null,
+    readOnlyReason: null,
     cwd: null,
     model: null,
     modelDiscovery: null,

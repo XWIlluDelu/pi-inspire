@@ -903,6 +903,7 @@ export class AppStore {
       sessionFile: active?.sessionFile ?? null,
       sessionStats: active?.stats ?? null,
       runtimeSettings: active?.runtimeSettings ?? null,
+      readOnlyReason: active?.readOnlyReason ?? null,
       cwd,
       model: (active?.model as AppState["model"]) ?? null,
       modelDiscovery: active?.modelDiscovery ?? null,
@@ -1564,6 +1565,11 @@ export class AppStore {
   ): PromptAcceptedResponse | false {
     const sessionId = this.state.sessionId;
     if (!sessionId || !command) return false;
+    if (
+      this.state.readOnlyReason &&
+      !command.descriptor.availableWithoutWorkspace
+    )
+      return false;
     if (
       includeDraftArtifacts &&
       (this.state.attachments.length > 0 || this.state.projectFiles.length > 0)
@@ -2502,6 +2508,7 @@ export class AppStore {
 
   cycleModel = (direction: 1 | -1): Promise<void> =>
     this.queueModelCycle(async (owns) => {
+      if (this.state.readOnlyReason) return;
       const available = this.state.availableModels;
       const byKey = new Map(
         available.map((model) => [modelIdentityKey(model), model]),
@@ -2532,7 +2539,7 @@ export class AppStore {
 
   cycleThinking = (): Promise<void> =>
     this.queueModelCycle(async () => {
-      if (!this.state.model) return;
+      if (!this.state.model || this.state.readOnlyReason) return;
       const levels = supportedThinkingLevels(this.state.model);
       const index = levels.indexOf(this.state.thinkingLevel as ThinkingLevel);
       await this.setThinkingLevel(levels[(index + 1) % levels.length]!);

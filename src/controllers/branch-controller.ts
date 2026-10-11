@@ -7,6 +7,7 @@ import type {
   BranchTreeResponse,
   ProjectionConflict,
   ProjectionHealth,
+  SessionReadOnlyReason,
 } from "../../shared/contracts";
 import { type Api, ApiError } from "../api";
 import type { CopyContent } from "../content-copy";
@@ -22,6 +23,7 @@ export interface BranchControllerState {
   branchActionId: string | null;
   projectionHealth: ProjectionHealth;
   projectionConflict: ProjectionConflict | null;
+  readOnlyReason?: SessionReadOnlyReason | null;
 }
 
 export interface BranchControllerPatch {
@@ -547,7 +549,8 @@ export class BranchController {
 
   private actionsBlocked(state: BranchControllerState): boolean {
     return Boolean(
-      state.branchActionId ||
+      state.readOnlyReason ||
+        state.branchActionId ||
         state.branchTreeLoading ||
         state.branchTreeError ||
         state.branchTree?.health.status === "error" ||
