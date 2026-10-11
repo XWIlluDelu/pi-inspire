@@ -62,7 +62,8 @@ beforeEach(async () => {
       return (extensionGate ?? Promise.resolve()).then(() => ({
         body: { ok: true },
       }));
-    if (url.startsWith("/api/preferences")) return { body: jsonBody(init) };
+    if (url.startsWith("/api/preferences"))
+      return { body: { ...store.getState().prefs, ...jsonBody(init) } };
     if (url.startsWith("/api/git/status")) {
       return { body: { kind: "not-repository" } };
     }
@@ -88,6 +89,69 @@ async function openPalette() {
   fireEvent.keyDown(window, { key: "k", ctrlKey: true });
   return screen.findByRole("dialog", { name: "Command palette" });
 }
+
+describe("botanical palette controls", () => {
+  it("offers botanical and classic swatches and persists each selection without changing theme", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    const theme = store.getState().prefs.theme;
+    for (const [palette, label] of [
+      ["wisteria", "Wisteria"],
+      ["hydrangea", "Hydrangea"],
+      ["lycoris", "Lycoris"],
+      ["chimonanthus", "Chimonanthus"],
+      ["classic-jade", "Jade"],
+      ["classic-amber", "Amber"],
+    ]) {
+      const choice = await screen.findByRole("button", {
+        name: label,
+      });
+      fireEvent.click(choice);
+      await waitFor(() =>
+        expect(choice).toHaveAttribute("aria-pressed", "true"),
+      );
+      expect(document.documentElement.dataset.palette).toBe(palette);
+      expect(store.getState().prefs.theme).toBe(theme);
+    }
+  });
+
+  it("offers each botanical palette as a command with the current choice marked", async () => {
+    render(<App />);
+    await openPalette();
+    const search = screen.getByRole("combobox", { name: "Filter commands" });
+    fireEvent.change(search, { target: { value: "Palette: Wisteria" } });
+    fireEvent.click(
+      await screen.findByRole("option", { name: /^Palette: Wisteria/ }),
+    );
+    await waitFor(() =>
+      expect(store.getState().prefs.palette).toBe("wisteria"),
+    );
+    await openPalette();
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "Filter commands" }),
+      {
+        target: { value: "Palette:" },
+      },
+    );
+    expect(
+      await screen.findByRole("option", { name: /^Palette: Wisteria/ }),
+    ).toHaveTextContent("current");
+    for (const label of [
+      "Wisteria",
+      "Hydrangea",
+      "Lycoris",
+      "Chimonanthus",
+      "Jade",
+      "Amber",
+    ]) {
+      expect(
+        await screen.findByRole("option", {
+          name: new RegExp(`^Palette: ${label}`),
+        }),
+      ).toBeVisible();
+    }
+  });
+});
 
 describe("overlay ownership", () => {
   it("keeps the touch palette search opt-in but focuses an explicitly requested rename", async () => {

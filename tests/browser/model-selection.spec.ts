@@ -11,7 +11,7 @@ test("model labels and selection retain text contrast across palettes and themes
   await pairAndOpen(page);
   await page.getByRole("button", { name: "Model", exact: true }).click();
   await expect(page.getByRole("option", { selected: true })).toBeVisible();
-  for (const palette of ["amber", "teal"]) {
+  for (const palette of ["chimonanthus", "hydrangea", "wisteria", "lycoris"]) {
     for (const theme of ["light", "dark"]) {
       await page.evaluate(
         ({ palette, theme }) => {

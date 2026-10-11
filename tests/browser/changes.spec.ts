@@ -47,7 +47,7 @@ for (const touch of [false, true]) {
     }) => {
       await pairedPage(page);
       const navigation = page.getByRole("button", {
-        name: "Toggle navigation",
+        name: /^(Toggle|Expand|Collapse) navigation$/,
         exact: true,
       });
       if ((await navigation.getAttribute("aria-expanded")) === "false")

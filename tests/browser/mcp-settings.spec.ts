@@ -102,6 +102,36 @@ async function scenario(page: Page) {
     json: async (path: string) => JSON.parse(await readFile(path, "utf8")),
   };
 }
+test("MCP configuration failures share the existing card inset", async ({ page }) => {
+  await page.route("**/api/mcp-config**", (route) =>
+    route.fulfill({
+      status: 503,
+      json: { error: "Could not read the MCP configuration directory." },
+    }),
+  );
+  await pairAndOpen(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await settings.getByRole("button", { name: "MCP", exact: true }).click();
+  const error = settings.locator(".mcp-config > .settings__error");
+  await expect(error).toContainText("Could not read");
+  for (const width of [1280, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    const alignment = await error.evaluate((el) => {
+      const text = document.createRange();
+      text.selectNodeContents(el);
+      const heading = el.parentElement!.querySelector(".models-subheading")!;
+      return {
+        left: text.getClientRects()[0]!.left - heading.getBoundingClientRect().left,
+        // The parent already owns the card inset; this is not another form row.
+        paddingBlock: getComputedStyle(el).paddingBlock,
+      };
+    });
+    expect(Math.abs(alignment.left)).toBeLessThanOrEqual(1);
+    expect(alignment.paddingBlock).toBe("0px");
+  }
+});
+
 test("MCP edits retain stored secrets and scope, keep drafts across categories, and separate save from Reload", async ({
   page,
 }) => {

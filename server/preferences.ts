@@ -8,6 +8,8 @@ import {
   defaultPreferences,
   type InspirePreferences,
   MAX_SESSION_ID_CHARS,
+  migratePalettePreference,
+  PALETTE_PREFERENCES,
   READING_WIDTHS,
 } from "../shared/contracts.js";
 import { acquireFileLock } from "./file-lock.mjs";
@@ -21,7 +23,9 @@ import { ProjectDirectoryStore } from "./project-directories.js";
 const preferenceFields = {
   herdrEnabled: z.boolean(),
   theme: z.enum(["system", "light", "dark"]),
-  palette: z.enum(["amber", "teal"]),
+  palette: z
+    .enum([...PALETTE_PREFERENCES, "amber", "teal"])
+    .transform(migratePalettePreference),
   titlebarNeedles: z.boolean(),
   contentTextSize: z.enum(CONTENT_TEXT_SIZES),
   readingWidth: z.enum(READING_WIDTHS),
@@ -41,7 +45,6 @@ const preferenceFields = {
     "compact",
     "collapsed",
   ]),
-  assistantRoundDisplay: z.enum(["details", "divider"]),
   projectDisplay: z.enum(["folder", "path"]),
   completionAttention: z.enum(["off", "title", "desktop"]),
   recentModelIds: z
@@ -107,7 +110,11 @@ function projectPreferences(value: unknown): {
     else invalid.push(field);
   }
   const unknown = Object.keys(source).filter(
-    (field) => !Object.hasOwn(preferenceFields, field),
+    // Retired presentation preference is ignored on read and dropped on the
+    // next successful write; it must not lock existing installations.
+    (field) =>
+      field !== "assistantRoundDisplay" &&
+      !Object.hasOwn(preferenceFields, field),
   );
   const issues = [...invalid, ...unknown.map((field) => `unknown:${field}`)];
   const issueSummary =

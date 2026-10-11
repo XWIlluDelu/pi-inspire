@@ -14,6 +14,7 @@ import {
   RESOURCE_LIST_INITIAL_SIZE,
   type SessionResourceListResponse,
 } from "../../shared/resource-references";
+import { gitChangeCount } from "../git-presentation";
 import { resourceRows as toResourceRows } from "../resources";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
@@ -219,25 +220,42 @@ export const ContextPane = memo(function ContextPane({
       <div className="ctx__header" ref={recoverModalFocus}>
         <div className="ctx__modes" role="group" aria-label="Context mode">
           {(["files", "changes", "branches", "terminal"] as const).map(
-            (mode) => (
-              <button
-                type="button"
-                key={mode}
-                aria-pressed={state.contextMode === mode}
-                data-terminal-focus-trigger={
-                  mode === "terminal" ? "" : undefined
-                }
-                onClick={() => store.setContextMode(mode)}
-              >
-                {mode === "files"
+            (mode) => {
+              const label =
+                mode === "files"
                   ? "Files"
                   : mode === "changes"
                     ? "Changes"
                     : mode === "branches"
                       ? "History"
-                      : "Terminal"}
-              </button>
-            ),
+                      : "Terminal";
+              const changesCount =
+                mode === "changes" ? (gitChangeCount(state.gitStatus) ?? 0) : 0;
+              const title =
+                mode === "changes" && changesCount > 0
+                  ? `${label} (${changesCount} ${changesCount === 1 ? "change" : "changes"})`
+                  : undefined;
+              return (
+                <button
+                  type="button"
+                  key={mode}
+                  aria-label={label}
+                  title={title}
+                  aria-pressed={state.contextMode === mode}
+                  data-terminal-focus-trigger={
+                    mode === "terminal" ? "" : undefined
+                  }
+                  onClick={() => store.setContextMode(mode)}
+                >
+                  <span>{label}</span>
+                  {changesCount > 0 ? (
+                    <span className="ctx__mode-badge" aria-hidden="true">
+                      {changesCount > 99 ? "99+" : changesCount}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            },
           )}
         </div>
         <div className="ctx__header-actions">

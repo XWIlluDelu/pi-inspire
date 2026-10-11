@@ -25,6 +25,12 @@ async function namedSession(page: Page) {
   await composer.fill("Keep the unfinished comparison");
   return { title, composer };
 }
+async function openRename(page: Page) {
+  await page.getByRole("button", { name: /^Session actions:/ }).click();
+  await page
+    .getByRole("menuitem", { name: "Rename session", exact: true })
+    .click();
+}
 for (const touch of [false, true]) {
   test.describe(touch ? "touch title actions" : "desktop title actions", () => {
     test.use({
@@ -33,31 +39,45 @@ for (const touch of [false, true]) {
         : { width: 1280, height: 900 },
       hasTouch: touch,
     });
-    test("anchors in-place rename, accepts Enter/outside click and restores keyboard focus", async ({
+    test("opens the title menu and anchors in-place rename with keyboard focus restoration", async ({
       page,
     }) => {
       const { title, composer } = await namedSession(page);
       const rect = (await title.boundingBox())!;
       expect(rect.width).toBeGreaterThanOrEqual(44);
+      await expect(page.locator(".topbar__heading > button")).toHaveCount(0);
+      await expect(title).toHaveAttribute("aria-haspopup", "menu");
+      await expect(page.locator(".topbar__project .lucide-folder")).toHaveCount(
+        0,
+      );
       const x = rect.x + Math.min(60, rect.width / 2);
       const y = rect.y + rect.height / 2;
       const click = () =>
         touch ? page.touchscreen.tap(x, y) : page.mouse.click(x, y);
       await click();
-      const rename = page.getByRole("menuitem", { name: "Rename session" });
-      await expect(rename).toBeFocused();
       const menu = page.getByRole("menu", { name: "Session actions" });
-      const menuBox = (await menu.boundingBox())!;
-      expect(Math.abs(menuBox.x - rect.x)).toBeLessThanOrEqual(1);
-      expect(menuBox.y).toBeGreaterThanOrEqual(rect.y + rect.height);
-
-      await rename.click();
+      await expect(menu).toBeVisible();
+      await expect(title).toHaveAttribute("aria-expanded", "true");
+      await expect(menu.getByRole("menuitem")).toHaveText([
+        "Rename session",
+        "Clone current branch",
+        "Export session…",
+      ]);
       const input = page.getByRole("textbox", { name: "Session name" });
+      await expect(input).toHaveCount(0);
+      const rename = menu.getByRole("menuitem", {
+        name: "Rename session",
+        exact: true,
+      });
+      await expect(rename).toBeFocused();
+      if (touch) await rename.tap();
+      else await rename.click();
+      await expect(menu).toHaveCount(0);
       await expect(input).toBeFocused();
-      const inputBox = (await input.boundingBox())!;
-      expect(Math.abs(inputBox.x - menuBox.x)).toBeLessThanOrEqual(1);
-      if (touch) expect(inputBox.width).toBeGreaterThan(160);
-      else expect(inputBox.width).toBeGreaterThan(menuBox.width);
+      await expect
+        .poll(async () => Math.abs((await input.boundingBox())!.x - rect.x))
+        .toBeLessThanOrEqual(1);
+      expect((await input.boundingBox())!.width).toBeGreaterThan(160);
       await input.fill("Reviewed calibration notes");
       await input.press("Enter");
       await expect(title).toContainText("Reviewed calibration notes");
@@ -69,9 +89,7 @@ for (const touch of [false, true]) {
       await expect(title).toHaveCSS("outline-style", "solid");
       await expect(composer).toHaveValue("Keep the unfinished comparison");
 
-      await title.click();
-      await expect(menu).toHaveCSS("width", `${menuBox.width}px`);
-      await rename.click();
+      await openRename(page);
       await input.fill("Saved outside the editor");
       const bar = (await page.locator(".topbar").boundingBox())!;
       const outside = { x: bar.x + bar.width / 2, y: bar.y + bar.height - 1 };
@@ -84,8 +102,21 @@ for (const touch of [false, true]) {
       await title.focus();
       await page.keyboard.press("Enter");
       await expect(rename).toBeFocused();
+      await page.keyboard.press("ArrowDown");
+      await expect(
+        menu.getByRole("menuitem", { name: "Clone current branch" }),
+      ).toBeFocused();
+      await page.keyboard.press("Home");
+      await page.keyboard.press("Enter");
+      await expect(input).toBeFocused();
       await page.keyboard.press("Escape");
       await expect(title).toBeFocused();
+      await page.keyboard.press("ArrowDown");
+      await expect(rename).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(menu).toHaveCount(0);
+      await expect(title).toBeFocused();
+      await expect(title).toHaveAttribute("aria-expanded", "false");
     });
   });
 }
@@ -93,7 +124,6 @@ test("a delayed blur save cannot replace a newer name still being edited", async
   page,
 }) => {
   const { title, composer } = await namedSession(page);
-  const rename = page.getByRole("menuitem", { name: "Rename session" });
   const input = page.getByRole("textbox", { name: "Session name" });
   let releaseSave!: () => void;
   const saveGate = new Promise<void>((resolve) => {
@@ -107,8 +137,7 @@ test("a delayed blur save cannot replace a newer name still being edited", async
     },
     { times: 1 },
   );
-  await title.click();
-  await rename.click();
+  await openRename(page);
   await input.fill("Earlier blur save");
   const saving = page.waitForResponse("**/api/sessions/rename");
   const requested = page.waitForRequest("**/api/sessions/rename");
@@ -130,14 +159,14 @@ test("a delayed blur save cannot replace a newer name still being edited", async
 test("title/palette exports download the selected format and branch without consuming draft attachments", async ({
   page,
 }, info) => {
-  const { title, composer } = await namedSession(page);
+  const { title: actions, composer } = await namedSession(page);
   await page.locator('input[type="file"]').setInputFiles({
     name: "draft.txt",
     mimeType: "text/plain",
     buffer: Buffer.from("Preserve the export draft artifact"),
   });
   await expect(page.locator(".attachment--ready")).toBeVisible();
-  await title.click();
+  await actions.click();
   await page
     .getByRole("menuitem", { name: "Export session…", exact: true })
     .click();
@@ -153,7 +182,7 @@ test("title/palette exports download the selected format and branch without cons
   ).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
-  await expect(title).toBeFocused();
+  await expect(actions).toBeFocused();
 
   const exports: unknown[] = [];
   page.on("request", (request) => {
@@ -162,7 +191,7 @@ test("title/palette exports download the selected format and branch without cons
   });
   for (const format of ["html", "jsonl"]) {
     if (format === "html") {
-      await title.click();
+      await actions.click();
       await page
         .getByRole("menuitem", { name: "Export session…", exact: true })
         .click();
@@ -205,7 +234,7 @@ test("title/palette exports download the selected format and branch without cons
     await expect(composer).toHaveValue("Keep the unfinished comparison");
     await expect(
       format === "html"
-        ? title
+        ? actions
         : page.getByRole("button", {
             name: "Open command palette",
             exact: true,

@@ -11,7 +11,6 @@ import {
 import { nativeCommand, parseCommandInvocation } from "../../shared/commands";
 import {
   ACTIVITY_FOLD_VISIBILITIES,
-  ASSISTANT_ROUND_DISPLAYS,
   isAbortableRunState,
   isBusyRunState,
   type PalettePreference,
@@ -26,7 +25,7 @@ import {
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import { isTouchFirstDevice } from "../input-device";
 import { paletteTextMatchRanges, rankPaletteItems } from "../palette-search";
-import { preferenceChoiceLabel } from "../preference-labels";
+import { PALETTE_LABELS, preferenceChoiceLabel } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
 import {
   queueTerminalAction,
@@ -54,11 +53,6 @@ const THEME_LABELS: Record<ThemePreference, string> = {
   light: "Light",
   dark: "Dark",
   system: "System",
-};
-
-const PALETTE_LABELS: Record<PalettePreference, string> = {
-  amber: "Amber",
-  teal: "Jade",
 };
 
 function runTerminalAction(action: TerminalUiAction): void {
@@ -485,16 +479,6 @@ export const CommandPalette = memo(function CommandPalette({
         hint:
           state.prefs.activityFoldVisibility === value ? "current" : undefined,
         run: () => store.setActivityFoldVisibility(value),
-      });
-    }
-    for (const value of ASSISTANT_ROUND_DISPLAYS) {
-      actions.push({
-        id: `assistant-rounds-${value}`,
-        group: "Preferences",
-        title: `Assistant turn details: ${value === "details" ? "On" : "Off"}`,
-        hint:
-          state.prefs.assistantRoundDisplay === value ? "current" : undefined,
-        run: () => store.setAssistantRoundDisplay(value),
       });
     }
 

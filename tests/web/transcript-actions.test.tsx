@@ -199,7 +199,6 @@ describe("message actions", () => {
           streaming={false}
           thinkingVisibility="collapsed"
           toolVisibility="collapsed"
-          assistantRoundDisplay="divider"
         />,
       );
 
@@ -210,6 +209,10 @@ describe("message actions", () => {
         ),
       );
 
+      expect(
+        screen.queryByRole("button", { name: "Copy thinking block" }),
+      ).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Expand Thinking" }));
       fireEvent.click(
         screen.getByRole("button", { name: "Copy thinking block" }),
       );
@@ -217,6 +220,10 @@ describe("message actions", () => {
         expect(writeText).toHaveBeenLastCalledWith("private reasoning"),
       );
 
+      expect(
+        screen.queryByRole("button", { name: "Copy read tool block" }),
+      ).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Expand read tool" }));
       fireEvent.click(
         screen.getByRole("button", { name: "Copy read tool block" }),
       );
@@ -232,6 +239,12 @@ describe("message actions", () => {
         ),
       );
 
+      fireEvent.click(
+        screen.getByRole("button", { name: "Collapse read tool" }),
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: "Expand Web search" }),
+      );
       fireEvent.click(
         screen.getByRole("button", { name: "Copy web search block" }),
       );
@@ -269,9 +282,8 @@ describe("message actions", () => {
       );
       await waitFor(() => expect(openResource).toHaveBeenCalledTimes(1));
       expect(disclosure).toHaveAttribute("aria-expanded", "false");
-      fireEvent.click(
-        toolCard.querySelector(".card__header-spacer") as HTMLElement,
-      );
+      // The native disclosure owns the header hit area via its CSS pseudo-element.
+      fireEvent.click(disclosure);
       expect(disclosure).toHaveAttribute("aria-expanded", "true");
       expect(openResource).toHaveBeenCalledTimes(1);
       fireEvent.click(disclosure);

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type ToolPresentationConfiguration,
   toolPresentationConfigurationSchema,
@@ -19,7 +19,64 @@ function configureThinking(
   });
 }
 
-afterEach(() => configureToolPresentationRegistry());
+afterEach(() => {
+  configureToolPresentationRegistry();
+  vi.useRealTimers();
+});
+
+describe("empty Thinking disclosure", () => {
+  it.each(["expanded", "dynamic"] as const)(
+    "keeps empty %s cards compact while honoring manual disclosure and arriving content",
+    (visibility) => {
+      const card = (text: string) => (
+        <ThinkingCard text={text} visibility={visibility} dynamicActive />
+      );
+      const { container, rerender } = render(card("\u001b[31m \n\t\u001b[0m"));
+      const disclosure = screen.getByRole("button", {
+        name: "Expand Thinking",
+      });
+      expect(disclosure).toHaveAttribute("aria-expanded", "false");
+      expect(container.querySelector(".card__body")).toBeNull();
+
+      rerender(card("First thought"));
+      expect(disclosure).toHaveAttribute("aria-expanded", "true");
+
+      fireEvent.click(disclosure);
+      rerender(card(""));
+      expect(disclosure).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(disclosure);
+      expect(disclosure).toHaveAttribute("aria-expanded", "true");
+      expect(container.querySelector(".card__body")).not.toBeNull();
+      rerender(card("Later thought"));
+      expect(disclosure).toHaveAttribute("aria-expanded", "true");
+      fireEvent.click(disclosure);
+      rerender(card("Updated thought"));
+      expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    },
+  );
+
+  it("starts adaptive residency when content arrives, not while the body is empty", () => {
+    vi.useFakeTimers();
+    const card = (text: string, dynamicActive: boolean) => (
+      <ThinkingCard
+        text={text}
+        visibility="dynamic"
+        dynamicActive={dynamicActive}
+      />
+    );
+    const { rerender } = render(card("", true));
+    act(() => vi.advanceTimersByTime(5_000));
+    rerender(card("Visible thought", true));
+    const disclosure = screen.getByRole("button", {
+      name: "Collapse Thinking",
+    });
+    rerender(card("Visible thought", false));
+    act(() => vi.advanceTimersByTime(1_799));
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    act(() => vi.advanceTimersByTime(1));
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  });
+});
 
 describe("custom Thinking presentations", () => {
   it("replaces only the summary and expanded body inside the native shell", async () => {
@@ -55,7 +112,7 @@ describe("custom Thinking presentations", () => {
     });
     configureThinking(configuration.thinking!);
 
-    const { container } = render(
+    const { container, rerender } = render(
       <ThinkingCard
         text={"\u001b[31m# Plan\u001b[0m\n\n- inspect"}
         visibility="collapsed"
@@ -88,6 +145,23 @@ describe("custom Thinking presentations", () => {
       within(card).getByRole("button", { name: "Copy thinking block" }),
     ).toBeInTheDocument();
     expect(card.textContent).not.toContain("\u001b");
+
+    configureThinking({
+      summary: [{ value: { literal: "Trace" } }],
+      blocks: [{ type: "text", source: { literal: "Configured context" } }],
+    });
+    rerender(
+      <ThinkingCard
+        key="empty"
+        text=""
+        visibility="expanded"
+        dynamicActive={false}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Collapse Thinking" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Configured context")).toBeInTheDocument();
   });
 
   it("falls back to native Thinking content when configured blocks are incompatible", () => {

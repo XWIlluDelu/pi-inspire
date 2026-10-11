@@ -101,7 +101,7 @@ test("inspection backgrounds isolate alpha and preserve image pixels across them
   ).toHaveAttribute("aria-pressed", "true");
   const reference = new Map<string, Buffer>();
 
-  for (const palette of ["amber", "teal"] satisfies PalettePreference[]) {
+  for (const palette of ["chimonanthus", "hydrangea"] satisfies PalettePreference[]) {
     for (const theme of ["light", "dark"] satisfies ThemePreference[]) {
       await test.step(`${palette}/${theme}: inspection pixels do not inherit the shell`, async () => {
         await page.evaluate(

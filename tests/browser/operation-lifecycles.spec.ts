@@ -24,7 +24,7 @@ async function openTerminal(page: Page, pair: boolean) {
     )
   ) {
     const toggle = page.getByRole("button", {
-      name: "Toggle navigation",
+      name: /^(Toggle|Expand|Collapse) navigation$/,
       exact: true,
     });
     if (

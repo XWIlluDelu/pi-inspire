@@ -13,7 +13,6 @@ export const TOOL_VISIBILITY_PREFERENCES = [
   "collapsed",
   "hidden",
 ] as const;
-export const ASSISTANT_ROUND_DISPLAYS = ["details", "divider"] as const;
 export const ACTIVITY_FOLD_VISIBILITIES = [
   "dynamic",
   "expanded",
@@ -61,8 +60,6 @@ export const MAX_CURATED_SESSION_RESULTS = 10_000;
 export type VisibilityPreference = (typeof VISIBILITY_PREFERENCES)[number];
 export type ToolVisibilityPreference =
   (typeof TOOL_VISIBILITY_PREFERENCES)[number];
-export type AssistantRoundDisplayPreference =
-  (typeof ASSISTANT_ROUND_DISPLAYS)[number];
 export type ActivityFoldVisibilityPreference =
   (typeof ACTIVITY_FOLD_VISIBILITIES)[number];
 export type ContentTextSizePreference = (typeof CONTENT_TEXT_SIZES)[number];
@@ -70,7 +67,24 @@ export type ReadingWidthPreference = (typeof READING_WIDTHS)[number];
 export type DesktopSendKeyPreference = (typeof DESKTOP_SEND_KEYS)[number];
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 export type ThemePreference = "system" | "light" | "dark";
-export type PalettePreference = "amber" | "teal";
+export const PALETTE_PREFERENCES = [
+  "wisteria",
+  "hydrangea",
+  "lycoris",
+  "chimonanthus",
+  "classic-jade",
+  "classic-amber",
+] as const;
+export type PalettePreference = (typeof PALETTE_PREFERENCES)[number];
+
+/** Legacy persisted/API identifiers normalize at the Host boundary. */
+export function migratePalettePreference(
+  value: PalettePreference | "amber" | "teal",
+): PalettePreference {
+  if (value === "amber") return "chimonanthus";
+  if (value === "teal") return "hydrangea";
+  return value;
+}
 export type LaunchPreference = "welcome" | "continue";
 export type ProjectDisplayPreference = "folder" | "path";
 export type CompletionAttentionPreference = "off" | "title" | "desktop";
@@ -219,9 +233,6 @@ export interface InspirePreferences {
   /** Presentation of complete non-response activity runs between visible
    * assistant response passages. The cards inside keep their own preferences. */
   activityFoldVisibility: ActivityFoldVisibilityPreference;
-  /** Detailed preserves Pi's current per-message attribution verbatim; divider
-   * replaces that whole row with one quiet visual boundary. */
-  assistantRoundDisplay: AssistantRoundDisplayPreference;
   /** How the topbar shows the session's project location. */
   projectDisplay: ProjectDisplayPreference;
   /** Opt-in attention for terminal transitions that were not visible. */
@@ -246,7 +257,7 @@ export interface InspirePreferences {
 export const defaultInterfaceSettings = {
   herdrEnabled: false,
   theme: "system",
-  palette: "amber",
+  palette: "chimonanthus",
   titlebarNeedles: false,
   contentTextSize: "comfortable",
   readingWidth: "comfortable",
@@ -255,7 +266,6 @@ export const defaultInterfaceSettings = {
   thinkingVisibility: "dynamic",
   toolVisibility: "dynamic",
   activityFoldVisibility: "dynamic",
-  assistantRoundDisplay: "divider",
   projectDisplay: "folder",
   completionAttention: "off",
 } satisfies Pick<
@@ -271,7 +281,6 @@ export const defaultInterfaceSettings = {
   | "thinkingVisibility"
   | "toolVisibility"
   | "activityFoldVisibility"
-  | "assistantRoundDisplay"
   | "projectDisplay"
   | "completionAttention"
 >;
@@ -884,6 +893,8 @@ export interface TranscriptActivityRange {
   cursor: string;
   afterMessageId: string | null;
   messageCount: number;
+  /** Chronological hints, at most two per kind, preserve single/multiple cues
+   * even when one kind is hidden. Paired results do not add a cue. */
   kinds: TranscriptActivityKind[];
 }
 

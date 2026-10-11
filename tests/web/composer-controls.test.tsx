@@ -212,6 +212,50 @@ describe("composer-adjacent status and queued controls", () => {
   });
 });
 describe("composer meta row", () => {
+  it("keeps Send last and mounted as Stop appears, with recovery still exclusive", () => {
+    render(<Composer />);
+    typeDraft("Follow-up");
+    const send = screen.getByRole("button", { name: "Send message" });
+    const socket = FakeWebSocket.instances.at(-1)!;
+    send.focus();
+
+    for (const runState of [
+      "running",
+      "queued",
+      "retrying",
+      "compacting",
+    ] as const) {
+      const snapshot = activeSnapshot();
+      snapshot.runState = runState;
+      snapshot.sessionStatuses = { s1: { runState } };
+      act(() => socket.emit({ type: "snapshot", data: snapshot }));
+      const stop = screen.getByRole("button", {
+        name:
+          runState === "compacting"
+            ? "Cancel context compaction"
+            : "Abort running task",
+      });
+      expect(screen.getByRole("button", { name: "Send as steer" })).toBe(send);
+      expect(screen.getAllByRole("button").slice(-2)).toEqual([stop, send]);
+      expect(send).toHaveFocus();
+    }
+
+    act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
+    expect(screen.getByRole("button", { name: "Send message" })).toBe(send);
+    expect(
+      screen.queryByRole("button", { name: "Abort running task" }),
+    ).toBeNull();
+
+    const conflict = activeSnapshot();
+    conflict.runState = "conflict";
+    conflict.sessionStatuses = { s1: { runState: "conflict" } };
+    act(() => socket.emit({ type: "snapshot", data: conflict }));
+    expect(screen.getAllByRole("button").at(-1)).toHaveAccessibleName(
+      "Recover session",
+    );
+    expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
+  });
+
   it("keeps context hints non-interactive and opens session usage on activation", () => {
     render(<Composer />);
     const meter = screen.getByRole("button", {
