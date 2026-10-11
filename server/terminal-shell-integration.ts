@@ -57,7 +57,12 @@ const bashIntegration =
 }
 __inspire_terminal_preexec() {
   local command
-  command="$(builtin fc -ln -1 2>/dev/null)"
+  if [[ "__INSPIRE_OPEN____inspire_terminal_uses_debug-}" == 1 ]]; then
+    command="$(HISTTIMEFORMAT= builtin history 1)"
+    command="__INSPIRE_OPEN__command#*[0-9]  }"
+  else
+    command="$(builtin fc -ln -1 2>/dev/null)"
+  fi
   command="__INSPIRE_OPEN__command#"__INSPIRE_OPEN__command%%[![:space:]]*}"}"
   command="$(__inspire_encode_terminal_value "$command")"
   printf '\033]6973;C1;%s\007' "$command"
@@ -66,16 +71,44 @@ __inspire_terminal_prompt() {
   local command_status=$?
   local cwd
   cwd="$(__inspire_encode_terminal_value "$PWD")"
+  __inspire_terminal_ready=
   printf '\033]6973;P1;%s\007\033]6973;D;%d\007\033]6973;A\007' "$cwd" "$command_status"
+  return "$command_status"
 }
 if [[ -n __INSPIRE_OPEN__PROMPT_COMMAND+x} ]]; then
   __inspire_original_prompt_command=("__INSPIRE_OPEN__PROMPT_COMMAND[@]}")
+else
+  __inspire_original_prompt_command=()
+fi
+if (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1) )); then
   PROMPT_COMMAND=(__inspire_terminal_prompt "__INSPIRE_OPEN____inspire_original_prompt_command[@]}")
 else
-  PROMPT_COMMAND=(__inspire_terminal_prompt)
+  # Array-valued PROMPT_COMMAND is only executed as an array since Bash 5.1.
+  unset PROMPT_COMMAND
+  printf -v PROMPT_COMMAND '%s\n' __inspire_terminal_prompt "__INSPIRE_OPEN____inspire_original_prompt_command[@]}"
 fi
-__inspire_original_ps0="__INSPIRE_OPEN__PS0-}"
-PS0='$(__inspire_terminal_preexec)'"$__inspire_original_ps0"
+if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )); then
+  __inspire_original_ps0="__INSPIRE_OPEN__PS0-}"
+  PS0='$(__inspire_terminal_preexec)'"$__inspire_original_ps0"
+else
+  # System Bash on macOS predates PS0. Observe one top-level DEBUG event per
+  # accepted command, not each simple command or the prompt itself.
+  __inspire_terminal_uses_debug=1
+  __inspire_terminal_debug() {
+    local command_status=$?
+    if [[ "$__inspire_terminal_ready" == 1 && "$BASH_COMMAND" != __inspire_terminal_prompt && "$BASH_SUBSHELL" == 0 ]]; then
+      __inspire_terminal_ready=
+      __inspire_terminal_preexec
+    fi
+    return "$command_status"
+  }
+  if [[ -n "$__inspire_original_debug_trap" ]]; then
+    __inspire_original_debug_trap="__INSPIRE_OPEN____inspire_original_debug_trap#trap -- }"
+    __inspire_original_debug_trap="__INSPIRE_OPEN____inspire_original_debug_trap% DEBUG}"
+    eval "__inspire_original_debug_trap=$__inspire_original_debug_trap"
+  fi
+  PROMPT_COMMAND+=$'\n__inspire_terminal_ready=1'
+fi
 `);
 
 const bashWrapper =
@@ -90,7 +123,13 @@ elif [ -r "$HOME/.profile" ]; then
 elif [ -r "$HOME/.bashrc" ]; then
   . "$HOME/.bashrc"
 fi
+__inspire_original_debug_trap="$(trap -p DEBUG)"
 . "__INSPIRE_OPEN__INSPIRE_SHELL_INTEGRATION_DIR}/bash-integration.sh"
+# Bash 3 restores an existing DEBUG trap when a sourced file returns. Install
+# the composed hook here, in the outer initialization file, not the nested source.
+if [[ "__INSPIRE_OPEN____inspire_terminal_uses_debug-}" == 1 ]]; then
+  trap '__inspire_terminal_debug; eval "$__inspire_original_debug_trap"' DEBUG
+fi
 `);
 
 const zshIntegration =
@@ -130,21 +169,17 @@ printf '\e]6973;P1;%s\a\e]6973;A\a' (__inspire_encode_terminal_value "$PWD")
 
 const powerShellWrapper = [
   "$script:InspireOriginalPrompt = $function:prompt",
-  "try {",
-  "  $enterHandler = Get-PSReadLineKeyHandler -Chord Enter -ErrorAction Stop",
-  '  if ($enterHandler.Function -eq "AcceptLine") {',
-  "    Set-PSReadLineKeyHandler -Chord Enter -ScriptBlock {",
-  "      try {",
-  "        $line = ''",
-  "        $cursor = 0",
-  "        [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)",
-  "        $command = [Uri]::EscapeDataString($line)",
-  '        [Console]::Write("{0}]6973;C1;{1}`a", [char]27, $command)',
-  "      } catch {}",
-  "      [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()",
-  "    }",
+  "$script:InspireOriginalReadLine = $function:PSConsoleHostReadLine",
+  "if ($script:InspireOriginalReadLine) {",
+  "  function global:PSConsoleHostReadLine {",
+  "    $line = & $script:InspireOriginalReadLine",
+  "    try {",
+  "      $command = [Uri]::EscapeDataString($line)",
+  '      [Console]::Write("{0}]6973;C1;{1}`a", [char]27, $command)',
+  "    } catch {}",
+  "    return $line",
   "  }",
-  "} catch {}",
+  "}",
   "function global:prompt {",
   "  $commandStatus = if ($?) { 0 } elseif ($global:LASTEXITCODE -is [int]) { $global:LASTEXITCODE } else { 1 }",
   "  $cwd = [Uri]::EscapeDataString($executionContext.SessionState.Path.CurrentLocation.Path)",

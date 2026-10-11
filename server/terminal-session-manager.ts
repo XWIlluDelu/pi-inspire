@@ -274,6 +274,9 @@ function defaultPtyFactory(
     ...options,
     encoding: null,
     name: "xterm-256color",
+    // Keep shell markers ordered with rendered output, independently of the
+    // Windows-provided ConPTY version.
+    useConptyDll: process.platform === "win32",
   });
   let knownDescendants: number[] = [];
   return {
@@ -295,7 +298,10 @@ function defaultPtyFactory(
     kill: (signal) =>
       pty.kill(process.platform === "win32" ? undefined : signal),
     killTree: (signal) => {
-      if (process.platform === "win32")
+      if (process.platform === "win32") {
+        // Windows spawn returns before the connection assigns a PID. Native
+        // kill queues until readiness; the process-tree helper cannot target 0.
+        if (pty.pid === 0) return pty.kill();
         return signalProcessTree(
           {
             pid: pty.pid,
@@ -311,6 +317,7 @@ function defaultPtyFactory(
           (signal ?? "SIGHUP") as NodeJS.Signals,
           { environment: options.env, platform: "win32", timeoutMs: 1_000 },
         );
+      }
       const result = killPosixProcessTree(
         pty.pid,
         signal ?? "SIGHUP",
