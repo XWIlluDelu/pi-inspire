@@ -8,6 +8,7 @@ import {
   RefreshCw,
   ScrollText,
   Sun,
+  Terminal,
 } from "lucide-react";
 import {
   memo,
@@ -462,7 +463,19 @@ export const SettingsContent = memo(function SettingsContent({
                   }
                 />
               </SettingField>
+              <HerdrSettings
+                onNavigateRestart={() =>
+                  navigate("updates", "settings-host-restart")
+                }
+              />
+            </Section>
 
+            <Section
+              id="pi-settings"
+              icon={<Terminal size={14} />}
+              title="Pi session settings"
+              description="Applies to the active session and asks Pi to update global settings. Project overrides may differ."
+            >
               <SettingField
                 label="Steering delivery"
                 description="How Steer messages reach Pi during a task."
@@ -558,12 +571,6 @@ export const SettingsContent = memo(function SettingsContent({
                   onChange={(checked) => void store.setAutoRetry(checked)}
                 />
               </SettingField>
-
-              <HerdrSettings
-                onNavigateRestart={() =>
-                  navigate("updates", "settings-host-restart")
-                }
-              />
             </Section>
           </div>
 

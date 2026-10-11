@@ -212,11 +212,19 @@ describe("native effective retry settings", () => {
         expect(
           events.some(
             (event) =>
-              event.method === "setStatus" ||
-              event.method === "notify" ||
-              event.type === "message_start",
+              event.method === "setStatus" || event.type === "message_start",
           ),
         ).toBe(false);
+        expect(events.filter((event) => event.method === "notify")).toEqual(
+          trust === "never"
+            ? [
+                expect.objectContaining({
+                  notifyType: "warning",
+                  message: expect.stringContaining("trust-protected project"),
+                }),
+              ]
+            : [],
+        );
         expect(
           await workers[0]!.request({ type: "get_messages" }),
         ).toMatchObject({
