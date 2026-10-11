@@ -98,6 +98,7 @@ const clearHiddenSchema = z
 const newSchema = z
   .object({
     cwd: z.string().min(1).max(4_096),
+    createDirectory: z.boolean().optional(),
     name: z.string().max(160).optional(),
     model: z
       .object({
@@ -1021,10 +1022,8 @@ export function createInspireServer(deps: AppDependencies): {
     response.json(await deps.runtime.deselectSession());
   });
   app.post("/api/sessions/new", async (request, response) => {
-    const { cwd, name, model, thinkingLevel } = newSchema.parse(request.body);
-    response.json(
-      await deps.runtime.newSession(cwd, { name, model, thinkingLevel }),
-    );
+    const { cwd, ...options } = newSchema.parse(request.body);
+    response.json(await deps.runtime.newSession(cwd, options));
   });
   registerModelSettingsRoutes(app, deps);
   registerMcpConfigRoutes(app, deps);

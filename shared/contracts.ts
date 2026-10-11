@@ -89,6 +89,8 @@ export interface ModelOption extends ModelIdentity {
 }
 
 export interface NewSessionOptions {
+  /** Explicit new-session action only; observational reads never create paths. */
+  createDirectory?: boolean;
   name?: string;
   model?: ModelIdentity;
   thinkingLevel?: ThinkingLevel;

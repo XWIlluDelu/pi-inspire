@@ -69,7 +69,7 @@ import {
   resolveProjectFiles,
 } from "./attachments.js";
 import { type DiagnosticLogger, nullDiagnosticLogger } from "./diagnostics.js";
-import { resolveProjectDirectory } from "./paths.js";
+import { createProjectDirectory, resolveProjectDirectory } from "./paths.js";
 import {
   isPiRpcOutcomeUnknown,
   PiRpcCancelledError,
@@ -2211,7 +2211,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   ): Promise<ActiveSnapshot> {
     this.assertNotClosing();
     const selection = ++this.selectionSequence;
-    const cwd = await resolveProjectDirectory(cwdInput);
+    const cwd = options.createDirectory
+      ? await createProjectDirectory(cwdInput)
+      : await resolveProjectDirectory(cwdInput);
     // Persist discovery before constructing/starting Pi: even a failed startup
     // response may leave a successfully created native session behind.
     await this.catalog.rememberProjectCwds?.([cwd]);

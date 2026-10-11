@@ -13,10 +13,11 @@ import {
   type ModelOption,
   modelIdentityKey,
   type NewSessionDefaults,
+  type SessionReadOnlyReason,
   THINKING_LEVELS,
   type ThinkingLevel,
 } from "../../shared/contracts";
-import type { ProjectFileResult } from "../api";
+import { ApiError, type ProjectFileResult } from "../api";
 import { selectAttachmentFiles } from "../attachment-selection";
 import { clipboardFiles } from "../clipboard-files";
 import type { PiCommand } from "../composer-completion";
@@ -64,6 +65,7 @@ export interface WelcomeInheritance {
   cwd: string;
   model: ModelOption | null;
   modelDiscovery?: "loading" | "unavailable" | null;
+  readOnlyReason?: SessionReadOnlyReason | null;
   thinkingLevel: string;
   commands: readonly PiCommand[];
 }
@@ -86,6 +88,7 @@ export const Welcome = memo(function Welcome({
       cwd: source.cwd,
       model: source.model,
       modelDiscovery: source.modelDiscovery,
+      readOnlyReason: source.readOnlyReason,
       thinkingLevel: source.thinkingLevel,
       commands: source.commands,
       sessions: source.sessions,
@@ -101,6 +104,7 @@ export const Welcome = memo(function Welcome({
         cwd: state.cwd,
         model: state.model,
         modelDiscovery: state.modelDiscovery,
+        readOnlyReason: state.readOnlyReason,
         thinkingLevel: state.thinkingLevel,
         commands: state.commands,
       } satisfies WelcomeInheritance)
@@ -121,7 +125,9 @@ export const Welcome = memo(function Welcome({
       inheritance?.thinkingLevel ??
       state.thinkingLevel);
   const sourcePending = Boolean(
-    inheritance?.modelDiscovery && !sourceSelection,
+    !inheritance?.readOnlyReason &&
+      inheritance?.modelDiscovery &&
+      !sourceSelection,
   );
   const [draft, setDraft] = useState(startDraft);
   const updateDraft = (text: string) => {
@@ -165,6 +171,8 @@ export const Welcome = memo(function Welcome({
   useEffect(() => {
     onDirectoryChange?.(effectiveDirectory);
   }, [effectiveDirectory, onDirectoryChange]);
+  const [missingDirectory, setMissingDirectory] = useState<string | null>(null);
+  const directoryMissing = missingDirectory === effectiveDirectory;
   const [catalog, setCatalog] = useState<ModelOption[] | null>(null);
   const [pickedModel, setPickedModel] = useState<ModelOption | null>(null);
   const [commonModels, setCommonModels] = useState<ModelIdentity[]>([]);
@@ -180,7 +188,9 @@ export const Welcome = memo(function Welcome({
   const thinkingRef = useRef(thinkingLevel);
   thinkingRef.current = thinkingLevel;
   const catalogSource =
-    inheritance?.cwd === effectiveDirectory ? inheritance.sessionId : undefined;
+    !inheritance?.readOnlyReason && inheritance?.cwd === effectiveDirectory
+      ? inheritance.sessionId
+      : undefined;
   const refreshModels = useCallback(async () => {
     const generation = ++catalogGeneration.current;
     const inputGeneration = thinkingInputGeneration.current;
@@ -191,15 +201,29 @@ export const Welcome = memo(function Welcome({
         effectiveDirectory || undefined,
       );
     } catch (error) {
-      if (catalogGeneration.current === generation && !modelOwnedRef.current) {
-        setModelWarning(
-          error instanceof Error ? error.message : "Model discovery failed",
+      if (catalogGeneration.current === generation) {
+        setMissingDirectory(
+          error instanceof ApiError &&
+            error.code === "PROJECT_DIRECTORY_MISSING"
+            ? effectiveDirectory
+            : null,
         );
-        setModelStatus("error");
+        if (!modelOwnedRef.current) {
+          setModelWarning(
+            error instanceof Error ? error.message : "Model discovery failed",
+          );
+          setModelStatus("error");
+        }
       }
+      if (
+        error instanceof ApiError &&
+        error.code === "PROJECT_DIRECTORY_MISSING"
+      )
+        return undefined;
       throw error;
     }
     if (catalogGeneration.current === generation) {
+      setMissingDirectory(null);
       setCatalog(result.models);
       setCommonModels(result.commonModels ?? []);
       if (!modelOwnedRef.current && result.defaults) {
@@ -281,13 +305,11 @@ export const Welcome = memo(function Welcome({
   // input made AFTER this request remains user-owned. Catalog refresh alone is
   // not a model switch and must not reapply defaults.
   useEffect(() => {
-    if (
-      !modelTouched ||
-      !effectiveDirectory ||
-      !pickedModel ||
-      thinkingTouchedRef.current
-    )
+    if (!modelTouched || !effectiveDirectory || !pickedModel) return;
+    if (thinkingTouched) {
+      setModelStatus("ready");
       return;
+    }
     let cancelled = false;
     const inputGeneration = thinkingInputGeneration.current;
     setModelStatus("loading");
@@ -316,6 +338,7 @@ export const Welcome = memo(function Welcome({
     modelKey,
     modelTouched,
     pickedModel,
+    thinkingTouched,
     modelResolveAttempt,
   ]);
 
@@ -323,6 +346,7 @@ export const Welcome = memo(function Welcome({
     const sessionId = inheritance?.sessionId;
     if (!sourcePending || modelTouched || !sessionId) return;
     let cancelled = false;
+    setModelWarning(null);
     setModelStatus("loading");
     void store.readNewSessionModels(sessionId, inheritance.cwd, true).then(
       (result) => {
@@ -336,8 +360,14 @@ export const Welcome = memo(function Welcome({
         setModelWarning(result.warning ?? null);
         setModelStatus(result.selection.model ? "ready" : "idle");
       },
-      () => {
-        if (!cancelled) setModelStatus("error");
+      (error) => {
+        if (cancelled) return;
+        setModelWarning(
+          error instanceof Error
+            ? error.message
+            : "The source model is unavailable",
+        );
+        setModelStatus("error");
       },
     );
     return () => {
@@ -430,6 +460,8 @@ export const Welcome = memo(function Welcome({
   );
 
   const changeDirectory = (value: string) => {
+    ++catalogGeneration.current;
+    setMissingDirectory(null);
     setDirectory(value);
     setShowHiddenFiles(false);
     setProjectFiles([]);
@@ -445,27 +477,41 @@ export const Welcome = memo(function Welcome({
   const hasInput = Boolean(
     draft.trim() || attachments.length > 0 || projectFiles.length > 0,
   );
-  const startReadiness = starting
-    ? "Starting session…"
-    : !effectiveDirectory || !hasInput
+  const sourceUnresolved = sourcePending && !modelTouched;
+  const thinkingDefault =
+    directoryMissing && !thinkingTouched && modelStatus !== "ready";
+  const startReadiness =
+    directoryMissing && !sourceUnresolved
       ? null
-      : modelStatus === "loading"
-        ? "Resolving model…"
-        : modelStatus === "error"
-          ? (modelWarning ?? "Model resolution failed")
-          : !selectedModel
-            ? "Select a model"
-            : null;
+      : starting
+        ? "Starting session…"
+        : !effectiveDirectory || !hasInput
+          ? null
+          : modelStatus === "loading"
+            ? "Resolving model…"
+            : modelStatus === "error"
+              ? (modelWarning ?? "Model resolution failed")
+              : !selectedModel
+                ? "Select a model"
+                : null;
   const canStart = Boolean(
     hasInput &&
       effectiveDirectory &&
+      !directoryMissing &&
       selectedModel &&
       modelStatus === "ready" &&
       !starting,
   );
 
-  const start = async () => {
-    if (!canStart) return;
+  const canCreate = Boolean(
+    hasInput &&
+      effectiveDirectory &&
+      directoryMissing &&
+      !sourceUnresolved &&
+      !starting,
+  );
+  const start = async (createDirectory = false) => {
+    if (createDirectory ? !canCreate : !canStart) return;
     const message = draft;
     const files = attachments.map((attachment) => attachment.file);
     const referencedProjectFiles = [...projectFiles];
@@ -473,19 +519,26 @@ export const Welcome = memo(function Welcome({
     // that produced it, so a symlink retarget cannot reinterpret the path.
     const target = projectFileRoot || directory.trim();
     const model = selectedModel;
-    if (!model) return;
+    if (!model && !createDirectory) return;
     setStarting(true);
     try {
       // A displayed workspace default is a preview, not an explicit override:
       // native startup must resolve its own model after registration/trust.
-      const selected = modelTouched || Boolean(inheritedModel);
+      const selected = model && (modelTouched || Boolean(inheritedModel));
       const opened = await store.newSession(target || undefined, {
+        ...(createDirectory ? { createDirectory: true } : {}),
         ...(selected
           ? { model: { provider: model.provider, id: model.id } }
           : {}),
-        ...(selected || thinkingTouched ? { thinkingLevel } : {}),
+        ...(thinkingTouched ||
+        (selected && (!directoryMissing || modelStatus === "ready"))
+          ? { thinkingLevel }
+          : {}),
       });
-      if (!opened) return;
+      if (!opened) {
+        if (createDirectory) void refreshModels().catch(() => {});
+        return;
+      }
 
       // The ordinary composer may mount before this async continuation. Drive
       // both its durable browser draft and its live nonce channel, then let the
@@ -623,12 +676,16 @@ export const Welcome = memo(function Welcome({
                 })
               }
               emptyLabel={
-                modelStatus === "loading" ||
-                (modelStatus === "idle" && effectiveDirectory && !modelTouched)
-                  ? "Resolving model…"
-                  : modelStatus === "error"
-                    ? "Model unavailable"
-                    : "Select model"
+                directoryMissing
+                  ? "Pi default"
+                  : modelStatus === "loading" ||
+                      (modelStatus === "idle" &&
+                        effectiveDirectory &&
+                        !modelTouched)
+                    ? "Resolving model…"
+                    : modelStatus === "error"
+                      ? "Model unavailable"
+                      : "Select model"
               }
               disabled={starting}
               refreshModels={refreshModels}
@@ -660,11 +717,13 @@ export const Welcome = memo(function Welcome({
                   : "Thinking level"
               }
               direction="up"
-              value={thinkingLevel}
+              value={thinkingDefault ? "" : thinkingLevel}
               display={
-                selectedModel?.reasoning === false
-                  ? "unavailable"
-                  : thinkingLevel
+                thinkingDefault
+                  ? "default"
+                  : selectedModel?.reasoning === false
+                    ? "unavailable"
+                    : thinkingLevel
               }
               disabled={
                 starting || !selectedModel || selectedModel.reasoning === false
@@ -684,7 +743,7 @@ export const Welcome = memo(function Welcome({
             type="button"
             className={`icon-button ${pickerOpen ? "icon-button--active" : ""}`}
             onClick={() => setPickerOpen((value) => !value)}
-            disabled={starting || !effectiveDirectory}
+            disabled={starting || !effectiveDirectory || directoryMissing}
             ref={projectPickerButtonRef}
             aria-label="Add project files"
             aria-haspopup="dialog"
@@ -747,6 +806,31 @@ export const Welcome = memo(function Welcome({
             disabled={starting}
           />
         </div>
+        {directoryMissing ? (
+          <div
+            className="welcome__dir-action"
+            role="status"
+            aria-busy={starting}
+          >
+            <span>Folder does not exist yet.</span>
+            <button
+              type="button"
+              className="button welcome__dir-action-btn"
+              disabled={!canCreate}
+              onClick={() => void start(true)}
+              title={
+                !hasInput ? "Add a message or attachment to start" : undefined
+              }
+            >
+              {starting ? (
+                <Loader2 size={13} className="spin" aria-hidden />
+              ) : null}
+              {starting
+                ? "Creating folder and starting…"
+                : "Create folder and start"}
+            </button>
+          </div>
+        ) : null}
         {startReadiness ? (
           <div
             className={`welcome__readiness ${modelStatus === "error" ? "welcome__readiness--error" : ""}`}

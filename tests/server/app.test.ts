@@ -218,7 +218,41 @@ describe("typed Host API", () => {
       .get("/api/models")
       .query({ cwd: join(temporary, "missing") })
       .set("Authorization", `Bearer ${token}`)
-      .expect(400, { error: "Project path does not exist" });
+      .expect(400, {
+        error: "Project path does not exist",
+        code: "PROJECT_DIRECTORY_MISSING",
+      });
+  });
+
+  it("forwards explicit directory creation only through authenticated new-session requests", async () => {
+    const create = vi.spyOn(runtime, "newSession");
+    const body = {
+      cwd: join(temporary, "new-project"),
+      createDirectory: true,
+      model: { provider: "anthropic", id: "claude-sonnet-4" },
+      thinkingLevel: "high",
+    };
+    await request(application.server)
+      .post("/api/sessions/new")
+      .send(body)
+      .expect(401);
+    expect(create).not.toHaveBeenCalled();
+    await request(application.server)
+      .post("/api/sessions/new")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ ...body, createDirectory: "true" })
+      .expect(400);
+    expect(create).not.toHaveBeenCalled();
+    await request(application.server)
+      .post("/api/sessions/new")
+      .set("Authorization", `Bearer ${token}`)
+      .send(body)
+      .expect(200);
+    expect(create).toHaveBeenCalledWith(body.cwd, {
+      createDirectory: true,
+      model: body.model,
+      thinkingLevel: "high",
+    });
   });
 
   it("stops accepting work before runtime teardown and drains an active request without deadlock", async () => {
