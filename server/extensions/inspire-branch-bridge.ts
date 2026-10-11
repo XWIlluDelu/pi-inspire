@@ -12,8 +12,8 @@ import {
   encodeBranchBridgeJson,
   MODEL_REFRESH_SUFFIX,
   MODEL_REFRESH_TIMEOUT_MS,
-  RETRY_STATE_SUFFIX,
   PENDING_IMAGE_SUFFIX,
+  RETRY_STATE_SUFFIX,
   type RetryStateRequest,
   type RetryStateResult,
 } from "../../shared/branch-bridge-protocol.js";
@@ -107,6 +107,15 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
     return;
 
   registerProviderAuthBridge(pi, { command, statusKey, workerId });
+
+  pi.on("session_start", (_event, ctx) => {
+    if (ctx.mode === "rpc" && !ctx.isProjectTrusted()) {
+      ctx.ui.notify(
+        "Pi is skipping trust-protected project settings and resources. Review this folder with /trust in terminal Pi, then Reload this session.",
+        "warning",
+      );
+    }
+  });
 
   pi.registerCommand(`${command}${RETRY_STATE_SUFFIX}`, {
     description: "Internal Inspire effective retry state",

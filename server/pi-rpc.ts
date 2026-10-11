@@ -8,6 +8,7 @@ import {
   type PiRpcTransportFactory,
 } from "./pi-rpc-transport.js";
 import { piInstallation } from "./pi-runtime.js";
+import { piStartupDiagnostics } from "./pi-startup-diagnostics.js";
 import { requestError } from "./request-error.js";
 
 export { MAX_RPC_OUTBOUND_LINE_BYTES } from "../shared/contracts.js";
@@ -135,6 +136,7 @@ export class PiRpcProcess extends EventEmitter {
     "unknown";
   private requestSequence = 0;
   private stderr = "";
+  private startupComplete = false;
   private stopping = false;
   private stopPromise: Promise<void> | null = null;
   private exitError: Error | null = null;
@@ -195,6 +197,7 @@ export class PiRpcProcess extends EventEmitter {
     this.stopping = false;
     this.exitError = null;
     this.stderr = "";
+    this.startupComplete = false;
     this.phase = "unknown";
     this.diagnostic("info", "worker_spawn", { childPid: child.pid });
 
@@ -220,6 +223,18 @@ export class PiRpcProcess extends EventEmitter {
       if (this.stopping || this.child !== child)
         throw this.exitError ?? new Error("Pi RPC startup was stopped");
       await this.request({ type: "get_state" }, 60_000);
+      this.startupComplete = true;
+      const warnings = piStartupDiagnostics(this.stderr).warnings;
+      if (warnings.length) {
+        // Host-authored guidance uses the existing notification surface.
+        this.emit("event", {
+          type: "extension_ui_request",
+          id: "inspire-startup-diagnostics",
+          method: "notify",
+          notifyType: "warning",
+          message: warnings.join("\n"),
+        });
+      }
     } catch (error) {
       // Startup owns an explicit deadline; failed startup cannot strand a writer.
       await this.stop();
@@ -435,11 +450,15 @@ export class PiRpcProcess extends EventEmitter {
     return stopped;
   }
 
-  /** Host-side diagnostics ride along as a `detail` property for the host
-   * log. They never join `message` — that string reaches the browser through
-   * runtime_error events and API error bodies, and raw stderr can carry
-   * anything the child process printed, credentials included. */
+  /** Raw child output stays Host-only. Browser startup failures receive only
+   * recognized resource identities and fixed, actionable guidance. */
   private withStderr(error: Error): Error {
+    if (!this.startupComplete) {
+      const { failures, warnings } = piStartupDiagnostics(this.stderr);
+      const diagnostics = [...failures, ...warnings].join("\n");
+      if (diagnostics && !error.message.includes(diagnostics))
+        error.message = `${diagnostics}\n${error.message}`;
+    }
     const detail = this.stderr.trim();
     return detail
       ? Object.assign(error, { detail: `Pi stderr: ${detail}` })
