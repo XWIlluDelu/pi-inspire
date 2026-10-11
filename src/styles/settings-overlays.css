@@ -1504,6 +1504,11 @@
   animation: float-in var(--dur-standard) var(--ease-standard);
 }
 
+.feedback--leaving {
+  opacity: 0;
+  transition: opacity var(--dur-standard) var(--ease-standard);
+}
+
 .notice--info {
   background: color-mix(in srgb, var(--info) 4%, var(--bg-raised));
   border-left-color: var(--info);

@@ -212,9 +212,11 @@ describe("composer-adjacent status and queued controls", () => {
   });
 });
 describe("composer meta row", () => {
-  it("reveals read-only model/context details on hover, focus and tap without moving focus", () => {
+  it("keeps context hints non-interactive and opens session usage on activation", () => {
     render(<Composer />);
-    const meter = screen.getByLabelText("Context 10 percent full");
+    const meter = screen.getByRole("button", {
+      name: "Session & usage, context 10 percent full",
+    });
     expect(meter).toHaveTextContent("10%");
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     fireEvent.pointerEnter(meter);
@@ -248,9 +250,16 @@ describe("composer meta row", () => {
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     expect(meter).toHaveFocus();
     act(() => meter.blur());
-    fireEvent.click(meter);
-    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+    fireEvent.pointerEnter(meter);
+    expect(
+      within(screen.getByRole("tooltip")).queryByRole("button"),
+    ).toBeNull();
     fireEvent.pointerDown(screen.getByLabelText("Message"));
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    fireEvent.click(meter);
+    expect(store.getState().commandActivities.s1?.at(-1)?.command).toBe(
+      "session",
+    );
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
@@ -300,7 +309,7 @@ describe("composer meta row", () => {
     const meter = screen.getByLabelText("Context usage unknown");
     expect(meter).toHaveTextContent("—");
     expect(meter).not.toHaveAttribute("aria-valuenow");
-    fireEvent.click(meter);
+    fireEvent.pointerEnter(meter);
     expect(screen.getByRole("tooltip")).toHaveTextContent("— / 131,072 tokens");
     expect(screen.getByRole("tooltip")).toHaveTextContent(
       "Updates after the next reply",

@@ -99,41 +99,54 @@ const ContextMeter = memo(function ContextMeter() {
           setOpen(false);
       }}
     >
-      <div
+      <button
+        type="button"
         className={`meter ${tone}`}
-        {...(percent === null
-          ? { role: "img", "aria-label": "Context usage unknown" }
-          : {
-              role: "meter",
-              "aria-label": `Context ${Math.round(percent)} percent full`,
-              "aria-valuemin": 0,
-              "aria-valuemax": 100,
-              "aria-valuenow": Math.round(fillPercent),
-              "aria-valuetext": `${Math.round(percent)}%`,
-            })}
-        tabIndex={0}
+        aria-label={`Session & usage, context ${percent === null ? "unknown" : `${Math.round(percent)} percent full`}`}
         aria-describedby={open ? hintId : undefined}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setOpen(false);
+          void store.runPaletteNativeCommand("/session");
+        }}
       >
-        <svg className="meter__ring" viewBox="0 0 14 14" aria-hidden>
-          <circle className="meter__ring-track" cx="7" cy="7" r={RING_RADIUS} />
-          {percent !== null && (
+        <span
+          className="meter__reading"
+          {...(percent === null
+            ? { role: "img", "aria-label": "Context usage unknown" }
+            : {
+                role: "meter",
+                "aria-label": `Context ${Math.round(percent)} percent full`,
+                "aria-valuemin": 0,
+                "aria-valuemax": 100,
+                "aria-valuenow": Math.round(fillPercent),
+                "aria-valuetext": `${Math.round(percent)}%`,
+              })}
+        >
+          <svg className="meter__ring" viewBox="0 0 14 14" aria-hidden>
             <circle
-              className="meter__ring-fill"
+              className="meter__ring-track"
               cx="7"
               cy="7"
               r={RING_RADIUS}
-              strokeDasharray={`${(fillPercent / 100) * RING_CIRCUMFERENCE} ${RING_CIRCUMFERENCE}`}
-              transform="rotate(-90 7 7)"
             />
-          )}
-        </svg>
-        <span aria-hidden>
-          {percent === null ? "—" : `${Math.round(percent)}%`}
+            {percent !== null && (
+              <circle
+                className="meter__ring-fill"
+                cx="7"
+                cy="7"
+                r={RING_RADIUS}
+                strokeDasharray={`${(fillPercent / 100) * RING_CIRCUMFERENCE} ${RING_CIRCUMFERENCE}`}
+                transform="rotate(-90 7 7)"
+              />
+            )}
+          </svg>
+          <span aria-hidden>
+            {percent === null ? "—" : `${Math.round(percent)}%`}
+          </span>
         </span>
-      </div>
+      </button>
       {open && (
         <div className="meter__hint" id={hintId} role="tooltip">
           {model && (

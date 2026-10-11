@@ -36,7 +36,6 @@ interface RuntimeEventHost {
     generation: number,
     minimumRevision?: number,
   ): Promise<void>;
-  scheduleNoticeDismissal(noticeId: number): void;
 }
 
 /** Owns ordered runtime-event reduction and user-attention correlation.
@@ -285,23 +284,6 @@ export class RuntimeEventController {
       event.sessionStatus,
     );
     if (eventSessionId) {
-      if (event.type === "agent_start" || event.type === "compaction_start") {
-        // The durable checkpoint remains in history. A successful local compact
-        // receipt must not stay pinned under unrelated subsequent conversation.
-        const activities = this.host.state().commandActivities[eventSessionId];
-        const retained = activities?.filter(
-          (activity) =>
-            activity.command !== "compact" || activity.status !== "success",
-        );
-        if (activities && retained && retained.length !== activities.length) {
-          this.host.patch({
-            commandActivities: {
-              ...this.host.state().commandActivities,
-              [eventSessionId]: retained,
-            },
-          });
-        }
-      }
       if (event.type === "agent_start" || event.type === "auto_retry_start") {
         this.armAttention(eventSessionId, "agent");
       } else if (event.type === "compaction_start") {
@@ -442,7 +424,6 @@ export class RuntimeEventController {
       return;
     }
 
-    const before = this.host.state().notices.length;
     const { slice, settle, resync, changed } = reduceEvent(
       this.eventSlice(),
       this.settledKeys,
@@ -451,9 +432,6 @@ export class RuntimeEventController {
     for (const key of settle) this.settledKeys.add(key);
     if (changed) {
       this.host.patch(sessionStatuses ? { ...slice, sessionStatuses } : slice);
-      for (const notice of slice.notices.slice(before)) {
-        this.host.scheduleNoticeDismissal(notice.id);
-      }
     } else if (sessionStatuses) {
       this.host.patch({ sessionStatuses });
     }

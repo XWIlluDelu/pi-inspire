@@ -29,7 +29,7 @@ afterEach(() => {
 
 describe("completion-driven Pi operation observation", () => {
   it.each(["compact", "export"] as const)(
-    "retains a successful /%s result after five minutes with a healthy connection",
+    "observes /%s completion after five minutes without redispatch",
     async (command) => {
       const pending = deferred<RouteResponse>();
       let dispatches = 0;
@@ -59,13 +59,16 @@ describe("completion-driven Pi operation observation", () => {
         },
       });
       await vi.advanceTimersByTimeAsync(0);
-      expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
-        status: "success",
-        message: "Pi completed",
-        ...(command === "export"
-          ? { action: { kind: "copy", value: "/tmp/export.html" } }
-          : {}),
-      });
+      if (command === "export") {
+        expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
+          status: "success",
+          message: "Pi completed",
+          action: { kind: "copy", value: "/tmp/export.html" },
+        });
+      } else {
+        expect(store.getState().commandActivities.s1).toBeUndefined();
+        expect(store.getState().notices.at(-1)?.text).toBe("Pi completed");
+      }
       expect(dispatches).toBe(1);
     },
   );

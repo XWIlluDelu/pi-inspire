@@ -539,10 +539,12 @@ export const CommandPalette = memo(function CommandPalette({
               compact: "Compact context…",
               copy: "Copy last response",
               fork: "Fork from History",
-              session: "Session information",
+              session: "Session & usage",
               reload: "Reload Pi resources",
               quit: "Leave Inspire",
             };
+            const sessionAliases =
+              command.name === "session" ? ["cost", "tokens"] : [];
             return {
               id: `cmd-${command.name}`,
               group: command.source === "builtin" ? "Pi" : "Pi resources",
@@ -550,7 +552,7 @@ export const CommandPalette = memo(function CommandPalette({
                 command.source === "builtin"
                   ? (titles[command.name] ?? `/${command.name}`)
                   : `/${command.name}`,
-              aliases: [command.name, `/${command.name}`],
+              aliases: [command.name, `/${command.name}`, ...sessionAliases],
               default: ["model", "export"].includes(command.name),
               hint:
                 command.execution === "terminal"

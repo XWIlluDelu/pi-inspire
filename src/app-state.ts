@@ -58,11 +58,20 @@ export interface NativeCommandActivity {
   title: string;
   message: string;
   createdAt?: number;
-  details?: Array<{ label: string; value: string }>;
+  details?: Array<{ id?: string; label: string; value: string }>;
   download?: { id: string; fileName: string };
   action?:
     | { kind: "open-terminal"; label: string; value?: string }
     | { kind: "copy"; label: string; value: string };
+}
+
+export function isCommandQuery(
+  activity: Pick<NativeCommandActivity, "command" | "status">,
+): boolean {
+  return (
+    activity.status === "info" &&
+    ["session", "name", "quit"].includes(activity.command)
+  );
 }
 
 export interface NativeCommandUiRequest {

@@ -1,18 +1,20 @@
 // @vitest-environment jsdom
 import {
+  act,
   fireEvent,
   render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   HostUpdateStatus,
   PiUpdateCheckResponse,
   UpdateCheckResponse,
 } from "../../shared/contracts";
 import { App } from "../../src/App";
+import { Notices } from "../../src/components/Notices";
 import { store } from "../../src/store";
 import { sessionPage } from "./fixtures/session-catalog";
 import {
@@ -108,6 +110,46 @@ describe("right-corner notices", () => {
     await store.init("token");
     FakeWebSocket.instances.at(-1)?.open();
   }
+
+  afterEach(() => vi.useRealTimers());
+
+  it("renews duplicate INFO in place, fades it, and retains warning/error diagnostics", async () => {
+    await initialize();
+    vi.useFakeTimers();
+    render(<Notices onViewUpdates={() => undefined} />);
+    const socket = FakeWebSocket.instances.at(-1)!;
+    let id = 0;
+    const notify = (notifyType: string, message: string) =>
+      act(() =>
+        socket.emit({
+          type: "extension_ui_request",
+          id: `notice-${++id}`,
+          method: "notify",
+          notifyType,
+          message,
+        }),
+      );
+    notify("info", "Indexing finished");
+    const notice = screen.getByText("Indexing finished").closest(".notice")!;
+    act(() => vi.advanceTimersByTime(7_000));
+    notify("info", "Indexing finished");
+    expect(screen.getByText("Indexing finished").closest(".notice")).toBe(
+      notice,
+    );
+    expect(store.getState().notices).toHaveLength(1);
+    notify("warning", "Credentials need attention");
+    notify("error", "Reload failed");
+    notify("error", "Reload failed");
+    act(() => vi.advanceTimersByTime(7_999));
+    expect(notice).not.toHaveClass("feedback--leaving");
+    act(() => vi.advanceTimersByTime(1));
+    expect(notice).toHaveClass("feedback--leaving");
+    act(() => vi.advanceTimersByTime(150));
+    expect(screen.queryByText("Indexing finished")).not.toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(120_000));
+    expect(screen.getByText("Credentials need attention")).toBeVisible();
+    expect(screen.getAllByText("Reload failed")).toHaveLength(1);
+  });
 
   it("copies and closes warning, error, and informational notices", async () => {
     await initialize();

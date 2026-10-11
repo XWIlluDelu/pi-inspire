@@ -3,6 +3,7 @@ import { messageFallbackCorrelation } from "../shared/message-identity";
 import {
   type AppState,
   emptyResourceInspectionState,
+  isCommandQuery,
   transcriptRevisionContains,
 } from "./app-state";
 import { asMessage, type ChatMessage, messageKey } from "./events";
@@ -183,6 +184,17 @@ export function snapshotLifecyclePatch(
   switch (transition.kind) {
     case "session-changed":
       return {
+        // Readouts belong to this inspection; operational results keep their partition.
+        commandActivities: Object.fromEntries(
+          Object.entries(previous.commandActivities).map(
+            ([sessionId, activities]) => [
+              sessionId,
+              sessionId === previous.sessionId
+                ? activities.filter((activity) => !isCommandQuery(activity))
+                : activities,
+            ],
+          ),
+        ),
         editorText: null,
         pendingAction: null,
         windowTitle: null,

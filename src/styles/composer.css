@@ -107,7 +107,7 @@
 .command-activity__details {
   margin: var(--space-2) 0 0;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
   gap: 4px var(--space-3);
 }
 
@@ -127,11 +127,43 @@
 .command-activity__details dd {
   min-width: 0;
   margin: 0;
-  overflow: hidden;
   color: var(--ink);
   font-family: var(--font-mono);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.command-activity__session {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-4);
+  margin: var(--space-1) 0 0;
+  color: var(--ink);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.command-activity__session dt {
+  color: var(--muted);
+}
+
+.command-activity__session dd {
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.command-activity__usage-cell {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.command-activity__usage-cell dt {
+  flex-shrink: 0;
 }
 
 .command-activity__action {
@@ -708,16 +740,27 @@
 
 /* Context gauge: a small ring plus percent, both taking the occupancy tone —
    calm while low, warning past 60%, error past 85%. */
-.meter {
+.meter__reading {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+}
+
+.meter {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
   padding: 0 var(--space-2);
   min-height: 32px;
   font-size: var(--text-xs);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   border-radius: var(--radius-control);
+}
+
+.meter:hover {
+  background: var(--bg-control);
 }
 
 .meter:focus-visible {

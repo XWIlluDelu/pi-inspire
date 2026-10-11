@@ -169,7 +169,7 @@ test("ranks command destinations and opens the model picker without consuming a 
   const filter = palette.getByLabel("Filter commands");
   for (const [query, title] of [
     ["settings", "Settings"],
-    ["cost", "Session information"],
+    ["cost", "Session & usage"],
     ["mdl", "Choose model"],
   ]) {
     await filter.fill(query!);
