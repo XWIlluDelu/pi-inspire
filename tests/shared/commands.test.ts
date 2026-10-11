@@ -1,42 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  PI_NATIVE_COMMANDS,
   parseCommandInvocation,
   parseNativeCommand,
 } from "../../shared/commands";
 
-describe("Pi native command inventory", () => {
-  it("covers Pi's built-in interactive commands without duplicate names", () => {
-    const names = PI_NATIVE_COMMANDS.map((command) => command.name);
-    expect(new Set(names).size).toBe(names.length);
-    expect(names).toEqual([
-      "settings",
-      "model",
-      "tree",
-      "thinking",
-      "scoped-models",
-      "export",
-      "import",
-      "share",
-      "bug",
-      "copy",
-      "name",
-      "session",
-      "changelog",
-      "hotkeys",
-      "fork",
-      "clone",
-      "trust",
-      "login",
-      "logout",
-      "new",
-      "compact",
-      "resume",
-      "reload",
-      "quit",
-    ]);
-  });
-
+describe("Pi native command parsing", () => {
   it("parses a leading command token and preserves arguments", () => {
     expect(
       parseCommandInvocation("  /compact  keep exact paths\nnext  "),

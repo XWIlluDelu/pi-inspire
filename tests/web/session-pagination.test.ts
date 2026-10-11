@@ -1,32 +1,21 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AppStore } from "../../src/store";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
-  FakeWebSocket,
   installFakeWebSocket,
   installFetch,
   jsonBody,
   sessionSummary,
 } from "./helpers";
+import { initStore } from "./store-fixture";
 
 function emptyBootstrap(preferences = bootstrapPayload().preferences) {
   return bootstrapPayload({
     preferences,
     snapshot: { active: null, runState: "idle", sessionStatuses: {} },
   });
-}
-
-async function initStore(): Promise<{
-  store: AppStore;
-  socket: FakeWebSocket;
-}> {
-  const store = new AppStore();
-  await store.init("token");
-  const socket = FakeWebSocket.instances.at(-1)!;
-  socket.open();
-  return { store, socket };
 }
 
 function offsetOf(url: string): number {
@@ -80,14 +69,13 @@ describe("session list pagination", () => {
         const offset = offsetOf(url);
         requests.push(offset);
         return {
-          body: {
-            sessions: (basePages.get(offset) ?? []).map((id) =>
+          body: sessionPage(
+            (basePages.get(offset) ?? []).map((id) =>
               sessionSummary({ id, cwd: `/work/${id}` }),
             ),
-            total: 8,
+            8,
             offset,
-            limit: 40,
-          },
+          ),
         };
       }
       return undefined;
@@ -151,37 +139,26 @@ describe("session list pagination", () => {
         const offset = Number(parsed.searchParams.get("offset") ?? 0);
         if (query === "needle") {
           return {
-            body: {
-              sessions: [
+            body: sessionPage(
+              [
                 sessionSummary({
                   id: offset === 0 ? "match" : "current-older",
                 }),
               ],
-              total: 2,
+              2,
               offset,
-              limit: 40,
-            },
+            ),
           };
         }
         if (offset === 0) {
           return {
-            body: {
-              sessions: [sessionSummary({ id: "recent" })],
-              total: 2,
-              offset: 0,
-              limit: 40,
-            },
+            body: sessionPage([sessionSummary({ id: "recent" })], 2),
           };
         }
         olderCalls += 1;
         await olderGate;
         return {
-          body: {
-            sessions: [sessionSummary({ id: "stale-older" })],
-            total: 2,
-            offset: 1,
-            limit: 40,
-          },
+          body: sessionPage([sessionSummary({ id: "stale-older" })], 2, 1),
         };
       }
       return undefined;
@@ -247,22 +224,16 @@ describe("session list pagination", () => {
         const offset = offsetOf(url);
         if (offset === 0)
           return {
-            body: {
-              sessions: [sessionSummary({ id: "recent" })],
-              total: 2,
-              offset,
-              limit: 40,
-            },
+            body: sessionPage([sessionSummary({ id: "recent" })], 2, offset),
           };
         olderStarted();
         await olderGate;
         return {
-          body: {
-            sessions: [sessionSummary({ id: "obsolete-page" })],
-            total: 2,
+          body: sessionPage(
+            [sessionSummary({ id: "obsolete-page" })],
+            2,
             offset,
-            limit: 40,
-          },
+          ),
         };
       }
       return undefined;
@@ -300,12 +271,7 @@ describe("session list pagination", () => {
         const offset = offsetOf(url);
         if (offset === 0)
           return {
-            body: {
-              sessions: [sessionSummary({ id: "kept" })],
-              total: 2,
-              offset,
-              limit: 40,
-            },
+            body: sessionPage([sessionSummary({ id: "kept" })], 2, offset),
           };
         attempts += 1;
         if (attempts === 1)
@@ -314,12 +280,7 @@ describe("session list pagination", () => {
             body: { error: "catalog temporarily unavailable" },
           };
         return {
-          body: {
-            sessions: [sessionSummary({ id: "retried" })],
-            total: 2,
-            offset,
-            limit: 40,
-          },
+          body: sessionPage([sessionSummary({ id: "retried" })], 2, offset),
         };
       }
       return undefined;
@@ -370,8 +331,8 @@ describe("session list pagination", () => {
         const offset = offsetOf(url);
         offsets.push(offset);
         return {
-          body: {
-            sessions: [
+          body: sessionPage(
+            [
               sessionSummary({
                 id: refreshing
                   ? "refreshed"
@@ -380,10 +341,9 @@ describe("session list pagination", () => {
                     : "older",
               }),
             ],
-            total: refreshing ? 1 : 2,
+            refreshing ? 1 : 2,
             offset,
-            limit: 40,
-          },
+          ),
         };
       }
       return undefined;
@@ -497,12 +457,12 @@ describe("session list pagination", () => {
         offsets.push([offset, limit]);
         const ids = currentIds.slice(offset, offset + limit);
         return {
-          body: {
-            sessions: ids.map((id) => sessionSummary({ id })),
-            total: currentIds.length,
+          body: sessionPage(
+            ids.map((id) => sessionSummary({ id })),
+            currentIds.length,
             offset,
             limit,
-          },
+          ),
         };
       }
       return undefined;
@@ -581,7 +541,7 @@ describe("session list pagination", () => {
         return { body: { sessions: ids.map((id) => sessionSummary({ id })) } };
       }
       if (url.startsWith("/api/sessions?")) {
-        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+        return { body: sessionPage([], 0) };
       }
       return undefined;
     });
@@ -641,12 +601,7 @@ describe("session list pagination", () => {
         baseCalls += 1;
         if (phase !== "initial" && baseCalls > 1) preserving = true;
         return {
-          body: {
-            sessions: [sessionSummary({ id: "confirmed-base" })],
-            total: 1,
-            offset: 0,
-            limit: 40,
-          },
+          body: sessionPage([sessionSummary({ id: "confirmed-base" })], 1),
         };
       }
       return undefined;
@@ -713,12 +668,7 @@ describe("session list pagination", () => {
       }
       if (url.startsWith("/api/sessions?")) {
         return {
-          body: {
-            sessions: [sessionSummary({ id: "uncommitted-base" })],
-            total: 1,
-            offset: 0,
-            limit: 40,
-          },
+          body: sessionPage([sessionSummary({ id: "uncommitted-base" })], 1),
         };
       }
       return undefined;
@@ -766,12 +716,7 @@ describe("session list pagination", () => {
       }
       if (url.startsWith("/api/sessions?"))
         return {
-          body: {
-            sessions: [sessionSummary({ id: "base-row" })],
-            total: 1,
-            offset: 0,
-            limit: 40,
-          },
+          body: sessionPage([sessionSummary({ id: "base-row" })], 1),
         };
       return undefined;
     });
@@ -837,14 +782,14 @@ describe("session list pagination", () => {
         }
         const source = preserving ? refreshedIds : oldIds;
         return {
-          body: {
-            sessions: source
+          body: sessionPage(
+            source
               .slice(offset, offset + limit)
               .map((id) => sessionSummary({ id })),
-            total: source.length,
+            source.length,
             offset,
             limit,
-          },
+          ),
         };
       }
       return undefined;
@@ -912,12 +857,12 @@ describe("session list pagination", () => {
         const limit = Number(parsed.searchParams.get("limit") ?? 40);
         if (query === "new-query")
           return {
-            body: {
-              sessions: [sessionSummary({ id: "new-result" })],
-              total: 1,
-              offset: 0,
+            body: sessionPage(
+              [sessionSummary({ id: "new-result" })],
+              1,
+              0,
               limit,
-            },
+            ),
           };
         if (preserving) {
           preserveOffsets.push(offset);
@@ -927,14 +872,14 @@ describe("session list pagination", () => {
           }
         }
         return {
-          body: {
-            sessions: ids
+          body: sessionPage(
+            ids
               .slice(offset, offset + limit)
               .map((id) => sessionSummary({ id })),
-            total: ids.length,
+            ids.length,
             offset,
             limit,
-          },
+          ),
         };
       }
       return undefined;
@@ -994,14 +939,14 @@ describe("session list pagination", () => {
         const offset = Number(parsed.searchParams.get("offset") ?? 0);
         const limit = Number(parsed.searchParams.get("limit") ?? 40);
         return {
-          body: {
-            sessions: ids
+          body: sessionPage(
+            ids
               .slice(offset, offset + limit)
               .map((id) => sessionSummary({ id })),
-            total: ids.length,
+            ids.length,
             offset,
             limit,
-          },
+          ),
         };
       }
       return undefined;
@@ -1060,14 +1005,14 @@ describe("session list pagination", () => {
         const offset = Number(parsed.searchParams.get("offset") ?? 0);
         const limit = Number(parsed.searchParams.get("limit") ?? 40);
         return {
-          body: {
-            sessions: ids
+          body: sessionPage(
+            ids
               .slice(offset, offset + limit)
               .map((id) => sessionSummary({ id })),
-            total: ids.length,
+            ids.length,
             offset,
             limit,
-          },
+          ),
         };
       }
       return undefined;
@@ -1120,12 +1065,10 @@ describe("session list pagination", () => {
         const parsed = new URL(url, "http://local");
         const query = parsed.searchParams.get("q") ?? "";
         return {
-          body: {
-            sessions: [sessionSummary({ id: query ? "query-result" : "base" })],
-            total: 1,
-            offset: 0,
-            limit: 40,
-          },
+          body: sessionPage(
+            [sessionSummary({ id: query ? "query-result" : "base" })],
+            1,
+          ),
         };
       }
       return undefined;

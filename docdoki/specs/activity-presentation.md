@@ -9,7 +9,7 @@ covers:
   - server/session-projection.ts
   - tests/web/transcript-{fold,paging,inspection}.test.tsx
   - tests/web/events.test.ts
-  - tests/server/runtime-projection.test.ts
+  - tests/server/runtime-transcript.test.ts
 ---
 
 # Activity disclosure

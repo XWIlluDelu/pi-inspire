@@ -20,7 +20,6 @@ import {
   type RouteResponse,
   TEST_SNAPSHOT_DIGEST,
 } from "./helpers";
-
 import { baseRoutes, initStore, requestToken } from "./store-fixture";
 
 describe("resource previews", () => {
@@ -512,13 +511,9 @@ describe("resource previews", () => {
       type: "snapshot",
       data: activeSnapshot({
         transcriptPage: {
-          sessionId: "s1",
-          revision: 1,
           viewId: "view-branch-b",
           effectiveLeafId: "branch-b",
           messages: [],
-          hasOlder: false,
-          olderCursor: null,
         },
         effectiveLeafId: "branch-b",
       }),

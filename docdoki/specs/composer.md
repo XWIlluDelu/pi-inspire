@@ -9,8 +9,8 @@ covers:
   - src/styles/*.css
   - tests/server/{attachments,attachment-retention,composer-history*,runtime-composer-artifacts,runtime-pending*,runtime-compaction,app}.test.ts
   - tests/shared/{composer-artifact-references,pending-contracts}.test.ts
-  - tests/web/{composer*,session-drafts,store-composer,transcript-inspection,welcome*,model-selector,model-store}.test.ts*
-  - tests/browser/{workbench,model-selection,project-file-picker,pending-input}.spec.ts
+  - tests/web/{composer*,session-drafts,native-commands,transcript-actions,welcome*,model-selector,model-store}.test.ts*
+  - tests/browser/{composer,model-selection,project-file-picker,pending-input}.spec.ts
 ---
 
 # Conversation composer

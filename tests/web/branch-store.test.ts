@@ -7,6 +7,7 @@ import {
   setSessionDraft,
 } from "../../src/session-drafts";
 import { AppStore } from "../../src/store";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -28,8 +29,7 @@ async function setup(
   installFetch(async (url, init) => {
     if (url.startsWith("/api/bootstrap"))
       return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
-    if (url.startsWith("/api/sessions?"))
-      return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+    if (url.startsWith("/api/sessions?")) return { body: sessionPage([], 0) };
     return route(url, init);
   });
   const store = new AppStore();
@@ -43,15 +43,11 @@ async function setup(
 function moveView(store: AppStore, viewId = "view-2"): void {
   const snapshot = activeSnapshot({
     transcriptPage: {
-      sessionId: "s1",
       revision: 2,
       viewId,
-      incarnation: "projection-1",
       appendFromRevision: 2,
       effectiveLeafId: "u1",
       messages: [],
-      hasOlder: false,
-      olderCursor: null,
     },
     effectiveLeafId: "u1",
   });
@@ -190,7 +186,6 @@ describe("branch request view ownership", () => {
           effectiveLeafId: "a2",
           transcriptPage: {
             revision: 2,
-            appendFromRevision: 1,
             effectiveLeafId: "a2",
           },
         }),
@@ -230,7 +225,6 @@ describe("branch request view ownership", () => {
           effectiveLeafId: "a2",
           transcriptPage: {
             revision: 2,
-            appendFromRevision: 1,
             effectiveLeafId: "a2",
           },
         }),
@@ -425,24 +419,6 @@ describe("branch request view ownership", () => {
           branchActionId: null,
         });
       }
-    },
-  );
-
-  it.each(["navigate", "fork"] as const)(
-    "routes an owned branch %s 401 through auth loss",
-    async (kind) => {
-      const store = await setup((url) => {
-        if (url.startsWith(`/api/branches/${kind}`))
-          return { status: 401, body: { error: "unauthorized" } };
-        return undefined;
-      });
-      if (kind === "navigate") await store.navigateBranch("a1", "switch");
-      else await store.forkBranch("u1");
-      expect(store.getState()).toMatchObject({
-        needsToken: true,
-        connection: "offline",
-        error: null,
-      });
     },
   );
 });

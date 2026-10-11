@@ -1,7 +1,29 @@
-import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import { expect, type Page, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
+import { pairedPage } from "./support/navigation";
 
 test.use({ serviceWorkers: "block" });
+async function namedSession(page: Page) {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await pairedPage(page);
+  const response = await page.request.post("/api/sessions/new", {
+    data: {
+      cwd: browserWorkspace,
+      name: "Calibration notes for this session with a long title covering model selection, tool execution, and follow-up analysis",
+    },
+  });
+  expect(response.ok()).toBe(true);
+  await page.reload();
+  const title = page.getByRole("button", { name: /^Session actions:/ });
+  await expect(title).toContainText("Calibration notes");
+  const composer = page.getByRole("textbox", {
+    name: "Message",
+    exact: true,
+  });
+  await composer.fill("Keep the unfinished comparison");
+  return { title, composer };
+}
 for (const touch of [false, true]) {
   test.describe(touch ? "touch title actions" : "desktop title actions", () => {
     test.use({
@@ -10,29 +32,10 @@ for (const touch of [false, true]) {
         : { width: 1280, height: 900 },
       hasTouch: touch,
     });
-    test("renames in place and downloads from independent title and palette export entries", async ({
+    test("anchors in-place rename, accepts Enter/outside click and restores keyboard focus", async ({
       page,
-    }, info) => {
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      await page.goto("/");
-      await page.getByLabel("Access token").fill("inspire-browser-test-token");
-      await page.getByRole("button", { name: "Pair", exact: true }).click();
-      await expect(page.getByRole("main")).toBeVisible();
-      const response = await page.request.post("/api/sessions/new", {
-        data: {
-          cwd: browserWorkspace,
-          name: "Calibration notes for this session with a long title covering model selection, tool execution, and follow-up analysis",
-        },
-      });
-      expect(response.ok()).toBe(true);
-      await page.reload();
-      const title = page.getByRole("button", { name: /^Session actions:/ });
-      await expect(title).toContainText("Calibration notes");
-      const composer = page.getByRole("textbox", {
-        name: "Message",
-        exact: true,
-      });
-      await composer.fill("Keep the unfinished comparison");
+    }) => {
+      const { title, composer } = await namedSession(page);
       const rect = (await title.boundingBox())!;
       expect(rect.width).toBeGreaterThanOrEqual(44);
       const x = rect.x + Math.min(60, rect.width / 2);
@@ -46,9 +49,7 @@ for (const touch of [false, true]) {
       const menuBox = (await menu.boundingBox())!;
       expect(Math.abs(menuBox.x - rect.x)).toBeLessThanOrEqual(1);
       expect(menuBox.y).toBeGreaterThanOrEqual(rect.y + rect.height);
-      await page.screenshot({
-        path: info.outputPath(`title-${touch ? "320" : "desktop"}-menu.png`),
-      });
+
       await rename.click();
       const input = page.getByRole("textbox", { name: "Session name" });
       await expect(input).toBeFocused();
@@ -79,114 +80,136 @@ for (const touch of [false, true]) {
       await expect(title).toContainText("Saved outside the editor");
       await expect(composer).toHaveValue("Keep the unfinished comparison");
 
-      let releaseSave!: () => void;
-      const saveGate = new Promise<void>((resolve) => {
-        releaseSave = resolve;
-      });
-      await page.route(
-        "**/api/sessions/rename",
-        async (route) => {
-          await saveGate;
-          await route.continue();
-        },
-        { times: 1 },
-      );
-      await title.click();
-      await rename.click();
-      await input.fill("Earlier blur save");
-      const saving = page.waitForResponse("**/api/sessions/rename");
-      const requested = page.waitForRequest("**/api/sessions/rename");
-      await composer.click();
-      await requested;
-      await input.fill("Newer name still being edited");
-      const refreshed = page.waitForResponse(
-        (response) => new URL(response.url()).pathname === "/api/sessions",
-      );
-      releaseSave();
-      await saving;
-      await refreshed;
-      await expect(input).toBeFocused();
-      await expect(input).toHaveValue("Newer name still being edited");
-      await input.press("Enter");
-      await expect(title).toContainText("Newer name still being edited");
-      await expect(composer).toHaveValue("Keep the unfinished comparison");
-
       await title.focus();
       await page.keyboard.press("Enter");
       await expect(rename).toBeFocused();
       await page.keyboard.press("Escape");
       await expect(title).toBeFocused();
+    });
+  });
+}
+test("a delayed blur save cannot replace a newer name still being edited", async ({
+  page,
+}) => {
+  const { title, composer } = await namedSession(page);
+  const rename = page.getByRole("menuitem", { name: "Rename session" });
+  const input = page.getByRole("textbox", { name: "Session name" });
+  let releaseSave!: () => void;
+  const saveGate = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  await page.route(
+    "**/api/sessions/rename",
+    async (route) => {
+      await saveGate;
+      await route.continue();
+    },
+    { times: 1 },
+  );
+  await title.click();
+  await rename.click();
+  await input.fill("Earlier blur save");
+  const saving = page.waitForResponse("**/api/sessions/rename");
+  const requested = page.waitForRequest("**/api/sessions/rename");
+  await composer.click();
+  await requested;
+  await input.fill("Newer name still being edited");
+  const refreshed = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/api/sessions",
+  );
+  releaseSave();
+  await saving;
+  await refreshed;
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("Newer name still being edited");
+  await input.press("Enter");
+  await expect(title).toContainText("Newer name still being edited");
+  await expect(composer).toHaveValue("Keep the unfinished comparison");
+});
+test("title/palette exports download the selected format and branch without consuming draft attachments", async ({
+  page,
+}, info) => {
+  const { title, composer } = await namedSession(page);
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "draft.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("Preserve the export draft artifact"),
+  });
+  await expect(page.locator(".attachment--ready")).toBeVisible();
+  await title.click();
+  await page
+    .getByRole("menuitem", { name: "Export session…", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Export session",
+    exact: true,
+  });
+  await expect(
+    dialog.getByRole("group", { name: "Export format" }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("radio", { name: "HTML Whole session" }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(title).toBeFocused();
+
+  const exports: unknown[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/sessions/export")
+      exports.push(request.postDataJSON());
+  });
+  for (const format of ["html", "jsonl"]) {
+    if (format === "html") {
       await title.click();
       await page
         .getByRole("menuitem", { name: "Export session…", exact: true })
         .click();
-      const dialog = page.getByRole("dialog", {
-        name: "Export session",
-        exact: true,
-      });
-      await expect(
-        dialog.getByRole("group", { name: "Export format" }),
-      ).toBeVisible();
-      await expect(dialog.getByRole("textbox")).toHaveCount(0);
+    } else {
+      await page
+        .getByRole("button", { name: "Open command palette", exact: true })
+        .click();
+      const palette = page.getByRole("dialog", { name: "Command palette" });
+      await palette.getByLabel("Filter commands").fill("export");
+      await palette.getByRole("option", { name: /Export session/ }).click();
+      await expect(palette).toHaveCount(0);
+      await dialog.getByRole("radio", { name: "JSONL Current branch" }).check();
+    }
+    await expect(dialog.getByRole("textbox")).toHaveCount(0);
+
+    const downloaded = page.waitForEvent("download");
+    if (format === "html") {
       await expect(
         dialog.getByRole("radio", { name: "HTML Whole session" }),
       ).toBeFocused();
-      await page.keyboard.press("Escape");
-      await expect(dialog).toHaveCount(0);
-      await expect(title).toBeFocused();
-
-      const exports: unknown[] = [];
-      page.on("request", (request) => {
-        if (new URL(request.url()).pathname === "/api/sessions/export")
-          exports.push(request.postDataJSON());
-      });
-      for (const format of ["html", "jsonl"]) {
-        if (format === "html") {
-          await title.click();
-          await page
-            .getByRole("menuitem", { name: "Export session…", exact: true })
-            .click();
-        } else {
-          await page
-            .getByRole("button", { name: "Open command palette", exact: true })
-            .click();
-          const palette = page.getByRole("dialog", { name: "Command palette" });
-          await palette.getByLabel("Filter commands").fill("export");
-          await palette.getByRole("option", { name: /Export session/ }).click();
-          await expect(palette).toHaveCount(0);
-          await dialog
-            .getByRole("radio", { name: "JSONL Current branch" })
-            .check();
-        }
-        await expect(dialog.getByRole("textbox")).toHaveCount(0);
-        await page.screenshot({
-          path: info.outputPath(
-            `export-${touch ? "320" : "desktop"}-${format}.png`,
-          ),
-        });
-        const downloaded = page.waitForEvent("download");
-        if (format === "html") await page.keyboard.press("Enter");
-        else
-          await dialog
-            .getByRole("button", { name: "Download", exact: true })
-            .click();
-        const download = await downloaded;
-        expect(download.suggestedFilename()).toMatch(
-          new RegExp(`\\.${format}$`),
-        );
-        expect(await download.failure()).toBeNull();
-        await expect(dialog).toHaveCount(0);
-        await expect(composer).toHaveValue("Keep the unfinished comparison");
-        await expect(
-          format === "html"
-            ? title
-            : page.getByRole("button", {
-                name: "Open command palette",
-                exact: true,
-              }),
-        ).toBeFocused();
-      }
-      expect(exports).toMatchObject([{ format: "html" }, { format: "jsonl" }]);
-    });
-  });
-}
+      await page.keyboard.press("Enter");
+    } else
+      await dialog
+        .getByRole("button", { name: "Download", exact: true })
+        .click();
+    const download = await downloaded;
+    expect(download.suggestedFilename()).toMatch(new RegExp(`\\.${format}$`));
+    expect(await download.failure()).toBeNull();
+    if (format === "jsonl") {
+      const path = info.outputPath("branch-copy.jsonl");
+      await download.saveAs(path);
+      const records = (await readFile(path, "utf8"))
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      expect(records[0]).toMatchObject({ type: "session", version: 3 });
+    }
+    await expect(page.locator(".attachment")).toContainText("draft.txt");
+    await expect(dialog).toHaveCount(0);
+    await expect(composer).toHaveValue("Keep the unfinished comparison");
+    await expect(
+      format === "html"
+        ? title
+        : page.getByRole("button", {
+            name: "Open command palette",
+            exact: true,
+          }),
+    ).toBeFocused();
+  }
+  expect(exports).toMatchObject([{ format: "html" }, { format: "jsonl" }]);
+});

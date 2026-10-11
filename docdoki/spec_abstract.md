@@ -59,8 +59,8 @@ isolation from Inspire. [[resource-preview]] defines the capability and lifecycl
 ## Current work and gaps
 
 The Pi 1.0 core/native and frontend quality review is complete. It repaired bounded live output,
-duplicate Git observations and canonical file selection, reconciled tests and documentation, and
-consolidated the round's history.
+duplicate Git observations and canonical file selection, reconciled documentation, and consolidated
+tests by behavior and history by semantic outcome.
 
 [[pi-capability-gaps]] owns remaining capability work. Known gaps include
 native setting-persistence feedback and scope disclosure, startup/resource diagnostics, extension

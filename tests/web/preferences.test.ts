@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultInterfaceSettings } from "../../shared/contracts";
 import { AppStore } from "../../src/store";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -20,8 +21,7 @@ describe("preference persistence", () => {
     installFakeWebSocket();
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap")) return { body: bootstrapPayload() };
-      if (url.startsWith("/api/sessions"))
-        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+      if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
       if (url.startsWith("/api/preferences") && init.method === "PATCH") {
         saved.push(jsonBody(init));
         return { body: jsonBody(init) };
@@ -40,8 +40,7 @@ describe("preference persistence", () => {
           }),
         };
       }
-      if (url.startsWith("/api/sessions"))
-        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+      if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
       return undefined;
     });
     const store = new AppStore();
@@ -114,8 +113,7 @@ describe("settings reset", () => {
         patches.push(patch);
         return { body: { ...initial, ...patch } };
       }
-      if (url.startsWith("/api/sessions"))
-        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+      if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
       return undefined;
     });
     const appStore = new AppStore();
@@ -151,7 +149,7 @@ describe("launch behavior", () => {
         return { body: activeSnapshot({ sessionId: summary.id }) };
       if (url.startsWith("/api/sessions")) {
         return {
-          body: { sessions: [summary], total: 1, offset: 0, limit: 40 },
+          body: sessionPage([summary], 1),
         };
       }
       return undefined;
@@ -191,7 +189,7 @@ describe("launch behavior", () => {
       if (url.startsWith("/api/sessions")) {
         await catalogGate;
         return {
-          body: { sessions: [previous], total: 1, offset: 0, limit: 40 },
+          body: sessionPage([previous], 1),
         };
       }
       return undefined;
@@ -222,12 +220,7 @@ describe("launch behavior", () => {
       }
       if (url.startsWith("/api/sessions")) {
         return {
-          body: {
-            sessions: [sessionSummary()],
-            total: 1,
-            offset: 0,
-            limit: 40,
-          },
+          body: sessionPage([sessionSummary()], 1),
         };
       }
       return undefined;

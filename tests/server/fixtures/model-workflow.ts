@@ -1,34 +1,17 @@
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { vi } from "vitest";
 import { ProjectTrustStore } from "../../../server/pi-runtime.js";
+import { nativePiWorkspace, stubNativePiEnvironment } from "./native-pi.js";
 
 export async function modelWorkflowFixture() {
-  const root = await realpath(
-    await mkdtemp(join(tmpdir(), "inspire-model-workflow-")),
-  );
-  const agent = join(root, "agent");
-  const sessions = join(root, "sessions");
+  const workspace = await nativePiWorkspace("inspire-model-workflow-", {});
+  const { root, agent, sessions } = workspace;
   const events = join(root, "events");
-  for (const [key, value] of Object.entries({
-    HOME: root,
-    USERPROFILE: root,
-    PI_CODING_AGENT_DIR: agent,
-    PI_CODING_AGENT_SESSION_DIR: sessions,
-    PI_OFFLINE: "1",
-    PI_SKIP_VERSION_CHECK: "1",
-    PI_TELEMETRY: "0",
+  stubNativePiEnvironment({
+    ...workspace.env,
     INSPIRE_MODEL_FIXTURE_EVENTS: events,
-    XDG_CONFIG_HOME: join(root, "config"),
-    XDG_CACHE_HOME: join(root, "cache"),
-    XDG_STATE_HOME: join(root, "state"),
-  }))
-    vi.stubEnv(key, value);
-  await mkdir(agent, { recursive: true });
-  await mkdir(sessions);
-  await writeFile(join(agent, "auth.json"), "{}");
+  });
   await writeFile(
     join(agent, "settings.json"),
     JSON.stringify({

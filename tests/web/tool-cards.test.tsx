@@ -146,28 +146,6 @@ describe("saved tool resources", () => {
 });
 
 describe("native Pi tool cards", () => {
-  it.each(["bash", "powershell"])(
-    "renders %s as a native terminal card",
-    (name) => {
-      const { container } = render(
-        card(
-          call(name, { command: "echo ready" }),
-          result("\u001b[32mReady\u001b[0m"),
-        ),
-      );
-      expect(
-        container.querySelector(`[data-tool-rule="inspire.pi.${name}"]`),
-      ).not.toBeNull();
-      expect(screen.getByRole("group", { name: "Command" })).toHaveTextContent(
-        "echo ready",
-      );
-      expect(screen.getByRole("group", { name: "Output" })).toHaveTextContent(
-        "Ready",
-      );
-      expect(screen.queryByText("Arguments")).not.toBeInTheDocument();
-    },
-  );
-
   it("retains an unpaired result's text, image and structured data without inventing input", async () => {
     render(
       <UnpairedToolResultRow
@@ -393,84 +371,6 @@ describe("native Pi tool cards", () => {
       .closest(".card") as HTMLElement;
     expect(within(custom).getByText("Arguments")).toBeInTheDocument();
     expect(within(custom).getByText("custom output")).toBeInTheDocument();
-  });
-
-  it("opens an inline native read image in the existing preview", () => {
-    const { container } = render(
-      card(call("read", { path: "assets/pixel.png" }), {
-        role: "toolResult",
-        content: [
-          { type: "text", text: "Read image file [image/png]" },
-          { type: "image", data: "cG5n", mimeType: "image/png" },
-        ],
-        isError: false,
-      }),
-    );
-
-    const image = screen.getByRole("img", { name: "assets/pixel.png" });
-    expect(image).toHaveAttribute("src", "data:image/png;base64,cG5n");
-    expect(container.querySelector(".tool-presentation")).toHaveAttribute(
-      "data-tool-rule",
-      "inspire.pi.read",
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Preview assets/pixel.png" }),
-    );
-    expect(
-      screen.getByRole("dialog", { name: "Image preview" }),
-    ).toBeInTheDocument();
-  });
-
-  it("renders a successful edit from Pi's persisted patch", () => {
-    const patch = [
-      "--- src/app.ts",
-      "+++ src/app.ts",
-      "@@ -1 +1 @@",
-      "-const value = 1;",
-      "+const value = 2;",
-      "",
-    ].join("\n");
-    const { container } = render(
-      card(
-        call("edit", {
-          path: "src/app.ts",
-          edits: [{ oldText: "requested fragment", newText: "replacement" }],
-        }),
-        result("Successfully replaced 1 block(s) in src/app.ts.", { patch }),
-      ),
-    );
-
-    expect(screen.getByText("Applied changes")).toBeInTheDocument();
-    expect(container.querySelector(".diff__lines")).not.toBeNull();
-    expect(container.querySelectorAll(".diff__line--del")).toHaveLength(1);
-    expect(container.querySelectorAll(".diff__line--add")).toHaveLength(1);
-    expect(screen.queryByText("Requested replacement")).not.toBeInTheDocument();
-    expect(screen.queryByText("requested fragment")).not.toBeInTheDocument();
-  });
-
-  it("groups grep matches instead of exposing argument JSON", () => {
-    const { container } = render(
-      card(
-        call("grep", {
-          pattern: "needle",
-          path: "src",
-          glob: "*.ts",
-          context: 1,
-        }),
-        result("a.ts-4- before\na.ts:5: needle here\na.ts-6- after"),
-      ),
-    );
-
-    expect(container.querySelector(".tool-search-group")).not.toBeNull();
-    expect(
-      container.querySelector(".tool-search-group .resource-path__visible"),
-    ).toHaveTextContent("a.ts");
-    expect(
-      container.querySelector(".tool-search-group__line-plane"),
-    ).not.toBeNull();
-    expect(screen.getByText("needle here")).toBeInTheDocument();
-    expect(screen.getByText("5")).toHaveClass("tool-search-line__number");
-    expect(screen.queryByText("Arguments")).not.toBeInTheDocument();
   });
 
   it("keeps complete resource actions behind one middle-truncation label", () => {

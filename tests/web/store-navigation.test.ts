@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppStore } from "../../src/store";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -14,7 +15,6 @@ import {
   type RouteResponse,
   sessionSummary,
 } from "./helpers";
-
 import { baseRoutes, initStore } from "./store-fixture";
 
 describe("session switching guard", () => {
@@ -34,7 +34,7 @@ describe("session switching guard", () => {
       if (url.startsWith("/api/sessions")) {
         const sessions = missing ? rows.slice(0, 1) : rows;
         return {
-          body: { sessions, total: sessions.length, offset: 0, limit: 40 },
+          body: sessionPage(sessions, sessions.length),
         };
       }
       return baseRoutes(url, init);
@@ -127,8 +127,8 @@ describe("navigation curation", () => {
       }
       if (url.startsWith("/api/sessions")) {
         return {
-          body: {
-            sessions: [
+          body: sessionPage(
+            [
               {
                 id: "s7",
                 cwd: "/demo",
@@ -139,10 +139,8 @@ describe("navigation curation", () => {
                 messageCount: 2,
               },
             ],
-            total: 1,
-            offset: 0,
-            limit: 40,
-          },
+            1,
+          ),
         };
       }
       return baseRoutes(url, init);
@@ -183,12 +181,7 @@ describe("navigation curation", () => {
       if (url.startsWith("/api/sessions?")) {
         listRequests += 1;
         return {
-          body: {
-            sessions: [sessionSummary({ id: "recent" })],
-            total: 2,
-            offset: 0,
-            limit: 40,
-          },
+          body: sessionPage([sessionSummary({ id: "recent" })], 2),
         };
       }
       return baseRoutes(url, init);
@@ -264,12 +257,7 @@ describe("navigation curation", () => {
       }
       if (url.startsWith("/api/sessions?")) {
         return {
-          body: {
-            sessions: [sessionSummary({ id: "recent" })],
-            total: 2,
-            offset: 0,
-            limit: 40,
-          },
+          body: sessionPage([sessionSummary({ id: "recent" })], 2),
         };
       }
       return baseRoutes(url, init);
@@ -330,12 +318,10 @@ describe("navigation curation", () => {
       if (url.startsWith("/api/sessions?")) {
         listRequests += 1;
         return {
-          body: {
-            sessions: [sessionSummary({ id: "recent", cwd: "/work/other" })],
-            total: 8,
-            offset: 0,
-            limit: 40,
-          },
+          body: sessionPage(
+            [sessionSummary({ id: "recent", cwd: "/work/other" })],
+            8,
+          ),
         };
       }
       return baseRoutes(url, init);
@@ -407,12 +393,7 @@ describe("navigation curation", () => {
       if (url.startsWith("/api/sessions?")) {
         listRequests += 1;
         return {
-          body: {
-            sessions: [sessionSummary({ id: "recent" })],
-            total: 2,
-            offset: 0,
-            limit: 40,
-          },
+          body: sessionPage([sessionSummary({ id: "recent" })], 2),
         };
       }
       return baseRoutes(url, init);
@@ -555,7 +536,7 @@ describe("navigation curation", () => {
         };
       }
       if (url.startsWith("/api/sessions")) {
-        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+        return { body: sessionPage([], 0) };
       }
       return baseRoutes(url, init);
     });
@@ -605,12 +586,10 @@ describe("navigation curation", () => {
       if (url.startsWith("/api/sessions")) {
         // The newest page holds nothing from that folder at all.
         return {
-          body: {
-            sessions: [sessionSummary({ id: "recent", cwd: "/work/other" })],
-            total: 1,
-            offset: 0,
-            limit: 40,
-          },
+          body: sessionPage(
+            [sessionSummary({ id: "recent", cwd: "/work/other" })],
+            1,
+          ),
         };
       }
       return baseRoutes(url, init);
@@ -650,7 +629,7 @@ describe("navigation curation", () => {
         };
       }
       if (url.startsWith("/api/sessions")) {
-        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+        return { body: sessionPage([], 0) };
       }
       return baseRoutes(url, init);
     });
@@ -781,33 +760,5 @@ describe("selection race ownership", () => {
     releaseOpen();
     await opening;
     expect(store.getState().sessionId).toBe("s-B");
-  });
-
-  it("a failed thinking-level change does not roll back over another session", async () => {
-    const { promise: gate, resolve: releaseThinking } = deferred<void>();
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/control/thinking")) {
-        await gate;
-        return { status: 500, body: { error: "unsupported level" } };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-
-    const changing = store.setThinkingLevel("high"); // optimistic on s1, gated
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({
-        sessionId: "s2",
-        sessionName: "B",
-        thinkingLevel: "low",
-      }),
-    });
-    expect(store.getState().thinkingLevel).toBe("low");
-
-    releaseThinking();
-    await changing;
-    // The rollback belonged to s1; s2's visible level stays truthful.
-    expect(store.getState().thinkingLevel).toBe("low");
   });
 });

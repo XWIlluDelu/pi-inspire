@@ -1,20 +1,8 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import type { ActiveSnapshot } from "../../shared/contracts";
-
-async function pairAndOpen(page: Page) {
-  await page.goto("/");
-  await page.getByLabel("Access token").fill("inspire-browser-test-token");
-  await page.getByRole("button", { name: "Pair", exact: true }).click();
-  await expect(page.getByRole("main")).toBeVisible();
-  await page
-    .locator(".nav__row-main")
-    .filter({ hasText: /Review extension event lifecycle/ })
-    .click();
-  await expect(
-    page.getByRole("textbox", { name: "Message", exact: true }),
-  ).toBeVisible();
-}
+import { routeMockSnapshots } from "./support/mock-host";
+import { pairAndOpen } from "./support/navigation";
 
 test("model labels and selection retain text contrast across palettes and themes", async ({
   page,
@@ -88,10 +76,7 @@ test("cached model choices open immediately and background updates preserve sele
   await expect(search).toHaveValue("fresh-model");
   await expect(trigger).toHaveText(selected!);
   await expect(draft).toHaveValue("Catalog refresh must preserve this draft");
-  await page.screenshot({
-    path: "output/playwright/model-catalog-updated.png",
-    animations: "disabled",
-  });
+
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
   failed = true;
@@ -130,29 +115,7 @@ test("the first-message model transition clamps max to high and sends explicit s
     }
     return snapshot;
   };
-  await page.routeWebSocket("**/events**", (ws) => {
-    const upstream = ws.connectToServer();
-    upstream.onMessage((message) => {
-      const event = JSON.parse(String(message));
-      if (event.type === "snapshot" && event.data)
-        event.data = decorate(event.data);
-      ws.send(JSON.stringify(event));
-    });
-    ws.onMessage((message) => upstream.send(message));
-  });
-  for (const pattern of [
-    "**/api/bootstrap**",
-    "**/api/snapshot**",
-    "**/api/sessions/open",
-  ]) {
-    await page.route(pattern, async (route) => {
-      const response = await route.fetch();
-      const data = await response.json();
-      if (data.snapshot) data.snapshot = decorate(data.snapshot);
-      else if (data.active) decorate(data);
-      await route.fulfill({ response, json: data });
-    });
-  }
+  await routeMockSnapshots(page, { snapshot: decorate });
   await page.route("**/api/models**", (route) =>
     route.fulfill({ json: { models: [extended, ordinary] } }),
   );
@@ -181,10 +144,7 @@ test("the first-message model transition clamps max to high and sends explicit s
   await expect(
     page.getByRole("button", { name: "Start session", exact: true }),
   ).toBeEnabled();
-  await page.screenshot({
-    path: "output/playwright/model-start-thinking-high.png",
-    animations: "disabled",
-  });
+
   await page
     .getByRole("button", { name: "Start session", exact: true })
     .click();

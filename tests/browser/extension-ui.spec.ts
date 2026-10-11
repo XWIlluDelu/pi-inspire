@@ -8,6 +8,7 @@ import type {
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { clipboardLines } from "./support/clipboard";
 import { moveCaretToEnd } from "./support/native-input";
+import { pairedPage } from "./support/navigation";
 
 test.use({ serviceWorkers: "block" });
 
@@ -84,10 +85,7 @@ async function openExample(page: Page, theme: "light" | "dark") {
     emit({ type: "extension_ui_remove", id: response.id, reason: "answered" });
     await route.fulfill({ json: { ok: true } });
   });
-  await page.goto("/");
-  await page.getByLabel("Access token").fill("inspire-browser-test-token");
-  await page.getByRole("button", { name: "Pair", exact: true }).click();
-  await expect(page.getByRole("main")).toBeVisible();
+  await pairedPage(page);
   const created = await page.request.post("/api/sessions/new", {
     data: { cwd: browserWorkspace, name: "Native UI example" },
   });
@@ -251,10 +249,7 @@ test("native dialog keyboard/pointer flow, deadline reconnect and content-first 
   await page.keyboard.press("ArrowUp");
   await expect(code).toHaveAttribute("aria-selected", "false");
   await page.keyboard.press("ArrowDown");
-  await page.screenshot({
-    path: "output/playwright/extension-selection-desktop.png",
-    animations: "disabled",
-  });
+
   expect(
     (await new AxeBuilder({ page }).include(".dialog").analyze()).violations,
   ).toEqual([]);
@@ -365,10 +360,7 @@ test("native dialog keyboard/pointer flow, deadline reconnect and content-first 
     "Code review:",
   );
   await expect(message.locator(".custom-message__type")).toHaveCount(0);
-  await page.getByRole("main").screenshot({
-    path: "output/playwright/extension-content-desktop.png",
-    animations: "disabled",
-  });
+
   clearDisplays(fixture);
   await expect(
     page.locator(
@@ -420,10 +412,7 @@ test.describe("narrow touch reading", () => {
         .evaluate((element) => element.scrollWidth > element.clientWidth),
     ).toBe(true);
     await expect(page.locator(".topbar__extension-status")).toBeVisible();
-    await page.screenshot({
-      path: "output/playwright/extension-content-narrow.png",
-      animations: "disabled",
-    });
+
     await summary.tap();
     const full = page.getByRole("dialog", {
       name: "Extension status",
@@ -449,10 +438,7 @@ test.describe("narrow touch reading", () => {
           .analyze()
       ).violations,
     ).toEqual([]);
-    await page.screenshot({
-      path: "output/playwright/extension-status-expanded-narrow.png",
-      animations: "disabled",
-    });
+
     await summary.tap();
     await expect(full).toBeHidden();
     const below = page.getByRole("region", {

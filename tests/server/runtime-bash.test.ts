@@ -1,19 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PiRpcProcess, PiRpcResponseFence } from "../../server/pi-rpc.js";
-import { RuntimeController } from "../../server/runtime.js";
 import { RuntimeBashController } from "../../server/runtime-bash.js";
 import {
   createRuntimeSlot,
   type RuntimeSlot,
 } from "../../server/runtime-slot.js";
 import {
-  catalog,
   disposeRuntimeFixture,
-  FakeRpc,
+  schedulingRuntime,
   initializeRuntimeFixture,
-  preview,
-  record,
-  trackedAttachmentStore,
   waitForReady,
 } from "./fixtures/runtime.js";
 
@@ -62,16 +57,8 @@ describe("RuntimeController shell acceptance", () => {
   afterEach(disposeRuntimeFixture);
 
   it("consumes a confirmed shell command even when reconciliation and worker retirement fail", async () => {
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
+    const f = schedulingRuntime();
+    const { runtime } = f;
     try {
       await runtime.openSession("a");
       await waitForReady(runtime);
@@ -79,10 +66,10 @@ describe("RuntimeController shell acceptance", () => {
         runtime as unknown as { reconcileSlot(): Promise<unknown> },
         "reconcileSlot",
       );
-      worker.responseOverrides.set("bash", () => {
+      f.worker.responseOverrides.set("bash", () => {
         reconcile.mockRejectedValueOnce(new Error("Projection unavailable"));
-        worker.stop = async () => {
-          worker.stops += 1;
+        f.worker.stop = async () => {
+          f.worker.stops += 1;
           throw new Error("Worker exit could not be confirmed");
         };
         return {
@@ -100,9 +87,9 @@ describe("RuntimeController shell acceptance", () => {
         runtime.prompt({ sessionId: "a", message: "!echo done" }),
       ).rejects.toMatchObject({ status: 409 });
       expect(
-        worker.commands.filter((command) => command.type === "bash"),
+        f.worker.commands.filter((command) => command.type === "bash"),
       ).toHaveLength(1);
-      expect(worker.stops).toBe(1);
+      expect(f.worker.stops).toBe(1);
     } finally {
       await expect(runtime.close()).rejects.toThrow(
         "Worker exit could not be confirmed",

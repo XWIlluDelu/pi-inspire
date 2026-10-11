@@ -1,7 +1,7 @@
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test, type WebSocketRoute } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { createInspireServer } from "../../server/app";
 import { AttachmentStore } from "../../server/attachments";
 import { GitInspectionService } from "../../server/git-inspection";
@@ -12,7 +12,7 @@ import { ToolPresentationConfigStore } from "../../server/tool-presentation-conf
 import type { ToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import type { ToolCallContent } from "../../src/events";
 import { toolResultResourcesFixture } from "../fixtures/tool-result-resources.mjs";
-import { browserWorkspace } from "./fixtures/workspace.mjs";
+import { openMockEventSession } from "./support/mock-host";
 
 test.use({ serviceWorkers: "block" });
 
@@ -59,54 +59,12 @@ async function openReview(
   page: Page,
   preferences: Record<string, unknown> = {},
 ) {
-  let socket: WebSocketRoute | undefined;
-  let sessionId: string | null = null;
-  await page.routeWebSocket(/\/events(?:\?|$)/, (client) => {
-    socket = client;
-    const server = client.connectToServer();
-    server.onMessage((data) => {
-      const event = JSON.parse(String(data));
-      if (socket === client && event.type === "snapshot")
-        sessionId =
-          event.detailSessionId ?? event.data?.active?.sessionId ?? null;
-      client.send(data);
-    });
+  return openMockEventSession(page, "Tool presentation review", configuration, {
+    theme: "light",
+    toolVisibility: "expanded",
+    activityFoldVisibility: "expanded",
+    ...preferences,
   });
-  await page.route("**/api/bootstrap", async (route) => {
-    const response = await route.fetch();
-    if (!response.ok()) return route.fulfill({ response });
-    const body = await response.json();
-    body.preferences = {
-      ...body.preferences,
-      theme: "light",
-      toolVisibility: "expanded",
-      activityFoldVisibility: "expanded",
-      ...preferences,
-    };
-    body.toolPresentations = configuration;
-    await route.fulfill({ response, json: body });
-  });
-  await page.goto("/");
-  await page.getByLabel("Access token").fill("inspire-browser-test-token");
-  await page.getByRole("button", { name: "Pair", exact: true }).click();
-  await expect(page.getByRole("main")).toBeVisible();
-  // Own an empty session rather than depending on the Host selection left by
-  // another browser file or earlier presentation case.
-  const created = await page.request.post("/api/sessions/new", {
-    data: { cwd: browserWorkspace, name: "Tool presentation review" },
-  });
-  expect(created.ok()).toBe(true);
-  sessionId = null;
-  socket = undefined;
-  await page.reload();
-  await expect(
-    page.getByRole("button", { name: /^Session actions:/ }),
-  ).toHaveText("Tool presentation review");
-  await expect.poll(() => sessionId).not.toBeNull();
-  return (...events: Record<string, unknown>[]) => {
-    for (const event of events)
-      socket!.send(JSON.stringify({ ...event, sessionId }));
-  };
 }
 
 for (const mobile of [false, true]) {
@@ -284,18 +242,11 @@ for (const mobile of [false, true]) {
         .include(".card--tool")
         .analyze();
       expect(accessibility.violations).toEqual([]);
-      await card.screenshot({
-        path: `output/playwright/child-calls/${mobile ? "mobile" : "desktop"}-small.png`,
-        animations: "disabled",
-      });
+
       await card
         .getByRole("button", { name: "Collapse CodeMode tool" })
         .click();
       await expect(card.getByText("3 calls", { exact: true })).toBeVisible();
-      await card.screenshot({
-        path: `output/playwright/child-calls/${mobile ? "mobile" : "desktop"}-small-collapsed.png`,
-        animations: "disabled",
-      });
     });
 
     test("keeps the conversation reading position through live settlement and reopens calls before output", async ({
@@ -436,10 +387,7 @@ for (const mobile of [false, true]) {
             );
           })
           .toBeLessThan(1);
-      await page.screenshot({
-        path: `output/playwright/child-calls/${mobile ? "mobile" : "desktop"}-running.png`,
-        animations: "disabled",
-      });
+
       const finalCalls = calls.map((call, index) => ({
         ...call,
         id: `script/${index + 1}`,
@@ -540,10 +488,7 @@ for (const mobile of [false, true]) {
       if (!mobile) await expect(row).toBeFocused();
       await expect(row).toBeInViewport();
       await expectReadingPosition();
-      await page.screenshot({
-        path: `output/playwright/child-calls/${mobile ? "mobile" : "desktop"}-settled-reading.png`,
-        animations: "disabled",
-      });
+
       // The parent owns its own Adaptive completion deadline. Inspect it
       // deliberately even if it closed while the script result was rendered.
       const parentDisclosure = parentCard.getByRole("button", {
@@ -594,10 +539,7 @@ for (const mobile of [false, true]) {
           () => document.documentElement.scrollWidth <= innerWidth,
         ),
       ).toBe(true);
-      await page.screenshot({
-        path: `output/playwright/child-calls/${mobile ? "mobile" : "desktop"}-reopened.png`,
-        animations: "disabled",
-      });
+
       const order = await toolCard(page, "codemode").evaluate((card) => {
         const result = card
           .querySelector(".tool-call-result")!
@@ -884,185 +826,188 @@ test("argument generation follows growing code without stealing the user's scrol
   expect(await code.evaluate((element) => element.scrollTop)).toBe(0);
 });
 
-for (const palette of ["amber", "teal"]) {
-  for (const theme of ["light", "dark"]) {
-    test(`narrow tool content retains its geometry and contrast in ${palette}/${theme}`, async ({
-      page,
-    }) => {
-      await page.setViewportSize({ width: 390, height: 844 });
-      const send = await openReview(page, { palette, theme });
-      const path =
-        "src/components/session-workbench/projection/lifecycle/SessionProjectionController.tsx";
-      const query = "long_identifier_".repeat(18);
-      const calls = [
-        tool("read", { path, offset: 100_000 }),
-        tool("grep", { pattern: query, path: "src/" }),
-        tool("review_files", { pattern: "session" }),
-        tool("review_json", { data: { action: "inspect", path } }),
-        tool("review_plot", { title: "Spectrum" }),
-        tool("edit", {
-          path: "src/a.ts",
-          edits: [{ oldText: "old()", newText: "new()" }],
-        }),
-        tool("bash", { command: "false" }),
-        tool("review_error", { operation: "inspect" }),
-        tool("review_markdown", {}),
-      ];
-      const results = [
-        "const url = '" +
-          "long-identifier-".repeat(80) +
-          "';\n" +
-          "const short = 1;\n".repeat(120),
-        "src/session.ts-8- const before = true;\nsrc/session.ts:9: const sessionId = active;\nsrc/session.ts-10- return sessionId;",
-        "src/session.ts  [modified with an unusually long annotation that must never hide the file name]",
-        "Saved metadata",
-        null,
-        "--- src/a.ts\n+++ src/a.ts\n@@ -1,2 +1,2 @@\n-old()\n+new()\n return ready;",
-        "Command exited with code 1",
-        "The source is unavailable.",
-        "[Runtime guide](https://example.org/pi/runtime)\n\n```ts\nconst ready = true;\n```\n\n" +
-          "More tool documentation.\n\n".repeat(80),
-      ];
-      send(
-        { type: "agent_start" },
-        { type: "message_start", message: assistant(calls) },
-      );
-      for (const [index, call] of calls.entries()) {
-        send({
-          type: "message_end",
-          message: {
-            role: "toolResult",
-            toolCallId: call.id,
-            toolName: call.name,
-            isError: call.name === "bash" || call.name === "review_error",
-            ...(call.name === "edit"
-              ? { details: { patch: results[index] } }
-              : {}),
-            content:
-              results[index] === null
-                ? [
-                    {
-                      type: "image",
-                      mimeType: "image/png",
-                      data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgqK0AAAF2APY+jiZ4AAAAAElFTkSuQmCC",
-                    },
-                  ]
-                : [{ type: "text", text: results[index] }],
-          },
-        });
-      }
+// Layout/scroll behavior does not depend on palette. The two appearance modes
+// retain independent contrast coverage without replaying their Cartesian product.
+for (const [palette, theme] of [
+  ["amber", "light"],
+  ["teal", "dark"],
+]) {
+  test(`narrow tool content retains its geometry and contrast in ${palette}/${theme}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const send = await openReview(page, { palette, theme });
+    const path =
+      "src/components/session-workbench/projection/lifecycle/SessionProjectionController.tsx";
+    const query = "long_identifier_".repeat(18);
+    const calls = [
+      tool("read", { path, offset: 100_000 }),
+      tool("grep", { pattern: query, path: "src/" }),
+      tool("review_files", { pattern: "session" }),
+      tool("review_json", { data: { action: "inspect", path } }),
+      tool("review_plot", { title: "Spectrum" }),
+      tool("edit", {
+        path: "src/a.ts",
+        edits: [{ oldText: "old()", newText: "new()" }],
+      }),
+      tool("bash", { command: "false" }),
+      tool("review_error", { operation: "inspect" }),
+      tool("review_markdown", {}),
+    ];
+    const results = [
+      "const url = '" +
+        "long-identifier-".repeat(80) +
+        "';\n" +
+        "const short = 1;\n".repeat(120),
+      "src/session.ts-8- const before = true;\nsrc/session.ts:9: const sessionId = active;\nsrc/session.ts-10- return sessionId;",
+      "src/session.ts  [modified with an unusually long annotation that must never hide the file name]",
+      "Saved metadata",
+      null,
+      "--- src/a.ts\n+++ src/a.ts\n@@ -1,2 +1,2 @@\n-old()\n+new()\n return ready;",
+      "Command exited with code 1",
+      "The source is unavailable.",
+      "[Runtime guide](https://example.org/pi/runtime)\n\n```ts\nconst ready = true;\n```\n\n" +
+        "More tool documentation.\n\n".repeat(80),
+    ];
+    send(
+      { type: "agent_start" },
+      { type: "message_start", message: assistant(calls) },
+    );
+    for (const [index, call] of calls.entries()) {
       send({
         type: "message_end",
         message: {
           role: "toolResult",
-          toolCallId: "unpaired",
-          toolName: "external_extension",
-          content: [{ type: "text", text: "Unpaired output remains readable" }],
-          details: { count: 3 },
+          toolCallId: call.id,
+          toolName: call.name,
+          isError: call.name === "bash" || call.name === "review_error",
+          ...(call.name === "edit"
+            ? { details: { patch: results[index] } }
+            : {}),
+          content:
+            results[index] === null
+              ? [
+                  {
+                    type: "image",
+                    mimeType: "image/png",
+                    data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgqK0AAAF2APY+jiZ4AAAAAElFTkSuQmCC",
+                  },
+                ]
+              : [{ type: "text", text: results[index] }],
         },
       });
-      const unpaired = toolCard(page, "external_extension result");
-      await expect(unpaired).toContainText("Unpaired output remains readable");
-      await expect(unpaired).not.toContainText("Arguments");
-      const read = toolCard(page, "read");
-      const source = read.locator(".tool-code");
-      await expect(source).toBeVisible();
-      const pathLabel = read.getByRole("button", { name: path, exact: true });
-      const leaf = pathLabel.locator(".resource-path__leaf");
-      await expect(leaf).toHaveText("SessionProjectionController.tsx");
-      const leafBox = await leaf.boundingBox();
-      const pathBox = await pathLabel.boundingBox();
-      expect(leafBox!.width).toBeGreaterThan(80);
-      expect(leafBox!.x + leafBox!.width).toBeLessThanOrEqual(
-        pathBox!.x + pathBox!.width + 1,
-      );
-      const suffix = await leaf.evaluate((element) => {
-        const text = element.querySelector("bdi")!.firstChild!;
-        const range = document.createRange();
-        range.setStart(text, text.textContent!.length - 4);
-        range.setEnd(text, text.textContent!.length);
-        const box = range.getBoundingClientRect();
-        return { left: box.left, right: box.right };
-      });
-      expect(suffix.left).toBeGreaterThanOrEqual(pathBox!.x);
-      expect(suffix.right).toBeLessThanOrEqual(pathBox!.x + pathBox!.width + 1);
-      const size = await source.evaluate((element) => ({
-        height: element.clientHeight,
-        scroll: element.scrollHeight,
-      }));
-      expect(size.height).toBeLessThan(550);
-      expect(size.scroll).toBeGreaterThan(size.height);
-      await source.evaluate((element) => {
-        element.scrollLeft = element.scrollWidth;
-      });
-      const plane = await source.boundingBox();
-      for (const number of [
-        source.locator(".tool-code__number").nth(0),
-        source.locator(".tool-code__number").nth(1),
-      ]) {
-        const box = await number.boundingBox();
-        expect(box!.x).toBeGreaterThanOrEqual(plane!.x);
-        expect(box!.x).toBeLessThan(plane!.x + 3);
-        expect(
-          await number.evaluate(
-            (element) => element.scrollWidth <= element.clientWidth,
-          ),
-        ).toBe(true);
-      }
-      await source.focus();
-      await source.press("PageDown");
-      await expect
-        .poll(() => source.evaluate((element) => element.scrollTop))
-        .toBeGreaterThan(0);
-      const grep = toolCard(page, "grep");
-      const property = grep
-        .locator(".tool-properties__item")
-        .filter({ hasText: query });
+    }
+    send({
+      type: "message_end",
+      message: {
+        role: "toolResult",
+        toolCallId: "unpaired",
+        toolName: "external_extension",
+        content: [{ type: "text", text: "Unpaired output remains readable" }],
+        details: { count: 3 },
+      },
+    });
+    const unpaired = toolCard(page, "external_extension result");
+    await expect(unpaired).toContainText("Unpaired output remains readable");
+    await expect(unpaired).not.toContainText("Arguments");
+    const read = toolCard(page, "read");
+    const source = read.locator(".tool-code");
+    await expect(source).toBeVisible();
+    const pathLabel = read.getByRole("button", { name: path, exact: true });
+    const leaf = pathLabel.locator(".resource-path__leaf");
+    await expect(leaf).toHaveText("SessionProjectionController.tsx");
+    const leafBox = await leaf.boundingBox();
+    const pathBox = await pathLabel.boundingBox();
+    expect(leafBox!.width).toBeGreaterThan(80);
+    expect(leafBox!.x + leafBox!.width).toBeLessThanOrEqual(
+      pathBox!.x + pathBox!.width + 1,
+    );
+    const suffix = await leaf.evaluate((element) => {
+      const text = element.querySelector("bdi")!.firstChild!;
+      const range = document.createRange();
+      range.setStart(text, text.textContent!.length - 4);
+      range.setEnd(text, text.textContent!.length);
+      const box = range.getBoundingClientRect();
+      return { left: box.left, right: box.right };
+    });
+    expect(suffix.left).toBeGreaterThanOrEqual(pathBox!.x);
+    expect(suffix.right).toBeLessThanOrEqual(pathBox!.x + pathBox!.width + 1);
+    const size = await source.evaluate((element) => ({
+      height: element.clientHeight,
+      scroll: element.scrollHeight,
+    }));
+    expect(size.height).toBeLessThan(550);
+    expect(size.scroll).toBeGreaterThan(size.height);
+    await source.evaluate((element) => {
+      element.scrollLeft = element.scrollWidth;
+    });
+    const plane = await source.boundingBox();
+    for (const number of [
+      source.locator(".tool-code__number").nth(0),
+      source.locator(".tool-code__number").nth(1),
+    ]) {
+      const box = await number.boundingBox();
+      expect(box!.x).toBeGreaterThanOrEqual(plane!.x);
+      expect(box!.x).toBeLessThan(plane!.x + 3);
       expect(
-        await property.evaluate(
-          (element) => element.scrollWidth <= element.clientWidth + 1,
+        await number.evaluate(
+          (element) => element.scrollWidth <= element.clientWidth,
         ),
       ).toBe(true);
-      const files = toolCard(page, "review_files");
-      const file = files.getByRole("button", {
-        name: "src/session.ts",
-        exact: true,
-      });
-      expect((await file.boundingBox())!.width).toBeGreaterThan(80);
-      await expect(
-        toolCard(page, "review_json").locator(".tool-code__number"),
-      ).toHaveCount(0);
-      const image = toolCard(page, "review_plot").locator("img");
-      await image.scrollIntoViewIfNeeded();
-      await expect(image).toBeVisible();
-      await expect
-        .poll(() =>
-          image.evaluate(
-            (element: HTMLImageElement) =>
-              element.complete && element.naturalWidth > 0,
-          ),
-        )
-        .toBe(true);
-      const markdown = toolCard(page, "review_markdown").locator(
-        ".tool-markdown",
-      );
-      const markdownSize = await markdown.evaluate((element) => ({
-        height: element.clientHeight,
-        scroll: element.scrollHeight,
-      }));
-      expect(markdownSize.height).toBeLessThan(550);
-      expect(markdownSize.scroll).toBeGreaterThan(markdownSize.height);
-      await markdown.focus();
-      await expect(markdown).toBeFocused();
-      await expect(
-        markdown.getByRole("link", { name: "Runtime guide" }),
-      ).toBeVisible();
-      const accessibility = await new AxeBuilder({ page })
-        .include(".card--tool")
-        .analyze();
-      expect(accessibility.violations).toEqual([]);
+    }
+    await source.focus();
+    await source.press("PageDown");
+    await expect
+      .poll(() => source.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(0);
+    const grep = toolCard(page, "grep");
+    const property = grep
+      .locator(".tool-properties__item")
+      .filter({ hasText: query });
+    expect(
+      await property.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth + 1,
+      ),
+    ).toBe(true);
+    const files = toolCard(page, "review_files");
+    const file = files.getByRole("button", {
+      name: "src/session.ts",
+      exact: true,
     });
-  }
+    expect((await file.boundingBox())!.width).toBeGreaterThan(80);
+    await expect(
+      toolCard(page, "review_json").locator(".tool-code__number"),
+    ).toHaveCount(0);
+    const image = toolCard(page, "review_plot").locator("img");
+    await image.scrollIntoViewIfNeeded();
+    await expect(image).toBeVisible();
+    await expect
+      .poll(() =>
+        image.evaluate(
+          (element: HTMLImageElement) =>
+            element.complete && element.naturalWidth > 0,
+        ),
+      )
+      .toBe(true);
+    const markdown = toolCard(page, "review_markdown").locator(
+      ".tool-markdown",
+    );
+    const markdownSize = await markdown.evaluate((element) => ({
+      height: element.clientHeight,
+      scroll: element.scrollHeight,
+    }));
+    expect(markdownSize.height).toBeLessThan(550);
+    expect(markdownSize.scroll).toBeGreaterThan(markdownSize.height);
+    await markdown.focus();
+    await expect(markdown).toBeFocused();
+    await expect(
+      markdown.getByRole("link", { name: "Runtime guide" }),
+    ).toBeVisible();
+    const accessibility = await new AxeBuilder({ page })
+      .include(".card--tool")
+      .analyze();
+    expect(accessibility.violations).toEqual([]);
+  });
 }
 
 // Native read/bash produce the recorded artifacts offline. The mock Runtime
@@ -1111,6 +1056,8 @@ test("saved tool images and full logs reopen through the authorized viewers on d
     mock: true,
     version: "tool-resources-test",
     piVersion: fixture.piVersion,
+    // This fixture owns the native API/resource boundary, not the UI build.
+    distDir: `${fixture.root}/api-only`,
   });
   await new Promise<void>((resolve) =>
     host.server.listen(0, "127.0.0.1", resolve),
@@ -1119,6 +1066,19 @@ test("saved tool images and full logs reopen through the authorized viewers on d
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   try {
+    // Keep the application source identical to the rest of the browser run,
+    // while requests for native APIs and scoped resources retain this origin.
+    await page.route(`${url}/**`, async (route) => {
+      const requested = new URL(route.request().url());
+      if (requested.pathname.startsWith("/api/")) return route.continue();
+      const response = await route.fetch({
+        url: new URL(
+          `${requested.pathname}${requested.search}`,
+          testInfo.project.use.baseURL,
+        ).href,
+      });
+      await route.fulfill({ response });
+    });
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto(url);
@@ -1162,14 +1122,6 @@ test("saved tool images and full logs reopen through the authorized viewers on d
           read.locator('[data-tool-rule="inspire.pi.read"]'),
         ).toBeVisible();
       else await expect(read).toContainText("Arguments");
-      const cardScreenshot = testInfo.outputPath(
-        `${presentation}-saved-image.png`,
-      );
-      await read.screenshot({ path: cardScreenshot });
-      await testInfo.attach(`${presentation} saved image`, {
-        path: cardScreenshot,
-        contentType: "image/png",
-      });
       await thumbnail.focus();
       await thumbnail.press("Enter");
       const preview = page.getByRole("dialog", { name: "Image preview" });
@@ -1178,14 +1130,6 @@ test("saved tool images and full logs reopen through the authorized viewers on d
         "src",
         (await thumbnail.locator("img").getAttribute("src")) ?? "",
       );
-      const imageScreenshot = testInfo.outputPath(
-        `${presentation}-image-preview.png`,
-      );
-      await page.screenshot({ path: imageScreenshot });
-      await testInfo.attach(`${presentation} image preview`, {
-        path: imageScreenshot,
-        contentType: "image/png",
-      });
       await preview.getByRole("button", { name: "Zoom image" }).click();
       await expect(
         preview.getByRole("button", { name: "Fit image to window" }),
@@ -1229,14 +1173,6 @@ test("saved tool images and full logs reopen through the authorized viewers on d
       );
       expect(content.ok()).toBe(true);
       expect(await content.text()).toBe(fixture.fullOutput);
-      const logScreenshot = testInfo.outputPath(
-        `${presentation}-full-output.png`,
-      );
-      await page.screenshot({ path: logScreenshot });
-      await testInfo.attach(`${presentation} full output`, {
-        path: logScreenshot,
-        contentType: "image/png",
-      });
     }
     expect(errors).toEqual([]);
   } finally {

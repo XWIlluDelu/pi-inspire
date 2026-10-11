@@ -4,6 +4,8 @@ import type { ModelOption } from "../../shared/contracts";
 import type { CommonModelOption } from "../../shared/model-settings";
 import { AppStore } from "../../src/store";
 import { modelSettingsSnapshot } from "./fixtures/model-settings";
+import { sessionPage } from "./fixtures/session-catalog";
+import type { RouteResponse } from "./helpers";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -13,6 +15,7 @@ import {
   installFetch,
   jsonBody,
 } from "./helpers";
+import { baseRoutes, initStore } from "./store-fixture";
 
 describe("model catalog ownership", () => {
   beforeEach(() => installFakeWebSocket());
@@ -183,8 +186,7 @@ describe("native model controls", () => {
         sessionId = String(jsonBody(init).id);
         return { body: snapshot() };
       }
-      if (url.startsWith("/api/sessions"))
-        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+      if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
       if (url.startsWith("/api/control/model")) {
         const body = jsonBody(init);
         controls.push(body);
@@ -291,18 +293,35 @@ describe("native model controls", () => {
 describe("recent model preference", () => {
   beforeEach(() => installFakeWebSocket());
 
-  it("records a bounded MRU without rewriting an unchanged order", async () => {
+  it("evicts the oldest recent model, promotes an existing identity without duplication, and skips unchanged writes", async () => {
+    const recent = Array.from({ length: 8 }, (_, index) => ({
+      provider: "fixture",
+      id: `recent-${index}`,
+    }));
     const patches: Record<string, unknown>[] = [];
+    let selected = { provider: "openai", id: "gpt-5" };
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap"))
-        return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
-      if (url.startsWith("/api/sessions"))
-        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
-      if (url.startsWith("/api/control/model")) return { body: { ok: true } };
-      if (url.startsWith("/api/snapshot"))
         return {
-          body: activeSnapshot({ model: { provider: "openai", id: "gpt-5" } }),
+          body: bootstrapPayload({
+            snapshot: activeSnapshot(),
+            preferences: {
+              ...bootstrapPayload().preferences,
+              recentModelIds: recent,
+            },
+          }),
         };
+      if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
+      if (url.startsWith("/api/control/model")) {
+        const body = jsonBody(init);
+        selected = {
+          provider: String(body.provider),
+          id: String(body.modelId),
+        };
+        return { body: { ok: true } };
+      }
+      if (url.startsWith("/api/snapshot"))
+        return { body: activeSnapshot({ model: selected }) };
       if (url.startsWith("/api/preferences")) {
         patches.push(jsonBody(init));
         return {
@@ -315,20 +334,34 @@ describe("recent model preference", () => {
     await store.init("token");
     FakeWebSocket.instances.at(-1)!.open();
 
-    await store.setModel("openai", "gpt-5");
-    await vi.waitFor(() => expect(patches).toHaveLength(1));
-    expect(patches[0]).toEqual({
-      recentModelIds: [{ provider: "openai", id: "gpt-5" }],
-    });
-    expect(store.getState().prefs.recentModelIds).toEqual([
+    await expect(store.setModel("openai", "gpt-5")).resolves.toBe(true);
+    const afterNewSelection = [
       { provider: "openai", id: "gpt-5" },
-    ]);
+      ...recent.slice(0, 7),
+    ];
+    await vi.waitFor(() =>
+      expect(patches).toEqual([{ recentModelIds: afterNewSelection }]),
+    );
+    expect(store.getState().prefs.recentModelIds).toEqual(afterNewSelection);
 
-    await store.setModel("openai", "gpt-5");
-    expect(patches).toHaveLength(1);
-    expect(store.getState().prefs.recentModelIds).toEqual([
-      { provider: "openai", id: "gpt-5" },
-    ]);
+    await expect(store.setModel("fixture", "recent-3")).resolves.toBe(true);
+    const afterPromotion = [
+      recent[3]!,
+      afterNewSelection[0]!,
+      ...recent.slice(0, 3),
+      ...recent.slice(4, 7),
+    ];
+    await vi.waitFor(() =>
+      expect(patches).toEqual([
+        { recentModelIds: afterNewSelection },
+        { recentModelIds: afterPromotion },
+      ]),
+    );
+    expect(store.getState().prefs.recentModelIds).toEqual(afterPromotion);
+
+    await expect(store.setModel("fixture", "recent-3")).resolves.toBe(true);
+    expect(patches).toHaveLength(2);
+    expect(store.getState().prefs.recentModelIds).toEqual(afterPromotion);
   });
 
   it("keeps formerly colliding NUL-containing identities distinct in the MRU", async () => {
@@ -337,8 +370,7 @@ describe("recent model preference", () => {
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap"))
         return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
-      if (url.startsWith("/api/sessions"))
-        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+      if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
       if (url.startsWith("/api/control/model")) {
         selected = jsonBody(init) as typeof selected;
         return { body: { ok: true } };
@@ -369,8 +401,7 @@ describe("recent model preference", () => {
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap"))
         return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
-      if (url.startsWith("/api/sessions"))
-        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+      if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
       if (url.startsWith("/api/control/model"))
         return { status: 500, body: { error: "model unavailable" } };
       if (url.startsWith("/api/preferences")) {
@@ -397,5 +428,70 @@ describe("recent model preference", () => {
             notice.kind === "warning" && notice.text === "model unavailable",
         ),
     ).toBe(true);
+  });
+});
+
+describe("thinking level control", () => {
+  beforeEach(() => installFakeWebSocket());
+
+  it("rolls back to the truthful level and resyncs when the API rejects the change", async () => {
+    let snapshotCalls = 0;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/control/thinking"))
+        return { status: 500, body: { error: "unsupported level" } };
+      if (url.startsWith("/api/snapshot")) {
+        snapshotCalls += 1;
+        return { body: activeSnapshot({ thinkingLevel: "medium" }) };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    expect(store.getState().thinkingLevel).toBe("medium");
+
+    await store.setThinkingLevel("xhigh");
+    // rolled back: the UI must not claim a level the runtime rejected
+    expect(store.getState().thinkingLevel).toBe("medium");
+    expect(store.getState().error).toBeNull();
+    expect(
+      store
+        .getState()
+        .notices.some(
+          (notice) =>
+            notice.kind === "warning" && notice.text === "unsupported level",
+        ),
+    ).toBe(true);
+    await vi.waitFor(() => expect(snapshotCalls).toBeGreaterThan(0));
+  });
+
+  it("does not let an older refusal undo a newer accepted level", async () => {
+    const xhigh = deferred<RouteResponse>();
+    const low = deferred<RouteResponse>();
+    const fetch = installFetch((url, init) => {
+      if (url.startsWith("/api/control/thinking")) {
+        const body = jsonBody(init) as { level: string };
+        return body.level === "xhigh" ? xhigh.promise : low.promise;
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+
+    const older = store.setThinkingLevel("xhigh");
+    expect(store.getState().thinkingLevel).toBe("xhigh");
+    const newer = store.setThinkingLevel("low");
+    expect(store.getState().thinkingLevel).toBe("low");
+    low.resolve({ body: { ok: true } });
+    await expect(newer).resolves.toBe(true);
+    expect(store.getState().thinkingLevel).toBe("low");
+    xhigh.resolve({ status: 500, body: { error: "unsupported level" } });
+    await expect(older).resolves.toBe(false);
+
+    expect(store.getState().thinkingLevel).toBe("low");
+    expect(store.getState().notices).toEqual([]);
+    expect(store.getState().error).toBeNull();
+    expect(
+      fetch.mock.calls.filter(([url]) =>
+        String(url).startsWith("/api/snapshot"),
+      ),
+    ).toEqual([]);
   });
 });

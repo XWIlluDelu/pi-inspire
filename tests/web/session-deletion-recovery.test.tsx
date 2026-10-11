@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HiddenClearDialog } from "../../src/components/HiddenClearDialog";
 import { SessionDeleteDialog } from "../../src/components/SessionDeleteDialog";
 import { store } from "../../src/store";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -67,12 +68,7 @@ async function setup() {
       };
     if (url.startsWith("/api/sessions?"))
       return {
-        body: {
-          sessions: model.rows,
-          total: model.rows.length,
-          offset: 0,
-          limit: 40,
-        },
+        body: sessionPage(model.rows, model.rows.length),
       };
     return baseRoutes(url, init);
   });

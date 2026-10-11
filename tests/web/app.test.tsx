@@ -9,12 +9,11 @@ import {
 } from "@testing-library/react";
 import axe from "axe-core";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-// App integration assertions exercise the real panel, not lazy-transform
-// scheduling. Preload this chunk outside each test's behavior timeout.
 import "../../src/components/ContextPane";
 import { App } from "../../src/App";
 import { store } from "../../src/store";
 import { mockModelMenuLayout } from "./fixtures/model-menu-layout";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -24,6 +23,9 @@ import {
   jsonBody,
   sessionSummary,
 } from "./helpers";
+
+// App integration assertions exercise the real panel, not lazy-transform
+// scheduling. Preload this chunk outside each test's behavior timeout.
 
 let renamedTo: string | null = null;
 let abortCalls = 0;
@@ -143,7 +145,7 @@ beforeAll(async () => {
     }
     if (url.startsWith("/api/sessions")) {
       return {
-        body: { sessions: [summary, older], total: 2, offset: 0, limit: 40 },
+        body: sessionPage([summary, older], 2),
       };
     }
     if (url.startsWith("/api/extension-ui")) return { body: { ok: true } };
@@ -609,33 +611,6 @@ describe("welcome flow", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByLabelText("Project directory")).toHaveValue(
       "/home/demo/research",
-    );
-    await store.openSession("s1");
-  });
-
-  it("switches between Windows drive roots in the project directory picker", async () => {
-    render(<App />);
-    const nav = screen.getByRole("navigation", { name: "Sessions" });
-    fireEvent.click(within(nav).getByRole("button", { name: /New session/ }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Browse host directories" }),
-    );
-
-    const dialog = await screen.findByRole("dialog", {
-      name: "Choose project directory",
-    });
-    fireEvent.click(await within(dialog).findByRole("button", { name: "D:" }));
-    await within(dialog).findByText("D:\\");
-    fireEvent.click(
-      await within(dialog).findByRole("button", { name: "projects" }),
-    );
-    await within(dialog).findByText("No subdirectories");
-    fireEvent.click(
-      within(dialog).getByRole("button", { name: "Use this directory" }),
-    );
-
-    expect(screen.getByLabelText("Project directory")).toHaveValue(
-      "D:\\projects",
     );
     await store.openSession("s1");
   });

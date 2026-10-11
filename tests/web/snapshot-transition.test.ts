@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createInitialAppState, type AppState } from "../../src/app-state";
+import { type AppState, createInitialAppState } from "../../src/app-state";
 import {
   deriveSnapshotTransition,
   snapshotLifecyclePatch,
@@ -30,8 +30,6 @@ function snapshot(overrides: SnapshotPageOverrides = {}) {
     durableLeafId: "a6",
     transcriptPage: {
       revision: 5,
-      viewId: "view-s1",
-      incarnation: "projection-1",
       appendFromRevision: 5,
       effectiveLeafId: "a6",
       ...overrides,

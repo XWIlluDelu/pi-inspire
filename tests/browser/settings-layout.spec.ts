@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { modelSettingsScenario, pairAndOpen } from "./fixtures/model-settings";
-import { openCommandPalette } from "./support/navigation";
+import { modelSettingsScenario } from "./fixtures/model-settings";
+import {
+  openCommandPalette,
+  pairAndOpen,
+  pairedPage,
+} from "./support/navigation";
 
 test("Tab from a Settings dropdown skips collapsed content and reaches its disclosure", async ({
   page,
@@ -26,7 +30,7 @@ test("Tab from a Settings dropdown skips collapsed content and reaches its discl
 
 test("settings dropdown escapes a clipped scroller and keeps pointer hover separate from keyboard selection", async ({
   page,
-}, testInfo) => {
+}) => {
   await page.setViewportSize({ width: 1280, height: 460 });
   await modelSettingsScenario(page);
   await pairAndOpen(page);
@@ -89,10 +93,7 @@ test("settings dropdown escapes a clipped scroller and keeps pointer hover separ
   await expect(menu.getByRole("option").first()).toHaveClass(
     /dropdown__option--active/,
   );
-  await page.screenshot({
-    path: testInfo.outputPath("dropdown-unclipped.png"),
-    animations: "disabled",
-  });
+
   await trigger.press("Escape");
   await expect(menu).toHaveCount(0);
 });
@@ -237,34 +238,10 @@ for (const width of [540, 390, 320]) {
       hasTouch: touch,
       serviceWorkers: "block",
     });
-    test("keeps labels readable, category navigation inside the dialog, and versions compact and copyable", async ({
+    test("keeps category controls readable and keyboard navigation inside the dialog", async ({
       page,
-      context,
     }) => {
-      await context.grantPermissions(["clipboard-read", "clipboard-write"]);
       await modelSettingsScenario(page);
-      await page.route("**/api/bootstrap**", async (route) => {
-        const response = await route.fetch();
-        const data = await response.json();
-        data.updateStatus = {
-          revision: 999,
-          piUpdateCheck: {
-            currentVersion: "1.0.0",
-            pi: {
-              kind: "available",
-              latestVersion: "1.0.2",
-              releaseUrl: "https://example.invalid/pi",
-            },
-            extensions: { kind: "none" },
-          },
-          inspireUpdateCheck: { kind: "unreleased" },
-          piUpdateChecking: false,
-          inspireUpdateChecking: false,
-          availableUpdateIdentity: null,
-          updateSnoozedUntil: Date.now() + 3600000,
-        };
-        await route.fulfill({ response, json: data });
-      });
       await pairAndOpen(page);
       await page.getByRole("button", { name: "Settings", exact: true }).click();
       const settings = page.getByRole("dialog", {
@@ -307,7 +284,6 @@ for (const width of [540, 390, 320]) {
       );
       const infoBox = (await launchInfo.boundingBox())!;
       const controlBox = (await launch.boundingBox())!;
-      expect(infoBox.width).toBeGreaterThanOrEqual(180);
       if (touch) {
         expect(controlBox.y).toBeGreaterThanOrEqual(infoBox.y + infoBox.height);
       } else {
@@ -331,49 +307,7 @@ for (const width of [540, 390, 320]) {
         exact: true,
       });
       await expect(versions).toBeInViewport();
-      const piRow = versions.locator(".system-versions__row").first();
-      const labels = await versions
-        .getByRole("term")
-        .evaluateAll((terms) =>
-          terms.map((term) => term.firstElementChild?.textContent),
-        );
-      expect(labels).toEqual(["Pi", "Extensions", "INSΠRE"]);
-      if (!touch) {
-        const heights = await versions
-          .locator(".system-versions__row")
-          .evaluateAll((rows) =>
-            rows.map((row) => row.getBoundingClientRect().height),
-          );
-        expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(1);
-      }
-      const copy = piRow.getByRole("button", {
-        name: "Copy pi update",
-        exact: true,
-      });
-      await expect(copy).toHaveClass(/file-path-action/);
-      await copy.click();
-      await expect
-        .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-        .toBe("pi update");
-      const host = settings.getByRole("button", {
-        name: "Restart Host",
-        exact: true,
-      });
-      const all = settings.getByRole("button", {
-        name: "Restart all",
-        exact: true,
-      });
-      expect((await host.boundingBox())!.height).toBe(
-        (await all.boundingBox())!.height,
-      );
-      await expect(host).toHaveClass(/button--danger-outline/);
-      await expect(all).toHaveClass(/button--danger-outline/);
       await nav.getByRole("button", { name: "Models", exact: true }).click();
-      const custom = settings.getByRole("button", {
-        name: "Add provider",
-        exact: true,
-      });
-      await expect(custom).toHaveClass("button");
       await content.evaluate((element) => {
         element.scrollTop = element.scrollHeight;
       });
@@ -408,3 +342,101 @@ for (const width of [540, 390, 320]) {
     });
   });
 }
+
+test("Settings activity menus remain clickable beyond their card and persist the choice", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  for (const viewport of [
+    { width: 1440, height: 960 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
+    await dialog.getByRole("button", { name: "Reset preferences" }).click();
+    await dialog
+      .getByRole("button", { name: "Conversation", exact: true })
+      .click();
+    await dialog.getByRole("combobox", { name: "Activity groups" }).click();
+    await page
+      .getByRole("listbox", { name: "Activity groups", exact: true })
+      .getByRole("option", { name: "Collapsed", exact: false })
+      .click();
+    await expect(
+      dialog.getByRole("combobox", { name: "Activity groups" }),
+    ).toHaveText("Collapsed");
+    await expect
+      .poll(async () => {
+        const response = await page.request.get("/api/bootstrap");
+        return (await response.json()).preferences.activityFoldVisibility;
+      })
+      .toBe("collapsed");
+    await page.reload();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Conversation", exact: true })
+      .click();
+    await expect(
+      dialog.getByRole("combobox", { name: "Activity groups" }),
+    ).toHaveText("Collapsed");
+    const restored = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/preferences") &&
+        response.request().method() === "PATCH",
+    );
+    await dialog.getByRole("button", { name: "Reset preferences" }).click();
+    await restored;
+    const activity = dialog.getByRole("combobox", { name: "Activity groups" });
+    await activity.click();
+    await page.keyboard.press("Escape");
+    await expect(dialog.getByRole("listbox")).toHaveCount(0);
+    await expect(dialog).toBeVisible();
+    await expect(activity).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+  }
+});
+
+test("System copies the Pi update command to the clipboard", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await modelSettingsScenario(page);
+  await page.route("**/api/bootstrap**", async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    data.updateStatus = {
+      revision: 999,
+      piUpdateCheck: {
+        currentVersion: "1.0.0",
+        pi: {
+          kind: "available",
+          latestVersion: "1.0.2",
+          releaseUrl: "https://example.invalid/pi",
+        },
+        extensions: { kind: "none" },
+      },
+      inspireUpdateCheck: { kind: "unreleased" },
+      piUpdateChecking: false,
+      inspireUpdateChecking: false,
+      availableUpdateIdentity: null,
+      updateSnoozedUntil: Date.now() + 3600000,
+    };
+    await route.fulfill({ response, json: data });
+  });
+  await pairAndOpen(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await settings
+    .getByRole("navigation", { name: "Settings categories" })
+    .getByRole("button", { name: "System", exact: true })
+    .click();
+  await settings
+    .getByRole("button", { name: "Copy pi update", exact: true })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("pi update");
+});

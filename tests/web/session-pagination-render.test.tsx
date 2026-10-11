@@ -5,6 +5,7 @@ import axe from "axe-core";
 import { beforeAll, describe, expect, it } from "vitest";
 import { Nav } from "../../src/components/Nav";
 import { store } from "../../src/store";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   bootstrapPayload,
   FakeWebSocket,
@@ -38,12 +39,11 @@ beforeAll(async () => {
       );
       if (offset === 0)
         return {
-          body: {
-            sessions: [sessionSummary({ id: "page-1", title: "Newest" })],
-            total: 3,
+          body: sessionPage(
+            [sessionSummary({ id: "page-1", title: "Newest" })],
+            3,
             offset,
-            limit: 40,
-          },
+          ),
         };
       if (offset === 1) {
         olderAttempts += 1;
@@ -52,21 +52,19 @@ beforeAll(async () => {
           return { status: 503, body: { error: "Try again shortly" } };
         }
         return {
-          body: {
-            sessions: [sessionSummary({ id: "page-2", title: "Middle" })],
-            total: 3,
+          body: sessionPage(
+            [sessionSummary({ id: "page-2", title: "Middle" })],
+            3,
             offset,
-            limit: 40,
-          },
+          ),
         };
       }
       return {
-        body: {
-          sessions: [sessionSummary({ id: "page-3", title: "Oldest" })],
-          total: 3,
+        body: sessionPage(
+          [sessionSummary({ id: "page-3", title: "Oldest" })],
+          3,
           offset,
-          limit: 40,
-        },
+        ),
       };
     }
     return undefined;

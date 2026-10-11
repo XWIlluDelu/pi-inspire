@@ -1,14 +1,12 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
+import { pairedPage } from "./support/navigation";
 
 test("Pi errors remain visible after reopening and reload, with copyable long details", async ({
   page,
   context,
 }) => {
-  await page.goto("/");
-  await page.getByLabel("Access token").fill("inspire-browser-test-token");
-  await page.getByRole("button", { name: "Pair" }).click();
-  await expect(page.getByRole("main")).toBeVisible();
+  await pairedPage(page);
   const openErrors = async () => {
     await page
       .locator(".nav__row-main")
@@ -85,9 +83,7 @@ test("Pi errors remain visible after reopening and reload, with copyable long de
         (await new AxeBuilder({ page }).include(".assistant-error").analyze())
           .violations,
       ).toEqual([]);
-      await page.screenshot({
-        path: `output/playwright/pi-error-${palette}-${theme}-${width}.png`,
-      });
+
       await error.getByRole("button", { name: "Hide details" }).click();
     }
   }

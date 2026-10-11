@@ -1,5 +1,6 @@
 import { expect, test, type WebSocketRoute } from "@playwright/test";
 import type { ActiveSnapshot } from "../../shared/contracts";
+import { pairedPage } from "./support/navigation";
 
 // UI wire fixture only; real native execution is checked by the isolated Pi
 // lifecycle integration tests, never the mock Host or independent terminal.
@@ -103,9 +104,7 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
     });
   });
 
-  await page.goto("/");
-  await page.getByLabel("Access token").fill("inspire-browser-test-token");
-  await page.getByRole("button", { name: "Pair" }).click();
+  await pairedPage(page);
   await page
     .locator(".nav__row-main")
     .filter({ hasText: /Review extension event lifecycle/ })
@@ -136,7 +135,7 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
     }),
   );
   await expect(card.getByText("STREAMED_BROWSER_OUTPUT")).toBeVisible();
-  await page.screenshot({ path: "output/playwright/native-shell-desktop.png" });
+
   await input.fill("Explicit model input during shell.");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(input).toHaveValue("");
@@ -166,5 +165,4 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
   await expect(
     card.getByRole("button", { name: /Copy shell result/ }),
   ).toBeVisible();
-  await page.screenshot({ path: "output/playwright/native-shell-narrow.png" });
 });

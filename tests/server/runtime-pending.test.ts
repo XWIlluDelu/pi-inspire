@@ -10,6 +10,7 @@ import {
   trackedAttachmentStore,
   deferredSignal,
   upload,
+  schedulingRuntime,
   initializeRuntimeFixture,
   disposeRuntimeFixture,
 } from "./fixtures/runtime.js";
@@ -81,22 +82,14 @@ afterEach(disposeRuntimeFixture);
 describe("RuntimeController Pending input and recovery", () => {
   it("keeps observed pending input across reconnect and settlement, clearing it only on queue removal or worker replacement", async () => {
     const store = trackedAttachmentStore();
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      store,
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
+    const f = schedulingRuntime({ attachments: store });
+    const { runtime } = f;
     await runtime.openSession("a");
     await new Promise<void>((resolveTick) => setImmediate(resolveTick));
 
     const initialRevision = (await runtime.snapshot()).pendingQueues!.revision;
     const longPendingText = "x".repeat(600);
-    worker.emit("event", {
+    f.worker.emit("event", {
       type: "queue_update",
       steering: ["first", longPendingText],
       followUp: ["later"],
@@ -118,7 +111,7 @@ describe("RuntimeController Pending input and recovery", () => {
       followUp: [pendingEntry("text-followUp-0", "later")],
     });
 
-    worker.emit("event", {
+    f.worker.emit("event", {
       type: "queue_update",
       steering: Array.from({ length: 1_001 }, (_, index) => `steer-${index}`),
       followUp: ["bounded-out"],
@@ -130,7 +123,7 @@ describe("RuntimeController Pending input and recovery", () => {
       followUp: [],
     });
 
-    worker.emit("event", { type: "agent_settled" });
+    f.worker.emit("event", { type: "agent_settled" });
     await vi.waitFor(async () =>
       expect((await runtime.snapshot()).pendingQueues).toMatchObject({
         totalCount: 1_002,
@@ -140,14 +133,14 @@ describe("RuntimeController Pending input and recovery", () => {
       }),
     );
 
-    worker.emit("event", {
+    f.worker.emit("event", {
       type: "queue_update",
       steering: ["stale"],
       followUp: [],
     });
     const beforeReplacement = (await runtime.snapshot()).pendingQueues!
       .revision;
-    worker.emit("exit", new Error("replacement required"));
+    f.worker.emit("exit", new Error("replacement required"));
     const replaced = (await runtime.snapshot()).pendingQueues!;
     expect(replaced).toMatchObject({
       totalCount: 0,
@@ -452,16 +445,8 @@ describe("RuntimeController Pending input and recovery", () => {
   });
 
   it("copies full pending text beyond display limits without mutating queues", async () => {
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
+    const f = schedulingRuntime();
+    const { runtime } = f;
     try {
       await runtime.openSession("a");
       await waitForReady(runtime);
@@ -470,7 +455,7 @@ describe("RuntimeController Pending input and recovery", () => {
         longText,
         ...Array.from({ length: 1001 }, (_, index) => `steer-${index}`),
       ];
-      worker.emit("event", {
+      f.worker.emit("event", {
         type: "queue_update",
         steering,
         followUp: ["hidden follow"],
@@ -492,11 +477,11 @@ describe("RuntimeController Pending input and recovery", () => {
         snapshot.pendingQueues,
       );
       expect(
-        worker.commands.some(
+        f.worker.commands.some(
           ({ type }) => type === "clear_queue" || type === "abort",
         ),
       ).toBe(false);
-      worker.emit("event", {
+      f.worker.emit("event", {
         type: "queue_update",
         steering: steering.slice(1),
         followUp: ["hidden follow"],
@@ -509,10 +494,10 @@ describe("RuntimeController Pending input and recovery", () => {
           if (event.type === "agent_settled") resolveSettled();
         }),
       );
-      worker.emit("event", { type: "agent_settled", messages: [] });
+      f.worker.emit("event", { type: "agent_settled", messages: [] });
       await settled;
       for (let index = 0; index < request.revision; index++)
-        worker.emit("event", {
+        f.worker.emit("event", {
           type: "queue_update",
           steering: ["different run, same coordinate"],
           followUp: [],
@@ -520,7 +505,7 @@ describe("RuntimeController Pending input and recovery", () => {
       await expect(
         runtime.pendingText({ ...request, itemId: "text-steer-0" }),
       ).rejects.toThrow("Pending input changed");
-      worker.emit("event", {
+      f.worker.emit("event", {
         type: "queue_update",
         steering: ["preview"],
         followUp: [42],
@@ -577,27 +562,19 @@ describe("RuntimeController Pending input and recovery", () => {
   });
 
   it("recovers only unconsumed Pi texts, all Steer before Queue, without stopping", async () => {
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
+    const f = schedulingRuntime();
+    const { runtime } = f;
     try {
       await runtime.openSession("a");
       await waitForReady(runtime);
-      worker.emit("event", { type: "agent_start" });
-      worker.emit("event", {
+      f.worker.emit("event", { type: "agent_start" });
+      f.worker.emit("event", {
         type: "queue_update",
         steering: ["consumed", "left"],
         followUp: ["later"],
       });
-      worker.responseOverrides.set("clear_queue", () => {
-        worker.emit("event", {
+      f.worker.responseOverrides.set("clear_queue", () => {
+        f.worker.emit("event", {
           type: "queue_update",
           steering: [],
           followUp: [],
@@ -610,8 +587,10 @@ describe("RuntimeController Pending input and recovery", () => {
       });
       expect((await runtime.snapshot()).pendingQueues!.totalCount).toBe(0);
       expect((await runtime.snapshot()).runState).toBe("running");
-      expect(worker.stops).toBe(0);
-      expect(worker.commands.some(({ type }) => type === "abort")).toBe(false);
+      expect(f.worker.stops).toBe(0);
+      expect(f.worker.commands.some(({ type }) => type === "abort")).toBe(
+        false,
+      );
     } finally {
       await runtime.close();
     }
@@ -903,26 +882,18 @@ describe("RuntimeController Pending input and recovery", () => {
   );
 
   it("recovers mixed Host-held input without resuming it when compaction ends", async () => {
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
+    const f = schedulingRuntime();
+    const { runtime } = f;
     try {
       await runtime.openSession("a");
       await waitForReady(runtime);
-      worker.responseOverrides.set("get_state", {
+      f.worker.responseOverrides.set("get_state", {
         sessionId: "a",
-        sessionFile: worker.sessionPath,
+        sessionFile: f.worker.sessionPath,
         isStreaming: false,
         isCompacting: true,
       });
-      worker.emit("event", { type: "compaction_start", reason: "manual" });
+      f.worker.emit("event", { type: "compaction_start", reason: "manual" });
       const requests = [
         runtime.prompt({
           sessionId: "a",
@@ -952,14 +923,14 @@ describe("RuntimeController Pending input and recovery", () => {
           expect.objectContaining({ code: "PROMPT_RECOVERED" }),
         ),
       );
-      worker.emit("event", {
+      f.worker.emit("event", {
         type: "compaction_end",
         reason: "manual",
         result: {},
       });
       await new Promise<void>((done) => setImmediate(done));
       expect(
-        worker.commands.some(
+        f.worker.commands.some(
           ({ type }) => type === "prompt" || type === "abort",
         ),
       ).toBe(false);
@@ -1024,28 +995,22 @@ describe("RuntimeController Pending input and recovery", () => {
   });
 
   it("reports unavailable recovery and hard-stops instead of aborting with a live queue", async () => {
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
+    const f = schedulingRuntime();
+    const { runtime } = f;
     try {
       await runtime.openSession("a");
       await waitForReady(runtime);
-      worker.emit("event", { type: "agent_start" });
-      worker.responseOverrides.set("clear_queue", () => {
+      f.worker.emit("event", { type: "agent_start" });
+      f.worker.responseOverrides.set("clear_queue", () => {
         throw new Error("queue read failed");
       });
       await expect(runtime.abort("a")).resolves.toMatchObject({
         error: "queue read failed",
       });
-      expect(worker.stops).toBe(1);
-      expect(worker.commands.some(({ type }) => type === "abort")).toBe(false);
+      expect(f.worker.stops).toBe(1);
+      expect(f.worker.commands.some(({ type }) => type === "abort")).toBe(
+        false,
+      );
     } finally {
       await runtime.close();
     }
@@ -1053,16 +1018,8 @@ describe("RuntimeController Pending input and recovery", () => {
 
   it("clears the public Pi queue at its current boundary without rewriting newer projections", async () => {
     const store = trackedAttachmentStore();
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      store,
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
+    const f = schedulingRuntime({ attachments: store });
+    const { runtime } = f;
     await runtime.openSession("a");
     await new Promise<void>((resolveTick) => setImmediate(resolveTick));
     const forwarded: Array<Record<string, unknown>> = [];
@@ -1070,7 +1027,7 @@ describe("RuntimeController Pending input and recovery", () => {
       forwarded.push(event as Record<string, unknown>),
     );
 
-    worker.emit("event", {
+    f.worker.emit("event", {
       type: "queue_update",
       steering: ["first"],
       followUp: ["later"],
@@ -1081,15 +1038,15 @@ describe("RuntimeController Pending input and recovery", () => {
     });
     expect(forwarded.at(-1)).not.toHaveProperty("steering");
     expect(forwarded.at(-1)).not.toHaveProperty("followUp");
-    worker.responseOverrides.set("clear_queue", () => {
+    f.worker.responseOverrides.set("clear_queue", () => {
       // Pi consumed 'first' before the operation, cleared 'later', then
       // another producer queued new work before the HTTP receipt arrived.
-      worker.emit("event", {
+      f.worker.emit("event", {
         type: "queue_update",
         steering: [],
         followUp: [],
       });
-      worker.emit("event", {
+      f.worker.emit("event", {
         type: "queue_update",
         steering: ["new"],
         followUp: [],
@@ -1098,14 +1055,14 @@ describe("RuntimeController Pending input and recovery", () => {
     });
     await expect(runtime.clearPending("a")).resolves.toBeUndefined();
     expect(
-      worker.commands.filter((command) => command.type === "clear_queue"),
+      f.worker.commands.filter((command) => command.type === "clear_queue"),
     ).toEqual([{ type: "clear_queue" }]);
     expect((await runtime.snapshot()).pendingQueues).toMatchObject({
       totalCount: 1,
       steering: [{ textPreview: "new" }],
       followUp: [],
     });
-    expect(worker.commands.some((command) => command.type === "abort")).toBe(
+    expect(f.worker.commands.some((command) => command.type === "abort")).toBe(
       false,
     );
     await runtime.close();

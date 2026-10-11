@@ -12,6 +12,7 @@ import { App } from "../../src/App";
 import { ExtensionStatus } from "../../src/components/ExtensionDisplays";
 import { ExtensionUiDialog } from "../../src/components/ExtensionUiDialog";
 import { store } from "../../src/store";
+import { sessionPage } from "./fixtures/session-catalog";
 import { mockTouchFirstDevice } from "./fixtures/touch-device";
 import {
   activeSnapshot,
@@ -54,7 +55,7 @@ beforeEach(async () => {
     }
     if (url.startsWith("/api/sessions")) {
       return {
-        body: { sessions, total: sessions.length, offset: 0, limit: 40 },
+        body: sessionPage(sessions, sessions.length),
       };
     }
     if (url.startsWith("/api/extension-ui"))

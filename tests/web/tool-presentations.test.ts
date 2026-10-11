@@ -365,6 +365,22 @@ describe("declarative Thinking presentation", () => {
 });
 
 describe("shipped Pi tool rules", () => {
+  it.each(["bash", "powershell"])(
+    "binds %s command/result blocks and normalizes terminal escape sequences",
+    (name) => {
+      const presentation = toolPresentationRegistry.resolve({
+        call: call(name, {
+          command: "\u001b[32mprintf Ready\u001b[0m\nexit 0",
+          timeout: 30,
+        }),
+        result: result("\u001b[33mReady\u001b[0m"),
+      });
+      expect(presentation?.blocks()).toEqual([
+        { type: "terminal", label: "Command", text: "printf Ready\nexit 0" },
+        { type: "terminal", label: "Output", text: "Ready", error: false },
+      ]);
+    },
+  );
   it("keeps Codemode's native script, result image and full-output reader on the selected lazy rule", () => {
     const presentation = toolPresentationRegistry.resolve({
       call: call("codemode", {

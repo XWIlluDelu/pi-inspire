@@ -14,6 +14,7 @@ import type {
 } from "../../shared/contracts";
 import { App } from "../../src/App";
 import { store } from "../../src/store";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   bootstrapPayload,
   FakeWebSocket,
@@ -98,8 +99,7 @@ describe("right-corner notices", () => {
           body: { ...updateResponse, updateStatus: updateStatus() },
         };
       }
-      if (url.startsWith("/api/sessions"))
-        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+      if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
       return undefined;
     });
   });

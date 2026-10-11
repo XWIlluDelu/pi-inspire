@@ -1,53 +1,24 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { refreshWorkerCatalog } from "../../server/model-catalog-refresh.js";
-import { PiRpcProcess } from "../../server/pi-rpc.js";
 import { requestWorkerAuth } from "../../server/provider-auth-bridge.js";
-import { newBridgeIdentity } from "../../server/runtime-branch-bridge.js";
 import type {
   ProviderLoginAttempt,
   ProviderLoginOption,
 } from "../../shared/model-settings.js";
-import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
+import { nativePiWorkspace, nativeBridgeWorker } from "./fixtures/native-pi.js";
 
 it("uses the live extension provider's native login and refreshes availability without changing the session", async () => {
-  const root = await mkdtemp(join(tmpdir(), "inspire-worker-auth-"));
-  const config = join(root, "agent");
-  const cwd = join(root, "workspace");
-  const sessions = join(root, "sessions");
-  await Promise.all([config, cwd, sessions].map((path) => mkdir(path)));
-  await writeFile(
-    join(config, "settings.json"),
-    JSON.stringify({
-      defaultProjectTrust: "never",
-      compaction: { enabled: false },
-    }),
-  );
-  await writeFile(join(config, "auth.json"), "{}");
-  const bridge = newBridgeIdentity();
-  const rpc = new PiRpcProcess({
-    cwd,
-    env: isolatedTestEnvironment(root, {
-      INSPIRE_BRANCH_COMMAND: bridge.command,
-      INSPIRE_BRANCH_STATUS_KEY: bridge.statusKey,
-      INSPIRE_BRANCH_WORKER_ID: bridge.workerId,
-    }),
-    args: [
-      "--no-extensions",
-      "--no-skills",
-      "--no-context-files",
-      "--no-prompt-templates",
-      "--no-themes",
-      "--no-tools",
-      "--no-approve",
-      "--extension",
-      resolve("server/extensions/inspire-branch-bridge.ts"),
-      "--extension",
-      resolve("tests/fixtures/pi-provider-auth-extension.ts"),
-    ],
+  const workspace = await nativePiWorkspace("inspire-worker-auth-", {
+    defaultProjectTrust: "never",
+    compaction: { enabled: false },
   });
+  const { root, agent: config } = workspace;
+  const { bridge, rpc } = nativeBridgeWorker(
+    workspace,
+    "tests/fixtures/pi-provider-auth-extension.ts",
+  );
   try {
     await rpc.start();
     const before = await rpc.request<Record<string, unknown>>({

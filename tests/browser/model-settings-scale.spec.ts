@@ -212,9 +212,7 @@ for (const touch of [false, true]) {
             `[id="${await search.getAttribute("aria-activedescendant")}"]`,
           ),
         ).toContainText(target.name ?? target.id);
-        await page.screenshot({
-          path: `output/playwright/models-scale-picker-${touch ? "touch" : "desktop"}.png`,
-        });
+
         await page.getByRole("button", { name: "Manage models" }).click();
         const gridSearch = page.getByRole("combobox", {
           name: "Search available models",
@@ -265,9 +263,7 @@ for (const touch of [false, true]) {
         ).toHaveCount(0);
         await gridSearch.fill(`${target.provider} ${target.id}`);
         await frame(page);
-        await page.screenshot({
-          path: `output/playwright/models-scale-list-${touch ? "touch" : "desktop"}.png`,
-        });
+
         const geometry = await grid.evaluate((element) => {
           const rect = element.getBoundingClientRect();
           return {

@@ -94,7 +94,7 @@ describe("execution output previews", () => {
     expect(state.tools[call.id]?.outputPreview).toBeUndefined();
   });
 
-  it.each(["bash", "powershell", "unknown_extension", "declared_extension"])(
+  it.each(["bash", "declared_extension", "unknown_extension"])(
     "renders %s live text separately from arguments and final content",
     (name) => {
       configureToolPresentationRegistry(

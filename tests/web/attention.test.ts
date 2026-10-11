@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppStore } from "../../src/store";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -59,7 +60,7 @@ function attentionRoutes(
     }
     if (url.startsWith("/api/sessions")) {
       return {
-        body: { sessions: [background], total: 1, offset: 0, limit: 40 },
+        body: sessionPage([background], 1),
       };
     }
     if (url.startsWith("/api/preferences")) {
@@ -442,8 +443,7 @@ describe("completion attention", () => {
           }),
         };
       }
-      if (url.startsWith("/api/sessions"))
-        return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+      if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
       return undefined;
     });
     const store = new AppStore();

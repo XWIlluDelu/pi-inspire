@@ -1,11 +1,13 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import type {
+  PalettePreference,
+  ThemePreference,
+} from "../../shared/contracts";
+import { pairedPage } from "./support/navigation";
 
 async function pair(page: Page) {
-  await page.goto("/");
-  await page.getByLabel("Access token").fill("inspire-browser-test-token");
-  await page.getByRole("button", { name: "Pair", exact: true }).click();
-  await expect(page.getByRole("main")).toBeVisible();
+  await pairedPage(page);
   await page
     .locator(".nav__row-main")
     .filter({ hasText: "Review extension event lifecycle" })
@@ -87,128 +89,78 @@ async function attachImage(
   return { thumbnail, dialog, image: dialog.locator("img") };
 }
 
-for (const theme of ["light", "dark"]) {
-  for (const palette of ["amber", "jade"]) {
-    test(`image backgrounds isolate alpha in ${palette} ${theme}`, async ({
-      page,
-    }) => {
-      await pair(page);
-      await page.evaluate(
-        ({ theme, palette }) => {
-          document.documentElement.dataset.theme = theme;
-          document.documentElement.dataset.palette = palette;
-        },
-        { theme, palette },
-      );
-      const { dialog, image } = await attachImage(page);
-      const backgrounds = dialog.getByRole("group", {
-        name: "Image background",
-      });
-      await expect(
-        backgrounds.getByRole("button", { name: "Checkerboard" }),
-      ).toHaveAttribute("aria-pressed", "true");
-      await expect(image).toHaveCSS("background-color", "rgb(238, 238, 238)");
-      await expect(image).not.toHaveCSS("background-image", "none");
-      await expect(page.locator(".image-lightbox")).toHaveCSS(
-        "backdrop-filter",
-        "blur(2px)",
-      );
-      // Compare against the real shared overlay rule, not a source-code regex.
-      const standardBackdrop = await page.evaluate(() => {
-        const overlay = document.createElement("div");
-        overlay.className = "overlay";
-        document.body.append(overlay);
-        const color = getComputedStyle(overlay).backgroundColor;
-        overlay.remove();
-        return color;
-      });
-      await expect(page.locator(".image-lightbox")).toHaveCSS(
-        "background-color",
-        standardBackdrop,
-      );
-
-      // Controls follow the shell theme; inspection colors deliberately do not.
-      const tokens = await dialog.evaluate((element) => {
-        const style = getComputedStyle(element);
-        return {
-          surface: style.getPropertyValue("--bg-raised").trim(),
-          ink: style.getPropertyValue("--ink").trim(),
-        };
-      });
-      const normalized = await page.evaluate((tokens) => {
-        const element = document.createElement("div");
-        document.body.append(element);
-        element.style.color = tokens.surface;
-        const surface = getComputedStyle(element).color;
-        element.style.color = tokens.ink;
-        const ink = getComputedStyle(element).color;
-        element.remove();
-        return { surface, ink };
-      }, tokens);
-      const close = dialog.getByRole("button", { name: "Close image preview" });
-      await expect(close).toHaveCSS("background-color", normalized.surface);
-      await expect(close).toHaveCSS("color", normalized.ink);
-      await expect(backgrounds).toHaveCSS(
-        "background-color",
-        normalized.surface,
-      );
-      await expect(backgrounds.locator('[aria-pressed="true"]')).toHaveCSS(
-        "background-color",
-        normalized.ink,
-      );
-      const checkerboard = await imagePixels(page, image);
-      await page.screenshot({
-        path: test.info().outputPath(`${palette}-${theme}.png`),
-      });
-      // Shell content must not bleed through any alpha pixel.
-      await page.locator(".image-lightbox").evaluate((element) => {
-        element.style.backgroundColor = "rgb(0, 255, 0)";
-      });
-      expect((await imagePixels(page, image)).equals(checkerboard)).toBe(true);
-      await backgrounds
-        .getByRole("button", { name: "White", exact: true })
-        .click();
-      await expect(image).toHaveCSS("background-image", "none");
-      await expect(image).toHaveCSS("background-color", "rgb(255, 255, 255)");
-      const white = await imagePixels(page, image);
-      await backgrounds
-        .getByRole("button", { name: "Black", exact: true })
-        .click();
-      await expect(image).toHaveCSS("background-color", "rgb(0, 0, 0)");
-      expect((await imagePixels(page, image)).equals(white)).toBe(false);
-      await expect(
-        dialog.getByRole("button", { name: "Zoom image" }),
-      ).toHaveAttribute("aria-pressed", "false");
-      await expect(dialog).toBeVisible();
-      const audit = await new AxeBuilder({ page })
-        .include(".image-lightbox")
-        .analyze();
-      expect(audit.violations).toEqual([]);
-    });
-  }
-}
-
-test("settings header meets its body without inherited dialog spacing", async ({
+test("inspection backgrounds isolate alpha and preserve image pixels across themes", async ({
   page,
 }) => {
   await pair(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
-  await expect(dialog.locator(".settings__layout")).toBeVisible();
-  for (const width of [1280, 390]) {
-    await page.setViewportSize({ width, height: 800 });
-    await expect(dialog).toHaveCSS("row-gap", "0px");
-    const gap = await dialog.evaluate((element) => {
-      const header = element
-        .querySelector(".settings__header")!
-        .getBoundingClientRect();
-      const body = element
-        .querySelector(".settings__layout")!
-        .getBoundingClientRect();
-      return body.top - header.bottom;
-    });
-    expect(gap).toBeCloseTo(0, 1);
+  const { dialog, image } = await attachImage(page);
+  const source = await image.getAttribute("src");
+  const backgrounds = dialog.getByRole("group", { name: "Image background" });
+  await expect(
+    backgrounds.getByRole("button", { name: "Checkerboard" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  const reference = new Map<string, Buffer>();
+
+  for (const palette of ["amber", "teal"] satisfies PalettePreference[]) {
+    for (const theme of ["light", "dark"] satisfies ThemePreference[]) {
+      await test.step(`${palette}/${theme}: inspection pixels do not inherit the shell`, async () => {
+        await page.evaluate(
+          ({ palette, theme }) => {
+            document.documentElement.dataset.palette = palette;
+            document.documentElement.dataset.theme = theme;
+          },
+          { palette, theme },
+        );
+
+        for (const name of ["Checkerboard", "White", "Black"]) {
+          const choice = backgrounds.getByRole("button", { name, exact: true });
+          await choice.click();
+          await expect(choice).toHaveAttribute("aria-pressed", "true");
+          if (name === "Checkerboard") {
+            await expect(image).not.toHaveCSS("background-image", "none");
+          } else {
+            await expect(image).toHaveCSS("background-image", "none");
+            await expect(image).toHaveCSS(
+              "background-color",
+              name === "White" ? "rgb(255, 255, 255)" : "rgb(0, 0, 0)",
+            );
+          }
+          const pixels = await imagePixels(page, image);
+          const original = reference.get(name);
+          if (original) {
+            expect(
+              pixels.equals(original),
+              `${name} pixels changed with the theme`,
+            ).toBe(true);
+          } else {
+            reference.set(name, pixels);
+          }
+
+          // A changed scrim must not show through transparent or half-alpha pixels.
+          await page.locator(".image-lightbox").evaluate((element) => {
+            element.style.backgroundColor = "rgb(0, 255, 0)";
+          });
+          expect(
+            (await imagePixels(page, image)).equals(pixels),
+            `${name} let the scrim bleed into the image`,
+          ).toBe(true);
+          await page.locator(".image-lightbox").evaluate((element) => {
+            element.style.removeProperty("background-color");
+          });
+        }
+
+        await expect(image).toHaveAttribute("src", source!);
+        await expect(
+          dialog.getByRole("button", { name: "Zoom image" }),
+        ).toHaveAttribute("aria-pressed", "false");
+        const audit = await new AxeBuilder({ page })
+          .include(".image-lightbox")
+          .analyze();
+        expect(audit.violations).toEqual([]);
+      });
+    }
   }
+  expect(reference.get("White")!.equals(reference.get("Black")!)).toBe(false);
 });
 
 test("opaque images are unchanged by inspection backgrounds", async ({
@@ -351,6 +303,5 @@ for (const scenario of [
         scenario.viewport.height - 16,
       );
     }
-    await page.screenshot({ path: test.info().outputPath("layout.png") });
   });
 }

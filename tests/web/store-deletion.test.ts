@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -11,7 +12,6 @@ import {
   jsonBody,
   sessionSummary,
 } from "./helpers";
-
 import { baseRoutes, initStore } from "./store-fixture";
 
 describe("session deletion ownership", () => {
@@ -56,7 +56,7 @@ describe("session deletion ownership", () => {
       if (url.startsWith("/api/sessions")) {
         const sessions = deleted ? rows.slice(0, 1) : rows;
         return {
-          body: { sessions, total: sessions.length, offset: 0, limit: 40 },
+          body: sessionPage(sessions, sessions.length),
         };
       }
       return baseRoutes(url, init);
@@ -111,7 +111,7 @@ describe("session deletion ownership", () => {
       if (url.startsWith("/api/sessions")) {
         const sessions = deleted ? rows.slice(0, 1) : rows;
         return {
-          body: { sessions, total: sessions.length, offset: 0, limit: 40 },
+          body: sessionPage(sessions, sessions.length),
         };
       }
       return baseRoutes(url, init);
@@ -163,7 +163,7 @@ describe("session deletion ownership", () => {
       if (url.startsWith("/api/sessions")) {
         const sessions = deleted ? rows.slice(0, 1) : rows;
         return {
-          body: { sessions, total: sessions.length, offset: 0, limit: 40 },
+          body: sessionPage(sessions, sessions.length),
         };
       }
       return baseRoutes(url, init);
@@ -220,7 +220,7 @@ describe("session deletion ownership", () => {
       if (url.startsWith("/api/sessions")) {
         const sessions = deleted ? [] : [row];
         return {
-          body: { sessions, total: sessions.length, offset: 0, limit: 40 },
+          body: sessionPage(sessions, sessions.length),
         };
       }
       return baseRoutes(url, init);
@@ -259,7 +259,7 @@ describe("session deletion ownership", () => {
       if (url.startsWith("/api/sessions/by-id"))
         return { body: { sessions: [row] } };
       if (url.startsWith("/api/sessions"))
-        return { body: { sessions: [row], total: 1, offset: 0, limit: 40 } };
+        return { body: sessionPage([row], 1) };
       return baseRoutes(url, init);
     });
     const { store } = await initStore();

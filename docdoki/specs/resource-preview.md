@@ -13,12 +13,12 @@ covers:
   - src/App.tsx
   - src/styles.css
   - src/styles/*.css
-  - tests/server/{app,resources,resources-windows-paths,runtime-reads,git-inspection,runtime}.test.ts
+  - tests/server/{app-resources,app-auth,resources,resources-windows-paths,runtime-reads,git-inspection,runtime-selection}.test.ts
   - tests/web/{resources,document-resources,document-image-controller,git-controller,workspace-controller,store-resources}.test.ts
   - tests/web/{document-preview,pdf-preview,resources-pane,search-match-text,changes-pane,pane-resize,rich-text}.test.tsx
   - tests/web/{source-diff,file-icons,syntax-highlighting}.test.ts
   - tests/server/html-preview.test.ts
-  - tests/browser/{workbench,html-preview}.spec.ts
+  - tests/browser/{filesystem-files,pdf-preview,html-preview}.spec.ts
 ---
 
 # Resource preview

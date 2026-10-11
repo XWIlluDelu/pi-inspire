@@ -49,7 +49,7 @@ covers:
   - src/components/Transcript.tsx
   - src/components/BranchTree.tsx
   - server/session-tree.ts
-  - tests/server/app.test.ts
+  - tests/server/{app,app-events}.test.ts
   - tests/server/mock.test.ts
   - tests/server/model-catalog.test.ts
   - tests/server/session-delete.test.ts
@@ -58,11 +58,11 @@ covers:
   - tests/server/pi-session-directory*.test.ts
   - tests/server/project-directories.test.ts
   - tests/server/project-discovery.integration.test.ts
-  - tests/server/runtime.test.ts
+  - tests/server/runtime-{selection,worker-pool,worker-lifecycle}.test.ts
   - tests/server/runtime-branching.test.ts
-  - tests/server/runtime-projection.test.ts
+  - tests/server/runtime-{materialization,persistence-ownership,startup-attestation}.test.ts
   - tests/server/pi-rpc.test.ts
-  - tests/browser/workbench.spec.ts
+  - tests/browser/session-navigation.spec.ts
   - tests/server/session-projection.test.ts
   - tests/web/app.test.tsx
   - tests/web/nav-render.test.tsx

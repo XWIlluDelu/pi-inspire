@@ -1,14 +1,12 @@
 import {
   lstat,
   mkdir,
-  mkdtemp,
   readFile,
   rm,
   symlink,
   utimes,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import express from "express";
 import request from "supertest";
@@ -24,6 +22,10 @@ import { ModelRuntime, ProjectTrustStore } from "../../server/pi-runtime.js";
 import type { RuntimeLike } from "../../server/runtime.js";
 import type { ModelOption } from "../../shared/contracts.js";
 import type { ModelConfigEdit } from "../../shared/model-settings.js";
+import {
+  nativePiWorkspace,
+  stubNativePiEnvironment,
+} from "./fixtures/native-pi.js";
 
 let root: string;
 let agent: string;
@@ -69,22 +71,14 @@ const initialConfig = {
   },
 };
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "inspire-model-settings-"));
-  agent = join(root, "agent");
-  cwd = join(root, "workspace");
-  await Promise.all([
-    mkdir(agent),
-    mkdir(join(cwd, ".pi"), { recursive: true }),
-  ]);
-  await writeFile(
-    join(agent, "settings.json"),
-    JSON.stringify(initialSettings),
+  const workspace = await nativePiWorkspace(
+    "inspire-model-settings-",
+    initialSettings,
   );
+  ({ root, agent, cwd } = workspace);
+  await mkdir(join(cwd, ".pi"));
   await writeFile(join(agent, "models.json"), JSON.stringify(initialConfig));
-  await writeFile(join(agent, "auth.json"), "{}");
-  vi.stubEnv("PI_CODING_AGENT_DIR", agent);
-  vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", join(root, "sessions"));
-  vi.stubEnv("PI_OFFLINE", "1");
+  stubNativePiEnvironment(workspace.env);
   service = new ModelSettingsService(agent);
 });
 afterEach(async () => {

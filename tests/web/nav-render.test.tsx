@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Nav } from "../../src/components/Nav";
 import { ProjectGroup, SessionRow } from "../../src/components/NavSessions";
 import { store } from "../../src/store";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -185,12 +186,12 @@ describe("session navigation controls", () => {
         );
         const limit = searchPageSize ?? 40;
         return {
-          body: {
-            sessions: sessions.slice(offset, offset + limit),
-            total: sessions.length,
+          body: sessionPage(
+            sessions.slice(offset, offset + limit),
+            sessions.length,
             offset,
             limit,
-          },
+          ),
         };
       }
       if (url.startsWith("/api/preferences") && init.method === "PATCH")

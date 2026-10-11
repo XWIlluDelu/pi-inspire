@@ -25,6 +25,7 @@ import {
 } from "../../src/session-drafts";
 import { store, useAppState } from "../../src/store";
 import { mockModelMenuLayout } from "./fixtures/model-menu-layout";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -161,8 +162,7 @@ beforeAll(async () => {
       return promptGate ?? { status: 202, body: { accepted: true } };
     }
     if (url.startsWith("/api/sessions/refresh")) return { body: { ok: true } };
-    if (url.startsWith("/api/sessions"))
-      return { body: { sessions: [], total: 0, offset: 0, limit: 40 } };
+    if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
     if (url.startsWith("/api/preferences"))
       return { body: { ...bootstrapPayload().preferences, ...jsonBody(init) } };
     return undefined;

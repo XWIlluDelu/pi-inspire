@@ -6,380 +6,11 @@ import {
   deferred,
   installFakeWebSocket,
   installFetch,
-  type RouteResponse,
 } from "./helpers";
-
 import { baseRoutes, initStore } from "./store-fixture";
 
 describe("transcript paging", () => {
   beforeEach(() => installFakeWebSocket());
-
-  it("prepends addressed older messages with dedupe and advances the cursor", async () => {
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
-              pageMessages: [{ role: "user", content: "new", timestamp: 2 }],
-              transcriptPage: {
-                sessionId: "s1",
-                revision: 4,
-                messages: [{ role: "user", content: "new", timestamp: 2 }],
-                hasOlder: true,
-                olderCursor: "cursor-1",
-              },
-            }),
-          }),
-        };
-      }
-      if (url.startsWith("/api/transcript/older")) {
-        return {
-          body: {
-            sessionId: "s1",
-            revision: 4,
-            messages: [
-              { role: "user", content: "old", timestamp: 1 },
-              { role: "user", content: "new duplicate", timestamp: 2 },
-            ],
-            hasOlder: false,
-            olderCursor: null,
-          },
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await store.loadOlderMessages();
-    expect(
-      store.getState().messages.map((message) => message.timestamp),
-    ).toEqual([1, 2]);
-    expect(store.getState().hasOlderMessages).toBe(false);
-    expect(store.getState().olderMessagesCursor).toBeNull();
-    expect(store.getState().olderMessagesError).toBeNull();
-  });
-
-  it("loads the bounded user-turn outline and directly merges a selected turn with continuation", async () => {
-    const requestedTurnCursors: Array<string | null> = [];
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
-              transcriptPage: {
-                sessionId: "s1",
-                revision: 4,
-                viewId: "view-s1",
-                incarnation: "projection-1",
-                messages: [
-                  {
-                    role: "user",
-                    content: "latest",
-                    timestamp: 10,
-                    __inspireMessageId: "u2",
-                    __inspireMessageIndex: 10,
-                    __inspireUserTurnId: "u2",
-                    __inspireUserTurnIndex: 2,
-                  },
-                ],
-                hasOlder: true,
-                olderCursor: "older-latest",
-              },
-            }),
-          }),
-        };
-      }
-      if (url.startsWith("/api/transcript/user-turns")) {
-        return {
-          body: {
-            sessionId: "s1",
-            revision: 4,
-            viewId: "view-s1",
-            incarnation: "projection-1",
-            total: 3,
-            start: 0,
-            turns: [
-              { id: "u0", ordinal: 0, snippet: "old", attachmentCount: 0 },
-              { id: "u1", ordinal: 1, snippet: "middle", attachmentCount: 0 },
-              { id: "u2", ordinal: 2, snippet: "latest", attachmentCount: 0 },
-            ],
-          },
-        };
-      }
-      if (url.startsWith("/api/transcript/user-turn?")) {
-        const cursor = new URL(url, "http://localhost").searchParams.get(
-          "cursor",
-        );
-        requestedTurnCursors.push(cursor);
-        const continuation = cursor === "continue-turn";
-        return {
-          body: {
-            sessionId: "s1",
-            revision: 4,
-            viewId: "view-s1",
-            incarnation: "projection-1",
-            messages: continuation
-              ? [
-                  {
-                    role: "assistant",
-                    content: "continued response",
-                    timestamp: 3,
-                    __inspireMessageId: "a0-continued",
-                    __inspireMessageIndex: 2,
-                    __inspireUserTurnId: "u0",
-                    __inspireUserTurnIndex: 0,
-                  },
-                ]
-              : [
-                  {
-                    role: "user",
-                    content: "old",
-                    timestamp: 1,
-                    __inspireMessageId: "u0",
-                    __inspireMessageIndex: 0,
-                    __inspireUserTurnId: "u0",
-                    __inspireUserTurnIndex: 0,
-                  },
-                  {
-                    role: "assistant",
-                    content: "response",
-                    timestamp: 2,
-                    __inspireMessageId: "a0",
-                    __inspireMessageIndex: 1,
-                    __inspireUserTurnId: "u0",
-                    __inspireUserTurnIndex: 0,
-                  },
-                ],
-            hasOlder: false,
-            olderCursor: null,
-            targetMessageId: "u0",
-            rangeStart: 0,
-            rangeEnd: continuation ? 3 : 2,
-            hasMoreInTurn: !continuation,
-            continuationCursor: continuation ? null : "continue-turn",
-          },
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await store.loadPromptMapTurns();
-    expect(store.getState()).toMatchObject({
-      promptMapTotal: 3,
-      promptMapLoadedStarts: [0],
-      promptMapError: null,
-    });
-    expect(await store.navigatePromptMapTurn(2)).toBe(true);
-    expect(store.getState().promptMapNavigatingOrdinal).toBeNull();
-    expect(await store.navigatePromptMapTurn(0)).toBe(true);
-    expect(requestedTurnCursors).toEqual([null, "continue-turn"]);
-    expect(
-      store.getState().messages.map((message) => message.__inspireMessageIndex),
-    ).toEqual([0, 1, 2, 10]);
-    expect(store.getState().promptMapNavigatingOrdinal).toBeNull();
-  });
-
-  it("keeps a newer prompt-map load coalesced when an obsolete load settles", async () => {
-    const staleResponse = deferred<RouteResponse>();
-    const currentResponse = deferred<RouteResponse>();
-    let requests = 0;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
-              transcriptPage: {
-                revision: 4,
-                viewId: "view-old",
-                incarnation: "projection-old",
-              },
-            }),
-          }),
-        };
-      }
-      if (url.startsWith("/api/transcript/user-turns")) {
-        requests += 1;
-        if (requests === 1) return staleResponse.promise;
-        if (requests === 2) return currentResponse.promise;
-        return { status: 500, body: { error: "duplicate prompt-map load" } };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-    const stale = store.loadPromptMapTurns();
-    await vi.waitFor(() => expect(requests).toBe(1));
-
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({
-        transcriptPage: {
-          revision: 5,
-          viewId: "view-current",
-          incarnation: "projection-current",
-        },
-      }),
-    });
-    const current = store.loadPromptMapTurns();
-    await vi.waitFor(() => expect(requests).toBe(2));
-
-    staleResponse.resolve({
-      body: {
-        sessionId: "s1",
-        revision: 4,
-        viewId: "view-old",
-        incarnation: "projection-old",
-        total: 1,
-        start: 0,
-        turns: [{ id: "old", ordinal: 0, snippet: "old", attachmentCount: 0 }],
-      },
-    });
-    await stale;
-    const coalesced = store.loadPromptMapTurns();
-    expect(requests).toBe(2);
-
-    currentResponse.resolve({
-      body: {
-        sessionId: "s1",
-        revision: 5,
-        viewId: "view-current",
-        incarnation: "projection-current",
-        total: 1,
-        start: 0,
-        turns: [
-          {
-            id: "current",
-            ordinal: 0,
-            snippet: "current",
-            attachmentCount: 0,
-          },
-        ],
-      },
-    });
-    await expect(Promise.all([current, coalesced])).resolves.toEqual([
-      [
-        {
-          id: "current",
-          ordinal: 0,
-          snippet: "current",
-          attachmentCount: 0,
-        },
-      ],
-      [
-        {
-          id: "current",
-          ordinal: 0,
-          snippet: "current",
-          attachmentCount: 0,
-        },
-      ],
-    ]);
-    expect(requests).toBe(2);
-  });
-
-  it("cancels an in-flight prompt-map seek when the branch view changes", async () => {
-    const first = deferred<RouteResponse>();
-    const { promise: firstStarted, resolve: firstRequested } = deferred<void>();
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
-              transcriptPage: {
-                sessionId: "s1",
-                revision: 4,
-                viewId: "view-s1",
-                incarnation: "projection-1",
-                messages: [
-                  {
-                    role: "user",
-                    content: "latest",
-                    timestamp: 10,
-                    __inspireMessageId: "u2",
-                    __inspireMessageIndex: 10,
-                    __inspireUserTurnId: "u2",
-                    __inspireUserTurnIndex: 2,
-                  },
-                ],
-                hasOlder: true,
-                olderCursor: "older-latest",
-              },
-            }),
-          }),
-        };
-      }
-      if (url.startsWith("/api/transcript/user-turns")) {
-        return {
-          body: {
-            sessionId: "s1",
-            revision: 4,
-            viewId: "view-s1",
-            incarnation: "projection-1",
-            total: 3,
-            start: 0,
-            turns: [
-              { id: "u0", ordinal: 0, snippet: "first", attachmentCount: 0 },
-              { id: "u1", ordinal: 1, snippet: "second", attachmentCount: 0 },
-              { id: "u2", ordinal: 2, snippet: "latest", attachmentCount: 0 },
-            ],
-          },
-        };
-      }
-      if (url.includes("/api/transcript/user-turn?") && url.includes("id=u0")) {
-        firstRequested();
-        return first.promise;
-      }
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-    await store.loadPromptMapTurns();
-    const obsolete = store.navigatePromptMapTurn(0);
-    await firstStarted;
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({
-        transcriptPage: {
-          sessionId: "s1",
-          revision: 5,
-          viewId: "view-rewrite",
-          incarnation: "projection-2",
-          messages: [
-            {
-              role: "user",
-              content: "rewritten",
-              timestamp: 11,
-              __inspireMessageId: "u-rewrite",
-              __inspireMessageIndex: 0,
-              __inspireUserTurnId: "u-rewrite",
-              __inspireUserTurnIndex: 0,
-            },
-          ],
-          hasOlder: false,
-          olderCursor: null,
-        },
-      }),
-    });
-    first.resolve({
-      body: {
-        sessionId: "s1",
-        revision: 4,
-        viewId: "view-s1",
-        incarnation: "projection-1",
-        messages: [],
-        hasOlder: false,
-        olderCursor: null,
-        targetMessageId: "u0",
-        rangeStart: 0,
-        rangeEnd: 0,
-        hasMoreInTurn: false,
-        continuationCursor: null,
-      },
-    });
-    expect(await obsolete).toBe(false);
-    expect(store.getState()).toMatchObject({
-      transcriptViewId: "view-rewrite",
-      promptMapNavigatingOrdinal: null,
-      promptMapError: null,
-    });
-  });
 
   it("materializes a bounded activity tail before expanding the complete range", async () => {
     const requested: string[] = [];
@@ -533,11 +164,7 @@ describe("transcript paging", () => {
           body: bootstrapPayload({
             snapshot: activeSnapshot({
               transcriptPage: {
-                sessionId: "s1",
                 revision: 4,
-                viewId: "view-s1",
-                incarnation: "projection-1",
-                appendFromRevision: 1,
                 messages: [
                   {
                     role: "assistant",
@@ -554,8 +181,6 @@ describe("transcript paging", () => {
                     kinds: ["tool"],
                   },
                 ],
-                hasOlder: false,
-                olderCursor: null,
               },
             }),
           }),
@@ -586,9 +211,7 @@ describe("transcript paging", () => {
         return {
           body: bootstrapPayload({
             snapshot: activeSnapshot({
-              pageMessages: [{ role: "user", content: "new", timestamp: 3 }],
               transcriptPage: {
-                sessionId: "s1",
                 revision: 4,
                 messages: [{ role: "user", content: "new", timestamp: 3 }],
                 hasOlder: true,
@@ -609,6 +232,7 @@ describe("transcript paging", () => {
                 revision: 4,
                 messages: [
                   { role: "assistant", content: "middle", timestamp: 2 },
+                  { role: "user", content: "new duplicate", timestamp: 3 },
                 ],
                 hasOlder: true,
                 olderCursor: "cursor-1",
@@ -635,6 +259,8 @@ describe("transcript paging", () => {
       store.getState().messages.map((message) => message.timestamp),
     ).toEqual([1, 2, 3]);
     expect(store.getState().hasOlderMessages).toBe(false);
+    expect(store.getState().olderMessagesCursor).toBeNull();
+    expect(store.getState().olderMessagesError).toBeNull();
   });
 
   it("keeps a failed automatic page local to the transcript and clears it on retry", async () => {
@@ -645,7 +271,6 @@ describe("transcript paging", () => {
           body: bootstrapPayload({
             snapshot: activeSnapshot({
               transcriptPage: {
-                sessionId: "s1",
                 revision: 4,
                 messages: [{ role: "user", content: "new", timestamp: 2 }],
                 hasOlder: true,
@@ -693,7 +318,6 @@ describe("transcript paging", () => {
           body: bootstrapPayload({
             snapshot: activeSnapshot({
               transcriptPage: {
-                sessionId: "s1",
                 revision: 4,
                 viewId: "view-a",
                 effectiveLeafId: "leaf-a",
@@ -729,13 +353,10 @@ describe("transcript paging", () => {
       type: "snapshot",
       data: activeSnapshot({
         transcriptPage: {
-          sessionId: "s1",
           revision: 4,
           viewId: "view-b",
           effectiveLeafId: "leaf-b",
           messages: [{ role: "assistant", content: "branch B", timestamp: 3 }],
-          hasOlder: false,
-          olderCursor: null,
         },
         effectiveLeafId: "leaf-b",
       }),
@@ -757,11 +378,9 @@ describe("transcript paging", () => {
           body: bootstrapPayload({
             snapshot: activeSnapshot({
               transcriptPage: {
-                sessionId: "s1",
                 revision: 4,
                 viewId: "view-a",
                 incarnation: "incarnation",
-                appendFromRevision: 1,
                 effectiveLeafId: "m2",
                 messages: [
                   {
@@ -813,11 +432,9 @@ describe("transcript paging", () => {
       type: "snapshot",
       data: activeSnapshot({
         transcriptPage: {
-          sessionId: "s1",
           revision: 5,
           viewId: "view-a",
           incarnation: "incarnation",
-          appendFromRevision: 1,
           effectiveLeafId: "m3",
           messages: [
             {
@@ -859,11 +476,9 @@ describe("transcript paging", () => {
           body: bootstrapPayload({
             snapshot: activeSnapshot({
               transcriptPage: {
-                sessionId: "s1",
                 revision: 4,
                 viewId: "view-a",
                 incarnation: "incarnation",
-                appendFromRevision: 1,
                 effectiveLeafId: "m2",
                 messages: [
                   {
@@ -914,7 +529,6 @@ describe("transcript paging", () => {
       type: "snapshot",
       data: activeSnapshot({
         transcriptPage: {
-          sessionId: "s1",
           revision: 5,
           viewId: "view-a",
           incarnation: "incarnation",
@@ -928,8 +542,6 @@ describe("transcript paging", () => {
               __inspireMessageId: "compact:0",
             },
           ],
-          hasOlder: false,
-          olderCursor: null,
         },
         effectiveLeafId: "compact",
       }),
@@ -950,11 +562,9 @@ describe("transcript paging", () => {
           body: bootstrapPayload({
             snapshot: activeSnapshot({
               transcriptPage: {
-                sessionId: "s1",
                 revision: 4,
                 viewId: "view-a",
                 incarnation: "incarnation",
-                appendFromRevision: 1,
                 effectiveLeafId: "m2",
                 messages: [
                   {
@@ -996,12 +606,10 @@ describe("transcript paging", () => {
         return {
           body: activeSnapshot({
             transcriptPage: {
-              sessionId: "s1",
               revision: 5,
               viewId: "view-a",
               incarnation: "incarnation",
               effectiveLeafId: "m3",
-              appendFromRevision: 1,
               messages: [
                 {
                   role: "user",
@@ -1016,8 +624,6 @@ describe("transcript paging", () => {
                   __inspireMessageId: "m3:0",
                 },
               ],
-              hasOlder: false,
-              olderCursor: null,
             },
             effectiveLeafId: "m3",
           }),
@@ -1036,11 +642,9 @@ describe("transcript paging", () => {
       type: "snapshot",
       data: activeSnapshot({
         transcriptPage: {
-          sessionId: "s1",
           revision: 4,
           viewId: "view-a",
           incarnation: "incarnation",
-          appendFromRevision: 1,
           effectiveLeafId: "m2",
           messages: [
             {
@@ -1090,7 +694,6 @@ describe("transcript paging", () => {
                 incidentId: "incident-projection",
               },
               transcriptPage: {
-                sessionId: "s1",
                 revision: 4,
                 incarnation: "inc",
                 appendFromRevision: 4,
@@ -1145,9 +748,7 @@ describe("transcript paging", () => {
         return {
           body: bootstrapPayload({
             snapshot: activeSnapshot({
-              pageMessages: [{ role: "user", content: "new", timestamp: 2 }],
               transcriptPage: {
-                sessionId: "s1",
                 revision: 4,
                 messages: [{ role: "user", content: "new", timestamp: 2 }],
                 hasOlder: true,
@@ -1187,7 +788,6 @@ describe("transcript paging", () => {
           body: bootstrapPayload({
             snapshot: activeSnapshot({
               transcriptPage: {
-                sessionId: "s1",
                 revision: 4,
                 messages: [],
                 hasOlder: true,
@@ -1204,11 +804,8 @@ describe("transcript paging", () => {
         return {
           body: activeSnapshot({
             transcriptPage: {
-              sessionId: "s1",
               revision: 5,
               messages: [{ role: "assistant", content: "fresh", timestamp: 5 }],
-              hasOlder: false,
-              olderCursor: null,
             },
           }),
         };

@@ -37,7 +37,7 @@ covers:
   - tests/web/events.test.ts
   - tests/web/store*.test.ts
   - tests/web/branch-store.test.ts
-  - tests/web/transcript-inspection.test.tsx
+  - tests/web/{transcript-search,transcript-actions,activity-visibility,extension-displays}.test.tsx
   - tests/web/assistant-error.test.tsx
   - tests/web/custom-message.test.tsx
   - tests/browser/assistant-error.spec.ts
@@ -47,7 +47,7 @@ covers:
   - tests/web/prompt-map.test.tsx
   - tests/web/transcript-virtual-search.test.tsx
   - tests/web/transcript-viewport.test.tsx
-  - tests/server/runtime-projection.test.ts
+  - tests/server/runtime-transcript.test.ts
 ---
 
 # Conversation experience

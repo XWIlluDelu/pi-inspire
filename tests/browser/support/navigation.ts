@@ -10,8 +10,25 @@ export async function pairedPage(page: Page) {
 }
 
 export async function openMockSession(page: Page, title: RegExp) {
+  const toggle = page.getByRole("button", {
+    name: "Toggle navigation",
+    exact: true,
+  });
+  if (
+    (await toggle.getAttribute("aria-expanded")) === "false" ||
+    (await page.locator(".nav--rail").count())
+  )
+    await toggle.click();
   await page.locator(".nav__row-main").filter({ hasText: title }).click();
   await expect(page.locator(".topbar__title-button")).toHaveText(title);
+}
+
+export async function pairAndOpen(page: Page) {
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  await expect(
+    page.getByRole("textbox", { name: "Message", exact: true }),
+  ).toBeVisible();
 }
 
 export async function openCommandPalette(page: Page) {

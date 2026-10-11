@@ -8,12 +8,15 @@ import {
   within,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ModelsSettings } from "../../src/components/ModelsSettings";
+import { SettingsDialog } from "../../src/components/SettingsDialog";
 import type { store } from "../../src/store";
 import { mockModelMenuLayout } from "./fixtures/model-menu-layout";
 import {
   loginProviders,
   modelSettingsSnapshot,
 } from "./fixtures/model-settings";
+import { deferred } from "./helpers";
 
 const fixture = vi.hoisted(() => ({
   state: { sessionId: "one", cwd: "/one", transportGeneration: 1 },
@@ -32,16 +35,6 @@ vi.mock("../../src/store", () => ({
   shallowEqual: () => false,
 }));
 
-import { ModelsSettings } from "../../src/components/ModelsSettings";
-import { SettingsDialog } from "../../src/components/SettingsDialog";
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 async function openDeclarations() {
   const section = await screen.findByRole("region", {
     name: "Custom providers",
@@ -215,7 +208,7 @@ describe("Models settings configuration and ownership", () => {
     ).toBeDisabled();
   });
 
-  it("starts empty with provider creation, no duplicate selection controls or common placeholders", async () => {
+  it("can start provider creation from an empty catalog and cancel without writing", async () => {
     fixture.host.providerAuth.mockResolvedValue([]);
     fixture.host.readModelSettings.mockResolvedValue(
       modelSettingsSnapshot({
@@ -234,20 +227,17 @@ describe("Models settings configuration and ownership", () => {
     await screen.findByText("No models available yet.");
     expect(screen.getByRole("button", { name: "Add provider" })).toBeEnabled();
     expect(
-      screen.queryByLabelText("Provider", { exact: true }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Add model" }),
-    ).not.toBeInTheDocument();
-    expect(
       screen.queryByText(/Common order and rules/),
     ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Default model" }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByRole("grid", { name: "Available models" })).toHaveClass(
-      "model-picker__list--empty",
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
+    expect(screen.getByRole("region", { name: "Add provider" })).toBeVisible();
+    expect(screen.getByLabelText("Provider ID")).toHaveFocus();
+    fireEvent.change(screen.getByLabelText("Provider ID"), {
+      target: { value: "unsaved-first-provider" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByText("No models available yet.")).toBeInTheDocument();
+    expect(fixture.host.editModelConfig).not.toHaveBeenCalled();
   });
   it("uses an explicit prospective owner for reads and edits without borrowing the selected session", async () => {
     fixture.host.saveModelPreferences.mockResolvedValue({
@@ -312,13 +302,6 @@ describe("Models settings configuration and ownership", () => {
     expect(
       document.querySelector(".models-default-value__name"),
     ).toHaveTextContent("Local model");
-    expect(document.querySelector("datalist")).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "Default model" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Add to common" }),
-    ).not.toBeInTheDocument();
     expect(within(list).queryByText("Local model")).not.toBeInTheDocument();
     fireEvent.click(
       within(list).getByRole("checkbox", { name: "Common: GPT 5" }),
@@ -432,7 +415,6 @@ describe("Models settings configuration and ownership", () => {
     fireEvent.change(screen.getByLabelText("Base URL"), {
       target: { value: "https://unsaved-existing.test" },
     });
-    expect(screen.getByLabelText("Remove API key")).toHaveClass("choice-input");
     fireEvent.click(screen.getByLabelText("Remove API key"));
     fireEvent.click(screen.getByRole("button", { name: "Back to models" }));
     fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
@@ -478,10 +460,10 @@ describe("Models settings configuration and ownership", () => {
     );
   });
 
-  it("prioritizes startup defaults and keeps custom connection fields behind their disclosure", async () => {
+  it("keeps defaults and login before collapsed custom declarations", async () => {
     render(<ModelsSettings />);
-    const addProvider = await screen.findByRole("button", {
-      name: "Add provider",
+    const custom = await screen.findByRole("region", {
+      name: "Custom providers",
     });
     expect(
       screen
@@ -489,47 +471,16 @@ describe("Models settings configuration and ownership", () => {
         .map((heading) => heading.textContent),
     ).toEqual(["Models", "Login & API keys", "Custom providers"]);
     expect(
-      screen.getByRole("region", { name: "Models" }).nextElementSibling,
-    ).toBe(screen.getByRole("region", { name: "Login & API keys" }));
+      within(custom).queryByRole("button", { name: "Edit provider custom" }),
+    ).toBeNull();
+    fireEvent.click(within(custom).getByRole("button", { name: "Show" }));
     expect(
-      screen.getByRole("region", { name: "Login & API keys" })
-        .nextElementSibling,
-    ).toBe(screen.getByRole("region", { name: "Custom providers" }));
-    fireEvent.click(addProvider);
-    expect(screen.getByRole("region", { name: "Add provider" })).toBeVisible();
+      within(custom).getByRole("button", { name: "Edit provider custom" }),
+    ).toBeEnabled();
+    fireEvent.click(within(custom).getByRole("button", { name: "Hide" }));
     expect(
-      screen.queryByRole("region", { name: "Models" }),
-    ).not.toBeInTheDocument();
-    const inputs = [...document.querySelectorAll(".models-form input")];
-    for (const [index, name] of [
-      "Provider ID",
-      "Base URL",
-      "API type",
-      "API key",
-    ].entries())
-      expect(inputs[index]).toHaveAccessibleName(name);
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    await openDeclarations();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Add model to custom" }),
-    );
-    expect(
-      [...document.querySelectorAll(".models-form input")]
-        .map((input) => input.closest("label")?.textContent?.trim())
-        .slice(0, 7),
-    ).toEqual([
-      "Model ID",
-      "Display name",
-      "Thinking supported",
-      "Text input",
-      "Image input",
-      "Context window",
-      "Maximum output tokens",
-    ]);
-    expect(
-      screen.getByText("Connection overrides").closest("details"),
-    ).not.toHaveAttribute("open");
-    expect(screen.queryByText("New session defaults")).not.toBeInTheDocument();
+      within(custom).queryByRole("button", { name: "Edit provider custom" }),
+    ).toBeNull();
   });
 
   it("saves a row default and native common order independently", async () => {
@@ -768,6 +719,14 @@ describe("Models settings configuration and ownership", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Add model to custom" }),
     );
+    const identityFields = [
+      ...screen
+        .getByLabelText("Model ID")
+        .closest("form")!
+        .querySelectorAll("input"),
+    ].slice(0, 2);
+    expect(identityFields[0]).toHaveAccessibleName("Model ID");
+    expect(identityFields[1]).toHaveAccessibleName("Display name");
     fireEvent.change(screen.getByLabelText("Model ID"), {
       target: { value: "new-model" },
     });
@@ -802,6 +761,9 @@ describe("Models settings configuration and ownership", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Add model to openai" }),
     );
+    expect(
+      screen.getByText("Connection overrides").closest("details"),
+    ).not.toHaveAttribute("open");
     expect(screen.getByLabelText("API override")).toHaveAttribute(
       "placeholder",
       "Use default",
@@ -955,27 +917,59 @@ describe("Models settings configuration and ownership", () => {
     ).toBeEnabled();
   });
 
-  it("does not publish an old refresh warning after its settings read crosses an owner change", async () => {
-    const readback = deferred<ReturnType<typeof modelSettingsSnapshot>>();
-    fixture.host.readModelSettings
-      .mockResolvedValueOnce(modelSettingsSnapshot())
-      .mockReturnValueOnce(readback.promise);
-    fixture.host.refreshModels
-      .mockResolvedValueOnce("Old worker warning")
-      .mockResolvedValue(undefined);
-    const view = render(<ModelsSettings />);
-    await waitFor(() =>
-      expect(fixture.host.readModelSettings).toHaveBeenCalledTimes(2),
-    );
+  it.each(["session switch", "transport replacement"] as const)(
+    "keeps current settings and warning when an old refresh read settles after %s",
+    async (transition) => {
+      const readback = deferred<ReturnType<typeof modelSettingsSnapshot>>();
+      const oldSettings = modelSettingsSnapshot({
+        saved: {
+          ...modelSettingsSnapshot().saved,
+          defaultThinkingLevel: "xhigh",
+        },
+      });
+      const currentSettings = modelSettingsSnapshot({
+        saved: {
+          ...modelSettingsSnapshot().saved,
+          defaultThinkingLevel: "low",
+        },
+      });
+      fixture.host.readModelSettings
+        .mockResolvedValueOnce(oldSettings)
+        .mockReturnValueOnce(readback.promise)
+        .mockResolvedValue(currentSettings);
+      fixture.host.refreshModels
+        .mockResolvedValueOnce("Old worker warning")
+        .mockResolvedValue("Current worker warning");
+      const view = render(<ModelsSettings />);
+      await waitFor(() =>
+        expect(fixture.host.readModelSettings).toHaveBeenCalledTimes(2),
+      );
+      expect(
+        screen.getByRole("combobox", { name: "Default thinking" }),
+      ).toHaveTextContent("xhigh");
+      expect(screen.queryByText("Old worker warning")).not.toBeInTheDocument();
 
-    fixture.state = { sessionId: "two", cwd: "/two", transportGeneration: 2 };
-    view.rerender(<ModelsSettings />);
-    await waitFor(() =>
-      expect(fixture.host.readModelSettings).toHaveBeenCalledTimes(4),
-    );
-    await act(async () => readback.resolve(modelSettingsSnapshot()));
-    expect(screen.queryByText("Old worker warning")).not.toBeInTheDocument();
-  });
+      fixture.state =
+        transition === "session switch"
+          ? { sessionId: "two", cwd: "/two", transportGeneration: 1 }
+          : { ...fixture.state, transportGeneration: 2 };
+      view.rerender(<ModelsSettings />);
+      await screen.findByText("Current worker warning");
+      expect(
+        screen.getByRole("combobox", { name: "Default thinking" }),
+      ).toHaveTextContent("low");
+      expect(fixture.host.readModelSettings).toHaveBeenLastCalledWith({
+        sessionId: transition === "session switch" ? "two" : "one",
+      });
+
+      await act(async () => readback.resolve(oldSettings));
+      expect(
+        screen.getByRole("combobox", { name: "Default thinking" }),
+      ).toHaveTextContent("low");
+      expect(screen.getByText("Current worker warning")).toBeInTheDocument();
+      expect(screen.queryByText("Old worker warning")).not.toBeInTheDocument();
+    },
+  );
 
   it("does not invoke old-owner callbacks after logout settles across a session/transport change", async () => {
     const logout = deferred<null>();

@@ -3,9 +3,12 @@ import { cp, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { expect, test } from "@playwright/test";
+import { openMockSession, pairedPage } from "./support/navigation";
 
-const root = resolve("output/playwright/filesystem-fixture");
-const token = "inspire-browser-test-token";
+const root = resolve(
+  process.env.INSPIRE_BROWSER_TEST_OUTPUT_DIR ?? "output/playwright",
+  "filesystem-fixture",
+);
 test.beforeAll(async () => {
   for (const dir of [
     root,
@@ -48,10 +51,7 @@ test.beforeAll(async () => {
 test("authorized audio and video previews play from local blobs", async ({
   page,
 }) => {
-  await page.goto("/");
-  await page.getByLabel("Access token").fill(token);
-  await page.getByRole("button", { name: "Pair", exact: true }).click();
-  await expect(page.getByRole("main")).toBeVisible();
+  await pairedPage(page);
   const created = await page.request.post("/api/sessions/new", {
     data: { cwd: root, name: "Media fixture" },
   });
@@ -90,9 +90,6 @@ test("authorized audio and video previews play from local blobs", async ({
       const bounds = (await media.boundingBox())!;
       expect(bounds.x).toBeGreaterThanOrEqual(0);
       expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
-      await page.screenshot({
-        path: `output/playwright/media-${tag}-${width}.png`,
-      });
     }
   }
 });
@@ -104,10 +101,7 @@ test("large document Markdown keeps scoped images and heading navigation with th
   const workers: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("worker", (worker) => workers.push(worker.url()));
-  await page.goto("/");
-  await page.getByLabel("Access token").fill(token);
-  await page.getByRole("button", { name: "Pair", exact: true }).click();
-  await expect(page.getByRole("main")).toBeVisible();
+  await pairedPage(page);
   const created = await page.request.post("/api/sessions/new", {
     data: { cwd: root, name: "Large document fixture" },
   });
@@ -144,10 +138,7 @@ for (const narrow of [false, true]) {
     await page.setViewportSize(
       narrow ? { width: 390, height: 844 } : { width: 1440, height: 900 },
     );
-    await page.goto("/");
-    await page.getByLabel("Access token").fill(token);
-    await page.getByRole("button", { name: "Pair", exact: true }).click();
-    await expect(page.getByRole("main")).toBeVisible();
+    await pairedPage(page);
     const created = await page.request.post("/api/sessions/new", {
       data: { cwd: root, name: "Filesystem fixture" },
     });
@@ -182,10 +173,7 @@ for (const narrow of [false, true]) {
       '[data-workspace-path=".settings/config.txt"]',
     );
     await expect(hiddenFile).toBeVisible();
-    await page.screenshot({
-      path: `output/playwright/filesystem-hidden-${narrow ? "narrow" : "desktop"}.png`,
-      fullPage: true,
-    });
+
     await hiddenFile.click();
     await expect(
       pane.getByText("Synthetic hidden configuration", { exact: true }),
@@ -214,10 +202,7 @@ for (const narrow of [false, true]) {
     const downloadPromise = page.waitForEvent("download");
     await pane.getByRole("link", { name: "Download report.md" }).click();
     expect((await downloadPromise).suggestedFilename()).toBe("report.md");
-    await page.screenshot({
-      path: `output/playwright/filesystem-files-${narrow ? "narrow" : "desktop"}.png`,
-      fullPage: true,
-    });
+
     await pane
       .getByRole("button", { name: /Back to file browser for/ })
       .click();
@@ -235,10 +220,7 @@ for (const narrow of [false, true]) {
 test("hidden inline references send unchanged text; only explicit picker selections deliver files", async ({
   page,
 }) => {
-  await page.goto("/");
-  await page.getByLabel("Access token").fill(token);
-  await page.getByRole("button", { name: "Pair", exact: true }).click();
-  await expect(page.getByRole("main")).toBeVisible();
+  await pairedPage(page);
   const created = await page.request.post("/api/sessions/new", {
     data: { cwd: root, name: "Project file delivery fixture" },
   });
@@ -314,4 +296,177 @@ test("hidden inline references send unchanged text; only explicit picker selecti
   const picked = await submit();
   expect(picked.message).toBe(prompt);
   expect(picked.projectFiles).toEqual([".settings/config.txt"]);
+});
+
+test("files navigation preserves context across desktop and narrow workspaces", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+
+  const pane = page.getByRole("complementary", { name: "Context panel" });
+  const search = pane.getByRole("searchbox", {
+    name: "Search workspace files",
+  });
+  await search.fill("WorkspaceBrowser.tsx");
+  await pane
+    .locator('[data-workspace-path="src/components/WorkspaceBrowser.tsx"]')
+    .click();
+  await expect(
+    pane.getByRole("button", { name: "Back to file browser" }),
+  ).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const drawer = page.getByRole("dialog", { name: "Context panel" });
+  await expect(drawer).toBeVisible();
+  await drawer.getByRole("button", { name: "Back to file browser" }).click();
+  await expect(
+    drawer.getByRole("searchbox", { name: "Search workspace files" }),
+  ).toHaveValue("WorkspaceBrowser.tsx");
+  await drawer.getByRole("button", { name: "Close context pane" }).click();
+
+  await page.getByRole("button", { name: "Toggle navigation" }).click();
+  const navigation = page.getByRole("dialog", { name: "Sessions" });
+  const explorer = navigation.getByRole("region", { name: "Workspace files" });
+  await explorer.locator(".explorer__header").click();
+  await explorer.locator('[data-workspace-path="README.md"]').click();
+
+  await expect(page.getByRole("dialog", { name: "Sessions" })).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  await expect(
+    page
+      .getByRole("dialog", { name: "Context panel" })
+      .getByRole("button", { name: "Back to file browser" }),
+  ).toBeVisible();
+});
+
+test("document readers preserve source toggles, intrinsic SVG geometry and independent source scrolling", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  await openMockSession(page, /Resource virtualization and sandbox fixture/);
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  const resources = page.getByRole("complementary", { name: "Context panel" });
+  const search = resources.getByRole("searchbox", {
+    name: "Search workspace files",
+  });
+  await search.fill("file-previews/notebook.ipynb");
+  await resources
+    .locator(
+      '[data-workspace-path="tests/browser/fixtures/file-previews/notebook.ipynb"]',
+    )
+    .click();
+  await expect(
+    resources.getByRole("document", { name: "Notebook preview" }),
+  ).toBeVisible();
+  await expect(
+    resources.getByRole("heading", { name: "Observation window" }),
+  ).toBeVisible();
+  await expect(
+    resources.getByText("24/24 samples passed continuity checks", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await resources.getByRole("button", { name: "Source", exact: true }).click();
+  await expect(
+    resources.getByRole("region", { name: "File source" }),
+  ).toContainText('"nbformat": 4');
+
+  await resources.getByRole("button", { name: "Back to file browser" }).click();
+  await search.fill("file-previews/vector.svg");
+  await resources
+    .locator(
+      '[data-workspace-path="tests/browser/fixtures/file-previews/vector.svg"]',
+    )
+    .click();
+  const vector = resources.getByAltText("vector.svg");
+  await expect(vector).toBeVisible();
+  await expect(vector).not.toHaveCSS("background-image", "none");
+  const vectorGeometry = await vector.evaluate((image) => {
+    const bounds = image.getBoundingClientRect();
+    const canvas = image.parentElement!.getBoundingClientRect();
+    return {
+      ratio: bounds.width / bounds.height,
+      width: bounds.width,
+      height: bounds.height,
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+    };
+  });
+  // The checkerboard belongs to the actual image rectangle, not letterboxing;
+  // viewBox-only SVGs must still have non-zero, contained intrinsic geometry.
+  expect(vectorGeometry.ratio).toBeCloseTo(720 / 420, 2);
+  expect(vectorGeometry.width).toBeGreaterThan(0);
+  expect(vectorGeometry.height).toBeGreaterThan(0);
+  expect(vectorGeometry.width).toBeLessThanOrEqual(vectorGeometry.canvasWidth);
+  expect(vectorGeometry.height).toBeLessThanOrEqual(
+    vectorGeometry.canvasHeight,
+  );
+  await resources.getByRole("button", { name: "Source", exact: true }).click();
+  await expect(
+    resources.getByRole("region", { name: "File source" }),
+  ).toContainText("<svg");
+
+  await resources.getByRole("button", { name: "Back to file browser" }).click();
+  await search.fill("file-previews/document.md");
+  await resources
+    .locator(
+      '[data-workspace-path="tests/browser/fixtures/file-previews/document.md"]',
+    )
+    .click();
+  await expect(
+    resources.getByRole("heading", { name: "Observation log · Station 07" }),
+  ).toBeVisible();
+  const fileHeader = resources.locator(".file-detail-header");
+  const headerActionGeometry = () =>
+    fileHeader.evaluate((header) => {
+      const download = header.querySelector<HTMLElement>(".icon-button");
+      const view = header.querySelector<HTMLElement>(
+        ".file-detail-header__view",
+      );
+      if (!download || !view)
+        throw new Error("File header actions are missing");
+      return {
+        downloadLeft: download.getBoundingClientRect().left,
+        viewWidth: view.getBoundingClientRect().width,
+      };
+    });
+  const previewHeaderGeometry = await headerActionGeometry();
+  await resources.getByRole("button", { name: "Source", exact: true }).click();
+  await expect(
+    resources.getByRole("region", { name: "File source" }),
+  ).toContainText("Working reading");
+  const sourceHeaderGeometry = await headerActionGeometry();
+  expect(sourceHeaderGeometry.downloadLeft).toBeCloseTo(
+    previewHeaderGeometry.downloadLeft,
+    1,
+  );
+  expect(sourceHeaderGeometry.viewWidth).toBeCloseTo(
+    previewHeaderGeometry.viewWidth,
+    1,
+  );
+
+  await resources.getByRole("button", { name: "Back to file browser" }).click();
+  await search.fill("FilePreview.tsx");
+  await resources
+    .locator('[data-workspace-path="src/components/FilePreview.tsx"]')
+    .click();
+  const source = resources.getByRole("region", { name: "File source" });
+  await expect(source).toBeVisible();
+  expect(
+    await source.evaluate(
+      (element) => element.scrollHeight > element.clientHeight,
+    ),
+  ).toBe(true);
+
+  await source.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await source.hover({ position: { x: 12, y: 2 } });
+  await page.mouse.wheel(0, 480);
+  await expect
+    .poll(() => source.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
 });

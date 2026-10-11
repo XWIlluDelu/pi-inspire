@@ -6,6 +6,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelSelector } from "../../src/components/ModelSelector";
 import { supportedThinkingLevels } from "../../src/model-options";
@@ -226,8 +227,7 @@ describe("model picker interaction", () => {
     expect(change).toHaveBeenCalledWith("custom", "folder/chat");
   });
 
-  it("keeps configured common order above recency and offers one keyboard-reachable management destination, with no unconfigured common group", () => {
-    const manage = vi.fn();
+  it("keeps configured Common order above recency and removes the group when unconfigured", () => {
     const view = render(
       <ModelSelector
         value={models[0]!}
@@ -235,7 +235,6 @@ describe("model picker interaction", () => {
         recent={[models[0]!]}
         common={[models[2]!, models[1]!]}
         onChange={vi.fn()}
-        onManageModels={manage}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Model" }));
@@ -247,27 +246,42 @@ describe("model picker interaction", () => {
             option.textContent?.match(/GPT 5|Claude Haiku|Claude Sonnet/)?.[0],
         ),
     ).toEqual(["GPT 5", "Claude Haiku", "Claude Sonnet"]);
-    expect(
-      screen.getAllByRole("button", { name: "Manage models" }),
-    ).toHaveLength(1);
-    const search = screen.getByRole("combobox", { name: "Search models" });
-    fireEvent.keyDown(search, { key: "Tab" });
-    expect(
-      screen.getByRole("listbox", { name: "Available models" }),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Manage models" }));
-    expect(manage).toHaveBeenCalledOnce();
     view.rerender(
       <ModelSelector
         value={models[0]!}
         models={models}
         recent={[]}
         onChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("Common models")).not.toBeInTheDocument();
+  });
+
+  it("opens management with Tab and Enter without selecting a model", async () => {
+    const manage = vi.fn();
+    const change = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ModelSelector
+        value={models[0]!}
+        models={models}
+        recent={[]}
+        onChange={change}
         onManageModels={manage}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Model" }));
-    expect(screen.queryByText("Common models")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Search models" }),
+    ).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Manage models" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(manage).toHaveBeenCalledOnce();
+    expect(change).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("listbox", { name: "Available models" }),
+    ).toBeNull();
   });
   it.each(["insertion", "recent reorder"])(
     "keeps the highlighted model through catalog %s so Enter chooses the same identity",

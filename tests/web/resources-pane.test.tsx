@@ -14,6 +14,7 @@ import { App } from "../../src/App";
 import { ContextPane } from "../../src/components/ContextPane";
 import { MAX_MEDIA_PREVIEW_BYTES } from "../../src/resource-preview";
 import { store } from "../../src/store";
+import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -88,13 +89,8 @@ describe("Files pane", () => {
           return Response.json(
             bootstrapPayload({
               snapshot: activeSnapshot({
-                pageMessages: bootstrapMessages,
                 transcriptPage: {
-                  sessionId: "s1",
                   revision: transcriptRevision,
-                  viewId: "view-s1",
-                  incarnation: "projection-1",
-                  appendFromRevision: 1,
                   messages: bootstrapMessages,
                   hasOlder: true,
                   olderCursor: "older-s1",
@@ -104,12 +100,7 @@ describe("Files pane", () => {
           );
         }
         if (url.startsWith("/api/sessions"))
-          return Response.json({
-            sessions: [],
-            total: 0,
-            offset: 0,
-            limit: 40,
-          });
+          return Response.json(sessionPage([], 0));
         if (url.startsWith("/api/files/list")) {
           const dir =
             new URL(url, "http://localhost").searchParams.get("dir") ?? "";
@@ -818,13 +809,8 @@ describe("Files pane", () => {
       FakeWebSocket.instances.at(-1)?.emit({
         type: "snapshot",
         data: activeSnapshot({
-          pageMessages: bootstrapMessages,
           transcriptPage: {
-            sessionId: "s1",
             revision: 2,
-            viewId: "view-s1",
-            incarnation: "projection-1",
-            appendFromRevision: 1,
             messages: bootstrapMessages,
             hasOlder: true,
             olderCursor: "older-s1",
@@ -945,13 +931,8 @@ describe("Files pane", () => {
       FakeWebSocket.instances.at(-1)?.emit({
         type: "snapshot",
         data: activeSnapshot({
-          pageMessages: bootstrapMessages,
           transcriptPage: {
-            sessionId: "s1",
             revision: 2,
-            viewId: "view-s1",
-            incarnation: "projection-1",
-            appendFromRevision: 1,
             messages: bootstrapMessages,
           },
         }),
