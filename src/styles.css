@@ -24,6 +24,7 @@
 @import "./styles/welcome.css";
 @import "./styles/settings-overlays.css";
 @import "./styles/model-settings.css";
+@import "./styles/mcp-settings.css";
 @import "./styles/system-settings.css";
 @import "./styles/responsive.css";
 @import "./styles/history.css";

@@ -7,6 +7,7 @@ import {
   Palette,
   RefreshCw,
   ScrollText,
+  Server,
   Sun,
   Terminal,
 } from "lucide-react";
@@ -47,6 +48,7 @@ import { shallowEqual, store, useAppState } from "../store";
 import { Dropdown } from "./Dropdown";
 import { HerdrSettings } from "./HerdrSettings";
 import { HostRestartSettings } from "./HostRestartSettings";
+import { McpSettings } from "./McpSettings";
 import { ModelsSettings } from "./ModelsSettings";
 import {
   type SettingsChoice as Choice,
@@ -141,6 +143,7 @@ export type SettingsCategoryId =
   | "conversation"
   | "behavior"
   | "models"
+  | "mcp"
   | "updates";
 type CategoryId = SettingsCategoryId;
 
@@ -170,6 +173,11 @@ const CATEGORIES: Array<{
     icon: <Cpu size={14} aria-hidden />,
   },
   {
+    id: "mcp",
+    label: "MCP",
+    icon: <Server size={14} aria-hidden />,
+  },
+  {
     id: "updates",
     label: "System",
     icon: <RefreshCw size={14} aria-hidden />,
@@ -181,9 +189,11 @@ const CATEGORIES: Array<{
 export const SettingsContent = memo(function SettingsContent({
   initialCategory = "display",
   modelDestination,
+  workspaceOwner,
 }: {
   initialCategory?: SettingsCategoryId;
   modelDestination?: ModelSettingsDestination;
+  workspaceOwner: { sessionId?: string; cwd?: string };
 }) {
   const state = useAppState(
     (source) => ({
@@ -581,7 +591,21 @@ export const SettingsContent = memo(function SettingsContent({
           >
             <ModelsSettings
               active={activeCategory === "models"}
-              destination={modelDestination}
+              destination={{
+                ...modelDestination,
+                owner: modelDestination?.owner ?? workspaceOwner,
+              }}
+            />
+          </div>
+
+          <div
+            className="settings__page"
+            data-category="mcp"
+            hidden={activeCategory !== "mcp"}
+          >
+            <McpSettings
+              active={activeCategory === "mcp"}
+              owner={workspaceOwner}
             />
           </div>
 

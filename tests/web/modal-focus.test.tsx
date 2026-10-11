@@ -16,7 +16,7 @@ describe("modal focus ownership", () => {
     const user = userEvent.setup();
     const view = render(
       <SettingsDialog onClose={() => undefined}>
-        <SettingsContent />
+        <SettingsContent workspaceOwner={{}} />
       </SettingsDialog>,
     );
     const dialog = screen.getByRole("dialog", { name: "Settings" });
@@ -46,7 +46,7 @@ describe("modal focus ownership", () => {
     const user = userEvent.setup();
     render(
       <SettingsDialog onClose={onClose}>
-        <SettingsContent initialCategory="conversation" />
+        <SettingsContent initialCategory="conversation" workspaceOwner={{}} />
       </SettingsDialog>,
     );
     const trigger = screen.getByRole("combobox", { name: "Activity groups" });

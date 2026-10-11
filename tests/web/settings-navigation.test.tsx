@@ -7,7 +7,7 @@ import { SettingsDialog } from "../../src/components/SettingsDialog";
 function Settings({ onClose }: { onClose: () => void }) {
   return (
     <SettingsDialog onClose={onClose}>
-      <SettingsContent />
+      <SettingsContent workspaceOwner={{}} />
     </SettingsDialog>
   );
 }

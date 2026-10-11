@@ -2538,6 +2538,19 @@ export class AppStore {
       await this.setThinkingLevel(levels[(index + 1) % levels.length]!);
     });
 
+  readMcpConfig = (owner: { sessionId?: string; cwd?: string }) => {
+    if (!this.api) return Promise.reject(new Error("The Host is unavailable"));
+    return this.api.mcpConfig(owner);
+  };
+
+  editMcpConfig = (
+    owner: { sessionId?: string; cwd?: string },
+    edit: import("../shared/mcp").McpConfigEdit,
+  ) => {
+    if (!this.api) return Promise.reject(new Error("The Host is unavailable"));
+    return this.api.editMcpConfig(owner, edit);
+  };
+
   private modelSettingsApi = (): Api => {
     if (!this.api) throw new Error("The Host is unavailable");
     return this.api;

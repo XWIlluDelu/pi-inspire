@@ -37,6 +37,7 @@
     "docs/extensions.md",
     "docs/examples/native-ui.ts",
     "docs/host.md",
+    "docs/mcp.md",
     "docs/pi-commands.md",
     "docs/ssh-reverse.md",
     "docs/tool-presentations.md",

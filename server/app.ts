@@ -405,6 +405,8 @@ interface MaintenanceRestartLike {
   release(leaseId: string): MaintenanceRestartTransition;
 }
 
+import type { McpConfigService } from "./mcp-config.js";
+import { registerMcpConfigRoutes } from "./mcp-config-routes.js";
 import type { ModelSettingsService } from "./model-settings.js";
 import { registerModelSettingsRoutes } from "./model-settings-routes.js";
 import type { ProviderAuthService } from "./provider-auth.js";
@@ -440,6 +442,7 @@ interface AppDependencies {
     refresh?: boolean,
   ) => Promise<import("./model-metadata.js").ModelMetadata>;
   modelSettings?: ModelSettingsService;
+  mcpConfig?: McpConfigService;
   invalidateModels?: () => void;
   providerAuth?: ProviderAuthService;
   /** Cached public-release observation; failures never block local work. */
@@ -1024,6 +1027,7 @@ export function createInspireServer(deps: AppDependencies): {
     );
   });
   registerModelSettingsRoutes(app, deps);
+  registerMcpConfigRoutes(app, deps);
   app.get("/api/models", async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
     const {
