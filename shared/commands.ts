@@ -10,6 +10,8 @@ interface PiNativeCommandDescriptor {
   description: string;
   argumentHint?: string;
   execution: PiNativeCommandExecution;
+  /** Can be used while the retained session's project folder is unavailable. */
+  availableWithoutWorkspace?: boolean;
 }
 
 /**
@@ -20,6 +22,7 @@ interface PiNativeCommandDescriptor {
 export const PI_NATIVE_COMMANDS = [
   {
     name: "settings",
+    availableWithoutWorkspace: true,
     description: "Open INSΠRE and Pi runtime settings",
     execution: "surface",
   },
@@ -31,6 +34,7 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "tree",
+    availableWithoutWorkspace: true,
     description: "Open conversation history and branches",
     execution: "surface",
   },
@@ -42,6 +46,7 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "scoped-models",
+    availableWithoutWorkspace: true,
     description: "Manage common models and their cycle order",
     execution: "surface",
   },
@@ -70,6 +75,7 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "copy",
+    availableWithoutWorkspace: true,
     description: "Copy the last assistant response",
     execution: "client",
   },
@@ -81,16 +87,19 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "session",
+    availableWithoutWorkspace: true,
     description: "Show session, usage, and cost information",
     execution: "informational",
   },
   {
     name: "changelog",
+    availableWithoutWorkspace: true,
     description: "Read the installed Pi version's release notes",
     execution: "surface",
   },
   {
     name: "hotkeys",
+    availableWithoutWorkspace: true,
     description: "Show browser keyboard shortcuts",
     execution: "informational",
   },
@@ -124,6 +133,7 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "new",
+    availableWithoutWorkspace: true,
     description: "Start a new session",
     execution: "surface",
   },
@@ -135,6 +145,7 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "resume",
+    availableWithoutWorkspace: true,
     description: "Find and resume another session",
     execution: "surface",
   },
@@ -145,6 +156,7 @@ export const PI_NATIVE_COMMANDS = [
   },
   {
     name: "quit",
+    availableWithoutWorkspace: true,
     description: "Explain how to leave the browser client",
     execution: "informational",
   },

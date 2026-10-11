@@ -1134,12 +1134,16 @@ export function parseRetryInfo(value: unknown): RetryInfo | null {
   };
 }
 
+export type SessionReadOnlyReason = "workspace-unavailable";
+
 export interface ActiveSnapshot {
   active: null | {
     sessionId: string;
     sessionFile?: string;
     sessionName?: string;
     cwd: string;
+    /** History remains readable when its execution environment is unavailable. */
+    readOnlyReason?: SessionReadOnlyReason;
     model: unknown;
     /** Read-only selection waits for native registration metadata. */
     modelDiscovery?: "loading" | "unavailable";

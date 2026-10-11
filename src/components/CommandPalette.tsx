@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { parseCommandInvocation } from "../../shared/commands";
+import { nativeCommand, parseCommandInvocation } from "../../shared/commands";
 import {
   ACTIVITY_FOLD_VISIBILITIES,
   ASSISTANT_ROUND_DISPLAYS,
@@ -102,6 +102,7 @@ export const CommandPalette = memo(function CommandPalette({
     )?.title;
     return {
       sessionId: appState.sessionId,
+      readOnlyReason: appState.readOnlyReason,
       heading: sessionHeading(
         appState.sessionName,
         catalogTitle,
@@ -350,36 +351,37 @@ export const CommandPalette = memo(function CommandPalette({
           run: () => runTerminalAction("settings"),
         },
       );
-      actions.push(
-        {
-          id: "model-next",
-          group: "Models",
-          title: "Next model",
-          hint: "Alt+Shift+M",
-          run: () => void store.cycleModel(1),
-        },
-        {
-          id: "model-previous",
-          group: "Models",
-          title: "Previous model",
-          hint: "Alt+Shift+P",
-          run: () => void store.cycleModel(-1),
-        },
-        {
-          id: "thinking-cycle",
-          group: "Models",
-          title: "Cycle thinking level",
-          hint: "Alt+Shift+R",
-          run: () => void store.cycleThinking(),
-        },
-        {
-          id: "manage-models",
-          group: "Models",
-          title: "Manage models",
-          aliases: ["/scoped-models", "common models", "provider settings"],
-          run: () => store.openModelSettings(),
-        },
-      );
+      if (!state.readOnlyReason)
+        actions.push(
+          {
+            id: "model-next",
+            group: "Models",
+            title: "Next model",
+            hint: "Alt+Shift+M",
+            run: () => void store.cycleModel(1),
+          },
+          {
+            id: "model-previous",
+            group: "Models",
+            title: "Previous model",
+            hint: "Alt+Shift+P",
+            run: () => void store.cycleModel(-1),
+          },
+          {
+            id: "thinking-cycle",
+            group: "Models",
+            title: "Cycle thinking level",
+            hint: "Alt+Shift+R",
+            run: () => void store.cycleThinking(),
+          },
+        );
+      actions.push({
+        id: "manage-models",
+        group: "Models",
+        title: "Manage models",
+        aliases: ["/scoped-models", "common models", "provider settings"],
+        run: () => store.openModelSettings(),
+      });
       if (hasEarlierBranch) {
         actions.push({
           id: "latest-branch",
@@ -390,7 +392,7 @@ export const CommandPalette = memo(function CommandPalette({
         });
       }
     }
-    if (state.sessionId) {
+    if (state.sessionId && !state.readOnlyReason) {
       actions.push({
         id: "clone",
         group: "Conversation",
@@ -520,6 +522,9 @@ export const CommandPalette = memo(function CommandPalette({
       ? resolveCommandInventory(state.commands)
           .filter(
             (command) =>
+              (!state.readOnlyReason ||
+                (command.source === "builtin" &&
+                  nativeCommand(command.name)?.availableWithoutWorkspace)) &&
               !actions.some((action) =>
                 action.aliases?.includes(`/${command.name}`),
               ),

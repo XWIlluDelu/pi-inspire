@@ -2,6 +2,7 @@ import type {
   ActiveSnapshot,
   ModelIdentity,
   NewSessionOptions,
+  SessionReadOnlyReason,
 } from "../../shared/contracts";
 import { type Api, ApiError, ApiRequestCancelledError } from "../api";
 
@@ -10,6 +11,7 @@ export interface SessionSelectionState {
   cwd: string | null;
   openingSessionId: string | null;
   sessionSelectionPending: boolean;
+  readOnlyReason?: SessionReadOnlyReason | null;
 }
 
 interface SessionSelectionControllerHost {
@@ -59,7 +61,12 @@ export class SessionSelectionController {
     if (!api) return;
     // Re-selecting the visible session is a no-op only with no older operation
     // to supersede, including create/deselect intents with no target ID yet.
-    if (id === state.sessionId && !state.sessionSelectionPending) return;
+    if (
+      id === state.sessionId &&
+      !state.sessionSelectionPending &&
+      !state.readOnlyReason
+    )
+      return;
     if (id === state.openingSessionId) return;
     await this.runSelection(
       id,

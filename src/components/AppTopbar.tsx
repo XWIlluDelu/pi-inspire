@@ -168,6 +168,7 @@ const SessionIdent = memo(function SessionIdent({
     project,
     projectDisplay,
     cloneBusy,
+    readOnlyReason,
   } = useAppState((state) => {
     const catalogTitle = state.sessions.find(
       (session) => session.id === state.sessionId,
@@ -185,6 +186,7 @@ const SessionIdent = memo(function SessionIdent({
       project: state.cwd ? projectNameFromCwd(state.cwd) : null,
       projectDisplay: state.prefs.projectDisplay,
       cloneBusy: state.branchActionId !== null || state.branchTreeLoading,
+      readOnlyReason: state.readOnlyReason,
     };
   }, shallowEqual);
   const [editing, setEditing] = useState(false);
@@ -241,7 +243,7 @@ const SessionIdent = memo(function SessionIdent({
 
   if (!show || !sessionId) return null;
 
-  if (editing) {
+  if (editing && !readOnlyReason) {
     return (
       <form
         className="topbar__rename"
@@ -294,7 +296,8 @@ const SessionIdent = memo(function SessionIdent({
             onBlur={() => setRestoredTitleFocus(false)}
             aria-label={`Session actions: ${heading}`}
             aria-haspopup="menu"
-            aria-expanded={menuOpen}
+            aria-expanded={menuOpen && !readOnlyReason}
+            disabled={Boolean(readOnlyReason)}
             title={heading}
             onClick={() => setMenuOpen((open) => !open)}
             onKeyDown={(event) => {
@@ -308,7 +311,7 @@ const SessionIdent = memo(function SessionIdent({
             <span>{heading}</span>
           </button>
         </h1>
-        {menuOpen ? (
+        {menuOpen && !readOnlyReason ? (
           <SessionActionsMenu
             anchorRef={titleRef}
             cloneDisabled={cloneBusy}

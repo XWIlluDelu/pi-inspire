@@ -158,6 +158,7 @@ export function BranchTree({
     (source) => ({
       sessionId: source.sessionId,
       tree: source.branchTree,
+      readOnlyReason: source.readOnlyReason,
       loading: source.branchTreeLoading,
       error: source.branchTreeError,
       actionId: source.branchActionId,
@@ -434,15 +435,17 @@ export function BranchTree({
     );
   }
 
-  const blocked = state.actionId
-    ? "A history action is in progress"
-    : state.loading || state.error
-      ? "Refresh History before continuing"
-      : state.conflict ||
-          state.health.status !== "ok" ||
-          tree?.health.status !== "ok"
-        ? "Recover this session before continuing"
-        : null;
+  const blocked = state.readOnlyReason
+    ? "This session is read-only"
+    : state.actionId
+      ? "A history action is in progress"
+      : state.loading || state.error
+        ? "Refresh History before continuing"
+        : state.conflict ||
+            state.health.status !== "ok" ||
+            tree?.health.status !== "ok"
+          ? "Recover this session before continuing"
+          : null;
   const sameSessionBlocked =
     blocked ??
     (state.runState !== "idle" || state.bashRunning

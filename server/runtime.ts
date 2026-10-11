@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
@@ -1309,9 +1309,19 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return this.workerLifecycle.stop(slot, cancelledCommand);
   }
 
+  private requireWorkspace(slot: RuntimeSlot): void {
+    if (slot.readOnlyReason)
+      throw requestError(
+        "This session is read-only because its project folder is unavailable",
+        409,
+        { code: "SESSION_WORKSPACE_UNAVAILABLE" },
+      );
+  }
+
   private ensureFreshWriterInsideGate(
     slot: RuntimeSlot,
   ): Promise<RuntimeSlot & { process: PiRpcProcess }> {
+    this.requireWorkspace(slot);
     return this.workerLifecycle.ensureFreshWriter(slot);
   }
 
@@ -1749,7 +1759,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private readPreviewModels(slot: RuntimeSlot): Promise<void> {
     const catalog = this.modelMetadata;
-    if (!catalog || this.closing) return Promise.resolve();
+    if (!catalog || this.closing || slot.readOnlyReason)
+      return Promise.resolve();
     if (this.previewModels.get(slot)?.revision === catalog.revision)
       return Promise.resolve();
     const cached = catalog.peek(slot.cwd);
@@ -1813,10 +1824,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       !live && known?.revision === this.modelMetadata?.revision
         ? known?.data
         : undefined;
-    const unresolved = !live && this.modelMetadata && metadata === undefined;
+    const unresolved =
+      !live &&
+      !slot.readOnlyReason &&
+      this.modelMetadata &&
+      metadata === undefined;
     return safeProjection({
       active: {
         ...slot.preview,
+        readOnlyReason: slot.readOnlyReason ?? undefined,
         model: live
           ? slot.preview.model
           : metadata === null || unresolved
@@ -1864,8 +1880,19 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }) as ActiveSnapshot;
   }
 
-  private async resolveWorkspaceRoot(cwd: string): Promise<string> {
-    return realpath(resolve(cwd));
+  private async resolveWorkspaceRoot(cwd: string): Promise<string | null> {
+    try {
+      const root = await realpath(resolve(cwd));
+      return (await stat(root)).isDirectory() ? root : null;
+    } catch (error) {
+      if (
+        ["ENOENT", "ENOTDIR", "EACCES", "EPERM"].includes(
+          (error as NodeJS.ErrnoException).code ?? "",
+        )
+      )
+        return null;
+      throw error;
+    }
   }
 
   private async openProjection(
@@ -1938,8 +1965,21 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (
       existing &&
       (existing.projection || existing.process || this.opening.has(session.id))
-    )
+    ) {
+      if (existing.readOnlyReason) {
+        const slot = existing;
+        await this.mutateSlot(slot, async () => {
+          const root = await this.resolveWorkspaceRoot(session.cwd);
+          if (!root || !slot.readOnlyReason) return;
+          await this.catalog.rememberProjectCwds?.([root]);
+          slot.cwd = root;
+          slot.readOnlyReason = null;
+          if (slot.preview) slot.preview = { ...slot.preview, cwd: root };
+          this.renewView(slot);
+        });
+      }
       return existing;
+    }
     const pathOwner = [...this.slots.values()].find(
       (slot) =>
         slot.id !== session.id &&
@@ -1965,12 +2005,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
     const loading = (async () => {
       const workspaceRoot = await this.resolveWorkspaceRoot(session.cwd);
+      const cwd = workspaceRoot ?? session.cwd;
+      const readOnlyReason = workspaceRoot ? null : "workspace-unavailable";
       await this.attachments.registerSession(session.path);
-      await this.catalog.rememberProjectCwds?.([workspaceRoot]);
-      const { projection, preview } = await this.openProjection(
-        session,
-        workspaceRoot,
-      );
+      if (workspaceRoot)
+        await this.catalog.rememberProjectCwds?.([workspaceRoot]);
+      const { projection, preview } = await this.openProjection(session, cwd);
       if (this.closing) {
         await projection.close();
         this.assertNotClosing();
@@ -1987,7 +2027,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         current.projection = projection;
         this.attachProjection(current, projection);
         current.preview = preview;
-        current.cwd = workspaceRoot;
+        current.cwd = cwd;
+        current.readOnlyReason = readOnlyReason;
         current.sessionPath = preview.sessionFile
           ? resolve(preview.sessionFile)
           : resolve(session.path);
@@ -2020,7 +2061,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
       const slot = createRuntimeSlot({
         id: session.id,
-        cwd: workspaceRoot,
+        cwd,
+        readOnlyReason,
         sessionPath: preview.sessionFile
           ? resolve(preview.sessionFile)
           : resolve(session.path),
@@ -2103,7 +2145,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         });
         this.scheduleIdleWorkerEviction();
       }
-      if (!ready) void this.ensureProcess(slot).catch(() => undefined);
+      if (!ready && !slot.readOnlyReason)
+        void this.ensureProcess(slot).catch(() => undefined);
       return snapshot;
     } finally {
       const remaining = (this.selectionReservations.get(id) ?? 1) - 1;
@@ -3372,6 +3415,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const source = this.requireSlot(request.sessionId);
     const selectionAtDispatch = this.selectionSequence;
     return this.mutateSlot(source, async () => {
+      this.requireWorkspace(source);
       // The addressed source and its fresh revision authorize this copy;
       // another browser's Host selection does not own this source view.
       await this.reconcileSlot(source, true);
@@ -4365,6 +4409,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         ? retained
         : await this.prepareCatalogSlot(sessionId);
     return this.useSlot(slot, async () => {
+      this.requireWorkspace(slot);
       // An already-warming Pi owns the source's actual startup selection.
       const warming = inherit ? this.opening.get(slot.id) : undefined;
       if (warming) await warming.catch(() => undefined);

@@ -1,6 +1,7 @@
 import {
   mkdir,
   mkdtemp,
+  readFile,
   realpath,
   rename,
   rm,
@@ -11,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ModelMetadataCatalog } from "../../server/model-metadata.js";
 import { type PiRpcOptions, type PiRpcProcess } from "../../server/pi-rpc.js";
 
 import { RuntimeController, safeProjection } from "../../server/runtime.js";
@@ -22,17 +24,17 @@ import {
 import { SessionProjection } from "../../server/session-projection.js";
 
 import {
+  catalog,
+  disposeRuntimeFixture,
   FakeRpc,
   fixtureWorkspace,
-  record,
-  waitForReady,
-  preview,
-  catalog,
-  workspaceDirectories,
-  trackedAttachmentStore,
   initializeRuntimeFixture,
-  disposeRuntimeFixture,
   persistedRecord,
+  preview,
+  record,
+  trackedAttachmentStore,
+  waitForReady,
+  workspaceDirectories,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
@@ -128,9 +130,84 @@ describe("runtime source admission", () => {
     }
   });
 
-  it("requires a real workspace even with an injected projection factory", async () => {
-    const session = record("a", join(fixtureWorkspace, "missing"));
-    const openProjection = vi.fn(preview);
+  it.each(["missing", "file"] as const)(
+    "reads retained history without starting Pi when the workspace is %s",
+    async (kind) => {
+      const session = await persistedRecord(
+        "a",
+        join(fixtureWorkspace, "unavailable"),
+      );
+      if (kind === "file") await writeFile(session.cwd, "not a directory");
+      const before = await readFile(session.path);
+      const createProcess = vi.fn(
+        (options: PiRpcOptions) =>
+          new FakeRpc(options) as unknown as PiRpcProcess,
+      );
+      const queryModels = vi
+        .fn()
+        .mockRejectedValue(
+          new Error("Metadata discovery must not run in an unavailable folder"),
+        );
+      const runtime = new RuntimeController(
+        catalog([session]),
+        trackedAttachmentStore(),
+        createProcess,
+      );
+      runtime.setModelMetadataCatalog(new ModelMetadataCatalog(queryModels));
+      try {
+        const opened = await runtime.openSession("a");
+        expect(opened.active).toMatchObject({
+          sessionId: "a",
+          cwd: session.cwd,
+          readOnlyReason: "workspace-unavailable",
+        });
+        expect(opened.active?.transcriptPage.messages).toEqual([
+          expect.objectContaining({ role: "user", content: "persisted:a" }),
+        ]);
+        const tree = await runtime.branchTree("a");
+        expect(
+          await runtime.branchEntry({
+            sessionId: "a",
+            viewId: opened.active!.transcriptPage.viewId,
+            targetId: "u1",
+          }),
+        ).toMatchObject({ text: "persisted:a" });
+        const resources = await runtime.resourceContext("a");
+        expect(await resources.loadMessages?.()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ role: "user", content: "persisted:a" }),
+          ]),
+        );
+        for (const operation of [
+          () => runtime.prompt({ sessionId: "a", message: "do not execute" }),
+          () => runtime.rename("a", "do not write"),
+          () =>
+            runtime.cloneBranch({ sessionId: "a", revision: tree.revision }),
+          () => runtime.nativeCommand({ sessionId: "a", command: "reload" }),
+          () => runtime.refreshModels("a"),
+        ]) {
+          await expect(operation()).rejects.toMatchObject({
+            status: 409,
+            code: "SESSION_WORKSPACE_UNAVAILABLE",
+          });
+        }
+        expect((await runtime.snapshot("a")).active?.readOnlyReason).toBe(
+          "workspace-unavailable",
+        );
+        expect(createProcess).not.toHaveBeenCalled();
+        expect(queryModels).not.toHaveBeenCalled();
+        expect(await readFile(session.path)).toEqual(before);
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
+
+  it("rechecks a restored folder on explicit open and then warms the worker", async () => {
+    const session = await persistedRecord(
+      "a",
+      join(fixtureWorkspace, "restored"),
+    );
     const createProcess = vi.fn(
       (options: PiRpcOptions) =>
         new FakeRpc(options) as unknown as PiRpcProcess,
@@ -139,15 +216,25 @@ describe("runtime source admission", () => {
       catalog([session]),
       trackedAttachmentStore(),
       createProcess,
-      openProjection,
     );
     try {
-      await expect(runtime.openSession("a")).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-      expect(openProjection).not.toHaveBeenCalled();
-      expect(createProcess).not.toHaveBeenCalled();
+      // A cold reconnect can also project history without selecting or warming.
+      const observed = await runtime.snapshot("a");
+      expect(observed.active?.readOnlyReason).toBe("workspace-unavailable");
       expect(runtime.activeSessionId).toBeNull();
+      expect(createProcess).not.toHaveBeenCalled();
+
+      await mkdir(session.cwd);
+      const opened = await runtime.openSession("a");
+      expect(opened.active?.readOnlyReason).toBeUndefined();
+      expect(opened.active?.cwd).toBe(await realpath(session.cwd));
+      expect(opened.active?.transcriptPage.viewId).not.toBe(
+        observed.active?.transcriptPage.viewId,
+      );
+      await waitForReady(runtime);
+      expect(createProcess).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ cwd: await realpath(session.cwd) }),
+      );
     } finally {
       await runtime.close();
     }
