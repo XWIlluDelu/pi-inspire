@@ -17,6 +17,8 @@ import {
   vi,
 } from "vitest";
 import type { McpConfigSnapshot } from "../../shared/mcp";
+import type { ModelCatalogResponse } from "../../shared/model-settings";
+import { ApiError } from "../../src/api";
 import { App } from "../../src/App";
 import { Composer } from "../../src/components/Composer";
 import { Welcome } from "../../src/components/Welcome";
@@ -47,6 +49,7 @@ const canonicalProjectCwd = "/canonical/proj";
 let defaultModelCwd: string | null;
 let defaultModelAvailable: boolean;
 let projectFileCwd: string | null;
+let directoryFailure: "missing" | "file" | null = null;
 
 beforeAll(async () => {
   newSessionBody = null;
@@ -84,11 +87,39 @@ beforeAll(async () => {
         }),
       };
     if (url.startsWith("/api/new-session/thinking")) {
+      if (directoryFailure === "missing")
+        return {
+          status: 400,
+          body: {
+            error: "Project path does not exist",
+            code: "PROJECT_DIRECTORY_MISSING",
+          },
+        };
       const query = new URL(url, "http://local").searchParams;
       return { body: { level: query.get("current") ?? "high" } };
     }
     if (url.startsWith("/api/models")) {
       const parsed = new URL(url, "http://local");
+      if (directoryFailure && parsed.searchParams.has("sessionId"))
+        return {
+          status: 409,
+          body: {
+            error:
+              "This session is read-only because its project folder is unavailable",
+            code: "SESSION_WORKSPACE_UNAVAILABLE",
+          },
+        };
+      if (directoryFailure)
+        return {
+          status: 400,
+          body:
+            directoryFailure === "missing"
+              ? {
+                  error: "Project path does not exist",
+                  code: "PROJECT_DIRECTORY_MISSING",
+                }
+              : { error: "Project path is not a directory" },
+        };
       defaultModelCwd = parsed.searchParams.get("cwd");
       return {
         body: {
@@ -118,6 +149,8 @@ beforeAll(async () => {
         },
       };
     }
+    if (url.startsWith("/api/sessions/deselect"))
+      return { body: { active: null, runState: "idle", sessionStatuses: {} } };
     if (url.startsWith("/api/sessions/new")) {
       newSessionBody = jsonBody(init);
       return {
@@ -177,6 +210,7 @@ beforeAll(async () => {
 beforeEach(mockModelMenuLayout);
 
 afterEach(() => {
+  directoryFailure = null;
   defaultModelAvailable = true;
   promptGate = null;
   setStartDraft("");
@@ -264,6 +298,304 @@ describe("new-session start surface", () => {
         },
       ),
     );
+  });
+
+  it("offers explicit directory creation without a model preview and sends the preserved first message", async () => {
+    directoryFailure = "missing";
+    newSessionBody = null;
+    promptBody = null;
+    act(() =>
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: { active: null, runState: "idle", sessionStatuses: {} },
+      }),
+    );
+    render(<Welcome />);
+    const message = screen.getByRole("textbox", { name: "First message" });
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Project directory" }),
+      {
+        target: { value: "/projects/new/nested" },
+      },
+    );
+    fireEvent.change(message, { target: { value: "Keep this first message" } });
+    const create = await screen.findByRole("button", {
+      name: "Create folder and start",
+    });
+    expect(create).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Start session" }),
+    ).toBeDisabled();
+    fireEvent.keyDown(message, {
+      key: "Enter",
+      ctrlKey: store.getState().prefs.desktopSendKey === "mod-enter",
+    });
+    expect(newSessionBody).toBeNull();
+    fireEvent.click(create);
+    await waitFor(() =>
+      expect(newSessionBody).toEqual({
+        cwd: "/projects/new/nested",
+        createDirectory: true,
+      }),
+    );
+    await waitFor(() =>
+      expect(promptBody?.message).toBe("Keep this first message"),
+    );
+  });
+
+  it.each(["missing", "file"] as const)(
+    "preflights New independently of its read-only history source when the folder is %s",
+    async (kind) => {
+      directoryFailure = kind;
+      act(() =>
+        FakeWebSocket.instances.at(-1)!.emit({
+          type: "snapshot",
+          data: activeSnapshot({
+            sessionId: "archived",
+            cwd: "/archived/project",
+            readOnlyReason: "workspace-unavailable",
+            model: {
+              provider: "anthropic",
+              id: "claude-sonnet-4",
+              reasoning: true,
+            },
+            thinkingLevel: "high",
+          }),
+        }),
+      );
+      const read = vi.spyOn(store, "readNewSessionModels");
+      const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
+      render(<App />);
+      fireEvent.click(screen.getByRole("button", { name: "New session" }));
+      fireEvent.change(
+        await screen.findByRole("textbox", { name: "First message" }),
+        { target: { value: "Start independent work" } },
+      );
+      await waitFor(() =>
+        expect(read).toHaveBeenCalledWith(undefined, "/archived/project"),
+      );
+      expect(read).not.toHaveBeenCalledWith("archived", "/archived/project");
+      expect(
+        screen.getByRole("combobox", { name: "Thinking level" }),
+      ).toHaveTextContent("high");
+      if (kind === "missing") {
+        const create = await screen.findByRole("button", {
+          name: "Create folder and start",
+        });
+        expect(create).toBeEnabled();
+        expect(
+          screen.getByRole("button", { name: "Start session" }),
+        ).toBeDisabled();
+        fireEvent.click(create);
+        await waitFor(() =>
+          expect(start).toHaveBeenCalledWith("/archived/project", {
+            createDirectory: true,
+            model: { provider: "anthropic", id: "claude-sonnet-4" },
+            thinkingLevel: "high",
+          }),
+        );
+      } else {
+        expect(
+          screen.queryByRole("button", { name: "Create folder and start" }),
+        ).toBeNull();
+        expect(start).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it("preserves inherited model, effort, draft and attachment on failed directory creation", async () => {
+    directoryFailure = "missing";
+    act(() =>
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: { active: null, runState: "idle", sessionStatuses: {} },
+      }),
+    );
+    render(
+      <Welcome
+        inherited={{
+          cwd: "/existing",
+          model: {
+            provider: "anthropic",
+            id: "claude-sonnet-4",
+            reasoning: true,
+          },
+          thinkingLevel: "high",
+          commands: [],
+        }}
+      />,
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Project directory" }),
+      {
+        target: { value: "/projects/missing" },
+      },
+    );
+    const message = screen.getByRole("textbox", { name: "First message" });
+    fireEvent.change(message, { target: { value: "Retain this work" } });
+    fireEvent.change(
+      screen.getByLabelText("Attach files", { selector: "input" }),
+      {
+        target: {
+          files: [new File(["image"], "retained.png", { type: "image/png" })],
+        },
+      },
+    );
+    const create = await screen.findByRole("button", {
+      name: "Create folder and start",
+    });
+    const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
+    try {
+      fireEvent.click(create);
+      await waitFor(() =>
+        expect(start).toHaveBeenCalledWith("/projects/missing", {
+          createDirectory: true,
+          model: { provider: "anthropic", id: "claude-sonnet-4" },
+          thinkingLevel: "high",
+        }),
+      );
+      await waitFor(() => expect(create).toBeEnabled());
+      expect(message).toHaveValue("Retain this work");
+      expect(
+        screen.getByRole("button", { name: "Remove attached image" }),
+      ).toBeEnabled();
+    } finally {
+      start.mockRestore();
+    }
+  });
+
+  it.each([false, true])(
+    "starts with an explicitly selected model and manual effort=%s without guessing unresolved defaults",
+    async (manualEffort) => {
+      directoryFailure = "missing";
+      act(() =>
+        FakeWebSocket.instances.at(-1)!.emit({
+          type: "snapshot",
+          data: { active: null, runState: "idle", sessionStatuses: {} },
+        }),
+      );
+      render(<Welcome />);
+      fireEvent.change(
+        screen.getByRole("textbox", { name: "Project directory" }),
+        { target: { value: "/new-project" } },
+      );
+      fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
+        target: { value: "Use this model" },
+      });
+      const create = await screen.findByRole("button", {
+        name: "Create folder and start",
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Model" }));
+      fireEvent.click(
+        within(
+          screen.getByRole("listbox", { name: "Available models" }),
+        ).getByRole("option", { name: /Claude Sonnet 4/ }),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", { name: "Thinking level" }),
+        ).toHaveTextContent("default"),
+      );
+      if (manualEffort) {
+        fireEvent.click(
+          screen.getByRole("combobox", { name: "Thinking level" }),
+        );
+        fireEvent.click(screen.getByRole("option", { name: "high" }));
+      }
+      const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
+      try {
+        fireEvent.click(create);
+        await waitFor(() =>
+          expect(start).toHaveBeenCalledWith("/new-project", {
+            createDirectory: true,
+            model: { provider: "anthropic", id: "claude-sonnet-4" },
+            ...(manualEffort ? { thinkingLevel: "high" } : {}),
+          }),
+        );
+      } finally {
+        start.mockRestore();
+      }
+    },
+  );
+
+  it("does not offer creation for a path blocked by a regular file", async () => {
+    directoryFailure = "file";
+    act(() =>
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: { active: null, runState: "idle", sessionStatuses: {} },
+      }),
+    );
+    render(<Welcome />);
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Project directory" }),
+      {
+        target: { value: "/file/project" },
+      },
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
+      target: { value: "Do not replace this file" },
+    });
+    await screen.findByText("Project path is not a directory");
+    expect(
+      screen.queryByRole("button", { name: "Create folder and start" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Start session" }),
+    ).toBeDisabled();
+  });
+
+  it("retires a late missing-directory observation after the user chooses another path", async () => {
+    act(() =>
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: { active: null, runState: "idle", sessionStatuses: {} },
+      }),
+    );
+    const gate = deferred<ModelCatalogResponse>();
+    const readModels = store.readNewSessionModels;
+    const read = vi
+      .spyOn(store, "readNewSessionModels")
+      .mockImplementation((id, cwd, inherit) =>
+        cwd === "/stale-project" ? gate.promise : readModels(id, cwd, inherit),
+      );
+    try {
+      render(<Welcome />);
+      const directory = screen.getByRole("textbox", {
+        name: "Project directory",
+      });
+      fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
+        target: { value: "Keep this draft" },
+      });
+      fireEvent.change(directory, { target: { value: "/stale-project" } });
+      await waitFor(() =>
+        expect(read).toHaveBeenCalledWith(undefined, "/stale-project"),
+      );
+      fireEvent.change(directory, { target: { value: "/valid-project" } });
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Start session" }),
+        ).toBeEnabled(),
+      );
+      await act(async () => {
+        gate.reject(
+          new ApiError(
+            400,
+            "Project path does not exist",
+            undefined,
+            "PROJECT_DIRECTORY_MISSING",
+          ),
+        );
+      });
+      expect(
+        screen.queryByRole("button", { name: "Create folder and start" }),
+      ).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Start session" }),
+      ).toBeEnabled();
+    } finally {
+      read.mockRestore();
+    }
   });
 
   it("keeps directory Enter from creating a session without taking message autofocus or submission", async () => {

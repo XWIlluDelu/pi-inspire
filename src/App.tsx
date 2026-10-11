@@ -503,6 +503,7 @@ export function App() {
         cwd: current.cwd,
         model: current.model,
         modelDiscovery: current.modelDiscovery,
+        readOnlyReason: current.readOnlyReason,
         thinkingLevel: current.thinkingLevel,
         commands: [...current.commands],
       });

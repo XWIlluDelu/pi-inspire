@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,24 +12,68 @@ import {
 } from "../../server/runtime.js";
 
 import {
-  FakeRpc,
-  TEST_CWD,
-  fixtureWorkspace,
-  record,
-  waitForReady,
-  preview,
   catalog,
-  trackedAttachmentStore,
   deferredSignal,
-  schedulingRuntime,
-  initializeRuntimeFixture,
   disposeRuntimeFixture,
+  FakeRpc,
+  fixtureWorkspace,
+  initializeRuntimeFixture,
+  preview,
+  record,
+  schedulingRuntime,
+  TEST_CWD,
+  trackedAttachmentStore,
+  waitForReady,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
 
 describe("worker startup and retirement", () => {
+  it("creates the selected directory only on explicit new-session admission, before starting Pi", async () => {
+    const cwd = join(fixtureWorkspace, "projects", "new-project");
+    const source = catalog([]);
+    source.rememberProjectCwds = vi.fn(async () => {});
+    const create = vi.fn((options) => {
+      expect(existsSync(cwd)).toBe(true);
+      return new FakeRpc(options) as unknown as PiRpcProcess;
+    });
+    const runtime = new RuntimeController(
+      source,
+      trackedAttachmentStore(),
+      create,
+      preview,
+    );
+    try {
+      await expect(runtime.newSession(cwd)).rejects.toMatchObject({
+        status: 400,
+        code: "PROJECT_DIRECTORY_MISSING",
+      });
+      expect(create).not.toHaveBeenCalled();
+      expect(existsSync(cwd)).toBe(false);
+      const snapshot = await runtime.newSession(cwd, {
+        createDirectory: true,
+        model: { provider: "anthropic", id: "claude-sonnet-4" },
+        thinkingLevel: "high",
+      });
+      expect((await stat(cwd)).isDirectory()).toBe(true);
+      expect(snapshot.active?.cwd).toBe(create.mock.calls[0]![0].cwd);
+      expect(source.rememberProjectCwds).toHaveBeenCalledWith([
+        snapshot.active!.cwd,
+      ]);
+      expect(create.mock.calls[0]![0].args).toEqual(
+        expect.arrayContaining([
+          "--model",
+          "anthropic/claude-sonnet-4",
+          "--thinking",
+          "high",
+        ]),
+      );
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("rejects a new worker without a session path regardless of projection injection", async () => {
     let worker!: FakeRpc;
     const openProjection = vi.fn(preview);

@@ -12,6 +12,8 @@ import type {
   NewSessionDefaults,
   ThinkingLevel,
 } from "../../shared/contracts";
+import type { ModelCatalogResponse } from "../../shared/model-settings";
+import { ApiError } from "../../src/api";
 import { Welcome } from "../../src/components/Welcome";
 import { store } from "../../src/store";
 import { mockModelMenuLayout } from "./fixtures/model-menu-layout";
@@ -161,6 +163,78 @@ it("waits for a pending source selection instead of applying workspace defaults"
   );
 });
 
+it("keeps unresolved source feedback and retry alongside missing-folder creation", async () => {
+  let source = deferred<ModelCatalogResponse>();
+  const queries = vi
+    .spyOn(store, "readNewSessionModels")
+    .mockImplementation(async (_sessionId, cwd, inherit) => {
+      if (inherit) return source.promise;
+      if (cwd === "/missing")
+        throw new ApiError(
+          400,
+          "Project path does not exist",
+          undefined,
+          "PROJECT_DIRECTORY_MISSING",
+        );
+      return { models, defaults };
+    });
+  const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
+  render(
+    <Welcome
+      showRecent={false}
+      inherited={{
+        ...inherit,
+        sessionId: "source",
+        model: null,
+        modelDiscovery: "loading",
+      }}
+    />,
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
+    target: { value: "Keep inherited choices" },
+  });
+  fireEvent.change(screen.getByRole("textbox", { name: "Project directory" }), {
+    target: { value: "/missing" },
+  });
+  const create = await screen.findByRole("button", {
+    name: "Create folder and start",
+  });
+  expect(create).toBeDisabled();
+  expect(screen.getByText("Resolving model…")).toBeInTheDocument();
+  await act(async () =>
+    source.reject(new ApiError(503, "The source model is unavailable")),
+  );
+  expect(
+    screen.getByText("The source model is unavailable"),
+  ).toBeInTheDocument();
+  expect(create).toBeDisabled();
+  source = deferred<ModelCatalogResponse>();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() =>
+    expect(queries.mock.calls.filter(([, , inherit]) => inherit)).toHaveLength(
+      2,
+    ),
+  );
+  expect(screen.getByText("Resolving model…")).toBeInTheDocument();
+  expect(create).toBeDisabled();
+  await act(async () =>
+    source.resolve({
+      models,
+      selection: { cwd: "/one", model: extended, thinkingLevel: "max" },
+    }),
+  );
+  await waitFor(() => expect(create).toBeEnabled());
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  fireEvent.click(create);
+  await waitFor(() =>
+    expect(start).toHaveBeenCalledWith("/missing", {
+      createDirectory: true,
+      model: { provider: "fixture", id: "extended" },
+      thinkingLevel: "max",
+    }),
+  );
+});
+
 it("refreshes the displayed workspace default but omits preview overrides at startup", async () => {
   const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
   render(<Welcome showRecent={false} />);
@@ -292,17 +366,37 @@ it.each(["xhigh", "max"])(
     );
   },
 );
-it("applies model policy but preserves intentional effort entered after its request", async () => {
+it("settles model readiness when manual effort supersedes policy, including across directory changes", async () => {
   const pending = deferred<ThinkingLevel>();
-  thinking = () => pending.promise;
+  const policy = vi.fn(() => pending.promise);
+  thinking = policy;
+  const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
   render(<Welcome showRecent={false} inherited={inherit} />);
+  fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
+    target: { value: "Use manual effort" },
+  });
   pick("ordinary");
+  await waitFor(() => expect(policy).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
   fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
   fireEvent.click(screen.getByRole("option", { name: /^low$/ }));
+  expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
+  fireEvent.change(screen.getByRole("textbox", { name: "Project directory" }), {
+    target: { value: "/two" },
+  });
   await act(async () => pending.resolve("medium"));
+  expect(policy).toHaveBeenCalledTimes(1);
   expect(
     screen.getByRole("combobox", { name: "Thinking level" }),
   ).toHaveTextContent("low");
+  expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Start session" }));
+  await waitFor(() =>
+    expect(start).toHaveBeenCalledWith("/two", {
+      model: { provider: "fixture", id: "ordinary" },
+      thinkingLevel: "low",
+    }),
+  );
 });
 it("ignores an old model response after another model is chosen", async () => {
   const pending = deferred<ThinkingLevel>();

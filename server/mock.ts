@@ -52,6 +52,7 @@ import {
   historyFixtureEntries,
   historyFixtureMessages,
 } from "./mock-history.js";
+import { createProjectDirectory } from "./paths.js";
 import { requestError } from "./request-error.js";
 import type { ResourceContext } from "./resources.js";
 import type { RuntimeLike } from "./runtime.js";
@@ -791,8 +792,11 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     cwdInput: string,
     options: NewSessionOptions = {},
   ): Promise<ActiveSnapshot> {
+    const cwd = options.createDirectory
+      ? await createProjectDirectory(cwdInput)
+      : cwdInput;
     const id = `mock-new-${++this.nextSession}`;
-    const snapshot = this.activate(id, cwdInput);
+    const snapshot = this.activate(id, cwd);
     if (snapshot.active) {
       snapshot.active.sessionName = options.name?.trim() || undefined;
       const selected = options.model
