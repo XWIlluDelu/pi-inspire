@@ -1,18 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PiRpcProcess } from "../../server/pi-rpc.js";
 import { RuntimeController } from "../../server/runtime.js";
+import { PreviewProjection } from "./fixtures/preview-projection.js";
 import {
-  FakeRpc,
-  record,
-  waitForReady,
-  preview,
   catalog,
-  trackedAttachmentStore,
   deferredSignal,
-  upload,
-  schedulingRuntime,
-  initializeRuntimeFixture,
   disposeRuntimeFixture,
+  FakeRpc,
+  initializeRuntimeFixture,
+  preview,
+  previewSnapshot,
+  record,
+  schedulingRuntime,
+  trackedAttachmentStore,
+  upload,
+  waitForReady,
 } from "./fixtures/runtime.js";
 
 function pendingEntry(id: string, text: string) {
@@ -151,22 +153,43 @@ describe("RuntimeController Pending input and recovery", () => {
     await runtime.close();
   });
 
-  it("holds manual-compaction input as Pending, clears it, and starts the first surviving prompt once Pi is idle", async () => {
+  it("copies uploaded and recalled images without delivering compaction input, then clears and resumes Pending", async () => {
     let worker!: FakeRpc;
     const compactGate = deferredSignal();
     let streaming = false;
+    const store = trackedAttachmentStore();
+    const saved = {
+      data: Buffer.from("saved image").toString("base64"),
+      mimeType: "image/png",
+    };
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
+      store,
       (options) => {
         worker = new FakeRpc(options);
         return worker as unknown as PiRpcProcess;
       },
-      preview,
+      async (session) => {
+        const value = await previewSnapshot(session);
+        return new PreviewProjection(session.id, {
+          ...value,
+          transcriptPage: {
+            ...value.transcriptPage,
+            messages: [
+              {
+                role: "user",
+                content: [{ type: "image", ...saved }],
+                timestamp: 1,
+              },
+            ],
+          },
+        });
+      },
     );
     try {
       await runtime.openSession("a");
       await waitForReady(runtime);
+      const history = await runtime.composerHistory("a", 0);
       worker.responseOverrides.set("compact", () => compactGate.promise);
       worker.responseOverrides.set("get_state", () => ({
         sessionId: "a",
@@ -189,16 +212,97 @@ describe("RuntimeController Pending input and recovery", () => {
           worker.commands.some((command) => command.type === "compact"),
         ).toBe(true),
       );
-      const removed = runtime.prompt({
-        sessionId: "a",
-        message: "remove me",
-        behavior: "steer",
-      });
+      const firstImage = await store.add(upload("first.png", "image/png"));
+      const secondImage = await store.add(upload("second.png", "image/png"));
+      const doc = await store.add(upload("notes.txt", "text/plain"));
+      const prepare = vi.spyOn(store, "resolveForPrompt");
+      const removed = [
+        runtime.prompt({
+          sessionId: "a",
+          message: "remove me",
+          behavior: "steer",
+          attachmentIds: [
+            secondImage.id,
+            doc.id,
+            firstImage.id,
+            secondImage.id,
+          ],
+        }),
+        runtime.prompt({
+          sessionId: "a",
+          message: "",
+          behavior: "followUp",
+          historyArtifacts: {
+            viewId: history.viewId,
+            incarnation: history.incarnation ?? null,
+            effectiveLeafId: history.effectiveLeafId ?? null,
+            imageReferences: history.entries[0]!.images.map(
+              (image) => image.reference,
+            ),
+            fileReferences: [],
+          },
+        }),
+        runtime.prompt({
+          sessionId: "a",
+          message: "remove me",
+          behavior: "followUp",
+          attachmentIds: [doc.id],
+        }),
+      ].map((promise) => promise.catch((error: unknown) => error));
       await vi.waitFor(async () =>
-        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
+        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(3),
       );
+      const pending = await runtime.snapshot();
+      const copy = {
+        sessionId: "a",
+        viewId: pending.active!.transcriptPage.viewId,
+        revision: pending.pendingQueues!.revision,
+      };
+      await expect(
+        runtime.pendingText({ ...copy, itemId: "host-steer-0" }),
+      ).resolves.toEqual({
+        text: "remove me",
+        imageAttachmentIds: [secondImage.id, firstImage.id],
+      });
+      await expect(
+        runtime.pendingText({ ...copy, itemId: "host-followUp-0" }),
+      ).resolves.toEqual({
+        text: "",
+        images: [saved],
+      });
+      await expect(
+        runtime.pendingText({ ...copy, itemId: "host-followUp-1" }),
+      ).resolves.toEqual({ text: "remove me" });
+      await expect(runtime.pendingText(copy)).resolves.toEqual({
+        text: "1. remove me\n2. \n3. remove me",
+        images: [
+          { attachmentId: secondImage.id },
+          { attachmentId: firstImage.id },
+          saved,
+        ],
+      });
+      expect((await runtime.snapshot()).pendingQueues).toEqual(
+        pending.pendingQueues,
+      );
+      expect(prepare).not.toHaveBeenCalled();
+      expect(
+        worker.commands.filter((command) => command.type === "prompt"),
+      ).toEqual([]);
+      // Copy did not lease staging; withdrawing an original still removes it.
+      await store.remove(secondImage.id);
+      await expect(runtime.pendingText(copy)).rejects.toThrow(
+        "Original pending images are unavailable",
+      );
+      await expect(
+        runtime.pendingText({ ...copy, itemId: "host-followUp-0" }),
+      ).resolves.toEqual({ text: "", images: [saved] });
       await runtime.clearPending("a");
-      await expect(removed).rejects.toMatchObject({ code: "PROMPT_CLEARED" });
+      expect(await Promise.all(removed)).toEqual(
+        removed.map(() => expect.objectContaining({ code: "PROMPT_CLEARED" })),
+      );
+      await expect(runtime.pendingText(copy)).rejects.toThrow(
+        "Pending input changed",
+      );
       const first = runtime.prompt({
         sessionId: "a",
         message: "start",
@@ -469,8 +573,8 @@ describe("RuntimeController Pending input and recovery", () => {
       expect(snapshot.pendingQueues!.steering).toHaveLength(1000);
       await expect(
         runtime.pendingText({ ...request, itemId: "text-steer-0" }),
-      ).resolves.toBe(longText);
-      const all = await runtime.pendingText(request);
+      ).resolves.toEqual({ text: longText });
+      const { text: all } = await runtime.pendingText(request);
       expect(all).toContain(longText.replace(/\n/g, "\n   "));
       expect(all).toContain("1003. hidden follow");
       expect((await runtime.snapshot()).pendingQueues).toEqual(
@@ -825,6 +929,18 @@ describe("RuntimeController Pending input and recovery", () => {
       expect((await f.store.imagePreview(image.id)).bytes.toString()).toBe(
         "payload",
       );
+      const snapshot = await f.runtime.snapshot();
+      expect(
+        await f.runtime.pendingText({
+          sessionId: "a",
+          viewId: snapshot.active!.transcriptPage.viewId,
+          revision: pending.revision,
+        }),
+      ).toEqual({
+        text: "1. still pending",
+        imageAttachmentIds: [image.id],
+      });
+      expect((await f.runtime.snapshot()).pendingQueues).toEqual(pending);
       f.worker.responseOverrides.set("clear_queue", () => {
         const input = structuredClone(f.queue);
         f.queue.steering = [];

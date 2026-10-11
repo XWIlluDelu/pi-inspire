@@ -47,6 +47,7 @@ import {
   type ModelOption,
   type NewSessionDefaults,
   type NewSessionOptions,
+  type PendingCopyContent,
   type PendingReadRequest,
   type PendingRecovery,
   type PiMessageDeliveryMode,
@@ -82,6 +83,7 @@ import { RuntimeBashController } from "./runtime-bash.js";
 import { newBridgeIdentity } from "./runtime-branch-bridge.js";
 import {
   assertPromptArtifactBudget,
+  readComposerHistoryImages,
   resolveComposerHistoryArtifacts,
   revalidateProjectFiles,
 } from "./runtime-composer-artifacts.js";
@@ -301,7 +303,7 @@ export interface RuntimeLike {
   prompt(request: PromptRequest): Promise<ComposerHistoryEntry | null>;
   abort(sessionId: string): Promise<PendingRecovery>;
   recoverPending(sessionId: string): Promise<PendingRecovery>;
-  pendingText(request: PendingReadRequest): Promise<string>;
+  pendingText(request: PendingReadRequest): Promise<PendingCopyContent>;
   clearPending(sessionId: string): Promise<void>;
   rename(sessionId: string, name: string): Promise<void>;
   setModel(
@@ -3611,7 +3613,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
-  async pendingText(request: PendingReadRequest): Promise<string> {
+  async pendingText(request: PendingReadRequest): Promise<PendingCopyContent> {
     this.assertMaintenanceAvailable();
     const slot = this.requireSlot(request.sessionId);
     await slot.eventTail;
@@ -3626,30 +3628,69 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const pi = this.piPendingContent(slot);
     if (!pi) throw requestError("Complete pending text is unavailable", 409);
     const texts = new Map<string, string>();
+    const images = new Map<string, NonNullable<PendingCopyContent["images"]>>();
     for (const [mode, values] of [
       ["steer", pi.steering],
       ["followUp", pi.followUp],
     ] as const) {
-      values.forEach(({ text }, index) =>
-        texts.set(`text-${mode}-${index}`, text),
-      );
+      values.forEach(({ text, imageCount, imageAttachmentIds }, index) => {
+        const id = `text-${mode}-${index}`;
+        texts.set(id, text);
+        if (request.itemId === undefined || request.itemId === id) {
+          if (imageCount && imageAttachmentIds?.length !== imageCount)
+            throw requestError("Original pending images are unavailable", 409);
+          images.set(
+            id,
+            (imageAttachmentIds ?? []).map((attachmentId) => ({
+              attachmentId,
+            })),
+          );
+        }
+      });
       slot.deferredPrompts
         .filter(({ request }) => request.behavior === mode)
-        .forEach(({ request }, index) =>
-          texts.set(`host-${mode}-${index}`, request.message),
-        );
+        .forEach(({ request: held }, index) => {
+          const id = `host-${mode}-${index}`;
+          texts.set(id, held.message);
+          if (request.itemId === undefined || request.itemId === id) {
+            const uploaded = this.attachments
+              .pendingCopyImageIds(held.attachmentIds ?? [])
+              .map((attachmentId) => ({ attachmentId }));
+            const recalled = held.historyArtifacts?.imageReferences.length
+              ? readComposerHistoryImages(slot, held.historyArtifacts).map(
+                  ({ data, mimeType }) => ({ data, mimeType }),
+                )
+              : [];
+            images.set(id, [...uploaded, ...recalled]);
+          }
+        });
     }
     if (texts.size !== slot.pendingQueues.totalCount)
       throw requestError("Complete pending text is unavailable", 409);
+    const copyContent = (
+      text: string,
+      originals: NonNullable<PendingCopyContent["images"]>,
+    ): PendingCopyContent => {
+      const ids = originals.flatMap((image) =>
+        "attachmentId" in image ? [image.attachmentId] : [],
+      );
+      if (ids.length !== originals.length) return { text, images: originals };
+      return { text, ...(ids.length ? { imageAttachmentIds: ids } : {}) };
+    };
     if (request.itemId !== undefined) {
       const text = texts.get(request.itemId);
       if (text === undefined)
         throw requestError("Pending item is no longer available", 409);
-      return text;
+      const originals = images.get(request.itemId) ?? [];
+      return copyContent(text, originals);
     }
-    return [...texts.values()]
-      .map((text, index) => `${index + 1}. ${text.replace(/\n/g, "\n   ")}`)
-      .join("\n");
+    const originals = [...images.values()].flat();
+    return copyContent(
+      [...texts.values()]
+        .map((text, index) => `${index + 1}. ${text.replace(/\n/g, "\n   ")}`)
+        .join("\n"),
+      originals,
+    );
   }
 
   /** Remove Host input synchronously before Pi can finish compaction and dispatch it. */

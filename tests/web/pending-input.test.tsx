@@ -99,7 +99,9 @@ describe("pending input visibility and actions", () => {
     expect(
       within(rows[0]!).getByRole("group", { name: "1 image" }),
     ).toBeVisible();
-    expect(within(rows[0]!).queryByRole("button", { name: /Copy/ })).toBeNull();
+    expect(
+      within(rows[0]!).getByRole("button", { name: /Copy/ }),
+    ).toBeVisible();
     expect(within(rows[1]!).getByText("Compare these")).toBeVisible();
     expect(
       within(rows[1]!).getByRole("group", { name: "2 images" }),
@@ -205,12 +207,20 @@ describe("pending input visibility and actions", () => {
       within(steering).getByRole("button", { name: "Copy steer item 1" }),
     );
     await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(fullText));
-    expect(getText).toHaveBeenLastCalledWith(7, queue.steering[0]!.id);
+    expect(getText).toHaveBeenLastCalledWith(
+      7,
+      queue.steering[0]!.id,
+      expect.any(AbortSignal),
+    );
     fireEvent.click(
       within(pending).getByRole("button", { name: "Copy all pending input" }),
     );
     await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(allText));
-    expect(getText).toHaveBeenLastCalledWith(7);
+    expect(getText).toHaveBeenLastCalledWith(
+      7,
+      undefined,
+      expect.any(AbortSignal),
+    );
     expect(onClear).not.toHaveBeenCalled();
     expect(onRecover).not.toHaveBeenCalled();
   });
@@ -366,7 +376,11 @@ describe("pending input visibility and actions", () => {
     await waitFor(() =>
       expect(writeText).toHaveBeenCalledExactlyOnceWith(allText),
     );
-    expect(getText).toHaveBeenCalledExactlyOnceWith(0);
+    expect(getText).toHaveBeenCalledExactlyOnceWith(
+      0,
+      undefined,
+      expect.any(AbortSignal),
+    );
   });
 });
 

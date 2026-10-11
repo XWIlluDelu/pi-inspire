@@ -39,6 +39,7 @@ import {
   resultChildCalls,
 } from "../../shared/tool-activity";
 import { stripTerminalSequences } from "../ansi";
+import type { CopyLoader } from "../content-copy";
 import { type DiffLine, parseUnifiedDiff } from "../diff";
 import {
   type ActivityTool,
@@ -47,6 +48,7 @@ import {
   type ToolCallContent,
   toolResultText,
 } from "../events";
+import { messageCopyContent } from "../message-copy";
 import { store } from "../store";
 import type {
   ResolvedToolPresentation,
@@ -96,6 +98,7 @@ interface CardHeaderProps {
   status?: React.ReactNode;
   copyText?: string | (() => string);
   copyLabel?: string;
+  getCopyContent?: CopyLoader;
   controlsId?: string;
 }
 
@@ -112,6 +115,7 @@ function CardHeader({
   status,
   copyText,
   copyLabel = `${toggleLabel} block`,
+  getCopyContent,
   controlsId,
 }: CardHeaderProps) {
   const action = expanded ? "Collapse" : "Expand";
@@ -158,6 +162,7 @@ function CardHeader({
           getText={
             typeof copyText === "function" ? async () => copyText() : undefined
           }
+          getContent={getCopyContent}
           label={copyLabel}
           className="card__copy"
         />
@@ -181,6 +186,7 @@ interface CardProps {
   status?: React.ReactNode;
   copyText?: string | (() => string);
   copyLabel?: string;
+  getCopyContent?: CopyLoader;
   children: React.ReactNode;
   forceClosed?: boolean;
   onManualOpenChange?: (open: boolean) => void;
@@ -197,6 +203,7 @@ function CollapsibleCard({
   status,
   copyText,
   copyLabel,
+  getCopyContent,
   children,
   forceClosed = false,
   onManualOpenChange,
@@ -266,6 +273,7 @@ function CollapsibleCard({
         status={status}
         copyText={copyText}
         copyLabel={copyLabel}
+        getCopyContent={getCopyContent}
         controlsId={bodyId}
       />
       {bodyMounted ? (
@@ -800,6 +808,7 @@ export function ToolResultCard({
   result: ChatMessage;
   visibility: StaticVisibility;
 }) {
+  const owner = useContext(EmbeddedImageOwnerContext);
   const name = typeof result.toolName === "string" ? result.toolName : "Tool";
   const calls = result.__inspireCalls ?? resultChildCalls(result);
   const output =
@@ -827,6 +836,14 @@ export function ToolResultCard({
       summaryVisibleWhenOpen={name === "codemode"}
       status={statusIcon(result.isError ? "failure" : "success")}
       copyText={() => JSON.stringify(result, null, 2)}
+      getCopyContent={(signal) =>
+        messageCopyContent(
+          result,
+          JSON.stringify(result, null, 2),
+          owner,
+          signal,
+        )
+      }
       copyLabel={`${name} result`}
     >
       {calls ? (
@@ -1628,6 +1645,7 @@ export function ToolCard({
   onDynamicClosed?: () => void;
   onManualOpenChange?: (open: boolean) => void;
 }) {
+  const owner = useContext(EmbeddedImageOwnerContext);
   const status = toolStatus(result, activity, live, call);
   const complete = toolComplete(result, activity) || dynamicActive === false;
   const dynamicOpen = useDynamicCardOpen(
@@ -1667,6 +1685,14 @@ export function ToolCard({
         summaryVisibleWhenOpen={presentation?.ruleId === "inspire.pi.codemode"}
         status={statusIcon(status)}
         copyText={() => toolClipboardText(call, result, activity)}
+        getCopyContent={(signal) =>
+          messageCopyContent(
+            result,
+            toolClipboardText(call, result, activity),
+            owner,
+            signal,
+          )
+        }
         copyLabel={toolClipboardLabel(call, result, activity)}
       >
         <ToolDetails
@@ -1750,6 +1776,7 @@ export function CollapsedActivityStrip({
   activities: CollapsedActivity[];
   live: boolean;
 }) {
+  const owner = useContext(EmbeddedImageOwnerContext);
   const visibleActivityIds = useVisibleActivityItemIds();
   const visibleActivityCount =
     visibleActivityIds === null
@@ -1892,6 +1919,18 @@ export function CollapsedActivityStrip({
                       rendered.call,
                       rendered.result,
                       rendered.activity,
+                    )
+                  }
+                  getCopyContent={(signal) =>
+                    messageCopyContent(
+                      rendered.result,
+                      toolClipboardText(
+                        rendered.call,
+                        rendered.result,
+                        rendered.activity,
+                      ),
+                      owner,
+                      signal,
                     )
                   }
                   copyLabel={toolClipboardLabel(

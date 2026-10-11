@@ -1,6 +1,7 @@
 import { Package } from "lucide-react";
 import { memo, useId, useState, useSyncExternalStore } from "react";
 import { type ChatMessage, messageText } from "../events";
+import { messageCopyContent } from "../message-copy";
 import {
   getCustomMessagePresentationRegistry,
   subscribeCustomMessagePresentations,
@@ -76,7 +77,14 @@ export const CustomMessage = memo(function CustomMessage({
             ) : null}
           </div>
           <CopyAction
-            getText={copyText}
+            getContent={async (signal) =>
+              messageCopyContent(
+                message,
+                await copyText(),
+                { sessionId, viewId, projectionKey },
+                signal,
+              )
+            }
             label={`${title} block`}
             className="custom-message__copy"
           />

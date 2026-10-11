@@ -27,6 +27,7 @@ async function openPendingSession(page: Page) {
 
 test("Pending image thumbnails open the shared viewer and wrap at narrow widths", async ({
   page,
+  context,
   request,
 }) => {
   const bytes = await readFile(
@@ -97,6 +98,29 @@ test("Pending image thumbnails open the shared viewer and wrap at narrow widths"
       )
       .toBe(true);
     const rows = pending.getByRole("listitem");
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.route("**/api/pending/text", (route) =>
+      route.fulfill({
+        json: { text: "", imageAttachmentIds: [attachments[5]!.id] },
+      }),
+    );
+    await rows
+      .nth(1)
+      .getByRole("button", { name: "Copy steer item 2" })
+      .click();
+    await expect(
+      rows.nth(1).getByRole("button", { name: "Steer item 2 copied" }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(async () => {
+        const image = await createImageBitmap(
+          await (await navigator.clipboard.read())[0]!.getType("image/png"),
+        );
+        const width = image.width;
+        image.close();
+        return width;
+      }),
+    ).toBe(720);
     await expect(rows.nth(0)).toContainText("Compare these charts");
     await expect(rows.nth(1).locator("pre")).toHaveCount(0);
     await expect(rows.nth(2)).toContainText("No text");

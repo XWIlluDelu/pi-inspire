@@ -788,6 +788,22 @@ export class AttachmentStore {
     await this.releasePendingImages([...copiedIds]);
   }
 
+  /** Match prompt preparation's upload order/deduplication without leasing.
+   * The image endpoint validates bytes when the browser reads each handle. */
+  pendingCopyImageIds(ids: readonly string[]): string[] {
+    return [...new Set(ids)].flatMap((id) => {
+      const value = this.values.get(id);
+      if (
+        !value ||
+        (value.kind === "image" &&
+          value.state !== "staged" &&
+          value.state !== "pending")
+      )
+        throw requestError("Original pending images are unavailable", 409);
+      return value.kind === "image" ? [id] : [];
+    });
+  }
+
   async imagePreview(id: string): Promise<{ bytes: Buffer; mimeType: string }> {
     const value = this.values.get(id);
     if (

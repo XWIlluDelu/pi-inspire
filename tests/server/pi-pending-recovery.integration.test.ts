@@ -5,10 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { pendingTextSummary } from "../../shared/pending-preview.js";
 
 import {
-  fixture,
-  eventsOf,
-  settled,
   disposeOperationFixture,
+  eventsOf,
+  fixture,
+  settled,
 } from "./fixtures/native-operation.js";
 
 afterEach(disposeOperationFixture);
@@ -294,12 +294,13 @@ describe("native Pending recovery", () => {
         };
         expect(
           await f.api.pendingText({ ...read, itemId: rows[0]!.id }),
-        ).toEqual({ text: caption });
+        ).toEqual({ text: caption, imageAttachmentIds: [pending.id] });
         expect(
           await f.api.pendingText({ ...read, itemId: rows[1]!.id }),
         ).toEqual({ text: "later exact text" });
         expect(await f.api.pendingText(read)).toEqual({
           text: `1. ${caption}\n2. later exact text`,
+          imageAttachmentIds: [pending.id],
         });
         const recovered = await f.api.recoverPending(f.sessionId);
         expect(recovered).toEqual({

@@ -54,12 +54,12 @@ describe("message actions", () => {
       fireEvent.click(
         within(userTurn).getByRole("button", { name: "Copy message" }),
       );
-      await waitFor(() =>
-        expect(writeText).toHaveBeenCalledWith("**user source**"),
-      );
       expect(
-        within(userTurn).getByRole("button", { name: "Message copied" }),
+        await within(userTurn).findByRole("button", {
+          name: "Message copied",
+        }),
       ).toBeInTheDocument();
+      expect(writeText).toHaveBeenCalledWith("**user source**");
 
       fireEvent.click(
         within(userTurn).getByRole("button", {

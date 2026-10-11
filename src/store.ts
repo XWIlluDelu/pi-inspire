@@ -64,6 +64,7 @@ import {
 } from "./app-state";
 import { type PiCommand, resolveCommandInventory } from "./composer-completion";
 import type { ComposerHistoryScope } from "./composer-history";
+import { type CopySource, imageSourceBlob } from "./content-copy";
 import { BranchController } from "./controllers/branch-controller";
 import { ComposerController } from "./controllers/composer-controller";
 import {
@@ -2095,13 +2096,34 @@ export class AppStore {
     }
   };
 
+  reportCopyError = (message: string) => this.notify("warning", message);
+
+  /** A copy may outlive a read or image decode, but not its source view. */
+  copyOwnership = (): (() => boolean) => {
+    const api = this.api;
+    const selection = this.selectionGeneration;
+    const transport = this.transportGeneration;
+    const session = this.state.sessionId;
+    const view = this.state.transcriptViewId;
+    const incarnation = this.state.transcriptIncarnation;
+    return () =>
+      this.api === api &&
+      this.selectionGeneration === selection &&
+      this.transportGeneration === transport &&
+      this.state.sessionId === session &&
+      this.state.transcriptViewId === view &&
+      this.state.transcriptIncarnation === incarnation;
+  };
+
   pendingText = async (
     revision: number,
     itemId?: string,
-  ): Promise<string | null> => {
+    signal = new AbortController().signal,
+  ): Promise<CopySource | null> => {
     const sessionId = this.state.sessionId;
     const viewId = this.state.transcriptViewId;
     const generation = this.selectionGeneration;
+    const queueRevision = this.state.queue.revision;
     const api = this.api;
     const transportGeneration = this.transportGeneration;
     if (!api || !sessionId || !viewId) {
@@ -2109,21 +2131,43 @@ export class AppStore {
       return null;
     }
     const owns = () =>
+      !signal.aborted &&
       this.api === api &&
       this.transportGeneration === transportGeneration &&
       this.state.sessionId === sessionId &&
+      this.state.transcriptViewId === viewId &&
+      this.state.queue.revision === queueRevision &&
       this.selectionGeneration === generation;
     try {
-      const result = await api.pendingText({
-        sessionId,
-        viewId,
-        revision,
-        ...(itemId === undefined ? {} : { itemId }),
-      });
+      const result = await api.pendingText(
+        {
+          sessionId,
+          viewId,
+          revision,
+          ...(itemId === undefined ? {} : { itemId }),
+        },
+        signal,
+      );
       if (!owns()) return null;
       if (typeof result.text !== "string")
         throw new Error("Complete pending text is unavailable");
-      return result.text;
+      const images: Blob[] = [];
+      const sources =
+        result.images ??
+        result.imageAttachmentIds?.map((attachmentId) => ({ attachmentId })) ??
+        [];
+      for (const source of sources) {
+        images.push(
+          "attachmentId" in source
+            ? await api.attachmentPreview(source.attachmentId, signal)
+            : await imageSourceBlob(
+                `data:${source.mimeType};base64,${source.data}`,
+                signal,
+              ),
+        );
+        if (!owns()) return null;
+      }
+      return images.length ? { text: result.text, images } : result.text;
     } catch (error) {
       if (!owns()) return null;
       if (error instanceof ApiError && error.status === 401)
@@ -2844,6 +2888,9 @@ export class AppStore {
     this.branches.readTree(query, signal);
   readBranchEntry = (targetId: string, offset = 0, signal?: AbortSignal) =>
     this.branches.readEntry(targetId, offset, signal);
+  branchCopyContent = (targetId: string, signal: AbortSignal) =>
+    this.branches.copyContent(targetId, signal);
+
   readBranchImage = (targetId: string, index: number, signal?: AbortSignal) =>
     this.branches.readImage(targetId, index, signal);
 

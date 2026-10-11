@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import {
   afterAll,
   afterEach,
@@ -13,6 +19,7 @@ import { toolPresentationConfigurationSchema } from "../../shared/tool-presentat
 import { Transcript } from "../../src/components/Transcript";
 import { ToolCard } from "../../src/components/transcript-cards";
 import { UnpairedToolResultRow } from "../../src/components/transcript-rows";
+import * as clipboard from "../../src/content-copy";
 import type { ChatMessage, ToolCallContent } from "../../src/events";
 import { store } from "../../src/store";
 import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
@@ -124,6 +131,52 @@ describe("saved tool resources", () => {
       expect(load.mock.calls[0]![4].aborted).toBe(true);
       expect(revoke).toHaveBeenCalledWith("blob:saved-tool-image");
       expect(create).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["expanded", "collapsed"] as const)(
+    "copies the same saved image and source from %s tool details",
+    async (visibility) => {
+      const png = new Blob(["saved image"], { type: "image/png" });
+      const load = vi.spyOn(store, "loadEmbeddedImage").mockResolvedValue(png);
+      const write = vi
+        .spyOn(clipboard, "writeCopyContent")
+        .mockResolvedValue(true);
+      vi.spyOn(store, "copyOwnership").mockReturnValue(() => true);
+      render(
+        <Transcript
+          sessionId={fixture.record.id}
+          viewId={fixture.page.viewId}
+          projectionIncarnation={fixture.page.incarnation ?? ""}
+          messages={fixture.page.messages as ChatMessage[]}
+          streaming={false}
+          thinkingVisibility="collapsed"
+          activityFoldVisibility="expanded"
+          toolVisibility={visibility}
+        />,
+      );
+      if (visibility === "collapsed")
+        fireEvent.click(
+          screen.getByRole("button", { name: /^read: finished/ }),
+        );
+      await screen.findByRole("button", { name: "Preview preview.png" });
+      // Thumbnail reads and copy reads are independent owners.
+      load.mockClear();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Copy read tool block" }),
+      );
+      await waitFor(() => expect(write).toHaveBeenCalled());
+      expect(load).toHaveBeenCalledWith(
+        fixture.record.id,
+        fixture.page.viewId,
+        `${fixture.page.viewId}\u0000${fixture.page.incarnation ?? ""}`,
+        "pi-embedded://2/1",
+        expect.any(AbortSignal),
+      );
+      expect(write).toHaveBeenCalledWith(
+        { text: expect.stringContaining("preview.png"), images: [png] },
+        expect.any(Function),
+      );
     },
   );
 

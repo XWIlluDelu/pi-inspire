@@ -78,6 +78,32 @@ describe("attachment consumption lifecycle", () => {
     ]);
   });
 
+  it("looks up original Pending Copy image handles without leasing or dropping missing attachments", async () => {
+    const first = await store.add(upload("first.png", "image/png"));
+    const second = await store.add(upload("second.png", "image/png"));
+    const doc = await store.add(upload("notes.txt", "text/plain"));
+    expect(
+      store.pendingCopyImageIds([second.id, doc.id, first.id, second.id]),
+    ).toEqual([second.id, first.id]);
+    expect(store.pendingCopyImageIds([doc.id])).toEqual([]);
+    expect(store.pendingCopyImageIds([])).toEqual([]);
+    expect(() => store.pendingCopyImageIds([first.id, "missing"])).toThrow(
+      "Original pending images are unavailable",
+    );
+
+    // Lookup leaves staging available to its actual delivery owner.
+    await store.resolveForPrompt([first.id]);
+    expect(() => store.pendingCopyImageIds([first.id])).toThrow(
+      "Original pending images are unavailable",
+    );
+    await store.holdPendingImages([first.id], []);
+    expect(store.pendingCopyImageIds([first.id])).toEqual([first.id]);
+    await store.remove(second.id);
+    expect(() => store.pendingCopyImageIds([second.id])).toThrow(
+      "Original pending images are unavailable",
+    );
+  });
+
   it("keeps consumed ordinary files through later withdrawals and reclaims consumed images", async () => {
     const doc = await store.add(upload("notes.txt", "text/plain"));
     const image = await store.add(upload("shot.png", "image/png"));

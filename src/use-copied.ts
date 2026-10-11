@@ -1,42 +1,59 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  type CopyLoader,
+  type CopySource,
+  writeCopyContent,
+} from "./content-copy";
 
-/** Clipboard write with a transient "copied" confirmation. Repeat copies
- * restart the confirmation window; unmount clears the pending timer. */
+/** One owned copy operation and a transient confirmation, retired on unmount. */
 export function useCopied({
   timeoutMs = 1_500,
   onError,
 }: {
   timeoutMs?: number;
   onError?: (message: string) => void;
-} = {}): {
-  copied: boolean;
-  copy: (text: string) => Promise<void>;
-} {
+} = {}) {
   const [copied, setCopied] = useState(false);
+  const [copying, setCopying] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const request = useRef<AbortController | null>(null);
 
   useEffect(
     () => () => {
+      request.current?.abort();
       if (timer.current) clearTimeout(timer.current);
     },
     [],
   );
 
-  const copy = async (text: string) => {
+  const copy = async (
+    source: CopySource | CopyLoader,
+    isCurrent: () => boolean = () => true,
+  ) => {
+    request.current?.abort();
+    const owner = new AbortController();
+    request.current = owner;
+    const current = () => !owner.signal.aborted && isCurrent();
+    if (timer.current) clearTimeout(timer.current);
     setCopied(false);
+    setCopying(true);
     try {
-      if (!navigator.clipboard?.writeText)
-        throw new Error("Clipboard access is unavailable in this browser");
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => setCopied(false), timeoutMs);
+      const content =
+        typeof source === "function" ? await source(owner.signal) : source;
+      if (content === null || !current()) return;
+      if (await writeCopyContent(content, current)) {
+        setCopied(true);
+        timer.current = setTimeout(() => setCopied(false), timeoutMs);
+      }
     } catch (error) {
-      onError?.(
-        error instanceof Error ? error.message : "Clipboard write failed",
-      );
+      if (current())
+        onError?.(
+          error instanceof Error ? error.message : "Clipboard write failed",
+        );
+    } finally {
+      if (request.current === owner && !owner.signal.aborted) setCopying(false);
     }
   };
 
-  return { copied, copy };
+  return { copied, copying, copy };
 }

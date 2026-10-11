@@ -87,13 +87,19 @@ export async function openMockEventSession(
     data: { cwd: browserWorkspace, name },
   });
   expect(created.ok()).toBe(true);
+  const createdSnapshot: ActiveSnapshot = await created.json();
+  const createdSessionId = createdSnapshot.active!.sessionId;
   sessionId = null;
   await page.reload();
   await expect(
     page.getByRole("button", { name: /^Session actions:/ }),
   ).toHaveText(name);
-  await expect.poll(() => sessionId).not.toBeNull();
+  // Reload can race a final snapshot from the old socket. Titles are not
+  // identities, and any non-null session could belong to that retiring page.
+  // Wait for this admission's handshake before injecting its live events.
+  await expect.poll(() => sessionId).toBe(createdSessionId);
   return (...events: Record<string, unknown>[]) => {
-    for (const event of events) transport.send({ ...event, sessionId });
+    for (const event of events)
+      transport.send({ ...event, sessionId: createdSessionId });
   };
 }

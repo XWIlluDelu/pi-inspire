@@ -26,7 +26,11 @@ import { resourceReferenceFromEventTarget } from "../resources";
 import { sessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { ContextPaneState } from "./ContextPaneState";
-import { HistoryShellPreview } from "./HistoryShellPreview";
+import { CopyAction } from "./CopyAction";
+import {
+  HistoryShellPreview,
+  historyShellContent,
+} from "./HistoryShellPreview";
 import { ImagePreview } from "./ImagePreview";
 import { RichText } from "./RichText";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
@@ -192,6 +196,13 @@ export function BranchTree({
   const loadedSearchRef = useRef<string | null>(null);
   const tree = page ?? state.tree;
   const searching = Boolean(query.trim());
+  const selectedContent = async (signal: AbortSignal) => {
+    if (!selected) return null;
+    const content = await store.branchCopyContent(selected.id, signal);
+    if (content && detail?.node.role === "shell")
+      content.text = historyShellContent(content.text, true).copy;
+    return content;
+  };
   const { turns, startBranches } = useMemo(
     () =>
       conversationOutline(
@@ -846,6 +857,14 @@ export function BranchTree({
               Back to history
             </button>
             {selected.leaf ? <span>Current point</span> : null}
+            {detail && detail.node.role !== "shell" ? (
+              <CopyAction
+                key={selected.id}
+                getContent={selectedContent}
+                label="history entry"
+                className="history-detail__copy"
+              />
+            ) : null}
           </header>
           <div
             className="history-detail__body"
@@ -863,8 +882,10 @@ export function BranchTree({
               <>
                 {detail.node.role === "shell" ? (
                   <HistoryShellPreview
+                    key={selected.id}
                     text={detail.text}
                     complete={detail.nextOffset === null}
+                    getCopyContent={selectedContent}
                   />
                 ) : (
                   <RichText

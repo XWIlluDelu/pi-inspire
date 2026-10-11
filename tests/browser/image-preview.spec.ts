@@ -182,7 +182,9 @@ test("narrow image controls preserve zoom, pan, focus, and dismissal", async ({
   await page.setViewportSize({ width: 320, height: 640 });
   const { thumbnail, dialog, image } = await attachImage(page);
   for (const button of await dialog
-    .locator(".image-lightbox__backgrounds button, .image-lightbox__close")
+    .locator(
+      ".image-lightbox__backgrounds button, .image-lightbox__actions button",
+    )
     .all()) {
     const bounds = (await button.boundingBox())!;
     expect(bounds.x).toBeGreaterThanOrEqual(0);
@@ -212,11 +214,16 @@ test("narrow image controls preserve zoom, pan, focus, and dismissal", async ({
   await page.keyboard.press("Shift+Tab");
   await expect(canvas).toBeFocused();
   const close = dialog.getByRole("button", { name: "Close image preview" });
+  const copy = dialog.getByRole("button", { name: "Copy image" });
   await close.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(copy).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect(
     dialog.getByRole("button", { name: "Black", exact: true }),
   ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(copy).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(close).toBeFocused();
   await page.keyboard.press("Escape");
@@ -271,8 +278,8 @@ for (const scenario of [
     const backgrounds = (await dialog
       .getByRole("group", { name: "Image background" })
       .boundingBox())!;
-    const close = (await dialog
-      .getByRole("button", { name: "Close image preview" })
+    const actions = (await dialog
+      .getByRole("group", { name: "Image actions" })
       .boundingBox())!;
     const dialogBox = (await dialog.boundingBox())!;
     expect(imageBox.x + imageBox.width / 2).toBeCloseTo(
@@ -287,13 +294,16 @@ for (const scenario of [
       2,
     );
     expect(backgrounds.y - imageBox.y - imageBox.height).toBeCloseTo(12, 0);
-    expect(imageBox.y - close.y - close.height).toBeCloseTo(12, 0);
+    expect(imageBox.y - actions.y - actions.height).toBeCloseTo(12, 0);
     expect(backgrounds.x + backgrounds.width / 2).toBeCloseTo(
       scenario.viewport.width / 2,
       0,
     );
-    expect(close.x + close.width).toBeCloseTo(dialogBox.x + dialogBox.width, 0);
-    for (const box of [imageBox, backgrounds, close]) {
+    expect(actions.x + actions.width).toBeCloseTo(
+      dialogBox.x + dialogBox.width,
+      0,
+    );
+    for (const box of [imageBox, backgrounds, actions]) {
       expect(box.x).toBeGreaterThanOrEqual(16);
       expect(box.y).toBeGreaterThanOrEqual(16);
       expect(box.x + box.width).toBeLessThanOrEqual(
