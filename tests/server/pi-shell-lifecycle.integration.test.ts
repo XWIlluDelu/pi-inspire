@@ -1,3 +1,4 @@
+import { on } from "node:events";
 import { readFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -232,19 +233,27 @@ describe("native shell input", () => {
     expect(f.modelRequests).toHaveLength(0);
   }, 20_000);
 
-  it("settles streamed output honestly when its isolated worker exits unexpectedly", async () => {
+  it("settles streamed output honestly when its isolated worker exits unexpectedly", async ({
+    signal,
+  }) => {
     const f = await fixture(false);
+    // Observe live output before killing the worker; startup speed is not under test.
+    const updates = on(f.runtime, "event", { signal });
     const running = f.api.prompt(f.delivery("!printf 'BEFORE_EXIT'; sleep 30"));
     void running.catch(() => {});
-    await vi.waitFor(() =>
-      expect(
-        f.runtimeEvents.some(
-          (event) =>
-            (event.message as Record<string, unknown>)?.output ===
-            "BEFORE_EXIT",
-        ),
-      ).toBe(true),
-    );
+    let liveOutput = "";
+    for await (const [event] of updates) {
+      const message = event.message as Record<string, unknown> | undefined;
+      if (
+        event.type === "message_update" &&
+        message?.role === "bashExecution" &&
+        typeof message.output === "string" &&
+        message.output.includes("BEFORE_EXIT")
+      ) {
+        liveOutput = message.output;
+        break;
+      }
+    }
     const pid = f.workers[0]!.pid;
     expect(pid).toEqual(expect.any(Number));
     process.kill(pid!, "SIGKILL"); // This fixture-created worker, never a live session.
@@ -258,7 +267,7 @@ describe("native shell input", () => {
         >
       ).find((message) => message.role === "bashExecution"),
     ).toMatchObject({
-      output: "BEFORE_EXIT",
+      output: liveOutput,
       __inspireBashRunning: false,
       __inspireBashInterrupted: true,
     });

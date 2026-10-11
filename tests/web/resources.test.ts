@@ -91,6 +91,25 @@ describe("Pi resource references", () => {
     ]);
   });
 
+  it("recognizes bare Windows drive paths without borrowing URL or drive-relative text", () => {
+    const resources = collectSessionResourceReferences([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: String.raw`First C:\reports\cited.html:7:2, then (d:/reports/render.custom).
+Not a file citation: C:relative.html or https://example.com/C:/report.pdf.`,
+          },
+        ],
+      },
+    ]);
+    expect(resources.map((item) => item.reference)).toEqual([
+      "d:/reports/render.custom",
+      String.raw`C:\reports\cited.html:7:2`,
+    ]);
+  });
+
   it("keeps references within one text part in recent-first order", () => {
     const resources = collectSessionResourceReferences([
       {

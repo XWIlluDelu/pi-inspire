@@ -622,6 +622,7 @@ test.describe("touch History navigation", () => {
     });
     await cloneButton.tap();
     await expect(composer).toHaveValue("");
+    await composer.fill("UNSENT — keep this in the source clone");
 
     const palette = await openCommandPalette(page);
     await palette.getByLabel("Filter commands").fill("clone");
