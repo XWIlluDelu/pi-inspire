@@ -361,6 +361,70 @@ describe("Pending input recovery and copying", () => {
     expect(await reading).toBeNull();
   });
 
+  it("reads Pending image bytes without recovering handles, and retires them when the queue changes", async () => {
+    let image = deferred<RouteResponse>();
+    const mutations: string[] = [];
+    installFetch((url, init) => {
+      if (url === "/api/pending/text")
+        return {
+          body: {
+            text: "",
+            images: [
+              { data: btoa("saved pixels"), mimeType: "image/png" },
+              { attachmentId: "queued" },
+            ],
+          },
+        };
+      if (url === "/api/attachments/queued/image") return image.promise;
+      if (url.includes("/pending/recover") || init.method === "DELETE")
+        mutations.push(url);
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    const first = store.pendingText(store.getState().queue.revision);
+    await vi.waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/api/attachments/queued/image"),
+        expect.anything(),
+      ),
+    );
+    image.resolve({
+      body: "uploaded pixels",
+      headers: { "Content-Type": "image/png" },
+    });
+    const copied = await first;
+    expect(copied).toMatchObject({
+      text: "",
+      images: [{ type: "image/png" }, { type: "image/png" }],
+    });
+    expect(typeof copied === "object" && copied?.images?.[0]?.size).toBe(
+      "saved pixels".length,
+    );
+    image = deferred<RouteResponse>();
+    const copy = store.pendingText(store.getState().queue.revision);
+    await vi.waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.filter(([input]) =>
+            String(input).includes("/attachments/queued/image"),
+          ),
+      ).toHaveLength(2),
+    );
+    const snapshot = activeSnapshot();
+    snapshot.pendingQueues = {
+      revision: 99,
+      totalCount: 0,
+      steering: [],
+      followUp: [],
+    };
+    socket.emit({ type: "snapshot", data: snapshot });
+    image.resolve({ body: "image pixels" });
+    expect(await copy).toBeNull();
+    expect(mutations).toEqual([]);
+    expect(store.getState().attachments).toEqual([]);
+  });
+
   it("reports a real copy failure without returning a preview", async () => {
     installFetch((url, init) =>
       url === "/api/pending/text"

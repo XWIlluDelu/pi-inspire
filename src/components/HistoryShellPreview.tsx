@@ -2,58 +2,63 @@ import { memo, useMemo } from "react";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { stripTerminalSequences } from "../ansi";
+import type { CopyLoader } from "../content-copy";
 import { CopyAction } from "./CopyAction";
 
 const parser = unified().use(remarkParse);
 const fullOutputPrefix = "Full output: ";
 
+export function historyShellContent(text: string, complete: boolean) {
+  const nodes = parser.parse(text).children;
+  const parts = nodes.map((node) => ({
+    code: node.type === "code",
+    text:
+      node.type === "code"
+        ? node.value
+        : text.slice(node.position!.start.offset!, node.position!.end.offset!),
+  }));
+  const last = parts.at(-1)?.text;
+  const fullOutputPath =
+    complete &&
+    nodes.at(-1)?.type === "paragraph" &&
+    last?.startsWith(fullOutputPrefix)
+      ? last.slice(fullOutputPrefix.length)
+      : null;
+  const visible = fullOutputPath ? parts.slice(0, -1) : parts;
+  const code = visible.filter((part) => part.code);
+  const metadata = visible
+    .filter((part) => !part.code)
+    .map((part) => part.text);
+  return {
+    copy: parts
+      .map((part) => part.text)
+      .filter(Boolean)
+      .join("\n\n"),
+    command: code[0]?.text ?? "",
+    output: code
+      .slice(1)
+      .map((part) => part.text)
+      .join("\n\n"),
+    facts: metadata.filter((line) => line !== "Output truncated"),
+    truncated: metadata.includes("Output truncated"),
+    fullOutputPath,
+  };
+}
+
 /** Decode the Host's shell-record fences, not Markdown written inside stdout. */
 export const HistoryShellPreview = memo(function HistoryShellPreview({
   text,
   complete,
+  getCopyContent,
 }: {
   text: string;
   complete: boolean;
+  getCopyContent?: CopyLoader;
 }) {
-  const content = useMemo(() => {
-    const nodes = parser.parse(text).children;
-    const parts = nodes.map((node) => ({
-      code: node.type === "code",
-      text:
-        node.type === "code"
-          ? node.value
-          : text.slice(
-              node.position!.start.offset!,
-              node.position!.end.offset!,
-            ),
-    }));
-    const last = parts.at(-1)?.text;
-    const fullOutputPath =
-      complete &&
-      nodes.at(-1)?.type === "paragraph" &&
-      last?.startsWith(fullOutputPrefix)
-        ? last.slice(fullOutputPrefix.length)
-        : null;
-    const visible = fullOutputPath ? parts.slice(0, -1) : parts;
-    const code = visible.filter((part) => part.code);
-    const metadata = visible
-      .filter((part) => !part.code)
-      .map((part) => part.text);
-    return {
-      copy: parts
-        .map((part) => part.text)
-        .filter(Boolean)
-        .join("\n\n"),
-      command: code[0]?.text ?? "",
-      output: code
-        .slice(1)
-        .map((part) => part.text)
-        .join("\n\n"),
-      facts: metadata.filter((line) => line !== "Output truncated"),
-      truncated: metadata.includes("Output truncated"),
-      fullOutputPath,
-    };
-  }, [text, complete]);
+  const content = useMemo(
+    () => historyShellContent(text, complete),
+    [text, complete],
+  );
 
   return (
     <section className="history-shell" aria-label="Shell record preview">
@@ -82,7 +87,8 @@ export const HistoryShellPreview = memo(function HistoryShellPreview({
         </div>
         <CopyAction
           text={content.copy}
-          label="loaded shell content"
+          getContent={getCopyContent}
+          label={getCopyContent ? "history entry" : "loaded shell content"}
           className="history-shell__copy-button"
         />
       </header>

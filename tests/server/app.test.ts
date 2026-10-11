@@ -336,7 +336,7 @@ describe("typed Host API", () => {
       .mockResolvedValue({ steering: ["complete"], followUp: ["later"] });
     const text = vi
       .spyOn(runtime, "pendingText")
-      .mockResolvedValue("x".repeat(2000));
+      .mockResolvedValue({ text: "x".repeat(2000) });
     for (const path of ["/api/pending/recover", "/api/pending/text"]) {
       await request(application.server)
         .post(path)

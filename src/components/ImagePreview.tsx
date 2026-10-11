@@ -8,8 +8,10 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { imageSourceBlob } from "../content-copy";
 import { store } from "../store";
 import { useModalFocus } from "../use-modal-focus";
+import { CopyAction } from "./CopyAction";
 
 export const EmbeddedImageOwnerContext = createContext<{
   sessionId: string;
@@ -110,15 +112,30 @@ function ImageLightbox({
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
-        <button
-          type="button"
-          className="image-lightbox__close"
-          onClick={onClose}
-          aria-label="Close image preview"
-          title="Close"
+        <div
+          className="image-lightbox__actions"
+          role="group"
+          aria-label="Image actions"
         >
-          <X size={18} aria-hidden />
-        </button>
+          <CopyAction
+            key={src}
+            getContent={async (signal) => ({
+              text: "",
+              images: [await imageSourceBlob(src, signal)],
+            })}
+            label="image"
+            className="image-lightbox__copy"
+          />
+          <button
+            type="button"
+            className="image-lightbox__close"
+            onClick={onClose}
+            aria-label="Close image preview"
+            title="Close"
+          >
+            <X size={18} aria-hidden />
+          </button>
+        </div>
         <button
           ref={canvasRef}
           type="button"

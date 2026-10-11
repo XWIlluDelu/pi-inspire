@@ -152,9 +152,9 @@
 .image-lightbox__canvas > img {
   display: block;
   max-width: min(var(--image-available-width), 1400px);
-  /* Reserve 44px close + 50px backgrounds + two gaps, even in landscape. */
+  /* Reserve 46px actions + 50px backgrounds + two gaps, even in landscape. */
   max-height: min(
-    calc(var(--image-available-height) - 94px - 2 * var(--space-3)),
+    calc(var(--image-available-height) - 96px - 2 * var(--space-3)),
     1000px
   );
   object-fit: contain;
@@ -169,20 +169,36 @@
   transition: none;
 }
 
+.image-lightbox__actions {
+  display: flex;
+  align-self: flex-end;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-control);
+  background: var(--bg-raised);
+}
+
+.image-lightbox__copy,
 .image-lightbox__close {
   flex: 0 0 auto;
-  align-self: flex-end;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 44px;
   height: 44px;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-pill);
-  background: var(--bg-raised);
-  color: var(--ink);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
 }
 
-.image-lightbox__close:hover {
+.image-lightbox__copy:hover,
+.image-lightbox__copy:focus-visible,
+.image-lightbox__close:hover,
+.image-lightbox__close:focus-visible {
   background: var(--bg-control);
+  color: var(--ink);
 }

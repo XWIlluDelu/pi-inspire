@@ -17,6 +17,7 @@ import type {
   ToolVisibilityPreference,
   VisibilityPreference,
 } from "../../shared/contracts";
+import type { CopyLoader, CopySource } from "../content-copy";
 import {
   type ActivityTool,
   type ChatMessage,
@@ -24,6 +25,7 @@ import {
   messageText,
   type ToolCallContent,
 } from "../events";
+import { messageCopyContent } from "../message-copy";
 import { store } from "../store";
 import { hasActiveModal } from "../use-modal-focus";
 import { CopyAction } from "./CopyAction";
@@ -69,21 +71,28 @@ function clockTime(timestamp?: number): string {
 
 function MessageActions({
   text,
+  getContent,
   forkEntryId,
   copyLabel = "Message",
   className = "",
 }: {
   text: string;
+  getContent?: CopyLoader;
   forkEntryId?: string;
   copyLabel?: string;
   className?: string;
 }) {
   const [forking, setForking] = useState(false);
-  if (!text && !forkEntryId) return null;
+  if (!text && !getContent && !forkEntryId) return null;
   return (
     <div className={`turn__actions ${className}`}>
-      {text ? (
-        <CopyAction text={text} label={copyLabel} className="turn__action" />
+      {text || getContent ? (
+        <CopyAction
+          text={text}
+          getContent={getContent}
+          label={copyLabel}
+          className="turn__action"
+        />
       ) : null}
       {forkEntryId ? (
         <button
@@ -191,7 +200,21 @@ export const UserBubble = memo(function UserBubble({
         ) : null}
         {text ? <RichText text={text} variant="user" /> : null}
       </div>
-      <MessageActions text={text} forkEntryId={message.__inspireEntryId} />
+      <MessageActions
+        text={text}
+        getContent={
+          images.length
+            ? (signal) =>
+                messageCopyContent(
+                  message,
+                  text,
+                  { sessionId, viewId, projectionKey },
+                  signal,
+                )
+            : undefined
+        }
+        forkEntryId={message.__inspireEntryId}
+      />
     </div>
   );
 });
@@ -617,7 +640,11 @@ export function PendingQueueGroups({
   pendingAction: "clear" | "recover" | null;
   onClear: () => Promise<boolean>;
   onRecover: () => Promise<boolean>;
-  getText: (revision: number, itemId?: string) => Promise<string | null>;
+  getText: (
+    revision: number,
+    itemId?: string,
+    signal?: AbortSignal,
+  ) => Promise<CopySource | null>;
 }) {
   const [confirmClear, setConfirmClear] = useState(false);
   useEffect(() => {
@@ -697,9 +724,12 @@ export function PendingQueueGroups({
           </span>
         </div>
         <div className="pending-groups__actions">
-          {entries.some((entry) => entry.textLength > 0) || omitted > 0 ? (
+          {queue.totalCount > 0 ? (
             <CopyAction
-              getText={() => getText(queue.revision)}
+              key={queue.revision}
+              getContent={(signal) =>
+                getText(queue.revision, undefined, signal)
+              }
               label="all pending input"
               className="pending-group__copy"
             />
@@ -774,7 +804,7 @@ export function PendingQueueGroups({
           <ol className="pending-group__list" start={group.start + 1}>
             {group.items.map((entry, index) => {
               const number = group.start + index + 1;
-              const canCopyText = entry.textPreview.length > 0;
+              const canCopy = entry.textLength > 0 || Boolean(entry.imageCount);
               return (
                 <li key={entry.id} className="pending-group__item">
                   <span className="pending-group__number" aria-hidden>
@@ -814,9 +844,12 @@ export function PendingQueueGroups({
                     ) : null}
                   </div>
                   <div className="pending-group__item-actions">
-                    {canCopyText ? (
+                    {canCopy ? (
                       <CopyAction
-                        getText={() => getText(queue.revision, entry.id)}
+                        key={queue.revision}
+                        getContent={(signal) =>
+                          getText(queue.revision, entry.id, signal)
+                        }
                         label={`${group.label} item ${index + 1}`}
                         className="pending-group__copy"
                       />

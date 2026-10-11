@@ -23,6 +23,7 @@ import type {
   InspirePreferences,
   InspireUpdateCheckResult,
   NewSessionOptions,
+  PendingCopyContent,
   PendingReadRequest,
   PendingRecovery,
   PiMessageDeliveryMode,
@@ -939,12 +940,12 @@ export function createApi(token: string | null = null) {
         {},
         { timeoutMs: null },
       ),
-    pendingText: (body: PendingReadRequest) =>
-      post<{ text: string }>(
+    pendingText: (body: PendingReadRequest, signal?: AbortSignal) =>
+      post<PendingCopyContent>(
         token,
         "/api/pending/text",
         body,
-        {},
+        { signal },
         { mutation: false },
       ),
     clearPending: (sessionId: string) =>

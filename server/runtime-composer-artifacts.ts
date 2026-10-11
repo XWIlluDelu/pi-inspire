@@ -271,6 +271,18 @@ export async function revalidateProjectFiles(
   return current;
 }
 
+/** Read recalled images without preparing files or transferring upload ownership. */
+export function readComposerHistoryImages(
+  slot: RuntimeSlot,
+  selection: HistorySelection,
+): RecalledImage[] {
+  const { projection, effectiveLeafId } = historyProjection(slot, selection);
+  return recalledImages(
+    selection.imageReferences,
+    userMessageLookup(projection.composerHistoryMessages(effectiveLeafId)),
+  );
+}
+
 export async function resolveComposerHistoryArtifacts(
   slot: RuntimeSlot,
   request: PromptRequest,

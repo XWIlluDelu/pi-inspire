@@ -26,6 +26,7 @@ import type {
   HostNativeCommandResponse,
   ModelOption,
   NewSessionOptions,
+  PendingCopyContent,
   PendingQueues,
   PendingReadRequest,
   PendingRecovery,
@@ -1001,7 +1002,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       this.publishPending(sessionId);
   }
 
-  async pendingText(request: PendingReadRequest): Promise<string> {
+  async pendingText(request: PendingReadRequest): Promise<PendingCopyContent> {
     const session = this.requireSession(request.sessionId);
     const pending = this.pendingFor(request.sessionId);
     if (
@@ -1016,14 +1017,24 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     if (request.itemId !== undefined) {
       if (!entries.some((entry) => entry.id === request.itemId))
         throw requestError("Pending item is no longer available", 409);
-      return this.pendingTexts.get(request.itemId)!;
+      const ids =
+        entries.find((entry) => entry.id === request.itemId)!
+          .imageAttachmentIds ?? [];
+      return {
+        text: this.pendingTexts.get(request.itemId)!,
+        ...(ids.length ? { imageAttachmentIds: ids } : {}),
+      };
     }
-    return entries
-      .map(
-        (entry, index) =>
-          `${index + 1}. ${this.pendingTexts.get(entry.id)!.replace(/\n/g, "\n   ")}`,
-      )
-      .join("\n");
+    const ids = entries.flatMap((entry) => entry.imageAttachmentIds ?? []);
+    return {
+      text: entries
+        .map(
+          (entry, index) =>
+            `${index + 1}. ${this.pendingTexts.get(entry.id)!.replace(/\n/g, "\n   ")}`,
+        )
+        .join("\n"),
+      ...(ids.length ? { imageAttachmentIds: ids } : {}),
+    };
   }
 
   async recoverPending(sessionId: string): Promise<PendingRecovery> {

@@ -253,6 +253,22 @@ async function previewAnswer() {
 }
 
 describe("read-only History inspection", () => {
+  it("copies the complete retained entry without expanding its bounded preview", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(<BranchTree />);
+    await previewAnswer();
+    fireEvent.click(screen.getByRole("button", { name: "Copy history entry" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(longAnswer));
+    expect(
+      screen.getByRole("button", { name: "Read more content" }),
+    ).toBeVisible();
+    expect(screen.queryByText(/old keyword beyond the snippet/)).toBeNull();
+  });
+
   it.each(["shell", "tool", "assistant"] as const)(
     "uses the canonical %s role to select plain shell or rich content",
     async (role) => {

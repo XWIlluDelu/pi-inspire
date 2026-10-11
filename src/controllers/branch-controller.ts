@@ -9,6 +9,7 @@ import type {
   ProjectionHealth,
 } from "../../shared/contracts";
 import { type Api, ApiError } from "../api";
+import type { CopyContent } from "../content-copy";
 
 export interface BranchControllerState {
   sessionId: string | null;
@@ -218,6 +219,42 @@ export class BranchController {
         api.branchImage({ sessionId, viewId, targetId }, index, signal),
       "view",
     );
+  }
+
+  async copyContent(
+    targetId: string,
+    signal: AbortSignal,
+  ): Promise<CopyContent | null> {
+    const viewId = this.host.state().transcriptViewId;
+    if (!viewId) return null;
+    return this.read(async (api, sessionId) => {
+      let offset = 0;
+      const chunks: string[] = [];
+      let imageEntries: NonNullable<BranchEntryResponse["images"]> = [];
+      do {
+        signal.throwIfAborted();
+        const page = await api.branchEntry(
+          { sessionId, viewId, targetId, offset },
+          signal,
+        );
+        chunks.push(page.text);
+        imageEntries = page.images ?? imageEntries;
+        if (page.nextOffset === null) break;
+        offset = page.nextOffset;
+      } while (true);
+      const images: Blob[] = [];
+      for (const image of imageEntries) {
+        signal.throwIfAborted();
+        images.push(
+          await api.branchImage(
+            { sessionId, viewId, targetId },
+            image.index,
+            signal,
+          ),
+        );
+      }
+      return { text: chunks.join(""), images };
+    }, "view");
   }
 
   private async read<T>(

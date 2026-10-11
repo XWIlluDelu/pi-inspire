@@ -57,6 +57,35 @@ function moveView(store: AppStore, viewId = "view-2"): void {
 }
 
 describe("branch request view ownership", () => {
+  it("discards a complete-content copy when its source view changes during image loading", async () => {
+    const image = deferred<RouteResponse>();
+    const store = await setup((url) => {
+      if (url.startsWith("/api/branches/entry"))
+        return {
+          body: {
+            sessionId: "s1",
+            revision: 1,
+            node: branchTree().nodes[0],
+            text: "saved input",
+            nextOffset: null,
+            totalChars: 11,
+            images: [{ index: 0, mimeType: "image/png" }],
+          },
+        };
+      if (url.startsWith("/api/branches/image")) return image.promise;
+    });
+    const copy = store.branchCopyContent("u1", new AbortController().signal);
+    await vi.waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/api/branches/image"),
+        expect.anything(),
+      ),
+    );
+    moveView(store);
+    image.resolve({ body: "saved pixels" });
+    expect(await copy).toBeNull();
+  });
+
   beforeEach(() => {
     installFakeWebSocket();
     for (const id of ["s1", "s2", "forked"]) deleteSessionDraft(id);

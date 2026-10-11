@@ -1366,11 +1366,9 @@ export function createInspireServer(deps: AppDependencies): {
   });
   app.post("/api/pending/text", async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
-    response.json({
-      text: await deps.runtime.pendingText(
-        pendingReadSchema.parse(request.body),
-      ),
-    });
+    response.json(
+      await deps.runtime.pendingText(pendingReadSchema.parse(request.body)),
+    );
   });
   app.post("/api/pending/recover", async (request, response) => {
     response.setHeader("Cache-Control", "no-store");

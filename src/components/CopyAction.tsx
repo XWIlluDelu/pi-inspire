@@ -1,56 +1,48 @@
 import { Check, Copy, Loader2 } from "lucide-react";
-import { useState } from "react";
+import type { CopyLoader } from "../content-copy";
+import { store } from "../store";
 import { useCopied } from "../use-copied";
 
 interface CopyActionProps {
   text?: string;
   getText?: () => Promise<string | null>;
+  getContent?: CopyLoader;
   label: string;
   className: string;
 }
 
-/** A compact clipboard control with in-place confirmation. */
+/** Shared content action; availability never depends on a text-only projection. */
 export function CopyAction({
   text,
   getText,
+  getContent,
   label,
   className,
 }: CopyActionProps) {
-  const { copied, copy } = useCopied();
-  const [loading, setLoading] = useState(false);
-  if (!text && !getText) return null;
-  const copyResolvedText = async () => {
-    if (loading) return;
-    if (!getText) {
-      await copy(text ?? "");
-      return;
-    }
-    setLoading(true);
-    try {
-      const resolved = await getText();
-      if (resolved !== null) await copy(resolved);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { copied, copying, copy } = useCopied({
+    onError: store.reportCopyError,
+  });
+  if (!text && !getText && !getContent) return null;
   return (
     <button
       type="button"
       className={`icon-button ${className}`}
       aria-label={
-        loading
+        copying
           ? `Loading ${label.toLowerCase()}`
           : copied
             ? `${label} copied`
             : `Copy ${label.toLowerCase()}`
       }
       title={
-        loading ? "Loading" : copied ? "Copied" : `Copy ${label.toLowerCase()}`
+        copying ? "Loading" : copied ? "Copied" : `Copy ${label.toLowerCase()}`
       }
-      disabled={loading}
-      onClick={() => void copyResolvedText()}
+      disabled={copying}
+      onClick={() =>
+        void copy(getContent ?? getText ?? text ?? "", store.copyOwnership())
+      }
     >
-      {loading ? (
+      {copying ? (
         <Loader2 className="spin" size={13} aria-hidden />
       ) : copied ? (
         <Check size={13} aria-hidden />

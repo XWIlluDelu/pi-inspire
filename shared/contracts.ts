@@ -650,6 +650,14 @@ export interface PendingRecovery extends PendingInput {
   warning?: string;
 }
 
+export interface PendingCopyContent {
+  text: string;
+  /** Original upload handles, retained for upload-only copies. */
+  imageAttachmentIds?: string[];
+  /** Ordered sources when the input also contains recalled images. */
+  images?: Array<{ attachmentId: string } | { data: string; mimeType: string }>;
+}
+
 export interface PendingReadRequest {
   sessionId: string;
   viewId: string;
