@@ -8,6 +8,7 @@ import {
 } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { MAX_SESSION_ID_CHARS } from "../shared/contracts.js";
+import { stripImageDimensionNotes } from "../shared/image-dimension-notes.js";
 import { JsonlObjectDecoder, PersistedJsonlError } from "./session-jsonl.js";
 
 const MAX_INDEXED_TEXT_CHARS = 10_000;
@@ -89,6 +90,9 @@ function messageText(
   if (typeof content === "string") return content.slice(0, limit);
   if (!Array.isArray(content)) return "";
   let text = "";
+  const imageCount = content.filter(
+    (value) => recordValue(value)?.type === "image",
+  ).length;
   let hasTextBlock = false;
   for (const value of content) {
     const block = recordValue(value);
@@ -96,7 +100,11 @@ function messageText(
     const separator = hasTextBlock ? " " : "";
     const remaining = limit - text.length;
     if (remaining <= 0) break;
-    text += `${separator}${block.text}`.slice(0, remaining);
+    text +=
+      `${separator}${stripImageDimensionNotes(block.text, imageCount)}`.slice(
+        0,
+        remaining,
+      );
     hasTextBlock = true;
   }
   return text;

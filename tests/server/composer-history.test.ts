@@ -119,6 +119,32 @@ describe("composer history projection", () => {
     ]);
   });
 
+  it("recalls image prompts without Pi dimension hints while preserving source and artifact coordinates", () => {
+    const sourceText =
+      "inspect\n\n[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]";
+    const message = {
+      role: "user",
+      content: [
+        { type: "text", text: sourceText },
+        { type: "image", data: "cGl4ZWxz", mimeType: "image/png" },
+      ],
+    };
+    expect(composerHistoryEntries([message])).toEqual([
+      {
+        text: "inspect",
+        images: [
+          {
+            reference: "pi-embedded://0/1",
+            mimeType: "image/png",
+            size: 6,
+          },
+        ],
+        files: [],
+      },
+    ]);
+    expect(message.content[0]?.text).toBe(sourceText);
+  });
+
   it("projects ordinary and project files, including file-only prompts", () => {
     const projectFile = "/workspace/src/source.ts";
     const attachment = "/cache/uploads/report.pdf";
