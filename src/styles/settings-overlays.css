@@ -406,6 +406,12 @@
   gap: 2px var(--space-3);
 }
 
+.settings__error {
+  color: var(--error);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
 .settings__field-label {
   font-size: 13px;
   font-weight: 500;
@@ -723,7 +729,7 @@
 
 .overlay {
   position: fixed;
-  inset: 0;
+  inset: var(--window-titlebar-height) 0 0;
   z-index: 50;
   background: var(--bg-overlay);
   backdrop-filter: blur(2px);
@@ -743,8 +749,8 @@
   }
 
   .dialog.settings {
-    height: calc(100dvh - 2 * var(--space-2));
-    max-height: calc(100dvh - 2 * var(--space-2));
+    height: calc(var(--app-height) - 2 * var(--space-2));
+    max-height: calc(var(--app-height) - 2 * var(--space-2));
   }
 
   .settings__header {

@@ -70,7 +70,7 @@
     100vw - var(--image-inset-left) - var(--image-inset-right)
   );
   --image-available-height: calc(
-    100dvh - var(--image-inset-top) - var(--image-inset-bottom)
+    var(--app-height) - var(--image-inset-top) - var(--image-inset-bottom)
   );
   z-index: 80;
   align-items: center;

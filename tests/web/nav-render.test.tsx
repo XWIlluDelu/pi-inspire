@@ -321,7 +321,8 @@ describe("session navigation controls", () => {
     );
   });
 
-  it("collapses folders, exposes search matches, and pins without selecting", async () => {
+  it("keeps the folder icon in sync with pointer, keyboard, and search disclosure without selecting", async () => {
+    const user = userEvent.setup();
     const onSelect = vi.fn();
     render(
       <Nav
@@ -333,9 +334,26 @@ describe("session navigation controls", () => {
 
     const alphaGroup = list().getByRole("button", { name: "alpha" });
     expect(alphaGroup).toHaveAttribute("aria-expanded", "true");
-    fireEvent.click(alphaGroup);
+    expect(alphaGroup.querySelectorAll("svg")).toHaveLength(1);
+    expect(alphaGroup.querySelector(".lucide-folder-open")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    await user.click(alphaGroup);
     expect(alphaGroup).toHaveAttribute("aria-expanded", "false");
+    expect(alphaGroup.querySelector(".lucide-folder")).not.toBeNull();
     expect(screen.queryByText("Alpha session")).not.toBeInTheDocument();
+    expect(alphaGroup.closest("h2")).toHaveClass("nav__group-title--active");
+
+    await user.keyboard("{Enter}");
+    expect(alphaGroup).toHaveAttribute("aria-expanded", "true");
+    expect(alphaGroup.querySelector(".lucide-folder-open")).not.toBeNull();
+    expect(alphaGroup.closest("h2")).not.toHaveClass(
+      "nav__group-title--active",
+    );
+    await user.keyboard(" ");
+    expect(alphaGroup).toHaveAttribute("aria-expanded", "false");
+    expect(alphaGroup.querySelector(".lucide-folder")).not.toBeNull();
 
     fireEvent.change(
       screen.getByRole("searchbox", { name: "Search sessions" }),
@@ -345,6 +363,9 @@ describe("session navigation controls", () => {
       name: "alpha",
     });
     expect(searchAlphaGroup).toHaveAttribute("aria-expanded", "true");
+    expect(
+      searchAlphaGroup.querySelector(".lucide-folder-open"),
+    ).not.toBeNull();
     expect(searchAlphaGroup).toBeDisabled();
     expect(searchAlphaGroup.querySelector(".search-match")).toHaveTextContent(
       "alpha",
@@ -364,6 +385,7 @@ describe("session navigation controls", () => {
       name: "alpha",
     });
     expect(restoredAlphaGroup).toHaveAttribute("aria-expanded", "false");
+    expect(restoredAlphaGroup.querySelector(".lucide-folder")).not.toBeNull();
     fireEvent.click(restoredAlphaGroup);
     fireEvent.click(
       screen.getByRole("button", { name: 'Pin "Alpha session"' }),
@@ -379,7 +401,8 @@ describe("session navigation controls", () => {
     ).toBeInTheDocument();
   });
 
-  it("moves a session into the collapsed Hidden group and takes it back", async () => {
+  it("keeps Hidden in a bottom drawer with keyboard disclosure, search, and restore", async () => {
+    const user = userEvent.setup();
     render(
       <Nav
         collapsed={false}
@@ -394,11 +417,38 @@ describe("session navigation controls", () => {
     const hiddenHeading = await screen.findByRole("heading", {
       name: "Hidden",
     });
-    // The summary count shares the toggle's fixed right column with folder
-    // counts, keeping both its alignment and the whole-row hit target.
+    const toggle = screen.getByRole("button", { name: "Hidden" });
     expect(
-      hiddenHeading.querySelector(".nav__group-count")?.parentElement,
-    ).toBe(screen.getByRole("button", { name: "Hidden" }));
+      hiddenHeading.querySelector(".nav__hidden-count")?.parentElement,
+    ).toBe(toggle);
+    const drawer = hiddenHeading.closest("section")!;
+    expect(drawer.closest(".nav__list")).toBeNull();
+    expect(drawer.previousElementSibling).toHaveClass("explorer");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "Clear Hidden" })).toBeVisible();
+    toggle.focus();
+    await user.keyboard("{Enter}");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const hiddenContent = document.getElementById(
+      toggle.getAttribute("aria-controls")!,
+    );
+    expect(hiddenContent).toHaveClass("nav__hidden-content");
+    expect(hiddenContent?.previousElementSibling).toBe(hiddenHeading);
+    expect(hiddenHeading).toHaveClass("nav__dock-heading");
+    expect(toggle).toHaveClass("nav__dock-toggle");
+    expect(document.querySelector(".explorer__header")).toHaveClass(
+      "nav__dock-toggle",
+    );
+    const clear = within(hiddenHeading).getByRole("button", {
+      name: "Clear Hidden",
+    });
+    expect(clear).toBeVisible();
+    expect(toggle.contains(clear)).toBe(false);
+    expect(
+      within(hiddenContent!).queryByRole("button", { name: "Clear Hidden" }),
+    ).toBeNull();
+    await user.keyboard(" ");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
     // Hidden starts closed, and its folder disappears with its last session.
     expect(screen.queryByText("Alpha session")).not.toBeInTheDocument();
     expect(groupNames()).toEqual(["beta", "Hidden"]);
@@ -409,6 +459,8 @@ describe("session navigation controls", () => {
       { target: { value: "alpha" } },
     );
     await screen.findByRole("heading", { name: "Hidden" });
+    expect(screen.getByRole("button", { name: "Hidden" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Clear Hidden" })).toBeDisabled();
     const hiddenSection = document.querySelector(
       ".nav__group--hidden",
     ) as HTMLElement;
@@ -435,7 +487,7 @@ describe("session navigation controls", () => {
     expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
   });
 
-  it("clears every session in Hidden from its top-level action", async () => {
+  it("clears every session from the collapsed Hidden header without expanding it", async () => {
     render(
       <Nav
         collapsed={false}
@@ -452,7 +504,10 @@ describe("session navigation controls", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Hide folder gamma" }));
     await screen.findByRole("heading", { name: "Hidden" });
-    fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+    expect(screen.getByRole("button", { name: "Hidden" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     expect(
       screen.queryByRole("button", {
         name: "Delete all sessions in folder gamma",
@@ -472,6 +527,10 @@ describe("session navigation controls", () => {
       ),
     ).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Hidden" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Clear Hidden" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete 2 sessions" }));

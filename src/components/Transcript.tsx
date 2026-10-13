@@ -291,6 +291,12 @@ export const Transcript = memo(function Transcript({
         )
       )
         return;
+      const scopeMenuId = searchInputRef.current
+        ?.closest(".transcript-search")
+        ?.querySelector("[aria-controls]")
+        ?.getAttribute("aria-controls");
+      if (scopeMenuId && document.getElementById(scopeMenuId)?.contains(target))
+        return;
       closeMobileTranscriptTool();
     };
     const timer = window.setTimeout(

@@ -57,4 +57,16 @@ test("narrow workbench preserves primary controls and drawer dismissal", async (
   await page.getByRole("button", { name: "History", exact: true }).click();
   const history = page.getByRole("dialog", { name: "Context panel" });
   await expect(history.getByRole("button", { name: /Refresh/ })).toHaveCount(1);
+  const labelInsets = await history
+    .locator(".ctx__modes button")
+    .evaluateAll((buttons) =>
+      buttons.map((button) => {
+        const range = document.createRange();
+        range.selectNodeContents(button);
+        const text = range.getBoundingClientRect();
+        const bounds = button.getBoundingClientRect();
+        return Math.min(text.left - bounds.left, bounds.right - text.right);
+      }),
+    );
+  expect(Math.min(...labelInsets)).toBeGreaterThanOrEqual(0);
 });

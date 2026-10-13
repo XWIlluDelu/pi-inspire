@@ -87,6 +87,7 @@ describe("settings reset", () => {
       ...bootstrapPayload().preferences,
       theme: "dark" as const,
       palette: "teal" as const,
+      titlebarNeedles: true,
       contentTextSize: "large" as const,
       readingWidth: "wide" as const,
       launch: "continue" as const,

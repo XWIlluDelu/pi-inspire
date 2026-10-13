@@ -1,5 +1,4 @@
 import {
-  ChevronRight,
   ChevronUp,
   EyeOff,
   Folder,
@@ -66,16 +65,18 @@ const WorkspaceExplorer = memo(function WorkspaceExplorer({
       className={`explorer ${open ? "explorer--open" : ""}`}
       aria-label="Workspace files"
     >
-      <div className="explorer__heading">
+      <div className="explorer__heading nav__dock-heading">
         <button
           type="button"
-          className="explorer__header"
+          className="explorer__header nav__dock-toggle"
           aria-expanded={open}
           onClick={() => store.setWorkspaceExplorerOpen(!open)}
           title={cwd}
         >
-          <Folder size={13} aria-hidden />
-          <span className="explorer__title">{projectNameFromCwd(cwd)}</span>
+          <Folder size={14} aria-hidden />
+          <span className="explorer__title nav__dock-title">
+            {projectNameFromCwd(cwd)}
+          </span>
           <ChevronUp
             size={12}
             className={`chev-flip ${open ? "chev-flip--open" : ""}`}
@@ -184,6 +185,7 @@ export const Nav = memo(function Nav({
   }>({ query: sessionQuery, id: null });
   const composing = useRef(false);
   const selectionStatusId = useId();
+  const hiddenContentId = useId();
   const sections = useMemo(
     () =>
       splitNavSections(sessions, {
@@ -534,84 +536,6 @@ export const Nav = memo(function Nav({
             ) : null}
           </div>
         ) : null}
-        {hiddenCount > 0 ? (
-          <section
-            className="nav__group nav__group--hidden"
-            aria-labelledby="nav-hidden-title"
-          >
-            <h2
-              className="nav__group-title nav__group-title--hidden"
-              id="nav-hidden-title"
-              aria-label="Hidden"
-            >
-              <button
-                type="button"
-                className="nav__group-toggle"
-                aria-expanded={hiddenExpanded}
-                disabled={searching}
-                onClick={() => setHiddenOpen((value) => !value)}
-              >
-                <ChevronRight
-                  size={13}
-                  className={`chev ${hiddenExpanded ? "chev--open" : ""}`}
-                  aria-hidden
-                />
-                <EyeOff size={14} aria-hidden />
-                <span className="nav__group-name">Hidden</span>
-                <span className="nav__group-count" aria-hidden>
-                  {hiddenCount}
-                </span>
-              </button>
-              <span className="nav__group-actions">
-                <button
-                  type="button"
-                  className="nav__row-action nav__row-action--danger"
-                  aria-label="Clear Hidden"
-                  title={hiddenClearTitle}
-                  disabled={hiddenClearDisabled}
-                  onClick={() => setHiddenClearCandidate(hiddenSessionIds)}
-                >
-                  {clearingHidden ? (
-                    <Loader2 size={12} className="spin" aria-hidden />
-                  ) : (
-                    <Trash2 size={12} aria-hidden />
-                  )}
-                </button>
-              </span>
-            </h2>
-            {hiddenExpanded ? (
-              <>
-                {hiddenGroups.map((group, groupIndex) => (
-                  <ProjectGroup
-                    key={group.cwd}
-                    group={group}
-                    headingId={`nav-hidden-group-title-${groupIndex}`}
-                    searching={searching}
-                    searchQuery={sessionQuery}
-                    showContext={(nameCounts.get(group.name) ?? 0) > 1}
-                    selectedSessionId={visibleSessionId}
-                    highlightedSessionId={highlightedSessionId}
-                    hidden
-                    onSelectSession={onSelectSession}
-                    onDeleteSession={setDeleteCandidate}
-                  />
-                ))}
-                {hidden.map((session) => (
-                  <SessionRow
-                    key={session.id}
-                    session={session}
-                    searchQuery={sessionQuery}
-                    selectedSessionId={visibleSessionId}
-                    highlightedSessionId={highlightedSessionId}
-                    showProject
-                    onSelect={onSelectSession}
-                    onDelete={setDeleteCandidate}
-                  />
-                ))}
-              </>
-            ) : null}
-          </section>
-        ) : null}
         {sessions.length === 0 ? (
           <div className="empty-state">
             {searching ? (
@@ -631,7 +555,89 @@ export const Nav = memo(function Nav({
         ) : null}
       </div>
       <WorkspaceExplorer selectedSessionId={visibleSessionId} />
+      {hiddenCount > 0 ? (
+        <section
+          className="nav__group nav__group--hidden"
+          aria-labelledby="nav-hidden-title"
+        >
+          <h2
+            className="nav__hidden-heading nav__dock-heading"
+            id="nav-hidden-title"
+            aria-label="Hidden"
+          >
+            <button
+              type="button"
+              className="nav__hidden-toggle nav__dock-toggle"
+              aria-expanded={hiddenExpanded}
+              aria-controls={hiddenContentId}
+              disabled={searching}
+              onClick={() => setHiddenOpen((value) => !value)}
+            >
+              <EyeOff size={14} aria-hidden />
+              <span className="nav__group-name nav__dock-title">Hidden</span>
+              <span className="nav__hidden-count" aria-hidden>
+                {hiddenCount}
+              </span>
+              <ChevronUp
+                size={12}
+                className={`chev-flip ${hiddenExpanded ? "chev-flip--open" : ""}`}
+                aria-hidden
+              />
+            </button>
+            <button
+              type="button"
+              className="nav__row-action nav__row-action--danger nav__hidden-clear"
+              aria-label="Clear Hidden"
+              title={hiddenClearTitle}
+              disabled={hiddenClearDisabled}
+              onClick={() => setHiddenClearCandidate(hiddenSessionIds)}
+            >
+              {clearingHidden ? (
+                <Loader2 size={12} className="spin" aria-hidden />
+              ) : (
+                <Trash2 size={12} aria-hidden />
+              )}
+            </button>
+          </h2>
+          {hiddenExpanded ? (
+            <div className="nav__hidden-content" id={hiddenContentId}>
+              {hiddenGroups.map((group, groupIndex) => (
+                <ProjectGroup
+                  key={group.cwd}
+                  group={group}
+                  headingId={`nav-hidden-group-title-${groupIndex}`}
+                  searching={searching}
+                  searchQuery={sessionQuery}
+                  showContext={(nameCounts.get(group.name) ?? 0) > 1}
+                  selectedSessionId={visibleSessionId}
+                  highlightedSessionId={highlightedSessionId}
+                  hidden
+                  onSelectSession={onSelectSession}
+                  onDeleteSession={setDeleteCandidate}
+                />
+              ))}
+              {hidden.map((session) => (
+                <SessionRow
+                  key={session.id}
+                  session={session}
+                  searchQuery={sessionQuery}
+                  selectedSessionId={visibleSessionId}
+                  highlightedSessionId={highlightedSessionId}
+                  showProject
+                  onSelect={onSelectSession}
+                  onDelete={setDeleteCandidate}
+                />
+              ))}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
       <ScrollRail container={navRef} scroller=".nav__list" variant="nav" />
+      <ScrollRail
+        container={navRef}
+        scroller=".nav__hidden-content"
+        variant="nav"
+      />
       <ScrollRail container={navRef} scroller=".explorer__tree" variant="nav" />
       {deleteCandidate ? (
         <SessionDeleteDialog

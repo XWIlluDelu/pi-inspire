@@ -205,6 +205,8 @@ export interface InspirePreferences {
   herdrEnabled: boolean;
   theme: ThemePreference;
   palette: PalettePreference;
+  /** Optional animated needles in an installed window's titlebar. */
+  titlebarNeedles: boolean;
   /** Reading typography for conversation prose, composer drafts, code, and text previews. */
   contentTextSize: ContentTextSizePreference;
   /** Shared maximum measure for the transcript and composer. */
@@ -245,6 +247,7 @@ export const defaultInterfaceSettings = {
   herdrEnabled: false,
   theme: "system",
   palette: "amber",
+  titlebarNeedles: false,
   contentTextSize: "comfortable",
   readingWidth: "comfortable",
   launch: "welcome",
@@ -260,6 +263,7 @@ export const defaultInterfaceSettings = {
   | "herdrEnabled"
   | "theme"
   | "palette"
+  | "titlebarNeedles"
   | "contentTextSize"
   | "readingWidth"
   | "launch"

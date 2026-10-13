@@ -34,6 +34,8 @@
   --nav-w-collapsed: 48px;
   --ctx-w: clamp(340px, 38vw, 760px);
   --topbar-h: 52px;
+  --window-titlebar-height: 0px;
+  --app-height: calc(100dvh - var(--window-titlebar-height));
   --activity-row-h: 30px;
   --reading-width-max: 820px;
   --content-max: var(--reading-width-max);
@@ -100,6 +102,8 @@
 :root,
 :root[data-theme="light"] {
   color-scheme: light;
+  --chrome-bg: #F4F5F6;
+  --chrome-ink: #63676C;
   --brand-ink: #131517;
   --brand-accent: #D95A00;
   --bg-canvas: #F7F6F3;
@@ -159,6 +163,8 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
+  --chrome-bg: #14171A;
+  --chrome-ink: #B9C0C7;
   --brand-ink: #F4F6F8;
   --brand-accent: #FF8330;
   --bg-canvas: #0B0D10;
@@ -327,6 +333,10 @@ body,
 #root {
   height: 100%;
   margin: 0;
+}
+
+#root {
+  padding-top: var(--window-titlebar-height);
 }
 
 body {
@@ -513,7 +523,7 @@ a {
 
 .app {
   display: flex;
-  height: 100dvh;
+  height: var(--app-height);
   overflow: hidden;
 }
 
