@@ -2,23 +2,23 @@ import { access, rm, writeFile } from "node:fs/promises";
 
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
+import { nullDiagnosticLogger } from "../../server/diagnostics.js";
 import { type PiRpcProcess } from "../../server/pi-rpc.js";
 
 import { RuntimeController } from "../../server/runtime.js";
 
 import {
+  catalog,
+  deferredSignal,
+  disposeRuntimeFixture,
   FakeRpc,
   HIDDEN_FOLDER_CWD,
-  record,
-  waitForReady,
-  preview,
-  catalog,
-  trackedAttachmentStore,
-  deferredSignal,
   initializeRuntimeFixture,
-  disposeRuntimeFixture,
   persistedRecord,
+  preview,
+  record,
+  trackedAttachmentStore,
+  waitForReady,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
@@ -52,6 +52,101 @@ describe("runtime session deletion", () => {
     expect(source.refresh).not.toHaveBeenCalled();
     expect(source.invalidate).toHaveBeenCalledOnce();
     await runtime.close();
+  });
+
+  it.each(["single", "hidden"] as const)(
+    "returns committed %s deletion while attachment collection is still pending",
+    async (operation) => {
+      const store = trackedAttachmentStore();
+      const { promise: gate, resolve: release } = deferredSignal();
+      const collect = vi
+        .spyOn(store, "collectUnreferenced")
+        .mockImplementation(async () => {
+          await gate;
+          return { reclaimed: [], deferred: "Reference source is unavailable" };
+        });
+      const diagnostics = nullDiagnosticLogger();
+      const log = vi.spyOn(diagnostics, "record");
+      const sessions = [await persistedRecord("a"), await persistedRecord("b")];
+      const remove = vi.fn(async () => "trashed" as const);
+      const runtime = new RuntimeController(
+        catalog(sessions),
+        store,
+        undefined,
+        preview,
+        15_000,
+        undefined,
+        remove,
+        diagnostics,
+      );
+
+      try {
+        if (operation === "single") {
+          await expect(runtime.deleteSession("a")).resolves.toEqual({
+            sessionId: "a",
+            disposition: "trashed",
+          });
+        } else {
+          await expect(
+            runtime.clearHiddenSessions(["a", "b"], ["a", "b"], []),
+          ).resolves.toEqual({
+            deleted: [
+              { sessionId: "a", disposition: "trashed" },
+              { sessionId: "b", disposition: "trashed" },
+            ],
+          });
+        }
+        const count = operation === "single" ? 1 : 2;
+        expect(remove).toHaveBeenCalledTimes(count);
+        expect(collect).toHaveBeenCalledTimes(count);
+        expect(log).not.toHaveBeenCalled();
+        release();
+        await vi.waitFor(() =>
+          expect(log).toHaveBeenCalledWith(
+            "error",
+            "attachment_reclamation_deferred",
+            expect.objectContaining({ sessionId: "a" }),
+          ),
+        );
+      } finally {
+        release();
+        await runtime.close();
+      }
+    },
+  );
+
+  it("records rejected background collection without changing deletion success", async () => {
+    const store = trackedAttachmentStore();
+    vi.spyOn(store, "sessionDeleted").mockRejectedValue(
+      new Error("Collection unavailable"),
+    );
+    const diagnostics = nullDiagnosticLogger();
+    const log = vi.spyOn(diagnostics, "record");
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      undefined,
+      preview,
+      15_000,
+      undefined,
+      async () => "deleted",
+      diagnostics,
+    );
+    try {
+      await expect(runtime.deleteSession("a")).resolves.toEqual({
+        sessionId: "a",
+        disposition: "deleted",
+      });
+      await vi.waitFor(() =>
+        expect(log).toHaveBeenCalledWith(
+          "error",
+          "attachment_reclamation_deferred",
+          expect.objectContaining({ sessionId: "a" }),
+        ),
+      );
+    } finally {
+      await runtime.close();
+    }
   });
 
   it("does not delete a catalog identity reserved by a provisional new session", async () => {

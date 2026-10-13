@@ -530,12 +530,24 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       deleteSessionRecord: async (session, version) => {
         await this.attachments.registerSession(session.path);
         const disposition = await this.deleteSessionRecord(session, version);
-        const collection = await this.attachments.sessionDeleted(session.path);
-        if (collection.deferred)
-          this.logRuntimeError(
-            session.id,
-            new Error(collection.deferred),
-            "attachment_reclamation_deferred",
+        // Reclamation scans retained history and Trash, not just this session.
+        // Its outcome cannot delay or invalidate the committed deletion.
+        void this.attachments
+          .sessionDeleted(session.path)
+          .then((collection) => {
+            if (collection.deferred)
+              this.logRuntimeError(
+                session.id,
+                new Error(collection.deferred),
+                "attachment_reclamation_deferred",
+              );
+          })
+          .catch((error) =>
+            this.logRuntimeError(
+              session.id,
+              error,
+              "attachment_reclamation_deferred",
+            ),
           );
         return disposition;
       },
