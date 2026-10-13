@@ -151,6 +151,7 @@ export class ProviderAuthService {
       | "login"
       | "logout"
       | "registerNativeProvider"
+      | "refresh"
     >,
     private readonly getDeviceId?: () => string,
     private readonly providerSource?: Pick<
@@ -163,6 +164,8 @@ export class ProviderAuthService {
     > = new Map(),
   ) {}
   async request(operation: ProviderAuthOperation): Promise<ProviderAuthResult> {
+    if (operation.operation === "providers" || operation.operation === "start")
+      await this.runtime.refresh({ allowNetwork: false });
     switch (operation.operation) {
       case "providers":
         return this.providers();

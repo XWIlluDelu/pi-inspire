@@ -10,6 +10,7 @@ function fixture() {
   const states = new Map<string, ProviderLoginAttempt>();
   let sequence = 0;
   const auth = {
+    runtime: { refresh: vi.fn().mockResolvedValue(undefined) },
     request: ProviderAuthService.prototype.request,
     start: (provider: string, type: "api_key" | "oauth") => {
       const state: ProviderLoginAttempt = {

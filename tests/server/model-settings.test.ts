@@ -19,6 +19,7 @@ import {
 import { ModelSettingsService } from "../../server/model-settings.js";
 import { registerModelSettingsRoutes } from "../../server/model-settings-routes.js";
 import { ModelRuntime, ProjectTrustStore } from "../../server/pi-runtime.js";
+import { ProviderAuthService } from "../../server/provider-auth.js";
 import type { RuntimeLike } from "../../server/runtime.js";
 import type { ModelOption } from "../../shared/contracts.js";
 import type { ModelConfigEdit } from "../../shared/model-settings.js";
@@ -126,6 +127,74 @@ function routes(
 }
 
 describe("model settings routes", () => {
+  it.each(["providers", "start"] as const)(
+    "reloads the Host auth reader for %s after saving a new provider",
+    async (operation) => {
+      const native = await ModelRuntime.create({
+        modelsPath: join(agent, "models.json"),
+        authPath: join(agent, "auth.json"),
+        refreshOnCreate: false,
+      });
+      const auth = new ProviderAuthService(native);
+      const { app } = routes({ providerAuth: auth });
+      const provider = "new-provider";
+      expect(native.getProvider(provider)).toBeUndefined();
+      try {
+        for (const edit of [
+          {
+            kind: "provider",
+            id: provider,
+            values: {
+              api: "openai-completions",
+              baseUrl: "https://example.invalid/v1",
+            },
+          },
+          { kind: "model", provider, values: { id: "new-model" } },
+        ]) {
+          const current = await request(app)
+            .get("/api/model-settings")
+            .query({ cwd });
+          const saved = await request(app)
+            .patch("/api/model-settings/config")
+            .query({ cwd })
+            .send({ revision: current.body.configRevision, edit });
+          expect(saved.status, saved.body.error).toBe(200);
+          expect(saved.body.saved).toBe(true);
+        }
+        const response = await request(app)
+          .post("/api/provider-auth")
+          .query({ cwd })
+          .send(
+            operation === "providers"
+              ? { operation }
+              : { operation, provider, type: "api_key" },
+          );
+        expect(response.status).toBe(200);
+        if (operation === "providers")
+          expect(response.body.result).toContainEqual({
+            id: provider,
+            name: provider,
+            stored: null,
+            methods: [{ type: "api_key", label: "API key" }],
+          });
+        else {
+          expect(response.body.result).toMatchObject({
+            provider,
+            type: "api_key",
+            status: "pending",
+          });
+          await vi.waitFor(() =>
+            expect(auth.snapshot(response.body.result.id).prompt?.type).toBe(
+              "secret",
+            ),
+          );
+        }
+      } finally {
+        auth.close();
+      }
+    },
+  );
+
   it("offers native available models, not the full catalog, and refreshes configuration choices while retaining unavailable saved scope", async () => {
     const native = await ModelRuntime.create({
       modelsPath: join(agent, "models.json"),
