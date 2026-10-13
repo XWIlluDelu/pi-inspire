@@ -303,6 +303,10 @@ export class PreferenceController {
     this.save({ palette });
   }
 
+  setTitlebarNeedles(titlebarNeedles: boolean): void {
+    this.save({ titlebarNeedles });
+  }
+
   setContentTextSize(contentTextSize: ContentTextSizePreference): void {
     this.save({ contentTextSize });
   }

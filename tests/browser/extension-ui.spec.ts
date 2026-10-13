@@ -10,7 +10,11 @@ import { clipboardLines } from "./support/clipboard";
 import { moveCaretToEnd } from "./support/native-input";
 import { pairedPage } from "./support/navigation";
 
-test.use({ serviceWorkers: "block" });
+// Audit settled dialog colors, not intermediate entrance-animation opacity.
+test.use({
+  serviceWorkers: "block",
+  contextOptions: { reducedMotion: "reduce" },
+});
 
 type DemoDisplay =
   | { id: string; method: "setStatus"; statusKey: string; statusText?: string }

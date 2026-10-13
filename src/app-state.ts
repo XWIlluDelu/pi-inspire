@@ -234,6 +234,8 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   sessionStatuses: Record<string, SessionRuntimeStatus>;
   /** Unseen terminal transitions currently contributing a title marker. */
   attentionSessionIds: string[];
+  /** Ephemeral cue for observed successful runs finishing in the selected session. */
+  completedRunSequence: number;
   /** Session currently owned by the newest open operation, if any. */
   openingSessionId: string | null;
   /** Whether an open, deselect, or create request still owns selection. */
@@ -382,6 +384,7 @@ export function createInitialAppState(): AppState {
     sessionDeleteReviewRequired: false,
     sessionStatuses: {},
     attentionSessionIds: [],
+    completedRunSequence: 0,
     openingSessionId: null,
     sessionSelectionPending: false,
     deletingSessionId: null,

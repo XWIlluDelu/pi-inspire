@@ -186,6 +186,8 @@
 
 .nav__list {
   flex: 1;
+  /* Keep browsing usable when both bottom drawers are expanded. */
+  min-height: min(144px, 25%);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -204,6 +206,7 @@
 .nav__row {
   position: relative;
   border-radius: var(--radius-sm);
+  transition: background var(--dur-micro) var(--ease-standard);
 }
 
 .nav__row--active::before {
@@ -234,16 +237,12 @@
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
-.nav__row-main:hover {
+.nav__row:hover,
+.nav__row--active {
   background: var(--bg-inset);
 }
 
-.nav__row--active .nav__row-main,
-.nav__row--active .nav__row-main:hover {
-  background: var(--bg-inset);
-}
-
-.nav__row--highlighted .nav__row-main {
+.nav__row--highlighted {
   background: var(--accent-tint);
   outline: 1px solid var(--accent);
   outline-offset: -1px;
@@ -476,39 +475,27 @@
   color: var(--faint);
 }
 
-/* --- Shared workspace browser --- */
-
-.explorer {
-  flex: 0 0 auto;
-  min-height: 0;
+/* The two bottom drawers share one header grammar. */
+.nav__dock-heading {
+  flex: 0 0 36px;
   display: flex;
-  flex-direction: column;
+  align-items: stretch;
+  margin: 0;
   border-top: 1px solid var(--hairline);
 }
 
-.explorer--open {
-  flex: 0 1 50%;
-}
-
-.explorer__heading {
+.nav__dock-toggle {
   display: flex;
-  align-items: stretch;
-  border-bottom: 1px solid var(--hairline);
-  background: var(--bg-inset);
-}
-
-.explorer__header {
-  display: flex;
-  flex: 1 1 auto;
+  flex: 1;
   min-width: 0;
   align-items: center;
   gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border: 0;
   background: transparent;
-  padding: var(--space-2) var(--space-3);
-  color: var(--body);
+  color: var(--muted);
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
   transition:
@@ -516,21 +503,140 @@
     color var(--dur-micro) var(--ease-standard);
 }
 
-.explorer__header:hover {
+.nav__dock-toggle:hover:not(:disabled) {
   background: var(--bg-control);
   color: var(--ink);
 }
 
-.explorer__header svg {
+.nav__dock-toggle:disabled {
+  cursor: default;
+}
+
+.nav__dock-toggle > svg {
   flex: 0 0 auto;
 }
 
-.explorer__title {
+.nav__dock-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Plex's ink sits slightly high in a geometrically centred line box.
+   Correct text only; icons and hit targets stay on the row centre. */
+.nav__dock-title,
+.nav__hidden-count,
+.nav__hidden-content .nav__row-name,
+.nav__hidden-content .nav__row-meta {
+  translate: 0 var(--ui-text-offset);
+}
+
+.nav__hidden-count {
+  color: var(--faint);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Hidden follows the workspace explorer, outside the scrolling session catalog. */
+.nav__group.nav__group--hidden {
+  flex: 0 1 auto;
+  min-height: 36px;
+  max-height: 40%;
+  gap: 0;
+}
+
+.nav__hidden-content {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--space-3) var(--space-2);
+}
+
+/* Match direct session labels to the drawer label (14px icon + shared gap).
+   A hidden folder adds one more indentation level for its child sessions. */
+.nav__hidden-content > .nav__row > .nav__row-main {
+  padding-left: calc(14px + var(--space-2));
+}
+
+.nav__hidden-content > .nav__group > .nav__group-title .nav__group-toggle {
+  padding-left: 0;
+}
+
+.nav__hidden-content > .nav__group > .nav__row > .nav__row-main {
+  padding-left: calc(14px + var(--space-2) + var(--space-4));
+}
+
+.nav__hidden-content .nav__row-project {
+  padding: 0;
+  background: transparent;
+}
+
+.nav__hidden-heading {
+  --hidden-action-width: 28px;
+  position: relative;
+}
+
+.nav__hidden-toggle .nav__hidden-count {
+  margin-right: var(--hidden-action-width);
+}
+
+/* An independent hit target between the count and disclosure, never nested
+   inside the toggle and never taking a row from the content. */
+.nav__hidden-clear {
+  position: absolute;
+  right: 28px;
+  top: 0;
+  bottom: 0;
+  margin: auto 0;
+  width: var(--hidden-action-width);
+  height: 28px;
+}
+
+@media (hover: none), (max-width: 600px) {
+  .nav__hidden-heading {
+    --hidden-action-width: 36px;
+  }
+
+  .nav__hidden-clear {
+    height: 34px;
+  }
+
+  /* Cross-project Hidden rows need a second line when actions stay visible:
+     the title gets the full main column, with project and age beneath it. */
+  .nav__hidden-content .nav__row--cross-project .nav__row-main {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    padding-block: 6px;
+  }
+
+  .nav__hidden-content .nav__row--cross-project .nav__row-meta {
+    opacity: 1;
+  }
+
+  .nav__hidden-content .nav__row--cross-project .nav__row-project {
+    flex: 1;
+    max-width: none;
+    color: var(--faint);
+  }
+}
+
+/* --- Shared workspace browser --- */
+
+.explorer {
+  flex: 0 0 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.explorer--open {
+  flex: 0 1 50%;
 }
 
 .explorer__browser {
@@ -879,8 +985,7 @@ button.workspace-tree__status:hover {
 }
 
 /* Pinned folders sit above ordinary ones; a step marks where they end. */
-.nav__group--pinned-folder + .nav__group:not(.nav__group--pinned-folder),
-.nav__group--hidden {
+.nav__group--pinned-folder + .nav__group:not(.nav__group--pinned-folder) {
   margin-top: var(--space-3);
 }
 
@@ -920,9 +1025,7 @@ button.workspace-tree__status:hover {
 }
 
 .nav__group-title--folder:hover .nav__group-actions,
-.nav__group-title--folder:focus-within .nav__group-actions,
-.nav__group-title--hidden:hover .nav__group-actions,
-.nav__group-title--hidden:focus-within .nav__group-actions {
+.nav__group-title--folder:focus-within .nav__group-actions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -942,9 +1045,7 @@ button.workspace-tree__status:hover {
 }
 
 .nav__group-title--folder:hover .nav__group-count,
-.nav__group-title--folder:focus-within .nav__group-count,
-.nav__group-title--hidden:hover .nav__group-count,
-.nav__group-title--hidden:focus-within .nav__group-count {
+.nav__group-title--folder:focus-within .nav__group-count {
   opacity: 0;
 }
 
@@ -957,18 +1058,12 @@ button.workspace-tree__status:hover {
     padding-right: 78px;
   }
 
-  .nav__group-title--hidden .nav__group-toggle {
-    padding-right: 42px;
-  }
-
-  .nav__group-title--folder .nav__group-actions,
-  .nav__group-title--hidden .nav__group-actions {
+  .nav__group-title--folder .nav__group-actions {
     opacity: 1;
     pointer-events: auto;
   }
 
-  .nav__group-title--folder .nav__group-count,
-  .nav__group-title--hidden .nav__group-count {
+  .nav__group-title--folder .nav__group-count {
     opacity: 0;
   }
 }

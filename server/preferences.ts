@@ -22,6 +22,7 @@ const preferenceFields = {
   herdrEnabled: z.boolean(),
   theme: z.enum(["system", "light", "dark"]),
   palette: z.enum(["amber", "teal"]),
+  titlebarNeedles: z.boolean(),
   contentTextSize: z.enum(CONTENT_TEXT_SIZES),
   readingWidth: z.enum(READING_WIDTHS),
   launch: z.enum(["welcome", "continue"]),

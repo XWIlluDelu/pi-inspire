@@ -1133,7 +1133,7 @@ export function ModelsSettings({
                     </summary>
                     <p
                       className="settings__field-help"
-                      style={{ padding: "var(--space-2) var(--space-3) 0" }}
+                      style={{ paddingTop: "var(--space-2)" }}
                     >
                       Order used when cycling models. Rules can match several
                       models.
@@ -1141,7 +1141,7 @@ export function ModelsSettings({
                     {snapshot.projectOverrides.includes("enabledModels") ? (
                       <p
                         className="settings__field-help"
-                        style={{ padding: "var(--space-1) var(--space-3) 0" }}
+                        style={{ paddingTop: "var(--space-1)" }}
                       >
                         This project has its own common models.
                       </p>

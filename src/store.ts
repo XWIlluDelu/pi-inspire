@@ -2840,6 +2840,8 @@ export class AppStore {
   setTheme = (value: ThemePreference): void => this.preferences.setTheme(value);
   setPalette = (value: PalettePreference): void =>
     this.preferences.setPalette(value);
+  setTitlebarNeedles = (value: boolean): void =>
+    this.preferences.setTitlebarNeedles(value);
   setContentTextSize = (value: ContentTextSizePreference): void =>
     this.preferences.setContentTextSize(value);
   setReadingWidth = (value: ReadingWidthPreference): void =>

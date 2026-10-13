@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { resolveToken } from "./api";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
+import { WindowTitlebar } from "./components/WindowTitlebar";
 import { store } from "./store";
 import "./styles.css";
 
@@ -61,6 +62,7 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
+    <WindowTitlebar />
     <AppErrorBoundary>
       <App />
     </AppErrorBoundary>

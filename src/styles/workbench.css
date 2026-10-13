@@ -1444,7 +1444,7 @@ button.res__more:hover {
 /* --- Token gate --- */
 
 .token-gate {
-  height: 100dvh;
+  height: var(--app-height);
   display: grid;
   place-items: center;
 }

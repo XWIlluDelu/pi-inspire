@@ -172,6 +172,28 @@ for (const narrow of [false, true]) {
       )
       .toBeLessThanOrEqual(1);
     expect(await geometry()).toEqual(original);
+
+    if (!narrow) {
+      await page.setViewportSize({ width: 1024, height: 768 });
+      const context = page.locator("#context-pane");
+      if (!(await context.isVisible()))
+        await page
+          .getByRole("button", { name: "Toggle resources panel" })
+          .click();
+      await expect(context).toBeVisible();
+      const insets = await wrap.evaluate((element) => {
+        const center = element.getBoundingClientRect();
+        const search = element
+          .querySelector(".transcript-search")!
+          .getBoundingClientRect();
+        return {
+          left: search.left - center.left,
+          right: center.right - search.right,
+        };
+      });
+      expect(insets.left).toBeGreaterThanOrEqual(23);
+      expect(insets.right).toBeGreaterThanOrEqual(23);
+    }
   });
 }
 
@@ -310,6 +332,24 @@ test("prompt map navigates user turns and adapts to the narrow workbench", async
   await expect(page.getByLabel("Transcript search matches")).toContainText(
     "1 match",
   );
+  await page.setViewportSize({ width: 320, height: 740 });
+  await page.getByRole("combobox", { name: "Search scope" }).click();
+  await page.getByRole("option", { name: "Model", exact: true }).click();
+  await expect(mobileSearch).toBeVisible();
+  await expect(mobileSearch).toHaveValue("Prompt map fixture turn 13");
+  await expect(page.getByRole("combobox", { name: "Search scope" })).toHaveText(
+    "Model",
+  );
+  const matches = page.getByLabel("Transcript search matches");
+  await expect(matches).toHaveText("No matches");
+  expect(
+    await matches.evaluate(
+      (element) => element.scrollWidth - element.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    (await page.locator(".transcript-search__icon").boundingBox())!.width,
+  ).toBe(14);
   await page.getByRole("button", { name: "Close conversation search" }).click();
   await expect(searchLauncher).toBeVisible();
 

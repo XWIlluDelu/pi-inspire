@@ -26,6 +26,17 @@ afterEach(async () => {
 });
 
 describe("PreferencesStore validation", () => {
+  it("defaults titlebar needles off and persists the choice across reloads", async () => {
+    const { path, store } = await fixture();
+    await writeFile(path, JSON.stringify({ theme: "dark" }));
+    expect((await store.read()).titlebarNeedles).toBe(false);
+    await store.patch({ titlebarNeedles: true });
+    expect(await new PreferencesStore(path).read()).toMatchObject({
+      titlebarNeedles: true,
+      theme: "dark",
+    });
+  });
+
   it("loads valid fields in memory but refuses to overwrite one invalid field", async () => {
     const { path, store } = await fixture();
     const raw = JSON.stringify({

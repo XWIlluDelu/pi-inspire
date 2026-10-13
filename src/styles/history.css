@@ -269,8 +269,6 @@
   font-size: var(--text-xs);
 }
 @media (max-width: 760px) {
-  .ctx__header { padding-inline: var(--space-2); }
-  .ctx__modes button { padding-inline: 6px; }
   .branch-tree__search { min-height: 40px; }
   .branch-tree__search input { font-size: 16px; }
   .history-disclosure,

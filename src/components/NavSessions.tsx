@@ -1,8 +1,8 @@
 import {
-  ChevronRight,
   Eye,
   EyeOff,
   Folder,
+  FolderOpen,
   Loader2,
   Pin,
   PinOff,
@@ -124,7 +124,7 @@ export const SessionRow = memo(function SessionRow({
     : projectName;
   return (
     <div
-      className={`nav__row ${selected ? "nav__row--active" : ""} ${session.id === highlightedSessionId ? "nav__row--highlighted" : ""}`}
+      className={`nav__row ${showProject ? "nav__row--cross-project" : ""} ${selected ? "nav__row--active" : ""} ${session.id === highlightedSessionId ? "nav__row--highlighted" : ""}`}
     >
       <button
         type="button"
@@ -295,12 +295,11 @@ export function ProjectGroup({
           disabled={searching}
           onClick={() => store.toggleNavGroup(group.cwd)}
         >
-          <ChevronRight
-            size={13}
-            className={`chev ${expanded ? "chev--open" : ""}`}
-            aria-hidden
-          />
-          <Folder size={14} aria-hidden />
+          {expanded ? (
+            <FolderOpen size={14} aria-hidden />
+          ) : (
+            <Folder size={14} aria-hidden />
+          )}
           <span className="nav__group-name">
             <SearchMatchText
               text={group.name}

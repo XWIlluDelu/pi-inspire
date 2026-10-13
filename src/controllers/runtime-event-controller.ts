@@ -300,7 +300,16 @@ export class RuntimeEventController {
         }
       } else if (event.type === "agent_settled") {
         if (this.consumeAttentionArm(eventSessionId, "agent")) {
-          this.attendToOutcome(eventSessionId, this.statusOutcome(event));
+          const outcome = this.statusOutcome(event);
+          if (
+            outcome === "completed" &&
+            eventSessionId === this.host.state().sessionId
+          ) {
+            this.host.patch({
+              completedRunSequence: this.host.state().completedRunSequence + 1,
+            });
+          }
+          this.attendToOutcome(eventSessionId, outcome);
         }
       } else if (event.type === "runtime_error") {
         const armed =

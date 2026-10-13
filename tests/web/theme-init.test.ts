@@ -116,6 +116,8 @@ describe("first-paint visual preferences", () => {
     expect(html).toContain('<meta name="theme-color" content="#F4F5F6" />');
     expect(manifest.theme_color).toBe("#F4F5F6");
     expect(manifest.background_color).toBe("#F4F5F6");
+    expect(manifest.display_override).toEqual(["window-controls-overlay"]);
+    expect(manifest.display).toBe("standalone");
   });
 
   it("writes only the visual fields after the authoritative app state changes", () => {

@@ -71,7 +71,7 @@
 .terminal-pane--focused {
   position: fixed;
   z-index: 49;
-  inset: 0;
+  inset: var(--window-titlebar-height) 0 0;
   width: auto;
   height: auto;
   border: 0;
@@ -973,7 +973,7 @@
 .dialog.terminal-text-dialog {
   width: min(880px, calc(100vw - 32px));
   max-width: 100%;
-  height: min(720px, calc(100dvh - 48px));
+  height: min(720px, calc(var(--app-height) - 48px));
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -1134,7 +1134,7 @@
 @media (hover: none), (pointer: coarse), (max-width: 720px) {
   .dialog.terminal-text-dialog {
     width: calc(100vw - 16px);
-    height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 16px);
+    height: calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 16px);
     max-height: none;
   }
 

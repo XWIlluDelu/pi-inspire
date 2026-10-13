@@ -309,6 +309,17 @@ export const SettingsContent = memo(function SettingsContent({
               </SettingField>
 
               <SettingField
+                label="Titlebar needles"
+                description="Animated needles in the installed app's title bar."
+              >
+                <SettingsSwitch
+                  label="Titlebar needles"
+                  checked={state.prefs.titlebarNeedles}
+                  onChange={store.setTitlebarNeedles}
+                />
+              </SettingField>
+
+              <SettingField
                 label="Content text size"
                 description="Applies to messages, input, code, and previews."
               >
