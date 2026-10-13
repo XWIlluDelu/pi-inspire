@@ -360,6 +360,9 @@ export class RuntimeProjectionCoordinator {
       const initiallyOwned =
         priorPartial !== null ||
         isBusyRunState(slot.runState) ||
+        // Direct Bash can run idle and Pi persists it without an append event.
+        // Its lease still requires strict byte progress and a final entry witness.
+        slot.nativeBash?.worker === writer ||
         slot.persistenceExpectations.length > 0;
       const exactPrior =
         !priorPartial || result.previousUncommittedBytes === priorPartial.bytes;

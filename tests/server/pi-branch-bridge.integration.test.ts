@@ -152,7 +152,7 @@ export default function (pi) {
     }
   }, 15_000);
 
-  it("keeps the source worker and its dialogs independent from a fork destination", async () => {
+  it("isolates source navigation dialogs from shell delivery and fork destinations", async () => {
     const directory = await mkdtemp(
       join(tmpdir(), "inspire-real-runtime-branch-"),
     );
@@ -245,6 +245,7 @@ export default function (pi) {
     });
     const dialogs: Array<Record<string, unknown>> = [];
     const responses: Promise<void>[] = [];
+    let holdNavigation = true;
     runtime.on("event", (event) => {
       const record = event as Record<string, unknown>;
       if (
@@ -253,6 +254,7 @@ export default function (pi) {
       )
         return;
       dialogs.push(record);
+      if (holdNavigation) return;
       responses.push(
         runtime.extensionUiResponse({
           sessionId: record.sessionId,
@@ -271,12 +273,38 @@ export default function (pi) {
         { timeout: 10_000 },
       );
       let tree = await runtime.branchTree(SESSION_ID);
-      await runtime.navigateBranch({
+      const navigating = runtime.navigateBranch({
         sessionId: SESSION_ID,
         revision: tree.revision,
         targetId: "a1",
         mode: "switch",
       });
+      // Keep a rejection observed while the extension's dialog is held.
+      void navigating.catch(() => undefined);
+      await vi.waitFor(() => expect(dialogs).toHaveLength(1));
+      const shellRequests = vi.spyOn(workers[0]!, "request");
+      try {
+        await expect(
+          runtime.prompt({
+            sessionId: SESSION_ID,
+            message: "!echo rejected-during-navigation",
+          }),
+        ).rejects.toMatchObject({ status: 409 });
+        expect(
+          shellRequests.mock.calls.some(([command]) => command.type === "bash"),
+        ).toBe(false);
+      } finally {
+        holdNavigation = false;
+        await runtime.extensionUiResponse({
+          sessionId: SESSION_ID,
+          id: dialogs[0]!.id,
+          confirmed: true,
+        });
+        await expect(navigating).resolves.toMatchObject({
+          snapshot: { active: { effectiveLeafId: "a1" }, runState: "idle" },
+        });
+        shellRequests.mockRestore();
+      }
       tree = await runtime.branchTree(SESSION_ID);
       await runtime.navigateBranch({
         sessionId: SESSION_ID,

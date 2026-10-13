@@ -244,6 +244,13 @@ export class RuntimeWorkerLifecycle {
       await rpc.start();
       if (slot.startupError) throw slot.startupError;
       await this.startupAttestor.attest(slot, rpc, baseline);
+      // Disk attestation awaits after the last RPC response. Exit or Stop may
+      // retire this worker while that final filesystem observation is pending.
+      if (slot.process !== rpc || !rpc.available)
+        throw requestError(
+          "Pi runtime stopped during startup attestation",
+          503,
+        );
       slot.ready = true;
       slot.startupPhase = "complete";
       if (slot.runState === "failed" || slot.runState === "aborted")

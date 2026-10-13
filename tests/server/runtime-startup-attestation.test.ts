@@ -3,10 +3,13 @@ import { appendFile, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { RuntimeSlot } from "../../server/runtime-slot.js";
+import { deferredSignal } from "./fixtures/runtime.js";
+
 import {
-  setup,
-  ProjectionRpc,
   disposeProjectionFixture,
+  ProjectionRpc,
+  setup,
 } from "./fixtures/runtime-projection.js";
 
 afterEach(disposeProjectionFixture);
@@ -58,6 +61,87 @@ describe("writer startup attestation", () => {
         );
       } finally {
         await runtime.close();
+      }
+    },
+  );
+
+  it.each(["exit", "unavailable"] as const)(
+    "does not publish readiness after worker loss (%s) during final disk attestation",
+    async (loss) => {
+      const start = deferredSignal();
+      const reconcileEntered = deferredSignal();
+      const finishReconcile = deferredSignal();
+      const retirement = deferredSignal();
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      const { runtime, workers } = await setup([], (worker) => {
+        worker.onStart = () => start.promise;
+      });
+      const internals = runtime as unknown as {
+        slots: Map<string, RuntimeSlot>;
+        opening: Map<string, Promise<RuntimeSlot>>;
+      };
+      const slot = internals.slots.get("session-a")!;
+      const projection = slot.projection!;
+      const reconcile = projection.reconcileSuspended.bind(projection);
+      const heldReconcile = vi
+        .spyOn(projection, "reconcileSuspended")
+        .mockImplementation(async (force) => {
+          reconcileEntered.resolve();
+          await finishReconcile.promise;
+          return reconcile(force);
+        });
+      const stop = vi
+        .spyOn(workers[0]!, "stop")
+        .mockImplementation(() => retirement.promise);
+      const events: Array<{ type: string }> = [];
+      runtime.on("event", (event) => events.push(event));
+      const starting = internals.opening.get("session-a")!;
+      const outcome = starting.then(
+        () => null,
+        (error: unknown) => error,
+      );
+      try {
+        start.resolve();
+        await reconcileEntered.promise;
+        expect(workers[0]!.commands.at(-1)).toEqual({ type: "get_state" });
+        if (loss === "exit") {
+          workers[0]!.emit("exit", new Error("Synthetic attestation exit"));
+          expect(slot.process).toBeNull();
+          expect(slot.runState).toBe("failed");
+        } else {
+          vi.spyOn(workers[0]!, "available", "get").mockReturnValue(false);
+        }
+        finishReconcile.resolve();
+        await vi.waitFor(() => expect(stop).toHaveBeenCalled());
+        // Reconciliation cannot revive admission while actual stop is pending.
+        expect(slot.ready).toBe(false);
+        expect(slot.stopping).not.toBeNull();
+        expect(slot.workerProjectionRevision).toBeNull();
+        expect(events.some((event) => event.type === "runtime_ready")).toBe(
+          false,
+        );
+        retirement.resolve();
+        expect(await outcome).toMatchObject({ status: 503 });
+        expect(slot.ready).toBe(false);
+        expect(slot.startupPhase).toBe("idle");
+        expect(slot.runState).toBe("failed");
+        expect(slot.workerProjectionRevision).toBeNull();
+        expect(events.some((event) => event.type === "runtime_ready")).toBe(
+          false,
+        );
+        expect(
+          workers[0]!.commands.some(
+            (command) => command.type === "get_commands",
+          ),
+        ).toBe(false);
+      } finally {
+        start.resolve();
+        finishReconcile.resolve();
+        retirement.resolve();
+        await starting.catch(() => {});
+        heldReconcile.mockRestore();
+        await runtime.close();
+        errors.mockRestore();
       }
     },
   );

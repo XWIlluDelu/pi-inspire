@@ -16,7 +16,7 @@ import {
 } from "../../server/runtime.js";
 import type { RuntimePersistenceOwnershipController } from "../../server/runtime-persistence-ownership.js";
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
-import { deferredSignal } from "./fixtures/runtime.js";
+import { deferredSignal, waitForReady } from "./fixtures/runtime.js";
 import {
   disposeProjectionFixture,
   setup,
@@ -1173,6 +1173,115 @@ describe("writer persistence ownership", () => {
       await runtime.close();
     }
   });
+
+  it.each(["matching", "mismatching"] as const)(
+    "holds an idle native Bash partial append for its %s final worker witness",
+    async (witness) => {
+      const partialWritten = deferredSignal();
+      const completeWrite = deferredSignal();
+      const result = {
+        output: "owned shell output",
+        exitCode: 0,
+        cancelled: false,
+        truncated: false,
+      };
+      const entry = {
+        type: "message",
+        id: "bash-1",
+        parentId: "u1",
+        timestamp: "2026-08-01T00:00:02.000Z",
+        message: {
+          role: "bashExecution",
+          command: "echo owned",
+          ...result,
+          timestamp: 2,
+          excludeFromContext: false,
+        },
+      };
+      const line = `${JSON.stringify(entry)}\n`;
+      const firstCut = line.length - 32;
+      const secondCut = line.length - 16;
+      const { runtime, workers, path } = await setup([], (worker) => {
+        worker.responseOverrides.set("bash", async () => {
+          // Installed Pi persists direct Bash without message_end/entry_appended.
+          // Hold physical write progress so reconciliation sees each exact prefix.
+          worker.startupEntries = [
+            witness === "matching"
+              ? entry
+              : {
+                  ...entry,
+                  message: { ...entry.message, output: "different" },
+                },
+          ];
+          worker.startupLeafId = entry.id;
+          await appendFile(worker.sessionPath, line.slice(0, firstCut));
+          partialWritten.resolve();
+          await completeWrite.promise;
+          await appendFile(worker.sessionPath, line.slice(secondCut));
+          return result;
+        });
+      });
+      const internals = runtime as unknown as {
+        slots: Map<string, RuntimeSlot>;
+        reconcileSlot(slot: RuntimeSlot, force: boolean): Promise<unknown>;
+      };
+      let delivery: Promise<unknown> | undefined;
+      try {
+        await waitForReady(runtime, "session-a");
+        const slot = internals.slots.get("session-a")!;
+        const worker = workers[0]!;
+        delivery = runtime.prompt({
+          sessionId: "session-a",
+          message: "!echo owned",
+        });
+        await partialWritten.promise;
+        expect(slot.runState).toBe("idle");
+        expect(slot.nativeBash?.worker).toBe(slot.process);
+        expect(slot.persistenceExpectations).toEqual([]);
+        await internals.reconcileSlot(slot, true);
+        expect(slot.pendingPartialPersistence?.bytes).toBe(firstCut);
+        const deadline = slot.pendingPartialPersistence!.deadline;
+        expect(slot.conflict).toBeNull();
+        expect(worker.stops).toBe(0);
+
+        await appendFile(path, line.slice(firstCut, secondCut));
+        await internals.reconcileSlot(slot, true);
+        expect(slot.pendingPartialPersistence?.bytes).toBe(secondCut);
+        expect(slot.pendingPartialPersistence?.deadline).toBe(deadline);
+        expect(slot.workerProjectionSourceVersion).toBe(
+          slot.projection!.sourceVersion,
+        );
+        expect(worker.stops).toBe(0);
+
+        completeWrite.resolve();
+        await delivery;
+        await internals.reconcileSlot(slot, true);
+        expect(worker.commands).toContainEqual({
+          type: "get_entries",
+          since: "u1",
+        });
+        expect(slot.pendingPartialPersistence).toBeNull();
+        if (witness === "matching") {
+          expect(slot.process).toBe(worker);
+          expect(slot.conflict).toBeNull();
+          expect(slot.runState).toBe("idle");
+          expect(slot.workerProjectionRevision).toBe(slot.projection!.revision);
+          expect(slot.projection!.messages.at(-1)).toMatchObject(entry.message);
+          expect(worker.stops).toBe(0);
+        } else {
+          expect(slot.conflict?.kind).toBe("incomplete-persistence");
+          expect(slot.runState).toBe("conflict");
+          expect(slot.process).toBeNull();
+          expect(slot.ready).toBe(false);
+          expect(worker.stops).toBe(1);
+        }
+      } finally {
+        completeWrite.resolve();
+        await delivery?.catch(() => {});
+        await runtime.close();
+      }
+    },
+  );
 
   it.each(["in-place", "atomic"] as const)(
     "rejects an owned partial tail followed by a same-byte %s rewrite",

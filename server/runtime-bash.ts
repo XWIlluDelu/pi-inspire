@@ -46,7 +46,7 @@ export class RuntimeBashController {
         409,
       );
     const worker = await this.host.admit(slot);
-    // Startup is asynchronous: another delivery or Stop can win admission.
+    // Admission is asynchronous: another delivery, Stop or navigation can win.
     if (slot.nativeBash)
       throw requestError(
         "A shell command is already running; stop it first",
@@ -55,6 +55,11 @@ export class RuntimeBashController {
     if (slot.stoppingInput)
       throw requestError(
         "Stop is in progress; send again after it finishes",
+        409,
+      );
+    if (slot.pendingBranchBridge)
+      throw requestError(
+        "Branch navigation is in progress; run the shell command after it finishes",
         409,
       );
     const message: Record<string, unknown> = {
