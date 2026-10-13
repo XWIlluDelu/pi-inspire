@@ -70,6 +70,66 @@ describe("model catalog ownership", () => {
     expect(store.getState().model).toEqual(before.model);
     expect(store.getState().thinkingLevel).toBe(before.thinkingLevel);
   });
+  it.each([
+    { read: "settings", write: "preferences" },
+    { read: "catalog", write: "config" },
+  ] as const)(
+    "does not let a pending $read read undo a committed $write save",
+    async ({ read, write }) => {
+      const pending = deferred<RouteResponse>();
+      const committed = modelSettingsSnapshot({
+        models: [{ provider: "configured", id: "new" }],
+        commonModels: [{ provider: "configured", id: "new" }],
+      });
+      let reading = true;
+      installFetch((url, init) => {
+        if (url.startsWith("/api/bootstrap"))
+          return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
+        if (init?.method === "PATCH")
+          return { body: { saved: true, snapshot: committed } };
+        if (
+          url.startsWith("/api/model-settings") ||
+          url.startsWith("/api/models")
+        )
+          return reading ? pending.promise : { body: committed };
+        return undefined;
+      });
+      const store = new AppStore();
+      await store.init("token");
+      const owner = { sessionId: store.getState().sessionId! };
+      const older =
+        read === "settings"
+          ? store.readModelSettings(owner)
+          : store.refreshModels(owner);
+      if (write === "preferences")
+        await store.saveModelPreferences(owner, committed.settingsRevision, {
+          enabledModels: ["configured/new"],
+        });
+      else
+        await store.editModelConfig(owner, committed.configRevision, {
+          kind: "provider",
+          id: "configured",
+          values: {},
+        });
+      const savedModels = store.getState().availableModels;
+      expect(store.getState().commonModels).toEqual(committed.commonModels);
+
+      pending.resolve({
+        body: modelSettingsSnapshot({
+          models: [{ provider: "outdated", id: "old" }],
+          commonModels: [{ provider: "outdated", id: "old" }],
+        }),
+      });
+      await older;
+      expect(store.getState().commonModels).toEqual(committed.commonModels);
+      expect(store.getState().availableModels).toEqual(savedModels);
+
+      reading = false;
+      await store.refreshModels(owner);
+      expect(store.getState().availableModels).toEqual(committed.models);
+    },
+  );
+
   it("returns prospective-owner reads and writes without adopting their catalog or common scope into the selected session", async () => {
     const snapshot = modelSettingsSnapshot({
       models: [{ provider: "prospective", id: "model" }],

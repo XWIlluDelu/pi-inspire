@@ -2556,6 +2556,9 @@ export class AppStore {
     return this.api.editMcpConfig(owner, edit);
   };
 
+  // Publishing a settings-write snapshot retires earlier catalog reads.
+  private modelSettingsRevision = 0;
+
   private modelSettingsApi = (): Api => {
     if (!this.api) throw new Error("The Host is unavailable");
     return this.api;
@@ -2576,12 +2579,14 @@ export class AppStore {
     const api = this.modelSettingsApi();
     const transport = this.transportGeneration;
     const selection = this.selectionGeneration;
+    const revision = this.modelSettingsRevision;
     const snapshot = await api.modelSettings(owner);
     if (
       api === this.api &&
       transport === this.transportGeneration &&
       selection === this.selectionGeneration &&
-      this.ownsModelSettings(owner)
+      this.ownsModelSettings(owner) &&
+      revision === this.modelSettingsRevision
     )
       this.set({ commonModels: snapshot.commonModels });
     return snapshot;
@@ -2602,8 +2607,10 @@ export class AppStore {
       transport === this.transportGeneration &&
       selection === this.selectionGeneration &&
       this.ownsModelSettings(owner)
-    )
+    ) {
+      this.modelSettingsRevision++;
       this.set({ commonModels: result.snapshot.commonModels });
+    }
     return result;
   };
 
@@ -2622,11 +2629,13 @@ export class AppStore {
       transport === this.transportGeneration &&
       selection === this.selectionGeneration &&
       this.ownsModelSettings(owner)
-    )
+    ) {
+      this.modelSettingsRevision++;
       this.set({
         availableModels: result.snapshot.models,
         commonModels: result.snapshot.commonModels,
       });
+    }
     return result;
   };
 
@@ -2647,12 +2656,14 @@ export class AppStore {
     const selection = this.selectionGeneration;
     const requested = owner ?? { sessionId: this.state.sessionId ?? undefined };
     if (!api) throw new Error("The Host is unavailable");
+    const revision = this.modelSettingsRevision;
     const result = await api.refreshModels(requested.sessionId, requested.cwd);
     if (
       this.api === api &&
       this.transportGeneration === transport &&
       this.selectionGeneration === selection &&
-      this.ownsModelSettings(requested)
+      this.ownsModelSettings(requested) &&
+      revision === this.modelSettingsRevision
     )
       this.set({
         availableModels: result.models,

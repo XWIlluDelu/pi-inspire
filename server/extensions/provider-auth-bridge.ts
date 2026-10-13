@@ -23,13 +23,6 @@ export function registerProviderAuthBridge(
 ): void {
   let service: ProviderAuthService | undefined;
   let initializing: Promise<ProviderAuthService> | undefined;
-  let authRuntime:
-    | Awaited<
-        ReturnType<
-          typeof import("@earendil-works/pi-coding-agent").ModelRuntime.create
-        >
-      >
-    | undefined;
   async function getService(
     ctx: ExtensionCommandContext,
   ): Promise<ProviderAuthService> {
@@ -44,7 +37,6 @@ export function registerProviderAuthBridge(
         pathToFileURL(entry).href
       )) as typeof import("@earendil-works/pi-coding-agent");
       const runtime = await ModelRuntime.create({ refreshOnCreate: false });
-      authRuntime = runtime;
       const source = {
         getProvider: (id: string) => ctx.modelRegistry.getProvider(id),
         getRegisteredProviderIds: () =>
@@ -100,8 +92,6 @@ export function registerProviderAuthBridge(
       let error: string | undefined;
       try {
         const auth = await getService(ctx);
-        if (value.operation === "providers" || value.operation === "start")
-          await authRuntime!.refresh({ allowNetwork: false });
         result = await auth.request(value);
       } catch {
         error =
