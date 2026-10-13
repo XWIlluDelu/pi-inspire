@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Transcript } from "../../src/components/Transcript";
+import * as messageCopy from "../../src/message-copy";
 import { store } from "../../src/store";
 
 afterEach(() => {
@@ -16,6 +17,61 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("message actions", () => {
+  it("hides image dimension notes while keeping the image and exact source for Copy", async () => {
+    const sourceText =
+      "inspect\n\n[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]";
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    vi.spyOn(store, "loadEmbeddedImage").mockResolvedValue(
+      new Blob(["png"], { type: "image/png" }),
+    );
+    // Image clipboard delivery has its own tests; inspect the text supplied by
+    // this presentation's Copy action without depending on that browser API.
+    vi.spyOn(messageCopy, "messageCopyContent").mockImplementation(
+      async (_message, text) => ({ text }),
+    );
+    render(
+      <Transcript
+        messages={[
+          {
+            role: "user",
+            __inspireMessageIndex: 0,
+            content: [
+              { type: "text", text: sourceText },
+              { type: "image", mimeType: "image/png" },
+            ],
+          },
+        ]}
+        sessionId="s"
+        viewId="v"
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+    expect(await screen.findByText("inspect")).toBeInTheDocument();
+    expect(screen.queryByText(/Multiply coordinates/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: "Attached images" }),
+    ).toBeInTheDocument();
+    const search = screen.getByRole("searchbox", {
+      name: "Search conversation",
+    });
+    fireEvent.change(search, { target: { value: "Multiply coordinates" } });
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("No matches");
+    fireEvent.change(search, { target: { value: "inspect" } });
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("1 match");
+    fireEvent.click(screen.getByRole("button", { name: "Copy message" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(sourceText));
+  });
+
   it("copies each conversation message and forks through its authoritative entry id", async () => {
     const writeText = vi.fn(async () => undefined);
     Object.defineProperty(navigator, "clipboard", {

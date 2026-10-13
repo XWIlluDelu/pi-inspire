@@ -23,7 +23,7 @@ import {
   projectNameFromCwd,
   type RunState,
 } from "../../shared/contracts";
-import { type ChatMessage, messageText } from "../events";
+import { type ChatMessage, userMessageDisplayText } from "../events";
 import { gitChangeCount, gitHeadLabel } from "../git-presentation";
 import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
@@ -47,10 +47,11 @@ export function sessionHeading(
   if (catalog && !GENERIC_SESSION_HEADINGS.has(catalog)) return catalog;
   if (transcriptStartsAtRoot) {
     const firstPrompt = messages.find(
-      (message) => message.role === "user" && messageText(message).trim(),
+      (message) =>
+        message.role === "user" && userMessageDisplayText(message).trim(),
     );
     if (firstPrompt) {
-      return messageText(firstPrompt)
+      return userMessageDisplayText(firstPrompt)
         .replace(/\s+/g, " ")
         .trim()
         .slice(0, MAX_SESSION_DISPLAY_TITLE_CHARS);

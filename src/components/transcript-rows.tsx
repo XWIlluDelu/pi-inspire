@@ -24,6 +24,7 @@ import {
   contentItems,
   messageText,
   type ToolCallContent,
+  userMessageDisplayText,
 } from "../events";
 import { messageCopyContent } from "../message-copy";
 import { store } from "../store";
@@ -131,7 +132,8 @@ export const UserBubble = memo(function UserBubble({
   projectionKey: string;
 }) {
   const timestamp = message.timestamp;
-  const text = messageText(message);
+  const sourceText = messageText(message);
+  const text = userMessageDisplayText(message);
   const images: Array<
     { key: string; reference: string } | { key: string; src: string }
   > = [];
@@ -201,13 +203,13 @@ export const UserBubble = memo(function UserBubble({
         {text ? <RichText text={text} variant="user" /> : null}
       </div>
       <MessageActions
-        text={text}
+        text={sourceText}
         getContent={
           images.length
             ? (signal) =>
                 messageCopyContent(
                   message,
-                  text,
+                  sourceText,
                   { sessionId, viewId, projectionKey },
                   signal,
                 )

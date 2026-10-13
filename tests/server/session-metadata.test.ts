@@ -175,6 +175,31 @@ describe("SessionMetadataIndex", () => {
     expect(records[0]).not.toHaveProperty("allMessagesText");
   });
 
+  it("omits model-facing image notes from catalog titles and search", async () => {
+    const root = await directory();
+    const path = join(root, "session.jsonl");
+    const text =
+      "inspect\n\n[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]";
+    const entry = {
+      ...message("u1", "user", "", 1_767_225_602_000),
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text },
+          { type: "image", mimeType: "image/png", data: "cGl4ZWxz" },
+        ],
+      },
+    };
+    await writeFile(
+      path,
+      [header(), entry].map((value) => JSON.stringify(value)).join("\n") + "\n",
+    );
+    expect((await new SessionMetadataIndex().list(root))[0]).toMatchObject({
+      firstMessage: "inspect",
+      searchText: "inspect\n/work/project",
+    });
+  });
+
   it("reuses unchanged summaries and rescans only a changed file", async () => {
     const root = await directory();
     const path = join(root, "session.jsonl");

@@ -9,6 +9,7 @@ import {
   MAX_COMPOSER_HISTORY_ENTRIES,
   MAX_COMPOSER_HISTORY_PAGE_BYTES,
 } from "../shared/contracts.js";
+import { stripImageDimensionNotes } from "../shared/image-dimension-notes.js";
 import { parseAttachmentContext } from "./attachments.js";
 import { escapesBase } from "./paths.js";
 import { requestError } from "./request-error.js";
@@ -97,7 +98,7 @@ function userMessageEntry(
   }
 
   const parsed = parseAttachmentContext(content);
-  const text = parsed.text.trim();
+  const text = stripImageDimensionNotes(parsed.text, images.length).trim();
   const files = parsed.references.map((path, referenceIndex) =>
     historyFile(
       path,

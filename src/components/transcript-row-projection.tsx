@@ -23,6 +23,7 @@ import {
   messageKey,
   messageText,
   type ToolCallContent,
+  userMessageDisplayText,
 } from "../events";
 import type {
   ActivityMaterializationMode,
@@ -515,7 +516,7 @@ export function useTranscriptRows({
               projectionKey={projectionViewKey}
             />
           ),
-          searchText: settled ? messageText(message) : "",
+          searchText: settled ? userMessageDisplayText(message) : "",
           searchScope: "user",
           turnOrdinal: currentTurnOrdinal,
           turnId: currentTurnId,

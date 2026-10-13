@@ -1,4 +1,5 @@
 import type { UserTurnAnchor } from "./contracts.js";
+import { stripImageDimensionNotes } from "./image-dimension-notes.js";
 
 const USER_TURN_SNIPPET_CHARS = 180;
 
@@ -21,7 +22,12 @@ export function userTurnSummary(value: unknown): UserTurnSummary {
       else if (item.type === "image") attachmentCount += 1;
     }
   }
-  const normalized = text.join(" ").replace(/\s+/g, " ").trim();
+  const normalized = stripImageDimensionNotes(
+    text.join("\n\n"),
+    attachmentCount,
+  )
+    .replace(/\s+/g, " ")
+    .trim();
   const snippet = Array.from(normalized.slice(0, USER_TURN_SNIPPET_CHARS * 2))
     .slice(0, USER_TURN_SNIPPET_CHARS)
     .join("");

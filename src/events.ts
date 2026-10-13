@@ -23,6 +23,7 @@ import {
   type RetryInfo,
   type RunState,
 } from "../shared/contracts";
+import { stripImageDimensionNotes } from "../shared/image-dimension-notes";
 import { structuralMessageIdentity } from "../shared/message-identity";
 import {
   type ActivityTool,
@@ -136,6 +137,13 @@ export function messageText(message: ChatMessage): string {
     )
     .map((item) => item.text)
     .join("\n\n");
+}
+
+export function userMessageDisplayText(message: ChatMessage): string {
+  return stripImageDimensionNotes(
+    messageText(message),
+    contentItems(message).filter((item) => item.type === "image").length,
+  );
 }
 
 export function toolResultText(message: ChatMessage): string {
