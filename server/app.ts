@@ -1,4 +1,4 @@
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { isAbsolute, join, resolve } from "node:path";
@@ -72,7 +72,15 @@ import {
   type UpdateCoordinatorLike,
 } from "./update-coordinator.js";
 
-const pairSchema = z.object({ token: z.string().min(1).max(256) }).strict();
+import {
+  BrowserAuth,
+  canonicalOrigin,
+  challengeSchema,
+  exchangeSchema,
+  registrationSchema,
+  secretMatches as tokenMatches,
+  socketTicketSchema,
+} from "./browser-auth.js";
 const updateSnoozeSchema = z
   .object({
     identity: z
@@ -388,10 +396,7 @@ const PROMPT_OPERATION_RESULT_TTL_MS = 15 * 60 * 1_000;
 const PROMPT_OBSERVATION_WINDOW_MS = 20_000;
 const WEBSOCKET_HEARTBEAT_INTERVAL_MS = 20_000;
 const ACCESS_COOKIE = "inspire_access";
-const ACCESS_COOKIE_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1_000;
-
-/** Cookies are scoped by host but not by port. Derive a name per Host origin
- * so pairing another local port cannot overwrite this instance's token. */
+/** Legacy names are retained only to expire this Host\'s cookie-era credentials. */
 export function accessCookieName(host: string | undefined): string {
   const suffix = createHash("sha256")
     .update(host?.trim().toLowerCase() || "missing-host")
@@ -471,60 +476,22 @@ function bearerToken(request: Request): string | undefined {
   return value?.startsWith("Bearer ") ? value.slice(7) : undefined;
 }
 
-function accessCookieValues(
-  header: string | undefined,
-  host: string | undefined,
-): { present: boolean; values: string[] } {
-  if (!header) return { present: false, values: [] };
-  const expectedName = accessCookieName(host);
-  let present = false;
-  const values: string[] = [];
-  for (const segment of header.split(";")) {
-    const separator = segment.indexOf("=");
-    if (separator < 0 || segment.slice(0, separator).trim() !== expectedName)
-      continue;
-    present = true;
-    try {
-      values.push(decodeURIComponent(segment.slice(separator + 1).trim()));
-    } catch {
-      // A malformed stale value cannot shadow a later valid cookie with the
-      // same name. The unauthorized HTTP response expires this origin's copy.
-    }
+function expireLegacyCookies(request: Request, response: Response): void {
+  const names = new Set([ACCESS_COOKIE, accessCookieName(request.get("host"))]);
+  for (const segment of (request.get("cookie") ?? "").split(";")) {
+    const name = segment.slice(0, segment.indexOf("=")).trim();
+    if (!names.has(name)) continue;
+    response.clearCookie(name, {
+      httpOnly: true,
+      sameSite: "strict",
+      secure: request.secure,
+      path: "/",
+    });
   }
-  return { present, values };
 }
 
-function tokenMatches(
-  candidate: string | undefined,
-  expected: string,
-): boolean {
-  if (candidate === undefined) return false;
-  const left = Buffer.from(candidate);
-  const right = Buffer.from(expected);
-  return left.length === right.length && timingSafeEqual(left, right);
-}
-
-function setAccessCookie(
-  request: Request,
-  response: Response,
-  token: string,
-): void {
-  response.cookie(accessCookieName(request.get("host")), token, {
-    httpOnly: true,
-    sameSite: "strict",
-    secure: request.secure,
-    path: "/",
-    maxAge: ACCESS_COOKIE_MAX_AGE_MS,
-  });
-}
-
-function clearAccessCookie(request: Request, response: Response): void {
-  response.clearCookie(accessCookieName(request.get("host")), {
-    httpOnly: true,
-    sameSite: "strict",
-    secure: request.secure,
-    path: "/",
-  });
+function requestOrigin(request: Request): string {
+  return canonicalOrigin(request.get("host"), request.secure);
 }
 
 function originAllowed(
@@ -536,7 +503,7 @@ function originAllowed(
   if (!host) return false;
   try {
     const url = new URL(origin);
-    return url.protocol === (secure ? "https:" : "http:") && url.host === host;
+    return url.origin === canonicalOrigin(host, secure);
   } catch {
     return false;
   }
@@ -762,7 +729,12 @@ export function createInspireServer(deps: AppDependencies): {
       response.set("Cache-Control", "no-store");
     next();
   });
+  app.use((request, response, next) => {
+    expireLegacyCookies(request, response);
+    next();
+  });
   app.use(express.json({ limit: "2mb" }));
+  const browserAuth = new BrowserAuth(deps.token);
   const htmlPreviews = new HtmlPreviewStore(deps.resources, (sessionId) =>
     deps.runtime.resourceContext(sessionId),
   );
@@ -770,46 +742,75 @@ export function createInspireServer(deps: AppDependencies): {
     htmlPreviews.serve(request, response),
   );
 
-  // Pair one browser profile to this loopback host. The credential becomes an
-  // origin-scoped HttpOnly cookie; it never needs durable JavaScript storage.
-  app.post("/api/auth/pair", (request, response) => {
-    if (
-      !originAllowed(request.get("origin"), request.get("host"), request.secure)
-    ) {
-      return response.status(403).json({ error: "Origin is not allowed" });
-    }
-    const { token } = pairSchema.parse(request.body);
-    if (!tokenMatches(token, deps.token))
-      return response.status(401).json({ error: "Access token is not valid" });
-    setAccessCookie(request, response, deps.token);
-    response.status(204).end();
-  });
-
   app.use("/api", (request, response, next) => {
     if (
       !originAllowed(request.get("origin"), request.get("host"), request.secure)
-    ) {
+    )
       return response.status(403).json({ error: "Origin is not allowed" });
-    }
-    const bearer = bearerToken(request);
-    const cookies = accessCookieValues(
-      request.get("cookie"),
-      request.get("host"),
-    );
-    const bearerAuthenticated = tokenMatches(bearer, deps.token);
-    const cookieAuthenticated = cookies.values.some((candidate) =>
-      tokenMatches(candidate, deps.token),
-    );
-    if (!bearerAuthenticated && !cookieAuthenticated) {
-      if (cookies.present) clearAccessCookie(request, response);
-      return response.status(401).json({ error: "Authentication required" });
-    }
-    // Existing token URLs and non-cookie clients transparently establish the
-    // browser pairing on their first authenticated API request.
-    if (bearerAuthenticated && !cookieAuthenticated) {
-      setAccessCookie(request, response, deps.token);
-    }
     next();
+  });
+  // Registration is the only browser exchange that accepts the master token.
+  // Require an exact Origin even for read-like authentication POSTs.
+  app.use("/api/auth", (request, response, next) => {
+    if (request.get("origin") !== requestOrigin(request))
+      return response
+        .status(403)
+        .json({ error: "An exact browser Origin is required" });
+    next();
+  });
+  app.post("/api/auth/pair", (request, response) => {
+    response.json(
+      browserAuth.register(
+        requestOrigin(request),
+        registrationSchema.parse(request.body),
+      ),
+    );
+  });
+  app.post("/api/auth/challenge", (request, response) => {
+    const { certificate } = challengeSchema.parse(request.body);
+    response.json(browserAuth.challenge(requestOrigin(request), certificate));
+  });
+  app.post("/api/auth/exchange", (request, response) => {
+    const { challenge, signature } = exchangeSchema.parse(request.body);
+    response.json(
+      browserAuth.exchange(requestOrigin(request), challenge, signature),
+    );
+  });
+
+  // Native downloads cannot carry Authorization. A narrowly scoped one-use
+  // capability preserves streaming, with no file bytes buffered in JavaScript.
+  app.get("/api/resource-downloads/:ticket", async (request, response) => {
+    const origin = requestOrigin(request);
+    if (
+      request.get("origin")
+        ? request.get("origin") !== origin
+        : request.get("sec-fetch-site") !== "same-origin"
+    )
+      return response
+        .status(403)
+        .json({ error: "An exact browser origin is required" });
+    const grant = browserAuth.consumeDownload(request.params.ticket, origin);
+    await sendResourceContent(
+      request,
+      response,
+      grant.resourceId,
+      grant.sessionId,
+      true,
+    );
+  });
+
+  app.use("/api", (request, response, next) => {
+    const bearer = bearerToken(request);
+    if (
+      !tokenMatches(bearer, deps.token) &&
+      !browserAuth.accepts(bearer, requestOrigin(request))
+    )
+      return response.status(401).json({ error: "Authentication required" });
+    next();
+  });
+  app.post("/api/auth/socket-ticket", (request, response) => {
+    const { audience } = socketTicketSchema.parse(request.body);
+    response.json(browserAuth.ticket(requestOrigin(request), audience));
   });
 
   app.get("/api/health", (_request, response) => {
@@ -1538,20 +1539,51 @@ export function createInspireServer(deps: AppDependencies): {
     htmlPreviews.remove(request.params.id, sessionId);
     response.status(204).end();
   });
-  app.get("/api/resources/:id/content", async (request, response) => {
-    let closed = response.destroyed;
-    response.once("close", () => {
-      closed = true;
-    });
-    const { sessionId, download } = resourceContentSchema.parse(request.query);
-    // Handles are bound to the opaque branch view that authorized them. The
-    // current authority is rechecked before any headers or bytes are sent.
+  app.post("/api/resources/:id/download-ticket", async (request, response) => {
+    const { sessionId } = z
+      .object({ sessionId: sessionIdField })
+      .strict()
+      .parse(request.body);
     const context = await deps.runtime.resourceContext(sessionId);
     const resource = deps.resources.get(
       request.params.id,
       sessionId,
       context.viewId,
     );
+    await deps.resources.revalidate(resource, context);
+    response.json(
+      browserAuth.downloadTicket(
+        requestOrigin(request),
+        request.params.id,
+        sessionId,
+      ),
+    );
+  });
+  app.get("/api/resources/:id/content", async (request, response) => {
+    const { sessionId, download } = resourceContentSchema.parse(request.query);
+    await sendResourceContent(
+      request,
+      response,
+      request.params.id,
+      sessionId,
+      download === "1",
+    );
+  });
+  async function sendResourceContent(
+    request: Request,
+    response: Response,
+    resourceId: string,
+    sessionId: string,
+    download: boolean,
+  ): Promise<void> {
+    let closed = response.destroyed;
+    response.once("close", () => {
+      closed = true;
+    });
+    // Handles are bound to the opaque branch view that authorized them. The
+    // current authority is rechecked before any headers or bytes are sent.
+    const context = await deps.runtime.resourceContext(sessionId);
+    const resource = deps.resources.get(resourceId, sessionId, context.viewId);
     await deps.resources.revalidate(resource, context);
     if (closed || response.destroyed) return;
     const setResourceHeaders = (
@@ -1594,7 +1626,7 @@ export function createInspireServer(deps: AppDependencies): {
         .status(404)
         .json({ error: "The resource preview is no longer available" });
     }
-  });
+  }
 
   app.get("/api/preferences", async (_request, response) =>
     response.json(await deps.preferences.read()),
@@ -1698,27 +1730,30 @@ export function createInspireServer(deps: AppDependencies): {
 
   const distDir = resolve(deps.distDir ?? "dist");
   if (existsSync(distDir)) {
-    // A direct local launcher may pair before the application bundle runs,
-    // then removes the bearer from browser history. An HTTPS request forwarded
-    // through a trusted loopback proxy still strips this parameter, but must
-    // use the ordinary Pair form rather than treating a public URL as a bearer.
+    // Replace the direct launch master token with a one-use, origin-bound
+    // transfer in the fragment. Fragments never reach HTTP/referrers; the bundle
+    // removes it from history before registering its origin-stored browser key.
+    // HTTPS proxy launches strip query credentials without pairing.
     app.get("/", (request, response, next) => {
       const candidate =
         typeof request.query.token === "string"
           ? request.query.token
           : undefined;
       if (candidate === undefined) return next();
-      if (
+      const bootstrap =
         !trustedForwardedHttps(request) &&
+        !request.secure &&
+        isLoopbackAddress(request.socket.remoteAddress) &&
         tokenMatches(candidate, deps.token)
-      ) {
-        setAccessCookie(request, response, deps.token);
-      }
+          ? browserAuth.bootstrap(requestOrigin(request))
+          : null;
       const clean = new URL(
         request.originalUrl,
         `http://${request.get("host") ?? "127.0.0.1"}`,
       );
       clean.searchParams.delete("token");
+      clean.hash = bootstrap ? `inspire-bootstrap=${bootstrap}` : "";
+      response.set("Cache-Control", "no-store");
       response.redirect(
         303,
         `${clean.pathname}${clean.search}${clean.hash}` || "/",
@@ -1782,35 +1817,42 @@ export function createInspireServer(deps: AppDependencies): {
       socket.destroy();
       return;
     }
-    const queryToken = url.searchParams.get("token") ?? undefined;
-    const pairedTokens = accessCookieValues(
-      request.headers.cookie,
-      request.headers.host,
-    ).values;
-    const cookieAuthenticated = pairedTokens.some((candidate) =>
-      tokenMatches(candidate, deps.token),
-    );
-    const forwardedHttps = trustedForwardedHttps(request);
-    const eventsAuthenticated =
-      cookieAuthenticated ||
-      (!forwardedHttps && tokenMatches(queryToken, deps.token));
-    const originIsAllowed = originAllowed(
-      request.headers.origin,
-      request.headers.host,
-      forwardedHttps,
-    );
-
-    if (
-      url.pathname === "/terminal" &&
-      deps.terminal &&
-      cookieAuthenticated &&
-      request.headers.origin !== undefined &&
-      originIsAllowed
-    ) {
+    let origin: string;
+    try {
+      origin = canonicalOrigin(
+        request.headers.host,
+        trustedForwardedHttps(request),
+      );
+    } catch {
+      socket.destroy();
+      return;
+    }
+    const audience = url.pathname.slice(1);
+    const browserAuthenticated =
+      request.headers.origin === origin &&
+      browserAuth.consumeTicket(
+        url.searchParams.get("ticket"),
+        origin,
+        audience,
+      );
+    // Trusted non-browser clients can supply an explicit header, never a URL
+    // token. Browsers must use exact-origin, audience-bound single-use tickets.
+    const explicitAuthenticated =
+      request.headers.origin === undefined &&
+      tokenMatches(
+        request.headers.authorization?.startsWith("Bearer ")
+          ? request.headers.authorization.slice(7)
+          : undefined,
+        deps.token,
+      );
+    if (url.pathname === "/terminal" && deps.terminal && browserAuthenticated) {
       terminalGateway.upgrade(request, socket, head);
       return;
     }
-    if (url.pathname === "/events" && eventsAuthenticated && originIsAllowed) {
+    if (
+      url.pathname === "/events" &&
+      (browserAuthenticated || explicitAuthenticated)
+    ) {
       runtimeEvents.upgrade(request, socket, head, url);
       return;
     }

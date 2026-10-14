@@ -10,6 +10,7 @@ import {
 import { structuralMessageIdentity } from "../../shared/message-identity";
 import { eventsUrl, HTTP_OBSERVATION_TIMEOUT_MS } from "../api";
 import type { WireEvent } from "../events";
+import { socketTicket } from "../browser-auth";
 import { recordTransportMeasure, transportNow } from "../transport-performance";
 
 export const SOCKET_CONNECT_TIMEOUT_MS = 10_000;
@@ -155,6 +156,7 @@ function authoritativeSnapshot(
  */
 export class ConnectionController {
   private socket: WebSocket | null = null;
+  private socketRequest = 0;
   private socketPhase: "bootstrap" | "resume" | null = null;
   private detailSessionId: string | null = null;
   private detailRevision = 0;
@@ -181,12 +183,12 @@ export class ConnectionController {
 
   constructor(private readonly host: ConnectionControllerHost) {}
 
-  connect(token: string | null): void {
+  connect(token: string | null): Promise<void> {
     this.started = true;
     this.token = token;
     this.reconnectPending = false;
     this.scheduledReconnectKind = null;
-    this.openSocket(token, "bootstrap");
+    return this.openSocket(token, "bootstrap");
   }
 
   /** Selection commits keep the global stream alive, but fence its detail
@@ -224,10 +226,11 @@ export class ConnectionController {
     );
   }
 
-  private openSocket(
+  private async openSocket(
     token: string | null,
     phase: "bootstrap" | "resume",
-  ): void {
+  ): Promise<void> {
+    const request = ++this.socketRequest;
     const handshakeStartedAt = transportNow();
     this.reconnectPending = false;
     this.clearReconnectTimer();
@@ -243,6 +246,15 @@ export class ConnectionController {
       this.host.onTransportReplaced();
       previous.close();
     }
+    let ticket: string;
+    try {
+      ticket = await socketTicket("events");
+    } catch {
+      if (this.started && request === this.socketRequest)
+        this.scheduleReconnectAfterDelay(token, "bootstrap");
+      return;
+    }
+    if (!this.started || request !== this.socketRequest) return;
     const state = this.host.state();
     this.host.patch({
       connection: state.bootstrapped ? "reconnecting" : "connecting",
@@ -250,7 +262,7 @@ export class ConnectionController {
     this.detailSessionId = state.sessionId;
     this.detailRevision = 0;
     const socket = new WebSocket(
-      eventsUrl(token, state.snapshotDigest ?? null, state.sessionId),
+      eventsUrl(ticket, state.snapshotDigest ?? null, state.sessionId),
     );
     this.socket = socket;
     this.socketPhase = phase;
@@ -375,6 +387,7 @@ export class ConnectionController {
   }
 
   stop(): void {
+    this.socketRequest += 1;
     this.started = false;
     this.token = null;
     this.reconnectPending = false;
@@ -457,7 +470,7 @@ export class ConnectionController {
     if (!this.started || this.reconnectPending) return;
     this.scheduledReconnectKind = null;
     if (kind === "resume") {
-      this.openSocket(this.token, "resume");
+      void this.openSocket(this.token, "resume");
       return;
     }
     this.reconnectPending = true;

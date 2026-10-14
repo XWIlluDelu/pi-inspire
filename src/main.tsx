@@ -7,9 +7,8 @@ import { WindowTitlebar } from "./components/WindowTitlebar";
 import { store } from "./store";
 import "./styles.css";
 
-// A launch URL token exists only for this pairing attempt and is stripped
-// before render. Ordinary PWA launches authenticate with the host-owned
-// HttpOnly pairing cookie.
+// Strip a one-use launch transfer before render. Ordinary PWA launches use the
+// origin-stored non-extractable browser key, never a persistent bearer/cookie.
 const initialization = store.init(resolveToken());
 
 // Browser freezes and network changes can strand an apparently open socket

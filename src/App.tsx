@@ -13,7 +13,7 @@ import {
 } from "react";
 import { isAbortableRunState, type ThemePreference } from "../shared/contracts";
 import type { ModelSettingsDestination } from "../shared/model-settings";
-import { ApiError, pairHost } from "./api";
+import { pairHost } from "./api";
 import { ActivityBar } from "./components/ActivityBar";
 import { AppTopbar } from "./components/AppTopbar";
 import { CommandActivity } from "./components/CommandActivity";
@@ -172,8 +172,8 @@ function TokenGate() {
               .then(() => store.init(null))
               .catch((reason: unknown) => {
                 setError(
-                  reason instanceof ApiError && reason.status === 401
-                    ? "That access token does not match this host."
+                  reason instanceof Error
+                    ? reason.message
                     : "The host became unavailable before pairing completed.",
                 );
               })

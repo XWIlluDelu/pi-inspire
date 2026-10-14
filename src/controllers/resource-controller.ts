@@ -69,6 +69,7 @@ interface ResourceControllerHost {
    * merely to a session/view/revision projection. */
   transportGeneration(): number;
   handleAuthFailure(): void;
+  saveDownload(url: string, name: string): void;
   prepareGitForResourceOpen(contextMode: "files" | "changes"): () => boolean;
   selectWorkspacePath(workspacePath: string, reveal?: boolean): void;
 }
@@ -83,6 +84,7 @@ export class ResourceController {
   private previewObjectUrl: string | null = null;
   private resourceRequest: AbortController | null = null;
   private documentImageRequests = new Set<AbortController>();
+  private downloadRequests = new Set<AbortController>();
   private resourceProbeRequest: AbortController | null = null;
   private resourceProbeKey: string | null = null;
   private resourceProbedReferences = new Set<string>();
@@ -95,6 +97,8 @@ export class ResourceController {
     this.resourceRequest = null;
     for (const request of this.documentImageRequests) request.abort();
     this.documentImageRequests.clear();
+    for (const request of this.downloadRequests) request.abort();
+    this.downloadRequests.clear();
   }
 
   cancelProbes(clearStanding = false): void {
@@ -558,6 +562,60 @@ export class ResourceController {
     } finally {
       signal.removeEventListener("abort", abort);
       this.documentImageRequests.delete(request);
+    }
+  }
+
+  /** Mint a single-file capability only while the selected preview still owns
+   * the session/view/transport. The browser streams the complete original file. */
+  async downloadResource(): Promise<void> {
+    const api = this.host.api();
+    const generation = this.host.transportGeneration();
+    const {
+      sessionId,
+      transcriptViewId: viewId,
+      resourcePreview: preview,
+    } = this.host.state();
+    if (!api || !sessionId || !viewId || preview?.status !== "ready") return;
+    const { descriptor } = preview;
+    const request = new AbortController();
+    this.downloadRequests.add(request);
+    const checkCurrent = () => {
+      const state = this.host.state();
+      if (
+        request.signal.aborted ||
+        !this.ownsTransport(api, generation) ||
+        state.sessionId !== sessionId ||
+        state.transcriptViewId !== viewId ||
+        !state.resourcesOpen ||
+        state.fileBrowserView !== "preview" ||
+        state.resourcePreview?.status !== "ready" ||
+        state.resourcePreview.descriptor.id !== descriptor.id
+      )
+        throw Object.assign(new Error("The file selection changed"), {
+          name: "AbortError",
+        });
+    };
+    try {
+      checkCurrent();
+      const grant = await api.resourceDownloadTicket(
+        descriptor.id,
+        sessionId,
+        request.signal,
+      );
+      checkCurrent();
+      if (!/^[A-Za-z0-9_-]{43}$/.test(grant.ticket))
+        throw new Error("The Host returned an invalid download ticket");
+      this.host.saveDownload(
+        `/api/resource-downloads/${grant.ticket}`,
+        descriptor.name,
+      );
+    } catch (error) {
+      checkCurrent();
+      if (error instanceof ApiError && error.status === 401)
+        this.host.handleAuthFailure();
+      throw error;
+    } finally {
+      this.downloadRequests.delete(request);
     }
   }
 

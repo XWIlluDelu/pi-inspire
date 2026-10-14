@@ -1,3 +1,4 @@
+import { hostRequest } from "./support/host-request";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test, type WebSocketRoute } from "@playwright/test";
 import type {
@@ -90,7 +91,7 @@ async function openExample(page: Page, theme: "light" | "dark") {
     await route.fulfill({ json: { ok: true } });
   });
   await pairedPage(page);
-  const created = await page.request.post("/api/sessions/new", {
+  const created = await hostRequest(page).post("/api/sessions/new", {
     data: { cwd: browserWorkspace, name: "Native UI example" },
   });
   expect(created.ok()).toBe(true);

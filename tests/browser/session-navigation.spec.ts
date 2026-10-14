@@ -1,3 +1,4 @@
+import { hostRequest } from "./support/host-request";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import {
@@ -7,9 +8,9 @@ import {
 } from "./support/navigation";
 
 async function preserveCuration(page: Page) {
-  const before = await (await page.request.get("/api/preferences")).json();
+  const before = await (await hostRequest(page).get("/api/preferences")).json();
   return async () => {
-    const restored = await page.request.patch("/api/preferences", {
+    const restored = await hostRequest(page).patch("/api/preferences", {
       data: {
         pinnedSessionIds: before.pinnedSessionIds,
         hiddenSessionIds: before.hiddenSessionIds,
@@ -41,7 +42,7 @@ test("session search paginates unloaded results and keyboard selection preserves
       .click();
     const first = page.getByRole("textbox", { name: "First message" });
     await first.fill("SESSION_SEARCH_START_DRAFT");
-    const response = await page.request.get(
+    const response = await hostRequest(page).get(
       "/api/sessions?q=&offset=0&limit=40",
     );
     const catalog = (await response.json()).sessions as Array<{ id: string }>;

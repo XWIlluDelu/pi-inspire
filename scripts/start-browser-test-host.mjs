@@ -80,7 +80,9 @@ const child = spawn(
       XDG_CONFIG_HOME: resolve(home, "config"),
       XDG_STATE_HOME: resolve(home, "state"),
       XDG_RUNTIME_DIR: resolve(home, "runtime"),
-      INSPIRE_INSTALLATION_ROOT: resolve("."),
+      INSPIRE_INSTALLATION_ROOT: resolve(
+        process.env.INSPIRE_BROWSER_TEST_ROOT ?? ".",
+      ),
       INSPIRE_TOKEN: "inspire-browser-test-token",
       INSPIRE_PI_COMMAND: testPiCommand,
       INSPIRE_MOCK: "1",

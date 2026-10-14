@@ -128,7 +128,7 @@ describe("websocket lifecycle", () => {
 
   beforeEach(() => installFakeWebSocket());
 
-  it("uses the host pairing cookie without retaining a bearer in the PWA window", async () => {
+  it("delegates browser authentication to the transport and opens only ticketed sockets", async () => {
     const fetch = installFetch(baseRoutes);
     const store = new AppStore();
     await store.init(null);
@@ -140,11 +140,11 @@ describe("websocket lifecycle", () => {
     expect(bootstrapCall?.[1]).toMatchObject({ credentials: "same-origin" });
     expect(bootstrapCall?.[1]?.headers).not.toHaveProperty("Authorization");
     expect(socket.url).toBe(
-      `ws://localhost:3000/events?snapshot=${TEST_SNAPSHOT_DIGEST}&detail=s1`,
+      `ws://localhost:3000/events?ticket=fixture-socket-ticket&snapshot=${TEST_SNAPSHOT_DIGEST}&detail=s1`,
     );
   });
 
-  it("retires a launch bearer after bootstrap establishes the pairing cookie", async () => {
+  it("retires an explicit one-shot credential after bootstrap", async () => {
     const fetch = installFetch(baseRoutes);
     const store = new AppStore();
     await store.init("launch-token");
@@ -164,7 +164,7 @@ describe("websocket lifecycle", () => {
       sessionCalls.every(([, init]) => requestToken(init ?? {}) === null),
     ).toBe(true);
     expect(FakeWebSocket.instances.at(-1)?.url).toBe(
-      `ws://localhost:3000/events?snapshot=${TEST_SNAPSHOT_DIGEST}&detail=s1`,
+      `ws://localhost:3000/events?ticket=fixture-socket-ticket&snapshot=${TEST_SNAPSHOT_DIGEST}&detail=s1`,
     );
   });
 
@@ -196,7 +196,7 @@ describe("websocket lifecycle", () => {
     });
     expect(FakeWebSocket.instances).toHaveLength(1);
     expect(FakeWebSocket.instances[0]?.url).toBe(
-      `ws://localhost:3000/events?snapshot=${TEST_SNAPSHOT_DIGEST}&detail=new-session`,
+      `ws://localhost:3000/events?ticket=fixture-socket-ticket&snapshot=${TEST_SNAPSHOT_DIGEST}&detail=new-session`,
     );
   });
 
@@ -226,7 +226,7 @@ describe("websocket lifecycle", () => {
     });
     expect(FakeWebSocket.instances).toHaveLength(1);
     expect(FakeWebSocket.instances[0]?.url).toBe(
-      `ws://localhost:3000/events?snapshot=${TEST_SNAPSHOT_DIGEST}&detail=fresh-session`,
+      `ws://localhost:3000/events?ticket=fixture-socket-ticket&snapshot=${TEST_SNAPSHOT_DIGEST}&detail=fresh-session`,
     );
   });
 

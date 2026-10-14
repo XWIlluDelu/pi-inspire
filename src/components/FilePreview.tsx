@@ -367,13 +367,6 @@ export function ResourcePreviewContent({
   );
 }
 
-function downloadHref(
-  descriptor: ResourceDescriptor,
-  sessionId: string,
-): string {
-  return `/api/resources/${encodeURIComponent(descriptor.id)}/content?sessionId=${encodeURIComponent(sessionId)}&download=1`;
-}
-
 export function FilePreview({ state }: { state: ContextPaneView }) {
   const preview = state.resourcePreview;
   const descriptor = preview?.status === "ready" ? preview.descriptor : null;
@@ -421,6 +414,26 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
     state.fileBrowserView,
     viewMode,
   ].join("|");
+  const [download, setDownload] = useState<{
+    scope: string;
+    pending: boolean;
+    error?: string;
+  } | null>(null);
+  const currentDownload = download?.scope === htmlScope ? download : null;
+  const downloadResource = async () => {
+    setDownload({ scope: htmlScope, pending: true });
+    try {
+      await store.downloadResource();
+      setDownload({ scope: htmlScope, pending: false });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") return;
+      setDownload({
+        scope: htmlScope,
+        pending: false,
+        error: error instanceof Error ? error.message : "Download failed",
+      });
+    }
+  };
   const interactionGeneration = useRef(0);
   const interactionLease = useRef<{ release: () => void } | null>(null);
   const [interaction, setInteraction] = useState<{
@@ -490,10 +503,6 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
       request: (previous?.request ?? 0) + 1,
     }));
   }, [descriptor?.id, lineCount, referencedLine]);
-  const href =
-    descriptor && state.sessionId
-      ? downloadHref(descriptor, state.sessionId)
-      : null;
   return (
     <div className="file-preview">
       <div className="file-detail-header">
@@ -501,16 +510,17 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
           <PathCopyButton path={displayPath} />
         </div>
         <div className="file-detail-header__actions">
-          {href && descriptor ? (
-            <a
+          {descriptor && state.sessionId ? (
+            <button
+              type="button"
               className="icon-button"
               aria-label={`Download ${descriptor.name}`}
               title="Download"
-              href={href}
-              download={descriptor.name}
+              disabled={currentDownload?.pending}
+              onClick={() => void downloadResource()}
             >
               <Download size={14} aria-hidden />
-            </a>
+            </button>
           ) : (
             <button
               type="button"
@@ -552,6 +562,11 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
         </div>
       </div>
       <div className="file-preview__content">
+        {currentDownload?.error ? (
+          <div className="file-preview__notice" role="status">
+            {currentDownload.error}
+          </div>
+        ) : null}
         {currentInteraction?.error ? (
           <div className="file-preview__notice" role="status">
             {currentInteraction.error}

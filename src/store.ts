@@ -162,11 +162,16 @@ function terminalCommandGuidance(command: string): string {
 
 function downloadExportBlob(blob: Blob, fileName: string): void {
   const url = URL.createObjectURL(blob);
+  downloadFileUrl(url, fileName);
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
+function downloadFileUrl(url: string, fileName: string): void {
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = fileName;
+  anchor.rel = "noreferrer";
   anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 export class AppStore {
@@ -185,6 +190,7 @@ export class AppStore {
   /** ResourceController owns request lifecycles only. AppStore supplies every
    * state read/write, so it remains the one browser snapshot authority. */
   private readonly resources: ResourceController = new ResourceController({
+    saveDownload: downloadFileUrl,
     state: () => this.state,
     patch: (patch) => this.set(patch),
     api: () => this.api,
@@ -702,10 +708,8 @@ export class AppStore {
           undefined,
           "INVALID_BOOTSTRAP_AUTHORITY",
         );
-      // Bootstrap has either confirmed the existing pairing cookie or set one
-      // from the one-shot launch bearer. All continuing browser authority is
-      // cookie-backed; in particular, a forwarded WebSocket must never inherit
-      // a query token from a page that survived a Host upgrade.
+      // Browser authority now belongs to the origin-key transport. Never retain
+      // an explicit launch credential in the store or a WebSocket URL.
       api.retireBearer();
       this.authToken = null;
       reconnectToken = null;
@@ -751,7 +755,7 @@ export class AppStore {
         this.notify("warning", boot.preferencesWarning);
       if (boot.toolPresentationsWarning)
         this.notify("warning", boot.toolPresentationsWarning);
-      this.connectionController.connect(reconnectToken);
+      void this.connectionController.connect(reconnectToken);
       void this.loadSessions(this.state.sessionQuery).then(() => {
         if (!ownsBootstrap()) return;
         // The remembered launch preference applies once per store lifetime so
@@ -2982,6 +2986,8 @@ export class AppStore {
     this.resources.loadDocumentImage(documentId, reference, signal);
 
   createHtmlPreview = () => this.resources.createHtmlPreview();
+
+  downloadResource = () => this.resources.downloadResource();
 
   loadAttachmentImage = (id: string, signal: AbortSignal): Promise<Blob> => {
     if (!this.api) return Promise.reject(new Error("The Host is unavailable"));

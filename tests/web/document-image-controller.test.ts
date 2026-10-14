@@ -60,6 +60,7 @@ function fixture() {
     transportGeneration: () => generation,
     patch: vi.fn(),
     handleAuthFailure: vi.fn(),
+    saveDownload: vi.fn(),
     prepareGitForResourceOpen: vi.fn(),
     selectWorkspacePath: vi.fn(),
   };

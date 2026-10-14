@@ -1,3 +1,4 @@
+import { hostRequest } from "./support/host-request";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import {
@@ -28,7 +29,7 @@ test("project terminals survive browser detach and keep multiple tabs", async ({
   const emptyTerminal = page.locator(".terminal-empty");
   await emptyTerminal.getByRole("button", { name: "New terminal" }).click();
   const readTerminals = async () => {
-    const response = await page.request.get(
+    const response = await hostRequest(page).get(
       `/api/terminals?cwd=${encodeURIComponent(browserWorkspace)}`,
     );
     expect(response.ok()).toBe(true);
@@ -139,7 +140,7 @@ test("project terminals survive browser detach and keep multiple tabs", async ({
     await focusedPage.close();
   } finally {
     for (const terminalId of terminalIds) {
-      const response = await page.request.delete(
+      const response = await hostRequest(page).delete(
         `/api/terminals/${encodeURIComponent(terminalId)}?force=1`,
         { headers: await terminalMutationHeaders(page) },
       );
@@ -178,7 +179,7 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
   });
   await pairedPage(page);
   await openMockSession(page, /Review extension event lifecycle/);
-  const created = await page.request.post("/api/terminals", {
+  const created = await hostRequest(page).post("/api/terminals", {
     headers: await terminalMutationHeaders(page),
     data: { cwd: browserWorkspace },
   });
@@ -284,7 +285,7 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
       }
     }
   } finally {
-    await page.request.delete(
+    await hostRequest(page).delete(
       `/api/terminals/${encodeURIComponent(terminal.id)}?force=1`,
       { headers: await terminalMutationHeaders(page) },
     );
@@ -578,7 +579,7 @@ test.describe("touch terminal", () => {
     await page.getByRole("button", { name: "Toggle navigation" }).tap();
     await openMockSession(page, /Review extension event lifecycle/);
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    const response = await page.request.post("/api/terminals", {
+    const response = await hostRequest(page).post("/api/terminals", {
       headers: await terminalMutationHeaders(page),
       data: { cwd: browserWorkspace },
     });
@@ -828,7 +829,7 @@ test.describe("touch terminal", () => {
       await expect(page.locator(".ctx")).toBeVisible();
       await expect(input).not.toBeFocused();
     } finally {
-      await page.request.delete(
+      await hostRequest(page).delete(
         `/api/terminals/${encodeURIComponent(terminal.id)}?force=1`,
         { headers: await terminalMutationHeaders(page) },
       );

@@ -1,3 +1,4 @@
+import { hostRequest } from "./support/host-request";
 import { expect, test } from "@playwright/test";
 import {
   type ActiveSnapshot,
@@ -119,7 +120,7 @@ for (const viewport of [
         .click();
 
     emptyCatalog = false;
-    const created = await page.request.post("/api/sessions/new", {
+    const created = await hostRequest(page).post("/api/sessions/new", {
       data: { cwd: browserWorkspace, name: "Empty-state fixture" },
     });
     expect(created.ok()).toBe(true);

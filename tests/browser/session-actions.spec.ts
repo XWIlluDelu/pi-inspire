@@ -1,3 +1,4 @@
+import { hostRequest } from "./support/host-request";
 import { readFile } from "node:fs/promises";
 import { expect, type Page, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
@@ -7,7 +8,7 @@ test.use({ serviceWorkers: "block" });
 async function namedSession(page: Page) {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairedPage(page);
-  const response = await page.request.post("/api/sessions/new", {
+  const response = await hostRequest(page).post("/api/sessions/new", {
     data: {
       cwd: browserWorkspace,
       name: "Calibration notes for this session with a long title covering model selection, tool execution, and follow-up analysis",

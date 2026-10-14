@@ -1,3 +1,4 @@
+import { hostRequest } from "./support/host-request";
 import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +17,7 @@ for (const width of [980, 390]) {
       const directory = join(root, "projects", "new-project");
       try {
         await pairedPage(page);
-        await page.request.post("/api/sessions/deselect");
+        await hostRequest(page).post("/api/sessions/deselect");
         await page.reload();
         const message = page.getByRole("textbox", { name: "First message" });
         await expect(message).toBeVisible();
@@ -69,7 +70,9 @@ for (const width of [980, 390]) {
           page.getByRole("textbox", { name: "Message", exact: true }),
         ).toBeVisible();
         expect((await stat(directory)).isDirectory()).toBe(true);
-        const snapshot = await (await page.request.get("/api/snapshot")).json();
+        const snapshot = await (
+          await hostRequest(page).get("/api/snapshot")
+        ).json();
         expect(snapshot.active.cwd).toBe(await realpath(directory));
       } finally {
         await rm(root, { recursive: true, force: true });

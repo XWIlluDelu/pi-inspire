@@ -1,3 +1,4 @@
+import { hostRequest } from "./support/host-request";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
@@ -1168,7 +1169,7 @@ test("saved tool images and full logs reopen through the authorized viewers on d
       await expect(
         page.getByRole("region", { name: "File source", exact: true }),
       ).toContainText("native line 2500");
-      const content = await page.request.get(
+      const content = await hostRequest(page).get(
         `${url}/api/resources/${descriptor.id}/content?sessionId=${fixture.record.id}`,
       );
       expect(content.ok()).toBe(true);

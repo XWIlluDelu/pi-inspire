@@ -8,11 +8,12 @@ import {
   supportsPosixPermissions,
 } from "./platform-paths.mjs";
 
-const TOKEN_LENGTH = 64;
+const TOKEN_LENGTH = 86;
 const TOKEN_PATTERN = new RegExp(`^[A-Za-z0-9_-]{${TOKEN_LENGTH}}$`);
-// Earlier releases generated 32 or 96 random bytes, which encode to 43 or
-// 128 base64url characters. Retire either generation on the next host start.
-const LEGACY_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$|^[A-Za-z0-9_-]{128}$/;
+// Retire all cookie-era generated tokens, including the 64-character generation.
+// A distinct length makes migration one-time without changing plain .token readers.
+const LEGACY_TOKEN_PATTERN =
+  /^[A-Za-z0-9_-]{43}$|^[A-Za-z0-9_-]{64}$|^[A-Za-z0-9_-]{128}$/;
 const PRIVATE_FILE_MODE = 0o600;
 const PRIVATE_DIRECTORY_MODE = 0o700;
 
@@ -90,8 +91,8 @@ async function readPrivateToken(path: string): Promise<StoredToken> {
 }
 
 function generateToken(): string {
-  // 48 random bytes encode to exactly 64 base64url characters (384 bits).
-  return randomBytes(48).toString("base64url");
+  // 64 random bytes encode to 86 base64url characters (512 bits).
+  return randomBytes(64).toString("base64url");
 }
 
 async function writeTemporaryToken(

@@ -10,6 +10,7 @@ import {
   MAX_TERMINAL_INPUT_BYTES,
 } from "../shared/terminal-contracts";
 import { type Api, terminalUrl } from "./api";
+import { socketTicket } from "./browser-auth";
 
 export type TerminalTransportStatus =
   | "connecting"
@@ -181,7 +182,9 @@ export class TerminalConnection {
       if (this.stopped || generation !== this.generation) return;
       this.ticketRequest = null;
       this.armDeadline(CONNECT_TIMEOUT_MS, "Terminal connection timed out");
-      const socket = new WebSocket(terminalUrl());
+      const admission = await socketTicket("terminal");
+      if (this.stopped || generation !== this.generation) return;
+      const socket = new WebSocket(terminalUrl(admission));
       socket.binaryType = "arraybuffer";
       this.socket = socket;
       socket.addEventListener("open", () => {

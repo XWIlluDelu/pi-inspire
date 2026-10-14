@@ -1,6 +1,18 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
-import { afterEach } from "vitest";
+import { afterEach, vi } from "vitest";
+
+// UI/receipt tests start at the authenticated transport boundary. Cryptographic
+// protocol/isolation is exercised by browser-auth server and Chromium tests.
+vi.mock("../../src/browser-auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/browser-auth")>()),
+  authenticatedFetch: (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+    transport: typeof fetch = fetch,
+  ) => transport(input, init),
+  socketTicket: vi.fn(async () => "fixture-socket-ticket"),
+}));
 
 class ResizeObserverStub {
   observe(): void {}

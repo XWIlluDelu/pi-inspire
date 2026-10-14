@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { socketTicket } from "../../src/browser-auth";
 import { MAX_ASSISTANT_STREAM_BATCH_EVENTS } from "../../shared/assistant-stream";
 import {
   ConnectionController,
@@ -82,13 +83,53 @@ afterEach(() => {
 });
 
 describe("ConnectionController", () => {
-  it("keeps socket-local interest through selection, stale snapshots, and resume", () => {
+  it("backs off ticket failures and fences stale or stopped admissions", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
+    const { controller, host } = harness();
+    const admission = vi.mocked(socketTicket);
+    const original = admission.getMockImplementation();
+    admission.mockRejectedValueOnce(new Error("503"));
+    await controller.connect(null);
+    expect(host.reconnect).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(host.reconnect).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(host.reconnect).toHaveBeenCalledOnce();
+    let complete!: (ticket: string) => void;
+    admission.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    const stale = controller.connect(null);
+    await controller.connect(null);
+    expect(ImmediateCloseSocket.instances).toHaveLength(1);
+    complete("stale");
+    await stale;
+    expect(ImmediateCloseSocket.instances).toHaveLength(1);
+    admission.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    const stopped = controller.connect(null);
+    controller.stop();
+    complete("stopped");
+    await stopped;
+    expect(ImmediateCloseSocket.instances).toHaveLength(1);
+    if (original) admission.mockImplementation(original);
+  });
+
+  it("keeps socket-local interest through selection, stale snapshots, and resume", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
     const state = { ...host.state(), sessionId: "a" as string | null };
     host.state.mockImplementation(() => state);
-    controller.connect(null);
+    await controller.connect(null);
     const socket = ImmediateCloseSocket.instances[0];
     expect(new URL(socket.url).searchParams.get("detail")).toBe("a");
     socket.open();
@@ -114,19 +155,19 @@ describe("ConnectionController", () => {
     socket.emit({ ...snapshot, detailSessionId: null, detailRevision: 2 });
     expect(socket.closeCount).toBe(0);
     socket.close();
-    vi.advanceTimersByTime(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(
       new URL(ImmediateCloseSocket.instances[1].url).searchParams.get("detail"),
     ).toBe("");
     expect(host.reconnect).not.toHaveBeenCalled();
   });
 
-  it("sends a selection committed while the handshake was still connecting", () => {
+  it("sends a selection committed while the handshake was still connecting", async () => {
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
     const state = { ...host.state() };
     host.state.mockImplementation(() => state);
-    controller.connect(null);
+    await controller.connect(null);
     state.sessionId = "new-owner";
     controller.updateDetailInterest();
     const socket = ImmediateCloseSocket.instances[0];
@@ -138,49 +179,50 @@ describe("ConnectionController", () => {
     });
   });
 
-  it("detaches a replaced socket before an eager close callback can reconnect", () => {
+  it("detaches a replaced socket before an eager close callback can reconnect", async () => {
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
 
-    controller.connect("first");
+    await controller.connect("first");
     const first = ImmediateCloseSocket.instances[0]!;
-    controller.connect("second");
+    await controller.connect("second");
 
     expect(host.onTransportReplaced).toHaveBeenCalledOnce();
     expect(host.onTransportClosed).not.toHaveBeenCalled();
     expect(host.reconnect).not.toHaveBeenCalled();
     expect(ImmediateCloseSocket.instances).toHaveLength(2);
-    expect(first.url).toContain("token=first");
+    expect(first.url).toContain("ticket=fixture-socket-ticket");
+    expect(first.url).not.toContain("token=");
   });
 
-  it("tries one lightweight resume before falling back to bootstrap", () => {
+  it("tries one lightweight resume before falling back to bootstrap", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
 
-    controller.connect("retry-token");
+    await controller.connect("retry-token");
     ImmediateCloseSocket.instances[0]!.onclose?.();
 
     expect(host.onTransportClosed).toHaveBeenCalledOnce();
-    vi.advanceTimersByTime(999);
+    await vi.advanceTimersByTimeAsync(999);
     expect(ImmediateCloseSocket.instances).toHaveLength(1);
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(host.reconnect).not.toHaveBeenCalled();
     expect(ImmediateCloseSocket.instances).toHaveLength(2);
 
     ImmediateCloseSocket.instances[1]!.onclose?.();
-    vi.advanceTimersByTime(1_999);
+    await vi.advanceTimersByTimeAsync(1_999);
     expect(host.reconnect).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(host.reconnect).toHaveBeenCalledWith("retry-token");
   });
 
-  it("opens from an unchanged runtime snapshot after applying its out-of-band witness", () => {
+  it("opens from an unchanged runtime snapshot after applying its out-of-band witness", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
 
-    controller.connect("token");
+    await controller.connect("token");
     ImmediateCloseSocket.instances[0]!.emit({
       type: "snapshot",
       authorityId,
@@ -198,12 +240,12 @@ describe("ConnectionController", () => {
     });
   });
 
-  it("keeps Host-wide update events outside the runtime snapshot digest", () => {
+  it("keeps Host-wide update events outside the runtime snapshot digest", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
 
-    controller.connect("token");
+    await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
     socket.emit(snapshot);
     host.invalidateSnapshotDigest.mockClear();
@@ -216,12 +258,12 @@ describe("ConnectionController", () => {
     expect(host.invalidateSnapshotDigest).not.toHaveBeenCalled();
   });
 
-  it("publishes open only after applying the authoritative first snapshot", () => {
+  it("publishes open only after applying the authoritative first snapshot", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
 
-    controller.connect("token");
+    await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
     socket.open();
     expect(host.patch).not.toHaveBeenCalledWith({
@@ -240,40 +282,43 @@ describe("ConnectionController", () => {
     expect(host.applyEvent).toHaveBeenCalledTimes(1);
   });
 
-  it.each([false, true])("bounds a blackhole (socket opened: %s)", (opened) => {
-    vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
-    const { controller, host } = harness();
-    controller.connect("token");
-    const socket = ImmediateCloseSocket.instances[0]!;
-    if (opened) socket.open();
-    const deadline = opened
-      ? FIRST_SNAPSHOT_TIMEOUT_MS
-      : SOCKET_CONNECT_TIMEOUT_MS;
-    vi.advanceTimersByTime(deadline - 1);
-    expect(socket.closeCount).toBe(0);
-    vi.advanceTimersByTime(1);
-    expect(socket.closeCount).toBe(1);
-    expect(host.onTransportClosed).toHaveBeenCalledOnce();
-    // Late callbacks cannot publish state or schedule an additional retry.
-    socket.open();
-    socket.emit(snapshot);
-    socket.onclose?.();
-    expect(host.applyEvent).not.toHaveBeenCalled();
-    expect(host.onTransportClosed).toHaveBeenCalledOnce();
-    vi.advanceTimersByTime(1_000);
-    expect(ImmediateCloseSocket.instances).toHaveLength(2);
-  });
+  it.each([false, true])(
+    "bounds a blackhole (socket opened: %s)",
+    async (opened) => {
+      vi.useFakeTimers();
+      vi.stubGlobal("WebSocket", ImmediateCloseSocket);
+      const { controller, host } = harness();
+      await controller.connect("token");
+      const socket = ImmediateCloseSocket.instances[0]!;
+      if (opened) socket.open();
+      const deadline = opened
+        ? FIRST_SNAPSHOT_TIMEOUT_MS
+        : SOCKET_CONNECT_TIMEOUT_MS;
+      await vi.advanceTimersByTimeAsync(deadline - 1);
+      expect(socket.closeCount).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(socket.closeCount).toBe(1);
+      expect(host.onTransportClosed).toHaveBeenCalledOnce();
+      // Late callbacks cannot publish state or schedule an additional retry.
+      socket.open();
+      socket.emit(snapshot);
+      socket.onclose?.();
+      expect(host.applyEvent).not.toHaveBeenCalled();
+      expect(host.onTransportClosed).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(ImmediateCloseSocket.instances).toHaveLength(2);
+    },
+  );
 
-  it("gives a slow valid snapshot its own budget after a slow connection", () => {
+  it("gives a slow valid snapshot its own budget after a slow connection", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
-    controller.connect("token");
+    await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
-    vi.advanceTimersByTime(SOCKET_CONNECT_TIMEOUT_MS - 1);
+    await vi.advanceTimersByTimeAsync(SOCKET_CONNECT_TIMEOUT_MS - 1);
     socket.open();
-    vi.advanceTimersByTime(30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(socket.closeCount).toBe(0);
     expect(host.patch).not.toHaveBeenCalledWith({
       connection: "open",
@@ -285,64 +330,64 @@ describe("ConnectionController", () => {
       connectionProblem: null,
     });
     expect(host.applyEvent).toHaveBeenCalledBefore(host.recordSnapshotDigest);
-    vi.advanceTimersByTime(FIRST_SNAPSHOT_TIMEOUT_MS - 30_000);
+    await vi.advanceTimersByTimeAsync(FIRST_SNAPSHOT_TIMEOUT_MS - 30_000);
     expect(socket.closeCount).toBe(0);
   });
 
-  it("allows slow selection snapshots but bounds a missing one despite healthy heartbeats", () => {
+  it("allows slow selection snapshots but bounds a missing one despite healthy heartbeats", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
     const state = { ...host.state() };
     host.state.mockImplementation(() => state);
-    controller.connect("token");
+    await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
     socket.open();
     socket.emit(snapshot);
     state.sessionId = "b";
     controller.updateDetailInterest();
-    vi.advanceTimersByTime(30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     socket.emit({ ...snapshot, detailSessionId: "b", detailRevision: 1 });
     expect(socket.closeCount).toBe(0);
     state.sessionId = "c";
     controller.updateDetailInterest();
-    vi.advanceTimersByTime(30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     socket.emit({ type: "heartbeat" });
-    vi.advanceTimersByTime(FIRST_SNAPSHOT_TIMEOUT_MS - 30_000);
+    await vi.advanceTimersByTimeAsync(FIRST_SNAPSHOT_TIMEOUT_MS - 30_000);
     expect(socket.closeCount).toBe(1);
   });
 
-  it("retires a socket error without depending on a later close event", () => {
+  it("retires a socket error without depending on a later close event", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
-    controller.connect("token");
+    await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
     socket.close = vi.fn();
     socket.onerror?.();
     expect(host.onTransportClosed).toHaveBeenCalledOnce();
     socket.emit(snapshot);
     expect(host.applyEvent).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(ImmediateCloseSocket.instances).toHaveLength(2);
     expect(host.reconnect).not.toHaveBeenCalled();
   });
 
-  it("resets its inactivity watchdog on valid heartbeat frames", () => {
+  it("resets its inactivity watchdog on valid heartbeat frames", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
 
-    controller.connect("token");
+    await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
     socket.open();
     socket.emit(snapshot);
-    vi.advanceTimersByTime(20_000);
+    await vi.advanceTimersByTimeAsync(20_000);
     socket.emit({ type: "heartbeat" });
-    vi.advanceTimersByTime(STREAM_INACTIVITY_TIMEOUT_MS - 1);
+    await vi.advanceTimersByTimeAsync(STREAM_INACTIVITY_TIMEOUT_MS - 1);
     expect(host.reconnect).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
 
     expect(host.onTransportClosed).toHaveBeenCalledOnce();
     expect(host.reconnect).not.toHaveBeenCalled();
@@ -352,13 +397,13 @@ describe("ConnectionController", () => {
     );
   });
 
-  it("keeps a recent stream on visibility return but rebuilds it on online", () => {
+  it("keeps a recent stream on visibility return but rebuilds it on online", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
 
-    controller.connect("token");
+    await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
     socket.open();
     socket.emit(snapshot);
@@ -366,17 +411,18 @@ describe("ConnectionController", () => {
     expect(host.reconnect).not.toHaveBeenCalled();
 
     controller.recover("online");
+    await Promise.resolve();
     expect(socket.closeCount).toBe(1);
     expect(host.onTransportClosed).toHaveBeenCalledOnce();
     expect(host.reconnect).not.toHaveBeenCalled();
     expect(ImmediateCloseSocket.instances).toHaveLength(2);
   });
 
-  it("coalesces complete partial messages but flushes before lifecycle events", () => {
+  it("coalesces complete partial messages but flushes before lifecycle events", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
-    controller.connect("token");
+    await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
     socket.open();
     socket.emit(snapshot);
@@ -413,11 +459,11 @@ describe("ConnectionController", () => {
     });
   });
 
-  it("merges ordered delta batches and flushes them before lifecycle events", () => {
+  it("merges ordered delta batches and flushes them before lifecycle events", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
-    controller.connect("token");
+    await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
     socket.open();
     socket.emit(snapshot);
@@ -453,11 +499,11 @@ describe("ConnectionController", () => {
     });
   });
 
-  it("publishes a bounded delta batch before retaining its continuation", () => {
+  it("publishes a bounded delta batch before retaining its continuation", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
-    controller.connect("token");
+    await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
     socket.open();
     socket.emit(snapshot);
@@ -492,11 +538,11 @@ describe("ConnectionController", () => {
     expect(host.applyEvent).toHaveBeenCalledTimes(3);
   });
 
-  it("releases the latest partial message on its render timer", () => {
+  it("releases the latest partial message on its render timer", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
-    controller.connect("token");
+    await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
     socket.open();
     socket.emit(snapshot);
@@ -513,9 +559,9 @@ describe("ConnectionController", () => {
       });
     }
     expect(host.applyEvent).toHaveBeenCalledTimes(1);
-    vi.advanceTimersByTime(15);
+    await vi.advanceTimersByTimeAsync(15);
     expect(host.applyEvent).toHaveBeenCalledTimes(1);
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(host.applyEvent).toHaveBeenCalledTimes(2);
     expect(host.applyEvent).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -525,11 +571,11 @@ describe("ConnectionController", () => {
     );
   });
 
-  it("rebuilds instead of dropping a malformed frame from a live sequence", () => {
+  it("rebuilds instead of dropping a malformed frame from a live sequence", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
-    controller.connect("token");
+    await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
     socket.open();
     socket.emit(snapshot);
@@ -538,7 +584,7 @@ describe("ConnectionController", () => {
 
     expect(socket.closeCount).toBe(1);
     expect(host.onTransportClosed).toHaveBeenCalledOnce();
-    vi.advanceTimersByTime(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(host.reconnect).not.toHaveBeenCalled();
     expect(ImmediateCloseSocket.instances).toHaveLength(2);
   });
@@ -546,25 +592,28 @@ describe("ConnectionController", () => {
   it.each([
     ["authority", { type: "snapshot", snapshotDigest, data: snapshot.data }],
     ["digest", { type: "snapshot", authorityId, data: snapshot.data }],
-  ])("rejects a first snapshot without its %s witness", (_field, event) => {
+  ])(
+    "rejects a first snapshot without its %s witness",
+    async (_field, event) => {
+      vi.useFakeTimers();
+      vi.stubGlobal("WebSocket", ImmediateCloseSocket);
+      const { controller, host } = harness();
+      await controller.connect("token");
+      const socket = ImmediateCloseSocket.instances[0]!;
+
+      socket.emit(event);
+
+      expect(socket.closeCount).toBe(1);
+      expect(host.onTransportClosed).toHaveBeenCalledOnce();
+      expect(host.applyEvent).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects a malformed authoritative snapshot after synchronization", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
-    controller.connect("token");
-    const socket = ImmediateCloseSocket.instances[0]!;
-
-    socket.emit(event);
-
-    expect(socket.closeCount).toBe(1);
-    expect(host.onTransportClosed).toHaveBeenCalledOnce();
-    expect(host.applyEvent).not.toHaveBeenCalled();
-  });
-
-  it("rejects a malformed authoritative snapshot after synchronization", () => {
-    vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
-    const { controller, host } = harness();
-    controller.connect("token");
+    await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
     socket.open();
     socket.emit(snapshot);
@@ -579,14 +628,14 @@ describe("ConnectionController", () => {
     expect(host.applyEvent).toHaveBeenCalledTimes(1);
   });
 
-  it("rebuilds from a snapshot when a live reducer rejects an event", () => {
+  it("rebuilds from a snapshot when a live reducer rejects an event", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
     host.applyEvent.mockImplementation((event: { type?: string }) => {
       if (event.type === "agent_start") throw new Error("invalid transition");
     });
-    controller.connect("token");
+    await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
     socket.open();
     socket.emit(snapshot);
@@ -594,7 +643,7 @@ describe("ConnectionController", () => {
 
     expect(socket.closeCount).toBe(1);
     expect(host.onTransportClosed).toHaveBeenCalledOnce();
-    vi.advanceTimersByTime(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(host.reconnect).not.toHaveBeenCalled();
     expect(ImmediateCloseSocket.instances).toHaveLength(2);
   });
