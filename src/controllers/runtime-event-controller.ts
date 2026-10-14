@@ -7,6 +7,7 @@ import {
   type SessionRuntimeStatus,
 } from "../../shared/contracts";
 import type { AppState } from "../app-state";
+import { isExternalSessionActivities } from "../../shared/session-activity";
 import {
   type ChatMessage,
   type EventSlice,
@@ -256,6 +257,21 @@ export class RuntimeEventController {
   }
 
   apply(event: WireEvent): void {
+    if (event.type === "external_session_activity") {
+      if (!isExternalSessionActivities(event.activities)) return;
+      const previous = this.host.state().externalSessionActivities;
+      const next = event.activities;
+      if (
+        Object.keys(previous).length === Object.keys(next).length &&
+        Object.entries(next).every(
+          ([id, activity]) => previous[id] === activity,
+        )
+      )
+        return;
+      this.host.patch({ externalSessionActivities: next });
+      for (const id of Object.keys(next)) this.host.ensureSessionVisible(id);
+      return;
+    }
     if (event.type === "snapshot") {
       if (event.data) {
         // Addressed snapshots refresh an existing detail interest, not a new

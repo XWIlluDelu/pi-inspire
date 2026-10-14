@@ -240,7 +240,7 @@ describe("ConnectionController", () => {
     });
   });
 
-  it("keeps Host-wide update events outside the runtime snapshot digest", async () => {
+  it("resumes unchanged after out-of-band observations but invalidates on runtime changes", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
@@ -251,11 +251,38 @@ describe("ConnectionController", () => {
     host.invalidateSnapshotDigest.mockClear();
     host.applyEvent.mockClear();
 
-    socket.emit({ type: "update_status", updateStatus: { revision: 1 } });
-    expect(host.applyEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "update_status" }),
-    );
+    for (const event of [
+      { type: "update_status", updateStatus: { revision: 1 } },
+      {
+        type: "external_session_activity",
+        activities: { external: "working" },
+      },
+      { type: "external_session_activity", activities: {} },
+      { type: "external_session_activity", activities: {} },
+    ]) {
+      socket.emit(event);
+      expect(host.applyEvent).toHaveBeenLastCalledWith(event);
+    }
     expect(host.invalidateSnapshotDigest).not.toHaveBeenCalled();
+
+    socket.close();
+    await vi.advanceTimersByTimeAsync(1_000);
+    const resumed = ImmediateCloseSocket.instances[1]!;
+    expect(new URL(resumed.url).searchParams.get("snapshot")).toBe(
+      snapshotDigest,
+    );
+    resumed.emit({
+      type: "snapshot",
+      authorityId,
+      snapshotDigest,
+      unchanged: true,
+    });
+    expect(host.patch).toHaveBeenLastCalledWith({
+      connection: "open",
+      connectionProblem: null,
+    });
+    resumed.emit({ type: "agent_start", sessionId: "a" });
+    expect(host.invalidateSnapshotDigest).toHaveBeenCalledOnce();
   });
 
   it("publishes open only after applying the authoritative first snapshot", async () => {

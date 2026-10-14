@@ -64,6 +64,7 @@ export const SessionRow = memo(function SessionRow({
     individuallyHidden,
     projectHidden,
     runtimeStatus,
+    externalActivity,
     deletingSessionId,
     clearingHidden,
   } = useAppState(
@@ -74,6 +75,7 @@ export const SessionRow = memo(function SessionRow({
       individuallyHidden: state.prefs.hiddenSessionIds.includes(session.id),
       projectHidden: state.prefs.hiddenProjectCwds.includes(session.cwd),
       runtimeStatus: state.sessionStatuses[session.id],
+      externalActivity: state.externalSessionActivities[session.id],
       deletingSessionId: state.deletingSessionId,
       clearingHidden: state.clearingHidden,
     }),
@@ -83,13 +85,33 @@ export const SessionRow = memo(function SessionRow({
   const selected = session.id === selectedSessionId;
   const opening = openingSessionId === session.id;
   const hidden = individuallyHidden || projectHidden;
-  const indicator = runtimeStatus?.indicator;
   const conflicted = runtimeStatus?.runState === "conflict";
-  const busy = runtimeStatus ? isBusyRunState(runtimeStatus.runState) : false;
+  const managedBusy = runtimeStatus
+    ? isBusyRunState(runtimeStatus.runState)
+    : false;
+  const external = !managedBusy && !conflicted ? externalActivity : undefined;
+  const indicator =
+    external === "working"
+      ? "running"
+      : external === "blocked"
+        ? "attention"
+        : external === "idle"
+          ? undefined
+          : runtimeStatus?.indicator;
+  const externalLabel =
+    external === "working"
+      ? "Working in Pi"
+      : external === "blocked"
+        ? "Waiting for input in Pi"
+        : external === "idle"
+          ? "Idle in Pi"
+          : null;
+  const busy = managedBusy || externalActivity === "working";
   const deleteDisabled =
     active ||
     opening ||
     busy ||
+    externalActivity !== undefined ||
     conflicted ||
     deletingSessionId !== null ||
     clearingHidden;
@@ -97,11 +119,13 @@ export const SessionRow = memo(function SessionRow({
     ? "Switch to another session before deleting"
     : conflicted
       ? "Resolve the session conflict before deleting"
-      : busy
-        ? "Wait for this session to finish working"
-        : opening
-          ? "Wait for this session to finish opening"
-          : "Delete session";
+      : externalActivity !== undefined
+        ? "Close the Pi terminal session before deleting"
+        : busy
+          ? "Wait for this session to finish working"
+          : opening
+            ? "Wait for this session to finish opening"
+            : "Delete session";
   // Yellow stays on while a session works or needs external-change recovery,
   // including the visible one; green and red are unseen completion attention
   // and clear once the row is viewed.
@@ -111,7 +135,9 @@ export const SessionRow = memo(function SessionRow({
         ? null
         : indicator
       : (indicator ?? null);
-  const attentionLabel = attention ? INDICATOR_LABELS[attention] : null;
+  const attentionLabel = attention
+    ? (externalLabel ?? INDICATOR_LABELS[attention])
+    : null;
   const title = session.title || "New session";
   const titleMatches = sessionSearchMatchRanges(title, searchQuery);
   const projectName = projectNameFromCwd(session.cwd);
@@ -133,7 +159,7 @@ export const SessionRow = memo(function SessionRow({
         disabled={opening}
         aria-busy={opening}
         aria-current={selected ? "page" : undefined}
-        title={`${title} · ${session.messageCount} messages`}
+        title={`${title} · ${session.messageCount} messages${externalLabel ? ` · ${externalLabel}` : ""}`}
       >
         <span className="nav__row-title">
           {opening ? (

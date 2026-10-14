@@ -48,6 +48,7 @@ import {
   piInstallation,
   SettingsManager,
 } from "./pi-runtime.js";
+import { PiSessionActivity } from "./pi-session-activity.js";
 import { PiUpdateChecker } from "./pi-update-checker.js";
 import { PreferencesStore } from "./preferences.js";
 import {
@@ -198,6 +199,7 @@ void herdr.initialize();
 const attachments = new AttachmentStore();
 let catalog: SessionCatalogLike;
 let runtime: RuntimeLike;
+let sessionActivity: PiSessionActivity | undefined;
 const modelMetadata = new ModelMetadataCatalog();
 if (mock) {
   catalog = new MockCatalog();
@@ -207,7 +209,7 @@ if (mock) {
   });
 } else {
   catalog = createHostSessionCatalog(process.cwd(), preferences);
-  runtime = new RuntimeController(
+  const managedRuntime = new RuntimeController(
     catalog,
     attachments,
     (options) => herdr.createProcess(options),
@@ -221,6 +223,17 @@ if (mock) {
     .on("worker_status", (rpc: PiRpcProcess, status: RuntimeWorkerStatus) => {
       herdr.updateWorkerStatus(rpc, status);
     });
+  runtime = managedRuntime;
+  sessionActivity = new PiSessionActivity({
+    catalog,
+    publish: (activities) => {
+      managedRuntime.emit("event", {
+        type: "external_session_activity",
+        activities,
+      });
+    },
+  });
+  sessionActivity.start();
 }
 const toolPresentations = new ToolPresentationConfigStore(
   process.env.INSPIRE_TOOL_PRESENTATIONS_PATH ||
@@ -361,6 +374,7 @@ let shuttingDown = false;
 async function shutdown(reason: string, requestedExitCode = 0): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+  sessionActivity?.close();
   let exitCode = requestedExitCode;
   console.log(`Shutting down after ${reason}…`);
   diagnostics.record("info", "host_stopping", { reason, requestedExitCode });

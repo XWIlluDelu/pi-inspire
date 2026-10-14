@@ -36,6 +36,7 @@
     "docs/screenshots/welcome-dark.png",
     "docs/extensions.md",
     "docs/examples/native-ui.ts",
+    "docs/examples/session-activity.ts",
     "docs/host.md",
     "docs/mcp.md",
     "docs/pi-commands.md",
@@ -75,7 +76,8 @@
       "tests/fixtures/pi-model-catalog-extension.ts",
       "tests/fixtures/pi-model-workflow-extension.ts",
       "tests/fixtures/pi-provider-auth-extension.ts",
-      "docs/examples/native-ui.ts"
+      "docs/examples/native-ui.ts",
+      "docs/examples/session-activity.ts"
     ],
     "ignoreDependencies": [
       "@earendil-works/pi-ai"

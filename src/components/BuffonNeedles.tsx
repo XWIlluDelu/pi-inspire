@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { isBusyRunState } from "../../shared/contracts";
+import { countBusySessions } from "../../shared/session-activity";
 import { useAppState } from "../store";
 
 const REFERENCE_WIDTH = 2400; // Drawable CSS pixels, independent of screen DPI.
@@ -29,7 +29,9 @@ export function BuffonNeedles() {
   const [needles, setNeedles] = useState<TitlebarNeedle[]>([]);
   const nextId = useRef(0);
   const surface = useRef<HTMLDivElement>(null);
-  const busy = useAppState((state) => isBusyRunState(state.runState));
+  const busyCount = useAppState((state) =>
+    countBusySessions(state.sessionStatuses, state.externalSessionActivities),
+  );
 
   useEffect(() => {
     const layer = surface.current;
@@ -66,7 +68,7 @@ export function BuffonNeedles() {
         : end;
       leftSpan = leftEnd - start;
       drawableWidth = leftSpan + end - rightStart;
-      rate = (busy ? 10.8 : 3.6) * (drawableWidth / REFERENCE_WIDTH);
+      rate = 3.6 * (1 + busyCount) * (drawableWidth / REFERENCE_WIDTH);
       // Allow maximum-lifetime occupancy plus random-arrival headroom.
       limit = Math.min(256, Math.ceil((rate * MAX_LIFETIME_MS) / 1000) + 12);
     };
@@ -136,7 +138,7 @@ export function BuffonNeedles() {
       overlay.removeEventListener("change", evaluate);
       // State/size changes only retime arrivals; existing needles finish fading.
     };
-  }, [busy]);
+  }, [busyCount]);
 
   return (
     <div ref={surface} className="window-titlebar__needles" aria-hidden="true">

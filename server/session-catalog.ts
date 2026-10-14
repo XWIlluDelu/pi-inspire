@@ -145,7 +145,10 @@ export class SessionCatalog implements SessionCatalogLike {
     const seeds = [this.startupCwd, ...(await this.projectCwds())];
     await this.projects?.remember(seeds);
     const cwds = new Set([...seeds, ...((await this.projects?.read()) ?? [])]);
-    return [...new Set([...cwds].map(resolvePiSessionDirectory))];
+    const directories = new Set<string | undefined>();
+    for (const cwd of cwds)
+      directories.add(await resolvePiSessionDirectory(cwd));
+    return [...directories];
   }
 
   private loadGeneration(generation: number): Promise<void> {

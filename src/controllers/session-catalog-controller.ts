@@ -7,6 +7,7 @@ import {
   type SessionSummary,
 } from "../../shared/contracts";
 import { type Api, ApiError } from "../api";
+import type { ExternalSessionActivities } from "../../shared/session-activity";
 
 const SESSION_PAGE_SIZE = 40;
 
@@ -32,6 +33,7 @@ export interface SessionCatalogState {
   prefs: InspirePreferences;
   sessionId: string | null;
   sessionStatuses: Record<string, SessionRuntimeStatus>;
+  externalSessionActivities?: ExternalSessionActivities;
 }
 
 export interface SessionCatalogPatch {
@@ -580,6 +582,8 @@ export class SessionCatalogController {
     const state = this.host.state();
     if (state.sessionId) ids.add(state.sessionId);
     for (const id of Object.keys(state.sessionStatuses)) ids.add(id);
+    for (const id of Object.keys(state.externalSessionActivities ?? {}))
+      ids.add(id);
     return {
       ids,
       cwds: new Set([
@@ -828,7 +832,8 @@ export class SessionCatalogController {
     const state = this.host.state();
     const stillOwned =
       state.sessionId === owner.id ||
-      Object.hasOwn(state.sessionStatuses, owner.id);
+      Object.hasOwn(state.sessionStatuses, owner.id) ||
+      Object.hasOwn(state.externalSessionActivities ?? {}, owner.id);
     return (
       stillOwned &&
       !owner.query.trim() &&
