@@ -1,3 +1,4 @@
+import { hostRequest } from "./host-request";
 import { expect, type Page, type WebSocketRoute } from "@playwright/test";
 import type {
   ActiveSnapshot,
@@ -83,7 +84,7 @@ export async function openMockEventSession(
     },
   });
   await pairedPage(page);
-  const created = await page.request.post("/api/sessions/new", {
+  const created = await hostRequest(page).post("/api/sessions/new", {
     data: { cwd: browserWorkspace, name },
   });
   expect(created.ok()).toBe(true);

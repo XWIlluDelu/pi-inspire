@@ -1,3 +1,4 @@
+import { hostRequest } from "./support/host-request";
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 import { openMockSession, pairedPage } from "./support/navigation";
@@ -93,7 +94,7 @@ test("HTML interaction isolates real resources and revokes execution across desk
   await expect(iframe).toHaveAttribute("sandbox", "");
   await expect(frame.locator("#status")).toHaveText("Static preview");
   await expect
-    .poll(async () => (await page.request.get(url!)).status())
+    .poll(async () => (await hostRequest(page).get(url!)).status())
     .toBe(404);
 
   await pane
@@ -104,7 +105,7 @@ test("HTML interaction isolates real resources and revokes execution across desk
   await pane.getByRole("button", { name: "Source", exact: true }).click();
   await expect(pane.getByRole("region", { name: "File source" })).toBeVisible();
   await expect
-    .poll(async () => (await page.request.get(secondUrl!)).status())
+    .poll(async () => (await hostRequest(page).get(secondUrl!)).status())
     .toBe(404);
   await pane.getByRole("button", { name: "Preview", exact: true }).click();
   await expect(frame.locator("#status")).toHaveText("Static preview");

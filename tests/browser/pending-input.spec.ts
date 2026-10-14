@@ -1,3 +1,4 @@
+import { hostRequest } from "./support/host-request";
 import { readFile } from "node:fs/promises";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
@@ -330,7 +331,7 @@ for (const action of ["Return all", "Escape"] as const) {
     page,
   }) => {
     const { composer, input, pending } = await openPendingSession(page);
-    const boot = await (await page.request.get("/api/bootstrap")).json();
+    const boot = await (await hostRequest(page).get("/api/bootstrap")).json();
     const uploads = new Map<string, UploadedAttachment>();
     let queued: Array<{
       mode: "steer" | "followUp";
@@ -449,7 +450,7 @@ for (const action of ["Return all", "Escape"] as const) {
       .last()
       .click();
     await expect(composer.locator(".attachment--image")).toHaveCount(count - 1);
-    const withdrawn = await page.request.get(
+    const withdrawn = await hostRequest(page).get(
       `/api/attachments/${draftImage.id}/image`,
     );
     expect(withdrawn.status()).toBe(404);

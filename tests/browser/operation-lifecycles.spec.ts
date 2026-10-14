@@ -1,3 +1,4 @@
+import { hostRequest } from "./support/host-request";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
@@ -96,7 +97,7 @@ test("uncertain terminal creation survives reload and reuses its operation", asy
     await expect(page.locator(`#terminal-tab-${createdId}`)).toBeVisible({
       timeout: 10_000,
     });
-    const beforeReload = await page.request.get(
+    const beforeReload = await hostRequest(page).get(
       `/api/terminals?cwd=${encodeURIComponent(browserWorkspace)}`,
     );
     const before = await beforeReload.json();
@@ -123,7 +124,7 @@ test("uncertain terminal creation survives reload and reuses its operation", asy
     await expect(recovery).toHaveCount(0);
     expect(identities).toHaveLength(2);
     expect(identities[1]).toBe(identities[0]);
-    const afterReload = await page.request.get(
+    const afterReload = await hostRequest(page).get(
       `/api/terminals?cwd=${encodeURIComponent(browserWorkspace)}`,
     );
     const after = await afterReload.json();
@@ -133,7 +134,7 @@ test("uncertain terminal creation survives reload and reuses its operation", asy
   } finally {
     if (!page.isClosed()) await page.unroute("**/api/terminals");
     if (createdId && !page.isClosed())
-      await page.request.delete(
+      await hostRequest(page).delete(
         `/api/terminals/${encodeURIComponent(createdId)}?force=1`,
         { headers: await terminalMutationHeaders(page) },
       );

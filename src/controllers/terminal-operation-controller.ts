@@ -1,4 +1,5 @@
 import type { TerminalOperationIdentity } from "../../shared/terminal-contracts";
+import { authenticatedFetch } from "../browser-auth";
 
 const STORAGE_KEY = "inspire:terminal-operations:v1";
 const MAX_PENDING = 128;
@@ -237,11 +238,15 @@ export class TerminalOperationController {
         throw new Error(
           "Too many unresolved terminal operations. Resolve existing operations first.",
         );
-      const response = await this.transport("/api/terminal-operations", {
-        credentials: "same-origin",
-        headers,
-        signal: AbortSignal.timeout(10_000),
-      });
+      const response = await authenticatedFetch(
+        "/api/terminal-operations",
+        {
+          credentials: "same-origin",
+          headers,
+          signal: AbortSignal.timeout(10_000),
+        },
+        this.transport,
+      );
       if (!response.ok) {
         const problem = (await response.json().catch(() => null)) as {
           error?: unknown;
@@ -274,17 +279,23 @@ export class TerminalOperationController {
     this.persist(); // A previous storage failure cannot make a retry untracked.
     let response: Response;
     try {
-      response = await this.transport(path, {
-        method,
-        body,
-        credentials: "same-origin",
-        headers: {
-          ...headers,
-          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-          "X-Terminal-Operation": JSON.stringify(entry.identity),
+      response = await authenticatedFetch(
+        path,
+        {
+          method,
+          body,
+          credentials: "same-origin",
+          headers: {
+            ...headers,
+            ...(body === undefined
+              ? {}
+              : { "Content-Type": "application/json" }),
+            "X-Terminal-Operation": JSON.stringify(entry.identity),
+          },
+          signal: AbortSignal.timeout(20_000),
         },
-        signal: AbortSignal.timeout(20_000),
-      });
+        this.transport,
+      );
       const outcome = response.headers.get("X-Terminal-Outcome");
       const matched =
         response.headers.get("X-Terminal-Operation") === entry.identity.id;

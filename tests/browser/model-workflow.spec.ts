@@ -1,3 +1,4 @@
+import { hostRequest } from "./support/host-request";
 import { expect, type Page, test } from "@playwright/test";
 import type { ModelOption } from "../../shared/contracts";
 
@@ -68,7 +69,7 @@ async function modelScenario(page: Page, inherited: boolean) {
     submitted = route.request().postDataJSON();
     // Capture the startup contract without creating a mock-only session that
     // cannot appear in the fixture catalog. Native startup has its own fixture.
-    const response = await page.request.get(
+    const response = await hostRequest(page).get(
       "/api/snapshot?detail=mock-history",
     );
     const payload = await response.json();

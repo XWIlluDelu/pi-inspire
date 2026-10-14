@@ -1,5 +1,6 @@
+import { hostRequest } from "./support/host-request";
 import { execFile } from "node:child_process";
-import { cp, mkdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { expect, test } from "@playwright/test";
@@ -23,6 +24,10 @@ test.beforeAll(async () => {
     { recursive: true },
   );
   await writeFile(resolve(root, ".gitignore"), "dist/\n");
+  await writeFile(
+    resolve(root, "large-download.bin"),
+    Buffer.alloc(33 * 1024 * 1024 + 17, 7),
+  );
   await writeFile(
     resolve(root, ".settings/config.txt"),
     "Synthetic hidden configuration\n",
@@ -52,7 +57,7 @@ test("authorized audio and video previews play from local blobs", async ({
   page,
 }) => {
   await pairedPage(page);
-  const created = await page.request.post("/api/sessions/new", {
+  const created = await hostRequest(page).post("/api/sessions/new", {
     data: { cwd: root, name: "Media fixture" },
   });
   expect(created.ok()).toBe(true);
@@ -102,7 +107,7 @@ test("large document Markdown keeps scoped images and heading navigation with th
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("worker", (worker) => workers.push(worker.url()));
   await pairedPage(page);
-  const created = await page.request.post("/api/sessions/new", {
+  const created = await hostRequest(page).post("/api/sessions/new", {
     data: { cwd: root, name: "Large document fixture" },
   });
   expect(created.ok()).toBe(true);
@@ -139,7 +144,7 @@ for (const narrow of [false, true]) {
       narrow ? { width: 390, height: 844 } : { width: 1440, height: 900 },
     );
     await pairedPage(page);
-    const created = await page.request.post("/api/sessions/new", {
+    const created = await hostRequest(page).post("/api/sessions/new", {
       data: { cwd: root, name: "Filesystem fixture" },
     });
     expect(created.ok()).toBe(true);
@@ -200,8 +205,13 @@ for (const narrow of [false, true]) {
       )
       .toBe(1);
     const downloadPromise = page.waitForEvent("download");
-    await pane.getByRole("link", { name: "Download report.md" }).click();
-    expect((await downloadPromise).suggestedFilename()).toBe("report.md");
+    await pane.getByRole("button", { name: "Download report.md" }).click();
+    const downloaded = await downloadPromise;
+    expect(downloaded.suggestedFilename()).toBe("report.md");
+    expect(await downloaded.failure()).toBeNull();
+    expect(await readFile((await downloaded.path())!, "utf8")).toBe(
+      await readFile(resolve(root, "dist/report.md"), "utf8"),
+    );
 
     await pane
       .getByRole("button", { name: /Back to file browser for/ })
@@ -217,11 +227,48 @@ for (const narrow of [false, true]) {
   });
 }
 
+test("native authenticated download streams complete bytes beyond the media preview cap", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  const created = await hostRequest(page).post("/api/sessions/new", {
+    data: { cwd: root, name: "Large download fixture" },
+  });
+  expect(created.ok()).toBe(true);
+  await page.reload();
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  const pane = page.locator(".ctx");
+  await pane
+    .getByRole("region", { name: "Workspace file tree" })
+    .getByRole("button", { name: "large-download.bin", exact: true })
+    .click();
+  const downloadPromise = page.waitForEvent("download");
+  await pane
+    .getByRole("button", { name: "Download large-download.bin" })
+    .click();
+  const download = await downloadPromise;
+  expect(new URL(download.url()).pathname).toMatch(
+    /^\/api\/resource-downloads\/[A-Za-z0-9_-]{43}$/,
+  );
+  expect(await download.failure()).toBeNull();
+  expect(download.suggestedFilename()).toBe("large-download.bin");
+  const bytes = await readFile((await download.path())!);
+  expect(bytes.length).toBe(33 * 1024 * 1024 + 17);
+  expect(
+    bytes.equals(await readFile(resolve(root, "large-download.bin"))),
+  ).toBe(true);
+  const replay = await page.request.get(download.url(), {
+    headers: { "Sec-Fetch-Site": "same-origin" },
+  });
+  expect(replay.status()).toBe(401);
+});
+
 test("hidden inline references send unchanged text; only explicit picker selections deliver files", async ({
   page,
 }) => {
   await pairedPage(page);
-  const created = await page.request.post("/api/sessions/new", {
+  const created = await hostRequest(page).post("/api/sessions/new", {
     data: { cwd: root, name: "Project file delivery fixture" },
   });
   expect(created.ok()).toBe(true);

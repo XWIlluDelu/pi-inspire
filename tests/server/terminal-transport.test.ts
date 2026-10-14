@@ -7,6 +7,7 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { createInspireServer } from "../../server/app.js";
+import { pairedBrowser, socketAdmission } from "./fixtures/host-api.js";
 import { AttachmentStore } from "../../server/attachments.js";
 import { MockCatalog, MockRuntime } from "../../server/mock.js";
 import { PreferencesStore } from "../../server/preferences.js";
@@ -209,7 +210,7 @@ describe("terminal HTTP and WebSocket transport", () => {
       .expect(200, { catalogEpoch: "catalog-1", revision: 2 });
   });
 
-  it("requires a paired cookie and one-use ticket before forwarding bytes", async () => {
+  it("requires origin-bound socket and attach tickets before forwarding bytes", async () => {
     const queryOnly = new WebSocket(
       `${baseUrl.replace("http", "ws")}/terminal?token=${token}`,
     );
@@ -221,21 +222,20 @@ describe("terminal HTTP and WebSocket transport", () => {
     });
     expect(rejectedCode).toBe(401);
 
-    const paired = await request(application.server)
-      .post("/api/auth/pair")
-      .set("Origin", baseUrl)
-      .send({ token })
-      .expect(204);
-    const cookie = String(paired.headers["set-cookie"]).split(";", 1)[0]!;
+    const { bearer } = await pairedBrowser(application.server, baseUrl, token);
+    const admission = await socketAdmission(
+      application.server,
+      baseUrl,
+      bearer,
+      "terminal",
+    );
+    const socketUrl = `${baseUrl.replace("http", "ws")}/terminal?ticket=${admission}`;
     const ticketResponse = await request(application.server)
       .post(`/api/terminals/${terminal.id}/attach-ticket`)
-      .set("Cookie", cookie)
+      .set("Authorization", `Bearer ${bearer}`)
       .set("Origin", baseUrl)
       .expect(200);
-    const missingOrigin = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/terminal`,
-      { headers: { Cookie: cookie } },
-    );
+    const missingOrigin = new WebSocket(socketUrl, {});
     const missingOriginStatus = await new Promise<number>((resolve) => {
       missingOrigin.once("unexpected-response", (_request, response) =>
         resolve(response.statusCode ?? 0),
@@ -244,13 +244,9 @@ describe("terminal HTTP and WebSocket transport", () => {
     });
     expect(missingOriginStatus).toBe(401);
 
-    const wrongScheme = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/terminal`,
-      {
-        headers: { Cookie: cookie },
-        origin: baseUrl.replace("http:", "https:"),
-      },
-    );
+    const wrongScheme = new WebSocket(socketUrl, {
+      origin: baseUrl.replace("http:", "https:"),
+    });
     const wrongSchemeStatus = await new Promise<number>((resolve) => {
       wrongScheme.once("unexpected-response", (_request, response) =>
         resolve(response.statusCode ?? 0),
@@ -259,8 +255,7 @@ describe("terminal HTTP and WebSocket transport", () => {
     });
     expect(wrongSchemeStatus).toBe(401);
 
-    const socket = new WebSocket(`${baseUrl.replace("http", "ws")}/terminal`, {
-      headers: { Cookie: cookie },
+    const socket = new WebSocket(socketUrl, {
       origin: baseUrl,
     });
     const messages: Array<Record<string, unknown>> = [];
@@ -303,10 +298,18 @@ describe("terminal HTTP and WebSocket transport", () => {
       rows: 35,
     });
 
-    const replay = new WebSocket(`${baseUrl.replace("http", "ws")}/terminal`, {
-      headers: { Cookie: cookie },
-      origin: baseUrl,
-    });
+    const replayAdmission = await socketAdmission(
+      application.server,
+      baseUrl,
+      bearer,
+      "terminal",
+    );
+    const replay = new WebSocket(
+      `${baseUrl.replace("http", "ws")}/terminal?ticket=${replayAdmission}`,
+      {
+        origin: baseUrl,
+      },
+    );
     const replayMessages: Array<Record<string, unknown>> = [];
     replay.on("message", (raw, isBinary) => {
       if (!isBinary) replayMessages.push(JSON.parse(raw.toString()));

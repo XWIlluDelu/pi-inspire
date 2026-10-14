@@ -96,20 +96,16 @@ export interface ProjectFileResult {
   workspaceCwd?: string;
 }
 
-// Deterministic development-only token, matched by the dev:host script.
-// Production authentication is an origin-scoped HttpOnly pairing cookie; the
-// query token remains only long enough to establish that pairing.
-const DEV_TOKEN = "inspire-dev-token";
+import {
+  authenticatedFetch,
+  BrowserPairingError,
+  captureBrowserBootstrap,
+  pairBrowser,
+} from "./browser-auth";
 
 export function resolveToken(): string | null {
-  const url = new URL(window.location.href);
-  const fromUrl = url.searchParams.get("token");
-  if (fromUrl) {
-    url.searchParams.delete("token");
-    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
-    return fromUrl;
-  }
-  return import.meta.env.DEV ? DEV_TOKEN : null;
+  captureBrowserBootstrap();
+  return null;
 }
 
 export class ApiError extends Error {
@@ -172,9 +168,11 @@ async function applicationFetch(
   init?: RequestInit,
 ): Promise<Response> {
   try {
-    return await fetch(input, init);
+    return await authenticatedFetch(input, init);
   } catch (error) {
     if (aborted(error)) throw error;
+    if (error instanceof BrowserPairingError)
+      throw new ApiError(401, error.message);
     throw new ApiTransportError("request");
   }
 }
@@ -552,9 +550,8 @@ export function createApi(token: string | null = null) {
         body: JSON.stringify(intent),
         signal: AbortSignal.timeout(10_000),
       }),
-    /** A successful bearer-authenticated bootstrap establishes the pairing
-     * cookie. Retire the launch credential before any later API or event-stream
-     * request so a long-lived page cannot keep replaying it. */
+    /** Retire any explicit one-shot client credential. Browser credentials
+     * are managed separately by the origin-key authentication transport. */
     retireBearer: () => {
       token = null;
     },
@@ -1133,6 +1130,18 @@ export function createApi(token: string | null = null) {
         `/api/html-previews/${encodeURIComponent(id)}?sessionId=${encodeURIComponent(sessionId)}`,
         { method: "DELETE" },
       ),
+    resourceDownloadTicket: (
+      id: string,
+      sessionId: string,
+      signal: AbortSignal,
+    ) =>
+      post<{ ticket: string; expiresAt: number }>(
+        token,
+        `/api/resources/${encodeURIComponent(id)}/download-ticket`,
+        { sessionId },
+        { signal },
+        { mutation: false },
+      ),
     resourceContent: (
       id: string,
       sessionId: string,
@@ -1152,18 +1161,18 @@ export function createApi(token: string | null = null) {
 export type Api = ReturnType<typeof createApi>;
 
 export async function pairHost(token: string): Promise<void> {
-  const response = await applicationFetch("/api/auth/pair", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token }),
-  });
-  await ensureOk(response);
+  try {
+    await pairBrowser(token);
+  } catch (error) {
+    if (error instanceof BrowserPairingError)
+      throw new ApiError(401, error.message);
+    throw error;
+  }
 }
 
-export function terminalUrl(): string {
+export function terminalUrl(ticket: string): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/terminal`;
+  return `${protocol}//${window.location.host}/terminal?ticket=${encodeURIComponent(ticket)}`;
 }
 
 function detailQuery(sessionId: string | null | undefined): string {
@@ -1173,13 +1182,13 @@ function detailQuery(sessionId: string | null | undefined): string {
 }
 
 export function eventsUrl(
-  token: string | null = null,
+  ticket: string | null = null,
   snapshotDigest: string | null = null,
   sessionId?: string | null,
 ): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const query = new URLSearchParams();
-  if (token) query.set("token", token);
+  if (ticket) query.set("ticket", ticket);
   if (snapshotDigest) query.set("snapshot", snapshotDigest);
   if (sessionId !== undefined) query.set("detail", sessionId ?? "");
   const suffix = query.size > 0 ? `?${query}` : "";

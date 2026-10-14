@@ -659,11 +659,8 @@ describe("Files pane", () => {
     ).toHaveAttribute("data-pane-scroll-active", "true");
     expect(within(pane).queryByRole("button", { name: "Preview" })).toBeNull();
     expect(
-      within(pane).getByRole("link", { name: "Download long.ts" }),
-    ).toHaveAttribute(
-      "href",
-      "/api/resources/text/content?sessionId=s1&download=1",
-    );
+      within(pane).getByRole("button", { name: "Download long.ts" }),
+    ).toBeEnabled();
     expect(
       within(pane).queryByRole("button", { name: "Add to prompt" }),
     ).toBeNull();
@@ -1110,7 +1107,7 @@ describe("Files pane", () => {
       within(pane).queryByText("Scripts and network access blocked."),
     ).not.toBeInTheDocument();
     expect(
-      within(pane).getByRole("link", { name: "Download demo.html" }),
+      within(pane).getByRole("button", { name: "Download demo.html" }),
     ).toBeInTheDocument();
     const frame = await within(pane).findByTitle("Preview demo.html");
     expect(frame).toHaveAttribute("sandbox", "");
@@ -1326,7 +1323,7 @@ describe("Files pane", () => {
     ).toBeInTheDocument();
     expect(pane.querySelector("iframe, object, embed")).toBeNull();
     expect(
-      within(pane).getByRole("link", { name: "Download document.pdf" }),
+      within(pane).getByRole("button", { name: "Download document.pdf" }),
     ).toBeInTheDocument();
   });
 

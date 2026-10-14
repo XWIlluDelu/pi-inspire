@@ -20,6 +20,13 @@ import {
   token,
 } from "./fixtures/host-api.js";
 
+function eventSocket(url: string, options: import("ws").ClientOptions = {}) {
+  return new WebSocket(url, {
+    ...options,
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
 describe("WebSocket observation and transport limits", () => {
   let application: Awaited<ReturnType<typeof hostApiFixture>>["application"];
   let runtime: Awaited<ReturnType<typeof hostApiFixture>>["runtime"];
@@ -33,7 +40,7 @@ describe("WebSocket observation and transport limits", () => {
 
   async function connect(query = "") {
     const observed = observeEventSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}${query}`,
+      `${baseUrl.replace("http", "ws")}/events?${query.replace(/^&/, "")}`,
     );
     await vi.waitFor(() => expect(observed.frames[0]?.type).toBe("snapshot"));
     return observed;
@@ -86,8 +93,8 @@ describe("WebSocket observation and transport limits", () => {
     await runtime.openSession("mock-older");
     const connect = async (id: string, digest?: string) => {
       const frames: DetailFrame[] = [];
-      const socket = new WebSocket(
-        `${baseUrl.replace("http", "ws")}/events?token=${token}&detail=${id}${digest ? `&snapshot=${digest}` : ""}`,
+      const socket = eventSocket(
+        `${baseUrl.replace("http", "ws")}/events?detail=${id}${digest ? `&snapshot=${digest}` : ""}`,
       );
       socket.on("message", (data) => frames.push(JSON.parse(data.toString())));
       await vi.waitFor(() => expect(frames[0]?.type).toBe("snapshot"));
@@ -220,8 +227,8 @@ describe("WebSocket observation and transport limits", () => {
         return snapshot;
       });
     const frames: DetailFrame[] = [];
-    const socket = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}&detail=mock-active`,
+    const socket = eventSocket(
+      `${baseUrl.replace("http", "ws")}/events?detail=mock-active`,
     );
     socket.on("message", (data) => frames.push(JSON.parse(data.toString())));
     try {
@@ -299,7 +306,7 @@ describe("WebSocket observation and transport limits", () => {
       return snapshot();
     });
     const { socket, frames } = observeEventSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}&detail=mock-active`,
+      `${baseUrl.replace("http", "ws")}/events?detail=mock-active`,
     );
     try {
       await new Promise<void>((resolve, reject) => {
@@ -329,8 +336,8 @@ describe("WebSocket observation and transport limits", () => {
       .get("/api/bootstrap")
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
-    const socket = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}&snapshot=${bootstrap.body.snapshotDigest}`,
+    const socket = eventSocket(
+      `${baseUrl.replace("http", "ws")}/events?snapshot=${bootstrap.body.snapshotDigest}`,
     );
     try {
       const firstFrame = await new Promise<Record<string, unknown>>(
@@ -357,12 +364,10 @@ describe("WebSocket observation and transport limits", () => {
 
   it("streams a large write as compact bounded argument batches only to detail viewers", async () => {
     await runtime.openSession("mock-active");
-    const detail = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}&detail=mock-active`,
+    const detail = eventSocket(
+      `${baseUrl.replace("http", "ws")}/events?detail=mock-active`,
     );
-    const background = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}`,
-    );
+    const background = eventSocket(`${baseUrl.replace("http", "ws")}/events`);
     const frames: Array<Record<string, unknown> & { type: string }> = [];
     const backgroundFrames: Array<Record<string, unknown> & { type: string }> =
       [];
@@ -511,8 +516,8 @@ describe("WebSocket observation and transport limits", () => {
 
   it("batches ordered assistant deltas without retransmitting cumulative messages", async () => {
     await runtime.openSession("mock-active");
-    const socket = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}&detail=mock-active`,
+    const socket = eventSocket(
+      `${baseUrl.replace("http", "ws")}/events?detail=mock-active`,
     );
     try {
       await new Promise<void>((resolve, reject) => {
@@ -589,8 +594,8 @@ describe("WebSocket observation and transport limits", () => {
     const heartbeat = await hostApiFixture({
       websocketHeartbeatIntervalMs: 20,
     });
-    const url = `${heartbeat.baseUrl.replace("http", "ws")}/events?token=${token}`;
-    const responsive = new WebSocket(url);
+    const url = `${heartbeat.baseUrl.replace("http", "ws")}/events`;
+    const responsive = eventSocket(url);
     try {
       const ping = new Promise<void>((resolve) =>
         responsive.once("ping", resolve),
@@ -617,7 +622,7 @@ describe("WebSocket observation and transport limits", () => {
       ]);
       responsive.close();
 
-      const unresponsive = new WebSocket(url, { autoPong: false });
+      const unresponsive = eventSocket(url, { autoPong: false });
       const closed = new Promise<number>((resolve, reject) => {
         unresponsive.once("close", resolve);
         unresponsive.once("error", () => undefined);
@@ -668,9 +673,7 @@ describe("WebSocket observation and transport limits", () => {
       await gate;
       return snapshot();
     });
-    const socket = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/events?token=${token}`,
-    );
+    const socket = eventSocket(`${baseUrl.replace("http", "ws")}/events`);
     try {
       await new Promise<void>((resolve, reject) => {
         socket.once("open", resolve);

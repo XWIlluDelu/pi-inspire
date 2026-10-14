@@ -426,7 +426,7 @@ describe("resource previews", () => {
       connection: "open",
     });
     expect(freshSocket.url).toBe(
-      `ws://localhost:3000/events?snapshot=${TEST_SNAPSHOT_DIGEST}&detail=s1`,
+      `ws://localhost:3000/events?ticket=fixture-socket-ticket&snapshot=${TEST_SNAPSHOT_DIGEST}&detail=s1`,
     );
     expect(store.getState().resourceAvailability).toEqual({});
   });

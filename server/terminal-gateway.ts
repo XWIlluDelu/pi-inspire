@@ -19,6 +19,7 @@ import {
   type TerminalMutationMethod,
 } from "../shared/terminal-contracts.js";
 import { requestError } from "./request-error.js";
+import { canonicalOrigin } from "./browser-auth.js";
 import type {
   TerminalAttachment,
   TerminalService,
@@ -104,7 +105,7 @@ const MAX_TERMINAL_SOCKET_BUFFERED_BYTES = 8 * 1024 * 1024;
 const MAX_TERMINAL_SOCKETS = 128;
 
 /** Register after /api authentication. Upgrade admission remains in the Host:
- * exact-origin paired cookies are required before a single-use ticket is read.
+ * exact-origin single-use socket tickets are required before attach is read.
  * This gateway owns only tickets/attachments; the daemon still owns the PTYs. */
 export function createTerminalGateway(
   app: Express,
@@ -113,7 +114,7 @@ export function createTerminalGateway(
 ) {
   const terminalTickets = new Map<
     string,
-    { terminalId: string; expiresAt: number }
+    { terminalId: string; origin: string; expiresAt: number }
   >();
   const pruneTerminalTickets = (now = Date.now()): void => {
     for (const [ticket, entry] of terminalTickets) {
@@ -127,12 +128,13 @@ export function createTerminalGateway(
   };
   const consumeTerminalTicket = (
     ticket: string,
+    origin: string | undefined,
   ): { terminalId: string } | null => {
     const now = Date.now();
     pruneTerminalTickets(now);
     const entry = terminalTickets.get(ticket);
     terminalTickets.delete(ticket);
-    return entry && entry.expiresAt > now
+    return entry && entry.expiresAt > now && entry.origin === origin
       ? { terminalId: entry.terminalId }
       : null;
   };
@@ -250,7 +252,11 @@ export function createTerminalGateway(
     pruneTerminalTickets();
     const ticket = randomUUID();
     const expiresAt = Date.now() + TERMINAL_ATTACH_TICKET_TTL_MS;
-    terminalTickets.set(ticket, { terminalId, expiresAt });
+    terminalTickets.set(ticket, {
+      terminalId,
+      origin: canonicalOrigin(request.get("host"), request.secure),
+      expiresAt,
+    });
     response.json({ ticket, expiresAt: new Date(expiresAt).toISOString() });
   });
 
@@ -304,7 +310,7 @@ export function createTerminalGateway(
   }, heartbeatIntervalMs);
   heartbeatInterval.unref();
 
-  terminalWebsocket.on("connection", (socket) => {
+  terminalWebsocket.on("connection", (socket, upgradeRequest) => {
     terminalSockets.add(socket);
     responsiveTerminalSockets.set(socket, true);
     let attachment: TerminalAttachment | null = null;
@@ -376,7 +382,10 @@ export function createTerminalGateway(
           socket.close(1008, "Invalid terminal attach");
           return;
         }
-        const ticket = consumeTerminalTicket(request.ticket);
+        const ticket = consumeTerminalTicket(
+          request.ticket,
+          upgradeRequest.headers.origin,
+        );
         if (!ticket) {
           sendError(
             "terminal_ticket_invalid",

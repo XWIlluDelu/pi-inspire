@@ -1,3 +1,4 @@
+import { hostRequest } from "./support/host-request";
 import { expect, test } from "@playwright/test";
 import { modelSettingsScenario } from "./fixtures/model-settings";
 import {
@@ -368,7 +369,7 @@ test("Settings activity menus remain clickable beyond their card and persist the
     ).toHaveText("Collapsed");
     await expect
       .poll(async () => {
-        const response = await page.request.get("/api/bootstrap");
+        const response = await hostRequest(page).get("/api/bootstrap");
         return (await response.json()).preferences.activityFoldVisibility;
       })
       .toBe("collapsed");

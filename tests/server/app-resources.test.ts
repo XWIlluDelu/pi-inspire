@@ -1,4 +1,11 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 
 import { join, resolve } from "node:path";
 import request from "supertest";
@@ -11,6 +18,7 @@ import {
   hostApiFixture,
   closeHostApiFixture,
   token,
+  pairedBrowser,
 } from "./fixtures/host-api.js";
 
 const mockWorkspace = resolve("/home/demo/research");
@@ -39,6 +47,81 @@ describe("HTTP resource and upload authority", () => {
     } = fixture);
   });
   afterEach(async () => closeHostApiFixture(fixture));
+
+  it("streams only the one-use download's current session/view/resource and revalidates before bytes", async () => {
+    const { bearer } = await pairedBrowser(application.server, baseUrl);
+    await writeFile(join(temporary, "download.txt"), "complete raw download\n");
+    const opened = await request(application.server)
+      .post("/api/sessions/new")
+      .set("Authorization", `Bearer ${bearer}`)
+      .send({ cwd: temporary })
+      .expect(200);
+    const sessionId = opened.body.active.sessionId as string;
+    const resolved = await request(application.server)
+      .post("/api/resources/resolve")
+      .set("Authorization", `Bearer ${bearer}`)
+      .send({
+        sessionId,
+        reference: "download.txt",
+        workspacePath: "download.txt",
+      })
+      .expect(200);
+    const id = resolved.body.id as string;
+    const mint = async () => {
+      const result = await request(application.server)
+        .post(`/api/resources/${id}/download-ticket`)
+        .set("Authorization", `Bearer ${bearer}`)
+        .send({ sessionId })
+        .expect(200);
+      return `/api/resource-downloads/${result.body.ticket}`;
+    };
+    await request(application.server)
+      .post(`/api/resources/${id}/download-ticket`)
+      .send({ sessionId })
+      .expect(401);
+    const url = await mint();
+    await request(application.server).get(url).expect(403);
+    await request(application.server)
+      .get(url)
+      .set("Sec-Fetch-Site", "same-site")
+      .expect(403);
+    const bytes = await request(application.server)
+      .get(url)
+      .set("Sec-Fetch-Site", "same-origin")
+      .expect(200);
+    expect(bytes.text).toBe("complete raw download\n");
+    expect(bytes.headers["content-disposition"]).toContain("attachment;");
+    await request(application.server)
+      .get(url)
+      .set("Sec-Fetch-Site", "same-origin")
+      .expect(401);
+    const wrongOrigin = await mint();
+    await request(application.server)
+      .get(wrongOrigin)
+      .set("Host", "localhost:55555")
+      .set("Sec-Fetch-Site", "same-origin")
+      .expect(401);
+    const retiredView = await mint();
+    const context = await runtime.resourceContext(sessionId);
+    vi.spyOn(runtime, "resourceContext").mockResolvedValueOnce({
+      ...context,
+      viewId: "retired-view",
+    });
+    await request(application.server)
+      .get(retiredView)
+      .set("Sec-Fetch-Site", "same-origin")
+      .expect(404);
+    const stale = await mint();
+    await rm(join(temporary, "download.txt"));
+    await request(application.server)
+      .get(stale)
+      .set("Sec-Fetch-Site", "same-origin")
+      .expect(404);
+    await request(application.server)
+      .get(stale)
+      .set("Sec-Fetch-Site", "same-origin")
+      .expect(401);
+  });
 
   // Multiple HTTP requests run real native hidden-attribute commands on the
   // host. This checks behavior, not a 5-second budget for the whole scenario.

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -26,12 +26,70 @@ export type DetailFrame = Record<string, unknown> & {
 
 export function observeEventSocket(url: string) {
   const frames: DetailFrame[] = [];
-  const socket = new WebSocket(url);
+  const socket = new WebSocket(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
   socket.on("message", (data) => frames.push(JSON.parse(data.toString())));
   return { socket, frames };
 }
 
 export const token = "test-local-token";
+
+export async function pairedBrowser(
+  server: import("node:http").Server,
+  origin: string,
+  master = token,
+) {
+  const { privateKey, publicKey } = generateKeyPairSync("ec", {
+    namedCurve: "prime256v1",
+  });
+  const jwk = publicKey.export({ format: "jwk" });
+  const paired = await request(server)
+    .post("/api/auth/pair")
+    .set("Origin", origin)
+    .send({
+      token: master,
+      publicKey: { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y },
+    })
+    .expect(200);
+  const certificate = paired.body.certificate as string;
+  const challengeResponse = await request(server)
+    .post("/api/auth/challenge")
+    .set("Origin", origin)
+    .send({ certificate })
+    .expect(200);
+  const challenge = challengeResponse.body.challenge as string;
+  const signature = sign("sha256", Buffer.from(challenge), {
+    key: privateKey,
+    dsaEncoding: "ieee-p1363",
+  }).toString("base64url");
+  const exchanged = await request(server)
+    .post("/api/auth/exchange")
+    .set("Origin", origin)
+    .send({ challenge, signature })
+    .expect(200);
+  return {
+    bearer: exchanged.body.bearer as string,
+    certificate,
+    privateKey,
+    publicKey: jwk,
+  };
+}
+
+export async function socketAdmission(
+  server: import("node:http").Server,
+  origin: string,
+  bearer: string,
+  audience = "events",
+): Promise<string> {
+  const response = await request(server)
+    .post("/api/auth/socket-ticket")
+    .set("Origin", origin)
+    .set("Authorization", `Bearer ${bearer}`)
+    .send({ audience })
+    .expect(200);
+  return response.body.ticket as string;
+}
 const fixtureModel = {
   provider: "anthropic",
   id: "claude-sonnet-4",
