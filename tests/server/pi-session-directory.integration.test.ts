@@ -131,7 +131,9 @@ describe("real Pi CLI session-directory compatibility", () => {
       }
       const file = resolve(cwd, state.sessionFile);
       const expected =
-        selection === "cli" ? cliDirectory : resolvePiSessionDirectory(cwd);
+        selection === "cli"
+          ? cliDirectory
+          : await resolvePiSessionDirectory(cwd);
       if (expected) expect(dirname(file)).toBe(expected);
       else expect(dirname(dirname(file))).toBe(join(agent, "sessions"));
       const persisted = await readFile(file, "utf8");

@@ -18,6 +18,7 @@ import {
   type UserTurnAnchor,
 } from "../shared/contracts";
 import type { ModelSettingsOwner } from "../shared/model-settings";
+import type { ExternalSessionActivities } from "../shared/session-activity";
 import type { PiCommand } from "./composer-completion";
 import type { PendingAttachment } from "./controllers/composer-controller";
 import type {
@@ -232,6 +233,8 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   /** Authoritative per-session runtime status for every live session worker,
    * keyed by session id. Drives nav attention indicators. */
   sessionStatuses: Record<string, SessionRuntimeStatus>;
+  /** Read-only Herdr observations, never execution/control authority. */
+  externalSessionActivities: ExternalSessionActivities;
   /** Unseen terminal transitions currently contributing a title marker. */
   attentionSessionIds: string[];
   /** Ephemeral cue for observed successful runs finishing in the selected session. */
@@ -383,6 +386,7 @@ export function createInitialAppState(): AppState {
     sessionDeleteError: null,
     sessionDeleteReviewRequired: false,
     sessionStatuses: {},
+    externalSessionActivities: {},
     attentionSessionIds: [],
     completedRunSequence: 0,
     openingSessionId: null,

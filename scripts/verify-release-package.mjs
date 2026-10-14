@@ -304,6 +304,7 @@ try {
     "deploy/systemd/inspire-host.service.in",
     "docs/ssh-reverse.md",
     "docs/examples/native-ui.ts",
+    "docs/examples/session-activity.ts",
     "dist/index.html",
     "dist/THIRD_PARTY_NOTICES.txt",
     "inspire",
@@ -327,7 +328,8 @@ try {
       path.startsWith("tests/") ||
       path.startsWith("server/") ||
       (/\.(?:[cm]?ts|tsx)$/u.test(path) &&
-        path !== "docs/examples/native-ui.ts"),
+        path !== "docs/examples/native-ui.ts" &&
+        path !== "docs/examples/session-activity.ts"),
   );
   if (forbidden.length > 0)
     throw new Error(

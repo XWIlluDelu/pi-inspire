@@ -451,7 +451,10 @@ export class AppStore {
     invalidateSnapshotDigest: () => {
       this.snapshotDigest = null;
     },
-    onTransportReplaced: () => this.runtimeEvents.clearLiveAttention(),
+    onTransportReplaced: () => {
+      this.runtimeEvents.clearLiveAttention();
+      this.set({ externalSessionActivities: {} });
+    },
     onTransportClosed: () => {
       // A later terminal event cannot be correlated across a lost stream.
       // The reconnect snapshot may remove stale state but must not recreate
@@ -461,6 +464,7 @@ export class AppStore {
       this.set({
         connection: "reconnecting",
         connectionProblem: { kind: "stream-interrupted" },
+        externalSessionActivities: {},
       });
     },
     reconnect: (token) => void this.init(token),

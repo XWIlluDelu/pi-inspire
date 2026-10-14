@@ -356,9 +356,13 @@ export class ConnectionController {
         this.clearSnapshotTimer();
         return;
       }
-      // Host-wide update status is carried on the authenticated stream but is
-      // not part of the runtime snapshot digest.
-      if (event.type !== "update_status") this.host.invalidateSnapshotDigest();
+      // Host-wide update status and external activity observations travel on
+      // this stream but are not part of the runtime snapshot digest.
+      if (
+        event.type !== "update_status" &&
+        event.type !== "external_session_activity"
+      )
+        this.host.invalidateSnapshotDigest();
       const streamUpdate = streamMessageUpdate(event);
       if (streamUpdate) {
         this.queueStreamUpdate(socket, streamUpdate);

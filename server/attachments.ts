@@ -391,7 +391,7 @@ export class AttachmentStore {
     if (this.owned.size === 0) return { reclaimed: [] };
     const configured = this.retention.sessionDirectories
       ? []
-      : [resolvePiSessionDirectory(process.cwd())];
+      : [await resolvePiSessionDirectory(process.cwd())];
     for (const directory of [
       ...configured,
       ...((await this.directorySource?.()) ?? []),
