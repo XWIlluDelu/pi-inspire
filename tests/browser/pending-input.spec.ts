@@ -605,11 +605,13 @@ test.describe("touch Pending layout", () => {
           return {
             width: copy.width,
             height: copy.height,
-            verticalBalance: (text.top - row.top) - (row.bottom - text.bottom),
+            verticalBalance: text.top - row.top - (row.bottom - text.bottom),
             baseline: number.top - text.top,
             firstLine: copy.y + copy.height / 2 - (text.top + 10),
             contained:
-              copy.top >= row.top && copy.bottom <= row.bottom && copy.right <= row.right,
+              copy.top >= row.top &&
+              copy.bottom <= row.bottom &&
+              copy.right <= row.right,
           };
         });
         expect(geometry.width).toBeGreaterThanOrEqual(32);

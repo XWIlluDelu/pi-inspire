@@ -359,7 +359,16 @@ test("compact terminal controls keep selection, search, and output scoped to the
   await searchInput.fill("TERMINAL_REDESIGN_A");
   await expect(page.locator(".terminal-search__count")).not.toHaveText("0/0");
   expect(dimensions()).toEqual(beforeSearch);
-  expect(firstTerminal.resizes).toHaveLength(beforeSearchResizes);
+  // A newly used font can request another fit without resizing the PTY.
+  // Check every reported geometry, not the timing-dependent number of fits.
+  expect(
+    firstTerminal.resizes
+      .slice(beforeSearchResizes)
+      .every(
+        (size) =>
+          size.cols === beforeSearch.cols && size.rows === beforeSearch.rows,
+      ),
+  ).toBe(true);
   await page.locator(`#terminal-tab-${ids[1]}`).click();
   await expect.poll(() => secondTerminal.resizes.length).toBeGreaterThan(0);
   secondTerminal.write("TERMINAL_REDESIGN_B\r\n");
@@ -411,7 +420,14 @@ test("compact terminal controls keep selection, search, and output scoped to the
   await expect(textOutput).toBeFocused();
   await expect(textOutput).toHaveAttribute("readonly", "");
   expect(dimensions()).toEqual(beforeSearch);
-  expect(firstTerminal.resizes).toHaveLength(beforeSelectionResizes);
+  expect(
+    firstTerminal.resizes
+      .slice(beforeSelectionResizes)
+      .every(
+        (size) =>
+          size.cols === beforeSearch.cols && size.rows === beforeSearch.rows,
+      ),
+  ).toBe(true);
   await expect(textOutput).not.toHaveValue(/TERMINAL_REDESIGN_B/);
   await textOutput.press("ControlOrMeta+a");
   await textDialog
