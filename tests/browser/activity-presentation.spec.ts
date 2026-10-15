@@ -127,7 +127,12 @@ test("activity kind cues stay local, respect reduced motion and disclose with ke
     name: "Expand assistant activity",
   });
   await expect(disclosure).toBeVisible();
-  await expect(fold.locator(".activity-fold__rail")).toHaveCount(0);
+  await expect(disclosure).toHaveCSS("font-family", /Rajdhani/);
+  await expect(disclosure).toHaveCSS("text-transform", "uppercase");
+  const matrix = await disclosure
+    .locator(".activity-fold__matrix")
+    .boundingBox();
+  expect(matrix!.width).toBe(matrix!.height);
   const kind = fold.locator(".activity-fold__kind").first();
   // Unit tests establish which kinds are live. Here isolate the CSS animation
   // from the mock worker's timing and verify that it never moves the control.
@@ -196,6 +201,7 @@ test("activity kind cues stay local, respect reduced motion and disclose with ke
     const lower = fold.getByRole("button", {
       name: "Collapse assistant activity from the lower boundary",
     });
+    await expect(lower).toHaveCSS("font-family", /Rajdhani/);
     await lower.scrollIntoViewIfNeeded();
     await lower.focus();
     expect(
@@ -240,10 +246,39 @@ test("activity Copy is available only with expanded content and custom messages 
       exact: true,
     });
     await expect(copy).toHaveCount(0);
+    const summaryGap = await thinking
+      .locator(".card__header")
+      .evaluate(
+        (el) =>
+          el.querySelector(".card__summary")!.getBoundingClientRect().left -
+          el.querySelector(".card__disclosure")!.getBoundingClientRect().right,
+      );
     await thinking
       .getByRole("button", { name: "Expand Thinking", exact: true })
       .click();
     await expect(thinking.locator(".card__body")).toBeVisible();
+    await expect(thinking.locator(".card__summary")).toHaveCount(0);
+    await page.evaluate(() => document.fonts.ready);
+    const rhythm = await thinking.evaluate((el) => {
+      const title = el.querySelector(".card__label")!.getBoundingClientRect();
+      const disclosure = el
+        .querySelector(".card__disclosure")!
+        .getBoundingClientRect();
+      const copy = el.querySelector(".card__copy")!.getBoundingClientRect();
+      const paragraphs = [...el.querySelectorAll("p")].map((p) =>
+        p.getBoundingClientRect(),
+      );
+      return {
+        copyGap: copy.left - disclosure.right,
+        indent: paragraphs[0]!.left - title.left,
+        paragraphGap: paragraphs[1]!.top - paragraphs[0]!.bottom,
+      };
+    });
+    expect(rhythm.copyGap).toBeGreaterThan(0);
+    expect(summaryGap).toBeGreaterThan(rhythm.copyGap);
+    expect(Math.abs(rhythm.indent)).toBeLessThanOrEqual(1);
+    expect(rhythm.paragraphGap).toBeGreaterThan(0);
+    expect(rhythm.paragraphGap).toBeLessThanOrEqual(8);
     await copy.focus();
     await expect(copy).toBeFocused();
     await page.keyboard.press("Enter");
@@ -295,6 +330,36 @@ test("activity Copy is available only with expanded content and custom messages 
     .click();
   await expect(extension).toBeVisible();
   await expect(extension).toContainText("The keyboard checks are complete.");
+});
+
+test("Earlier activity expands the hidden prefix independently of the visible tail", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const send = await openMockEventSession(
+    page,
+    "Earlier history",
+    customMessageConfiguration,
+    { activityFoldVisibility: "compact", thinkingVisibility: "expanded" },
+  );
+  send(
+    ...Array.from({ length: 40 }, (_, i) => ({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        __inspireMessageId: `earlier-${i}`,
+        content: [{ type: "thinking", thinking: `History step ${i + 1}` }],
+      },
+    })),
+  );
+  const earlier = page.locator(".activity-fold__omission");
+  await expect(earlier).toBeVisible();
+  await expect(earlier).toHaveCSS("font-family", /Rajdhani/);
+  await expect(earlier).toHaveCSS("text-transform", "uppercase");
+  await expect(page.locator(".card--thinking:visible")).toHaveCount(24);
+  await earlier.click();
+  await expect(earlier).toHaveCount(0);
+  await expect(page.locator(".card--thinking:visible")).toHaveCount(40);
 });
 
 test("success and failure cues retain semantic color in tools and nested calls", async ({

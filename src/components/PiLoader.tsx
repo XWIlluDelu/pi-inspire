@@ -1,6 +1,6 @@
 import { type ComponentProps, type CSSProperties, useState } from "react";
 
-export const PI_LOADING_VARIANTS = [
+const PI_LOADING_VARIANTS = [
   "rows",
   "columns",
   "trace",
@@ -9,7 +9,7 @@ export const PI_LOADING_VARIANTS = [
   "relay",
   "gather",
 ] as const;
-export type PiLoadingVariant = (typeof PI_LOADING_VARIANTS)[number];
+type PiLoadingVariant = (typeof PI_LOADING_VARIANTS)[number];
 
 function choosePiLoadingVariant(): PiLoadingVariant {
   return PI_LOADING_VARIANTS[
@@ -29,22 +29,16 @@ const points = [
 
 type Props = Omit<ComponentProps<"svg">, "children" | "width" | "height"> & {
   size?: number;
-  /** A fixed pattern for demonstrations; ordinary loading reselects after every complete cycle. */
-  variant?: PiLoadingVariant;
 };
 
 /** An indeterminate Π, not a percentage or a rotating refresh action. */
 export function PiLoader({
   size = 14,
-  variant,
   className = "",
   onAnimationIteration,
   ...props
 }: Props) {
-  const [chosen, setChosen] = useState(
-    () => variant ?? choosePiLoadingVariant(),
-  );
-  const pattern = variant ?? chosen;
+  const [pattern, setPattern] = useState(choosePiLoadingVariant);
   return (
     <svg
       width={size}
@@ -58,11 +52,10 @@ export function PiLoader({
         // Dots have staggered, bubbling iteration events. Only the invisible
         // outer clock ends a complete pattern; ordinary rerenders do not.
         if (
-          !variant &&
           event.target === event.currentTarget &&
           event.animationName === "pi-loading-cycle"
         ) {
-          setChosen(choosePiLoadingVariant());
+          setPattern(choosePiLoadingVariant());
         }
         onAnimationIteration?.(event);
       }}

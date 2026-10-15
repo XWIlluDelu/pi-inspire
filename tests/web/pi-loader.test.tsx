@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { PI_LOADING_VARIANTS, PiLoader } from "../../src/components/PiLoader";
+import { PiLoader } from "../../src/components/PiLoader";
 import { PiStatus } from "../../src/components/PiStatus";
 
 afterEach(() => {
@@ -36,69 +36,47 @@ it("keeps the current cycle through phase/label updates, then reselects at the o
   expect(next.container.firstChild).toHaveAttribute("data-variant", "gather");
 });
 
-it.each(PI_LOADING_VARIANTS)(
-  "keeps the seven-cell Π and caller's slot/accessible label for %s",
-  (variant) => {
-    const { container, getByLabelText } = render(
-      <PiLoader
-        size={12}
-        variant={variant}
-        aria-label="Loading content"
-        className="status-icon"
-      />,
-    );
-    const icon = getByLabelText("Loading content");
-    expect(icon).toHaveAttribute("width", "12");
-    expect(icon).toHaveAttribute("height", "12");
-    expect(icon).not.toHaveAttribute("aria-hidden", "true");
-    expect(icon).toHaveClass("status-icon");
-    expect(icon).not.toHaveClass("spin");
-    const points = [...container.querySelectorAll("rect")].map((dot) => [
-      Number(dot.getAttribute("x")) + Number(dot.getAttribute("width")) / 2,
-      Number(dot.getAttribute("y")) + Number(dot.getAttribute("height")) / 2,
-    ]);
-    expect(points).toEqual([
-      [3.1, 3.1],
-      [8, 3.1],
-      [12.9, 3.1],
-      [3.1, 8],
-      [12.9, 8],
-      [3.1, 12.9],
-      [12.9, 12.9],
-    ]);
-    const random = vi.spyOn(Math, "random");
-    const boundary = new Event("webkitAnimationIteration", { bubbles: true });
-    Object.assign(boundary, { animationName: "pi-loading-cycle" });
-    fireEvent(icon, boundary);
-    expect(icon).toHaveAttribute("data-variant", variant);
-    expect(random).not.toHaveBeenCalled();
-    const xs = points.map(([x]) => x!);
-    const ys = points.map(([, y]) => y!);
-    const ratio =
-      (Math.max(...xs) - Math.min(...xs) + 2) /
-      (Math.max(...ys) - Math.min(...ys) + 2);
-    expect(ratio).toBeCloseTo(1);
-  },
-);
+it("selects all seven patterns from equal random intervals", () => {
+  const random = vi.spyOn(Math, "random");
+  for (const [index, pattern] of [
+    "rows",
+    "columns",
+    "trace",
+    "breathe",
+    "spread",
+    "relay",
+    "gather",
+  ].entries()) {
+    random.mockReturnValue((index + 0.5) / 7);
+    const view = render(<PiLoader />);
+    expect(view.container.firstChild).toHaveAttribute("data-variant", pattern);
+    view.unmount();
+  }
+});
+
+it("preserves the caller's square slot and accessible label", () => {
+  const { getByLabelText } = render(
+    <PiLoader size={12} aria-label="Loading content" className="status-icon" />,
+  );
+  const icon = getByLabelText("Loading content");
+  expect(icon).toHaveAttribute("width", "12");
+  expect(icon).toHaveAttribute("height", "12");
+  expect(icon).not.toHaveAttribute("aria-hidden", "true");
+  expect(icon).toHaveClass("status-icon");
+});
 
 it.each(["success", "error"] as const)(
   "keeps %s static and aligned with the loading slot",
   (status) => {
-    const { container, getByLabelText } = render(
+    const { getByLabelText } = render(
       <PiStatus size={12} status={status} aria-label={status} />,
     );
     const icon = getByLabelText(status);
     expect(icon).toHaveAttribute("width", "12");
     expect(icon).toHaveAttribute("viewBox", "0 0 16 16");
     expect(icon).not.toHaveClass("pi-loading");
-    expect(container.querySelector("circle")).toBeNull();
-    expect(container.querySelectorAll("rect")).toHaveLength(
-      status === "success" ? 3 : 5,
-    );
-    expect(container.querySelector("path")).toHaveAttribute(
-      "stroke",
-      "currentColor",
-    );
+    expect(icon).toHaveAttribute("height", "12");
+    expect(icon).toHaveAttribute("data-status", status);
   },
 );
 

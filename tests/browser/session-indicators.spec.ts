@@ -4,7 +4,7 @@ import { openMockSession, pairedPage } from "./support/navigation";
 
 test("sidebar work and unread outcomes share a stable matrix slot without animating attention", async ({
   page,
-}, testInfo) => {
+}) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   const transport = await routeMockSnapshots(page, {});
@@ -43,7 +43,6 @@ test("sidebar work and unread outcomes share a stable matrix slot without animat
       },
     });
   }
-  const bounds = [];
   for (const [index, fixture] of fixtures.entries()) {
     const row = page.locator(".nav__row").filter({ hasText: fixture.name });
     const status = row.getByRole("img", { name: fixture.label, exact: true });
@@ -53,7 +52,6 @@ test("sidebar work and unread outcomes share a stable matrix slot without animat
     const box = await glyph.boundingBox();
     expect(box!.width).toBe(12);
     expect(box!.height).toBe(12);
-    bounds.push(await row.boundingBox());
     expect(
       await status.evaluate((el) => {
         const icon = el.getBoundingClientRect();
@@ -61,22 +59,6 @@ test("sidebar work and unread outcomes share a stable matrix slot without animat
         return Math.abs(icon.y + icon.height / 2 - title.y - title.height / 2);
       }),
     ).toBeLessThanOrEqual(0.5);
-  }
-  const clip = {
-    x: bounds[0]!.x,
-    y: bounds[0]!.y - 6,
-    width: bounds[0]!.width,
-    height: bounds[2]!.y + bounds[2]!.height - bounds[0]!.y + 12,
-  };
-  for (const theme of ["light", "dark"]) {
-    await page.evaluate(
-      (theme) => (document.documentElement.dataset.theme = theme),
-      theme,
-    );
-    await page.screenshot({
-      path: testInfo.outputPath(`sidebar-${theme}.png`),
-      clip,
-    });
   }
   const working = page
     .locator(".nav__row")
