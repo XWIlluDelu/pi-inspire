@@ -1581,6 +1581,21 @@ span.card__file-arg {
   font-size: 1.05em;
 }
 
+/* Inline flex preserves the child's text baseline even when overflow is
+   scrollable; ordinary formulas stay inline, wide ones own their scroll area. */
+.rich-text .inline-math {
+  display: inline-flex;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  vertical-align: baseline;
+  padding: 2px 0;
+}
+
+.rich-text .inline-math > * {
+  flex: 0 0 auto;
+}
+
 .rich-text .katex-display {
   margin: var(--space-3) 0;
   padding: var(--space-1) 2px;

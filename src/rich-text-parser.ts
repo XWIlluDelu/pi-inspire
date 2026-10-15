@@ -11,7 +11,8 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math-extended";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
-import { unified, type Plugin } from "unified";
+import { type Plugin, unified } from "unified";
+import { remarkMathDelimiterBoundaries } from "./remark-math-boundaries";
 
 // Shared sanitize schema for every variant. Raw HTML from model content is
 // never interpreted (there is no rehype-raw), and the remaining
@@ -280,9 +281,16 @@ const processor = (headings: boolean) =>
     .use(remarkParse)
     .use(remarkGfm)
     .use(remarkMath)
+    .use(remarkMathDelimiterBoundaries)
     .use(remarkMathSourceSafety)
     .use(headings ? [remarkDocumentHeadings] : [])
-    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(remarkRehype, {
+      // Raw tags (including generic types such as Array<T>) remain readable
+      // text. Never parse them into DOM or discard them as unsafe raw HAST.
+      handlers: {
+        html: (_state, node) => ({ type: "text", value: node.value }),
+      },
+    })
     .use(rehypeSanitize, schema)
     .freeze();
 const processors = [processor(false), processor(true)];

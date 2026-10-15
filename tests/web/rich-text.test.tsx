@@ -121,6 +121,39 @@ $$z$$
     expect(container.querySelector(".rich-text")?.textContent).toBe(source);
   });
 
+  it.each(["assistant", "thinking", "extension", "user"] as const)(
+    "does not join bare regex anchors into math in %s content",
+    (variant) => {
+      const source = String.raw`Use /^\d+$/ for the first check. Keep the ordinary words and spaces; replace it with /^(0|[1-9]\d*)$/ instead.`;
+      const { container, rerender } = render(
+        <RichText text={source} variant={variant} />,
+      );
+      expect(container.querySelector(".katex")).toBeNull();
+      expect(container.querySelector(".rich-text")?.textContent).toBe(source);
+      rerender(
+        <RichText
+          variant={variant}
+          text={source + " **Review this** and retain $x+1$/2 as math."}
+        />,
+      );
+      expect(container.querySelector("strong")?.textContent).toBe(
+        "Review this",
+      );
+      expect(container.querySelectorAll(".katex")).toHaveLength(1);
+      expect(container.querySelector("annotation")?.textContent).toBe("x+1");
+    },
+  );
+
+  it("keeps regex code literal and valid adjacent math intact", () => {
+    const source = "/^a$/i, /^b$/g, `/^c$/`, $x$ and $$y$$ and \\(z\\).";
+    const { container } = render(<RichText text={source} />);
+    expect(container.querySelector(".inline-code")?.textContent).toBe("/^c$/");
+    expect(container.querySelectorAll("annotation")).toHaveLength(3);
+    expect(container.querySelector(".rich-text")?.textContent).toContain(
+      "/^a$/i, /^b$/g",
+    );
+  });
+
   it("keeps a KaTeX failure contained and the source readable", () => {
     const { container } = render(<RichText text={"$\\def\\bad{策划}$"} />);
     // throwOnError is false: the raw source stays visible inside the error span
