@@ -28,6 +28,12 @@
 
 .nav__rail-toggle-icon {
   display: none;
+  color: var(--muted);
+  transition: color var(--dur-micro) var(--ease-standard);
+}
+
+.nav__brand-rail:is(:hover, :active) .nav__rail-toggle-icon {
+  color: var(--ink);
 }
 
 /* Overlay owns the app identity; desktop navigation starts with its actions. */
@@ -153,9 +159,9 @@
 
 .nav__new-session--rail {
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  min-height: 34px;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
   margin: var(--space-1) auto 0;
   padding: 0;
   border-radius: var(--radius-sm);
@@ -219,7 +225,7 @@
 .nav__error {
   margin: calc(var(--space-3) * -1) var(--space-3) var(--space-3);
   padding: var(--space-2) var(--space-3);
-  color: var(--error);
+  color: var(--error-ink);
   background: var(--error-tint);
   border-top: 1px solid var(--hairline);
   border-bottom: 1px solid var(--hairline);
@@ -253,7 +259,7 @@
 
 .nav__search:focus-within {
   background: var(--bg-surface);
-  border-color: var(--accent-deep);
+  border-color: var(--accent-focus);
   box-shadow: 0 0 0 1px var(--accent-tint);
   color: var(--ink);
 }
@@ -281,7 +287,9 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 0 var(--space-3) var(--space-3);
+  /* Folder rows reserve 8px for the active marker; compensate at the outer
+     gutter so their icon/text axes still match New, Search and Workspace. */
+  padding: 0 var(--space-3) var(--space-3) var(--space-2);
 }
 
 /* Align sessions with folder labels, leaving the icon column as hierarchy. */
@@ -358,7 +366,7 @@
 }
 
 .nav__row:hover .nav__row-actions,
-.nav__row:focus-within .nav__row-actions {
+.nav__row:has(:focus-visible) .nav__row-actions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -438,7 +446,7 @@
   }
 
   .nav__row:hover .nav__row-meta,
-  .nav__row:focus-within .nav__row-meta {
+  .nav__row:has(:focus-visible) .nav__row-meta {
     opacity: 1;
   }
 }
@@ -522,7 +530,7 @@
    them. */
 @media (hover: hover) and (min-width: 601px) {
   .nav__row:hover .nav__row-meta,
-  .nav__row:focus-within .nav__row-meta {
+  .nav__row:has(:focus-visible) .nav__row-meta {
     opacity: 0;
   }
 }
@@ -906,7 +914,7 @@ button.workspace-tree__status:hover {
 }
 
 .workspace-search:focus-within {
-  border-color: var(--accent-deep);
+  border-color: var(--accent-focus);
   color: var(--ink);
 }
 
@@ -1019,9 +1027,16 @@ button.workspace-tree__status:hover {
 
 .nav__pagination-button:hover:not(:disabled),
 .nav__pagination-button:focus-visible {
-  border-color: var(--accent-deep);
   color: var(--accent-deep);
   background: var(--accent-tint);
+}
+
+.nav__pagination-button:hover:not(:disabled) {
+  border-color: var(--accent-deep);
+}
+
+.nav__pagination-button:focus-visible:not(:disabled) {
+  border-color: var(--accent-focus);
 }
 
 .nav__pagination-button:disabled {
@@ -1123,7 +1138,7 @@ button.workspace-tree__status:hover {
 }
 
 .nav__group-title--folder:hover .nav__group-actions,
-.nav__group-title--folder:focus-within .nav__group-actions {
+.nav__group-title--folder:has(:focus-visible) .nav__group-actions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1143,7 +1158,7 @@ button.workspace-tree__status:hover {
 }
 
 .nav__group-title--folder:hover .nav__group-count,
-.nav__group-title--folder:focus-within .nav__group-count {
+.nav__group-title--folder:has(:focus-visible) .nav__group-count {
   opacity: 0;
 }
 

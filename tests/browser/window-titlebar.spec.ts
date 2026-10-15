@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { pairAndOpen } from "./support/navigation";
 
 // Chromium's media emulation does not implement display-mode. Exercise the
@@ -171,9 +171,40 @@ test("Overlay adds a quiet corner icon, retains the centered wordmark and restor
     before === "true" ? "false" : "true",
   );
   await brand.click();
-  await page.getByRole("button", { name: "Collapse navigation" }).click();
+  await overlay(page, true);
+  const collapse = page.getByRole("button", { name: "Collapse navigation" });
+  await page.mouse.move(1270, 830);
+  const restingColor = await collapse.evaluate(
+    (el) => getComputedStyle(el).color,
+  );
+  await collapse.click();
+  await page.mouse.move(1270, 830);
   await expect(page.locator(".nav__brand-icon--rail")).toBeHidden();
-  await expect(page.locator(".nav__rail-toggle-icon")).toBeVisible();
+  const railIcon = page.locator(".nav__rail-toggle-icon");
+  await expect(railIcon).toBeVisible();
+  await expect(railIcon).toHaveCSS("color", restingColor);
+  // Sample the same layout frame after the rail finishes its width transition.
+  await expect
+    .poll(() =>
+      railIcon.evaluate((el) => {
+        const rail = el.getBoundingClientRect();
+        const topbar = document
+          .querySelector(".topbar")!
+          .getBoundingClientRect();
+        const offsets = [
+          ".window-titlebar__corner-logo",
+          ".nav__new-session-icon",
+        ].map((selector) => {
+          const box = document.querySelector(selector)!.getBoundingClientRect();
+          return Math.abs(box.x + box.width / 2 - rail.x - rail.width / 2);
+        });
+        offsets.push(
+          Math.abs(topbar.y + topbar.height / 2 - rail.y - rail.height / 2),
+        );
+        return Math.max(...offsets);
+      }),
+    )
+    .toBeLessThanOrEqual(0.5);
   const centered = (await brand.boundingBox())!;
   expect(Math.abs(centered.x + centered.width / 2 - 640)).toBeLessThan(1);
   await page.getByRole("button", { name: "Expand navigation" }).click();
@@ -195,7 +226,7 @@ test("Overlay adds a quiet corner icon, retains the centered wordmark and restor
   expect(create.y).toBeGreaterThanOrEqual(header.y + header.height);
 });
 
-test("Overlay native-color hints follow every palette and luminosity, and revert on exit", async ({
+test("Overlay chrome and needle colors follow every palette and luminosity, and revert on exit", async ({
   page,
 }) => {
   await overlay(page, true);
@@ -218,6 +249,25 @@ test("Overlay native-color hints follow every palette and luminosity, and revert
         .getByRole("group", { name: "Color palette", exact: true })
         .getByRole("button", { name: palette, exact: true })
         .click();
+      // Sample the production needle styles without waiting for random arrivals.
+      const colors = await page
+        .locator(".window-titlebar__safe")
+        .evaluate((safe) =>
+          ["tool", "think"].map((role) => {
+            const needle = document.createElement("span");
+            needle.className = `window-titlebar__needle window-titlebar__needle--${role}`;
+            const identity = document.createElement("span");
+            identity.style.color = `var(--activity-${role})`;
+            safe.append(needle, identity);
+            const actual = getComputedStyle(needle).backgroundColor;
+            const expected = getComputedStyle(identity).color;
+            needle.remove();
+            identity.remove();
+            return { role, actual, expected };
+          }),
+        );
+      for (const { role, actual, expected } of colors)
+        expect(actual, `${palette} ${theme} ${role} needle`).toBe(expected);
       await expect
         .poll(() =>
           page.evaluate(() => {

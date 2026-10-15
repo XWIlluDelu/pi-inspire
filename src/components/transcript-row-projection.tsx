@@ -762,7 +762,7 @@ export function useTranscriptRows({
             typeof message.errorMessage === "string" &&
             message.errorMessage.trim()
               ? message.errorMessage
-              : "PI did not provide error details.";
+              : "Pi did not provide error details.";
           built.push({
             key: `error:${projectedKey}`,
             node: <AssistantError text={errorText} />,

@@ -12,7 +12,7 @@ test("Pi errors remain visible after reopening and reload, with copyable long de
       .locator(".nav__row-main")
       .filter({ hasText: "Pi error display fixture" })
       .click();
-    await expect(page.getByRole("group", { name: "PI error" })).toHaveCount(2);
+    await expect(page.getByRole("group", { name: "Pi error" })).toHaveCount(2);
   };
   await openErrors();
   await expect(
@@ -21,7 +21,7 @@ test("Pi errors remain visible after reopening and reload, with copyable long de
   await expect(
     page.getByText("WebSocket error", { exact: true }),
   ).toBeVisible();
-  const error = page.getByRole("group", { name: "PI error" }).last();
+  const error = page.getByRole("group", { name: "Pi error" }).last();
   await error.getByRole("button", { name: "Show details" }).click();
   const fullText = await error
     .locator(".assistant-error__message")

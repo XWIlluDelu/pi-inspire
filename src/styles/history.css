@@ -24,7 +24,7 @@
   color: var(--muted);
   background: var(--bg-stage);
 }
-.branch-tree__search:focus-within { border-color: var(--accent-deep); }
+.branch-tree__search:focus-within { border-color: var(--accent-focus); }
 .branch-tree__search input {
   min-width: 0;
   flex: 1 1 auto;
@@ -90,7 +90,7 @@
 .history-result:focus-visible,
 .history-entry:focus-visible,
 .history-route:focus-visible,
-.history-disclosure:focus-visible { outline: 1px solid var(--accent-deep); outline-offset: -1px; }
+.history-disclosure:focus-visible { outline: 1px solid var(--accent-focus); outline-offset: -1px; }
 .history-disclosure {
   min-height: 30px;
   display: inline-flex;
@@ -175,9 +175,18 @@
   font-weight: 500;
   background: color-mix(in srgb, currentColor 8%, transparent);
 }
-.history-shell__status[data-outcome="success"] { color: var(--activity-success); }
-.history-shell__status[data-outcome="error"] { color: var(--error); }
-.history-shell__status[data-outcome="warning"] { color: var(--warning); }
+.history-shell__status[data-outcome="success"] {
+  color: var(--activity-success-ink);
+  background: color-mix(in srgb, var(--activity-success) 8%, transparent);
+}
+.history-shell__status[data-outcome="error"] {
+  color: var(--error-ink);
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+}
+.history-shell__status[data-outcome="warning"] {
+  color: var(--warning-ink);
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+}
 .history-shell__command,
 .history-shell__output {
   margin: 0;
@@ -263,7 +272,7 @@
 }
 .branches__stale {
   padding: var(--space-2) var(--space-3);
-  color: var(--warning);
+  color: var(--warning-ink);
   background: var(--warning-tint);
   border-bottom: 1px solid var(--hairline);
   font-size: var(--text-xs);

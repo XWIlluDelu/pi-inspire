@@ -240,7 +240,7 @@
 
 .image-lightbox__control:focus-visible,
 .image-lightbox__background:has(select:focus-visible) {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 3px;
   box-shadow: none;
 }
@@ -258,7 +258,7 @@
 }
 
 .image-lightbox__canvas:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
 }
 

@@ -176,7 +176,7 @@
   }
 
   button.activity-fold__rail:focus-visible .activity-fold__handle {
-    outline: 2px solid var(--accent-deep);
+    outline: 2px solid var(--accent-focus);
     outline-offset: 1px;
     color: var(--accent-deep);
   }
@@ -227,7 +227,7 @@
 
   .activity-fold__omission:focus-visible {
     border-radius: var(--radius-xs);
-    outline: 2px solid var(--accent-deep);
+    outline: 2px solid var(--accent-focus);
     outline-offset: -2px;
     color: var(--accent-deep);
     opacity: 1;
@@ -239,7 +239,7 @@
 
   .activity-fold__omission--error,
   .activity-fold__disclosure--error .activity-fold__summary-badge {
-    color: var(--danger);
+    color: var(--error-ink);
     opacity: 0.9;
   }
 
@@ -332,7 +332,7 @@
   }
 
   .activity-fold__disclosure:focus-visible .activity-fold__summary-badge {
-    outline: 2px solid var(--accent-deep);
+    outline: 2px solid var(--accent-focus);
     outline-offset: 1px;
     border-radius: var(--radius-xs);
     color: var(--accent-deep);

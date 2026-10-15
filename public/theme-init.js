@@ -52,10 +52,10 @@
   // Before CSS is available, mirror the outer-frame tokens for Overlay only.
   // Runtime applyBrowserTheme reads the actual CSS role after bootstrap.
   const frameColors = {
-    chimonanthus: ["#F3EFEA", "#151311"],
-    wisteria: ["#EDEDF5", "#131317"],
-    hydrangea: ["#EBF2EF", "#111514"],
-    lycoris: ["#F4EDED", "#161213"],
+    chimonanthus: ["#EFECE4", "#12100E"],
+    wisteria: ["#ECEAF2", "#111017"],
+    hydrangea: ["#EAECE7", "#101412"],
+    lycoris: ["#EFE9E6", "#141010"],
     "classic-amber": ["#EFEEEB", "#13161A"],
     "classic-jade": ["#EDF1EF", "#131815"],
   };

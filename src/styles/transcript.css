@@ -147,10 +147,17 @@
 .transcript-search:focus-within,
 .transcript-search--active {
   opacity: 1;
-  border-color: var(--accent-deep);
   background: var(--bg-surface);
   box-shadow: var(--shadow-1);
   color: var(--ink);
+}
+
+.transcript-search--active {
+  border-color: var(--accent-deep);
+}
+
+.transcript-search:focus-within {
+  border-color: var(--accent-focus);
 }
 
 .transcript-search output:empty {
@@ -386,7 +393,7 @@
 }
 
 .prompt-map__toggle:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 2px;
 }
 
@@ -454,7 +461,7 @@
 }
 
 .prompt-map__list:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
   border-radius: var(--radius-sm);
 }
@@ -568,7 +575,7 @@
   border: 1px solid color-mix(in srgb, var(--error) 28%, var(--hairline));
   border-radius: var(--radius-sm);
   background: var(--error-tint);
-  color: var(--error);
+  color: var(--error-ink);
   font: inherit;
   cursor: pointer;
 }
@@ -691,7 +698,7 @@
   .activity-fold__boundary,
   .activity-fold__omission
 ):focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
   color: var(--ink);
 }
@@ -759,9 +766,10 @@
 .activity-fold__omission--loading > .activity-fold__dots {
   animation: activity-omission-pulse 0.9s ease-in-out infinite;
 }
-.activity-fold__omission--error,
-.activity-fold__disclosure--error {
-  color: var(--danger);
+/* Keep the error role through the generic hover, pressed and focus ink treatment. */
+.activity-fold__omission.activity-fold__omission--error,
+.activity-fold__disclosure.activity-fold__disclosure--error {
+  color: var(--error-ink);
 }
 
 @media (pointer: coarse) {
@@ -852,7 +860,8 @@
   position: relative;
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  /* Align mixed-size text by its baseline, not by the disclosure hit box. */
+  align-items: baseline;
   gap: 0 6px;
   /* A hanging disclosure keeps wrapped metadata on the title's reading axis,
      without reserving an extra indent when both groups fit on one line. */
@@ -909,7 +918,7 @@
 }
 
 .context-checkpoint__toggle:focus-visible::after {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
 }
 
@@ -934,6 +943,8 @@
 .context-checkpoint__title {
   display: flex;
   align-items: center;
+  /* The title supplies the toggle's baseline; the leading SVG must not. */
+  align-self: baseline;
   min-height: 28px;
   flex: 0 1 auto;
   min-width: 0;
@@ -946,6 +957,11 @@
   gap: 6px;
   min-width: 0;
   max-width: 100%;
+}
+
+.context-checkpoint__details:not(:has(.context-checkpoint__metric)) {
+  /* A standalone Copy is a control, not a second text baseline. */
+  align-self: center;
 }
 
 .context-checkpoint__metric {
@@ -969,7 +985,7 @@
   transition: opacity var(--dur-micro) var(--ease-standard);
 }
 
-.context-checkpoint__head:is(:hover, :focus-within) .context-checkpoint__copy {
+.context-checkpoint__head:is(:hover, :has(:focus-visible)) .context-checkpoint__copy {
   opacity: 1;
 }
 
@@ -994,7 +1010,7 @@
 
 @media (hover: none) {
   .context-checkpoint__copy.icon-button {
-    opacity: 1;
+    opacity: 0.75;
   }
 }
 
@@ -1039,7 +1055,8 @@
 }
 
 .turn:hover .turn__actions,
-.turn:focus-within .turn__actions {
+.turn--user:has(:focus-visible) .turn__actions,
+.turn:not(.turn--user):focus-within .turn__actions {
   opacity: 1;
 }
 
@@ -1171,7 +1188,7 @@
     background var(--dur-micro) var(--ease-standard);
 }
 .custom-message__head:hover .custom-message__copy,
-.custom-message__head:focus-within .custom-message__copy {
+.custom-message__head:has(:focus-visible) .custom-message__copy {
   opacity: 1;
 }
 @media (hover: none) {
@@ -1219,7 +1236,7 @@
 }
 .custom-message__details > summary:focus-visible,
 .custom-message__copy.icon-button:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 2px;
 }
 .custom-message__raw {
@@ -1307,7 +1324,7 @@
 }
 
 .assistant-error__message--expanded:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 1px;
 }
 
@@ -1339,7 +1356,7 @@
 }
 
 .assistant-error__disclosure:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 1px;
 }
 
@@ -1404,9 +1421,16 @@
 
 .transcript__older-retry:hover,
 .transcript__older-retry:focus-visible {
-  border-color: var(--accent-deep);
   color: var(--ink);
   background: var(--bg-inset);
+}
+
+.transcript__older-retry:hover {
+  border-color: var(--accent-deep);
+}
+
+.transcript__older-retry:focus-visible {
+  border-color: var(--accent-focus);
 }
 
 .jump-to-latest {
@@ -1717,7 +1741,7 @@
 }
 
 .pending-group__image:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 2px;
 }
 

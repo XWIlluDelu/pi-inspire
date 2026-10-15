@@ -114,6 +114,10 @@ for (const touch of [false, true]) {
           }
           return route.fallback();
         });
+        await page.route("**/api/preferences", async (route) => {
+          Object.assign(preferences, route.request().postDataJSON());
+          await route.fulfill({ json: preferences });
+        });
         await page.reload();
         await page.getByRole("button", { name: "Hidden", exact: true }).click();
         const drawer = page.locator(".nav__group--hidden");
@@ -135,6 +139,54 @@ for (const touch of [false, true]) {
         await expect(
           page.getByRole("button", { name: "Clear Hidden", exact: true }),
         ).toBeDisabled();
+        // A pointer click must not keep one folder's actions revealed while
+        // another is hovered. Keyboard focus still owns a visible action row.
+        if (!touch) {
+          await page.setViewportSize({ width: 1440, height: 1000 });
+          const otherFolder = drawer.locator(".nav__group").filter({
+            has: page.getByRole("button", {
+              name: "Restore folder other",
+              exact: true,
+            }),
+          });
+          const toggle = target.locator(".nav__group-toggle");
+          await toggle.click();
+          await otherFolder.locator(".nav__group-title").hover();
+          await expect(toggle).toBeFocused();
+          expect(
+            await toggle.evaluate((el) => el.matches(":focus-visible")),
+          ).toBe(false);
+          await drawer.screenshot({
+            path: testInfo.outputPath("pointer-actions.png"),
+          });
+          await expect(target.locator(".nav__group-actions")).toHaveCSS(
+            "opacity",
+            "0",
+          );
+          await expect(target.locator(".nav__group-count")).toHaveCSS(
+            "opacity",
+            "1",
+          );
+          await expect(otherFolder.locator(".nav__group-actions")).toHaveCSS(
+            "opacity",
+            "1",
+          );
+          await page.keyboard.press("Tab");
+          await expect(
+            target.getByRole("button", {
+              name: "Restore folder target",
+              exact: true,
+            }),
+          ).toBeFocused();
+          await expect(target.locator(".nav__group-actions")).toHaveCSS(
+            "opacity",
+            "1",
+          );
+          await expect(target.locator(".nav__group-count")).toHaveCSS(
+            "opacity",
+            "0",
+          );
+        }
         const revealRows = async () => {
           const hiddenToggle = page.getByRole("button", {
             name: "Hidden",

@@ -197,7 +197,7 @@
 }
 
 .settings__nav-item:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 1px;
 }
 
@@ -584,14 +584,14 @@
 [data-palette-choice="classic-amber"] { --palette-swatch: #D95A00; }
 :root[data-theme="dark"] [data-palette-choice="classic-jade"] { --palette-swatch: #52D2C9; }
 :root[data-theme="dark"] [data-palette-choice="classic-amber"] { --palette-swatch: #FF781F; }
-[data-palette-choice="wisteria"] { --palette-swatch: #705697; }
-[data-palette-choice="hydrangea"] { --palette-swatch: #4F7D6B; }
-[data-palette-choice="lycoris"] { --palette-swatch: #965254; }
-[data-palette-choice="chimonanthus"] { --palette-swatch: #966844; }
-:root[data-theme="dark"] [data-palette-choice="wisteria"] { --palette-swatch: #8B74B0; }
-:root[data-theme="dark"] [data-palette-choice="hydrangea"] { --palette-swatch: #639A88; }
-:root[data-theme="dark"] [data-palette-choice="lycoris"] { --palette-swatch: #B37274; }
-:root[data-theme="dark"] [data-palette-choice="chimonanthus"] { --palette-swatch: #B58E6D; }
+[data-palette-choice="wisteria"] { --palette-swatch: #6E5494; }
+[data-palette-choice="hydrangea"] { --palette-swatch: #1F7A68; }
+[data-palette-choice="lycoris"] { --palette-swatch: #BC5042; }
+[data-palette-choice="chimonanthus"] { --palette-swatch: #B36010; }
+:root[data-theme="dark"] [data-palette-choice="wisteria"] { --palette-swatch: #B39DDB; }
+:root[data-theme="dark"] [data-palette-choice="hydrangea"] { --palette-swatch: #5EC4AE; }
+:root[data-theme="dark"] [data-palette-choice="lycoris"] { --palette-swatch: #EE8474; }
+:root[data-theme="dark"] [data-palette-choice="chimonanthus"] { --palette-swatch: #EAA03E; }
 
 @container settings-card (max-width: 320px) {
   .palette-picker__choice {
@@ -634,7 +634,7 @@
 }
 
 .settings__action-button:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 1px;
 }
 
@@ -704,7 +704,7 @@
 
 .settings-switch input:checked + .settings-switch__track {
   border-color: var(--accent-deep);
-  background: var(--accent);
+  background: var(--accent-fill);
 }
 
 .settings-switch
@@ -717,7 +717,7 @@
 
 .settings-switch input:focus-visible + .settings-switch__track {
   box-shadow: 0 0 0 2px var(--accent-tint);
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 1px;
 }
 
@@ -804,7 +804,7 @@
 }
 
 .settings__utility:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 1px;
 }
 
@@ -890,7 +890,7 @@
 }
 
 .palette__input:focus {
-  border-bottom-color: var(--accent-deep);
+  border-bottom-color: var(--accent-focus);
 }
 
 .palette__list {
@@ -1300,13 +1300,14 @@
   margin: 0;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
-  color: var(--warning);
+  color: var(--warning-ink);
   background: color-mix(in srgb, var(--warning) 9%, transparent);
   font-size: var(--text-sm);
   line-height: 1.5;
 }
 
 .session-delete__warning svg {
+  color: var(--warning);
   flex: 0 0 auto;
   margin-top: 2px;
 }
@@ -1316,7 +1317,7 @@
   padding: var(--space-2) var(--space-3);
   border: 1px solid color-mix(in srgb, var(--error) 28%, transparent);
   border-radius: var(--radius-md);
-  color: var(--error);
+  color: var(--error-ink);
   background: var(--error-tint);
   font-size: var(--text-sm);
   line-height: 1.5;
@@ -1390,7 +1391,7 @@
 }
 
 .dialog__options .picker__row:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
 }
 
@@ -1500,8 +1501,8 @@
 
 .dirpicker__path:focus-visible {
   outline: none;
-  border-color: var(--accent-deep);
-  box-shadow: inset 2px 0 0 0 var(--accent);
+  border-color: var(--accent-focus);
+  box-shadow: inset 2px 0 0 0 var(--accent-focus);
 }
 
 .dirpicker__roots {
@@ -1617,7 +1618,7 @@
 .dialog__input:focus-visible,
 .dialog__editor:focus-visible {
   outline: none;
-  border-color: var(--accent-deep);
+  border-color: var(--accent-focus);
   box-shadow: 0 0 0 3px var(--accent-tint);
 }
 
@@ -1704,14 +1705,26 @@
 }
 
 .notice--info .notice__title {
+  color: var(--info-ink);
+}
+
+.notice--info .notice__title > svg {
   color: var(--info);
 }
 
 .notice--warning .notice__title {
+  color: var(--warning-ink);
+}
+
+.notice--warning .notice__title > svg {
   color: var(--warning);
 }
 
 .notice--error .notice__title {
+  color: var(--error-ink);
+}
+
+.notice--error .notice__title > svg {
   color: var(--error);
 }
 

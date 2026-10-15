@@ -41,5 +41,5 @@
   .choice-input { appearance: auto; }
   .choice-input:checked::before { content: none; }
 }
-.choice-input:focus-visible { outline: 2px solid var(--accent-deep); outline-offset: 2px; }
+.choice-input:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: 2px; }
 .choice-input:disabled { opacity: 0.45; cursor: default; }

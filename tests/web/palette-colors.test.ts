@@ -2,46 +2,12 @@ import { readFile } from "node:fs/promises";
 import { URL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { PALETTE_PREFERENCES } from "../../shared/contracts";
+import { paletteTokens as tokens } from "./palette-css";
 
-const css = await readFile(
-  new URL("../../src/styles/foundation.css", import.meta.url),
+const titlebarCss = await readFile(
+  new URL("../../src/styles/window-titlebar.css", import.meta.url),
   "utf8",
 );
-const blocks = [
-  ...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g),
-].map((match) => ({
-  selectors: match[1]!
-    .trim()
-    .split(",")
-    .map((s) => s.trim()),
-  values: Object.fromEntries(
-    [...match[2]!.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((m) => [
-      m[1]!,
-      m[2]!.trim(),
-    ]),
-  ),
-}));
-
-function tokens(palette: string, theme: string): Record<string, string> {
-  const values: Record<string, string> = {};
-  for (const block of blocks) {
-    if (
-      block.selectors.some(
-        (selector) =>
-          /^:root(?:\[data-(?:palette|theme)="[\w-]+"\])*$/.test(selector) &&
-          [...selector.matchAll(/\[data-(palette|theme)="([^"]+)"\]/g)].every(
-            (m) => m[2] === (m[1] === "theme" ? theme : palette),
-          ),
-      )
-    )
-      Object.assign(values, block.values);
-  }
-  const resolve = (value: string): string =>
-    value.replace(/var\((--[\w-]+)\)/g, (_, key) => resolve(values[key]!));
-  return Object.fromEntries(
-    Object.entries(values).map(([key, value]) => [key, resolve(value)]),
-  );
-}
 
 function rgb(hex: string): number[] {
   return hex
@@ -63,16 +29,6 @@ function contrast(foreground: number[], background: number[]): number {
     b = luminance(background);
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }
-function tint(
-  color: number[],
-  background: number[],
-  opacity: number,
-): number[] {
-  return background.map(
-    (value, i) => opacity * color[i]! + (1 - opacity) * value,
-  );
-}
-
 describe("classic palette preservation", () => {
   it.each([
     ["classic-jade", "light", "#007D78", "#F6F8F7", "#E9EEEB"],
@@ -89,149 +45,88 @@ describe("classic palette preservation", () => {
 });
 
 describe("activity identities", () => {
+  it("draws needles directly from the same Tool/Thinking identity roles", () => {
+    for (const role of ["tool", "think"]) {
+      const rule = titlebarCss.match(
+        new RegExp(`\\.window-titlebar__needle--${role}\\s*\\{([^}]+)\\}`),
+      )?.[1];
+      expect(rule).toContain(`background-color: var(--activity-${role});`);
+    }
+  });
   for (const palette of PALETTE_PREFERENCES)
     for (const theme of ["light", "dark"]) {
-      it(`${palette} ${theme} separates theme-owned tool identity from thinking and legacy needles`, () => {
+      it(`${palette} ${theme} separates tool and thinking identities without independent needle colors`, () => {
         const value = tokens(palette, theme);
-        expect(value["--activity-tool"]).toBe(value["--accent-deep"]);
+        // Identity belongs to the theme family, not necessarily its text-ink shade.
+        expect(value["--activity-tool"]).not.toBe(value["--activity-error"]);
         expect(value["--activity-think"]).not.toBe(value["--activity-tool"]);
         expect(value["--think"]).toBe(value["--activity-think"]);
         for (const role of ["--activity-tool", "--activity-think"])
           expect(
             contrast(rgb(value[role]!), rgb(value["--bg-stage"]!)),
           ).toBeGreaterThanOrEqual(3);
-        const legacy =
-          palette === "classic-jade"
-            ? theme === "dark"
-              ? ["#52D2C9", "#A290F5"]
-              : ["#007D78", "#6854C4"]
-            : palette === "classic-amber"
-              ? theme === "dark"
-                ? ["#FF8F3D", "#A290F5"]
-                : ["#BA4D00", "#6854C4"]
-              : theme === "dark"
-                ? ["#FF9647", "#B6A3FF"]
-                : ["#914407", "#6343B4"];
-        expect([value["--needle-tool"], value["--needle-think"]]).toEqual(
-          legacy,
-        );
+        expect(value).not.toHaveProperty("--needle-tool");
+        expect(value).not.toHaveProperty("--needle-think");
       });
     }
 });
 
-describe("botanical palette role contrast", () => {
-  // The low-saturation botanical contract does not recolor classic presets.
-  for (const palette of PALETTE_PREFERENCES.filter(
-    (value) => !value.startsWith("classic-"),
-  ))
-    for (const theme of ["light", "dark"]) {
-      it(`${palette} ${theme} keeps botanical color restrained`, () => {
-        const value = tokens(palette, theme);
-        const accent = rgb(value["--accent"]!);
-        const high = Math.max(...accent),
-          low = Math.min(...accent);
-        const lightness = (high + low) / 2;
-        const saturation = (high - low) / (1 - Math.abs(2 * lightness - 1));
-        expect(saturation).toBeLessThanOrEqual(0.45);
-        expect(value["--bg-prompt"]).toBe(value["--bg-surface"]);
-        if (theme === "light") {
-          const stage = rgb(value["--bg-stage"]!).map((v) =>
-            Math.round(v * 255),
-          );
-          const rail = rgb(value["--bg-rail"]!).map((v) => Math.round(v * 255));
-          // Near-neutral reading fields, with only a small rail temperature shift.
-          expect(Math.max(...stage) - Math.min(...stage)).toBeLessThanOrEqual(
-            4,
-          );
-          expect(Math.max(...rail) - Math.min(...rail)).toBeLessThanOrEqual(10);
-          expect(Math.max(...stage)).toBeLessThanOrEqual(247);
-        }
+// Identity and paper-temperature values remain stable; rendered role/state contrast
+// is checked separately in browser/theme-colors.spec.ts.
+describe("floral palette roles", () => {
+  it.each([
+    ["wisteria", "light", "#FAF9FC", "#6E5494", "#684E8E", "#4663AC"],
+    ["wisteria", "dark", "#16151D", "#B39DDB", "#B39DDB", "#7AA2F7"],
+    ["hydrangea", "light", "#FBFBF9", "#1F7A68", "#1E7564", "#6554B8"],
+    ["hydrangea", "dark", "#151A17", "#5EC4AE", "#5EC4AE", "#A393EB"],
+    ["lycoris", "light", "#FCFBF9", "#BC5042", "#B5493B", "#4A6696"],
+    ["lycoris", "dark", "#1A1515", "#EE8474", "#EE8474", "#88A4E0"],
+    ["chimonanthus", "light", "#FCFBF8", "#B36010", "#A6570B", "#6652BA"],
+    ["chimonanthus", "dark", "#181613", "#EAA03E", "#EAA03E", "#A490F0"],
+  ])(
+    "%s %s retains its paper stage, accent and default identity pair",
+    (palette, theme, stage, accent, tool, think) => {
+      const value = tokens(palette, theme);
+      expect(value).toMatchObject({
+        "--bg-stage": stage,
+        "--accent": accent,
+        "--activity-tool": tool,
+        "--activity-think": think,
+        "--accent-focus": accent,
+        "--accent-soft": "transparent",
       });
-
-      it(`${palette} ${theme} keeps reading ink and action foregrounds readable`, () => {
-        const value = tokens(palette, theme);
-        const selected = rgb(value["--nav-active-bg"]!);
-        const surfaces = [
-          "--bg-rail",
+      expect(value["--bg-prompt"]).not.toBe(value["--bg-surface"]);
+      expect(value["--nav-active-bg"]).toBe(value["--accent-tint"]);
+      expect(value["--error"]).not.toBe(accent);
+      for (const role of ["--ink", "--body"]) {
+        for (const surface of [
           "--bg-stage",
-          "--bg-context",
           "--bg-surface",
           "--bg-raised",
           "--bg-inset",
           "--bg-control",
-        ];
-        for (const role of [
-          "--ink",
-          "--body",
-          "--muted",
-          "--faint",
-          "--accent-deep",
+          "--bg-prompt",
         ]) {
           expect(
-            contrast(rgb(value[role]!), selected),
-            `${role} on selected session`,
-          ).toBeGreaterThanOrEqual(4.5);
-          for (const surface of surfaces) {
-            expect(
-              contrast(rgb(value[role]!), rgb(value[surface]!)),
-              `${role} on ${surface}`,
-            ).toBeGreaterThanOrEqual(4.5);
-          }
-        }
-        for (const fill of [
-          "--accent-fill",
-          "--accent-hover",
-          "--accent-active",
-        ]) {
-          expect(
-            contrast(rgb(value["--on-accent"]!), rgb(value[fill]!)),
-            fill,
+            contrast(rgb(value[role]!), rgb(value[surface]!)),
+            `${role} on ${surface}`,
           ).toBeGreaterThanOrEqual(4.5);
         }
+      }
+      for (const role of [
+        "--muted",
+        "--accent-deep",
+        "--activity-tool",
+        "--activity-think",
+      ]) {
         expect(
-          contrast(rgb(value["--on-status"]!), rgb(value["--error"]!)),
+          contrast(rgb(value[role]!), rgb(value["--bg-stage"]!)),
+          role,
         ).toBeGreaterThanOrEqual(4.5);
-      });
-
-      it(`${palette} ${theme} separates semantic ink from decorative accents`, () => {
-        const value = tokens(palette, theme);
-        expect(value["--error"]).not.toBe(value["--accent"]);
-        expect(value["--activity-think"]).not.toBe(value["--activity-tool"]);
-        for (const role of [
-          "--success",
-          "--warning",
-          "--error",
-          "--info",
-          "--think",
-          "--activity-tool",
-          "--activity-think",
-        ]) {
-          const foreground = rgb(value[role]!);
-          for (const surface of [
-            "--bg-stage",
-            "--bg-surface",
-            "--bg-control",
-          ]) {
-            const background = rgb(value[surface]!);
-            expect(
-              contrast(foreground, background),
-              `${role} on ${surface}`,
-            ).toBeGreaterThanOrEqual(4.5);
-            // Status chips and notices add at most a 12% semantic tint.
-            expect(
-              contrast(foreground, tint(foreground, background, 0.12)),
-              `${role} on tinted ${surface}`,
-            ).toBeGreaterThanOrEqual(4.5);
-          }
-        }
-        for (const surface of ["--bg-stage", "--bg-surface", "--bg-control"]) {
-          const background = rgb(value[surface]!);
-          const accentInk = rgb(value["--accent-deep"]!);
-          // Accent chips tint with decorative accent, not readable accent ink.
-          expect(
-            contrast(accentInk, tint(rgb(value["--accent"]!), background, 0.1)),
-          ).toBeGreaterThanOrEqual(4.5);
-        }
-      });
-    }
+      }
+      expect(
+        contrast(rgb(value["--on-accent"]!), rgb(value["--accent-fill"]!)),
+      ).toBeGreaterThanOrEqual(4.5);
+    },
+  );
 });
