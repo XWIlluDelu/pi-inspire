@@ -68,6 +68,7 @@ import {
 import { ChildCalls, childCallsSummary } from "./ChildCalls";
 import { CodeModeResult, codeModeDuration } from "./CodeModeResult";
 import { CopyAction } from "./CopyAction";
+import { DetailSummary } from "./DetailSummary";
 import { ImageGallery } from "./ImageGallery";
 import {
   EmbeddedImageOwnerContext,
@@ -615,7 +616,7 @@ function RawResultData({ value }: { value: unknown }) {
       className="tool-result-details"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary>Result details</summary>
+      <DetailSummary>Result details</DetailSummary>
       {open ? (
         <pre
           className="card__mono"
@@ -1402,9 +1403,9 @@ function ToolArguments({ call }: { call: ToolCallContent }) {
       className="tool-result-details"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary>
+      <DetailSummary>
         {call.__inspireToolCall ? "Arguments (partial)" : "Arguments"}
-      </summary>
+      </DetailSummary>
       {open ? <RawArguments call={call} /> : null}
     </details>
   );
@@ -1418,7 +1419,9 @@ function ToolScript({ call }: { call: ToolCallContent }) {
       className="tool-result-details"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary>Script{call.__inspireToolCall ? " (partial)" : ""}</summary>
+      <DetailSummary>
+        Script{call.__inspireToolCall ? " (partial)" : ""}
+      </DetailSummary>
       {open ? (
         <ToolPresentationBlockView
           block={{

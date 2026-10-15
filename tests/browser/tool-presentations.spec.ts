@@ -1,4 +1,3 @@
-import { hostRequest } from "./support/host-request";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
@@ -13,6 +12,7 @@ import { ToolPresentationConfigStore } from "../../server/tool-presentation-conf
 import type { ToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import type { ToolCallContent } from "../../src/events";
 import { toolResultResourcesFixture } from "../fixtures/tool-result-resources.mjs";
+import { hostRequest } from "./support/host-request";
 import { openMockEventSession } from "./support/mock-host";
 
 test.use({ serviceWorkers: "block" });
@@ -79,6 +79,50 @@ for (const mobile of [false, true]) {
           }
         : { viewport: { width: 1365, height: 950 } },
     );
+    test("partial CodeMode keeps its phase and local disclosure in one compact block", async ({
+      page,
+    }) => {
+      const send = await openReview(page);
+      const call: ToolCallContent = {
+        ...tool("codemode", {
+          code: 'text(await tools.read({path: "src/styles/activity-cards.css"}));',
+        }),
+        __inspireToolCall: {
+          phase: "streaming",
+          characters: 72,
+          truncated: false,
+        },
+      };
+      send(
+        { type: "agent_start" },
+        { type: "message_start", message: assistant([call]) },
+      );
+      const card = toolCard(page, "codemode");
+      const pending = card.locator(".card__pending");
+      const summary = card
+        .locator("summary")
+        .filter({ hasText: "Script (partial)" });
+      await expect(pending).toHaveText("Generating arguments…");
+      const phase = (await pending.boundingBox())!;
+      const detail = (await summary.boundingBox())!;
+      expect(phase.height).toBeLessThan(22);
+      expect(detail.y - (phase.y + phase.height)).toBeGreaterThanOrEqual(4);
+      expect(detail.y - (phase.y + phase.height)).toBeLessThanOrEqual(12);
+      expect(detail.height).toBeGreaterThanOrEqual(mobile ? 32 : 28);
+      expect(
+        await card.locator(".card__body").evaluate((el) => {
+          const s = getComputedStyle(el);
+          return parseFloat(s.paddingBottom) + parseFloat(s.marginBottom);
+        }),
+      ).toBeLessThanOrEqual(8);
+      await summary.focus();
+      await page.keyboard.press("Enter");
+      await expect(card.locator(".tool-code")).toContainText(
+        "activity-cards.css",
+      );
+      await page.keyboard.press("Enter");
+      await expect(card.locator(".tool-code")).toHaveCount(0);
+    });
     test("separates CodeMode calls from readable output and preserves whole-block copy", async ({
       page,
     }) => {

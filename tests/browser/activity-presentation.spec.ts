@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
-import { openMockSession, pairedPage } from "./support/navigation";
-import { openMockEventSession } from "./support/mock-host";
 import { activityReadingMessages } from "../web/fixtures/activity-reading";
 import { customMessageConfiguration } from "../web/fixtures/custom-message-presentation";
+import { openMockEventSession } from "./support/mock-host";
+import { openMockSession, pairedPage } from "./support/navigation";
 
 test("the full activity header discloses content with Copy beside its text", async ({
   page,
@@ -29,18 +29,28 @@ test("the full activity header discloses content with Copy beside its text", asy
       const copy = element
         .querySelector<HTMLElement>(".card__copy")!
         .getBoundingClientRect();
-      const icon = element
-        .querySelector(".card__icon")!
-        .getBoundingClientRect();
       const body = element
         .parentElement!.querySelector(".card__body")!
         .getBoundingClientRect();
+      const arrow = element
+        .querySelector(".card__chevron")!
+        .getBoundingClientRect();
+      const icon = element
+        .querySelector(".card__icon")!
+        .getBoundingClientRect();
       return {
+        leadingDisclosure: arrow.right <= icon.left,
         copyGap:
           copy.left -
           element.querySelector(".card__disclosure")!.getBoundingClientRect()
             .right,
-        bodyIndent: body.left - icon.left,
+        bodyIndent: body.left - element.getBoundingClientRect().left,
+        bodyBackground: getComputedStyle(
+          element.parentElement!.querySelector(".card__body")!,
+        ).backgroundColor,
+        bodyBorder: getComputedStyle(
+          element.parentElement!.querySelector(".card__body")!,
+        ).borderLeftWidth,
         readingOffset:
           body.left +
           Number.parseFloat(
@@ -58,13 +68,35 @@ test("the full activity header discloses content with Copy beside its text", asy
         overflow: element.scrollWidth > element.clientWidth + 1,
       };
     });
+    expect(geometry.leadingDisclosure).toBe(true);
     expect(geometry.copyGap).toBeGreaterThanOrEqual(4);
     expect(geometry.copyGap).toBeLessThanOrEqual(8);
     expect(Math.abs(geometry.bodyIndent)).toBeLessThanOrEqual(1);
     expect(Math.abs(geometry.readingOffset)).toBeLessThanOrEqual(1);
+    expect(geometry.bodyBackground).toBe("rgba(0, 0, 0, 0)");
+    expect(geometry.bodyBorder).toBe("0px");
     expect(geometry.shadow).toBe("none");
     expect(geometry.overflow).toBe(false);
     await expect(header).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    const hierarchy = await fold.evaluate((element) => {
+      const upper = getComputedStyle(
+        element.querySelector(".activity-fold__boundary--upper")!,
+      );
+      const lower = getComputedStyle(
+        element.querySelector(".activity-fold__boundary--lower")!,
+      );
+      const item = getComputedStyle(element.querySelector(".card__label")!);
+      return {
+        groupSize: parseFloat(upper.fontSize),
+        groupWeight: parseFloat(upper.fontWeight),
+        actionSize: parseFloat(lower.fontSize),
+        itemSize: parseFloat(item.fontSize),
+        itemWeight: parseFloat(item.fontWeight),
+      };
+    });
+    expect(hierarchy.groupSize).toBeGreaterThan(hierarchy.itemSize);
+    expect(hierarchy.groupWeight).toBeLessThanOrEqual(hierarchy.itemWeight);
+    expect(hierarchy.actionSize).toBeGreaterThanOrEqual(hierarchy.itemSize);
     const copy = header.locator(".card__copy");
     await copy.focus();
     await page.keyboard.press("Shift+Tab");
@@ -263,6 +295,116 @@ test("activity Copy is available only with expanded content and custom messages 
     .click();
   await expect(extension).toBeVisible();
   await expect(extension).toContainText("The keyboard checks are complete.");
+});
+
+test("success and failure cues retain semantic color in tools and nested calls", async ({
+  page,
+}) => {
+  const send = await openMockEventSession(
+    page,
+    "Activity states",
+    customMessageConfiguration,
+    {
+      activityFoldVisibility: "expanded",
+      toolVisibility: "compact",
+    },
+  );
+  const messages = activityReadingMessages();
+  const code = messages.find(
+    (message) =>
+      message.role === "toolResult" &&
+      "toolCallId" in message &&
+      message.toolCallId === "reading-code",
+  );
+  if (!code || !("details" in code) || !code.details?.calls)
+    throw new Error("Missing nested activity fixture");
+  code.details.calls.push({
+    id: "failed-child",
+    name: "preview_check",
+    args: "{}",
+    status: "error",
+    durationMs: 30,
+  });
+  // Model-call preview strings are intentionally not an expandable argument
+  // payload, so this completed call has no detail control.
+  code.details.calls.push({
+    id: "model-complete",
+    name: "models.classify",
+    args: "fixture/classifier",
+    status: "ok",
+  });
+  send(...messages.map((message) => ({ type: "message_end", message })));
+  const codeCard = page
+    .locator(".card--tool")
+    .filter({ hasText: "CodeMode" })
+    .first();
+  await codeCard.locator(".card__disclosure").click();
+  await expect(codeCard.locator(".child-call__status--error")).toBeVisible();
+  const detail = codeCard.locator("details.child-call").first();
+  await detail.locator("summary").click();
+  await expect(detail.locator(".child-call__detail")).toBeVisible();
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const alignment = await codeCard.evaluate((element) => {
+      const detail = element.querySelector("details.child-call[open]")!;
+      const name = detail
+        .querySelector(".child-call__name")!
+        .getBoundingClientRect();
+      const status = detail
+        .querySelector(".child-call__status")!
+        .getBoundingClientRect();
+      const arrow = detail
+        .querySelector(".child-call__chevron")!
+        .getBoundingClientRect();
+      const body = detail.querySelector(".child-call__detail")!;
+      const plainStatus = element
+        .querySelector(".child-call > div.child-call__row .child-call__status")!
+        .getBoundingClientRect();
+      return {
+        statusOffset: plainStatus.left - status.left,
+        leading: arrow.right <= status.left,
+        nameOffset:
+          body.getBoundingClientRect().left +
+          parseFloat(getComputedStyle(body).paddingLeft) -
+          name.left,
+        overflow: element.scrollWidth > element.clientWidth + 1,
+      };
+    });
+    expect(alignment.leading).toBe(true);
+    expect(Math.abs(alignment.statusOffset)).toBeLessThanOrEqual(1);
+    expect(Math.abs(alignment.nameOffset)).toBeLessThanOrEqual(1);
+    expect(alignment.overflow).toBe(false);
+  }
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate(
+      (theme) => (document.documentElement.dataset.theme = theme),
+      theme,
+    );
+    for (const [selector, token] of [
+      [".card--thinking .card__icon", "--activity-think"],
+      [".card--tool .card__icon", "--activity-tool"],
+      [".card__label", "--ink"],
+      [".card__status .status-success", "--success"],
+      [".card__status .status-error", "--error"],
+      [".child-call__status--ok", "--success"],
+      [".child-call__status--error", "--error"],
+    ]) {
+      const cue = page.locator(selector!).first();
+      await expect(cue).toBeVisible();
+      const colors = await cue.evaluate((element, token) => {
+        const sample = document.createElement("span");
+        sample.style.color = `var(${token})`;
+        element.append(sample);
+        const colors = {
+          actual: getComputedStyle(element).color,
+          semantic: getComputedStyle(sample).color,
+        };
+        sample.remove();
+        return colors;
+      }, token!);
+      expect(colors.actual).toBe(colors.semantic);
+    }
+  }
 });
 
 test.describe("touch activity disclosures", () => {

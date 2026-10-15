@@ -7,6 +7,7 @@ import {
   subscribeCustomMessagePresentations,
 } from "../tool-presentations/registry";
 import { CopyAction } from "./CopyAction";
+import { DetailSummary } from "./DetailSummary";
 import { ImageGallery } from "./ImageGallery";
 import { ImagePreview, PersistedImage } from "./ImagePreview";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
@@ -153,14 +154,14 @@ export const CustomMessage = memo(function CustomMessage({
         </ImageGallery>
         {hasDetails || presentation ? (
           <details className="custom-message__details" open={detailsOpen}>
-            <summary
+            <DetailSummary
               onClick={(event) => {
                 event.preventDefault();
                 setDetailsOpen(!detailsOpen);
               }}
             >
               Details
-            </summary>
+            </DetailSummary>
             {detailsOpen ? (
               <pre className="custom-message__raw">
                 {inspect(
