@@ -1,0 +1,88 @@
+/* A square 3×3 grid underlies Π loading and linked completion/error marks.
+   The visible glyph is 11.6×11.6 within the existing square icon slot. */
+.pi-loading,
+.pi-status {
+  display: inline-block;
+  flex: 0 0 auto;
+  vertical-align: middle;
+  overflow: visible;
+}
+
+/* A nonvisual clock switches patterns only after a complete dot sequence. */
+.pi-loading {
+  --pi-loading-period: 2.4s;
+  animation: pi-loading-cycle var(--pi-loading-period) linear infinite;
+}
+@keyframes pi-loading-cycle {
+  0%, 100% { opacity: 1; }
+}
+
+.pi-loading__dot {
+  --pi-gather-x: 0px;
+  --pi-gather-y: 0px;
+  fill: currentColor;
+  stroke: none;
+  opacity: .24;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pi-loading-breathe var(--pi-loading-period) ease-in-out infinite;
+}
+
+.pi-loading[data-variant="trace"] .pi-loading__dot {
+  animation-name: pi-loading-trace;
+}
+.pi-loading[data-variant="spread"] .pi-loading__dot {
+  animation-name: pi-loading-spread;
+}
+.pi-loading[data-variant="relay"] .pi-loading__dot {
+  animation-name: pi-loading-relay;
+}
+.pi-loading[data-variant="gather"] .pi-loading__dot {
+  animation-name: pi-loading-gather;
+}
+
+@keyframes pi-loading-step-0 {
+  0%, 6%, 88%, 100% { opacity: .24; }
+  16%, 70% { opacity: 1; }
+}
+@keyframes pi-loading-step-1 {
+  0%, 22%, 88%, 100% { opacity: .24; }
+  32%, 70% { opacity: 1; }
+}
+@keyframes pi-loading-step-2 {
+  0%, 38%, 88%, 100% { opacity: .24; }
+  48%, 70% { opacity: 1; }
+}
+@keyframes pi-loading-trace {
+  0%, 12% { opacity: 1; }
+  65%, 100% { opacity: .24; }
+}
+@keyframes pi-loading-breathe {
+  0%, 100% { opacity: .4; transform: scale(.85); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+@keyframes pi-loading-spread {
+  0%, 100% { opacity: .3; transform: scale(.85); }
+  20% { opacity: 1; transform: scale(1.12); }
+  55% { opacity: .6; transform: scale(1); }
+}
+@keyframes pi-loading-relay {
+  0%, 100% { opacity: .3; transform: translateY(.45px); }
+  50% { opacity: 1; transform: translateY(-.45px); }
+}
+@keyframes pi-loading-gather {
+  0%, 70%, 100% { opacity: .65; transform: none; }
+  35% {
+    opacity: 1;
+    transform: translate(var(--pi-gather-x), var(--pi-gather-y)) scale(.85);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pi-loading { animation: none; }
+  .pi-loading__dot {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+  }
+}

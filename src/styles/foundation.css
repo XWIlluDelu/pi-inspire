@@ -41,6 +41,7 @@
   --content-max: var(--reading-width-max);
   --composer-max: var(--reading-width-max);
   --font-sans: "IBM Plex Sans SC", system-ui, sans-serif;
+  --font-label: "Rajdhani", var(--font-sans);
   --font-mono: "Flux Mono SC", ui-monospace, monospace;
   --text-xs: 11.5px;
   --text-sm: 12.5px;

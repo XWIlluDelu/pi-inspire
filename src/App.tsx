@@ -1,4 +1,3 @@
-import { Loader2 } from "lucide-react";
 import {
   lazy,
   memo,
@@ -30,6 +29,7 @@ import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
 import { Nav } from "./components/Nav";
 import { Notices } from "./components/Notices";
 import { PaneResizeHandle } from "./components/PaneResizeHandle";
+import { PiLoader } from "./components/PiLoader";
 import { RenderErrorBoundary } from "./components/RenderErrorBoundary";
 import type { SettingsCategoryId } from "./components/Settings";
 import { SettingsDialog, SettingsLoading } from "./components/SettingsDialog";
@@ -279,8 +279,7 @@ function HostUnavailable({
             Try again
           </button>
           <span>
-            <Loader2 size={12} className="spin" aria-hidden /> Reconnecting
-            automatically
+            <PiLoader size={12} aria-hidden /> Reconnecting automatically
           </span>
         </div>
       </div>

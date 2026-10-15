@@ -1,8 +1,9 @@
-import { AlertTriangle, Loader2, X } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { dismissTerminalMenu } from "../terminal-menus";
 import { recoverModalFocus, useModalFocus } from "../use-modal-focus";
 import { ContextPaneState } from "./ContextPaneState";
+import { PiLoader } from "./PiLoader";
 
 /** Keep the pane and its focus owner mounted across deferred body states. */
 export function ContextPaneShell({
@@ -91,7 +92,7 @@ export function ContextPaneLoading({
           onRetry ? (
             <AlertTriangle size={17} aria-hidden />
           ) : (
-            <Loader2 size={17} className="spin" aria-hidden />
+            <PiLoader size={17} aria-hidden />
           )
         }
         title={onRetry ? "Context could not be opened." : "Loading context"}

@@ -1,9 +1,10 @@
-import { AlertTriangle, FileText, Loader2, X } from "lucide-react";
+import { AlertTriangle, FileText, X } from "lucide-react";
 import type { PendingAttachment } from "../controllers/composer-controller";
 import { formatBytes } from "../format";
 import { transcriptProjectionKey } from "../transcript-projection-key";
 import { ImageGallery } from "./ImageGallery";
 import { ImagePreview, PersistedImage } from "./ImagePreview";
+import { PiLoader } from "./PiLoader";
 
 export function AttachmentList({
   sessionId,
@@ -69,9 +70,9 @@ export function AttachmentList({
                 </>
               )}
               {item.status === "uploading" ? (
-                <Loader2
+                <PiLoader
                   size={12}
-                  className="spin attachment__status"
+                  className="attachment__status"
                   aria-label="Uploading"
                 />
               ) : null}

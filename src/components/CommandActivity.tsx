@@ -5,7 +5,6 @@ import {
   CircleX,
   Download,
   Info,
-  Loader2,
   TerminalSquare,
   X,
 } from "lucide-react";
@@ -16,11 +15,11 @@ import {
 } from "../app-state";
 import { shallowEqual, store, useAppState } from "../store";
 import { useReadingDwell } from "../use-reading-dwell";
+import { PiLoader } from "./PiLoader";
 import { ScrollRail } from "./ScrollRail";
 
 function ActivityIcon({ status }: { status: Activity["status"] }) {
-  if (status === "running")
-    return <Loader2 size={14} className="spin" aria-hidden />;
+  if (status === "running") return <PiLoader size={14} aria-hidden />;
   if (status === "success") return <CheckCircle2 size={14} aria-hidden />;
   if (status === "error") return <CircleX size={14} aria-hidden />;
   if (status === "warning") return <AlertTriangle size={14} aria-hidden />;

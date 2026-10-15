@@ -1,8 +1,9 @@
-import { Loader2, SquareTerminal } from "lucide-react";
+import { SquareTerminal } from "lucide-react";
 import { memo } from "react";
 import { stripTerminalSequences } from "../ansi";
 import type { ChatMessage } from "../events";
 import { CopyAction } from "./CopyAction";
+import { PiLoader } from "./PiLoader";
 
 /** Pi's direct shell result is user activity, not an assistant tool call. */
 export const BashExecution = memo(function BashExecution({
@@ -57,7 +58,7 @@ export const BashExecution = memo(function BashExecution({
     >
       <div className="shell-execution__header">
         {running ? (
-          <Loader2 size={14} className="spin" aria-hidden />
+          <PiLoader size={14} aria-hidden />
         ) : (
           <SquareTerminal size={14} aria-hidden />
         )}

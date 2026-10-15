@@ -1,14 +1,10 @@
-import {
-  CheckCircle2,
-  ChevronRight,
-  Circle,
-  Loader2,
-  XCircle,
-} from "lucide-react";
+import { ChevronRight, Circle } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import type { ChildCall, ChildCallList } from "../../shared/tool-activity";
 import { stripTerminalSequences } from "../ansi";
 import { childCallSummary, isModelCall } from "../child-call-summary";
+import { PiLoader } from "./PiLoader";
+import { PiStatus } from "./PiStatus";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 
 const statusLabels: Record<ChildCall["status"], string> = {
@@ -44,16 +40,17 @@ function CallRow({ call }: { call: ChildCall }) {
   const summary = childCallSummary(call);
   const icon =
     call.status === "running" ? (
-      <Loader2 size={12} className="spin" aria-hidden />
+      <PiLoader size={12} aria-hidden />
     ) : call.status === "ok" ? (
-      <CheckCircle2 size={12} aria-hidden />
+      <PiStatus status="success" size={12} aria-hidden />
     ) : call.status === "error" ? (
-      <XCircle size={12} aria-hidden />
+      <PiStatus status="error" size={12} aria-hidden />
     ) : (
       <Circle size={12} aria-hidden />
     );
   const row = (
     <>
+      <code className="child-call__name">{call.name}</code>
       <span
         className={`child-call__status child-call__status--${call.status}`}
         title={statusLabels[call.status]}
@@ -61,7 +58,6 @@ function CallRow({ call }: { call: ChildCall }) {
         {icon}
         <span className="sr-only">{statusLabels[call.status]}</span>
       </span>
-      <code className="child-call__name">{call.name}</code>
       {summary.text ? (
         <span className="child-call__summary">
           {summary.path ? (

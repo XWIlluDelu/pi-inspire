@@ -2,7 +2,7 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { countBusySessions } from "../../shared/session-activity";
-import { createInitialAppState, type AppState } from "../../src/app-state";
+import { type AppState, createInitialAppState } from "../../src/app-state";
 import { SessionRow } from "../../src/components/NavSessions";
 import { RuntimeEventController } from "../../src/controllers/runtime-event-controller";
 import { useAppState } from "../../src/store";
@@ -56,6 +56,59 @@ function row() {
 }
 
 describe("session activity presentation", () => {
+  it("uses one dot-matrix family for work and unread terminal outcomes", () => {
+    state.sessionStatuses = {
+      external: { runState: "running", indicator: "running" },
+    };
+    const view = render(row());
+    expect(
+      screen.getByRole("img", { name: "Working" }).querySelector(".pi-loading"),
+    ).toBeTruthy();
+    for (const [indicator, label] of [
+      ["completed", "Completed"],
+      ["failed", "Failed"],
+    ] as const) {
+      state.sessionStatuses = {
+        external: {
+          runState: indicator === "completed" ? "idle" : "failed",
+          indicator,
+        },
+      };
+      view.rerender(row());
+      const mark = screen.getByRole("img", { name: label });
+      expect(mark.querySelector(".pi-status")).toHaveAttribute(
+        "data-status",
+        indicator === "completed" ? "success" : "error",
+      );
+      expect(mark.querySelector(".pi-loading")).toBeNull();
+      view.rerender(
+        <SessionRow
+          session={external}
+          selectedSessionId="external"
+          onSelect={() => {}}
+        />,
+      );
+      expect(screen.queryByRole("img", { name: label })).toBeNull();
+    }
+    state.sessionStatuses = {
+      external: { runState: "conflict", indicator: "attention" },
+    };
+    view.rerender(row());
+    const attention = screen.getByRole("img", { name: "Needs recovery" });
+    expect(attention.querySelector(".pi-loading,.pi-status")).toBeNull();
+  });
+
+  it("keeps managed input-blocked work static without enabling deletion", () => {
+    state.sessionStatuses = {
+      external: { runState: "running", indicator: "running", needsInput: true },
+    };
+    const view = render(row());
+    expect(screen.getByRole("img", { name: "Waiting for input" })).toHaveClass(
+      "nav__row-dot--attention",
+    );
+    expect(view.container.querySelector(".pi-loading")).toBeNull();
+  });
+
   it("counts all busy identities once, excluding idle and input-blocked sessions", () => {
     expect(
       countBusySessions(
