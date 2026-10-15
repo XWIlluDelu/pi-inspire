@@ -102,7 +102,9 @@ async function scenario(page: Page) {
     json: async (path: string) => JSON.parse(await readFile(path, "utf8")),
   };
 }
-test("MCP configuration failures share the existing card inset", async ({ page }) => {
+test("MCP configuration failures share the existing card inset", async ({
+  page,
+}) => {
   await page.route("**/api/mcp-config**", (route) =>
     route.fulfill({
       status: 503,
@@ -122,7 +124,8 @@ test("MCP configuration failures share the existing card inset", async ({ page }
       text.selectNodeContents(el);
       const heading = el.parentElement!.querySelector(".models-subheading")!;
       return {
-        left: text.getClientRects()[0]!.left - heading.getBoundingClientRect().left,
+        left:
+          text.getClientRects()[0]!.left - heading.getBoundingClientRect().left,
         // The parent already owns the card inset; this is not another form row.
         paddingBlock: getComputedStyle(el).paddingBlock,
       };

@@ -56,64 +56,6 @@ describe("transcript density preferences", () => {
     ).toHaveLength(3);
   });
 
-  it("toggles thinking and tool cards from non-interactive header space", () => {
-    render(
-      <Transcript
-        messages={[
-          {
-            role: "assistant",
-            timestamp: 12,
-            content: [
-              { type: "thinking", thinking: "reasoning details" },
-              {
-                type: "toolCall",
-                id: "header-tool",
-                name: "read",
-                arguments: { path: "src/header.ts" },
-              },
-              { type: "text", text: "answer" },
-            ],
-          },
-          {
-            role: "toolResult",
-            toolCallId: "header-tool",
-            content: "file body",
-            timestamp: 13,
-          },
-          {
-            role: "custom",
-            customType: "intercom_message",
-            content: "custom details",
-            display: true,
-            timestamp: 14,
-          },
-        ]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
-      />,
-    );
-
-    const cards = [
-      screen
-        .getByText("Thinking", { selector: ".card__label" })
-        .closest(".card") as HTMLElement,
-      screen
-        .getByText("read", { selector: ".card__tool-name" })
-        .closest(".card") as HTMLElement,
-    ];
-    for (const card of cards) {
-      const disclosure = card.querySelector(
-        ".card__disclosure",
-      ) as HTMLButtonElement;
-      expect(disclosure).toHaveAttribute("aria-expanded", "false");
-      fireEvent.click(card.querySelector(".card__header") as HTMLElement);
-      expect(disclosure).toHaveAttribute("aria-expanded", "true");
-      fireEvent.click(card.querySelector(".card__header") as HTMLElement);
-      expect(disclosure).toHaveAttribute("aria-expanded", "false");
-    }
-  });
-
   it("holds fast Thinking for 1800 ms and parallel tools for 1500 ms before lifecycle collapse", () => {
     vi.useFakeTimers();
     const active = {

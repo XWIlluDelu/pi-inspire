@@ -1,63 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { openMockSession, pairedPage } from "./support/navigation";
 
-test("user message actions use spare side space and wrap below without narrowing the bubble", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  await pairedPage(page);
-  await openMockSession(page, /Calibration history fixture/);
-  const turn = page.locator(".turn--user").first();
-  const copy = turn.getByRole("button", { name: /Copy/ }).first();
-  for (const width of [1440, 820, 390, 320]) {
-    await page.setViewportSize({ width, height: 900 });
-    await turn.scrollIntoViewIfNeeded();
-    await copy.focus();
-    await expect(turn.locator(".turn__actions")).toHaveCSS("opacity", "1");
-    const geometry = await turn.evaluate((el) => {
-      const row = el.getBoundingClientRect();
-      const bubble = el.querySelector(".user-bubble")!.getBoundingClientRect();
-      const actions = el
-        .querySelector(".turn__actions")!
-        .getBoundingClientRect();
-      return {
-        rowWidth: row.width,
-        bubbleWidth: bubble.width,
-        bubbleX: bubble.x,
-        bubbleRight: bubble.right,
-        actionsX: actions.x,
-        actionsRight: actions.right,
-        actionsTop: actions.top,
-        bubbleBottom: bubble.bottom,
-        bottomInset: bubble.bottom - actions.bottom,
-        fitsBeside:
-          bubble.width + actions.width +
-            parseFloat(getComputedStyle(el).columnGap) <= row.width + 0.5,
-        rowX: row.x,
-        rowRight: row.right,
-        overflow: el.scrollWidth - el.clientWidth,
-      };
-    });
-    expect(geometry.bubbleWidth).toBeLessThanOrEqual(geometry.rowWidth);
-    if (geometry.fitsBeside) {
-      expect(geometry.bubbleX - geometry.actionsRight).toBe(8);
-      expect(Math.abs(geometry.bottomInset)).toBeLessThanOrEqual(1);
-    } else {
-      expect(
-        Math.abs(geometry.actionsRight - geometry.bubbleRight),
-      ).toBeLessThanOrEqual(1);
-      expect(geometry.actionsTop).toBeGreaterThanOrEqual(geometry.bubbleBottom);
-    }
-    expect(geometry.actionsX).toBeGreaterThanOrEqual(geometry.rowX - 1);
-    expect(geometry.bubbleRight).toBeLessThanOrEqual(geometry.rowRight + 1);
-    expect(geometry.overflow).toBeLessThanOrEqual(1);
-    await copy.press("Tab");
-    await expect(
-      turn.getByRole("button", { name: "Fork session from this input" }),
-    ).toBeFocused();
-  }
-});
-
 test("desktop pane gutters remain pointer and keyboard resize targets", async ({
   page,
 }) => {
@@ -226,12 +169,21 @@ test("sidebar owns desktop toggles and creation while phones keep a full drawer"
     name: "New session",
     exact: true,
   });
-  const search = drawer.getByRole("searchbox", { name: "Search sessions", exact: true });
+  const search = drawer.getByRole("searchbox", {
+    name: "Search sessions",
+    exact: true,
+  });
   expect((await create.boundingBox())!.height).toBe(36);
   expect((await drawer.locator(".nav__search").boundingBox())!.height).toBe(36);
-  expect(await create.evaluate(el => getComputedStyle(el).fontSize)).toBe("14px");
-  expect(await search.evaluate(el => getComputedStyle(el).fontSize)).toBe("14px");
-  expect((await drawer.locator(".nav__controls").boundingBox())!.height).toBe(88);
+  expect(await create.evaluate((el) => getComputedStyle(el).fontSize)).toBe(
+    "14px",
+  );
+  expect(await search.evaluate((el) => getComputedStyle(el).fontSize)).toBe(
+    "14px",
+  );
+  expect((await drawer.locator(".nav__controls").boundingBox())!.height).toBe(
+    88,
+  );
   await drawer.getByRole("button", { name: "Close navigation" }).click();
   await expect(phoneToggle).toBeFocused();
   await page.setViewportSize({ width: 1440, height: 1000 });

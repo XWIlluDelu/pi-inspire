@@ -87,7 +87,7 @@ test("Settings headings sit outside their cards and nested fills follow the bord
     await settings.getByRole("button", { name: "System", exact: true }).click();
     const status = settings.locator(".host-restart__status-row");
     await expect(status).toBeVisible();
-    const statusCorner = await status.evaluate(el => {
+    const statusCorner = await status.evaluate((el) => {
       const outer = getComputedStyle(el.closest(".settings__card")!);
       const inner = getComputedStyle(el);
       return [

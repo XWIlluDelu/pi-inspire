@@ -163,7 +163,7 @@ async function renew(): Promise<Access> {
   });
 }
 
-export async function browserAuthorization(): Promise<Record<string, string>> {
+async function browserAuthorization(): Promise<Record<string, string>> {
   if (!access || access.expiresAt <= Date.now() + 30_000) {
     renewal ??= renew().finally(() => {
       renewal = null;

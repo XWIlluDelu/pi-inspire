@@ -570,15 +570,23 @@ describe("session navigation controls", () => {
       expect(store.getState().sessionListHydrating).toBe(false),
     );
     await store.loadSessions("Alpha session");
-    installFetch((url) => url.startsWith("/api/sessions/by-cwd")
-      ? { status: 503, body: { error: "Folder lookup failed" } }
-      : undefined);
-    fireEvent.click(screen.getByRole("button", {
-      name: 'Restore "Alpha session"',
-    }));
-    await waitFor(() => expect(store.getState().notices.some(
-      notice => notice.text === "Folder lookup failed",
-    )).toBe(true));
+    installFetch((url) =>
+      url.startsWith("/api/sessions/by-cwd")
+        ? { status: 503, body: { error: "Folder lookup failed" } }
+        : undefined,
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: 'Restore "Alpha session"',
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        store
+          .getState()
+          .notices.some((notice) => notice.text === "Folder lookup failed"),
+      ).toBe(true),
+    );
     expect(store.getState().prefs.hiddenProjectCwds).toEqual([alpha.cwd]);
     expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
   });

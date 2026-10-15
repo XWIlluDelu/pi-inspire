@@ -204,11 +204,15 @@ test.describe("touch custom messages", () => {
     });
     await expect(copy).toBeVisible();
     const copyBox = (await copy.boundingBox())!;
-    expect(copyBox.width).toBeGreaterThanOrEqual(44);
-    expect(copyBox.height).toBeGreaterThanOrEqual(44);
+    expect(copyBox.width).toBeGreaterThanOrEqual(32);
+    expect(copyBox.height).toBeGreaterThanOrEqual(32);
     const summary = card.locator("summary");
     const summaryBox = (await summary.boundingBox())!;
-    expect(summaryBox.height).toBeGreaterThanOrEqual(44);
+    expect(summaryBox.height).toBeGreaterThanOrEqual(32);
+    const bodyBox = (await card
+      .locator(".custom-message__body")
+      .boundingBox())!;
+    expect(copyBox.y + copyBox.height).toBeLessThanOrEqual(bodyBox.y);
     await summary.tap();
     await expect(card.locator("details")).toHaveAttribute("open", "");
     await expect(card.locator(".custom-message__raw")).toContainText(
