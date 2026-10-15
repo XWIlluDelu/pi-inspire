@@ -35,12 +35,20 @@ multiline editor text is saved with Save. Timed dialogs quietly show remaining t
 deadline, so reopening or reconnecting does not restart it. Untimed dialogs show no countdown.
 
 Dialog timeouts dismiss the browser request, as do Inspire's Stop and worker cleanup. An extension's
-own `AbortSignal` resolves the dialog in Pi 1.0 without sending a browser-dismissal event, so that
-request can remain visible until answered or cleared by Inspire.
+own `AbortSignal` resolves the dialog in Pi 1.0/1.1 without sending a browser-dismissal event, so that
+request can remain visible until answered or cleared by Inspire. The public `ui_prompt_end` callback
+reports aggregate waiting and has no dialog ID; it cannot safely dismiss one of several concurrent
+dialogs. Inspire does not infer cancellation from idle state or command completion.
 
 ## Startup
 
 RPC startup must finish before Pi can consume a dialog response. Awaiting `select`, `confirm`, `input`, or `editor` in `session_start` therefore fails with `PI_STARTUP_RESPONSE_UI_UNSUPPORTED`, and Inspire stops that worker. Startup notices, status, and text widgets work.
+
+When Pi reports an extension-load failure, Inspire identifies the failed file with repair/disable
+guidance. Raw exception details remain in the Host console log. Invalid-settings warnings similarly
+identify the file to repair. A native trust warning explains when this worker skips trust-protected
+project settings and resources; use terminal Pi's `/trust`, then Reload this session. This is not a
+complete resource inventory: invalid-skill omission diagnostics are not exposed by Pi RPC.
 
 For interactive setup, register a command and advertise it in a startup notice or widget. The command can open dialogs once the worker is ready. Retain the existing interactive startup path in TUI mode if needed.
 
@@ -61,6 +69,29 @@ GUI navigation uses independent workers rather than switching one TUI process be
 | Fork / Clone | Copies a verified snapshot through Pi's `SessionManager` into a separate session. Fork excludes the selected input; Clone includes its endpoint. Source `session_before_fork` / `session_fork` hooks do not run and cannot veto either copy. Persisted extension entries follow Pi branch semantics; process memory and pending dialogs stay with the source. The destination loads extensions during startup. |
 
 Keep state scoped to its Pi session and reconstruct it from persisted entries during `session_start` where appropriate. An extension relying on source-runtime switch/fork hooks needs to account for these GUI actions separately.
+
+## Show terminal session activity
+
+The optional [session activity extension](examples/session-activity.ts) lets Inspire show busy,
+waiting-for-input and idle state for local Pi terminal sessions, regardless of how they were started.
+Herdr is not required and has no separate activity detector.
+
+Enable the extension once through Pi's normal user configuration. From an Inspire checkout:
+
+```sh
+pi install /absolute/path/to/inspire/docs/examples/session-activity.ts
+```
+
+The same file ships in the installed Inspire package. Use its absolute path there, or copy it into
+your Pi user extensions directory. New Pi sessions load it automatically. In an existing terminal
+session, run `/reload` when idle to activate it. Remove the configured file with `pi remove` (or
+remove your copied extension) and reload to disable reporting.
+
+The reporter adds no tools, model prompts or session entries and makes no network requests. It writes
+only small, private, expiring activity records into the local user's Inspire cache. Only persisted
+sessions discoverable in Inspire's configured Pi storage can appear; activity does not change those
+storage roots. Sessions that explicitly disable extensions do not report. Inspire-managed RPC workers
+continue to use their existing runtime status, and each session counts once in the titlebar animation.
 
 ## Try the native UI example
 

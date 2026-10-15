@@ -5,7 +5,11 @@ covers:
   - src/ansi.ts
   - src/events.ts
   - src/components/Transcript.tsx
-  - src/styles/{transcript,activity-cards}.css
+  - src/components/ActivityMatrix.tsx
+  - tests/browser/activity-presentation.spec.ts
+  - src/styles/{transcript,activity-cards,legacy-activity}.css
+  - src/components/legacy-activity-fold.tsx
+  - tests/web/legacy-activity-fold.test.tsx
   - server/session-projection.ts
   - tests/web/transcript-{fold,paging}.test.tsx
   - tests/web/activity-visibility.test.tsx
@@ -21,35 +25,76 @@ Keep Thinking and tool work inspectable while assistant answers and displayed ex
 remain directly readable. [[conversation]] owns those content boundaries;
 [[tool-presentations]] owns typed card content and configuration.
 
-## Activity bands
+## Activity groups
 
-Every maximal run of visible non-response activity forms one full-width band between two quiet
-rails, including runs crossing assistant-message boundaries. Thinking, tool, generic, and tool-only
-round-lead content retain their existing cards inside it. Displayed custom messages break the band.
+Every maximal run of visible non-response activity forms one group, including runs crossing
+assistant-message boundaries. Thinking, tool and generic content retain
+their identities inside it. Displayed custom messages break the group and remain independently readable.
 
 | Density | Presentation |
 | --- | --- |
-| Expanded | Every card in source order. |
-| Compact | Latest 24 cards; a top `···` reveals an omitted prefix. Equivalent to Expanded for shorter runs. |
-| Collapsed | One disclosure button containing both rails and centered `···`. Already materialized card state is retained. |
-| Adaptive (`dynamic`) | Historical bands start Collapsed; live bands start Compact and close at the lifecycle boundary below. |
+| Expanded | Every item in source order; individual Thinking/Tool preferences still control its content. |
+| Compact | Latest 24 items; an Earlier activity control reveals an omitted prefix. Equivalent to Expanded for shorter runs. |
+| Collapsed | One left-aligned Activity disclosure. Already materialized item state is retained. |
+| Adaptive (`dynamic`) | Historical groups start Collapsed; live groups start Compact and close at the lifecycle boundary below. |
 
-Preferences choose the initial state. Manual disclosure follows the same ladder in every mode:
-Collapsed opens Compact, the Compact prefix opens Expanded, and either rail steps downward.
-When Expanded and Compact are equivalent, closing skips that intermediate state. Rail glyphs point
-toward the activity when contracting and away when expanding; adjacent telemetry edges stay parallel.
+Preferences choose the initial state. Collapsed opens Compact, the Compact prefix opens Expanded,
+and the upper/lower boundary controls step downward. When Expanded and Compact are equivalent,
+closing skips that intermediate state.
 
-Collapsed rails and dots are presentational children of one native button: one accessible disclosure
-name, one Tab stop, and one full-stack hit area, including the space between marks. Hover and keyboard
-focus apply the existing rail/glyph and dot feedback together. Activating any part, including with
-Enter or Space, opens Compact with the fold's center reading anchor. Open activity retains separate
-upper/lower controls and their respective reading anchors. When the lower control disappears on
-collapse, focus returns to the unified disclosure with `preventScroll`.
+The disclosure has one accessible name and Tab stop, with a shared rounded hover/focus surface.
+Enter, Space or pointer activation opens Compact with the group's center reading anchor. Open
+groups retain separate upper/lower controls and their reading anchors. On lower collapse, focus
+returns to the unified disclosure with `preventScroll`.
 
-Both rails retain colored tool/Thinking segments in source order, giving an approximate composition
-while collapsed. Historical runs over 24 items use evenly spaced samples; live runs show the latest
-24 and pulse only live segments. These are local activity cues, not an aggregate success/failure
-status or exact totals. Original double-rail, dot and glyph geometry remains unchanged.
+Adjacent activity items share one spacing rhythm across assistant-message boundaries; prose and
+expanded details retain their own internal spacing.
+A single neutral vertical guide connects the open group's activity. Assistant-turn attribution
+rows and divider ticks are absent both inside and outside groups. The group heading uses the
+base UI size in the Rajdhani structural-label face with secondary ink; individual identities use
+the smaller compact size and medium weight. Lower collapse and Earlier activity controls share the
+structural face and base UI size with secondary ink, not a tiny caption.
+Type icons use the theme identity colors directly, separate from failure and live-state indicators.
+Titles and expanded text use the normal ink/body roles without additional neutral mixing.
+Disclosure chevrons lead group labels, item identities and nested call rows. Top-level Activity
+and context events share a disclosure axis; the group guide continues under its arrow, and nested
+rows begin under the group label. Expanded text follows its own title/name axis. Rows without
+retained call detail reserve the disclosure column without adding an inert arrow. Hit areas stay unchanged.
+
+Thinking and tool details open as indented reading content, without an outer frame, tint, or
+shadow. Expanded text aligns with its header title. Code, Diff and output keep their local reading
+surfaces; a nested tool list has its own shallow guide. Summaries are prose, identities have quiet
+medium weight, and metadata remains subdued. A summary is separated from its identity/status group
+more clearly than an adjacent expanded-state Copy; shortening Copy spacing must not crowd the summary. Completion/failure marks retain their semantic green/red
+in both parent tools and nested calls; live work keeps its running cue. Tool-strip controls likewise avoid permanent boxes; their
+selected item remains visibly distinct.
+
+Activity uses a square 3×3 matrix alongside its structural label. Cells represent up to nine
+recent individual visible activities, oldest to newest in row-major reading order; a new record
+evicts the oldest when full. Tool and Thinking retain their identity colors. Unused cells remain
+neutral. Stream deltas and paired tool results do not add entries. Only live individual records
+pulse. A partially filled matrix reaching nine records briefly brightens once, retaining a subtle
+identity-colored glow while full. Rolling updates do not restart this response; initially full
+history does not flash on mount. Reduced motion keeps the static filled appearance. This is chronological data, not the
+random seven-pattern Π used for generic loading, and does not claim totals or aggregate success.
+
+Opaque deferred ranges contain bounded presence hints, not individual records. The matrix uses
+only the contiguous materialized tail after the last such range, rather than inventing order or
+counts from those hints. Its tooltip/accessibility description identifies unavailable history;
+expansion populates the matrix from the existing bounded materialization path. No extra history
+fetch occurs merely to decorate a collapsed header.
+
+Open activity bodies share one outer rhythm; no redundant trailing card margin is added to the
+fold gap. Thinking paragraphs retain reading line-height with a compact paragraph gap and align
+with their header text. Empty status slots do not consume header space or push Copy away.
+
+### Legacy presentation
+
+`LegacyDualLineFold` in `src/components/legacy-activity-fold.tsx` preserves the original paired
+tracks, sampling, glyphs and disclosure behavior. Its scoped skin in
+`src/styles/legacy-activity.css` also retains the original framed item presentation. The legacy
+module is not imported by the current transcript. The PWA titlebar needles commemorate the old
+design while using the active theme's Tool/Thinking identity roles; [[design-system]] owns their presentation.
 
 Fold-local choice overrides the default and survives pagination, virtualization, pairing changes,
 and deferred materialization within the branch view. Manual disclosure stops automatic collapse.
@@ -60,14 +105,17 @@ Older activity-only messages travel as opaque view-bound ranges:
 
 - Expanded loads every bounded page; Compact loads newest-first until it has 24 cards or exhausts
   the range; Collapsed leaves it unloaded.
-- The same prefix marker represents omitted content, loading, and retry. Selecting it requests
+- The same prefix control represents omitted content, loading, and retry with a matching text label. Selecting it requests
   complete Expanded materialization.
 - A projection change invalidates the request. Inserted pages preserve the scroll anchor, and
   materialized children stay mounted across later density changes.
 
-A live omission marker alternates its three 2px square dots between tool/thinking/tool and
-thinking/tool/thinking colors once per second. It retains the monospaced cells and 0.25em tracking.
-Settled markers are still, failed loads use the error color, and reduced motion uses a static pattern.
+The Earlier activity control shares the group boundaries’ Rajdhani uppercase structural-label
+role and leading disclosure axis. Its square matrix summarizes the last nine known individual
+records of the hidden prefix, not the visible latest 24. Opaque ranges remain unknown; the control
+does not fetch extra pages merely for decoration. Loading temporarily replaces its chevron with Π;
+errors use an explicit alert and retry label. Historical cells stay static unless their own record
+is live; current work elsewhere in the group does not animate the omitted prefix.
 
 ## Independent card preferences
 
@@ -80,8 +128,30 @@ Tool Collapsed groups adjacent runs of two or more calls into a wrapping strip o
 isolated calls remain Compact. Selecting a glyph reveals its full card below the strip without
 reordering other content.
 
-The explicit disclosure control and non-interactive header area perform the same open/close action.
-Copy and file-reference controls act independently; only the visible reference opens the resource.
+Empty native Thinking bodies stay closed under Expanded or Adaptive preferences, including
+whitespace and display-stripped terminal formatting. Their headers remain available for manual
+disclosure; a manual open or close still overrides the default as content arrives. Adaptive residency
+starts when displayable content arrives. Configured Thinking presentations can supply content of their
+own and retain their normal disclosure behavior.
+
+One native disclosure owns the complete header hit area, including plain summary text and remaining
+space. Copy and file-reference controls remain separate siblings above that hit area.
+Copy is available only while the individual content is expanded; closed headers reserve no Copy
+space or tab stop. In the expanded header it follows the complete header text, including retained
+summary metadata, rather than stretching to the row's far edge. Long identities truncate within
+the available header; summaries yield space before identity/actions.
+Thinking and ordinary tool summaries disappear when expanded to avoid repeating their content;
+CodeMode retains its useful duration/call summary. Header hover strengthens ink without
+a full-row fill or shadow. Touch press gives local, temporary disclosure feedback, never the
+browser's default full-row tap overlay or a sticky hover/selected state. Keyboard focus keeps a
+visible rounded outline around the complete disclosure row. Copy and file-reference controls act
+independently; only the visible reference opens the resource. Closing content immediately makes its
+controls inert, before the exit animation, so Tab cannot re-enter and accidentally reopen it. Child-call disclosures and collapsed tool strips follow the same
+pointer/keyboard distinction; a strip's persistent active state still identifies its open item.
+
+Phase and presentation layouts own the gap between output/status and local details; status text
+must not add a second block of vertical padding. Script, argument, raw-result and extension-message
+details retain native disclosure behavior and use the same thin chevron and compact hit-row treatment.
 
 ## Adaptive timing
 
@@ -134,6 +204,6 @@ messages use the same interruption projection.
 
 ## Checks
 
-Activity/fold tests cover the single collapsed disclosure and focus return, density, timing,
+Activity/fold tests cover the single collapsed disclosure and focus return, independent group/item preferences, kind indicators, legacy behavior, density, timing,
 identity, pagination, and scroll anchoring. Event tests cover generation, waiting, execution,
 settlement, and late updates.

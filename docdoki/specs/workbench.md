@@ -129,7 +129,17 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   green, unseen failure red, and recovery warning-ringed. This preserves location memory without
   duplicating a session into a second runtime-derived group; Hidden rows retain the same dots when
   expanded. The conversation stays dominant in the center, and the right contextual region opens
-  only when requested.
+  only when requested. Its Changes selector shows the same authoritative total as the topbar,
+  capped visually at `99+` and omitted when the header is too narrow; the tooltip retains the exact
+  count. On narrow screens the right drawer is at most 460px wide, while phones use the full width.
+
+- Navigation owns New session, search and its collapse/expand controls. [[design-system]] defines
+  their shared alignment and the installed-window header variant. The desktop rail's leading
+  control expands navigation and its separate plus button starts a session; the conversation
+  header does not duplicate that toggle. Keyboard collapse/expand from within navigation restores
+  focus to the corresponding sidebar toggle, while the same shortcut from the editor preserves
+  editor focus. On narrow screens there is no rail: the topbar opens the full modal drawer, whose
+  header closes it. Closing or changing viewport does not overwrite the desktop collapse state.
 
 - Pinning and hiding are reversible navigation metadata that never touch Pi's session storage, and
   they are mutually exclusive: hiding a session drops its pin, restoring it returns it to its
@@ -146,18 +156,40 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   without moving anything. On phone-width layouts or without hover they remain visible beside the
   age. Pin and Hide are frequent actions and stay directly accessible, not behind an overflow menu.
 
-- Project groups expose native expand/collapse controls; a collapsed group containing the visible
+- Project groups expose native expand/collapse controls across the header's main button. A single
+  open/closed folder icon conveys the displayed state without a separate disclosure arrow, leaving
+  more width for the folder name. The button retains its name and `aria-expanded` state for keyboard
+  and assistive-technology use. A collapsed group containing the visible
   session carries the active highlight on its header, and active search results remain visible
-  regardless of saved collapse state. Hidden is a curation drawer rather than a browsing group: it
-  opens on demand, starts closed again, and search reveals matching hidden sessions inside it
-  instead of returning them to their folders. Ordinary rows keep Pin and Hide; Hidden rows reuse
-  those same two action slots for Restore and Delete, making individual deletion a deliberate
-  second-stage action rather than a third always-present icon.
+  regardless of saved collapse state. Hidden is a bottom curation drawer outside the session list's
+  scroll area, below the workspace explorer when present. Both drawers use the same neutral header
+  surface, height, typography, icon alignment, and trailing disclosure indicator. Hidden places its
+  count at the trailing edge before the indicator. Each header precedes its own content; Hidden's
+  independently scrolling body is bounded to leave room for ordinary navigation. Project identity
+  remains on cross-project Hidden rows as quiet text rather than a filled badge. On phone-width or
+  non-hover layouts, these rows place project and age beneath the title so persistent actions do not
+  crowd it. Selection and search highlights cover the whole row, including its action area.
+  The drawer opens on demand, starts closed
+  again, and search reveals matching hidden sessions inside it instead of returning them to their
+  folders. With no hidden results the drawer is absent. Ordinary rows keep Pin and Hide; Hidden rows
+  reuse those same two action slots for Restore and Delete, making individual deletion a deliberate
+  second-stage action rather than a third always-present icon. Every hidden session, including a
+  child of a hidden folder, has both Restore and Delete in those fixed columns. Restoring a child
+  resolves the complete folder through the catalog, restores only that session and keeps all siblings
+  individually hidden. A failed lookup or newer Hidden edits leave the prior curation intact. Folder
+  headers have the same Restore/Delete columns. Folder Delete confirms the count and full path,
+  and clears only that complete hidden folder; other hidden sessions and folders are unchanged.
 
-  The Hidden header’s destructive action clears the entire drawer through one count-bearing
-  confirmation: it includes both individually hidden sessions and every session in complete hidden
-  folders, never only one child folder. It is unavailable while search or curation hydration can
-  show only a partial selection, and while any target is selected, opening, working, or conflicted.
+  Clear Hidden is a persistent header icon action, between the count and disclosure, with its own
+  accessible name and click target. The count and controls retain their positions when the drawer
+  opens or closes. Independent hidden session titles start farther left than folder contents, so
+  a row following a folder does not appear to be its child. Complete hidden folders retain their
+  own nested indentation. Clear does not consume a content row. It clears the entire drawer
+  through one count-bearing confirmation: it includes both individually hidden sessions and every
+  session in complete hidden folders, never only one child folder. It is unavailable while search or curation hydration can
+  show only a partial selection, and while any target is selected, opening, working, conflicted,
+  or still open in an observed Pi terminal. A folder-level deletion applies the same conditions
+  to that folder, not to unrelated targets elsewhere in Hidden.
   Session deletion leaves project files and project folders unchanged.
 
 - The existing sidebar search reaches session name, cwd, ID, and complete retained user/assistant
@@ -165,8 +197,20 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   corpus, source-authority, and execution boundary live in [[session-continuity]]; no second search
   panel or filter toolbar is introduced.
 
-  While the search input owns focus, unmodified Up/Down highlights visible results in the same
-  project/Pin/Hidden order as navigation; Enter opens the highlighted identity. Focus stays in the
+  Search reveals the immediate parent beside a project group when that parent has a visible
+  token/phrase match but the project basename does not. Existing context for colliding basenames
+  remains. Both contexts use `project @parent`; the `@` marker uses secondary text styling and is
+  excluded from match emphasis. Cross-project session locations have no `@` prefix: they normally
+  show the project basename, expanding to `parent/project` only when the parent matches and neither
+  title nor basename does. That expansion temporarily replaces age metadata; ordinary browsing
+  restores basename and age. Regex results have no match emphasis. Row layout and quiet location
+  styling follow the navigation rules above.
+
+  Focusing an empty search input does not highlight or open a session. Unmodified Up/Down starts
+  deliberate result navigation, including with an empty query; a non-empty query defaults to its first
+  result. Clearing the query or leaving and refocusing an empty input resets that transient highlight.
+  While the search input owns focus, Up/Down follows the same project/Pin/Hidden order as navigation;
+  Enter opens only the highlighted identity. Focus stays in the
   input, the highlighted row scrolls into view, and a live status names the choice for assistive
   technology. Highlighting is distinct from the opened session. The same identity survives page
   append, same-query refresh, and curation reordering; a changed query cannot open an old result
@@ -211,11 +255,11 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   semantics and real recovery buttons on failure. Before React bootstraps, a validated browser-local
   cache may apply only the saved theme, palette, content text size, and reading width to prevent a
   wrong first paint; host preferences remain authoritative and immediately replace stale cache
-  state. PWA title-bar metadata follows resolved light/dark mode using the palette-independent
-  neutrals in [[design-system]], and installed icons use a fixed neutral mark rather than a
-  runtime palette. The production origin is installable as a standalone PWA: its service worker caches only
-  the versioned application shell and same-origin static assets, never API, event, attachment, or
-  resource responses.
+  state. [[design-system]] owns PWA metadata: active Window Controls Overlay follows the workspace
+  frame, while ordinary tabs and standalone fallback use neutral hints. Installed icons retain
+  their fixed neutral identity. The production origin is installable as a standalone PWA. Its service
+  worker caches only the versioned application shell and same-origin static assets, never API, event,
+  attachment or resource responses.
 
   The cached shell can present those host-aware states, but cannot start a local process; Pi/session
   capability still requires the loopback host and its authenticated API.

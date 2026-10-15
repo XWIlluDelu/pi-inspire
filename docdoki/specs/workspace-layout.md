@@ -39,7 +39,9 @@ independent project shells in [[terminal]].
   [[conversation]] owns interaction details.
 
 - The navigation and contextual regions can collapse so the conversation can use the available
-  width. Below 900px, desktop rail preference is preserved but navigation itself becomes an
+  width. Desktop navigation owns its toggle: the expanded header's right-hand control collapses
+  it, and the rail logo expands it. The desktop conversation header has no duplicate toggle or
+  reserved slot. Below 900px, desktop rail preference is preserved but navigation itself becomes an
   independent drawer opened from the topbar. Its internal close button, Escape, and scrim dismiss
   it without horizontal overflow. Each open narrow drawer is exposed
   as a modal dialog, owns trapped and restorable focus through the central modal stack, and makes
@@ -55,10 +57,13 @@ independent project shells in [[terminal]].
   terminal mounted, preserving local interaction state.
 
 - Both side regions' widths are adjustable by dragging their boundary with the conversation
-  (zero-width handles riding the shared edges), persist across reloads, and reset to the default on
-  double-click; each boundary's scroll thumb keeps grab priority where the two overlap. A saved
-  width is clamped live as the window narrows without overwriting the user's preference, then
-  restored when space returns.
+  using focusable handles with pointer and keyboard control, persist across reloads, and reset to
+  the default on double-click; each boundary's scroll thumb keeps grab priority where the two
+  overlap. A saved width is clamped live as the window narrows without overwriting the user's
+  preference, then restored when space returns. Desktop panes are separated by 4px gutters
+  with 8px resize hit bands. Hover, keyboard focus and active dragging reveal a straight 2px
+  divider with round caps and inset ends, not an outline wrapping the adjacent pane's corners.
+  The session header shares the reading surface without a separate bottom seam.
 
 ## Session identity and Git observation
 
@@ -66,7 +71,8 @@ independent project shells in [[terminal]].
   conversation presents its normalized first prompt (or `New session` before any prompt) without
   promoting that fallback into session metadata or OS-visible titles. The heading truncates
   responsively at its available width. Beside it, the project location appears as folder name or
-  full path per a global preference, and clicking copies the absolute path without shifting layout.
+  full path per a global preference, without a redundant folder glyph; clicking copies the absolute
+  path without shifting layout.
   A quiet clickable Git summary follows: it shows the current branch or detached/unborn identity,
   adds a total only when the worktree has changes, and opens the detailed Changes pane on
   activation.
@@ -83,11 +89,16 @@ independent project shells in [[terminal]].
   command-owned progress copy.
 
   Session title, project, Git and extension status form one left-aligned cluster with consistent
-  spacing; global controls remain on the right. The title itself opens session actions, without a
-  separate menu button or chevron. Extension text uses the available space at every width, with full statuses
+  spacing; the project and Git identifiers form a tighter workspace subgroup beside the title,
+  and global controls remain on the right. Workspace identifiers have no resting background or frame;
+  hover strengthens their text and keyboard focus retains its outline. The text-only title opens
+  the session menu on both desktop and phones, with no chevron or separate More control.
+  Its hover feedback and keyboard focus outline retain the interactive affordance.
+  Rename is the first menu action and opens the inline editor. Extension text uses the available
+  space at every width, with full statuses
   available by click, tap or keyboard when truncated. No status takes no space. Secondary project and
   Git details yield before the title and primary navigation. Narrow layouts retain Settings in the
-  header; detailed Git status remains in Changes. The session menu sits below the title with a
+  header; detailed Git status remains in Changes. The session menu sits below the title button with a
   compact 216px width, limited by available space rather than title length. The inline rename
   input shares the title's leading edge, not the menu's width: it starts at 240px, grows with the
   displayed title up to 560px, and fits the available header space. On narrow bars it fills the
@@ -97,6 +108,15 @@ independent project shells in [[terminal]].
   Rename editing is owned by the session whose heading opened it; a switch cancels that editor, the
   submit carries the explicit session id rather than reading a newer visible selection, and a
   rejected rename leaves the current identity intact while emitting a non-blocking warning notice.
+
+  The title menu also offers Clone and Export while leaving the title visible. It opens with
+  Rename focused; arrows, Enter and Escape operate the menu, and keyboard dismissal returns focus
+  to the title. Export opens the shared format-and-download dialog without reading or changing
+  the message draft.
+  `/clone`, the command palette and the earlier-branch notice's `Clone from here` reach the same
+  endpoint-inclusive action. It creates an independent copy of the recorded active branch without
+  sending a model prompt or changing the source's work, pending input or draft. [[session-branches]]
+  defines native navigation, Fork/Clone boundaries and optional branch summaries.
 
 - Git status/diff request, cancellation, polling, and visible-surface scheduling belong to a bounded
   `GitController`. `AppStore` remains the sole snapshot publisher and executes the explicit
@@ -133,17 +153,8 @@ independent project shells in [[terminal]].
   points remain reachable through progressive loading; bounded responses never define the limit of
   accessible history. The center Transcript remains the active conversation surface.
 
-  The session title opens its action menu below the heading, leaving the title visible. Rename
-  is first and initially focused; selecting it enters the inline editor. Clone and Export follow; there is no
-  separate menu or Clone button beside the title. The menu supports arrows, Enter and Escape;
-  dismissal returns focus to the title. Export opens the shared format-and-download dialog without
-  reading or changing the message draft.
-  `/clone` and the command palette invoke the same Clone action. It opens an independent copy of the recorded active branch without
-  sending a model prompt or changing the source's work, pending input, or draft. The earlier-branch
-  notice offers `Clone from here` for the same endpoint-inclusive meaning. [[session-branches]]
-  defines native navigation, Fork/Clone boundaries, and optional branch summaries. On a narrow screen,
-  a successful context-changing action closes the modal contextual drawer to reveal the resulting
-  conversation/draft; read-only preview and Back keep it open.
+  On a narrow screen, a successful context-changing action closes the modal contextual drawer to
+  reveal the resulting conversation/draft; read-only preview and Back keep it open.
 
   Terminal presents the current project's ordered shell tabs without splits; hiding the pane
   detaches its views without ending PTYs, and focus mode or an independent same-origin window can

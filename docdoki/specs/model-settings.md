@@ -56,7 +56,8 @@ locale-folded literal-first/greedy-subsequence rule, including provider/ID-spann
 Identity deduplication and emphasis preserve fixed row heights, capacity, ordering and badges.
 The picker marks its selected model with one checkmark and `aria-selected`, and offers one
 Manage models destination. From New, that destination keeps the prospective project directory; an
-open session keeps its session owner. General control and focus styling follows [[design-system]].
+open session keeps its session owner. Opening Settings directly from New uses the same prospective
+directory. General control and focus styling follows [[design-system]].
 
 ## Defaults, common models and selection
 
@@ -80,15 +81,20 @@ Router in the existing model list. A physical response does not replace the sele
 
 Live selection comes from the owned worker, including after branch navigation. For inactive sessions,
 selection follows the viewed branch and Pi's recovery rules with current registration metadata.
-File-backed transcripts open independently of model discovery.
+File-backed transcripts open independently of model discovery. New from unavailable-workspace
+history retains known selection/effort but discovers choices in the prospective directory, not through
+the read-only source. Choosing manual effort retires an in-flight thinking preview; directory changes
+preserve that choice without leaving model readiness pending.
 
 ## New-session discovery
 
 New distinguishes explicit selection, inheritance from a session and workspace defaults. Explicit or
-inherited choices keep their effective thinking value; manual thinking changes take precedence.
+inherited choices keep their resolved thinking value; manual thinking changes take precedence.
 Workspace-default startup leaves model and unmodified thinking arguments to Pi. Model switches use
 Pi's per-model thinking preference, then global preference, then current effort, with supported-level
 clamping. Catalog refresh alone does not reapply defaults; non-reasoning models disable thinking.
+If a chosen model’s thinking cannot be previewed before explicit new-folder creation, unmodified
+effort is left to native startup rather than guessed. A manual effort choice remains explicit.
 
 One metadata query returns available choices and startup-default previews for the prospective cwd.
 It includes global and already-trusted project extension registrations, using Pi's stored/inherited
@@ -133,13 +139,16 @@ refresh or readback fails; the response supplies a warning so Settings can offer
 A configuration save invalidates cached workspace metadata. For an addressed session, it refreshes
 that worker only; other workspaces rediscover on demand. Without a session, it refreshes the edited
 workspace catalog. Refresh preserves ongoing work and the current selection. The explicit Refresh
-control rereads external changes while Settings remains open.
+control rereads external changes while Settings remains open. Earlier catalog/settings reads cannot
+replace a newer published write snapshot in the picker or Common scope.
 
 ## Authentication
 
 Provider methods come from the installed Pi, including native and extension API-key/OAuth flows.
 `/login` opens provider selection and may reveal an unambiguous provider's methods; authorization
 starts only after selecting a method. Loading, errors and empty results are separate states.
+Provider discovery and login admission reread saved declarations without requiring a Host restart,
+including when no session is selected.
 
 The Connect provider directory uses regular-weight names and semibold literal search matches.
 Search keeps its existing case-insensitive substring filter over provider ID and name. When only the

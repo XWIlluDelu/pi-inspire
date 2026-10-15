@@ -1,240 +1,60 @@
+---
+purpose: Implementation reasons behind document readers, streamed tool content and browser presentation.
+---
+
 # Workbench implementation notes
 
-## Custom message presentation
-
-### Decision
-
-The user approved a neutral, information-blue message surface for displayed Pi custom messages while explicitly retaining the existing PI error surface. The current contract is in [[conversation]] and [[design-system]]. A custom message supplies extension-authored context, without the call/result lifecycle of a tool. The generic presentation keeps optional `details` separate from Markdown `content`; it creates no empty Details entry when that field is absent or null.
-
-The previous tool-style card, custom activity tiles, and automatic tool-density lifecycle were removed. Tool calls and Thinking keep their existing presentation. Custom messages stay outside activity folds even when tool visibility is Hidden. The change does not alter Pi delivery or model-context conversion.
-
-### Projection boundary
-
-- `CustomMessage.tsx` renders Markdown and text/image blocks, preserves inspectable fallback data, and lazily mounts expanded Details.
-- `transcript-row-projection.tsx` places custom messages in chronological independent rows. Host-paired entry identities retain the row across live-to-durable timestamp adoption and history prepends; host reconciliation remains unchanged.
-- `server/session-projection.ts` treats displayed custom messages as visible boundaries in older-history and user-turn navigation. Merely changing the browser renderer would otherwise leave older custom content hidden in deferred activity ranges. Hidden context-only messages remain invisible.
-- Settled custom content participates in All search, but not User or Model scopes. Source/type labels do not claim user or Pi authorship.
-
-### Structured reading projections
-
-[[tool-presentations]] defines a small field-selection contract for sender-led custom messages.
-The Intercom adaptation selects structured body text rather than parsing its generated Markdown
-wrapper. Its absent-provenance guard leaves cross-machine messages in Pi's original presentation,
-so attribution cannot silently drop the unverified-origin warning.
-
-The narrow fixture exposed a shared table issue: inheriting prose's `overflow-wrap: anywhere`
-reduced table column minima to character widths. `.rich-text table` in
-`src/styles/activity-cards.css` now restores normal word minima while retaining local horizontal
-scrolling. Long-token wrapping outside tables is unchanged.
-
-## Document-relative previews
-
-### Directory and authority
-
-`DocumentPreview` supplies the opened descriptor to the shared sanitized `RichText` pipeline. Document
-links and images resolve from that file's actual directory; conversation references use the session
-cwd and explicit preview controls.
-
-`documentResourceReference` separates URL escaping from literal workspace paths and prefixes
-project-relative targets with `./`. A missing sibling must remain missing rather than opening an
-unrelated same-basename file elsewhere.
-
-Linked files need independent authorization through workspace realpath containment or an exact
-transcript citation, as defined in [[resource-preview]]. Reading the parent document and Git index
-membership grant no additional access. [[workbench-implementation]] explains discovery and authority.
-`ResourceController.loadDocumentImage` uses the authenticated resolver/content route without changing
-the selected file or availability state.
-
-### Images and navigation
-
-`DocumentImageResources` owns per-document deduplication, transfer scheduling, retained blobs, abort,
-and URL revocation. Limits live in [[resource-preview]]. Resolve/content completions must still belong
-to the selected document, session, branch view, and transport. Failures retain the authored description.
-
-Notebook cell attachments decode bounded canonical raster bundles within that cell; they do not enable
-arbitrary Markdown data URLs. Conversation images outside recognized local references retain their
-description, while remote and protocol-relative images appear as explicit links. HTML previews keep
-their isolated sandbox; Notebook cells remain static.
-
-`github-slugger` assigns heading IDs before sanitization. Scoped fragment navigation uses the
-sanitizer's `user-content-` prefix and waits for deferred rendering and image layout. Wheel, touch,
-pointer, or keyboard interaction cancels pending automatic positioning, preserving the reader's choice.
-
-## Filesystem and Git separation
-
-### Decision and repair
-
-The user rejected Git tracking/ignore rules as file-visibility rules: Files represents the project filesystem; Changes represents Git. Hidden visibility covers dot names and native Windows/macOS hidden attributes, not `node_modules`, `dist`, Git ignored files, or tracking state. Visibility, discovery completeness, and permission are independent.
-
-- `server/project-files.ts` no longer invokes Git. Tree levels enumerate real directories on demand, including empty directories, with at most 10,000 inspected entries per response. Search uses bounded breadth-first discovery (20,000 files, 10,000 queued directories, a five-second cooperative walk budget). Directory identity is checked before/after enumeration; contained directory links are navigable and canonical identities stop cycles. Unrepresentable POSIX filenames cannot alias real replacement-character names. Incomplete/capped/unreadable discovery is explicit.
-- The directory tree, search, established composer picker/`@`, and prospective New session search expose filesystem-only hidden visibility. An established workspace shares its cwd-scoped toggle across Files and composer entry points. Visibility changes retire old directory/search work while preserving the query, expansion and selected preview. New session owns its prospective-workspace toggle separately. The completion toolbar stays outside the ARIA listbox and preserves text/caret focus.
-- `server/resources.ts` authorizes contained regular files independently of discovery and Git. Exact transcript references remain a separate authority outside the workspace. Content requests still check the addressed session/view, current canonical workspace, lexical/canonical target witness and pinned object. Missing paths invalidate discovery caches, not permissions. Changing ignore rules or hiding a file cannot revoke an otherwise valid handle. Contained reads do not load conversation content.
-- `server/attachments.ts` and the existing delivery/history revalidation retain canonical-root, regular-file and selected-target checks without index membership. Hidden/ignored files can be sent and recalled; retargeting a selected symlink still fails. JSON-encoded prompt references retain their injection boundary.
-- Document-local links/images, downloads and terminal file links inherit the independent resource authority. Local images in ignored generated-output directories can load; remote/protocol-relative images, outside targets without citations, sandbox content and transfer limits remain unchanged.
-- Changes no longer infers `+0 −0` from an absent status entry. Only a concrete diff supplies line counts; missing/unavailable/incomplete/not-a-repository observations show unavailable counts and disable navigation. An empty selected Git comparison does not substitute working-tree bytes for staged source.
-
-Discovery caching does not grant read authority. [[state-ownership]] explains
-session addressing and pinned-object reads; [[workbench-implementation]] applies the same independent
-authorization to document images. Current contracts: [[resource-preview]], [[composer]], [[conversation]].
-
-### Limits
-
-- This is read-only bounded discovery, not an unrestricted file manager or a complete eager filesystem index. Special nodes and broken/outside symlink targets are not offered or traversed. A truncated scan is not proof of absence or basename uniqueness; exact qualified file reads do not depend on the scan.
-- Search caches have a five-second freshness window, at most eight canonical-root/visibility scopes, and shared in-flight scans. The scan time budget is cooperative between directory reads, not a hard deadline on an individual filesystem/native-attribute operation. Explicit refresh invalidates discovery globally within that small cache.
-- Native Windows/macOS attributes reuse the existing bounded platform helper. Their adapter behavior is covered synthetically here; this Linux run does not establish native Windows/macOS end-to-end performance or behavior.
-- Deployment/service restart is not part of this repair. Running Hosts must load the updated backend before the new Files semantics are available.
-
-## Hidden project directories
-
-### Behavior and reason
-
-The New session picker previously skipped every dot-prefixed name unconditionally in `server/host-dirs.ts`, on all host platforms. That made hidden projects unreachable through browsing even though typing their absolute path already worked. Windows Hidden attributes and macOS UF_HIDDEN were not inspected.
-
-Under [[workbench]], a local-to-the-open-picker Show hidden folders eye-icon toggle immediately after the heading opts into all immediate directories through the authenticated, session-independent `GET /api/host/dirs?showHidden=1`. It replaces the separate checkbox row at the user's request, uses a stable accessible label and `aria-pressed`, and changes its icon and action tooltip with visibility. Omission or `0` retains filtering; other values are rejected. No preference or filesystem attribute is changed. The toggle is retained through navigation and resets on reopening. Browser paths remain verbatim Host paths, including drive and UNC forms.
-
-### Native inspection boundary
-
-`server/host-hidden-dirs.ts` handles attributes Node's Dirent/Stats do not expose:
-
-- Linux and other POSIX hosts need no subprocess for the common dot-name rule.
-- Windows runs one bounded Windows PowerShell command per directory level. `Get-ChildItem -LiteralPath … -Force -Hidden` returns names as an explicit UTF-8 JSON array, including zero/singleton cases. The path travels through an environment value, never script interpolation, and no shell/profile runs.
-- macOS runs `/usr/bin/find` with `-mindepth 1 -maxdepth 1 -flags +hidden -print0`. NUL delimiters preserve spaces and newlines; the scan never descends into children. The [macOS find manual](https://keith.github.io/xcode-man-pages/find.1.html) defines these primaries; [chflags](https://keith.github.io/xcode-man-pages/chflags.1.html) defines `hidden` as hiding an item from the GUI.
-
-Native queries have a ten-second timeout and 8 MiB output bound. Failures remain visible rather than silently changing the filter. Explicit show-hidden listing bypasses native inspection, so unavailable tooling does not make all browsing impossible. These flags supplement dot-name filtering; the picker does not emulate every file manager's private visibility metadata.
-
-## Image preview backgrounds
-
-### Separation of responsibilities
-
-The full-image viewer reuses the standard `.overlay` scrim and 2px backdrop blur. A scrim only suppresses surrounding UI: even a stronger blur cannot provide a stable background for transparent image pixels. The image therefore owns an independent opaque, neutral inspection background. This separation preserves overlay reuse without making image colors depend on the workspace beneath it.
-
-`ImagePreview` shares `src/styles/image-preview.css` across staged attachments, conversation images, and the file reader. A CSS checkerboard is the default; the viewer offers White and Black alternatives for inspecting dark/light line art and alpha edges. Applying the background to the image rather than transforming the source bytes works across supported image formats, costs no alpha scan, and leaves opaque images unchanged. Background selection is local to one viewer opening and does not reset zoom or pan. Controls remain outside the clipped gesture surface. The viewer now hugs the fitted image instead of centering it inside a fixed-height stage below a detached toolbar: a 44px close row aligns to the group's right edge above the image, and the 50px background selector centers below it, each with a 12px gap. The two rows balance the image within 3px of the viewport center when safe areas are symmetric. Intrinsic image fitting reserves both rows, gaps, and safe-area gutters, so short landscape screens do not clip the controls. Control surfaces, text, hover, selection, and focus use theme tokens; the checkerboard and White/Black inspection colors deliberately remain stable across themes.
-
-The file reader still gives its media button definite flex bounds so viewBox-only SVGs cannot collapse. The contained image uses automatic intrinsic dimensions bounded by that button, keeping the checkerboard out of letterboxing. Thumbnail tiles retain their existing cropped geometry.
-
-Contracts: [[composer]] and [[resource-preview]].
-
-## Neutral PWA chrome
-
-### Decision and implementation
-
-The previous HTML and manifest fixed title-bar hints to Amber orange even when the application used Jade. Under [[design-system]], window chrome now uses the same neutral light/dark pair for both palettes. `public/theme-init.js` sets the page metadata before CSS/React paint from the existing validated visual cache; `applyBrowserTheme` in `src/visual-preferences.ts` applies the Host-authoritative resolved theme and system-theme updates. Tests keep the two small pre-bootstrap/runtime mappings aligned. Manifest theme and launch background use the neutral light fallback.
-
-Installed icons keep the Open Reticle geometry and carbon tile but replace orange details with silver; the brackets stay white. `npm run icons:build` (`scripts/render-app-icons.mjs`) regenerates all four PNGs from the two SVG masters through the project's Playwright Chromium, without another image dependency. Ordinary icons keep transparent rounded corners; maskable and Apple touch icons remain full-bleed. Manifest and touch-icon URLs advance to `v=4`; app identity, start URL, scope, and manifest location remain stable. Existing service-worker network-only handling for manifest/launcher assets remains unchanged. In-app identity is unchanged; the transparent tab favicon received the neutral-color follow-up below.
-
-### Transparent tab favicon follow-up
-
-The tab/favicon now keeps its 16px pixel geometry, fully transparent background and original alpha coverage while replacing orange ticks/aperture with quartz gray `#63676C` in light browser chrome and the existing installed-icon silver `#B9C0C7` in dark browser chrome. Ink/white brackets remain unchanged; this does not recolor the in-app logo or alter installed-icon PNGs. `index.html` advances the favicon URL to `v=3`. The service worker handles the favicon like the other mutable browser/PWA icons rather than serving an unversioned shell-cache copy; a color-only asset update need not change the hashed JavaScript entry.
-
-### Launcher sizing
-
-Ordinary launcher icons now apply the transparent inset specified in [[design-system]]. At an equal 64px canvas, the previous tile occupied 64×64px while the local Papirus Chrome and VS Code icons occupied 56×56px. Scaling the complete tile and mark to 81.25% gives Inspire a 52×52px visible tile, compensating for the solid background's greater visual weight without changing internal proportions or palette. Only the ordinary manifest icon URLs advance to `v=6`; maskable, Apple touch, and favicon assets remain unchanged.
-
-### Browser boundary
-
-[MDN's PWA color guide](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/How_to/Customize_your_app_colors) describes page `theme-color` overriding the manifest fallback in supporting browsers. It is a browser hint, not CSS ownership of OS window borders. Installed icons are manifest/OS assets rather than live theme components; [Chrome's manifest update guide](https://web.dev/articles/manifest-updates) documents browser-controlled delayed update behavior. Versioned URLs do not promise immediate replacement of already installed launcher icons. Platform/browser differences remain; restarting the installed app or reinstalling may be necessary to see a cached icon change.
-
-## Compact terminal controls
-
-### Design decision
-
-The terminal remains a shell inside the existing workbench, not a second command
-manager. The binding contract is [[terminal]].
-
-- One header keeps tabs, new/profile, connection/control state, search, focus,
-  and More. No permanent second toolbar consumes output space.
-- Selection exposes Copy and Add to chat; quoting still only fills the composer.
-  Search is a viewport overlay, so opening it does not resize the PTY.
-- More groups clipboard/output, display, and terminal management. One searchable
-  all-project navigator replaces the separate global button and duplicate local
-  terminal list. Low-frequency groups expand inline and scroll within the pane.
-- Duplicate, browser command-history navigation, copying the previous command,
-  and direct command reruns are removed. Native shell history remains available.
-  Last-output copy, paste protection, explicit takeover, ordering, rename,
-  restart/close confirmation, recent-close recreation, focused window, settings,
-  and touch keys remain.
-
-### Implementation boundaries
-
-`TerminalView` portals only the active view's controls into `TerminalPane`; xterm
-instances, streams, selections, and search state stay with their original view.
-The shared header is not another owner of terminal state. Nested menu Escape
-returns to its summary before closing the containing menu or narrow drawer.
-
-Last-output copy retains the latest completed marker pair and the current
-command's start, not a browser command log. `terminal-output.ts` reads
-buffer cell columns for both command ranges and whole-buffer copy: it includes
-the first output line, excludes the next prompt, joins soft wraps, and distinguishes
-wide-character margin padding from actual spaces. The view retires ranges on
-snapshot replacement, column reflow, and display reset. Scrollback eviction retires markers as well. A real xterm 6
-headless probe showed that `reset()` empties the current marker list without
-setting old `IMarker.isDisposed` flags; reset paths therefore retire these ranges
-explicitly rather than relying on that flag alone.
-
-Browser checks exposed two additional interaction defects. Xterm's internal
-search-decoration stacking layer could intercept overlay buttons; isolating its
-stacking context keeps search/selection controls above it. Delayed clipboard
-reads could paste after an A → B → A activation round trip. Clipboard completion
-now checks the originating activation/control epoch, ignores retired errors, and
-returns focus from the dismissed menu without stealing a newer focus choice.
-
-### Text selection and touch input
-
-Xterm's canvas selection is not native mobile text selection, and xterm clears it
-when its row count changes. Command-output markers remain valid across height-only
-changes, so they no longer share that invalidation rule.
-
-`TerminalTextDialog` captures the active buffer once in a read-only textarea.
-Native selection remains stable while the terminal receives output or resizes;
-Select all and Copy work without command markers. The text is materialized only
-when requested, rather than mirrored on every output event. The dialog reuses the
-workbench's modal focus handling and copied-feedback hook.
-
-Touch key pointer-down preserves the existing input focus, while the header's
-keyboard button explicitly requests it. `terminal-input.ts` encodes modifier and
-cursor-mode sequences for both text and touch keys. Paste clears pending modifiers
-before entering xterm, and escape-sequence replies bypass the text-key latch.
-The native textarea listens for selection changes directly: React's synthetic
-selection event did not reliably update after touch selection.
-
-## Streaming tool argument projection
-
-### Identity and incremental ownership
-
-Pi JSON/RPC >=0.84.3 supplies tool identity/name at `toolcall_start` (upstream PR #7953;
-verified against installed Pi 0.85.1 `docs/rpc.md` and `dist/modes/json-event.js`). That permits a named
-card before arguments complete; older identity-less starts retain end-only behavior. Contracts:
-[[activity-presentation]], [[session-transport]] and [[conversation]].
-
-`server/tool-argument-stream.ts` parses once into a worker/message-owned preview. Sensitive keyed
-values are redacted before transport; cumulative raw argument JSON is not retained. Immutable path
-updates in `shared/tool-argument-updates.ts` preserve call identity across both projections, and
-prototype-shaped keys remain inert own properties. Final tool data replaces the preview once.
-
-`server/runtime-stream-budget.ts` accounts for exact append JSON growth, including escaping and split
-surrogates, without serializing the cumulative assistant on every fragment. Structural changes still
-require full validation. If the item budget removes other argument paths, a character count cannot
-prove the reduced tree: publish a complete checkpoint, not merely the latest path patch.
-
-Same-tool fragments coalesce within the existing transport window. `sourceEventCount` preserves
-revision continuity across batches; background viewers receive no argument bodies. Joining snapshots
-can still serialize cumulative replacements, so established-viewer measurements do not describe that
-handshake. Display truncation and partial-path resource/copy rules remain in the contracts.
-
-### Incomplete edit items are valid generation shapes
-
-A normal next replacement begins as `{}` or oldText-only. Requiring both strings for every item made
-that prefix invalidate the entire diff, hiding previously complete rows. This was shape validation,
-not missing red/green CSS.
-
-The native edit rule accepts absent preview fields only with Host-owned preview metadata; wrong types
-and malformed authoritative calls still use their generic presentation. A missing side contributes
-no rows rather than a fabricated empty-string edit. Rendering derives from the current call, not a
-cached last-good diff, so a fresh observer sees the same prefix. Numbered headings remain stable, and
-no completed replacement count is claimed during generation.
-
-Source: `src/tool-presentations/pi-native.ts` and `tests/web/streaming-edit-cards.test.tsx`. Six initial
-regressions failed before repair. Cases cover field order, next-item growth, legacy replacements,
-interruption, fresh observers, DOM identity and final result adoption. Character-by-character browser
-fixtures exercised the parser → shared updates → registry → ToolCard path at desktop/narrow sizes;
-they did not execute a live model or edit a real file.
+## References and filesystem discovery
+
+Document links, inline paths and images resolve from the directory of the opened file, including a
+file found through basename recovery. Conversation references instead resolve from the session cwd.
+Keeping the base explicit prevents navigation from silently changing meaning between readers.
+
+Filesystem membership and Git observations are independent. Git output cannot establish whether an
+unlisted file is clean, ignored, absent or merely outside a bounded scan. Directory reads report their
+own completeness; Git contributes decoration and comparisons. See [[resource-preview]].
+
+Hidden visibility combines dot names with platform metadata. Windows `Hidden` and macOS
+`UF_HIDDEN` queries use bounded argument arrays and literal paths, separate from Git. If metadata is
+unavailable, discovery reports incomplete visibility. Authorization still depends on the session and realpath boundary, not visibility.
+
+## Rendering without changing execution
+
+Display labels and rendering strategy are separate: a card may say MCP while its underlying
+`codemode` call keeps the Codemode tree renderer. Presentation projections retain the recorded tool
+name, arguments and result for raw inspection and resource extraction.
+
+The Intercom reading projection selects structured body text instead of parsing a generated
+Markdown wrapper. Its absent-provenance guard preserves the original cross-machine origin warning.
+Unrecognized custom-message shapes retain generic inspection. See [[tool-presentations]] and
+[[conversation]].
+
+Pi supplies a call's identity and name before its arguments finish. The Host parses the incremental
+arguments once into a worker/message-owned preview, redacts sensitive keyed values before transport
+and retains no cumulative raw argument JSON. Immutable path updates preserve call identity across
+Host and browser projections. If a budget removes other paths, send a complete checkpoint rather
+than only the newest patch. Partial paths cannot authorize resource actions; final data replaces
+the preview in the same call. See [[activity-presentation]] and [[session-transport]].
+
+## Reader and image geometry
+
+Inline document images are requested lazily with bounded concurrency. Requests belong to the current
+session, branch view, open file and transport generation; stale completion cannot populate a new
+reader. RichText reuses unchanged math/code leaves and parses large sources in a shared worker.
+Measurement guidance is in [[performance]].
+
+Image frames use a shared theme-aware background and one geometry owner. If zoom/pan moves the
+image into a separate contain-sized layer, the clipping frame still paints the background. Controls
+stay in an adjacent toolbar rather than covering the image or resize handles. The source document
+retains its own colors; application chrome follows the active theme.
+
+## Browser-owned chrome
+
+The PWA icon is neutral because installed icons have no portable CSS-theme binding. Ordinary tabs
+and standalone fallback use neutral light/dark `theme-color` hints. Only an active Window Controls
+Overlay follows the palette's outer frame color. The overlay uses browser-reported titlebar geometry;
+CSS emulation cannot establish activation. See `src/visual-preferences.ts` and [[design-system]].
+
+The settings wordmark's stitch animation is static geometry: thread and needle follow the current
+tool/thinking identity roles, with reduced-motion and keyboard behavior shared across palettes.
+[[design-system]] owns the visual rules, including theme-specific exceptions.

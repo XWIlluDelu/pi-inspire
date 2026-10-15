@@ -53,12 +53,18 @@ Independent copies do not replace the active source worker. Durable trust comes 
   The header groups identity, outcome, context inclusion and one constant Copy. Exit success/failure
   and cancellation use the existing semantic colors with a quiet tinted status marker; a dashed
   ordinary-line boundary distinguishes command from output. Stdout remains literal, without Markdown
-  interpretation, syntax highlighting or terminal-insertion controls. Copy preserves all loaded
-  content without transport fences. Read more retains the bounded entry reader; the History body
+  interpretation, syntax highlighting or terminal-insertion controls. Copy reads the complete
+  retained Shell entry and removes transport fences. Read more retains the bounded entry reader; the History body
   owns scrolling rather than a nested output viewport. Once complete, the Host's separate full-output
   metadata becomes a `View full output` action for authorized file preview; its path remains in the
   tooltip and copied record. Text printed inside stdout never becomes that metadata. Ordinary
   assistant/tool content remains rich.
+  Each selected non-Shell entry has one constant Copy in its detail header; Shell keeps its own
+  existing header action. Copy reads all bounded chunks of the retained entry plus its structured
+  images without expanding or scrolling the preview. It copies the retained record, not any
+  separate full-output file or only the currently loaded excerpt. Image formats, ordering, plain-text
+  alternatives and clipboard failures follow [[design-system]]. Reads bind to the same selected
+  entry and transcript view throughout; leaving that entry or source cancels pending copying.
   Exact image coordinates remain Host-resolved and cancellable; saved images use the shared image viewer, with
   pointer/keyboard opening, fit/zoom, close and focus return. Retiring a read also retires its progress,
   while an older completion cannot clear a newer read's progress. Entry/image reads bind to their
@@ -76,7 +82,8 @@ Independent copies do not replace the active source worker. Durable trust comes 
   Do not assume every successful target becomes the resulting leaf.
 
 - Same-file branch navigation requires an idle, fresh, conflict-free worker with no queued input or
-  pre-existing dialog. Fork addresses its source by session id and requires that source's fresh
+  pre-existing dialog. Native shell requests are rejected while navigation is pending, including while
+  its extension hook awaits a dialog response. Fork addresses its source by session id and requires that source's fresh
   branch revision, materialized current-format JSONL, conflict-free projection, and retained user
   target; that input need not already be on the active path. Clone includes its addressed endpoint
   rather than requiring an editable user input. An explicitly empty effective path clones to a native

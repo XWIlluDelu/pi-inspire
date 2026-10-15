@@ -26,9 +26,21 @@ boundary. Catalog and navigation obligations remain in [[session-continuity]]; b
   context builder, without waiting for extensions or writing the JSONL; transcript virtualization
   avoids mounting every entry in a large history at once.
 
-- The independent Pi worker warms outside the selection critical path, and its `runtime_ready` event
-  replaces the temporary preview with authoritative RPC state only if that session is still selected.
-  Readiness requires the startup attestation below.
+- History readability does not depend on the original project directory. If that directory is
+  missing, is not a directory, or cannot be resolved, a valid retained JSONL still opens through the
+  same projection and resource authority. The snapshot reports `readOnlyReason: workspace-unavailable`;
+  neither a Pi worker nor project model discovery starts. Worker-backed mutations and independent
+  Fork/Clone reject at admission. Missing or corrupt session files retain their existing errors:
+  an unavailable workspace does not excuse an invalid history source.
+
+- For an available project directory, the independent Pi worker warms outside the selection critical
+  path, and its `runtime_ready` event replaces the temporary preview with authoritative RPC state only
+  if that session is still selected. Readiness requires the startup attestation below.
+
+- Explicitly reopening a workspace-unavailable session rechecks its recorded directory. If restored,
+  resolve and retain its physical root, renew the resource view, and use ordinary startup attestation
+  before execution. Do not create the missing directory, substitute the Host cwd, or change the
+  session header to make a history view executable.
 
 ## New-session materialization
 
@@ -63,6 +75,9 @@ selected/running work retains its worker.
   of installed-extension non-transcript `custom` state plus at most one missing
   `thinking_level_change`; `get_entries`, `get_state`, and disk must agree byte-for-byte on every entry, parent,
   final leaf, session, path, thinking level, and append lineage before the writer baseline advances.
+  After the final filesystem observation, the same worker must still own the slot and remain RPC
+  available before readiness is published or the writer baseline advances. A retired worker cannot
+  reset failure to idle or emit `runtime_ready`.
   This establishes state equivalence, not causal authorship: stock public RPC cannot distinguish an
   exactly matching entry from a prohibited concurrent writer in the interval after the second
   baseline. The one-writer rule remains authoritative, and messages, model changes, compactions,
@@ -104,9 +119,13 @@ selected/running work retains its worker.
   suffix is not accepted until a later disk reconciliation observes and proves it; matching
   persistence expectations that arrive during witness lookup are consumed only through the observed
   prefix, while later claims remain queued. Matched claims retire by identity, not by a count of
-  current queue heads: an earlier claim may be cancelled while a later receipt is still pending. Owned partial persistence must advance that same lineage
-  by strictly growing bytes with exact prefix/tail continuity. While the sole worker has an exact
-  pending append claim, the projection extends its verified SHA-256 state and immutable normalized
+  current queue heads: an earlier claim may be cancelled while a later receipt is still pending.
+  Owned partial persistence must advance that same lineage by strictly growing bytes with exact
+  prefix/tail continuity, preserving its original two-second lease deadline and requiring exact
+  final entry provenance. Direct native Bash can hold this bounded lease while its owning worker
+  remains current, even with an idle run state and no persistence event; the final entry still
+  requires the ordinary exact worker/claim witness. While the sole worker has an exact pending
+  append claim, the projection extends its verified SHA-256 state and immutable normalized
   entry/message prefix; without that provenance it rereads and verifies the committed bytes before
   parsing a suffix.
 

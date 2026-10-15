@@ -15,7 +15,8 @@ covers:
   - src/styles.css
   - src/styles/{terminal,responsive,workbench}.css
   - tests/{server,shared,web}/**/*terminal*
-  - tests/browser/{project-terminals,operation-lifecycles,terminal-settings}.spec.ts
+  - tests/browser/{project-terminals,operation-lifecycles,terminal-settings,terminal-theme}.spec.ts
+  - tests/browser/fixtures/terminal-theme.ts
   - tests/deploy/systemd-control.test.mjs
   - tests/launcher.test.ts
   - vite.config.ts
@@ -47,6 +48,25 @@ terminal environments unchanged.
 Shell profiles are discovered from that environment. POSIX shells, PowerShell, Command Prompt, and WSL
 use `node-pty` with true-color xterm metadata. Supported wrappers preserve normal shell initialization
 and emit cwd/command markers. Unsupported or failed integration still provides an ordinary PTY.
+
+The native dependency is pinned to `@lydell/node-pty@1.2.0-beta.15`, with per-platform prebuilt binaries.
+Windows explicitly uses its bundled ConPTY (`useConptyDll: true`) so shell markers and rendered output
+remain ordered; there is no silent OS-backend fallback. The sampled win32-x64 payload is Microsoft
+ConPTY `1.25.260303002-preview`. This tested prerelease/experimental backend choice avoids the observed
+cleanup hang and Linux build requirements of upstream stable `node-pty@1.1.0`.
+
+PowerShell wraps the existing `PSConsoleHostReadLine` and emits the execution marker only after the
+reader returns the accepted command. It does not rebind Enter or emit execution markers for unfinished
+multiline input. Existing PSReadLine handlers, profiles, launch flags and the original prompt remain
+in charge. Backend ordering and this post-input boundary are both required for exact last-output copy.
+
+Bash 4.4+ uses `PS0` for accepted-command markers. Earlier Bash, including macOS system Bash 3.2,
+uses one top-level DEBUG event per command cycle, composed with the existing DEBUG trap. Prompt
+commands use array semantics only on Bash 5.1+; older versions execute the preserved commands as
+newline-separated shell text. Existing prompt callbacks receive the original command status.
+The legacy DEBUG interface does not observe standalone subshell-only lists with no parent simple
+command event; those executions have no copyable output range. It does not invent a boundary or
+change shell tracing/inheritance to simulate the newer `PS0` interface.
 
 Close and restart require confirmed PTY exit. A bounded output-drain allowance follows hard
 termination, and the Host RPC deadline covers the daemon's stop budget. Unconfirmed exit retains the
@@ -107,9 +127,9 @@ owns input and PTY dimensions; other paired browsers remain live read-only viewe
 revokes the previous writer. A disconnected writer can reclaim its lease with an opaque token during
 the bounded grace period.
 
-HTTP controls require the paired cookie or explicit API bearer. `/terminal` WebSocket attachment
-requires an exact same-origin paired cookie and short-lived, single-use ticket; IDs and query tokens
-are not credentials. Dimensions, titles, paths, messages, replay, IPC connections, pending input, and
+HTTP controls use explicit bearer authentication; WebSocket upgrades use the origin/audience-bound
+socket tickets defined by [[host-lifecycle]]. Terminal attachment additionally consumes its
+short-lived, terminal-bound ticket. Dimensions, titles, paths, messages, replay, IPC connections, pending input, and
 outbound buffers are bounded. A slow viewer detaches independently of its PTY and other viewers.
 Diagnostics omit terminal input, output, and internal path-bearing failures.
 
@@ -168,13 +188,21 @@ labels on narrow cards. Browser preferences remain distinct from Host output and
 The xterm client supports ANSI/true color, alternate screens and mouse-capable TUIs, Unicode/IME,
 selection, safe HTTP links, authenticated project-file links, search options, paste protection, reset,
 clear, WebGL with renderer fallback, theme/font refitting, screen-reader mode, and configurable
-cursor/font/scrollback/shortcuts. File-link hit regions map UTF-16 offsets through xterm cells, preserving
-wide, combining, and supplementary characters.
+cursor/font/scrollback/shortcuts. Translucent selection colors are resolved to RGBA before
+crossing the xterm color-parser boundary. Theme changes repaint existing search decorations without
+advancing the selected match, changing search options or moving the viewport. Passive theme/output
+repainting preserves manual linear or rectangular selections, including an explicitly cleared
+selection, independently of the active search match. Unrelated root layout changes do not rescan
+unchanged search colors. Only explicit search navigation may select or scroll to a result.
+File-link hit regions map UTF-16 offsets through xterm cells, preserving wide, combining, and
+supplementary characters.
 
-Search opens without changing PTY dimensions. Workbench shortcut mode retains selected-copy, native
-paste, and terminal search; shell mode yields those keys to the PTY. `Ctrl+Shift+Escape` exits terminal
-focus when the event belongs to that pane. Shell history remains native; the view adds neither command
-reruns nor a separate history interface.
+Search opens without changing PTY dimensions. Case/whole-word/regex option changes refresh match
+counts and decorations; partial words must not hide valid whole-word hits on the same line in
+either direction. Literal punctuation stays literal even with whole-word matching enabled.
+Workbench shortcut mode retains selected-copy, native paste, and terminal search; shell mode yields
+those keys to the PTY. `Ctrl+Shift+Escape` exits terminal focus when the event belongs to that pane.
+Shell history remains native; the view adds neither command reruns nor a separate history interface.
 
 The non-wrapping touch bar keeps four 44px arrows fixed in a compact trailing group. Esc, Ctrl+C,
 one-shot Ctrl/Alt, Tab, Home/End, and Page Up/Down scroll independently in equal-width slots sized
@@ -229,6 +257,5 @@ this design. Pi prompts/extensions gain no implicit ability to inspect or operat
 Image protocols, OSC 52, recording, reboot command replay, containers, and tmux-specific attachment remain
 future options.
 
-[[platform-compatibility]] records cross-platform runtime and exit checks.
-[[state-ownership]] covers receipts, upgrade behavior, and uncertainty.
-[[workbench-implementation]] explains the control and rendering boundaries.
+[[platform-compatibility]] explains PTY backends and shell-marker constraints;
+[[state-ownership]] explains operation receipts and catalog reconciliation.

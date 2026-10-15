@@ -2,15 +2,17 @@
 purpose: One composer owns editing, drafts, prompt artifacts, input handoff, Pending recovery, and command feedback.
 covers:
   - server/{attachments,attachment-references,composer-history,runtime-composer-artifacts,runtime-pending*,project-files,image-content,assistant-text}.ts
-  - shared/{contracts,pending-preview,composer-artifact-references,resource-references}.ts
+  - shared/{contracts,pending-preview,composer-artifact-references,resource-references,image-dimension-notes}.ts
   - src/{App,api,store,app-state,clipboard-files,composer-*,session-drafts,model-options}.ts*
   - src/controllers/composer-controller.ts
-  - src/components/{ActivityBar,AttachmentList,Composer,ComposerInput,ImagePreview,ModelSelector,ProjectFiles,Transcript,transcript-rows,Welcome,ExportDialog}.tsx
+  - src/components/{ActivityBar,AttachmentList,Composer,ComposerInput,ImagePreview,ImageLightbox,ImageGallery,ModelSelector,ProjectFiles,Transcript,transcript-rows,Welcome,ExportDialog}.tsx
+  - src/{image-viewport,use-image-viewport,use-image-history}.ts
   - src/styles/*.css
   - tests/server/{attachments,attachment-retention,composer-history*,runtime-composer-artifacts,runtime-pending*,runtime-compaction,app}.test.ts
   - tests/shared/{composer-artifact-references,pending-contracts}.test.ts
   - tests/web/{composer*,session-drafts,native-commands,transcript-actions,welcome*,model-selector,model-store}.test.ts*
-  - tests/browser/{composer,model-selection,project-file-picker,pending-input}.spec.ts
+  - tests/web/{image-viewport,image-gallery,attachments}.test.ts*
+  - tests/browser/{composer,usage-facts,model-selection,project-file-picker,pending-input,image-preview,image-interactions}.spec.ts
 ---
 
 # Conversation composer
@@ -47,8 +49,12 @@ active textarea, focus and selection.
 The compact input keeps its padding, control order and icon-only send button. Controls wrap only as
 needed; phone Steer/Queue buttons split their delivery row equally. At widths up to 420px, Model and
 Thinking sit together with an 8px token gap on the selector row. Model shrinks without growing into
-spare space; long labels truncate while Thinking keeps its full width. Stop retains its existing
-filled error-color treatment and delivery-row placement. Desktop controls are unchanged.
+spare space; long labels truncate while Thinking keeps its full width. Send is the rightmost action
+in both idle and busy states; Stop appears immediately to its left in visual and DOM/tab order.
+The Send element stays mounted across idle/busy transitions. Stop retains its square icon, compact
+geometry and filled error-color treatment, including cancel-compaction and shell Stop. Conflict
+recovery keeps its warning treatment and remains the sole action when delivery is unavailable.
+Send colors and delivery behavior are unchanged.
 The textarea grows with content.
 Expand appears at the top right only when actual compact layout requires internal scrolling. The same
 input expands within the main column, preserving text, artifacts, focus and selection. Collapse
@@ -60,8 +66,10 @@ ownership from completion, modals or Stop.
 ### Retained prompt history
 
 The active editor traverses Pi-style newest-first history from the selected branch's retained user
-messages, including pre-compaction messages and reopened sessions. Trim entries, suppress only
-consecutive duplicates and retain at most 100 prompts; accepted prompts join immediately. Unmodified
+messages, including pre-compaction messages and reopened sessions. Image-prompt recall omits Pi's
+appended dimension/coordinate-mapping notes from editable text, while retaining all image artifact
+coordinates and the original stored source. The shared reading projection is specified in [[conversation]].
+Trim entries, suppress only consecutive duplicates and retain at most 100 prompts; accepted prompts join immediately. Unmodified
 Up first performs ordinary wrapped-line navigation, then moves to logical-line start before recalling
 older entries. Down navigates to the last visual line, recalls newer entries and finally restores the
 exact pre-browse draft, selection and artifacts. Editing a recalled entry exits browsing without
@@ -145,15 +153,40 @@ squeezing status/removal controls, and file chips do not stretch to adjacent ima
 `files` is the complete source when non-empty; only an empty list falls back to file-kind `items`.
 Do not combine these projections or deduplicate distinct files by coincident metadata.
 
-Activating an image opens the shared focus-contained viewer. A crisp, shadowless image sits above the
-standard viewport scrim and 2px blur. Only its pixels receive an opaque neutral checkerboard, shared
-by staged, conversation and file images across themes/formats. Checkerboard / White / Black controls
-change inspection background without changing bytes, zoom or pan; each opening defaults to
-Checkerboard without a stored preference or alpha scan. Image and controls form one content-sized
-centered group: close above its right edge, selector centered below. Controls use the active theme,
-remain outside the canvas, have 44px targets and fit within safe areas on narrow/landscape screens.
-Activation toggles fit/2× zoom; movement crosses a threshold before zoomed panning. Only backdrop,
-close or Escape dismisses. Native image dragging is disabled so inspection cannot restage an image.
+Sent image thumbnails stay subordinate to the message: 4:3 previews grow from 104 × 78px on narrow
+screens to 160 × 120px on desktop. Staged attachment tiles remain 64 × 64px; neither preview size
+limits the full-image viewer.
+
+Activating an image opens the shared focus-contained viewer. Its viewport is independent of fitted
+image dimensions, so small images, panoramas and long screenshots can expand into the available
+space. A crisp, shadowless image sits above the standard viewport scrim and 2px blur. Only its pixels
+receive an opaque neutral checkerboard, shared across themes/formats. Checkerboard / White / Black
+changes inspection background without changing bytes or view; it persists across gallery navigation
+but resets on reopening, without a stored preference or alpha scan. The header identifies the image
+when a name is available, shows intrinsic dimensions, and provides copy, source download and close.
+Theme-aware controls remain outside the clipped gesture surface, have at least 44px targets, and
+fit safe areas on narrow/landscape screens.
+
+Initial fit never enlarges a small image. Continuous zoom reaches 100% (one CSS pixel per source
+pixel, independent of device pixel ratio) and up to 800%. Plus/minus, actual-size and fit controls
+are explicit. Dragging or unmodified scrolling pans; pinch and Control/Command plus scroll zoom
+around the pointer or moving pinch center. Double-click/double-tap toggles fit and an anchored close-up
+(at least actual size);
+single clicks do not reset a view. Dragging crosses a movement threshold, never dismisses, and
+suppresses native image dragging/restaging. Finger-count changes rebase the gesture; cancellation
+releases it. Resize/rotation refits a fitted view or preserves manual scale and clamps position.
+Images cannot move completely outside the viewport. Arrow keys pan, plus/minus zoom, 1 selects
+actual size, and 0 fits.
+
+A tray, message, history detail or document can expose a gallery in displayed order, with previous,
+next, position count and Page Up/Page Down navigation. Navigation resets the selected image to fit
+without opening another dialog or history entry. It uses already-owned sources, never broadens
+resource authorization, and retires selection on source replacement/removal or owner teardown.
+Backdrop tap, close, Escape or browser Back dismisses and restores focus to the opener. One
+inspection owns one same-document history entry; normal close consumes it rather than accumulating
+extra Back stops. Loading and decoding failure are explicit; a failed image disables copy/zoom but
+keeps source download available. Download preserves the authorized source bytes without re-encoding
+or compositing the inspection background.
 
 Fork restores the excluded user input's text and saved images into the destination draft, using
 these same staged thumbnails, preview, removal and send controls. Clone leaves the draft empty;
@@ -186,7 +219,8 @@ before withdrawing staging and preserves accepted ordinary files.
 
 Collection follows references across all entries/branches in default, configured and remembered
 custom Pi storage, recoverable desktop Trash and private deletion recovery. Shared forks retain an
-upload until the last reference disappears. Confirmed deletion and periodic sweeps trigger collection.
+upload until the last reference disappears. Confirmed deletion triggers background collection without
+delaying the deletion response or later targets in a Hidden batch; periodic sweeps also trigger it.
 Incomplete, unreadable or changing Pi sources defer it; unrelated valid non-Pi JSONL in Trash does not
 block it. Staged, in-flight, accepted-but-unpersisted and recalled resend owners stay protected.
 Native `handled` input adds no future-reference hold, but persisted hook references still count.
@@ -199,6 +233,16 @@ uploads. Invalid chips explain remove/re-add and block send. Recovery does not s
 resend acceptance-unknown input. Upload cleanup cannot revoke confirmed prompt acceptance.
 
 ## Delivery and Pending
+
+The writing surface uses a 12px radius and a quiet border. Spacing, not an internal divider rule,
+separates writing/delivery from the metadata/action row. Attachments stay compact with control-radius
+corners; Steer/Queue keep their dedicated row rather than joining the model toolbar. Command feedback
+uses neutral surfaces and semantic status icons/text, not whole-panel status washes or competing
+running glows. Failed command receipts are unframed inline feedback, with bounded wrapping and an
+independent compact Dismiss action; action-rich results can still use local containers. Extension widgets retain
+Pi's above/below placement, with a small identity/copy header and readable preformatted content.
+Extension questions remain distinct forms with a clear source label and directly selectable options;
+keyboard focus, deadlines, cancellation, and touch targets are unchanged.
 
 Submission synchronously hands the exact draft/artifacts to an independent operation, including the
 first Welcome message, leaving the editor ready for the next input. Delayed receipts cannot clear
@@ -214,16 +258,19 @@ Unchanged-draft retries after uncertain acceptance preserve the exact operation 
 [[session-transport]], even when the default delivery mode has since changed.
 
 `running`, `retrying`, `queued` and `compacting` share Host/browser delivery authority. Active work
-exposes equal-width Steer / Queue choices beside Stop; the selection controls placeholder and send
+exposes equal-width Steer / Queue choices in their own compact mode row; the selection controls placeholder and send
 accessible name. Compaction accepts bounded Host-held input at Pi's actual boundary under
-[[pi-integration]]. Only Running gives the whole Composer a slow theme-colored breathing halo,
-including descendant focus; Retry/Compaction and reduced-motion Running use static semantic halos.
+[[pi-integration]]. Only Running gives the whole Composer a slow theme-colored breathing halo.
+A pointer-transparent pseudo-element carries a close, low-opacity halo without a broad outer wash.
+Its 3.6-second cycle animates opacity, not the Composer's geometry or shadow properties. The underlying
+surface keeps its normal border and its independent focus border while typing. Reduced-motion Running
+keeps the static low-intensity halo; Retry/Compaction retain their separate static semantic halos.
 Conflict recovery remains abortable but is not active busy ownership.
 
 The adjacent activity surface names Retry/Compaction from session state, including automatic work and
 reconnect. Available attempt/reason details enrich the label; missing details never invent counters.
 Ordinary, compaction and summary retry keep short status separate from wrapping reasons. Executing
-and failed tools remain in chronological cards.
+and failed tools remain in their chronological activity entries.
 
 Pending sits at Transcript's end, immediately showing ordered Steer/Queue input. As secondary
 information, the panel deliberately uses 0.75 overall opacity, a transparent background and a quiet
@@ -234,7 +281,7 @@ additional button-level dimming. [[design-system]] owns the shared presentation 
 single-mode queue names its mode in that header; mixed queues use quiet group labels without group
 counts or per-row S/Q badges. Bounded previews with omitted entries retain a generic header and visible
 group labels, since the supplied groups cannot establish the whole queue's mode. ActivityBar keeps its
-compact count capsule as a native Jump to Pending button. Activation aligns the current queue's
+compact text count as a native Jump to Pending button, with a neutral interaction background. Activation aligns the current queue's
 start below the floating reading controls, scrolls only the transcript and focuses the Pending
 region without focusing the editor. It releases latest-follow; keyboard and pointer activation
 share the same action. The region adds no ordinary Tab stop and retains the existing focus-within
@@ -246,9 +293,12 @@ count-only rows show Image / N images; unknown empty rows imply no image. Consum
 leave the public view even if Pi retains empty captions. Display, full-copy and recovery share that
 unconsumed view across runs.
 
-- **Copy:** item copy reads complete text at the matching Host queue revision/coordinate. Copy all
-  includes omitted rows, numbered with Steer before Queue and order preserved within each group.
-  Neither stops or removes input. Missing/stale full content fails instead of copying a preview.
+- **Copy:** item copy reads complete text and original images at the matching Host queue
+  revision/coordinate, including image-only items, uploads held during compaction and recalled images. Copy all includes omitted rows, numbered with
+  Steer before Queue and order preserved within each group. Image formats, clipboard ordering and
+  plain-text alternatives follow [[design-system]]. Neither action stops/removes input, recovers
+  attachment ownership, or changes the draft. Missing/stale full content fails instead of copying
+  a preview; queue revision changes retire delayed image reads and writes.
 - **Return all:** dequeue unconsumed Pi and Host-held input without stopping the task. Join Steer,
   then Queue, then the latest original-session draft with blank lines. This is one editable draft;
   message boundaries/modes are not retained and resending uses the newly selected mode. A delayed
@@ -286,32 +336,46 @@ with its input. Extension dialogs hide/deactivate the palette but preserve prepa
 uses the modal's focus/stacking layer. Escape returns to search before closing. Ordinary IME,
 touch-first and submit-key boundaries apply.
 
-Command receipts describe this browser's request/results, not Pi's current run phase. Compact retains
-eventual success/cancel/error; its running phase uses the state-owned activity surface, identical to
-automatic compaction. Delayed HTTP receipts cannot extend/end it. Headers show command/outcome,
-without local timestamps; `createdAt` remains metadata. Successful Compact retires when later agent
-work or compaction starts, leaving its durable checkpoint. Export/Reload retain named receipts.
-Successful Copy, argument-bearing Name, exact Model and valid Thinking use brief confirmation;
-failures retain their actual diagnostic without duplicate generic notices. Ordinary controls own their
-warning notices. Running receipts show command/phase without invented progress or placeholder advice.
+Command receipts describe this browser's request/results, not Pi's current run phase. Compact's
+running phase uses the state-owned activity surface, identical to automatic compaction. Delayed HTTP
+receipts cannot extend/end it. Headers show command/outcome without local timestamps; `createdAt`
+remains metadata. Successful Compact and Reload retire their dock receipts and show the returned
+confirmation as an INFO notice when their session is selected. Compact's durable checkpoint remains
+independent of that acknowledgment. Export retains its download/path actions; cancellation, failures
+and unknown outcomes retain their attributable dock result. Successful Copy, argument-bearing Name,
+exact Model and valid Thinking use the same brief confirmation. Background completion does not post
+a notice over another session. Ordinary controls own their warning notices. Running receipts show
+command/phase without invented progress or placeholder advice.
 Host adapter copy is not represented as verbatim Pi UI text; Reload explains worker-local state reset.
 Composer, receipts and extension widgets share outer width with independent scrollports and visible
-overlay rails. [[conversation]] owns summary cards and event-owned cancellation/failure notices.
+overlay rails. [[conversation]] owns context-event rows and event-owned cancellation/failure notices.
 
 Copy last response reads complete settled assistant text through the authenticated session/view-bound
 Host endpoint without starting a worker, trimming source or using a partial/preview. Selection/branch
 change invalidates the read before clipboard mutation.
 
-The context meter remains occupancy. Its ring/percentage opens a read-only model and used-token/window
-hint on hover/focus or touch tap until outside dismissal, within the viewport without focus/layout
-transfer. Report Pi percentages above 100%; clamp only ring/range. Unknown post-compaction usage shows
+The context ring remains an occupancy indicator. Its numeric slot reserves room for three digits
+and a percent sign, keeping the ring and adjacent action positions steady as readings change from
+unknown to single-, double- or triple-digit percentages. Larger native values grow without clipping.
+Hover/focus reveals a non-interactive model and
+used-token/window hint within the viewport; activating the control by click, touch or keyboard opens
+the local Session & usage result without consuming the draft or calling a model. The command palette
+and `/session` reach the same result. Repeating `/session`, bare `/name` or `/quit` replaces that
+query's existing readout in place and renews its reading dwell; `/session` reads the current local
+snapshot synchronously. Runtime progress and prompt handoff do not interrupt a requested readout.
+Leaving the selected session discards its query readouts, not operational receipts; reopening
+therefore does not resurrect old usage snapshots. Refresh clears this browser-local feedback.
+Reading durations, interaction pause and fade behavior follow [[design-system]].
+Report Pi percentages above 100%; clamp only ring/range.
+Unknown post-compaction usage shows
 `—`, retains capacity and explains “Updates after the next reply”, never zero. Escape closes the hint
 after menus/completion/modals/IME but before Stop. Historical checkpoints show persisted tokens-before;
 after-token receipt estimates stay labelled and are not fabricated after reload.
 
 ## Model controls and New
 
-Toolbar order is model, thinking, project files and attachments, then context and send/abort.
+Toolbar order is model, thinking, project files and attachments, then context, optional Stop and
+rightmost Send (with conflict recovery following the exception above).
 [[design-system]] owns sizing; project identity is in the topbar under [[workbench]].
 
 The model picker groups/searches Pi choices by provider/ID/display name, with Common first and a
@@ -326,9 +390,21 @@ New uses the same editor/artifacts, with a full-width editable directory address
 toolbar. Its filled bordered input expresses path editability and remains separate from the message.
 The first-message editor receives initial autofocus. Directory Enter does not implicitly submit
 creation; IME confirmation remains native.
+A missing typed directory offers one contextual **Create folder and start** action, without another
+confirmation. Only that action authorizes recursive directory creation; Send, Enter, browsing and
+model/file observations do not create directories. A file or inaccessible path is not offered as
+creatable. The action preserves the exact first message, local artifacts and explicit/inherited
+model and thinking choices. When a missing directory prevents a default preview, Pi resolves its
+normal defaults after creation in that directory, without substituting another execution cwd.
+Changing the path immediately retires the old action and late observations cannot restore it.
+Failure preserves staged work. Opening retained history never creates its missing directory.
+
 Readiness distinguishes pending/failed model resolution and in-flight creation; errors offer Retry
-and Pi's `unknown/unknown` means no model. While cwd matches, the inherited worker supplies model and
-resource completion; changing directory clears its commands until the new worker loads. Existing-
+and Pi's `unknown/unknown` means no model. While cwd matches and the source workspace is available,
+the inherited worker supplies model and resource completion; changing directory clears its commands
+until the new worker loads. Read-only sources retain known choices, but New queries the prospective
+directory rather than starting source discovery. Unresolved source selection keeps its loading/error
+feedback and Retry alongside the missing-folder action. Existing-
 session built-ins appear after creation; Host Compact also works before the first message.
 
 Files stay browser-local until Pi supplies a session identity, then use ordinary upload lifecycle.

@@ -87,7 +87,7 @@ See [Running and maintaining Inspire](docs/host.md) for service behavior, shell 
 
 - [Pi commands](docs/pi-commands.md): browser controls, compaction/export/reload, and terminal-only commands.
 - [Extension adaptation](docs/extensions.md): supported RPC UI, session lifecycle, text-widget recipes, and source customization.
-- [MCP configuration](docdoki/specs/mcp.md): scoped native server forms, protected values, and explicit Reload.
+- [MCP configuration](docs/mcp.md): scoped native server forms, protected values, and explicit Reload.
 - [Tool presentations](docs/tool-presentations.md): local JSON rules for custom tools and Thinking cards, including exact tool-name overrides.
 
 Tools, prompts, models, credentials, and extensions remain configured in Pi. Tool-presentation files customize the GUI; they do not select which extensions run.
