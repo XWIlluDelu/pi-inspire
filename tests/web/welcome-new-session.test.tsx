@@ -692,7 +692,7 @@ describe("new-session start surface", () => {
       },
     });
     expect(
-      screen.getByRole("button", { name: "Preview attached image" }),
+      screen.getByRole("button", { name: "Preview image.png" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("image.png")).not.toBeInTheDocument();
 
@@ -781,7 +781,7 @@ describe("new-session start surface", () => {
       "Inspect the attached image",
     );
     expect(
-      screen.getByRole("button", { name: "Preview attached image" }),
+      screen.getByRole("button", { name: "Preview image.png" }),
     ).toBeInTheDocument();
     expect(store.getState().failedDeliveryCount).toBe(0);
     promptGate = null;

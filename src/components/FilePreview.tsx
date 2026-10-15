@@ -248,6 +248,7 @@ function ReadyResource({
         <ImagePreview
           src={preview.objectUrl}
           alt={descriptor.name}
+          name={descriptor.name}
           className="image-preview--file"
         />
       </div>

@@ -67,6 +67,15 @@ for (const touch of [false, true]) {
         }));
         for (const viewport of viewports) {
           await page.setViewportSize(viewport);
+          for (const preview of await page
+            .locator(".image-preview--message")
+            .all()) {
+            const box = (await preview.boundingBox())!;
+            expect(box.width).toBeGreaterThanOrEqual(104);
+            expect(box.width).toBeLessThanOrEqual(160);
+            expect(box.width / box.height).toBeCloseTo(4 / 3);
+            if (viewport.width <= 390) expect(box.width).toBe(104);
+          }
           for (const turn of await page.locator(".turn--user").all()) {
             const copy = turn.getByRole("button", {
               name: "Copy message",

@@ -78,10 +78,7 @@ test("image-only Copy writes real PNGs in reverse order and pastes an image into
   const input = composer.getByRole("textbox", { name: "Message", exact: true });
   await input.focus();
   await page.keyboard.press("ControlOrMeta+v");
-  const attached = composer.getByRole("button", {
-    name: "Preview attached image",
-    exact: true,
-  });
+  const attached = composer.locator(".image-preview--attachment");
   await expect(attached.locator("img")).toHaveJSProperty("naturalWidth", 4);
   await expect(input).toHaveValue("");
   await attached.click();

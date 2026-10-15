@@ -1131,10 +1131,11 @@ test("saved tool images and full logs reopen through the authorized viewers on d
         "src",
         (await thumbnail.locator("img").getAttribute("src")) ?? "",
       );
-      await preview.getByRole("button", { name: "Zoom image" }).click();
+      await preview.getByRole("button", { name: "Actual size" }).click();
+      await preview.getByRole("button", { name: "Zoom in" }).click();
       await expect(
-        preview.getByRole("button", { name: "Fit image to window" }),
-      ).toHaveAttribute("aria-pressed", "true");
+        preview.getByRole("button", { name: "Actual size" }),
+      ).toHaveText("125%");
       await page.keyboard.press("Escape");
       await expect(preview).toHaveCount(0);
       await expect(thumbnail).toBeFocused();

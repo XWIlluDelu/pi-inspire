@@ -14,6 +14,8 @@ import {
 } from "../document-resources";
 import { resourceReferenceFromEventTarget } from "../resources";
 import { store } from "../store";
+import { ImageGallery } from "./ImageGallery";
+import { ImagePreview } from "./ImagePreview";
 
 export const DocumentResourceContext = createContext<{
   descriptor: ResourceDescriptor;
@@ -107,31 +109,35 @@ function DocumentPreviewOwner({
   const context = useMemo(() => ({ descriptor, images }), [descriptor, images]);
   return (
     <DocumentResourceContext.Provider value={context}>
-      <div
-        ref={root}
-        className={className}
-        data-pane-scroll-active={scrollable ? "true" : undefined}
-        onClick={(event) => {
-          const anchor =
-            event.target instanceof Element ? event.target.closest("a") : null;
-          const href = anchor?.getAttribute("href");
-          if (href?.startsWith("#")) {
+      <ImageGallery>
+        <div
+          ref={root}
+          className={className}
+          data-pane-scroll-active={scrollable ? "true" : undefined}
+          onClick={(event) => {
+            const anchor =
+              event.target instanceof Element
+                ? event.target.closest("a")
+                : null;
+            const href = anchor?.getAttribute("href");
+            if (href?.startsWith("#")) {
+              event.preventDefault();
+              event.stopPropagation();
+              scrollToAnchor(event.currentTarget, href);
+              return;
+            }
+            const reference = resourceReferenceFromEventTarget(event.target);
+            if (!reference) return;
+            const resolved = documentResourceReference(descriptor, reference);
+            if (!resolved) return;
             event.preventDefault();
             event.stopPropagation();
-            scrollToAnchor(event.currentTarget, href);
-            return;
-          }
-          const reference = resourceReferenceFromEventTarget(event.target);
-          if (!reference) return;
-          const resolved = documentResourceReference(descriptor, reference);
-          if (!resolved) return;
-          event.preventDefault();
-          event.stopPropagation();
-          void store.openResource(resolved);
-        }}
-      >
-        {children}
-      </div>
+            void store.openResource(resolved);
+          }}
+        >
+          {children}
+        </div>
+      </ImageGallery>
     </DocumentResourceContext.Provider>
   );
 }
@@ -174,6 +180,14 @@ export function DocumentImage({
       /* Invalid URL stays unavailable. */
     }
   }
+  let name = attachmentName ?? src.split(/[\\/]/).at(-1)?.split(/[?#]/)[0];
+  if (name) {
+    try {
+      name = decodeURIComponent(name);
+    } catch {
+      /* Keep malformed names readable. */
+    }
+  }
   const key = `${document?.descriptor.id ?? ""}:${src}`;
   const url = attachment ?? (loaded?.key === key ? loaded.url : undefined);
   const error = loaded?.key === key ? loaded.error : undefined;
@@ -199,8 +213,9 @@ export function DocumentImage({
   }, [attachmentName, document?.images, key, reference]);
   if (url && !error)
     return (
-      <img
-        className="document-image image-surface"
+      <ImagePreview
+        inline
+        name={name}
         src={url}
         alt={alt}
         title={title}

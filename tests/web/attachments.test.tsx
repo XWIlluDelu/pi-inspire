@@ -309,29 +309,22 @@ describe("persisted user images", () => {
 
       fireEvent.click(thumbnail);
       const preview = screen.getByRole("dialog", { name: "Image preview" });
-      const previewImage = within(preview).getByRole("img", {
-        name: "Attached image",
+      const previewImage = preview.querySelector("img")!;
+      Object.defineProperties(previewImage, {
+        naturalWidth: { value: 1200 },
+        naturalHeight: { value: 800 },
       });
+      fireEvent.load(previewImage);
       expect(previewImage).toHaveAttribute("draggable", "false");
       expect(fireEvent.dragStart(previewImage)).toBe(false);
 
-      const zoom = within(preview).getByRole("button", { name: "Zoom image" });
-      fireEvent.click(zoom);
-      expect(
-        within(preview).getByRole("button", { name: "Fit image to window" }),
-      ).toHaveAttribute("aria-pressed", "true");
-
-      fireEvent.pointerDown(zoom, {
-        pointerId: 1,
-        button: 0,
-        clientX: 10,
-        clientY: 10,
+      const actual = within(preview).getByRole("button", {
+        name: "Actual size",
       });
-      fireEvent.pointerMove(zoom, { pointerId: 1, clientX: 20, clientY: 10 });
-      expect(zoom).toHaveClass("image-lightbox__canvas--panning");
-      fireEvent.pointerUp(zoom, { pointerId: 1, clientX: 20, clientY: 10 });
-      fireEvent.click(zoom);
-      expect(zoom).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(actual);
+      expect(actual).toHaveTextContent("100%");
+      fireEvent.keyDown(preview, { key: "+" });
+      expect(actual).toHaveTextContent("125%");
 
       fireEvent.keyDown(window, { key: "Escape" });
       await waitFor(() =>
