@@ -1,78 +1,49 @@
 # Design overview
 
-## Documentation roles
-
-- `docdoki/` holds product intent, specifications, implementation progress and review records.
-- `docs/` holds installation, operation, extension-adaptation and customization guides.
-
-Link related topics rather than duplicating their content.
-
-## Architecture
+## Architecture and documentation
 
 Inspire is Pi's graphical interface. Pi and user configuration own tools, prompts, extensions and
-canonical session files. The authenticated local Host adapts RPC and owns privileged operations;
-browsers render replaceable projections and recover from Host state after reconnect.
+canonical session files. The authenticated Host adapts public RPC and owns privileged operations;
+browsers render recoverable projections of Host state. Direct Pi launch is the default; optional
+Herdr enhancement changes worker placement without changing agent ownership.
 
-The default backend launches Pi directly. Optional Herdr enhancement supplies a real pane environment
-through the same RPC and GUI. [[northstar]] defines the product boundary;
-[[dependency-boundaries]] describes the installed-Pi integration.
+[[northstar]] defines product intent. `specs/` holds decided behavior, including requirements not
+yet implemented; `notes/` explains reusable engineering choices; `stages/` tracks open work.
+User and operator guides live in [docs](../docs/host.md). Completed progress archives remain local
+and untracked.
 
 ## Design map
 
-| Area | Contract |
+| Area | Contracts |
 | --- | --- |
-| Workbench | [[workbench]], [[workspace-layout]] |
-| Settings | [[interface-preferences]], [[model-settings]], [[mcp]] |
-| Visual system | [[visual-language]], [[design-system]] |
-| Conversation | [[conversation]], [[activity-presentation]] |
-| Rich content | [[rich-rendering]], [[tool-presentations]] |
-| Sessions | [[session-continuity]], [[session-persistence]] |
+| Workbench and layout | [[workbench]], [[workspace-layout]] |
+| Visual system and preferences | [[visual-language]], [[design-system]], [[interface-preferences]] |
+| Conversation and activity | [[conversation]], [[activity-presentation]] |
+| Rich content and custom presentations | [[rich-rendering]], [[tool-presentations]] |
+| Input, models and MCP | [[composer]], [[model-settings]], [[mcp]] |
+| Session discovery and persistence | [[session-continuity]], [[session-persistence]] |
 | Transport and prompt observations | [[session-transport]] |
 | History, Fork/Clone and exports | [[session-branches]] |
 | Session deletion | [[session-deletion]] |
-| Input | [[composer]] |
-| Pi integration | [[pi-integration]] |
-| Host | [[host-lifecycle]] |
-| Herdr | [[herdr-enhancement]] |
-| Project terminal | [[terminal]] |
-| Files and Changes | [[resource-preview]] |
-| Connections | [[connection-modules]] |
+| Pi integration and hosting | [[pi-integration]], [[host-lifecycle]], [[herdr-enhancement]] |
+| Terminals, Files and Changes | [[terminal]], [[resource-preview]] |
+| Remote connections | [[connection-modules]] |
 
-Files supports explicitly enabled interactive HTML alongside default static rendering.
-The user click authorizes script execution and resource loading; the preview retains opaque-origin
-isolation from Inspire. [[resource-preview]] defines the capability and lifecycle boundaries.
+## Work state
 
-## Implemented capabilities
+| State | Work |
+| --- | --- |
+| Implemented | Native session, input, model/authentication, compaction and branch workflows; MCP file configuration; rich conversation readers; Files/Changes; project terminals; responsive layouts and theme families. See [README](../README.md) for the capability overview. |
+| Blocked on Pi | Worker-owned settings-save results, resource omission diagnostics, request-attributed dialog cancellation, complete loaded-extension inventory, generic argument completion and structured current-worker MCP management. [[pi-capability-gaps]] identifies the missing interfaces. |
+| Deferred | Holistic Files layout work in [[file-browsing]]. The current layout remains the implemented contract. |
+| Undecided | Additional History, usage, configuration and palette enhancements in [[pi-capability-gaps]]; reusable extension UI beyond current RPC adaptation in [[northstar]]. |
 
-- Native input, Steer/Queue with original-image recovery, shell execution, model/thinking controls,
-  provider configuration/login, compaction, History navigation, independent Fork/Clone and exports
-  use the installed Pi. [[pi-capability-gaps]] links their delivery evidence.
-- Conversations retain floating reading controls, activity rails and independent Thinking/tool
-  density. Files/Changes share source-reader styling and file identity without merging filesystem
-  and Git authority. [[conversation]], [[activity-presentation]] and [[resource-preview]] own the contracts.
-- Settings and Terminal settings use category views. Models uses native Common/Default choices and
-  focused provider/model editors, preserving browsing context, drafts and login across category
-  changes. [[interface-preferences]], [[model-settings]] and [[terminal]] define the behavior.
-- All retained frontend refinement groups, including the final Models editors, are accepted.
-  [[design-system]] owns shared search, focus, control and status presentation.
+## Engineering notes
 
-## Current work and gaps
-
-The Pi 1.0 core/native and frontend quality review is complete. It repaired bounded live output,
-duplicate Git observations and canonical file selection, reconciled documentation, and consolidated
-tests by behavior and history by semantic outcome. 
-A subsequent remote-CI cross-check repaired Windows bare-path citations and three test-readiness
-problems. Native Windows verification remains open.
-
-[[pi-capability-gaps]] owns remaining capability work. Known gaps include
-native setting-persistence feedback and scope disclosure, startup/resource diagnostics, extension
-dialog cancellation, complete loaded-extension names, fuller History controls and image copying.
-Generic extension argument completion and current-worker MCP management need supported public Pi
-interfaces; [[mcp]] retains the decided graphical design and distinguishes available file editing
-from blocked runtime controls. These obligations remain open.
-
-[[file-browsing]] retains the unimplemented Notebook kernel-name inference
-and separately deferred holistic Files design questions.
-
-Completed maintainability and cross-platform CI evidence is in [[state-ownership]].
-Measurements in [[performance]] describe their recorded workloads and environments.
+- [[dependency-boundaries]] — installed Pi, development pins and licensing.
+- [[state-ownership]] — generations, observations, receipts and reconciliation.
+- [[platform-compatibility]] — shell capture, process identity and terminal backends.
+- [[workbench-implementation]] — references, streaming projections and browser-owned chrome.
+- [[performance]] — reproducible workloads and measurement.
+- [[native-command-compatibility]] — native dispatch and operation boundaries.
+- [[remote-relay-options]] — alternatives to reverse SSH.

@@ -64,9 +64,17 @@ A Host-only restart preserves the existing terminal daemon and its environment.
 
 ## Browser pairing
 
-A direct local launch opens a one-time token URL. The browser exchanges it for an origin-scoped `HttpOnly`, `SameSite=Strict` cookie and removes the token from the URL. Normal launches reuse a private token for the installation, host, and port; `INSPIRE_TOKEN` can supply an explicit token.
+Pair once on a trusted browser profile. Inspire stores a non-extractable WebCrypto signing key in that origin's IndexedDB, alongside a public Host-authenticated registration certificate. The Host token is not stored in the browser. Reloads and Host restarts authenticate a one-use challenge with this key, then use a five-minute API bearer held only in page memory. Browser ports and tabs have independent API credentials; only tabs on the same origin share the stored pairing key. WebSocket connections use short-lived, single-use origin/audience tickets, not cookies or query-token authentication.
 
-A remote browser uses the Pair form through HTTPS. Its cookie is also `Secure`; see [remote pairing](ssh-reverse.md#browser-pairing). Every paired browser can operate the Host's Pi sessions and project terminals. Treat it as a full-control credential.
+A direct local launch replaces its token query with a one-use bootstrap transfer; the browser removes that transfer from its URL before pairing. HTTPS proxy URLs never pair through query tokens: use the Pair form instead. See [remote pairing](ssh-reverse.md#browser-pairing). WebCrypto and IndexedDB must be available (HTTPS or a browser-trusted loopback origin); blocked storage produces an error rather than a cookie fallback.
+
+Every paired browser can operate the Host's Pi sessions, files and project terminals as your user account. Protect the browser profile and the Host token. Changing the Host token invalidates all stored registrations and API bearers; pair each browser again. Clearing the site's IndexedDB also requires pairing again. Explicit bearer headers remain available for trusted non-browser clients. File downloads stream complete raw bytes through a separate 15-second, single-use resource/session/origin transfer ticket; their URLs never contain the Host or API bearer, and large files do not inherit preview limits.
+
+### Migration from cookie pairing
+
+Generated cookie-era tokens (including 64-character tokens) rotate once on the next Host start to a distinct 86-character generation. The private plain-text `.token` file remains compatible with launcher readers. Reopen the launcher URL or use the new token to pair again. Existing Host-qualified and older unqualified pairing cookies are expired when that Host is visited; cookies never authenticate new HTTP or WebSocket clients. Other Host-qualified cookies and unrelated browser data are left alone.
+
+**If you configured `INSPIRE_TOKEN` and previously paired a browser using cookies, rotate that configured token yourself before relying on the new port-isolation boundary.** Inspire cannot silently replace an operator-supplied secret. An old cookie can already contain a copy of that token; stopping cookie authentication does not revoke its explicit-bearer authority. Remove the old value from your secret configuration and restart the Host with its replacement. Old browser bundles must reload and pair; insecure cookie compatibility is not retained.
 
 ## Diagnostics
 
@@ -88,7 +96,7 @@ Inspire packages the browser client and compiled Node Host as a standalone npm C
 npm ci
 npm run release:verify
 npm pack
-npm install --global ./inspire-pi-gui-0.4.0.tgz
+npm install --global ./inspire-pi-gui-0.5.0.tgz
 inspire
 ```
 

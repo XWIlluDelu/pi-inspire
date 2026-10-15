@@ -8,7 +8,12 @@ covers:
   - shared/assistant-stream.ts
   - shared/contracts.ts
   - shared/user-turns.ts
-  - src/components/RichText.tsx
+  - shared/image-dimension-notes.ts
+  - src/components/RichText*.tsx
+  - src/rich-text-*.ts
+  - src/remark-math-boundaries.ts
+  - tests/web/rich-text*.{ts,tsx}
+  - tests/browser/rich-text-delimiters.spec.ts
   - src/components/ScrollRail.tsx
   - src/components/Transcript.tsx
   - src/components/TranscriptUtilities.tsx
@@ -33,6 +38,8 @@ covers:
   - src/components/ExtensionUiDialog.tsx
   - server/runtime.ts
   - server/session-projection.ts
+  - server/session-metadata.ts
+  - tests/server/session-metadata.test.ts
   - tests/web/ansi.test.tsx
   - tests/web/events.test.ts
   - tests/web/store*.test.ts
@@ -72,6 +79,14 @@ custom messages remain independent readable boundaries in this contract.
   Inline/fenced code and escapes stay code/text; valid same-line, multiline, and newline-adjacent
   displays remain distinct math blocks; first-line display content is never misclassified as
   metadata; and any unclosed opener remains exact readable source while a response streams.
+  Dollar delimiters use lexical boundaries so ordinary amounts, whitespace/path-separated Shell
+  variables, and bare or quoted regex endings do not consume intervening prose as math. Escaped
+  dollars within formulas are preserved, including backslash-run parity. Genuine formula closers,
+  including formulas followed by a slash and ordinal suffixes, remain valid.
+  Raw HTML-shaped source (including generic types such as `Array<T>`) is rendered as inert text,
+  never interpreted as elements or silently discarded.
+  Oversized inline formulas scroll locally, like display formulas and code, without widening the
+  message. Ordinary inline formulas retain the surrounding text baseline.
   Untrusted Markdown is sanitized before trust-disabled KaTeX generates its complete HTML, MathML,
   and SVG output, preserving extensible glyph geometry and accessibility metadata without enabling
   trust-only commands.
@@ -95,6 +110,12 @@ custom messages remain independent readable boundaries in this contract.
   links and file references wrap only when needed and remain inside the reading measure at narrow
   widths.
 
+  Image-bearing user messages omit Pi's exact appended image-dimension/coordinate-mapping suffix
+  from their bubble, view-local search, Prompt Map and catalog/title projections. Thumbnails and
+  image counts remain visible; image-only prompts retain their attachment label. Quoted examples,
+  non-suffix text and image omission diagnostics are not filtered. Stored messages, model context
+  and complete-source Copy remain unchanged; [[composer]] applies the same omission to recall.
+
 - Project references and artifact handoff follow [[composer]]; preview authorization follows
   [[resource-preview]]. Transcript paths are presentation, not filesystem authority.
 
@@ -107,8 +128,11 @@ custom messages remain independent readable boundaries in this contract.
   latest-follow across prepends and live appends until search is cleared or the user explicitly
   jumps to latest.
 
-  Desktop search floats at the top-right of the reading measure. Search and narrow navigation
-  surfaces do not reserve layout height; opening controls preserves the scrollport and reading
+  Desktop search floats at the top-right of the reading measure. Its opaque surface fill is subtly
+  distinct from the reading stage, with a quiet boundary and no elevation at rest. Hover strengthens
+  the boundary and adds the existing light elevation; focus or a non-empty query retains the accent
+  boundary. These states do not change its geometry or let scrolling text show through.
+  Search and narrow navigation surfaces do not reserve layout height; opening controls preserves the scrollport and reading
   position. Desktop Escape blurs the search input without clearing its query or selected match.
   When latest-follow is released, a bottom-centered floating text button, `Jump to latest`, restores
   follow. Search and narrow launchers precede messages in keyboard order; Latest follows them.
@@ -192,18 +216,22 @@ custom messages remain independent readable boundaries in this contract.
   multiline details have an explicit expand/collapse control and an independent copy action for the
   entire available error text, not its collapsed preview. Existing Host projection bounds still
   apply and visibly mark truncated source. A missing detail retains a truthful no-details fallback.
+  The error uses a compact neutral surface with a subtle error-tinted boundary, no shadow,
+  a semantic icon/label, adjacent Copy, and a readable reason. Its preview uses the first paragraph, bounded to three lines and
+  240 Unicode code points; an intact paragraph does not gain a trailing ellipsis solely because
+  diagnostics follow. Expanded diagnostics use a bounded, scrollable local monospace surface.
+  The label, body and details action share a reading anchor; secondary controls use 24px mouse and
+  32px touch targets. Semantic error icons and color remain distinct from tool identity.
 
   Live message completion, reload, reopening, and older-history pagination all derive the outcome
   from the same Pi message, without a second error-history store or a retry/diagnostic subsystem.
 
-- Assistant round boundaries have two presentation-only styles: Divider replaces the existing
-  Pi/model/time/stop-reason row with a quiet neutral rule centered in the ordinary inter-turn gap,
-  while Details preserves that row unchanged. A message carrying response text places this one
-  boundary with its first response passage rather than inside preceding collapsible activity; a
-  tool-only message retains it with its first activity. Divider color never implies hidden status.
+- Assistant replies and activity have no per-turn Pi/model/time attribution row or divider rule.
+  The Assistant turn details preference is retired. Message metadata remains intact; independent
+  error notices and per-tool duration/status are unchanged.
 
 - A displayed Pi custom message is extension-authored context, not a tool execution or user-authored
-  turn. It uses a quiet, neutral message surface with an information-blue left edge, package glyph,
+  turn. It uses a quiet, neutral bordered message surface without a colored edge, a package glyph,
   and a readable type-derived title, distinct from user input and Pi assistant authorship. Raw
   `customType` stays available in complete copy and existing Details rather than repeating in the
   primary header. Its body renders through the shared sanitized Markdown pipeline, supports
@@ -227,19 +255,27 @@ custom messages remain independent readable boundaries in this contract.
   activity. Settled content is searchable in All without being attributed to User or Model.
   `display:false` custom context remains absent from the browser.
 
-  This presentation does not change Pi delivery, model-context conversion, or the existing PI error
+  This presentation does not change Pi delivery, model-context conversion, or the existing Pi error
   surface.
 
 - Durable Pi `compaction` and `branch_summary` entries are projected as dedicated, collapsed
-  context-summary cards with recorded token counts and searchable Markdown bodies. Pi compaction
+  context-event rows with recorded token counts and searchable Markdown bodies. Pi compaction
   shows `Context compacted` and `Before ≈ … tokens` for its pre-compaction context estimate.
   Magic Context shows `Magic Context compacted` and `History chunk ≈ … tokens`: its marker writes
   the historian input chunk estimate into Pi's `tokensBefore` field. Source is read from the public
   compaction entry's `details.source` and projected as `__inspireCompactionSource`; cached source-less
   snapshots also recognize the extension's known marker prefix. Its redundant `Magic Context compacted:`
   body prefix is omitted in display, while Copy retains the recorded summary. No savings ratio is derived.
+  These unframed context events use a leading disclosure chevron, source icon, quiet label,
+  secondary metric, and an adjacent Copy only while expanded. Closed rows have no Copy gap or tab
+  stop. The metric wraps to the label's reading anchor in a narrow column, and expanded Markdown
+  shares that anchor without a new outer card. Disclosure and Copy are separate buttons in reading
+  order; the disclosure also owns the metric and blank header space, while Copy follows the complete
+  header text and never changes disclosure state. Hover strengthens ink only on hover-capable pointers;
+  touch press gives temporary local feedback, and keyboard focus keeps a visible outline. Both use the
+  shared control radius with non-overlapping 32px touch targets. Closed bodies do not render Markdown.
   Branch summaries have no compaction-before metric. Like Thinking,
-  tool, and extension-message cards, their headers show no timestamp or elapsed-time metadata.
+  tool, and extension-message headers, they show no timestamp or elapsed-time metadata.
   Canonical timestamps and source content remain unchanged. They are not hidden behind a
   generic-message raw JSON fallback and remain distinct rows at their context boundaries.
   Manual/automatic cancellation and failure have visible outcome notices even without a local

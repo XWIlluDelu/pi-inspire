@@ -1,68 +1,40 @@
 ---
-purpose: Explain native-command dispatch, compaction presentation, and input ownership at the Pi RPC boundary.
+purpose: Preserve native command ownership and operation semantics when adapting Pi to a GUI.
 ---
 
-# Native command compatibility
+# Native command adaptation
 
-Contracts: [[pi-integration]], [[composer]], and [[conversation]]. The supported command table is
-in [Pi commands](../../docs/pi-commands.md); the remaining presentation proposal is in
-.
+The user-facing inventory is [Pi commands](../../docs/pi-commands.md).
+[[pi-integration]] owns dispatch; [[composer]] owns preparation and feedback;
+[[pi-capability-gaps]] records unavailable public interfaces.
 
-## Command ownership
+## Dispatch and discovery
 
-Pi's interactive submit handler resolves built-ins before `AgentSession.prompt()`. RPC
-`get_commands` lists extensions, prompts, and skills instead. `shared/commands.ts` therefore
-reserves built-in names for their browser or terminal-only handler; namespaced extension commands
-remain available. First-message completion hides native commands that need an existing session,
-including colliding resource names.
+Pi RPC enumerates resource commands, not interactive built-ins. Reserve the installed built-in
+vocabulary before choosing an extension, prompt or skill with the same name, matching Pi's
+interactive client. Preserve the first native wire owner among resource collisions and keep
+namespaced extension commands available. Names are case-sensitive.
 
-The Host repeats the ownership check after acquiring a fresh writer. Names are case-sensitive,
-and separators are normalized for Pi's literal-space dispatcher. This prevents a resource removed
-by reload from reaching the model as an ordinary prompt. `/compact` also has a Host-owned
-first-message path. Terminal guidance opens a separate shell; it does not attach that shell to
-the active Pi session.
+A first message cannot invoke session-dependent commands. Hiding those commands must not expose
+colliding resources instead. Refresh discovery after reload and recheck ownership at dispatch so
+stale completion cannot route to the wrong command.
 
-## Compaction and feedback
+## Execution boundaries
 
-Pi's `buildContextEntries()` puts the latest compaction first for model context. The transcript
-uses the same selected entries in persisted append order: retained messages, checkpoint, later
-messages. This changes presentation only; model context and the session file remain intact.
+Command acknowledgement, execution completion and persistence are separate observations.
+Compaction, hooks and authentication may outlast ordinary reads; a generic response timeout
+cannot define their execution result. Standalone compaction Stop preserves the worker when native
+abort cooperates, while an unresponsive hook uses confirmed retirement.
 
-Summaries come from persisted history. Failure and cancellation notices follow Pi events, including
-operations started by another browser. These notices are transient. A local failure receipt can
-coexist with one because the event does not identify which browser operation it belongs to.
+Direct `!`/`!!` input uses Pi's native Bash operation and policy. It is not a project-terminal
+command. Shell-only Stop uses `abort_bash`; model Stop retains priority when both activities run.
 
-Summarization retries have their own snapshot-backed attempt count and bounded reason. Attempt
-start, retry finish, compaction end, settlement, and worker loss clear them. Backoff retains the
-`compacting` state so standalone cancellation remains available. Occupancy is not progress, and
-historical after-token counts are shown only when Pi recorded them.
+Original-image recovery needs queue admission, consumption and persisted-entry identity; a text
+queue alone cannot establish image ownership. See [[composer]] and [[session-persistence]].
 
-Command headers omit time; `createdAt` remains metadata. A successful compact receipt retires when
-later agent work or compaction starts, while its checkpoint stays in the transcript. Simple success
-(`/copy`, argument-bearing `/name`, exact `/model`, valid `/thinking`) uses a short notice; failure
-keeps one attributable receipt. Lost response ownership retains an unknown outcome. Control
-invocations own their warnings separately. A background command updates its own receipt without
-posting a notice over another session.
+## Native regression setup
 
-## Compaction-time delivery
-
-Pi TUI's compaction queue is separate from RPC prompt admission. The Host holds bounded input for
-the same session, worker, and explicit branch selection, and combines it with Pi's public queues
-in Pending. Compaction can renew the browser view without replacing that selection.
-
-Pi's actual streaming state decides delivery: an active agent can receive Steer/Queue while an
-earlier receipt is pending; otherwise input waits behind the existing preflight or command. Clear
-removes undispatched Host input and clears Pi's queue. Worker or branch replacement returns
-undelivered input for recovery rather than sending it to another history.
-
-Each delivery owns its operation identity and attachment handoff. An older receipt cannot block
-later input or clear a newer draft. The Host's 20-second HTTP observation window retains that
-identity; an unknown outcome keeps it for recovery. Host-held input becomes conversation history
-only when Pi persists it.
-
-## Superseded Pending design
-
-The dormant companion-Pi protocol for pause/resume, per-item identities/deletion/conversion and
-structured queue pagination was withdrawn. It is not a future commitment.
-Current Pending uses Pi's public queue events and `clear_queue`, with retained original input for
-copy/recovery under [[composer]] and [[pi-integration]].
+Use isolated agent directories, settings and credentials with deterministic local providers.
+The pinned development Pi or `INSPIRE_TEST_PI_COMMAND` supplies the runtime. Exercise accepted,
+rejected, delayed and cancelled outcomes through public RPC, including hooks that keep work pending.
+Component fixtures cover presentation and focus; native fixtures establish runtime semantics.

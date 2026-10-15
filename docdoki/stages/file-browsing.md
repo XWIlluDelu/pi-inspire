@@ -1,94 +1,43 @@
 ---
 scope:
-  - docdoki/specs/resource-preview.md
-  - docdoki/specs/workbench.md
-  - server/resources.ts
-  - shared/resource-references.ts
-  - src/App.tsx
-  - src/components/ContextPane.tsx
-  - src/components/ContextPaneState.tsx
-  - src/components/ContextSplitBody.tsx
-  - src/components/FilesPane.tsx
-  - src/components/FilePreview.tsx
-  - src/components/NotebookPreview.tsx
-  - src/components/ChangesPane.tsx
-  - src/components/WorkspaceBrowser.tsx
-  - src/components/PaneResizeHandle.tsx
-  - src/components/ResourcePathLabel.tsx
-  - src/controllers/workspace-controller.ts
-  - src/controllers/resource-controller.ts
-  - src/controllers/git-controller.ts
-  - src/store.ts
-  - src/styles.css
+  - docdoki/specs/{resource-preview,workspace-layout,workbench}.md
+  - src/components/{ContextPane,FilesPane,ChangesPane,WorkspaceBrowser,FilePreview}.tsx
+  - src/controllers/{workspace,resource,git}-controller.ts
+  - src/styles/*.css
   - tests/web/resources-pane.test.tsx
-  - tests/web/workspace-controller.test.ts
   - tests/browser/filesystem-files.spec.ts
 ---
 
 # File browsing experience
 
-## Objective
+## State
 
-Make workspace discovery and contextual file inspection feel like one coherent flow without turning INSΠRE into a file editor or a second IDE.
+Functional browsing and readers are implemented. The broader visual redesign is **deferred**.
+[[resource-preview]] owns discovery, authorization and preview behavior; [[workspace-layout]] owns
+the current pane geometry.
 
-## Status
+## Deferred design questions
 
-The selected functional scope is implemented, stabilized, documented, and release-validated. Its broader visual redesign remains explicitly deferred.
+Treat Files as one responsive design task:
 
-The document-context repair is also complete: Markdown/Notebook images, document-relative links, heading fragments and cell-local attachments now use the scoped reader path. [[workbench-implementation]] records the independent resource-authority boundary, Node 22 regression results and isolated Chromium evidence. This repair does not reopen the deferred visual redesign.
+- Could a sufficiently wide pane place search in the mode bar to recover vertical space?
+  Narrow panes and phones need the full-width search row. The current row stays until a complete
+  responsive treatment is selected.
+- How should the lower-left project-file header separate from Sessions without arbitrary tint?
+  The context-surface tint was rejected.
+- Keep that header limited to the project basename and collapse control. A separate “open right
+  pane” icon duplicates file selection and the workbench's pane control.
 
-## Selected functional scope
+Evaluate the complete flow in wide, resized, dark-theme and phone views rather than reopening
+isolated color or placement experiments.
 
-- One cwd-scoped `WorkspaceController` owns lazy levels, expansion, search, refresh, one-shot selection reveal, request cancellation, and transport/session acceptance. The compact navigation tree and right Files browser consume that same projection.
-- The compact lower-left surface keeps only the project basename, disclosure, and tree. Workspace search belongs to Files Browse, which also presents at most five deduplicated recent conversation files.
-- Selecting a workspace, search, recent, transcript, or Git file replaces Browse with a fixed index/detail stack: the shared workspace tree stays above the preview, while a compact project-folder row returns to Browse without losing tree, query, or Browse scroll state.
-- Files and Changes share fixed upper-region, divider, detail-header, source-canvas, and narrow-drawer geometry without an internal splitter. Files owns preview/source reading; Changes owns grouped Git facets and source diffs.
-- Recent refreshes run only while Browse is visible and retain the previous page and standing until current results arrive. Preview stays mounted through compatible transcript appends, preserving its reader scroll. Git polling likewise retains the selected diff and scroll while that exact facet remains present.
-- Resource probe and resolve generations prevent stale standing from overwriting a successful preview. Downloads stream through the authenticated resource route, text detection covers common source/configuration names, truncated rendered previews are explicit, and static HTML frames use an empty sandbox capability set. The authorized interactive HTML follow-up below supersedes the earlier all-frames statement.
-- On narrow layouts, opening a resource from navigation closes that drawer before the contextual drawer appears. Directory, search, probe, preview, Git, session, view, and transport transitions reject stale asynchronous results.
+## Requirements for that work
 
-## Interactive HTML follow-up
-
-User-authorized interactive HTML is implemented without changing the Files layout: the header
-adds Enable interaction / Stop interaction for complete HTML previews. Static remains the default;
-a click is the authorization, with no second prompt or self-contained/offline restriction.
-The separate document route preserves opaque-origin isolation and supports relative project assets
-and external resources. [[resource-preview]] owns the execution, resource-scope and lifetime contract.
-
-Regression evidence lives in `tests/server/html-preview.test.ts`,
-`tests/web/resources-pane.test.tsx` and `tests/browser/html-preview.spec.ts`.
-These cover explicit execution and stopping, local modules/fetch/media, external resource loading,
-application isolation and stale/retired capabilities on desktop and narrow layouts.
-A self-contained SVG cycling animation was also exercised in Chromium: wheel movement,
-Pause/Resume and speed adjustment to 2.0× worked, with desktop and 390px layouts inspected.
-
-## Reader conformance follow-up
-
-Notebook kernel-name inference in [[resource-preview]] is not implemented. `NotebookPreview.tsx`
-reads `language_info.name` and `kernelspec.language`, then defaults to Python; it ignores
-`kernelspec.name`. Implement the decided common-name inference without changing the preview flow.
-
-## Next actions
-
-Treat the Files surfaces as one later, holistic visual-design task rather than continuing local color and placement experiments:
-
-- Reconsider whether a sufficiently wide desktop Files pane should place workspace search in the top mode bar to recover vertical space. Keep the full-width search row on narrow panes and phones; the current full-width row remains authoritative until a complete responsive treatment is accepted.
-- Find a quiet way to distinguish the lower-left project-file header from the Sessions region without relying on an arbitrary tinted background. The attempted context-surface color was rejected and removed.
-- Keep the lower-left header limited to the project basename and collapse control. Do not restore a dedicated “open right pane” icon: selecting a file already opens its preview, and the workbench has its own global pane control.
-- Evaluate these choices together against real-browser wide, resized, dark-theme, and phone states before changing the current design.
-
-## Constraints
-
-- Preserve session-bound realpath authorization, bounded filesystem directory reads, hidden visibility independent of Git, and the existing resource-preview safety limits. The filesystem/Git separation follow-up supersedes the former index-membership/ignored-path authorization requirement.
-- Preserve the distinct semantics of conversation references and Git Changes; visual unification must not merge their data authorities.
-- Keep the surface read-only. Editing, file mutation, terminal emulation, and a complete IDE project manager remain out of scope.
-- Do not add a second eager repository index or materialize an unbounded tree in the browser.
-
-## Acceptance direction
-
-- The compact entry point identifies the current project without duplicating search or full-workbench controls.
-- A user can locate a known path in a large workspace without manually expanding and traversing every ancestor.
-- Selection has one visible path identity and coherent active state from discovery through preview.
-- Switching between workspace files, referenced files, and Changes is understandable without conflating their meanings.
-- Narrow navigation-to-preview flow leaves only the intended top drawer active and has an obvious return path.
-- Disclosure, selection, keyboard navigation, resize behavior, and responsive transitions are covered in a real browser.
+- Preserve session-bound realpath authorization, bounded filesystem reads, hidden visibility,
+  and resource-preview limits. Filesystem membership and Git observations remain separate.
+- Keep browsing read-only, without another eager index or an unbounded browser tree.
+- Let users locate a known path without expanding every ancestor, and retain one visible path
+  identity from discovery through preview.
+- Distinguish workspace files, conversation references and Changes while keeping their navigation
+  coherent. Narrow navigation-to-preview opens only the intended drawer and provides an obvious return.
+- Check disclosure, selection, keyboard navigation, resizing and responsive transitions in a browser.

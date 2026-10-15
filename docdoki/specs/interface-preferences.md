@@ -14,6 +14,9 @@ covers:
 
 # Interface preferences and completion attention
 
+The retired `assistantRoundDisplay` field is ignored when reading existing preferences and omitted
+on the next successful write. Its Details/Divider UI and command-palette actions are removed.
+
 ## Goal
 
 Keep persistent preferences easy to find and save each change without overwriting newer intent.
@@ -22,21 +25,32 @@ Keep persistent preferences easy to find and save each change without overwritin
 ## Settings organization
 
 Settings opens from the topbar as a modal, leaving session navigation in place. Display, Conversation,
-Behavior, Models and System are separate category views. Only the selected category is visible,
+Behavior, Models, MCP and System are separate category views. Only the selected category is visible,
 focusable and exposed to assistive technology. Category navigation starts its content at the top;
 scrolling within a category does not change the selection. Drafts, model browsing state and pending
 login attempts remain intact across category switches. Model and credential destinations reveal their
 owning category before locating the requested section.
 
+Section headings and descriptions sit above independent bordered field cards, not inside tinted
+header bands. Cards do not clip menus or keyboard focus. Checked switches use the shared accent fill
+and its contrasting foreground role in both luminosities; category and palette choices keep explicit
+selected-state markers. These are presentation choices, not changes to preference saving behavior.
+
 | Category | Controls |
 | --- | --- |
-| Display | Theme, palette, content text size, shared transcript/composer reading width, project-location form. |
-| Conversation | Reasoning detail, tool activity, activity groups, assistant-turn details, desktop send key. |
-| Models | Pi defaults, common scope/cycling, graphical model/provider configuration, and nearby login/logout under [[model-settings]]. |
+| Display | Theme, palette, titlebar needles, content text size, shared transcript/composer reading width, project-location form. |
+| Conversation | Reasoning detail, tool activity, activity groups, desktop send key. |
 | Behavior | Launch behavior, completion alerts, Pi delivery/compaction/retry, optional Herdr enhancement. |
+| Models | Pi defaults, common scope/cycling, graphical model/provider configuration, and nearby login/logout under [[model-settings]]. |
+| MCP | Scoped native-file configuration, protected-value edits and explicit selected-worker Reload under [[mcp]]; not a connection inventory. |
 | System | Component versions, Docs/Changelog release references, unified check for updates, and Host restart under [[host-lifecycle]]. |
 
-Pi controls follow [[pi-integration]]. Herdr takes effect on Host restart under [[herdr-enhancement]].
+Pi controls follow [[pi-integration]]. An ordinary subgroup heading and short, subdued scope note
+before the four native Behavior controls distinguish current-session settings, Pi-managed global
+defaults and project overrides. This is not a control-less setting row or a tinted notice, and it
+does not apply to Inspire preferences. Keep detailed persistence limitations in [[pi-integration]];
+do not label a setter acknowledgment as Saved. Herdr takes effect on Host restart under
+[[herdr-enhancement]].
 Footer utilities present INSΠRE version, optional install action, and Reset preferences on a single line.
 System lists Pi, Extensions and Inspire in that order. Pi's Docs and Changelog links share its label
 row; update commands reuse the file/path click-to-copy presentation without a persistent copy icon.
@@ -45,7 +59,10 @@ state whether project terminals keep running or close.
 Category names and self-explanatory choices need no introductory text; descriptions explain scope or
 non-obvious behavior. The bounded category navigation has no separate search.
 
-Restore defaults patches the complete interface-default set, including Herdr. It leaves Pi runtime
+Titlebar needles is an opt-in persisted switch for installed-window animation. The centered titlebar
+brand toggles the same preference; refresh restores the saved choice. See [[design-system]] for motion.
+
+Restore defaults patches the complete interface-default set, including Herdr and titlebar needles. It leaves Pi runtime
 settings, update observations, navigation curation, pane state, recent models, and other direct work
 state unchanged.
 
@@ -66,10 +83,12 @@ from selected, available controls.
 
 ## Loaded extension names
 
-Listing the current session's loaded extensions in System is requested but not implemented. Pi 1.0's
-RPC and public extension context do not expose the worker's complete inventory; a command-free
-extension is absent from `get_commands`. This needs a native inventory read. Package update results
-remain separate from loaded-extension membership.
+System must list the current session's complete loaded-extension names when Pi exposes that
+worker-owned inventory. This remains blocked in Pi 1.0.0 and the installed 1.1.0: neither RPC nor
+`ExtensionAPI`/`ExtensionContext` exposes it. `get_commands` and `getAllTools()` describe registered
+capabilities, not extensions that register neither. A fresh SDK resource scan would describe another
+runtime, not this worker. The narrow missing interface is a current-worker loaded-extension identity
+read, including command-free extensions. Package update results remain separate from membership.
 
 ## Modal focus
 
@@ -90,6 +109,8 @@ remain separate from loaded-extension membership.
   change retains ownership of its fields, including across a sequence of refused writes.
 - Full snapshots returned by other operations apply only to fields whose local owner has not
   advanced since that operation began; deletion cleanup therefore preserves newer settings.
+- Palette identifiers and their legacy migration follow [[design-system]]. Theme and palette changes
+  own separate fields; resetting preferences returns to Chimonanthus with System luminosity.
 - Missing stored fields receive migration defaults. For invalid fields, use defaults only for those
   fields; malformed JSON or a non-object root uses the full default projection. Preserve the saved
   file unchanged, warn during bootstrap, and refuse preference writes with a recoverable conflict
