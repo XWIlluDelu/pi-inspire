@@ -232,6 +232,49 @@ describe("runtime session deletion", () => {
     await runtime.close();
   });
 
+  it("requires the complete selected folder and leaves other Hidden records untouched", async () => {
+    const source = catalog([
+      await persistedRecord("loose", "/loose"),
+      await persistedRecord("b", "/folder"),
+      await persistedRecord("c", "/folder"),
+      await persistedRecord("other", "/other"),
+    ]);
+    const remove = vi.fn(async () => "trashed" as const);
+    const runtime = new RuntimeController(
+      source,
+      trackedAttachmentStore(),
+      undefined,
+      preview,
+      15_000,
+      undefined,
+      remove,
+    );
+    try {
+      await expect(
+        runtime.clearHiddenSessions(["b"], [], [HIDDEN_FOLDER_CWD]),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(remove).not.toHaveBeenCalled();
+      await expect(
+        runtime.clearHiddenSessions(["b", "c"], [], [HIDDEN_FOLDER_CWD]),
+      ).resolves.toMatchObject({
+        deleted: [{ sessionId: "b" }, { sessionId: "c" }],
+      });
+      expect(remove).toHaveBeenCalledTimes(2);
+      expect(remove).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ id: "b" }),
+        "catalog",
+      );
+      expect(remove).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ id: "c" }),
+        "catalog",
+      );
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it.each(["missing", "changed"])(
     "retains real Hidden preflight with an injected delete adapter (%s file)",
     async (failure) => {

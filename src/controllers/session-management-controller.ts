@@ -3,7 +3,7 @@ import {
   type InspirePreferences,
   type SessionDeleteDisposition,
 } from "../../shared/contracts";
-import { ApiError, type Api } from "../api";
+import { type Api, ApiError } from "../api";
 import type { AppState } from "../app-state";
 
 interface SessionManagementHost {
@@ -256,6 +256,7 @@ export class SessionManagementController {
 
   clearHiddenSessions = async (
     sessionIds: string[],
+    projectCwd?: string,
   ): Promise<HiddenClearResponse | null> => {
     const api = this.host.api();
     const transportGeneration = this.host.transportGeneration();
@@ -282,11 +283,16 @@ export class SessionManagementController {
     try {
       // Hiding is optimistic. Fence every outstanding curation write before
       // confirming that the reviewed ids still represent the complete Hidden
-      // selection sent to the host.
+      // selection (the whole drawer or one complete folder) sent to the host.
       await this.host.flushPreferences();
       if (!ownsTransport()) return null;
-      const hiddenSessionIds = [...this.host.state().prefs.hiddenSessionIds];
-      const hiddenProjectCwds = [...this.host.state().prefs.hiddenProjectCwds];
+      const currentPrefs = this.host.state().prefs;
+      const hiddenSessionIds =
+        projectCwd === undefined ? [...currentPrefs.hiddenSessionIds] : [];
+      const hiddenProjectCwds =
+        projectCwd === undefined
+          ? [...currentPrefs.hiddenProjectCwds]
+          : currentPrefs.hiddenProjectCwds.filter((cwd) => cwd === projectCwd);
       const individualIds = new Set(hiddenSessionIds);
       const projectCwds = new Set(hiddenProjectCwds);
       const currentIds = this.host
@@ -314,7 +320,7 @@ export class SessionManagementController {
       }
 
       const preferenceOwners = this.host.capturePreferenceOwners();
-      const result = await api.clearHiddenSessions(sessionIds);
+      const result = await api.clearHiddenSessions(sessionIds, projectCwd);
       if (!ownsTransport()) return null;
       const deleted = new Set(
         result.deleted.map((session) => session.sessionId),

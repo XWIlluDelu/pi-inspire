@@ -209,7 +209,7 @@ export const SessionRow = memo(function SessionRow({
               className="nav__row-action"
               aria-label={`Restore "${title}"`}
               title="Move back out of Hidden"
-              disabled={clearingHidden}
+              disabled={clearingHidden || deletingSessionId !== null}
               onClick={() => store.toggleSessionHidden(session.id)}
             >
               <Eye size={12} aria-hidden />
@@ -258,7 +258,7 @@ export const SessionRow = memo(function SessionRow({
 });
 
 /** One folder group. Its main row owns the whole collapse hit target while
- * the same fixed right column as a session row owns Pin/Hide or Restore. */
+ * the same fixed right column as a session row owns Pin/Hide or Restore/Trash. */
 export function ProjectGroup({
   group,
   headingId,
@@ -270,6 +270,8 @@ export function ProjectGroup({
   hidden = false,
   onSelectSession,
   onDeleteSession,
+  onDeleteGroup,
+  deleteGroupDisabledReason = null,
 }: {
   group: SessionGroup;
   headingId: string;
@@ -281,10 +283,13 @@ export function ProjectGroup({
   hidden?: boolean;
   onSelectSession: (id: string) => void;
   onDeleteSession?: (session: SessionSummary) => void;
+  onDeleteGroup?: () => void;
+  deleteGroupDisabledReason?: string | null;
 }) {
-  const { collapsed, pinned, clearingHidden } = useAppState(
+  const { collapsed, pinned, clearingHidden, deletingSessionId } = useAppState(
     (state) => ({
       collapsed: state.prefs.navCollapsedGroups.includes(group.cwd),
+      deletingSessionId: state.deletingSessionId,
       pinned: state.prefs.pinnedProjectCwds.includes(group.cwd),
       clearingHidden: state.clearingHidden,
     }),
@@ -349,12 +354,24 @@ export function ProjectGroup({
                 className="nav__row-action"
                 aria-label={`Restore folder ${group.name}`}
                 title="Move folder back out of Hidden"
-                disabled={clearingHidden}
+                disabled={clearingHidden || deletingSessionId !== null}
                 onClick={() => store.toggleProjectHidden(group.cwd)}
               >
                 <Eye size={12} aria-hidden />
               </button>
-              <span className="nav__row-action-spacer" aria-hidden />
+              <button
+                type="button"
+                className="nav__row-action nav__row-action--danger"
+                aria-label={`Delete all sessions in folder ${group.name}`}
+                title={
+                  deleteGroupDisabledReason ??
+                  "Delete this folder's hidden sessions"
+                }
+                disabled={!onDeleteGroup || deleteGroupDisabledReason !== null}
+                onClick={onDeleteGroup}
+              >
+                <Trash2 size={12} aria-hidden />
+              </button>
             </>
           ) : (
             <>

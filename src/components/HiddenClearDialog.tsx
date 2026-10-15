@@ -1,12 +1,15 @@
 import { AlertTriangle, Loader2, Trash2, X } from "lucide-react";
+import { projectNameFromCwd } from "../../shared/contracts";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 
 export function HiddenClearDialog({
   sessionIds,
+  projectCwd,
   onClose,
 }: {
   sessionIds: string[];
+  projectCwd?: string;
   onClose: () => void;
 }) {
   const { deleting, error, reviewRequired } = useAppState(
@@ -20,11 +23,13 @@ export function HiddenClearDialog({
   const dialogRef = useModalFocus<HTMLDivElement>(true, "clear-hidden", () => {
     if (!deleting) onClose();
   });
+  const folderName =
+    projectCwd === undefined ? null : projectNameFromCwd(projectCwd);
   const sessionCount = sessionIds.length;
   const sessionsLabel = `${sessionCount} ${sessionCount === 1 ? "session" : "sessions"}`;
 
   const confirm = async () => {
-    const result = await store.clearHiddenSessions(sessionIds);
+    const result = await store.clearHiddenSessions(sessionIds, projectCwd);
     if (result && !result.failure) onClose();
   };
 
@@ -49,7 +54,7 @@ export function HiddenClearDialog({
             <Trash2 size={17} />
           </span>
           <h2 className="dialog__title" id="hidden-clear-title">
-            Clear Hidden?
+            {folderName === null ? "Clear Hidden?" : "Clear hidden folder?"}
           </h2>
           <button
             type="button"
@@ -63,15 +68,17 @@ export function HiddenClearDialog({
           </button>
         </header>
 
-        <div className="session-delete__session">Hidden · {sessionsLabel}</div>
+        <div className="session-delete__session" title={projectCwd}>
+          {folderName ?? "Hidden"} · {sessionsLabel}
+        </div>
         <p
           className="dialog__message session-delete__description"
           id="hidden-clear-description"
         >
           <span>
-            Every session currently in Hidden will be moved to Trash, including
-            individually hidden sessions and every session inside hidden
-            folders.
+            {folderName === null
+              ? "Every session currently in Hidden will be moved to Trash, including individually hidden sessions and every session inside hidden folders."
+              : `All ${sessionsLabel} in ${projectCwd} will be moved to Trash. Other hidden sessions and folders are unchanged.`}
           </span>
           <span>
             If Trash is unavailable, they will be permanently deleted.

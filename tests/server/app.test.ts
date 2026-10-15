@@ -1221,6 +1221,53 @@ describe("typed Host API", () => {
     expect(events).toEqual([]);
   });
 
+  it("clears one complete Hidden folder without changing unrelated curation", async () => {
+    const target = join(temporary, "target");
+    const other = join(temporary, "other");
+    await request(application.app)
+      .patch("/api/preferences")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        hiddenSessionIds: ["independent", "target-1"],
+        hiddenProjectCwds: [target, other],
+        pinnedProjectCwds: [target, other],
+        navCollapsedGroups: [target, other],
+      })
+      .expect(200);
+    const clear = vi.spyOn(runtime, "clearHiddenSessions").mockResolvedValue({
+      deleted: [
+        { sessionId: "target-1", disposition: "trashed" },
+        { sessionId: "target-2", disposition: "trashed" },
+      ],
+    });
+    const response = await request(application.app)
+      .post("/api/sessions/clear-hidden")
+      .set("authorization", `Bearer ${token}`)
+      .send({ sessionIds: ["target-1", "target-2"], projectCwd: target })
+      .expect(200);
+    expect(clear).toHaveBeenCalledWith(["target-1", "target-2"], [], [target]);
+    expect(response.body.preferences).toMatchObject({
+      hiddenSessionIds: ["independent"],
+      hiddenProjectCwds: [other],
+      pinnedProjectCwds: [other],
+      navCollapsedGroups: [other],
+    });
+  });
+
+  it("refuses a folder that has left Hidden before any deletion", async () => {
+    const clear = vi.spyOn(runtime, "clearHiddenSessions");
+    const response = await request(application.app)
+      .post("/api/sessions/clear-hidden")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        sessionIds: ["session-1"],
+        projectCwd: join(temporary, "visible"),
+      })
+      .expect(409);
+    expect(response.body.code).toBe("HIDDEN_SELECTION_CHANGED");
+    expect(clear).not.toHaveBeenCalled();
+  });
+
   it("clears individually hidden sessions and complete Hidden folders in one reviewed batch", async () => {
     const cwd = "/tmp/hidden-folder";
     const deleted = vi.spyOn(runtime, "clearHiddenSessions").mockResolvedValue({
