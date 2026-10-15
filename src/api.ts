@@ -835,9 +835,10 @@ export function createApi(token: string | null = null) {
         `/api/sessions/${encodeURIComponent(sessionId)}`,
         { method: "DELETE" },
       ),
-    clearHiddenSessions: (sessionIds: string[]) =>
+    clearHiddenSessions: (sessionIds: string[], projectCwd?: string) =>
       post<HiddenClearResponse>(token, "/api/sessions/clear-hidden", {
         sessionIds,
+        projectCwd,
       }),
     terminals: (cwd?: string) =>
       request<TerminalCatalogResponse>(

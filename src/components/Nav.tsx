@@ -4,8 +4,8 @@ import {
   Folder,
   Inbox,
   Loader2,
-  Pin,
   PanelLeft,
+  Pin,
   Plus,
   Search,
   SearchX,
@@ -22,7 +22,6 @@ import {
   useState,
 } from "react";
 import {
-  isBusyRunState,
   projectNameFromCwd,
   type SessionSummary,
 } from "../../shared/contracts";
@@ -30,7 +29,7 @@ import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { HiddenClearDialog } from "./HiddenClearDialog";
 import { ProjectGroup, SessionRow } from "./NavSessions";
-import { splitNavSections } from "./nav-model";
+import { hiddenDeletionBlockReason, splitNavSections } from "./nav-model";
 import { ScrollRail } from "./ScrollRail";
 import { SessionDeleteDialog } from "./SessionDeleteDialog";
 import { BrandLogo, Wordmark } from "./Wordmark";
@@ -125,6 +124,7 @@ export const Nav = memo(function Nav({
     activeSessionId,
     openingSessionId,
     sessionStatuses,
+    externalSessionActivities,
     sessionQuery,
     sessionListNextOffset,
     sessionListTotal,
@@ -147,6 +147,7 @@ export const Nav = memo(function Nav({
       activeSessionId: state.sessionId,
       openingSessionId: state.openingSessionId,
       sessionStatuses: state.sessionStatuses,
+      externalSessionActivities: state.externalSessionActivities,
       sessionQuery: state.sessionQuery,
       sessionListNextOffset: state.sessionListNextOffset,
       sessionListTotal: state.sessionListTotal,
@@ -161,16 +162,7 @@ export const Nav = memo(function Nav({
     }),
     shallowEqual,
   );
-  const hiddenIds = new Set(curatedHiddenSessionIds);
-  const hiddenCwds = new Set(hiddenProjectCwds);
-  const hiddenHasBlockedSession = sessions.some((session) => {
-    if (!hiddenIds.has(session.id) && !hiddenCwds.has(session.cwd))
-      return false;
-    const status = sessionStatuses[session.id];
-    return status
-      ? isBusyRunState(status.runState) || status.runState === "conflict"
-      : false;
-  });
+
   const visibleSessionId =
     selectedSessionId === undefined ? activeSessionId : selectedSessionId;
   const internalNavRef = useRef<HTMLElement>(null);
@@ -255,9 +247,10 @@ export const Nav = memo(function Nav({
   const [deleteCandidate, setDeleteCandidate] = useState<SessionSummary | null>(
     null,
   );
-  const [hiddenClearCandidate, setHiddenClearCandidate] = useState<
-    string[] | null
-  >(null);
+  const [hiddenClearCandidate, setHiddenClearCandidate] = useState<{
+    sessionIds: string[];
+    projectCwd?: string;
+  } | null>(null);
 
   if (collapsed) {
     return (
@@ -341,36 +334,25 @@ export const Nav = memo(function Nav({
   ];
   const hiddenSessionIds = hiddenSessions.map((session) => session.id);
   const hiddenCount = hiddenSessions.length;
-  const hiddenHasSelectedSession = hiddenSessions.some(
-    (session) => session.id === activeSessionId,
+  const deletionState = {
+    sessionId: activeSessionId,
+    openingSessionId,
+    sessionStatuses,
+    externalSessionActivities,
+    sessionQuery,
+    sessionListLoading,
+    sessionListLoadingOlder,
+    sessionListHydrating,
+    sessionListError,
+    clearingHidden,
+    deletingSessionId,
+  };
+  const hiddenClearReason = hiddenDeletionBlockReason(
+    hiddenSessions,
+    deletionState,
   );
-  const hiddenHasOpeningSession = hiddenSessions.some(
-    (session) => session.id === openingSessionId,
-  );
-  const hiddenClearDisabled =
-    clearingHidden ||
-    deletingSessionId !== null ||
-    searching ||
-    sessionListBusy ||
-    sessionListError !== null ||
-    hiddenHasSelectedSession ||
-    hiddenHasOpeningSession ||
-    hiddenHasBlockedSession;
-  const hiddenClearTitle = clearingHidden
-    ? "Clearing Hidden…"
-    : hiddenHasSelectedSession
-      ? "Switch to another session before clearing Hidden"
-      : hiddenHasOpeningSession
-        ? "Wait for every session in Hidden to finish opening"
-        : hiddenHasBlockedSession
-          ? "Wait for every session in Hidden to finish working or resolve conflicts"
-          : searching
-            ? "Clear Hidden is unavailable while searching"
-            : sessionListBusy || sessionListError !== null
-              ? "Wait for Hidden sessions to finish loading"
-              : deletingSessionId !== null
-                ? "Wait for the current session deletion to finish"
-                : "Clear Hidden";
+  const hiddenClearDisabled = hiddenClearReason !== null;
+  const hiddenClearTitle = hiddenClearReason ?? "Clear Hidden";
 
   const contents = (
     <>
@@ -633,7 +615,9 @@ export const Nav = memo(function Nav({
               aria-label="Clear Hidden"
               title={hiddenClearTitle}
               disabled={hiddenClearDisabled}
-              onClick={() => setHiddenClearCandidate(hiddenSessionIds)}
+              onClick={() =>
+                setHiddenClearCandidate({ sessionIds: hiddenSessionIds })
+              }
             >
               {clearingHidden ? (
                 <Loader2 size={12} className="spin" aria-hidden />
@@ -657,6 +641,16 @@ export const Nav = memo(function Nav({
                   hidden
                   onSelectSession={onSelectSession}
                   onDeleteSession={setDeleteCandidate}
+                  onDeleteGroup={() =>
+                    setHiddenClearCandidate({
+                      sessionIds: group.sessions.map((session) => session.id),
+                      projectCwd: group.cwd,
+                    })
+                  }
+                  deleteGroupDisabledReason={hiddenDeletionBlockReason(
+                    group.sessions,
+                    deletionState,
+                  )}
                 />
               ))}
               {hidden.map((session) => (
@@ -693,7 +687,8 @@ export const Nav = memo(function Nav({
       ) : null}
       {hiddenClearCandidate ? (
         <HiddenClearDialog
-          sessionIds={hiddenClearCandidate}
+          sessionIds={hiddenClearCandidate.sessionIds}
+          projectCwd={hiddenClearCandidate.projectCwd}
           onClose={() => {
             store.clearSessionDeleteError();
             setHiddenClearCandidate(null);

@@ -1168,8 +1168,9 @@ export class AppStore {
 
   clearHiddenSessions = (
     sessionIds: string[],
+    projectCwd?: string,
   ): Promise<HiddenClearResponse | null> =>
-    this.sessionManagement.clearHiddenSessions(sessionIds);
+    this.sessionManagement.clearHiddenSessions(sessionIds, projectCwd);
 
   // --- Prompting & native commands ---
 

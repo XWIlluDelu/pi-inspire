@@ -1,8 +1,68 @@
 import {
   type InspirePreferences,
+  isBusyRunState,
   projectNameFromCwd,
   type SessionSummary,
 } from "../../shared/contracts";
+import type { AppState } from "../app-state";
+
+type HiddenDeletionState = Pick<
+  AppState,
+  | "sessionId"
+  | "openingSessionId"
+  | "sessionStatuses"
+  | "externalSessionActivities"
+  | "sessionQuery"
+  | "sessionListLoading"
+  | "sessionListLoadingOlder"
+  | "sessionListHydrating"
+  | "sessionListError"
+  | "clearingHidden"
+  | "deletingSessionId"
+>;
+
+/** The drawer and each complete folder apply the same rules to their own set.
+ * Activity in a different folder must not block an otherwise idle selection. */
+export function hiddenDeletionBlockReason(
+  sessions: readonly SessionSummary[],
+  state: HiddenDeletionState,
+): string | null {
+  if (state.clearingHidden)
+    return "Wait for the current Hidden deletion to finish";
+  if (state.deletingSessionId !== null)
+    return "Wait for the current session deletion to finish";
+  if (state.sessionQuery.trim())
+    return "Deletion is unavailable while searching";
+  if (
+    state.sessionListLoading ||
+    state.sessionListLoadingOlder ||
+    state.sessionListHydrating ||
+    state.sessionListError !== null
+  ) {
+    return "Wait for Hidden sessions to finish loading";
+  }
+  if (sessions.some((session) => session.id === state.sessionId))
+    return "Switch to another session before deleting";
+  if (sessions.some((session) => session.id === state.openingSessionId))
+    return "Wait for these sessions to finish opening";
+  if (
+    sessions.some(
+      (session) => state.externalSessionActivities[session.id] !== undefined,
+    )
+  )
+    return "Close the Pi terminal sessions before deleting";
+  if (
+    sessions.some((session) => {
+      const status = state.sessionStatuses[session.id];
+      return (
+        status &&
+        (isBusyRunState(status.runState) || status.runState === "conflict")
+      );
+    })
+  )
+    return "Wait for these sessions to finish working or resolve conflicts";
+  return null;
+}
 
 export interface SessionGroup {
   cwd: string;

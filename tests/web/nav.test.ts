@@ -3,8 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   compactAge,
   groupSessionsByCwd,
-  splitNavSections,
+  hiddenDeletionBlockReason,
   type NavCuration,
+  splitNavSections,
 } from "../../src/components/nav-model";
 import { sessionSummary } from "./helpers";
 
@@ -14,6 +15,64 @@ const curation = (overrides: Partial<NavCuration> = {}): NavCuration => ({
   hiddenProjectCwds: [],
   hiddenSessionIds: [],
   ...overrides,
+});
+
+describe("hidden deletion eligibility", () => {
+  const idle = (): Parameters<typeof hiddenDeletionBlockReason>[1] => ({
+    sessionId: "elsewhere",
+    openingSessionId: null,
+    sessionStatuses: {},
+    externalSessionActivities: {},
+    sessionQuery: "",
+    sessionListLoading: false,
+    sessionListLoadingOlder: false,
+    sessionListHydrating: false,
+    sessionListError: null,
+    clearingHidden: false,
+    deletingSessionId: null,
+  });
+  const targets = [sessionSummary({ id: "target" })];
+
+  it.each([
+    ["selected", { sessionId: "target" }, /Switch/],
+    ["opening", { openingSessionId: "target" }, /opening/],
+    [
+      "running",
+      {
+        sessionStatuses: {
+          target: { runState: "running", indicator: "running" },
+        },
+      },
+      /working/,
+    ],
+    [
+      "external",
+      { externalSessionActivities: { target: "idle" } },
+      /Pi terminal/,
+    ],
+    ["partial catalog", { sessionListHydrating: true }, /loading/],
+    ["search", { sessionQuery: "term" }, /searching/],
+    ["another deletion", { deletingSessionId: "elsewhere" }, /deletion/],
+  ] as const)(
+    "blocks %s targets or an incomplete selection",
+    (_, patch, message) => {
+      expect(
+        hiddenDeletionBlockReason(targets, { ...idle(), ...patch }),
+      ).toMatch(message);
+    },
+  );
+
+  it("ignores active work outside the target folder", () => {
+    expect(
+      hiddenDeletionBlockReason(targets, {
+        ...idle(),
+        sessionStatuses: {
+          elsewhere: { runState: "running", indicator: "running" },
+        },
+        externalSessionActivities: { other: "working" },
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("groupSessionsByCwd", () => {
