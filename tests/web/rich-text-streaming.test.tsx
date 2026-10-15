@@ -6,8 +6,8 @@ import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkMath from "remark-math-extended";
 import { describe, expect, it, vi } from "vitest";
-import { RichText } from "../../src/components/RichText";
 import { ProgressiveRichText } from "../../src/components/ProgressiveRichText";
+import { RichText } from "../../src/components/RichText";
 
 function freshMarkup(text: string): string {
   const fresh = render(<RichText text={text} />);
@@ -24,6 +24,14 @@ const richPrefix = [
 ].join("\n\n");
 
 const cases = [
+  [
+    "literal dollars, generic tags and escaped math currency",
+    String.raw`$HOME and $PATH; Array<T>. $\text{Cost: \$5}$ and $ x+1 $. **Still text**.`,
+  ],
+  [
+    "bare regex anchors beside genuine formulas",
+    String.raw`/^\d+$/ then **ordinary text** and /^(0|[1-9]\d*)$/ with $x+1$.`,
+  ],
   [
     "references and footnotes defined later",
     '[late][id] and [^note].\n\nOther paragraph.\n\n[id]: https://example.com "Title"\n\n[^note]: Footnote $x$\n\n    continuation',
