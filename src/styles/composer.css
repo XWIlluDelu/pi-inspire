@@ -791,6 +791,24 @@
   gap: var(--space-1);
 }
 
+/* Anchor the ring, not the changing label's right edge. Reserve three digits
+   and the percent sign, but let larger native readings grow rather than clip. */
+.meter__value {
+  display: inline-grid;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.meter__value::before {
+  content: "100%";
+  visibility: hidden;
+}
+
+.meter__value::before,
+.meter__value > span {
+  grid-area: 1 / 1;
+}
+
 .meter {
   display: inline-flex;
   align-items: center;

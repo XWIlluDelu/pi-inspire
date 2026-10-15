@@ -223,6 +223,14 @@ body.pane-resizing--vertical .nav {
   cursor: not-allowed;
 }
 
+/* Center the label group as a unit, then align its mixed-size text by baseline. */
+.ctx__mode-label {
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 4px;
+}
+
 .ctx__mode-badge {
   display: inline-flex;
   align-items: center;

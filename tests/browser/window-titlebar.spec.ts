@@ -116,11 +116,21 @@ test("Overlay adds a quiet corner icon, retains the centered wordmark and restor
     await expect(page.locator(".nav__brand-lockup")).toBeHidden();
     const corner = page.locator(".window-titlebar__corner-logo");
     const icon = (await corner.boundingBox())!;
-    expect(icon.x).toBe(left + 12);
-    expect(icon.width).toBe(18);
+    if (left === 0) {
+      const navIcon = (await page
+        .locator(".nav__new-session-icon")
+        .boundingBox())!;
+      expect(icon.x + icon.width / 2).toBeCloseTo(
+        navIcon.x + navIcon.width / 2,
+      );
+    } else {
+      // Native left-hand controls take precedence over the sidebar axis.
+      expect(icon.x).toBeGreaterThanOrEqual(left + 12);
+    }
+    expect(icon.width).toBe(16);
     expect(icon.x + icon.width).toBeLessThan(1280 - right);
     await expect(corner).toHaveCSS("pointer-events", "none");
-    await expect(corner.locator("svg")).toHaveAttribute("height", "18");
+    await expect(corner.locator("svg")).toHaveAttribute("height", "16");
     const box = (await brand.boundingBox())!;
     expect(box.x).toBeGreaterThanOrEqual(left);
     expect(Math.abs(box.x + box.width / 2 - 640)).toBeLessThan(1);

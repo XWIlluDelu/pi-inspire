@@ -658,7 +658,11 @@
     background var(--dur-micro) var(--ease-standard);
 }
 
-.activity-fold__boundary--lower,
+.activity-fold__disclosure,
+.activity-fold__boundary {
+  font-size: var(--text-base);
+  font-weight: 400;
+}
 .activity-fold__omission {
   font-size: var(--text-xs);
 }
@@ -703,7 +707,6 @@
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  opacity: 0.7;
 }
 .activity-fold__kind--thinking {
   background: var(--activity-think);
@@ -729,10 +732,11 @@
   min-width: 0;
   flex-direction: column;
   gap: var(--space-1);
-  /* Center the guide below the 14px disclosure chevron; children start at 24px. */
+  /* The guide follows the disclosure axis; nested rows start under the label.
+     4px control inset + half the 14px chevron = 11px. */
   margin: 2px 0 2px 11px;
-  border-left: 1px solid var(--hairline);
-  padding: 2px 0 2px var(--space-3);
+  border-left: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+  padding: 2px 0 2px 12px;
 }
 
 /* Message boundaries no longer carry turn chrome or a different activity rhythm.
@@ -1077,7 +1081,7 @@
   background: var(--bg-prompt);
   border: 1px solid var(--line);
   border-radius: 14px;
-  padding: 12px 18px;
+  padding: 10px 14px;
   font-size: var(--text-reading);
   line-height: var(--leading-reading);
   color: var(--ink);

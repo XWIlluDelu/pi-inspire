@@ -45,7 +45,7 @@ export function WindowTitlebar() {
       <div className="window-titlebar__safe">
         {needlesActive ? <BuffonNeedles /> : null}
         <div className="window-titlebar__corner-logo" aria-hidden="true">
-          <BrandLogo size={18} />
+          <BrandLogo size={16} />
         </div>
         <div className="window-titlebar__identity">
           <button

@@ -247,12 +247,14 @@ export const ContextPane = memo(function ContextPane({
                   }
                   onClick={() => store.setContextMode(mode)}
                 >
-                  <span>{label}</span>
-                  {changesCount > 0 ? (
-                    <span className="ctx__mode-badge" aria-hidden="true">
-                      {changesCount > 99 ? "99+" : changesCount}
-                    </span>
-                  ) : null}
+                  <span className="ctx__mode-label">
+                    <span>{label}</span>
+                    {changesCount > 0 ? (
+                      <span className="ctx__mode-badge" aria-hidden="true">
+                        {changesCount > 99 ? "99+" : changesCount}
+                      </span>
+                    ) : null}
+                  </span>
                 </button>
               );
             },

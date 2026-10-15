@@ -53,6 +53,13 @@
   gap: var(--space-1);
 }
 
+/* The sans title's visible ink sits higher than the small mono metadata.
+   Move its control/editor together, without changing the row or type scale. */
+.topbar__heading,
+.topbar__rename {
+  transform: translateY(1px);
+}
+
 .topbar__title {
   flex: 0 1 auto;
   margin: 0;

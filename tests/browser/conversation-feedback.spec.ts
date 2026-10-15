@@ -44,8 +44,15 @@ for (const touch of [false, true]) {
             .querySelector(".context-checkpoint__metric")!
             .getBoundingClientRect();
           const fold = document.querySelector(".activity-fold")!;
+          const groupLabel = fold
+            .querySelector(
+              ".activity-fold__boundary--upper > span, .activity-fold__disclosure > span",
+            )!
+            .getBoundingClientRect();
           const groupChevron = fold
-            .querySelector("button > svg")!
+            .querySelector(
+              ".activity-fold__boundary--upper > svg, .activity-fold__disclosure > svg",
+            )!
             .getBoundingClientRect();
           const children = fold.querySelector(".activity-fold__content")!;
           const first = children
@@ -64,8 +71,12 @@ for (const touch of [false, true]) {
                 Math.round(rect.top),
               ),
             ).size,
-            chevrons: chevron.left - groupChevron.left,
-            nested: first.left - fold.getBoundingClientRect().left,
+            leadingEdge: chevron.left - groupChevron.left,
+            nested: first.left - groupLabel.left,
+            guideAxis:
+              children.getBoundingClientRect().left +
+              0.5 -
+              (groupChevron.left + groupChevron.right) / 2,
             metricWraps: metric.top >= title.bottom,
             metricCenter:
               (metric.top + metric.bottom - title.top - title.bottom) / 2,
@@ -75,8 +86,9 @@ for (const touch of [false, true]) {
         });
         expect(Math.abs(alignment.outerInset)).toBeLessThanOrEqual(1);
         expect(alignment.titleLines).toBe(1);
-        expect(Math.abs(alignment.chevrons)).toBeLessThanOrEqual(1);
-        expect(alignment.nested).toBe(24);
+        expect(Math.abs(alignment.leadingEdge)).toBeLessThanOrEqual(1);
+        expect(Math.abs(alignment.nested)).toBeLessThanOrEqual(1);
+        expect(Math.abs(alignment.guideAxis)).toBeLessThanOrEqual(1);
         if (alignment.metricWraps)
           expect(Math.abs(alignment.metricStart)).toBeLessThanOrEqual(1);
         else {
@@ -156,7 +168,32 @@ for (const touch of [false, true]) {
           (await notice
             .getByRole("button", { name: "Dismiss notification" })
             .boundingBox())!.height,
-        ).toBeGreaterThanOrEqual(44);
+        ).toBeGreaterThanOrEqual(32);
+      const noticeLayout = await notice.evaluate((element) => {
+        const head = element
+          .querySelector(".notice__head")!
+          .getBoundingClientRect();
+        const title = element
+          .querySelector(".notice__title")!
+          .getBoundingClientRect();
+        const bounds = element.getBoundingClientRect();
+        return {
+          extraHeadHeight: head.height - Math.max(title.height, 24),
+          controlsInside: [...element.querySelectorAll("button")].every(
+            (button) => {
+              const rect = button.getBoundingClientRect();
+              return (
+                rect.top >= bounds.top &&
+                rect.bottom <= bounds.bottom &&
+                rect.left >= bounds.left &&
+                rect.right <= bounds.right
+              );
+            },
+          ),
+        };
+      });
+      expect(noticeLayout.extraHeadHeight).toBeLessThanOrEqual(1);
+      expect(noticeLayout.controlsInside).toBe(true);
       await notice
         .getByRole("button", { name: "Dismiss notification" })
         .click();

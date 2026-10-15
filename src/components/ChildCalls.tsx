@@ -79,8 +79,8 @@ function CallRow({ call }: { call: ChildCall }) {
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary className="child-call__row">
-        {row}
         <ChevronRight size={12} className="child-call__chevron" aria-hidden />
+        {row}
       </summary>
       {open ? (
         <div className="child-call__detail">
