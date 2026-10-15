@@ -1,17 +1,17 @@
-import { AlertTriangle, Loader2, X } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 import {
   createContext,
-  type PointerEvent as ReactPointerEvent,
-  useCallback,
+  useContext,
   useEffect,
+  useId,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
-import { imageSourceBlob } from "../content-copy";
 import { store } from "../store";
-import { useModalFocus } from "../use-modal-focus";
-import { CopyAction } from "./CopyAction";
+import { useImageHistory } from "../use-image-history";
+import { ImageGalleryContext } from "./ImageGallery";
+import { ImageLightbox } from "./ImageLightbox";
 
 export const EmbeddedImageOwnerContext = createContext<{
   sessionId: string;
@@ -19,253 +19,128 @@ export const EmbeddedImageOwnerContext = createContext<{
   projectionKey: string;
 } | null>(null);
 
-const IMAGE_ZOOM = 2;
-const PAN_THRESHOLD_PX = 6;
-const IMAGE_BACKGROUNDS = ["Checkerboard", "White", "Black"] as const;
-type ImageBackground = (typeof IMAGE_BACKGROUNDS)[number];
-
-interface Point {
-  x: number;
-  y: number;
-}
-
-interface PanGesture {
-  pointerId: number;
-  start: Point;
-  origin: Point;
-  moved: boolean;
-}
-
-function ImageLightbox({
-  src,
-  alt,
-  onClose,
-}: {
-  src: string;
-  alt: string;
-  onClose: () => void;
-}) {
-  const dialogRef = useModalFocus<HTMLDivElement>(true, src, onClose);
-  const canvasRef = useRef<HTMLButtonElement>(null);
-  const imageRef = useRef<HTMLImageElement>(null);
-  const gestureRef = useRef<PanGesture | null>(null);
-  const suppressClickRef = useRef(false);
-  const [background, setBackground] = useState<ImageBackground>("Checkerboard");
-  const [zoomed, setZoomed] = useState(false);
-  const [panning, setPanning] = useState(false);
-  const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
-
-  const constrainPan = useCallback((next: Point): Point => {
-    const canvas = canvasRef.current;
-    const image = imageRef.current;
-    if (!canvas || !image) return next;
-    const maxX = Math.max(
-      0,
-      (image.clientWidth * IMAGE_ZOOM - canvas.clientWidth) / 2,
-    );
-    const maxY = Math.max(
-      0,
-      (image.clientHeight * IMAGE_ZOOM - canvas.clientHeight) / 2,
-    );
-    return {
-      x: Math.max(-maxX, Math.min(maxX, next.x)),
-      y: Math.max(-maxY, Math.min(maxY, next.y)),
-    };
-  }, []);
-
-  const finishGesture = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    const gesture = gestureRef.current;
-    if (!gesture || gesture.pointerId !== event.pointerId) return;
-    suppressClickRef.current = gesture.moved;
-    if (gesture.moved)
-      window.setTimeout(() => {
-        suppressClickRef.current = false;
-      }, 0);
-    gestureRef.current = null;
-    setPanning(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  };
-
-  const toggleZoom = () => {
-    if (suppressClickRef.current) {
-      suppressClickRef.current = false;
-      return;
-    }
-    if (zoomed) setPan({ x: 0, y: 0 });
-    setZoomed(!zoomed);
-  };
-
-  return createPortal(
-    <div
-      className="overlay image-lightbox"
-      role="presentation"
-      onClick={onClose}
-    >
-      <div
-        ref={dialogRef}
-        className="image-lightbox__dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Image preview"
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div
-          className="image-lightbox__actions"
-          role="group"
-          aria-label="Image actions"
-        >
-          <CopyAction
-            key={src}
-            getContent={async (signal) => ({
-              text: "",
-              images: [await imageSourceBlob(src, signal)],
-            })}
-            label="image"
-            className="image-lightbox__copy"
-          />
-          <button
-            type="button"
-            className="image-lightbox__close"
-            onClick={onClose}
-            aria-label="Close image preview"
-            title="Close"
-          >
-            <X size={18} aria-hidden />
-          </button>
-        </div>
-        <button
-          ref={canvasRef}
-          type="button"
-          className={`image-lightbox__canvas ${zoomed ? "image-lightbox__canvas--zoomed" : ""} ${panning ? "image-lightbox__canvas--panning" : ""}`}
-          aria-label={zoomed ? "Fit image to window" : "Zoom image"}
-          aria-pressed={zoomed}
-          title={zoomed ? "Click to fit · drag to pan" : "Click to zoom"}
-          onClick={toggleZoom}
-          onPointerDown={(event) => {
-            if (event.button !== 0) return;
-            suppressClickRef.current = false;
-            gestureRef.current = {
-              pointerId: event.pointerId,
-              start: { x: event.clientX, y: event.clientY },
-              origin: pan,
-              moved: false,
-            };
-            event.currentTarget.setPointerCapture(event.pointerId);
-          }}
-          onPointerMove={(event) => {
-            const gesture = gestureRef.current;
-            if (!gesture || gesture.pointerId !== event.pointerId) return;
-            const delta = {
-              x: event.clientX - gesture.start.x,
-              y: event.clientY - gesture.start.y,
-            };
-            if (
-              !gesture.moved &&
-              Math.hypot(delta.x, delta.y) < PAN_THRESHOLD_PX
-            )
-              return;
-            gesture.moved = true;
-            suppressClickRef.current = true;
-            if (!zoomed) return;
-            event.preventDefault();
-            setPanning(true);
-            setPan(
-              constrainPan({
-                x: gesture.origin.x + delta.x,
-                y: gesture.origin.y + delta.y,
-              }),
-            );
-          }}
-          onPointerUp={finishGesture}
-          onPointerCancel={finishGesture}
-          onDragStart={(event) => event.preventDefault()}
-        >
-          <img
-            ref={imageRef}
-            className="image-surface"
-            data-background={background.toLowerCase()}
-            src={src}
-            alt={alt}
-            draggable={false}
-            style={{
-              transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoomed ? IMAGE_ZOOM : 1})`,
-            }}
-            onDragStart={(event) => event.preventDefault()}
-          />
-        </button>
-        <div
-          className="image-lightbox__backgrounds"
-          role="group"
-          aria-label="Image background"
-        >
-          {IMAGE_BACKGROUNDS.map((option) => (
-            <button
-              key={option}
-              type="button"
-              aria-pressed={background === option}
-              onClick={() => setBackground(option)}
-            >
-              {option}
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
+/** Authored image links keep navigation semantics without nested buttons. */
+export const ImageLinkContext = createContext(false);
 
 export function ImagePreview({
   src,
   alt = "Attached image",
+  name,
+  title,
   className = "",
   loading = false,
+  imageLoading,
   error = null,
+  onError,
+  inline = false,
 }: {
   src?: string;
   alt?: string;
+  name?: string;
+  title?: string;
   className?: string;
   loading?: boolean;
+  imageLoading?: "eager" | "lazy";
   error?: string | null;
+  onError?: () => void;
+  inline?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const gallery = useContext(ImageGalleryContext);
+  const linked = useContext(ImageLinkContext);
+  const id = useId();
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const [openedSource, setOpenedSource] = useState<string | null>(null);
+  const [failedSource, setFailedSource] = useState<string | null>(null);
+  const [inlineWidth, setInlineWidth] = useState<{
+    src: string;
+    width: number;
+  } | null>(null);
+  const open = Boolean(src && openedSource === src);
+  const close = useImageHistory(open, () => setOpenedSource(null));
+  useLayoutEffect(() => {
+    if (openedSource && openedSource !== src) setOpenedSource(null);
+  }, [openedSource, src]);
+  const decodeError = src && failedSource === src;
+  const failure =
+    error ||
+    (decodeError
+      ? "This image could not be displayed. Open the preview to download the original."
+      : null);
+
+  useLayoutEffect(() => {
+    const element = linked ? imageRef.current : buttonRef.current;
+    if (!gallery || !src || !element) return;
+    gallery.register({ id, src, alt, name, element });
+  }, [gallery, id, src, alt, name, linked]);
+  useLayoutEffect(() => () => gallery?.unregister(id), [gallery, id]);
+  useLayoutEffect(() => {
+    if (!src) gallery?.unregister(id);
+  }, [gallery, id, src]);
+
+  const image = src ? (
+    <img
+      ref={imageRef}
+      className={`image-surface ${inline ? "document-image" : ""}`}
+      src={src}
+      alt={alt}
+      loading={imageLoading}
+      title={title}
+      draggable={false}
+      onError={() => {
+        setFailedSource(src);
+        onError?.();
+      }}
+      onLoad={(event) => {
+        setFailedSource(null);
+        // A viewBox-only SVG has no CSS intrinsic width. Give its shrink-to-fit
+        // button definite bounds; max-width still keeps it within the document.
+        if (inline && !linked && event.currentTarget.naturalWidth > 0)
+          setInlineWidth({ src, width: event.currentTarget.naturalWidth });
+      }}
+      onDragStart={(event) => event.preventDefault()}
+    />
+  ) : null;
+
+  if (linked) return image;
   return (
     <>
       <button
+        ref={buttonRef}
         type="button"
-        className={`image-preview ${className}`}
+        className={`image-preview ${inline ? "image-preview--inline" : ""} ${className}`}
         disabled={!src}
-        onClick={() => src && setOpen(true)}
+        style={
+          inline && inlineWidth && inlineWidth.src === src
+            ? { width: inlineWidth.width }
+            : undefined
+        }
+        onClick={() => {
+          if (src) {
+            if (gallery) gallery.open(id);
+            else setOpenedSource(src);
+          }
+        }}
         aria-label={
           src
-            ? alt === "Attached image"
-              ? "Preview attached image"
-              : `Preview ${alt}`
+            ? `Preview ${name || (alt === "Attached image" ? "attached image" : alt) || "image"}`
             : error
               ? `${alt} unavailable`
               : `${alt} loading`
         }
-        title={error ?? (src ? "Open image preview" : "Loading image")}
+        title={
+          failure || title || (src ? "Open image preview" : "Loading image")
+        }
+        data-image-error={decodeError || undefined}
       >
-        {src ? (
-          <img
-            className="image-surface"
-            src={src}
-            alt={alt}
-            draggable={false}
-            onDragStart={(event) => event.preventDefault()}
-          />
-        ) : null}
+        {image}
         {!src && loading ? (
           <Loader2 size={16} className="spin" aria-hidden />
         ) : null}
-        {!src && error ? <AlertTriangle size={16} aria-hidden /> : null}
+        {failure ? <AlertTriangle size={16} aria-hidden /> : null}
       </button>
       {open && src ? (
-        <ImageLightbox src={src} alt={alt} onClose={() => setOpen(false)} />
+        <ImageLightbox image={{ src, alt, name }} onClose={close} />
       ) : null}
     </>
   );
@@ -277,6 +152,7 @@ export function PersistedImage({
   projectionKey,
   reference,
   alt = "Attached image",
+  name,
   className = "image-preview--message",
 }: {
   sessionId: string;
@@ -284,6 +160,7 @@ export function PersistedImage({
   projectionKey: string;
   reference: string;
   alt?: string;
+  name?: string;
   className?: string;
 }) {
   const [src, setSrc] = useState<string>();
@@ -325,6 +202,7 @@ export function PersistedImage({
     <ImagePreview
       src={src}
       alt={alt}
+      name={name}
       className={className}
       loading={!src && !error}
       error={error}

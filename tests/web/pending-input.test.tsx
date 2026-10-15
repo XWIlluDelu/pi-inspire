@@ -116,7 +116,7 @@ describe("pending input visibility and actions", () => {
     expect(within(rows[2]!).queryByRole("group")).toBeNull();
     fireEvent.click(preview);
     expect(screen.getByRole("dialog", { name: "Image preview" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Zoom image" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible();
     expect(onClear).not.toHaveBeenCalled();
     expect(onRecover).not.toHaveBeenCalled();
     queue.steering.shift(); // Consumption removes the owner, including its open viewer.

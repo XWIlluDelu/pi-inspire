@@ -124,11 +124,14 @@ test("Pending image thumbnails open the shared viewer and wrap at narrow widths"
     const viewer = page.getByRole("dialog", { name: "Image preview" });
     await expect(viewer).toBeVisible();
 
-    await viewer.getByRole("button", { name: "Zoom image" }).click();
+    await viewer.getByRole("button", { name: "Actual size" }).click();
+    await viewer.getByRole("button", { name: "Zoom in" }).click();
     await expect(
-      viewer.getByRole("button", { name: "Fit image to window" }),
-    ).toHaveAttribute("aria-pressed", "true");
-    await viewer.getByRole("button", { name: "White", exact: true }).click();
+      viewer.getByRole("button", { name: "Actual size" }),
+    ).toHaveText("125%");
+    await viewer
+      .getByRole("combobox", { name: "Image background" })
+      .selectOption("White");
     await expect(viewer.locator("img")).toHaveAttribute(
       "data-background",
       "white",

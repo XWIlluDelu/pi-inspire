@@ -7,6 +7,7 @@ import {
   subscribeCustomMessagePresentations,
 } from "../tool-presentations/registry";
 import { CopyAction } from "./CopyAction";
+import { ImageGallery } from "./ImageGallery";
 import { ImagePreview, PersistedImage } from "./ImagePreview";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 
@@ -89,63 +90,67 @@ export const CustomMessage = memo(function CustomMessage({
             className="custom-message__copy"
           />
         </div>
-        <div className="custom-message__body">
-          {typeof message.content === "string" ? (
-            <RichText text={presentation?.body ?? text} variant="user" />
-          ) : Array.isArray(message.content) ? (
-            message.content.map((part: unknown, index: number) => {
-              if (!part || typeof part !== "object")
+        <ImageGallery>
+          <div className="custom-message__body">
+            {typeof message.content === "string" ? (
+              <RichText text={presentation?.body ?? text} variant="user" />
+            ) : Array.isArray(message.content) ? (
+              message.content.map((part: unknown, index: number) => {
+                if (!part || typeof part !== "object")
+                  return (
+                    <pre key={index} className="custom-message__raw">
+                      {inspect(part)}
+                    </pre>
+                  );
+                const item = part as Record<string, unknown>;
+                if (item.type === "text" && typeof item.text === "string") {
+                  return (
+                    <RichText key={index} text={item.text} variant="user" />
+                  );
+                }
+                if (item.type === "image") {
+                  if (
+                    Number.isSafeInteger(message.__inspireMessageIndex) &&
+                    sessionId &&
+                    viewId
+                  ) {
+                    return (
+                      <PersistedImage
+                        key={index}
+                        sessionId={sessionId}
+                        viewId={viewId}
+                        projectionKey={projectionKey}
+                        reference={`pi-embedded://${message.__inspireMessageIndex}/${index}`}
+                      />
+                    );
+                  }
+                  if (
+                    typeof item.data === "string" &&
+                    typeof item.mimeType === "string" &&
+                    /^image\//i.test(item.mimeType)
+                  ) {
+                    return (
+                      <ImagePreview
+                        key={index}
+                        src={`data:${item.mimeType};base64,${item.data}`}
+                        className="image-preview--message"
+                      />
+                    );
+                  }
+                }
                 return (
                   <pre key={index} className="custom-message__raw">
                     {inspect(part)}
                   </pre>
                 );
-              const item = part as Record<string, unknown>;
-              if (item.type === "text" && typeof item.text === "string") {
-                return <RichText key={index} text={item.text} variant="user" />;
-              }
-              if (item.type === "image") {
-                if (
-                  Number.isSafeInteger(message.__inspireMessageIndex) &&
-                  sessionId &&
-                  viewId
-                ) {
-                  return (
-                    <PersistedImage
-                      key={index}
-                      sessionId={sessionId}
-                      viewId={viewId}
-                      projectionKey={projectionKey}
-                      reference={`pi-embedded://${message.__inspireMessageIndex}/${index}`}
-                    />
-                  );
-                }
-                if (
-                  typeof item.data === "string" &&
-                  typeof item.mimeType === "string" &&
-                  /^image\//i.test(item.mimeType)
-                ) {
-                  return (
-                    <ImagePreview
-                      key={index}
-                      src={`data:${item.mimeType};base64,${item.data}`}
-                      className="image-preview--message"
-                    />
-                  );
-                }
-              }
-              return (
-                <pre key={index} className="custom-message__raw">
-                  {inspect(part)}
-                </pre>
-              );
-            })
-          ) : message.content != null ? (
-            <pre className="custom-message__raw">
-              {inspect(message.content)}
-            </pre>
-          ) : null}
-        </div>
+              })
+            ) : message.content != null ? (
+              <pre className="custom-message__raw">
+                {inspect(message.content)}
+              </pre>
+            ) : null}
+          </div>
+        </ImageGallery>
         {hasDetails || presentation ? (
           <details className="custom-message__details" open={detailsOpen}>
             <summary

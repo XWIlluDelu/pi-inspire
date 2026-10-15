@@ -62,9 +62,7 @@ test("Fork restores saved images for preview, editing and explicit resend", asyn
   expect(forked.editorAttachments).toHaveLength(1);
   expect(forked.editorText).toContain("Compare the calibration strategies");
   await expect(input).toHaveValue(forked.editorText);
-  const restored = composer.getByRole("button", {
-    name: "Preview attached image",
-  });
+  const restored = composer.locator(".image-preview--attachment");
   await expect(restored).toHaveCount(1);
   await expect(restored.locator("img")).toHaveJSProperty("naturalWidth", 720);
   await restored.click();
@@ -249,10 +247,11 @@ test("reads native-shaped shell History and inspects saved images", async ({
   }
   const viewer = page.getByRole("dialog", { name: "Image preview" });
   await expect(viewer).toBeVisible();
-  await viewer.getByRole("button", { name: "Zoom image", exact: true }).click();
-  await expect(
-    viewer.getByRole("button", { name: "Fit image to window" }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await viewer.getByRole("button", { name: "Actual size" }).click();
+  await viewer.getByRole("button", { name: "Zoom in" }).click();
+  await expect(viewer.getByRole("button", { name: "Actual size" })).toHaveText(
+    "125%",
+  );
 
   await viewer.getByRole("button", { name: "Close image preview" }).click();
   await expect(image).toBeFocused();

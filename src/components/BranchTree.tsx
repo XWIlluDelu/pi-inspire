@@ -32,6 +32,7 @@ import {
   historyShellContent,
 } from "./HistoryShellPreview";
 import { ImagePreview } from "./ImagePreview";
+import { ImageGallery } from "./ImageGallery";
 import { RichText } from "./RichText";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 
@@ -906,13 +907,15 @@ export function BranchTree({
                     Read more content
                   </button>
                 ) : null}
-                {detail.images?.map((image) => (
-                  <HistoryImage
-                    key={image.index}
-                    targetId={selected.id}
-                    index={image.index}
-                  />
-                ))}
+                <ImageGallery>
+                  {detail.images?.map((image) => (
+                    <HistoryImage
+                      key={image.index}
+                      targetId={selected.id}
+                      index={image.index}
+                    />
+                  ))}
+                </ImageGallery>
               </>
             ) : readError && !reading ? (
               <button

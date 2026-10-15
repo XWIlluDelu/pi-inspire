@@ -79,6 +79,12 @@ describe("saved tool resources", () => {
         { type: "image", mimeType: "image/png" },
       ]);
       expect(result.__inspireMessageIndex).toBe(2);
+      // A generic tool can return several parts with equal bytes; Pi read returns one.
+      if (presentation !== "native")
+        (result.content as unknown[]).push({
+          type: "image",
+          mimeType: "image/png",
+        });
       if (presentation === "generic") {
         (messages[1]!.content as ToolCallContent[])[0]!.name = "image_tool";
         result.toolName = "image_tool";
@@ -121,16 +127,33 @@ describe("saved tool resources", () => {
         ).not.toBeNull();
       expect(screen.queryByText(/Image unavailable/)).not.toBeInTheDocument();
       fireEvent.click(preview);
-      expect(
-        within(screen.getByRole("dialog", { name: "Image preview" })).getByRole(
-          "img",
-          { name: alt },
-        ),
-      ).toHaveAttribute("src", "blob:saved-tool-image");
+      // Source ownership applies while decoding too; jsdom does not decode blobs.
+      const displayed = within(
+        screen.getByRole("dialog", { name: "Image preview" }),
+      ).getByRole("img", { hidden: true });
+      expect(displayed).toHaveAttribute("src", "blob:saved-tool-image");
+      expect(displayed).toHaveAttribute("alt", alt);
+      if (presentation !== "native") {
+        const navigation = within(
+          screen.getByRole("dialog", { name: "Image preview" }),
+        ).getByRole("group", { name: "Image navigation" });
+        expect(navigation).toHaveTextContent("1 / 2");
+        fireEvent.click(
+          within(navigation).getByRole("button", { name: "Next image" }),
+        );
+        expect(navigation).toHaveTextContent("2 / 2");
+        expect(load).toHaveBeenCalledWith(
+          fixture.record.id,
+          fixture.page.viewId,
+          `${fixture.page.viewId}\u0000${fixture.page.incarnation ?? ""}`,
+          "pi-embedded://2/2",
+          expect.any(AbortSignal),
+        );
+      }
       unmount();
-      expect(load.mock.calls[0]![4].aborted).toBe(true);
+      for (const call of load.mock.calls) expect(call[4].aborted).toBe(true);
       expect(revoke).toHaveBeenCalledWith("blob:saved-tool-image");
-      expect(create).toHaveBeenCalledTimes(1);
+      expect(create).toHaveBeenCalledTimes(presentation === "native" ? 1 : 2);
     },
   );
 

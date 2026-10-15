@@ -29,6 +29,7 @@ import { messageCopyContent } from "../message-copy";
 import { store } from "../store";
 import { hasActiveModal } from "../use-modal-focus";
 import { CopyAction } from "./CopyAction";
+import { ImageGallery } from "./ImageGallery";
 import { ImagePreview, PersistedImage } from "./ImagePreview";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { useDynamicActivityGroup } from "./transcript-activity";
@@ -167,29 +168,31 @@ export const UserBubble = memo(function UserBubble({
         }
       >
         {images.length > 0 ? (
-          <div
-            className="user-bubble__images"
-            role="group"
-            aria-label="Attached images"
-          >
-            {images.map((image) =>
-              "reference" in image ? (
-                <PersistedImage
-                  key={image.key}
-                  sessionId={sessionId}
-                  viewId={viewId}
-                  projectionKey={projectionKey}
-                  reference={image.reference}
-                />
-              ) : (
-                <ImagePreview
-                  key={image.key}
-                  src={image.src}
-                  className="image-preview--message"
-                />
-              ),
-            )}
-          </div>
+          <ImageGallery>
+            <div
+              className="user-bubble__images"
+              role="group"
+              aria-label="Attached images"
+            >
+              {images.map((image) =>
+                "reference" in image ? (
+                  <PersistedImage
+                    key={image.key}
+                    sessionId={sessionId}
+                    viewId={viewId}
+                    projectionKey={projectionKey}
+                    reference={image.reference}
+                  />
+                ) : (
+                  <ImagePreview
+                    key={image.key}
+                    src={image.src}
+                    className="image-preview--message"
+                  />
+                ),
+              )}
+            </div>
+          </ImageGallery>
         ) : null}
         {text ? <RichText text={text} variant="user" /> : null}
       </div>
@@ -781,19 +784,21 @@ export function PendingQueueGroups({
                       </pre>
                     ) : null}
                     {entry.imageAttachmentIds?.length ? (
-                      <div
-                        className="pending-group__images"
-                        role="group"
-                        aria-label={`${entry.imageAttachmentIds.length} ${entry.imageAttachmentIds.length === 1 ? "image" : "images"}`}
-                      >
-                        {entry.imageAttachmentIds.map((id, imageIndex) => (
-                          <PendingImage
-                            key={id}
-                            id={id}
-                            alt={`Pending ${group.label.toLowerCase()} item ${index + 1} image ${imageIndex + 1}`}
-                          />
-                        ))}
-                      </div>
+                      <ImageGallery>
+                        <div
+                          className="pending-group__images"
+                          role="group"
+                          aria-label={`${entry.imageAttachmentIds.length} ${entry.imageAttachmentIds.length === 1 ? "image" : "images"}`}
+                        >
+                          {entry.imageAttachmentIds.map((id, imageIndex) => (
+                            <PendingImage
+                              key={id}
+                              id={id}
+                              alt={`Pending ${group.label.toLowerCase()} item ${index + 1} image ${imageIndex + 1}`}
+                            />
+                          ))}
+                        </div>
+                      </ImageGallery>
                     ) : entry.imageCount ? (
                       <span className="pending-group__image-count">
                         <ImageIcon size={13} aria-hidden />
