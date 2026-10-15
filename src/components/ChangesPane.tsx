@@ -5,7 +5,6 @@ import {
   FileText,
   GitBranch,
   History,
-  Loader2,
   RotateCw,
 } from "lucide-react";
 import {
@@ -35,6 +34,7 @@ import { ContextPaneState } from "./ContextPaneState";
 import { ContextSplitBody } from "./ContextSplitBody";
 import type { ContextPaneView } from "./context-pane-view";
 import { PathCopyButton, ResourcePreviewContent } from "./FilePreview";
+import { PiLoader } from "./PiLoader";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 
 function selectedChange(
@@ -281,7 +281,7 @@ function ChangesIndex({ state }: { state: ContextPaneView }) {
   if (!status && state.gitStatusLoading)
     return (
       <ContextPaneState
-        icon={<Loader2 className="spin" size={17} aria-hidden />}
+        icon={<PiLoader size={17} aria-hidden />}
         title="Reading Git status"
         hint="Inspecting the active workspace…"
       />
@@ -514,7 +514,7 @@ function ChangesDetail({
   } else if (!diffView || diffView.status === "loading") {
     content = (
       <ContextPaneState
-        icon={<Loader2 className="spin" size={17} aria-hidden />}
+        icon={<PiLoader size={17} aria-hidden />}
         title="Loading source"
         hint={path ?? "Reading Git changes…"}
       />

@@ -3,29 +3,22 @@ import {
   EyeOff,
   Folder,
   FolderOpen,
-  Loader2,
   Pin,
   PinOff,
   Trash2,
 } from "lucide-react";
 import { memo } from "react";
 import {
-  isBusyRunState,
   projectNameFromCwd,
-  type SessionIndicator,
   type SessionSummary,
 } from "../../shared/contracts";
+import { presentSessionActivity } from "../session-activity-presentation";
 import { sessionSearchMatchRanges } from "../session-search-presentation";
 import { shallowEqual, store, useAppState } from "../store";
 import { compactAge, parentSegment, type SessionGroup } from "./nav-model";
+import { PiLoader } from "./PiLoader";
+import { PiStatus } from "./PiStatus";
 import { SearchMatchText } from "./SearchMatchText";
-
-const INDICATOR_LABELS: Record<SessionIndicator, string> = {
-  running: "Working",
-  completed: "Completed",
-  failed: "Failed",
-  attention: "Needs recovery",
-};
 
 function searchParentContext(cwd: string, query: string): string {
   const parent = parentSegment(cwd);
@@ -85,28 +78,13 @@ export const SessionRow = memo(function SessionRow({
   const selected = session.id === selectedSessionId;
   const opening = openingSessionId === session.id;
   const hidden = individuallyHidden || projectHidden;
-  const conflicted = runtimeStatus?.runState === "conflict";
-  const managedBusy = runtimeStatus
-    ? isBusyRunState(runtimeStatus.runState)
-    : false;
-  const external = !managedBusy && !conflicted ? externalActivity : undefined;
-  const indicator =
-    external === "working"
-      ? "running"
-      : external === "blocked"
-        ? "attention"
-        : external === "idle"
-          ? undefined
-          : runtimeStatus?.indicator;
-  const externalLabel =
-    external === "working"
-      ? "Working in Pi"
-      : external === "blocked"
-        ? "Waiting for input in Pi"
-        : external === "idle"
-          ? "Idle in Pi"
-          : null;
-  const busy = managedBusy || externalActivity === "working";
+  const {
+    conflicted,
+    indicator,
+    externalLabel,
+    busy,
+    label: indicatorLabel,
+  } = presentSessionActivity(runtimeStatus, externalActivity);
   const deleteDisabled =
     active ||
     opening ||
@@ -135,9 +113,7 @@ export const SessionRow = memo(function SessionRow({
         ? null
         : indicator
       : (indicator ?? null);
-  const attentionLabel = attention
-    ? (externalLabel ?? INDICATOR_LABELS[attention])
-    : null;
+  const attentionLabel = attention ? indicatorLabel : null;
   const title = session.title || "New session";
   const titleMatches = sessionSearchMatchRanges(title, searchQuery);
   const projectName = projectNameFromCwd(session.cwd);
@@ -168,15 +144,29 @@ export const SessionRow = memo(function SessionRow({
               aria-label="Opening session"
               title="Opening session"
             >
-              <Loader2 size={12} className="spin" aria-hidden />
+              <PiLoader size={12} aria-hidden />
             </span>
           ) : attention ? (
             <span
-              className={`nav__row-dot nav__row-dot--${attention}`}
+              className={
+                attention === "attention"
+                  ? "nav__row-dot nav__row-dot--attention"
+                  : `nav__row-state nav__row-state--${attention}`
+              }
               role="img"
               aria-label={attentionLabel!}
               title={attentionLabel!}
-            />
+            >
+              {attention === "running" ? (
+                <PiLoader size={12} aria-hidden />
+              ) : attention === "completed" || attention === "failed" ? (
+                <PiStatus
+                  status={attention === "completed" ? "success" : "error"}
+                  size={12}
+                  aria-hidden
+                />
+              ) : null}
+            </span>
           ) : null}
           <span className="nav__row-name">
             <SearchMatchText text={title} ranges={titleMatches} />

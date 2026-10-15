@@ -487,7 +487,11 @@ export const SettingsContent = memo(function SettingsContent({
             <Section
               id="pi-settings"
               icon={<Terminal size={14} />}
-              title="Pi session settings"
+              title={
+                <>
+                  <span data-authored-case>Pi</span> session settings
+                </>
+              }
               description="Applies to the active session and asks Pi to update global settings. Project overrides may differ."
             >
               <SettingField

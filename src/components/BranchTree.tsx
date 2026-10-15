@@ -5,7 +5,6 @@ import {
   ChevronRight,
   GitBranch,
   History,
-  Loader2,
   Search,
 } from "lucide-react";
 import {
@@ -31,8 +30,9 @@ import {
   HistoryShellPreview,
   historyShellContent,
 } from "./HistoryShellPreview";
-import { ImagePreview } from "./ImagePreview";
 import { ImageGallery } from "./ImageGallery";
+import { ImagePreview } from "./ImagePreview";
+import { PiLoader } from "./PiLoader";
 import { RichText } from "./RichText";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 
@@ -548,7 +548,7 @@ export function BranchTree({
       <ContextPaneState
         icon={
           state.loading ? (
-            <Loader2 size={17} className="spin" aria-hidden />
+            <PiLoader size={17} aria-hidden />
           ) : (
             <AlertTriangle size={17} aria-hidden />
           )
@@ -603,11 +603,7 @@ export function BranchTree({
             }}
           />
           {reading ? (
-            <Loader2
-              size={13}
-              className="spin"
-              aria-label="Searching history"
-            />
+            <PiLoader size={13} aria-label="Searching history" />
           ) : null}
         </label>
         {routeLeaf && !searching ? (
@@ -927,15 +923,14 @@ export function BranchTree({
               </button>
             ) : reading ? (
               <p role="status">
-                <Loader2 size={14} className="spin" aria-hidden /> Loading
-                complete content…
+                <PiLoader size={14} aria-hidden /> Loading complete content…
               </p>
             ) : null}
           </div>
           <div className="history-detail__actions">
             {state.actionId ? (
               <p role="status">
-                <Loader2 size={14} className="spin" aria-hidden />
+                <PiLoader size={14} aria-hidden />
                 {summarizing
                   ? "Summarizing the conversation being left…"
                   : "Opening the conversation…"}

@@ -1,8 +1,9 @@
-import { AlertTriangle, Loader2, X } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { ContextPaneState } from "./ContextPaneState";
+import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText } from "./ProgressiveRichText";
 
 type Shortcut = string | string[] | { steps: (string | string[])[] };
@@ -243,7 +244,7 @@ export function CommandHelp({
             </>
           ) : (
             <ContextPaneState
-              icon={<Loader2 size={17} className="spin" aria-hidden />}
+              icon={<PiLoader size={17} aria-hidden />}
               title="Loading installed release notes…"
             />
           )}

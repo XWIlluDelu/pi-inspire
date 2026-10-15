@@ -1,7 +1,8 @@
-import { AlertTriangle, Loader2, Trash2, X } from "lucide-react";
+import { AlertTriangle, Trash2, X } from "lucide-react";
 import type { SessionSummary } from "../../shared/contracts";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
+import { PiLoader } from "./PiLoader";
 
 export function SessionDeleteDialog({
   session,
@@ -100,7 +101,7 @@ export function SessionDeleteDialog({
             aria-busy={deleting}
           >
             {deleting ? (
-              <Loader2 size={14} className="spin" aria-hidden />
+              <PiLoader size={14} aria-hidden />
             ) : !reviewRequired ? (
               <Trash2 size={14} aria-hidden />
             ) : null}

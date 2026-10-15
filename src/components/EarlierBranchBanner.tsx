@@ -1,6 +1,7 @@
-import { GitBranch, Loader2 } from "lucide-react";
+import { GitBranch } from "lucide-react";
 import { memo } from "react";
 import { shallowEqual, store, useAppState } from "../store";
+import { PiLoader } from "./PiLoader";
 
 /**
  * The transcript remains the primary context surface while inspecting an
@@ -46,7 +47,7 @@ export const EarlierBranchBanner = memo(function EarlierBranchBanner() {
           disabled={busy}
           onClick={() => void store.returnToLatestBranch()}
         >
-          {busy ? <Loader2 size={13} className="spin" aria-hidden /> : null}
+          {busy ? <PiLoader size={13} aria-hidden /> : null}
           Back to latest
         </button>
         <button

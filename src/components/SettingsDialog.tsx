@@ -1,7 +1,8 @@
-import { AlertTriangle, Loader2, X } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useModalFocus } from "../use-modal-focus";
 import { ContextPaneState } from "./ContextPaneState";
+import { PiLoader } from "./PiLoader";
 
 /** Static, inert placeholders keep the deferred body's columns and footer stable. */
 export function SettingsLoading({ onRetry }: { onRetry?: () => void }) {
@@ -40,7 +41,7 @@ export function SettingsLoading({ onRetry }: { onRetry?: () => void }) {
           <>
             <div className="settings__content">
               <div className="settings__loading-status" role="status">
-                <Loader2 size={14} className="spin" aria-hidden />
+                <PiLoader size={14} aria-hidden />
                 <span>Loading settings</span>
               </div>
               <div className="settings__card" aria-hidden="true">

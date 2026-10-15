@@ -334,16 +334,18 @@
 }
 
 .settings__section-title {
+  min-width: 0;
   margin: 0;
   color: var(--ink);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font: 500 var(--text-base)/var(--leading-ui) var(--font-label);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
 }
 
-/* Shared optical correction; field descriptions remain ordinary reading text. */
-.settings__section-title {
-  translate: 0 var(--ui-text-offset);
+.settings__section-title [data-authored-case] {
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .host-restart__actions .button {

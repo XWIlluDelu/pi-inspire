@@ -1,4 +1,4 @@
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import {
   createContext,
   useContext,
@@ -12,6 +12,7 @@ import { store } from "../store";
 import { useImageHistory } from "../use-image-history";
 import { ImageGalleryContext } from "./ImageGallery";
 import { ImageLightbox } from "./ImageLightbox";
+import { PiLoader } from "./PiLoader";
 
 export const EmbeddedImageOwnerContext = createContext<{
   sessionId: string;
@@ -134,9 +135,7 @@ export function ImagePreview({
         data-image-error={decodeError || undefined}
       >
         {image}
-        {!src && loading ? (
-          <Loader2 size={16} className="spin" aria-hidden />
-        ) : null}
+        {!src && loading ? <PiLoader size={16} aria-hidden /> : null}
         {failure ? <AlertTriangle size={16} aria-hidden /> : null}
       </button>
       {open && src ? (

@@ -3,7 +3,6 @@ import {
   Check,
   Command,
   GitBranch,
-  Loader2,
   PanelLeft,
   PanelRight,
   Settings as SettingsIcon,
@@ -28,6 +27,7 @@ import { gitChangeCount, gitHeadLabel } from "../git-presentation";
 import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
 import { ExtensionStatus } from "./ExtensionDisplays";
+import { PiLoader } from "./PiLoader";
 import { SessionActionsMenu } from "./SessionActionsMenu";
 
 const GENERIC_SESSION_HEADINGS = new Set(["Untitled session", "New session"]);
@@ -461,7 +461,7 @@ export const AppTopbar = memo(function AppTopbar({
                   {failure ? (
                     <AlertTriangle size={12} aria-hidden />
                   ) : (
-                    <Loader2 size={12} className="spin" aria-hidden />
+                    <PiLoader size={12} aria-hidden />
                   )}
                 </StatusChip>
               );

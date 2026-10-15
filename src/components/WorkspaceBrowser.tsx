@@ -2,7 +2,6 @@ import {
   AlertTriangle,
   ChevronRight,
   Folder,
-  Loader2,
   RefreshCw,
   Search,
   X,
@@ -29,6 +28,7 @@ import {
   useAppState,
 } from "../store";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
+import { PiLoader } from "./PiLoader";
 import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 
@@ -96,7 +96,7 @@ export function WorkspaceFileSearch() {
         }}
       />
       {state.workspaceSearchLoading ? (
-        <Loader2 size={12} className="spin" aria-label="Searching workspace" />
+        <PiLoader size={12} aria-label="Searching workspace" />
       ) : state.workspaceQuery ? (
         <button
           type="button"
@@ -265,7 +265,7 @@ export function WorkspaceTree({
     if (!entries || loading)
       return (
         <div className="workspace-tree__status" style={indent} role="status">
-          <Loader2 size={11} className="spin" aria-hidden /> Loading…
+          <PiLoader size={11} aria-hidden /> Loading…
         </div>
       );
     if (entries.length === 0 && !state.workspaceTruncatedDirs[dir])
@@ -401,7 +401,7 @@ export function WorkspaceSearchResults({
       ) : state.workspaceSearchLoading &&
         state.workspaceMatches.length === 0 ? (
         <div className="workspace-tree__status" role="status">
-          <Loader2 size={11} className="spin" aria-hidden /> Searching…
+          <PiLoader size={11} aria-hidden /> Searching…
         </div>
       ) : state.workspaceMatches.length === 0 ? (
         <div className="workspace-tree__status">

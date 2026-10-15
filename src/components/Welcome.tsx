@@ -2,7 +2,6 @@ import {
   ChevronRight,
   FolderOpen,
   FolderSearch,
-  Loader2,
   Paperclip,
   Send,
 } from "lucide-react";
@@ -36,6 +35,7 @@ import { ComposerInput } from "./ComposerInput";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { Dropdown } from "./Dropdown";
 import { ModelSelector } from "./ModelSelector";
+import { PiLoader } from "./PiLoader";
 import { ProjectFileChips, ProjectFilePicker } from "./ProjectFiles";
 import { relativeTime } from "./transcript-rows";
 import { BrandLogo, Wordmark } from "./Wordmark";
@@ -771,7 +771,7 @@ export const Welcome = memo(function Welcome({
             title="Start session"
           >
             {starting ? (
-              <Loader2 size={14} className="spin" aria-hidden />
+              <PiLoader size={14} aria-hidden />
             ) : (
               <Send size={14} aria-hidden />
             )}
@@ -822,9 +822,7 @@ export const Welcome = memo(function Welcome({
                 !hasInput ? "Add a message or attachment to start" : undefined
               }
             >
-              {starting ? (
-                <Loader2 size={13} className="spin" aria-hidden />
-              ) : null}
+              {starting ? <PiLoader size={13} aria-hidden /> : null}
               {starting
                 ? "Creating folder and starting…"
                 : "Create folder and start"}

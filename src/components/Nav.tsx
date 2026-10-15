@@ -3,7 +3,6 @@ import {
   EyeOff,
   Folder,
   Inbox,
-  Loader2,
   PanelLeft,
   Pin,
   Plus,
@@ -30,6 +29,7 @@ import { useModalFocus } from "../use-modal-focus";
 import { HiddenClearDialog } from "./HiddenClearDialog";
 import { ProjectGroup, SessionRow } from "./NavSessions";
 import { hiddenDeletionBlockReason, splitNavSections } from "./nav-model";
+import { PiLoader } from "./PiLoader";
 import { ScrollRail } from "./ScrollRail";
 import { SessionDeleteDialog } from "./SessionDeleteDialog";
 import { BrandLogo, Wordmark } from "./Wordmark";
@@ -546,7 +546,7 @@ export const Nav = memo(function Nav({
                 disabled
                 aria-busy="true"
               >
-                <Loader2 size={12} className="spin" aria-hidden />
+                <PiLoader size={12} aria-hidden />
                 {loadingSessionLabel}
               </button>
             ) : hasOlderSessions ? (
@@ -620,7 +620,7 @@ export const Nav = memo(function Nav({
               }
             >
               {clearingHidden ? (
-                <Loader2 size={12} className="spin" aria-hidden />
+                <PiLoader size={12} aria-hidden />
               ) : (
                 <Trash2 size={12} aria-hidden />
               )}

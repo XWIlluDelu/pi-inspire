@@ -57,6 +57,7 @@ import {
   loadTerminalUiSettings,
   type TerminalUiSettings,
 } from "../terminal-settings";
+import { PiLoader } from "./PiLoader";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 import { TerminalSettingsDialog } from "./TerminalSettingsDialog";
 import { TerminalView } from "./TerminalView";
@@ -1369,7 +1370,8 @@ export const TerminalPane = memo(function TerminalPane({
       </div>
 
       {loading && !catalog ? (
-        <div className="terminal-empty terminal-empty--loading">
+        <div className="terminal-empty terminal-empty--loading" role="status">
+          <PiLoader size={17} aria-hidden />
           Loading terminals…
         </div>
       ) : terminals.length === 0 ? (

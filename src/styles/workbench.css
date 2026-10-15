@@ -165,7 +165,7 @@ body.pane-resizing--vertical .nav {
   width: min(300px, calc(100% - 38px));
   flex: 0 1 300px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, .75fr) minmax(0, 1.5fr) minmax(0, 1.1fr) minmax(0, 1.2fr);
   align-items: center;
   padding: 2px;
   gap: 2px;
@@ -196,7 +196,10 @@ body.pane-resizing--vertical .nav {
   padding: 0 var(--space-1);
   background: transparent;
   color: var(--muted);
-  font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
+  font: 500 var(--text-base)/var(--leading-ui) var(--font-label);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
   text-align: center;
   cursor: pointer;
   transition:
@@ -239,16 +242,25 @@ body.pane-resizing--vertical .nav {
   height: 14px;
   padding: 0 3px;
   border-radius: var(--radius-pill);
-  font-family: var(--font-mono);
-  font-size: 10px;
+  font-family: var(--font-label);
+  font-size: var(--text-xs);
   font-weight: 600;
+  letter-spacing: 0;
   line-height: 1;
   background: var(--accent-tint);
   color: var(--accent-deep);
 }
 
 @container context-header (max-width: 360px) {
+  /* Keep the mode names readable; the exact Changes count remains in its title. */
   .ctx__mode-badge { display: none; }
+  .ctx__modes {
+    grid-template-columns: minmax(0, .75fr) minmax(0, 1.15fr) minmax(0, 1.1fr) minmax(0, 1.2fr);
+  }
+  .ctx__modes button {
+    font-size: 13px;
+    letter-spacing: 0.04em;
+  }
 }
 
 .segmented {

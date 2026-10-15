@@ -357,12 +357,13 @@ test("success and failure cues retain semantic color in tools and nested calls",
         .querySelector(".child-call__chevron")!
         .getBoundingClientRect();
       const body = detail.querySelector(".child-call__detail")!;
-      const plainStatus = element
-        .querySelector(".child-call > div.child-call__row .child-call__status")!
+      const plainName = element
+        .querySelector(".child-call > div.child-call__row .child-call__name")!
         .getBoundingClientRect();
       return {
-        statusOffset: plainStatus.left - status.left,
-        leading: arrow.right <= status.left,
+        nameColumnOffset: plainName.left - name.left,
+        leading: arrow.right <= name.left,
+        trailingStatus: name.right <= status.left,
         nameOffset:
           body.getBoundingClientRect().left +
           parseFloat(getComputedStyle(body).paddingLeft) -
@@ -371,7 +372,8 @@ test("success and failure cues retain semantic color in tools and nested calls",
       };
     });
     expect(alignment.leading).toBe(true);
-    expect(Math.abs(alignment.statusOffset)).toBeLessThanOrEqual(1);
+    expect(alignment.trailingStatus).toBe(true);
+    expect(Math.abs(alignment.nameColumnOffset)).toBeLessThanOrEqual(1);
     expect(Math.abs(alignment.nameOffset)).toBeLessThanOrEqual(1);
     expect(alignment.overflow).toBe(false);
   }

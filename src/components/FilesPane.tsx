@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, Loader2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft } from "lucide-react";
 import {
   type MutableRefObject,
   memo,
@@ -17,6 +17,7 @@ import { gitChangeForWorkspacePath, store } from "../store";
 import { ContextSplitBody } from "./ContextSplitBody";
 import type { ContextPaneView } from "./context-pane-view";
 import { FilePreview } from "./FilePreview";
+import { PiLoader } from "./PiLoader";
 import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
 import {
   selectedWorkspacePath,
@@ -197,7 +198,7 @@ function FileBrowser({
                 })}
                 {loading && recent.length === 0 ? (
                   <div className="files-browser__note" role="status">
-                    <Loader2 size={12} className="spin" aria-hidden /> Loading…
+                    <PiLoader size={12} aria-hidden /> Loading…
                   </div>
                 ) : error ? (
                   <button

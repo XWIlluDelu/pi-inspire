@@ -8,12 +8,12 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
+  Circle,
   ClipboardPaste,
   Copy,
   Eraser,
   Eye,
   Keyboard,
-  LoaderCircle,
   MessageSquareQuote,
   Monitor,
   RotateCcw,
@@ -75,6 +75,7 @@ import {
   terminalSelectionColor,
 } from "../terminal-theme";
 import { useCopied } from "../use-copied";
+import { PiLoader } from "./PiLoader";
 import { TerminalTextDialog } from "./TerminalTextDialog";
 import { TerminalTouchKeys } from "./TerminalTouchKeys";
 
@@ -956,7 +957,11 @@ export const TerminalView = memo(function TerminalView({
                 {descriptor.status === "exited" ? (
                   <Square size={12} aria-hidden />
                 ) : transport !== "connected" ? (
-                  <LoaderCircle size={14} aria-hidden />
+                  transport === "offline" ? (
+                    <Circle size={14} aria-hidden />
+                  ) : (
+                    <PiLoader size={14} aria-hidden />
+                  )
                 ) : writable ? (
                   <button
                     type="button"

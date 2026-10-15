@@ -1,4 +1,3 @@
-import { Loader2 } from "lucide-react";
 import {
   memo,
   type Ref,
@@ -32,6 +31,7 @@ import {
 import { transcriptProjectionKey } from "../transcript-projection-key";
 import { EarlierBranchBanner } from "./EarlierBranchBanner";
 import { EmbeddedImageOwnerContext } from "./ImagePreview";
+import { PiLoader } from "./PiLoader";
 import { PromptMap } from "./PromptMap";
 import { handleRichTextCopy } from "./rich-text-copy";
 import { ScrollRail } from "./ScrollRail";
@@ -573,7 +573,7 @@ export const Transcript = memo(function Transcript({
             <div className="transcript__older-sentinel">
               {loadingOlder || viewport.loadingEarlier ? (
                 <span className="transcript__older-status" role="status">
-                  <Loader2 size={13} className="spin" aria-hidden />
+                  <PiLoader size={13} aria-hidden />
                   Loading earlier messages…
                 </span>
               ) : olderError ? (

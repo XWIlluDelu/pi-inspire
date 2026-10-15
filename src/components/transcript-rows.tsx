@@ -4,7 +4,6 @@ import {
   CornerUpLeft,
   GitFork,
   Image as ImageIcon,
-  Loader2,
   Package,
   Trash2,
   X,
@@ -31,6 +30,7 @@ import { hasActiveModal } from "../use-modal-focus";
 import { CopyAction } from "./CopyAction";
 import { ImageGallery } from "./ImageGallery";
 import { ImagePreview, PersistedImage } from "./ImagePreview";
+import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { useDynamicActivityGroup } from "./transcript-activity";
 import { ActivityItemBoundary } from "./transcript-activity-visibility";
@@ -102,7 +102,7 @@ function MessageActions({
           }}
         >
           {forking ? (
-            <Loader2 size={13} className="spin" aria-hidden />
+            <PiLoader size={13} aria-hidden />
           ) : (
             <GitFork size={13} aria-hidden />
           )}
@@ -399,7 +399,7 @@ export const AssistantTurn = memo(function AssistantTurn({
       <div className="assistant-doc">
         {streaming && !hasVisibleContent ? (
           <div className="assistant-activity" role="status">
-            <Loader2 size={14} className="spin" aria-hidden />
+            <PiLoader size={14} aria-hidden />
             <span>Working…</span>
           </div>
         ) : dynamicTools && hasActivities ? (
@@ -706,7 +706,7 @@ export function PendingQueueGroups({
             onClick={() => void returnToComposer()}
           >
             {pendingAction === "recover" ? (
-              <Loader2 className="spin" size={13} aria-hidden />
+              <PiLoader size={13} aria-hidden />
             ) : (
               <CornerUpLeft size={13} aria-hidden />
             )}
