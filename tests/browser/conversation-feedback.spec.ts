@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import { conversationFeedbackMessages } from "../web/fixtures/conversation-feedback";
 import { openMockEventSession } from "./support/mock-host";
+import { textBaseline } from "./support/text-baseline";
 
 test.use({ serviceWorkers: "block", reducedMotion: "reduce" });
 
@@ -29,8 +30,9 @@ for (const touch of [false, true]) {
         })),
       );
       const checkpoint = page.locator(".context-checkpoint");
-      const error = page.getByRole("group", { name: "PI error" });
+      const error = page.getByRole("group", { name: "Pi error" });
       await expect(checkpoint).toContainText("History chunk ≈ 42,500 tokens");
+      await page.evaluate(() => document.fonts.ready);
       for (const width of [1440, 520, 480, 440, 390, 320]) {
         await page.setViewportSize({ width, height: 1000 });
         const alignment = await checkpoint.evaluate((el) => {
@@ -78,8 +80,6 @@ for (const touch of [false, true]) {
               0.5 -
               (groupChevron.left + groupChevron.right) / 2,
             metricWraps: metric.top >= title.bottom,
-            metricCenter:
-              (metric.top + metric.bottom - title.top - title.bottom) / 2,
             metricStart: metric.left - title.left,
             metricGap: metric.left - title.right,
           };
@@ -92,7 +92,15 @@ for (const touch of [false, true]) {
         if (alignment.metricWraps)
           expect(Math.abs(alignment.metricStart)).toBeLessThanOrEqual(1);
         else {
-          expect(Math.abs(alignment.metricCenter)).toBeLessThanOrEqual(1);
+          const [titleBaseline, metricBaseline] = await Promise.all([
+            checkpoint
+              .locator(".context-checkpoint__title")
+              .evaluate(textBaseline),
+            checkpoint
+              .locator(".context-checkpoint__metric")
+              .evaluate(textBaseline),
+          ]);
+          expect(Math.abs(titleBaseline - metricBaseline)).toBeLessThan(0.1);
           expect(alignment.metricGap).toBeGreaterThanOrEqual(4);
           expect(alignment.metricGap).toBeLessThanOrEqual(12);
         }
@@ -168,7 +176,8 @@ for (const touch of [false, true]) {
           (await notice
             .getByRole("button", { name: "Dismiss notification" })
             .boundingBox())!.height,
-        ).toBeGreaterThanOrEqual(32);
+          // Transformed notice DOMRects can report 31.999996 for a 32px target.
+        ).toBeGreaterThanOrEqual(31.99);
       const noticeLayout = await notice.evaluate((element) => {
         const head = element
           .querySelector(".notice__head")!

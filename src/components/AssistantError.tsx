@@ -12,10 +12,10 @@ export function AssistantError({ text }: { text: string }) {
     .join("");
   const hasDetails = preview.length < text.length;
   return (
-    <div className="assistant-error" role="group" aria-label="PI error">
+    <div className="assistant-error" role="group" aria-label="Pi error">
       <div className="assistant-error__head">
         <CircleAlert size={14} className="assistant-error__icon" aria-hidden />
-        <span className="assistant-error__label">PI error</span>
+        <span className="assistant-error__label">Pi error</span>
         <CopyAction
           text={text}
           label="Error message"

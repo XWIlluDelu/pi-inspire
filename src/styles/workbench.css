@@ -601,12 +601,12 @@ button.res__index-header--back:hover svg {
 }
 
 .res__index-summary--dirty {
-  color: var(--warning);
+  color: var(--warning-ink);
   background: color-mix(in srgb, var(--warning) 10%, transparent);
 }
 
 .res__index-summary--conflict {
-  color: var(--error);
+  color: var(--error-ink);
   background: color-mix(in srgb, var(--error) 12%, transparent);
   font-weight: 600;
 }
@@ -746,7 +746,7 @@ button.res__index-header--back:hover svg {
   border: 1px solid color-mix(in srgb, var(--warning) 24%, transparent);
   border-radius: var(--radius-xs);
   background: var(--warning-tint);
-  color: var(--warning);
+  color: var(--warning-ink);
   font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
   text-align: center;
 }
@@ -814,7 +814,7 @@ button.res__index-header--back:hover svg {
   padding: var(--space-2);
   border-top: 1px solid var(--hairline);
   background: var(--warning-tint);
-  color: var(--warning);
+  color: var(--warning-ink);
   font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
   text-align: center;
 }
@@ -997,7 +997,7 @@ button.res__more:hover {
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
   background: var(--warning-tint);
-  color: var(--warning);
+  color: var(--warning-ink);
   font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
 }
 
@@ -1193,7 +1193,7 @@ button.res__more:hover {
   padding: var(--space-2);
   border-top: 1px solid var(--hairline);
   background: var(--warning-tint);
-  color: var(--warning);
+  color: var(--warning-ink);
   font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
   text-align: center;
 }
@@ -1580,7 +1580,7 @@ button.res__more:hover {
 
 .token-gate input:focus-visible {
   outline: none;
-  border-color: var(--accent-deep);
+  border-color: var(--accent-focus);
   box-shadow: 0 0 0 3px var(--accent-tint);
 }
 

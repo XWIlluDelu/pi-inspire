@@ -185,7 +185,7 @@
 }
 
 .card__disclosure:focus-visible::after {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
 }
 
@@ -208,7 +208,7 @@
 }
 
 .card__header:hover .card__copy,
-.card__header:focus-within .card__copy {
+.card__header:has(:focus-visible) .card__copy {
   opacity: 1;
 }
 
