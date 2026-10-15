@@ -692,7 +692,9 @@ describe("navigation curation", () => {
     const { store } = await initStore();
 
     store.setTheme("dark");
-    await vi.waitFor(() => expect(store.getState().prefs.palette).toBe("hydrangea"));
+    await vi.waitFor(() =>
+      expect(store.getState().prefs.palette).toBe("hydrangea"),
+    );
 
     store.setPalette("chimonanthus");
     await vi.waitFor(() =>

@@ -430,6 +430,7 @@ export async function fixture(
   const observations: Observation[] = [];
   const nativeFetch = globalThis.fetch;
   vi.stubGlobal("window", {
+    location: new URL(baseUrl),
     setTimeout: globalThis.setTimeout,
     clearTimeout: globalThis.clearTimeout,
   });

@@ -322,11 +322,17 @@ test.describe("scalar default rows", () => {
       );
       const available = settings.locator(".models-available");
       const groupStart = await available
-        .locator(".model-picker__heading").first().evaluate((el) =>
-          el.getBoundingClientRect().left + Number.parseFloat(getComputedStyle(el).paddingLeft),
+        .locator(".model-picker__heading")
+        .first()
+        .evaluate(
+          (el) =>
+            el.getBoundingClientRect().left +
+            Number.parseFloat(getComputedStyle(el).paddingLeft),
         );
       const itemStart = (await available
-        .locator(".model-picker__name-text").first().boundingBox())!.x;
+        .locator(".model-picker__name-text")
+        .first()
+        .boundingBox())!.x;
       expect(Math.abs(groupStart - itemStart)).toBeLessThanOrEqual(1);
       if (width >= 540) {
         const emptyValue = (await defaults
@@ -337,7 +343,8 @@ test.describe("scalar default rows", () => {
         // The passive status must not squeeze its description into a narrow
         // column just to reserve the width of a dropdown that is not present.
         expect(
-          (await defaults.locator(".models-default-result").boundingBox())!.width,
+          (await defaults.locator(".models-default-result").boundingBox())!
+            .width,
         ).toBeLessThan(80);
       }
       expect(
@@ -394,7 +401,9 @@ test.describe("touch model editor", () => {
     const body = editor.locator(".models-form__body");
     await expect(search).toBeHidden();
     await expect(editor.getByLabel("Model ID", { exact: true })).toBeFocused();
-    const heading = await editor.locator(".models-editor__header h3").boundingBox();
+    const heading = await editor
+      .locator(".models-editor__header h3")
+      .boundingBox();
     const firstField = await body.locator("label").first().boundingBox();
     expect(Math.abs(heading!.x - firstField!.x)).toBeLessThanOrEqual(1);
     expect(await body.evaluate((el) => el.scrollTop)).toBe(0);

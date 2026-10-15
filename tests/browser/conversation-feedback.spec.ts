@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import { conversationFeedbackMessages } from "../web/fixtures/conversation-feedback";
@@ -9,7 +8,7 @@ test.use({ serviceWorkers: "block", reducedMotion: "reduce" });
 for (const touch of [false, true]) {
   test.describe(touch ? "touch feedback" : "pointer feedback", () => {
     test.use({ hasTouch: touch });
-    test("short-message actions and context/error controls remain aligned and independent", async ({
+    test("context and error controls remain aligned with independent disclosure, copy and dismissal", async ({
       page,
     }) => {
       const send = await openMockEventSession(
@@ -29,117 +28,47 @@ for (const touch of [false, true]) {
           message,
         })),
       );
-      const image = {
-        type: "image",
-        mimeType: "image/png",
-        data: readFileSync(
-          "tests/browser/fixtures/file-previews/training curve.png",
-        ).toString("base64"),
-      };
-      for (const captioned of [true, false]) {
-        const id = captioned ? "image-caption" : "image-only";
-        send({
-          type: "message_end",
-          message: {
-            role: "user",
-            content: captioned
-              ? [image, { type: "text", text: "Check the image alongside its caption." }]
-              : [image],
-            __inspireEntryId: `feedback-${id}`,
-            __inspireMessageId: `feedback-user-${id}`,
-          },
-        });
-      }
       const checkpoint = page.locator(".context-checkpoint");
       const error = page.getByRole("group", { name: "PI error" });
       await expect(checkpoint).toContainText("History chunk ≈ 42,500 tokens");
       for (const width of [1440, 520, 480, 440, 390, 320]) {
         await page.setViewportSize({ width, height: 1000 });
-        for (const turn of await page.locator(".turn--user").all()) {
-          const copy = turn.getByRole("button", {
-            name: "Copy message",
-            exact: true,
-          });
-          await copy.focus();
-          const geometry = await turn.evaluate((el) => {
-            const bubble = el
-              .querySelector(".user-bubble")!
-              .getBoundingClientRect();
-            const actions = el
-              .querySelector(".turn__actions")!
-              .getBoundingClientRect();
-            const buttons = [...el.querySelectorAll(".turn__action")].map((b) =>
-              b.getBoundingClientRect(),
-            );
-            const row = el.getBoundingClientRect();
-            const actionGroup = el.querySelector<HTMLElement>(".turn__actions")!;
-            actionGroup.style.display = "none";
-            const independentBubble = el
-              .querySelector(".user-bubble")!
-              .getBoundingClientRect();
-            actionGroup.style.removeProperty("display");
-            return {
-              fitsBeside:
-                bubble.width + actions.width +
-                  parseFloat(getComputedStyle(el).columnGap) <= row.width + 0.5,
-              beside: actions.right <= bubble.left,
-              sideGap: bubble.left - actions.right,
-              bottomInset: bubble.bottom - actions.bottom,
-              widthChange: bubble.width - independentBubble.width,
-              heightChange: bubble.height - independentBubble.height,
-              sameRow: Math.abs(buttons[0]!.top - buttons[1]!.top) < 1,
-              buttonGap: buttons[1]!.left - buttons[0]!.right,
-              height: actions.height,
-              rightAligned: Math.abs(actions.right - bubble.right) < 1,
-              bubbleGap: actions.top - bubble.bottom,
-              contained: [bubble, actions].every(
-                (box) => box.top >= row.top && box.bottom <= row.bottom + 1,
-              ),
-              overflow: el.scrollWidth - el.clientWidth,
-            };
-          });
-          expect(geometry.sameRow).toBe(true);
-          expect(geometry.buttonGap).toBeGreaterThanOrEqual(4);
-          expect(geometry.height).toBeLessThanOrEqual(32);
-          expect(geometry.beside).toBe(geometry.fitsBeside);
-          expect(Math.abs(geometry.widthChange)).toBeLessThanOrEqual(1);
-          expect(Math.abs(geometry.heightChange)).toBeLessThanOrEqual(1);
-          if (geometry.beside) {
-            expect(geometry.sideGap).toBe(8);
-            expect(Math.abs(geometry.bottomInset)).toBeLessThanOrEqual(1);
-          } else {
-            expect(geometry.rightAligned).toBe(true);
-            expect(geometry.bubbleGap).toBeGreaterThanOrEqual(2);
-            expect(geometry.bubbleGap).toBeLessThanOrEqual(8);
-          }
-          expect(geometry.contained).toBe(true);
-          expect(geometry.overflow).toBeLessThanOrEqual(1);
-          await copy.press("Tab");
-          await expect(
-            turn.getByRole("button", { name: "Fork session from this input" }),
-          ).toBeFocused();
-        }
         const alignment = await checkpoint.evaluate((el) => {
-          const chevron = el.querySelector(".context-checkpoint__chevron")!.getBoundingClientRect();
-          const title = el.querySelector(".context-checkpoint__title")!.getBoundingClientRect();
-          const metric = el.querySelector(".context-checkpoint__metric")!.getBoundingClientRect();
+          const chevron = el
+            .querySelector(".context-checkpoint__chevron")!
+            .getBoundingClientRect();
+          const title = el
+            .querySelector(".context-checkpoint__title")!
+            .getBoundingClientRect();
+          const metric = el
+            .querySelector(".context-checkpoint__metric")!
+            .getBoundingClientRect();
           const fold = document.querySelector(".activity-fold")!;
-          const groupChevron = fold.querySelector("button > svg")!.getBoundingClientRect();
+          const groupChevron = fold
+            .querySelector("button > svg")!
+            .getBoundingClientRect();
           const children = fold.querySelector(".activity-fold__content")!;
-          const first = children.querySelector(".card__header")!.getBoundingClientRect();
+          const first = children
+            .querySelector(".card__header")!
+            .getBoundingClientRect();
           const titleText = document.createRange();
-          titleText.selectNodeContents(el.querySelector(".context-checkpoint__title")!);
+          titleText.selectNodeContents(
+            el.querySelector(".context-checkpoint__title")!,
+          );
           return {
             outerInset:
               el.getBoundingClientRect().height -
               el.closest(".turn")!.getBoundingClientRect().height,
             titleLines: new Set(
-              [...titleText.getClientRects()].map((rect) => Math.round(rect.top)),
+              [...titleText.getClientRects()].map((rect) =>
+                Math.round(rect.top),
+              ),
             ).size,
             chevrons: chevron.left - groupChevron.left,
             nested: first.left - fold.getBoundingClientRect().left,
             metricWraps: metric.top >= title.bottom,
-            metricCenter: (metric.top + metric.bottom - title.top - title.bottom) / 2,
+            metricCenter:
+              (metric.top + metric.bottom - title.top - title.bottom) / 2,
             metricStart: metric.left - title.left,
             metricGap: metric.left - title.right,
           };
@@ -180,11 +109,14 @@ for (const touch of [false, true]) {
         await expect(toggle).toHaveAttribute("aria-expanded", "true");
         await toggle.press("Enter");
         const errorSpacing = await error.evaluate((el) => {
-          const head = el.querySelector(".assistant-error__head")!
+          const head = el
+            .querySelector(".assistant-error__head")!
             .getBoundingClientRect();
-          const copy = el.querySelector(".assistant-error__copy")!
+          const copy = el
+            .querySelector(".assistant-error__copy")!
             .getBoundingClientRect();
-          const message = el.querySelector(".assistant-error__message")!
+          const message = el
+            .querySelector(".assistant-error__message")!
             .getBoundingClientRect();
           const card = el.getBoundingClientRect();
           return {

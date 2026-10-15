@@ -29,7 +29,7 @@ import { ActivityItemVisibilityProvider } from "./transcript-activity-visibility
 
 const COMPACT_ACTIVITY_CARD_LIMIT = 24;
 
-export type ActivityTelemetryItem = {
+type ActivityTelemetryItem = {
   id: string;
   kind: "thinking" | "tool";
   label?: string;
@@ -39,7 +39,7 @@ export type ActivityTelemetryItem = {
   deferred?: boolean;
 };
 
-export type ActivityFoldPresentation = "expanded" | "compact" | "collapsed";
+type ActivityFoldPresentation = "expanded" | "compact" | "collapsed";
 
 function ActivityFoldDots({ active }: { active: boolean }) {
   return (

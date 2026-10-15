@@ -38,10 +38,12 @@ for (const width of [1280, 390, 320]) {
       const sharedInsets = await page
         .getByRole("dialog", { name: "Settings", exact: true })
         .evaluate((el) =>
-          [".settings__header", ".settings__content", ".settings__footer"].map((selector) => {
-            const style = getComputedStyle(el.querySelector(selector)!);
-            return [style.paddingLeft, style.paddingRight];
-          }),
+          [".settings__header", ".settings__content", ".settings__footer"].map(
+            (selector) => {
+              const style = getComputedStyle(el.querySelector(selector)!);
+              return [style.paddingLeft, style.paddingRight];
+            },
+          ),
         );
       await page
         .getByRole("button", { name: "Close settings", exact: true })
@@ -49,7 +51,11 @@ for (const width of [1280, 390, 320]) {
       const settings = await openTerminalSettings(page);
       expect(
         await settings.evaluate((el) =>
-          [".terminal-settings__header", ".terminal-settings__body", ".terminal-settings__footer"].map((selector) => {
+          [
+            ".terminal-settings__header",
+            ".terminal-settings__body",
+            ".terminal-settings__footer",
+          ].map((selector) => {
             const style = getComputedStyle(el.querySelector(selector)!);
             return [style.paddingLeft, style.paddingRight];
           }),
@@ -61,8 +67,11 @@ for (const width of [1280, 390, 320]) {
           .evaluateAll((fields) =>
             fields.map((field) => {
               const label = field
-                .querySelector(".settings__field-label")!.getBoundingClientRect();
-              const control = field.querySelector(".segmented")!.getBoundingClientRect();
+                .querySelector(".settings__field-label")!
+                .getBoundingClientRect();
+              const control = field
+                .querySelector(".segmented")!
+                .getBoundingClientRect();
               return {
                 x: control.x,
                 width: control.width,
@@ -71,7 +80,7 @@ for (const width of [1280, 390, 320]) {
             }),
           );
         expect(choices).toHaveLength(2);
-        expect(choices.every(choice => choice.belowLabel)).toBe(true);
+        expect(choices.every((choice) => choice.belowLabel)).toBe(true);
         expect(choices[0]!.x).toBe(choices[1]!.x);
         expect(choices[0]!.width).toBe(choices[1]!.width);
         const frame = (await settings.boundingBox())!;

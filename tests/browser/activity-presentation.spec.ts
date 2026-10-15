@@ -41,10 +41,19 @@ test("the full activity header discloses content with Copy beside its text", asy
           element.querySelector(".card__disclosure")!.getBoundingClientRect()
             .right,
         bodyIndent: body.left - icon.left,
-        readingOffset: body.left
-          + Number.parseFloat(getComputedStyle(element.parentElement!.querySelector(".card__body")!).paddingLeft)
-          + Number.parseFloat(getComputedStyle(element.parentElement!.querySelector(".card__body")!).borderLeftWidth)
-          - element.querySelector(".card__label")!.getBoundingClientRect().left,
+        readingOffset:
+          body.left +
+          Number.parseFloat(
+            getComputedStyle(
+              element.parentElement!.querySelector(".card__body")!,
+            ).paddingLeft,
+          ) +
+          Number.parseFloat(
+            getComputedStyle(
+              element.parentElement!.querySelector(".card__body")!,
+            ).borderLeftWidth,
+          ) -
+          element.querySelector(".card__label")!.getBoundingClientRect().left,
         shadow: getComputedStyle(element).boxShadow,
         overflow: element.scrollWidth > element.clientWidth + 1,
       };

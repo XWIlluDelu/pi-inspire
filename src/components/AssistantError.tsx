@@ -22,9 +22,8 @@ export function AssistantError({ text }: { text: string }) {
           className="assistant-error__copy"
         />
       </div>
-      <div
+      <section
         id={detailsId}
-        role={expanded ? "region" : undefined}
         aria-label={expanded ? "Error details" : undefined}
         tabIndex={expanded ? 0 : undefined}
         className={`assistant-error__message${expanded ? " assistant-error__message--expanded" : ""}`}
@@ -32,7 +31,7 @@ export function AssistantError({ text }: { text: string }) {
         {expanded || !hasDetails
           ? text
           : `${preview}${preview.length < firstParagraph.length ? "…" : ""}`}
-      </div>
+      </section>
       {hasDetails ? (
         <button
           type="button"

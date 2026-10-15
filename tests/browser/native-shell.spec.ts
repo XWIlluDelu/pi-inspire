@@ -119,9 +119,11 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
   await expect(card).toBeVisible();
   await expect(card.getByText("Running", { exact: true })).toBeVisible();
   const sectionSpacing = await card.evaluate((el) => {
-    const head = el.querySelector(".shell-execution__header")!
+    const head = el
+      .querySelector(".shell-execution__header")!
       .getBoundingClientRect();
-    const command = el.querySelector(".shell-execution__command")!
+    const command = el
+      .querySelector(".shell-execution__command")!
       .getBoundingClientRect();
     return { headerHeight: head.height, gap: command.top - head.bottom };
   });
