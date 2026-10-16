@@ -138,6 +138,14 @@ test("Files and Changes share the index boundary and preserve the selected file 
   await expect(resources.locator(".res__index-summary")).toHaveText(
     "1 working",
   );
+  await expect(resources.locator(".res__index-summary")).toHaveAttribute(
+    "title",
+    "1 working",
+  );
+  await expect(resources.locator(".res__index-title")).toHaveAttribute(
+    "title",
+    "mock/analysis",
+  );
   await expect(resources.locator(".changes__additions")).toHaveText("+1");
   await expect(resources.locator(".changes__deletions")).toHaveText("−1");
   await expect(

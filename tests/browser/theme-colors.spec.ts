@@ -45,8 +45,12 @@ const notices = [
   ["source-view__boundary", "file-canvas"],
   ["source-diff__boundary", "file-canvas"],
   ["changes__projection-note", "context"],
-  ["res__index-summary--dirty", "context"],
-  ["res__index-summary--conflict", "context"],
+  ["res__index-summary--clean", "stage"],
+  ["res__index-summary--dirty", "stage"],
+  ["changes__additions", "context"],
+  ["changes__deletions", "context"],
+  ["file-path-action file-path-action--copied", "stage"],
+  ["res__index-summary--conflict", "stage"],
 ];
 const controls = [
   ["primary", 4.5],

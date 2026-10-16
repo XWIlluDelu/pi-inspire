@@ -370,12 +370,19 @@ function ChangesIndexHeader({ state }: { state: ContextPaneView }) {
     : isClean
       ? "res__index-summary--clean"
       : "res__index-summary--dirty";
+  const headLabel = gitHeadLabel(status);
+  const summaryLabel = summary.length > 0 ? summary.join(" · ") : "Clean";
   return (
     <div className="res__index-header">
       <GitBranch size={13} className="res__index-branch-icon" aria-hidden />
-      <span className="res__index-title">{gitHeadLabel(status)}</span>
-      <span className={`res__index-summary ${summaryTone}`}>
-        {summary.length > 0 ? summary.join(" · ") : "Clean"}
+      <span className="res__index-title" title={headLabel ?? undefined}>
+        {headLabel}
+      </span>
+      <span
+        className={`res__index-summary ${summaryTone}`}
+        title={summaryLabel}
+      >
+        {summaryLabel}
       </span>
     </div>
   );
