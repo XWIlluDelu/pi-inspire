@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { openMockSession, pairedPage } from "./support/navigation";
-import { textMarkOffsets } from "./support/text-baseline";
+import { textBaseline, textMarkOffsets } from "./support/text-baseline";
 
 for (const width of [1440, 768, 390, 320]) {
   test(`structural labels retain balanced controls and readable content at ${width}px`, async ({
@@ -31,8 +31,8 @@ for (const width of [1440, 768, 390, 320]) {
     expect(
       await page.evaluate(
         () =>
-          document.fonts.check('500 14px "Rajdhani"') &&
-          document.fonts.check('600 14px "Rajdhani"'),
+          document.fonts.check('500 13px "Rajdhani"') &&
+          document.fonts.check('600 13px "Rajdhani"'),
       ),
     ).toBe(true);
     for (const name of ["Files", "Changes", "History", "Terminal"]) {
@@ -40,6 +40,16 @@ for (const width of [1440, 768, 390, 320]) {
       await expect(
         modes.getByRole("button", { name, exact: true }),
       ).toHaveAttribute("aria-pressed", "true");
+      const count = modes.locator(".ctx__mode-badge");
+      if (await count.isVisible()) {
+        const labelBaseline = await count
+          .locator("..")
+          .locator("span")
+          .first()
+          .evaluate(textBaseline);
+        const countBaseline = await count.evaluate(textBaseline);
+        expect(Math.abs(countBaseline - labelBaseline)).toBeLessThan(0.5);
+      }
       const items = await modes.locator("button").evaluateAll((elements) =>
         elements.map((button) => {
           const box = button.getBoundingClientRect();
