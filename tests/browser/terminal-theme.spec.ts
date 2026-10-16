@@ -170,7 +170,7 @@ for (const kind of ["none", "linear", "rectangular"] as const) {
       window.terminalThemeFixture.state(),
     );
     if (kind === "rectangular") {
-      const lines = before.text.split("\n");
+      const lines = before.text.split(/\r?\n/u);
       expect(lines).toHaveLength(3);
       expect(lines.every((line) => line.length <= 6)).toBe(true);
     } else expect(before.text).toBe(kind === "linear" ? "row 12" : "");

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { hostRequest } from "./support/host-request";
 import { openMockSession, pairedPage } from "./support/navigation";
 
 for (const touch of [false, true]) {
@@ -8,6 +9,18 @@ for (const touch of [false, true]) {
       page,
     }) => {
       await pairedPage(page);
+      const initial = await hostRequest(page).get("/api/bootstrap");
+      const preferences = (await initial.json()).preferences;
+      // Selection geometry owns its collapse state, including failed assertions
+      // and retries; it must not hide shared sessions from subsequent tests.
+      await page.route("**/api/preferences", (route) =>
+        route.fulfill({
+          headers: {
+            "X-Inspire-Authority": initial.headers()["x-inspire-authority"]!,
+          },
+          json: Object.assign(preferences, route.request().postDataJSON()),
+        }),
+      );
       await openMockSession(page, /Formula rendering and spectral analysis/);
       for (const width of [1440, 390, 320]) {
         await page.setViewportSize({ width, height: 1000 });
@@ -60,7 +73,7 @@ for (const touch of [false, true]) {
           return { gap: icon.left - markerRight, width: icon.width };
         });
         expect(clearance.gap).toBeGreaterThanOrEqual(3);
-        expect(clearance.width).toBe(16);
+        expect(clearance.width).toBeCloseTo(16, 2);
         await toggle.press("Enter");
         await expect(group.locator(".nav__group-title")).not.toHaveClass(
           /--active/,

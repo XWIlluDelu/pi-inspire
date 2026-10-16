@@ -41,7 +41,8 @@ test("the sans session title and mono workspace/status have balanced visible cen
     ".topbar__project-label",
     ".topbar__extension-text",
   ]) {
-    expect(Math.abs((await inkCenter(selector)) - title)).toBeLessThan(1);
+    // Canvas ink bounds vary by a pixel across native font rasterizers.
+    expect(Math.abs((await inkCenter(selector)) - title)).toBeLessThan(1.5);
   }
   const before = (await page.locator(".topbar__heading").boundingBox())!;
   await page
