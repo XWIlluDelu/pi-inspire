@@ -432,9 +432,25 @@ for (const viewport of [
         });
     }
 
-    // This fixture's visible code intersects the thumb vertically on a phone.
-    // Its trailing text must receive pointer/selection input, not the invisible grab band.
+    // Align the code with the thumb explicitly: previous conversations and font
+    // metrics must not decide whether this hit-testing scenario is exercised.
+    // Its trailing text must receive input, not the invisible grab band.
     if (viewport.width === 390) {
+      await log.evaluate((el) => {
+        const code = el.querySelector("pre")!.getBoundingClientRect();
+        const thumb = el
+          .parentElement!.querySelector(".srail__thumb")!
+          .getBoundingClientRect();
+        const range = el.scrollHeight - el.clientHeight;
+        const codeCenter =
+          el.scrollTop +
+          code.top -
+          el.getBoundingClientRect().top +
+          code.height / 2;
+        const thumbTravel = el.clientHeight - thumb.height;
+        el.scrollTop =
+          (codeCenter - thumb.height / 2) / (1 + thumbTravel / range);
+      });
       await expect
         .poll(() =>
           log.evaluate((el) => {

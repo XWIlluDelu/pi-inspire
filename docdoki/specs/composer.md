@@ -154,8 +154,9 @@ squeezing status/removal controls, and file chips do not stretch to adjacent ima
 Do not combine these projections or deduplicate distinct files by coincident metadata.
 
 Sent image thumbnails stay subordinate to the message: 4:3 previews grow from 104 × 78px on narrow
-screens to 160 × 120px on desktop. Staged attachment tiles remain 64 × 64px; neither preview size
-limits the full-image viewer.
+screens to 160 × 120px on desktop. Staged attachment tiles are 64 × 64px with a fine pointer and
+80 × 80px with a coarse pointer, keeping their preview center clear of the 32px corner removal
+target. Neither preview size limits the full-image viewer.
 
 Activating an image opens the shared focus-contained viewer. Its viewport is independent of fitted
 image dimensions, so small images, panoramas and long screenshots can expand into the available

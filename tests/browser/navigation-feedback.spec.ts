@@ -6,6 +6,7 @@ test.describe("cross-project touch rows", () => {
   test("Pinned retains a readable title above project and age", async ({
     page,
   }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
     await page.route("**/api/bootstrap**", async (route) => {
       const response = await route.fetch();
       const body = await response.json();

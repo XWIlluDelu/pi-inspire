@@ -11,8 +11,20 @@ test("deletes the visible idle session through one confirmation and returns to N
 }) => {
   await pairedPage(page);
   await openMockSession(page, /Calibration history fixture/);
-  const response = await hostRequest(page).get("/api/snapshot");
-  const id = (await response.json()).active.sessionId;
+  // Destructive tests own their persisted session; the shared History fixture
+  // must remain available to subsequent browser tests and retries.
+  const source = (await (await hostRequest(page).get("/api/snapshot")).json())
+    .active;
+  const created = await hostRequest(page).post("/api/branches/clone", {
+    data: {
+      sessionId: source.sessionId,
+      revision: source.transcriptPage.revision,
+    },
+  });
+  expect(created.ok()).toBe(true);
+  const clone = await created.json();
+  const id = clone.sessionId;
+  const name = clone.snapshot.active.sessionName;
   expect(
     (
       await hostRequest(page).patch("/api/preferences", {
@@ -23,7 +35,7 @@ test("deletes the visible idle session through one confirmation and returns to N
   await page.reload();
   await expect(
     page.getByRole("button", { name: /^Session actions:/ }),
-  ).toHaveText("Calibration history fixture");
+  ).toHaveText(name);
   const navigation = page.getByRole("button", {
     name: /^(Toggle|Expand|Collapse) navigation$/,
     exact: true,
@@ -36,8 +48,8 @@ test("deletes the visible idle session through one confirmation and returns to N
   const hidden = page.getByRole("button", { name: "Hidden", exact: true });
   if ((await hidden.getAttribute("aria-expanded")) !== "true")
     await hidden.click();
-  const remove = page.getByRole("button", {
-    name: 'Delete "Calibration history fixture"',
+  const remove = page.locator(".nav__group--hidden").getByRole("button", {
+    name: `Delete "${name}"`,
     exact: true,
   });
   await expect(remove).toBeEnabled();
