@@ -316,8 +316,11 @@ test.describe("touch image inspection", () => {
     expect(await page.evaluate(() => window.visualViewport!.scale)).toBe(1);
     const pinched = await geometry(image);
     expect(pinched.image.x + pinched.image.width / 2).toBeCloseTo(cx + 20, 0);
-    await touch("touchMove", [point(2, cx + 130, cy)]);
+    await touch("touchEnd", [point(1, cx - 90, cy)]);
     await touch("touchMove", [point(2, cx + 110, cy)]);
+    await expect
+      .poll(async () => (await geometry(image)).image.x)
+      .toBeCloseTo(pinched.image.x - 20, 0);
     expect((await geometry(image)).scale).toBeCloseTo(pinched.scale);
     await touch("touchEnd", []);
     await expect(dialog).toBeVisible();

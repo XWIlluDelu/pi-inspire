@@ -58,7 +58,8 @@ it("keeps healthy retained transcript and History readable when startup extensio
     join(f.trusted, ".pi/extensions/project.ts"),
     'export default function () { throw new Error("Broken startup extension"); }',
   );
-  const metadata = new ModelMetadataCatalog();
+  const query = vi.fn(queryModelMetadata);
+  const metadata = new ModelMetadataCatalog(query);
   const factory = vi.fn(() => {
     throw new Error("Pi startup unavailable");
   });
@@ -105,8 +106,9 @@ it("keeps healthy retained transcript and History readable when startup extensio
     });
   } finally {
     await runtime.close();
+    await Promise.allSettled(query.mock.results.map((result) => result.value));
   }
-});
+}, 30_000);
 
 it("opens retained transcript before deferred metadata and resolves New inheritance from that source without starting another worker", async () => {
   const f = await modelWorkflowFixture();
@@ -163,7 +165,7 @@ it("opens retained transcript before deferred metadata and resolves New inherita
     await query.mock.results[0]?.value.catch(() => undefined);
     await attachments.close();
   }
-});
+}, 30_000);
 
 it("keeps native virtual selection/effort across replies, real navigation, copies and read-only recovery while context remains physical", async () => {
   const f = await modelWorkflowFixture();

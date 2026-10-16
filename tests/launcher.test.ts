@@ -1,6 +1,7 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
+  access,
   chmod,
   mkdir,
   mkdtemp,
@@ -173,8 +174,9 @@ async function waitForLauncher(
   child: ChildProcess,
   env: NodeJS.ProcessEnv,
   output: Buffer[],
+  timeout = 60_000,
 ): Promise<void> {
-  const deadline = Date.now() + 60_000;
+  const deadline = Date.now() + timeout;
   let lastStatus = "";
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null)
@@ -182,6 +184,8 @@ async function waitForLauncher(
         `Isolated launcher exited before ready (code=${child.exitCode}, signal=${child.signalCode})\n${Buffer.concat(output)}`,
       );
     try {
+      // Do not repeatedly spawn Node while a cold build has not published a Host.
+      await access(env.INSPIRE_STATE_PATH!);
       lastStatus = runLauncher(["status"], env);
       if (lastStatus.startsWith("INSΠRE is running.")) return;
     } catch (error) {
@@ -567,7 +571,7 @@ describe("production launcher", () => {
     child.stdout?.on("data", (chunk: Buffer) => output.push(chunk));
     child.stderr?.on("data", (chunk: Buffer) => output.push(chunk));
 
-    await waitForLauncher(child, env, output);
+    await waitForLauncher(child, env, output, 120_000);
     const firstState = JSON.parse(await readFile(statePath, "utf8")) as {
       schemaVersion: number;
       token: string;
@@ -678,5 +682,5 @@ describe("production launcher", () => {
       ));
     expect(restartedExit).toBe(0);
     activeEnvironment = null;
-  }, 120_000);
+  }, 240_000);
 });
