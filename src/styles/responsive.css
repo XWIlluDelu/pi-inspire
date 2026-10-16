@@ -448,7 +448,7 @@ body.srail-dragging {
   }
 
   .notices {
-    top: calc(var(--window-titlebar-height) + var(--topbar-h) + var(--safe-top) + var(--space-2));
+    top: calc(var(--notice-header-bottom) + var(--space-2));
     right: max(var(--space-3), var(--safe-right));
     bottom: auto;
     width: min(

@@ -33,7 +33,7 @@ interface TranscriptDataControllerHost {
     preserveAppendHistory?: boolean,
   ): Promise<void>;
   handleAuthFailure(): void;
-  fail(message: string, severity?: "error" | "warning"): void;
+  notify(kind: "warning", message: string): void;
 }
 
 interface TranscriptScope {
@@ -357,11 +357,11 @@ export class TranscriptDataController {
       if (error instanceof ApiError && error.status === 401) {
         this.host.handleAuthFailure();
       } else if (!(error instanceof ApiError && error.status === 409)) {
-        this.host.fail(
+        this.host.notify(
+          "warning",
           error instanceof Error
             ? `Prompt history could not be loaded: ${error.message}`
             : "Prompt history could not be loaded",
-          "warning",
         );
       }
       return null;

@@ -890,15 +890,25 @@ export function App() {
                 </span>
               ) : null}
             </span>
-            {state.projectionConflict ? (
-              <button type="button" onClick={() => void store.abort()}>
-                Recover
-              </button>
-            ) : (
-              <button type="button" onClick={() => store.dismissError()}>
-                Dismiss
-              </button>
-            )}
+            <div className="banner__actions">
+              {state.projectionConflict ? (
+                <button type="button" onClick={() => void store.abort()}>
+                  Recover
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void store.refreshSession()}
+                  >
+                    Retry
+                  </button>
+                  <button type="button" onClick={() => store.dismissError()}>
+                    Dismiss
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         ) : null}
         {state.connection !== "open" && !state.error ? (
