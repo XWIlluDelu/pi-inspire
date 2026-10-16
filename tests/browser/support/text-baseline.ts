@@ -14,7 +14,7 @@ export function textBaseline(element: Element): number {
   return baseline;
 }
 
-/** Measure neighboring marks against the visible letters in one layout snapshot.
+/** Measure neighboring marks against the first line's visible letters in one layout snapshot.
  * Disclosure anchoring may scroll between separate browser evaluations. */
 export function textMarkOffsets(
   element: Element,
@@ -26,7 +26,7 @@ export function textMarkOffsets(
   const probe = document.createElement("span");
   probe.style.cssText =
     "display:inline-block;width:0;height:0;padding:0;margin:0;vertical-align:baseline";
-  line.append(...nodes, probe);
+  line.append(probe, ...nodes);
   label.append(line);
   const baseline = probe.getBoundingClientRect().top;
   label.replaceChildren(...nodes);

@@ -240,6 +240,8 @@ declaration.
   count in its title. Compact touch tabs are 34px tall, with adjacent 32px actions. Settings section
   icons remain outside the font-dependent heading line box. Activity matrices/disclosure arrows
   and Settings section icons align with the visible uppercase letters, not merely the line-box center.
+  A wrapped Settings heading keeps its icon beside the first line; its action stays independent
+  of the icon/title group rather than centering the icon between multiple lines.
   Navigation, file subsection headings, command-palette and completion/model-choice headings
   preserve authored casing and their established UI tiers. Technical identifiers retain their
   exact spelling; document typography is unchanged.
@@ -526,6 +528,10 @@ search autofocus, including in narrow windows. Explicit text actions such as Ren
 command editing still focus their input. Returning to the palette list follows the same device
 rule. Modal containment, nested portals, keyboard navigation and opener restoration remain intact;
 result updates and viewport resizing must not steal focus from a field the user has entered.
+
+Narrow Command Palette rows stack descriptions below their titles on the same left edge;
+rows without a description keep their title vertically centered within the touch target.
+Wide palettes retain their compact, right-aligned secondary column.
 
 ## Action-button presentation
 
