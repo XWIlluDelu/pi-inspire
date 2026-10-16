@@ -4,6 +4,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -22,6 +23,11 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { PiSessionActivity } from "../../server/pi-session-activity.js";
 import type { SessionRecord } from "../../server/session-catalog.js";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...fs, rename: vi.fn(fs.rename) };
+});
 
 const paths = vi.hoisted(() => ({ home: "" }));
 vi.mock("node:os", async (importOriginal) => ({
@@ -234,10 +240,16 @@ describe("optional native Pi activity reporter", () => {
     const { emit, records, setSession, context } = reporter();
     await emit("session_start");
     const first = (await records())[0]!;
+    const publishes = vi.mocked(rename);
+    expect(publishes).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(ACTIVITY_HEARTBEAT_MS);
-    await vi.waitFor(async () => {
-      expect((await records())[0]!.updatedAt).toBeGreaterThan(first.updatedAt);
-    });
+    // Fake-clock advancement does not settle real I/O. Await the atomic publish
+    // rather than repeatedly opening its target during Windows replacement.
+    await vi.waitFor(() => expect(publishes).toHaveBeenCalledTimes(2));
+    await publishes.mock.results[1]!.value;
+    expect((await records())[0]!.updatedAt).toBe(
+      first.updatedAt + ACTIVITY_HEARTBEAT_MS,
+    );
     setSession(session("two", join(paths.home, "two.jsonl")));
     await emit("session_start");
     expect(await records()).toMatchObject([
