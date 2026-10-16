@@ -1375,7 +1375,7 @@
   border-radius: var(--radius-control);
 }
 
-.extension-dialog .dialog__options .picker__row[aria-selected="true"] {
+.extension-dialog .dialog__options .picker__row:focus-visible {
   background: var(--bg-surface);
   box-shadow: none;
   color: var(--ink);
@@ -1386,9 +1386,16 @@
   flex: 1;
 }
 
-.extension-dialog .dialog__options .picker__row > svg {
-  flex: 0 0 auto;
-  color: var(--accent-deep);
+@media (hover: hover) {
+  .extension-dialog .dialog__options .picker__row:hover:not(:disabled) {
+    background: var(--bg-control);
+    color: var(--ink);
+  }
+}
+
+.extension-dialog .dialog__options .picker__row:active:not(:disabled) {
+  background: var(--bg-control);
+  color: var(--ink);
 }
 
 .extension-dialog .dialog__input,
@@ -1405,12 +1412,8 @@
   overflow-wrap: anywhere;
 }
 
-.dialog__options .picker__row[aria-selected="true"] {
-  background: var(--accent-tint);
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-
 .dialog__options .picker__row:focus-visible {
+  background: var(--bg-surface);
   outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
 }

@@ -1,4 +1,3 @@
-import { hostRequest } from "./support/host-request";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test, type WebSocketRoute } from "@playwright/test";
 import type {
@@ -8,6 +7,7 @@ import type {
 } from "../../shared/contracts";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { clipboardLines } from "./support/clipboard";
+import { hostRequest } from "./support/host-request";
 import { moveCaretToEnd } from "./support/native-input";
 import { pairedPage } from "./support/navigation";
 
@@ -248,6 +248,19 @@ test("native dialog keyboard/pointer flow, deadline reconnect and content-first 
   await expect(
     page.getByRole("option", { name: "Documentation", exact: true }),
   ).toBeFocused();
+  await expect(page.getByRole("listbox").locator("svg")).toHaveCount(0);
+  const hoverChoice = page.getByRole("option", { name: "Tests", exact: true });
+  const restingBackground = await hoverChoice.evaluate(
+    (el) => getComputedStyle(el).backgroundColor,
+  );
+  await hoverChoice.hover();
+  await expect
+    .poll(() =>
+      hoverChoice.evaluate((el) => getComputedStyle(el).backgroundColor),
+    )
+    .not.toBe(restingBackground);
+  await page.mouse.move(0, 0);
+  expect(fixture.responses).toHaveLength(0);
   await page.keyboard.press("ArrowDown");
   await expect(code).toBeFocused();
   await expect(code).toHaveAttribute("aria-selected", "true");

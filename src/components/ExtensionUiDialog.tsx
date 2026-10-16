@@ -1,4 +1,4 @@
-import { Check, Puzzle } from "lucide-react";
+import { Puzzle } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import type {
   ExtensionUiRequest,
@@ -85,7 +85,6 @@ function Selection({
           }
         >
           <span className="extension-dialog__choice">{option}</span>
-          {selected === index ? <Check size={15} aria-hidden /> : null}
         </button>
       ))}
     </div>
