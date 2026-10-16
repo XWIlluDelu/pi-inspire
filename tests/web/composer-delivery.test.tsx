@@ -135,7 +135,10 @@ describe("composer delivery and artifacts", () => {
     typeDraft("keep me");
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
-    await waitFor(() => expect(store.getState().error).toBe("boom"));
+    await waitFor(() =>
+      expect(store.getState().notices.at(-1)?.text).toBe("boom"),
+    );
+    expect(store.getState().error).toBeNull();
     expect(screen.getByLabelText("Message")).toHaveValue("keep me");
     expect(screen.getByText("notes.txt")).toBeInTheDocument();
     host.promptFails = false;

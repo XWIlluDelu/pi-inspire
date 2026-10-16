@@ -1012,6 +1012,11 @@
 }
 
 @media (pointer: coarse) {
+  .attachment--image {
+    /* Keep the preview center clear of its 32px corner removal target. */
+    width: 80px;
+    height: 80px;
+  }
   .attachment:not(.attachment--image) {
     min-height: 32px;
   }

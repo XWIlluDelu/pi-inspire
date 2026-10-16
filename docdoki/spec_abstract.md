@@ -33,6 +33,7 @@ and untracked.
 
 | State | Work |
 | --- | --- |
+| In progress | Complete cross-platform CI and replace the interim `v0.5.5` tag with the validated revision; [[follow-release-readiness-2026-10-16]]. |
 | Implemented | Native session, input, model/authentication, compaction and branch workflows; MCP file configuration; rich conversation readers; Files/Changes; project terminals; responsive layouts and theme families. See [README](../README.md) for the capability overview. |
 | Blocked on Pi | Worker-owned settings-save results, resource omission diagnostics, request-attributed dialog cancellation, complete loaded-extension inventory, generic argument completion and structured current-worker MCP management. [[pi-capability-gaps]] identifies the missing interfaces. |
 | Deferred | Holistic Files layout work in [[file-browsing]]. The current layout remains the implemented contract. |

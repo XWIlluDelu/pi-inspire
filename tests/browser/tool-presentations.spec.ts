@@ -108,7 +108,8 @@ for (const mobile of [false, true]) {
       expect(phase.height).toBeLessThan(22);
       expect(detail.y - (phase.y + phase.height)).toBeGreaterThanOrEqual(4);
       expect(detail.y - (phase.y + phase.height)).toBeLessThanOrEqual(12);
-      expect(detail.height).toBeGreaterThanOrEqual(mobile ? 32 : 28);
+      // DOMRect subtraction can fall just below the CSS size at subpixel precision.
+      expect(detail.height).toBeGreaterThanOrEqual((mobile ? 32 : 28) - 1 / 64);
       expect(
         await card.locator(".card__body").evaluate((el) => {
           const s = getComputedStyle(el);

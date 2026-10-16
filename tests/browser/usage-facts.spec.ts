@@ -29,7 +29,7 @@ for (const width of [1280, 390, 320]) {
       page,
     }) => {
       let source!: ActiveSnapshot;
-      let envelope!: { type: string };
+      let envelope!: { type: string; detailSessionId?: string };
       const transport = await routeMockSnapshots(page, {
         snapshot(snapshot) {
           if (snapshot.active) source = structuredClone(snapshot);
@@ -43,7 +43,9 @@ for (const width of [1280, 390, 320]) {
       await expect
         .poll(() => source?.active?.sessionId)
         .toBe(HISTORY_FIXTURE_SESSION_ID);
-      await expect.poll(() => envelope?.type).toBe("snapshot");
+      await expect
+        .poll(() => envelope?.detailSessionId)
+        .toBe(HISTORY_FIXTURE_SESSION_ID);
       await page.evaluate(() => document.fonts.ready);
       const meter = page.getByRole("button", {
         name: /^Session & usage, context/,
@@ -112,7 +114,7 @@ for (const width of [1280, 390, 320]) {
     }) => {
       await page.emulateMedia({ reducedMotion: "reduce" });
       let currentSnapshot!: ActiveSnapshot;
-      let snapshotEvent!: { type: string };
+      let snapshotEvent!: { type: string; detailSessionId?: string };
       const transport = await routeMockSnapshots(page, {
         snapshot(snapshot) {
           if (!snapshot.active) return;
@@ -185,7 +187,9 @@ for (const width of [1280, 390, 320]) {
       await expect
         .poll(() => currentSnapshot?.active?.sessionId)
         .toBe(HISTORY_FIXTURE_SESSION_ID);
-      await expect.poll(() => snapshotEvent?.type).toBe("snapshot");
+      await expect
+        .poll(() => snapshotEvent?.detailSessionId)
+        .toBe(HISTORY_FIXTURE_SESSION_ID);
       // Keep the Host envelope, including when its handshake acknowledged an unchanged snapshot.
       transport.send({
         ...snapshotEvent,
