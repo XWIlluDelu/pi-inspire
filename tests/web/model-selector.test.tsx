@@ -32,6 +32,52 @@ const models = [
 ];
 
 describe("model picker interaction", () => {
+  it.each([
+    { state: "disabled", disabled: true, choices: models },
+    { state: "unavailable", disabled: false, choices: [] },
+  ])(
+    "closes an open picker when $state without changing or reopening the selection",
+    ({ disabled, choices }) => {
+      const change = vi.fn();
+      const props = {
+        value: models[0]!,
+        models,
+        recent: [],
+        onChange: change,
+      };
+      const view = render(<ModelSelector {...props} />);
+      const trigger = screen.getByRole("button", { name: "Model" });
+      fireEvent.click(trigger);
+      expect(
+        screen.getByRole("listbox", { name: "Available models" }),
+      ).toBeInTheDocument();
+
+      view.rerender(
+        <ModelSelector {...props} models={choices} disabled={disabled} />,
+      );
+      expect(trigger).toBeDisabled();
+      expect(trigger).toHaveAttribute("aria-expanded", "false");
+      expect(
+        screen.queryByRole("listbox", { name: "Available models" }),
+      ).not.toBeInTheDocument();
+      fireEvent.keyDown(trigger, { key: "ArrowDown" });
+      expect(
+        screen.queryByRole("listbox", { name: "Available models" }),
+      ).not.toBeInTheDocument();
+      expect(change).not.toHaveBeenCalled();
+
+      view.rerender(<ModelSelector {...props} />);
+      expect(trigger).toBeEnabled();
+      expect(trigger).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(trigger);
+      fireEvent.click(screen.getByRole("option", { name: /Claude Haiku/ }));
+      expect(change).toHaveBeenCalledExactlyOnceWith(
+        models[1]!.provider,
+        models[1]!.id,
+      );
+    },
+  );
+
   it("focuses the list on touch devices while retaining explicit search and keyboard selection", async () => {
     const touch = mockTouchFirstDevice();
     try {
