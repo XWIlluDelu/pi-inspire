@@ -48,6 +48,7 @@ export const MAX_COMPOSER_HISTORY_ENTRIES = 100;
 /** Keeps ordinary web-accepted prompts indivisible while bounding each history response. */
 export const MAX_COMPOSER_HISTORY_PAGE_BYTES = 4 * 1024 * 1024;
 export const MAX_PROJECT_FILES = 20;
+export const MAX_PROMPT_CHARS = 500_000;
 export const MAX_SESSION_LIST_PAGE_SIZE = 100;
 export const MAX_SESSION_ID_CHARS = 128;
 /** Session-list and fallback-heading text is bounded before responsive CSS

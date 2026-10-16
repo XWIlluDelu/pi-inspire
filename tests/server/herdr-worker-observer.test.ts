@@ -197,6 +197,47 @@ describe("HerdrWorkerObserver", () => {
     ).rejects.toMatchObject({ status: 409 });
   });
 
+  it("locates native terminals by canonical file or ID without adopting stale or RPC panes", async () => {
+    const { root, sessionFile } = await fixture();
+    const alias = join(root, "native-link.jsonl");
+    await symlink(sessionFile, alias);
+    const fake = fakeClient(candidate(alias), foreground());
+    const observer = new HerdrWorkerObserver({ client: fake.client });
+    const expected = { serverId: "server-one", paneId: "w1:p1", pid: 101 };
+    await expect(
+      observer.findNativeWriter("session-one", sessionFile),
+    ).resolves.toEqual(expected);
+    fake.inspectSessions.mockResolvedValue(
+      candidate("session-one", { kind: "id" }),
+    );
+    await expect(
+      observer.findNativeWriter("session-one", sessionFile),
+    ).resolves.toEqual(expected);
+    fake.inspectSessions.mockResolvedValue(sibling("session-one"));
+    await expect(
+      observer.findNativeWriter("session-one", sessionFile),
+    ).resolves.toBeNull();
+    fake.inspectSessions.mockResolvedValue(candidate(sessionFile));
+    fake.inspectPaneProcess.mockResolvedValue({
+      ...foreground(),
+      foregroundProcesses: [],
+    });
+    await expect(
+      observer.findNativeWriter("session-one", sessionFile),
+    ).resolves.toBeNull();
+  });
+
+  it("does not choose arbitrarily between duplicate native sessions", async () => {
+    const { sessionFile } = await fixture();
+    const observed = candidate(sessionFile);
+    observed.panes.push({ ...observed.panes[0]!, paneId: "w1:p2" });
+    const fake = fakeClient(observed, foreground());
+    const observer = new HerdrWorkerObserver({ client: fake.client });
+    await expect(
+      observer.findNativeWriter("session-one", sessionFile),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
   it("matches native session ID references but refuses a changed server incarnation", async () => {
     const { sessionFile } = await fixture();
     const fake = fakeClient(

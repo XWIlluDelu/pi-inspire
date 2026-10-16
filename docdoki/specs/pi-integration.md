@@ -45,8 +45,10 @@ project directory, settings, credentials, models, extensions, skills, prompts, a
 authoritative. Workers inherit the user environment defined by [[host-lifecycle]].
 
 Direct RPC pipes are the default. Optional [[herdr-enhancement]] changes worker placement through a
-private byte transport while preserving native execution and session authority. Direct mode remains
-independent of Herdr. Project terminals belong to the separate [[terminal]] daemon, outside Pi's
+private byte transport while preserving native execution and session authority. It also connects the
+ordinary conversation composer to an existing native Pi terminal instead of starting another writer;
+that terminal retains its process, queue and dialogs. The detailed connection and lifecycle contract
+lives in [[herdr-enhancement]]. Direct mode remains independent of Herdr. Project terminals belong to the separate [[terminal]] daemon, outside Pi's
 runtime and history. Session-bound file previews follow [[resource-preview]].
 
 ## Settings and native commands

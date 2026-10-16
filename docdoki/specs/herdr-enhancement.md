@@ -1,10 +1,10 @@
 ---
-purpose: Optional Herdr placement and environment capabilities preserve Inspire's Pi workflow and lifecycle.
+purpose: Optional Herdr placement and connection to existing Pi terminals preserve session continuity and process ownership.
 progress: done
 covers:
   - server/herdr-*.ts
   - server/pi-rpc*.ts
-  - server/{runtime,runtime-worker-lifecycle,runtime-worker-pool}.ts
+  - server/{runtime,runtime-worker-lifecycle,runtime-worker-pool,runtime-external-sessions,external-session}.ts
   - server/index.ts
   - server/preferences.ts
   - shared/contracts.ts
@@ -14,7 +14,9 @@ covers:
   - tests/web/herdr-settings.test.tsx
   - tests/server/herdr-*.test.ts
   - tests/server/pi-rpc*.test.ts
-  - tests/server/runtime-{worker-pool,worker-lifecycle,session-deletion}.test.ts
+  - tests/server/runtime-{worker-pool,worker-lifecycle,session-deletion,external-sessions}.test.ts
+  - tests/browser/native-pi-continuity.spec.ts
+  - tests/server/fixtures/native-herdr.ts
 ---
 
 # Herdr enhancement
@@ -32,7 +34,7 @@ Pi and user configuration own tools, prompts, extensions, and collaboration unde
 Inspire owns session identity, writer admission, operation receipts, projection, and GUI controls.
 Herdr supplies project workspaces, panes, and their native environment.
 
-Both backends run the installed Pi in RPC mode with stdin/stdout pipes. The Herdr adapter starts an
+Both owned-worker backends run the installed Pi in RPC mode with stdin/stdout pipes. The Herdr adapter starts an
 Inspire bridge in a real pane and forwards the original RPC bytes over private IPC. The existing
 Host parser and scheduler remain shared; the bridge owns transport and child cleanup only.
 Extensions keep their Pi RPC compatibility requirements.
@@ -100,6 +102,29 @@ Inspire session-id tokens, then check candidate panes for a live foreground Pi p
 metadata alone cannot block admission. This is a pre-launch check of Herdr-reported writers;
 other applications' unreported or later launches remain outside its authority.
 
+## Existing native Pi sessions
+
+- With enhancement enabled, opening a session already running in a Herdr Pi terminal connects
+  Inspire to that process. The ordinary composer sends to it, new persisted messages appear in
+  the conversation, and Stop uses the original Pi's interrupt action.
+- Connection discovery matches the native session file or ID, current daemon incarnation and
+  live foreground Pi identity. Stale metadata does not establish a connection, and ambiguous live
+  matches are not chosen arbitrarily. Sibling Inspire RPC workers retain their existing writer
+  admission rules.
+- Native connections are outside the owned-worker pool. Switching sessions, closing the browser,
+  and Host shutdown/restart leave the native Pi and pane running. Independently running native work
+  does not block Host maintenance restart; an in-flight Host input submission still does.
+- Use public Herdr agent APIs for native text input, follow-up submission, interruption and status.
+  Read persisted conversation content through the normal session projection. Do not treat terminal
+  output as a transcript or native connections as RPC workers.
+- Preserve terminal drafts and dialogs. A nonempty editor or waiting dialog gets actionable feedback
+  without altering its contents. Pi owns its terminal queue and restores interrupted queued input
+  there. Commands/settings requiring an Inspire RPC worker direct the user to the original terminal
+  rather than launching another writer.
+- Attachments and project files retain their normal validation and file lifetimes. A stopped or
+  replaced input cannot be delivered after preparation. An uncertain submission is not retried
+  automatically, and any referenced files remain available to Pi.
+
 ## Checks
 
 - Compare real-Pi startup, state, persistence, events, cancellation, and shutdown through both
@@ -109,6 +134,9 @@ other applications' unreported or later launches remain outside its authority.
   enhancement disabled. Confirm pending and rejected retirement retain writer exclusion.
 - Check stale topology, incarnation changes, writer inspection, coalesced status, and disabled-mode
   independence. Retain ordinary terminal and restart regressions.
+- Use an isolated native Pi terminal to check browser submission, replies, reconnect, interruption,
+  attachment delivery and draft preservation. Verify the same Pi survives Host close and rejects
+  delivery after its session identity changes. Check native work does not block Host restart.
 - Measure bridge overhead separately from model work, with the environment and sample scope recorded.
 
 Herdr's [socket API](https://herdr.dev/docs/socket-api/) defines the argv layout and metadata interfaces.

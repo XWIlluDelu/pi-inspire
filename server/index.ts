@@ -220,6 +220,9 @@ if (mock) {
     diagnostics,
   )
     .setModelMetadataCatalog(modelMetadata)
+    .setExternalSessionConnector((sessionId, sessionFile) =>
+      herdr.connectExternalSession(sessionId, sessionFile),
+    )
     .on("worker_status", (rpc: PiRpcProcess, status: RuntimeWorkerStatus) => {
       herdr.updateWorkerStatus(rpc, status);
     });
