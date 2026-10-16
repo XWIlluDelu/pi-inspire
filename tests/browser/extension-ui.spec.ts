@@ -536,8 +536,8 @@ test.describe("narrow touch reading", () => {
           copyInside: copy.top >= card.top + 2 && copy.bottom <= body.top,
         };
       });
-      expect(spacing.headerHeight).toBe(24);
-      expect(spacing.gap).toBe(4);
+      expect(spacing.headerHeight).toBeCloseTo(24, 2);
+      expect(spacing.gap).toBeCloseTo(4, 2);
       expect(Math.abs(spacing.verticalBalance)).toBeLessThanOrEqual(1);
       expect(spacing.copyHeight).toBeGreaterThanOrEqual(32);
       expect(spacing.copyInside).toBe(true);

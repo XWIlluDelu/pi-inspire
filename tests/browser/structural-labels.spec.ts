@@ -157,7 +157,7 @@ test("resource count capsules center their numerals without shifting label basel
       const countBaseline = await count.evaluate(textBaseline);
       expect(Math.abs(nameBaseline - countBaseline)).toBeLessThan(0.5);
       const box = (await count.boundingBox())!;
-      expect(box.height).toBe(14);
+      expect(box.height).toBeCloseTo(14, 2);
       expect(box.width).toBeGreaterThanOrEqual(box.height);
       await expect(parent).toHaveCSS("font-size", "13px");
     }

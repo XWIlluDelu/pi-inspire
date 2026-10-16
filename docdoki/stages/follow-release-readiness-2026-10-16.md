@@ -38,6 +38,9 @@ Git tag with that revision. This does not authorize publishing a new npm package
   index, and positioning earlier code while Follow latest was still active.
   Both causes are repaired and their ordered reproductions now pass. Two unit
   regressions cover warm History reads through appending and settlement.
+  The subsequent full run passed 236/237 cases; its sole failure compared a
+  40.0000305px DOMRect with exactly 40px. Shell, widget and capsule geometry now
+  uses subpixel-aware comparisons; all ten affected browser cases pass.
 - Candidate CI passed all three release-package jobs and size reporting.
   The superseded run was cancelled after the browser failures were identified.
   Windows exposed two readiness races: lazy Settings loading and independently
