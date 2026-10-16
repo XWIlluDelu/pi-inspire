@@ -1,10 +1,28 @@
-import { hostRequest } from "./support/host-request";
 import { readFile } from "node:fs/promises";
 import { expect, type Page, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
-import { pairedPage } from "./support/navigation";
+import { hostRequest } from "./support/host-request";
+import { openMockSession, pairedPage } from "./support/navigation";
 
 test.use({ serviceWorkers: "block" });
+
+test("a failed clone leaves its action menu available instead of silently dismissing it", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  await page.route("**/api/branches/clone", (route) =>
+    route.fulfill({ status: 503, json: { error: "Clone is unavailable" } }),
+  );
+  await page.getByRole("button", { name: /^Session actions:/ }).click();
+  const menu = page.getByRole("menu", { name: "Session actions" });
+  const clone = menu.getByRole("menuitem", { name: "Clone current branch" });
+  await expect(clone).toBeEnabled();
+  await clone.click();
+  await expect(menu).toBeVisible();
+  await expect(clone).toBeDisabled();
+});
+
 async function namedSession(page: Page) {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairedPage(page);

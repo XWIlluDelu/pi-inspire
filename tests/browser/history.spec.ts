@@ -321,6 +321,10 @@ test("clears a pending search and retries the selected failed detail without los
   ).toBeEnabled();
   release();
   let reads = 0;
+  let releaseDetail!: () => void;
+  const detailGate = new Promise<void>((resolve) => {
+    releaseDetail = resolve;
+  });
   await page.route("**/api/branches/entry?**", async (route) => {
     reads++;
     if (reads === 1)
@@ -328,7 +332,10 @@ test("clears a pending search and retries the selected failed detail without los
         status: 503,
         json: { error: "Preview temporarily unavailable" },
       });
-    else await route.continue();
+    else {
+      await detailGate;
+      await route.continue();
+    }
   });
   await search.fill("Review calibration run 598");
   const match = history.getByRole("button", {
@@ -338,6 +345,16 @@ test("clears a pending search and retries the selected failed detail without los
   await history
     .getByRole("button", { name: "Retry preview", exact: true })
     .click();
+  try {
+    for (const label of ["Fork to new session", "Clone through here"]) {
+      const action = history.getByRole("button", { name: label, exact: true });
+      await expect(action).toBeDisabled();
+      await expect(action).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(action).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+    }
+  } finally {
+    releaseDetail();
+  }
   await expect(history.locator(".rich-text")).toContainText(
     "Review calibration run 598",
   );

@@ -1117,7 +1117,8 @@ a {
   cursor: default;
 }
 
-.button--quiet {
+.button--quiet,
+.button--quiet:disabled {
   border-color: transparent;
   background: transparent;
 }

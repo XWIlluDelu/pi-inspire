@@ -26,6 +26,19 @@ export interface BranchControllerState {
   readOnlyReason?: SessionReadOnlyReason | null;
 }
 
+/** Shared readiness for history actions and their entry points. */
+export function branchActionsBlocked(state: BranchControllerState): boolean {
+  return Boolean(
+    state.readOnlyReason ||
+      state.branchActionId ||
+      state.branchTreeLoading ||
+      state.branchTreeError ||
+      state.branchTree?.health.status === "error" ||
+      state.projectionHealth.status === "error" ||
+      state.projectionConflict,
+  );
+}
+
 export interface BranchControllerPatch {
   branchTree?: BranchTreeResponse | null;
   branchTreeLoading?: boolean;
@@ -302,7 +315,8 @@ export class BranchController {
     const state = this.host.state();
     const sessionId = state.sessionId;
     const tree = state.branchTree;
-    if (!api || !sessionId || !tree || this.actionsBlocked(state)) return false;
+    if (!api || !sessionId || !tree || branchActionsBlocked(state))
+      return false;
     const draftRevision = this.host.draftRevision();
     return this.runAction(
       `${mode}:${targetId}`,
@@ -358,7 +372,8 @@ export class BranchController {
     const state = this.host.state();
     const sessionId = state.sessionId;
     const tree = state.branchTree;
-    if (!api || !sessionId || !tree || this.actionsBlocked(state)) return false;
+    if (!api || !sessionId || !tree || branchActionsBlocked(state))
+      return false;
     const selectionRequest = this.host.beginForkSelection();
     return this.runAction(
       `fork:${targetId}`,
@@ -397,7 +412,7 @@ export class BranchController {
       !api ||
       state.sessionId !== sessionId ||
       !tree ||
-      this.actionsBlocked(state)
+      branchActionsBlocked(state)
     )
       return false;
     const selectionRequest = this.host.beginForkSelection();
@@ -544,18 +559,6 @@ export class BranchController {
       (ownership === "view" ||
         state.transcriptEffectiveLeafId === ticket.effectiveLeafId) &&
       this.host.selectionRequest() === ticket.selectionRequest
-    );
-  }
-
-  private actionsBlocked(state: BranchControllerState): boolean {
-    return Boolean(
-      state.readOnlyReason ||
-        state.branchActionId ||
-        state.branchTreeLoading ||
-        state.branchTreeError ||
-        state.branchTree?.health.status === "error" ||
-        state.projectionHealth.status === "error" ||
-        state.projectionConflict,
     );
   }
 }

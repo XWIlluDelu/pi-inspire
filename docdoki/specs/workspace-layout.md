@@ -122,7 +122,8 @@ independent project shells in [[terminal]].
   The title menu also offers Clone and Export while leaving the title visible. It opens with
   Rename focused; arrows, Enter and Escape operate the menu, and keyboard dismissal returns focus
   to the title. Export opens the shared format-and-download dialog without reading or changing
-  the message draft.
+  the message draft. Clone shares History's readiness checks. Refusal or failure leaves the menu
+  open; successful navigation closes it without stealing focus from a newer choice.
   `/clone`, the command palette and the earlier-branch notice's `Clone from here` reach the same
   endpoint-inclusive action. It creates an independent copy of the recorded active branch without
   sending a model prompt or changing the source's work, pending input or draft. [[session-branches]]

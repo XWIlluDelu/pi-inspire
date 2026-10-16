@@ -9,6 +9,7 @@ import {
   BranchController,
   type BranchControllerPatch,
   type BranchControllerState,
+  branchActionsBlocked,
 } from "../../src/controllers/branch-controller";
 import { deferred, branchTree as tree } from "./helpers";
 
@@ -93,6 +94,26 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
 }
 
 describe("BranchController", () => {
+  it.each([
+    { branchTreeError: "History is unavailable" },
+    { branchTreeLoading: true },
+    { branchActionId: "another-action" },
+  ])(
+    "shares unavailable clone state with menu entry points: %j",
+    async (initial) => {
+      const harness = createHarness(initial);
+      expect(branchActionsBlocked(harness.state())).toBe(true);
+      expect(await harness.controller.clone()).toBe(false);
+      expect(harness.cloneBranch).not.toHaveBeenCalled();
+      harness.patch({
+        branchTreeError: null,
+        branchTreeLoading: false,
+        branchActionId: null,
+      });
+      expect(branchActionsBlocked(harness.state())).toBe(false);
+    },
+  );
+
   it.each(["entry", "image"] as const)(
     "keeps immutable %s reads through same-view append, but rejects replaced owners",
     async (kind) => {
