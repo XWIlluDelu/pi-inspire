@@ -1,5 +1,5 @@
 import { CornerLeftUp, Eye, EyeOff, Folder, HardDrive } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { HostDirEntry, HostDirListing } from "../../shared/contracts";
 import { store } from "../store";
 import { useModalFocus } from "../use-modal-focus";
@@ -35,6 +35,23 @@ export function DirectoryPicker({
   // Only the newest request may write state — rapid navigation must not
   // let a slow earlier level overwrite a later one.
   const ticket = useRef(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const restoreListFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (loading || !restoreListFocus.current) return;
+    restoreListFocus.current = false;
+    // Do not steal focus if the user moved elsewhere while the request ran.
+    if (
+      document.activeElement !== document.body &&
+      document.activeElement !== listRef.current
+    )
+      return;
+    (
+      listRef.current?.querySelector<HTMLButtonElement>(
+        "button:not(:disabled)",
+      ) ?? listRef.current
+    )?.focus({ preventScroll: true });
+  }, [loading]);
   const requested = useRef<{
     path?: string;
     fallbackHome?: boolean;
@@ -55,7 +72,11 @@ export function DirectoryPicker({
   ) => {
     const mine = ++ticket.current;
     requested.current = { path, fallbackHome, discoverRoots };
+    restoreListFocus.current = Boolean(
+      listRef.current?.contains(document.activeElement),
+    );
     setPath(path ?? "");
+    setListing(null);
     setLoading(true);
     setError(null);
     const listing = store
@@ -181,7 +202,14 @@ export function DirectoryPicker({
             ))}
           </div>
         ) : null}
-        <div className="dirpicker__list" aria-busy={loading}>
+        <div
+          ref={listRef}
+          className="dirpicker__list"
+          role="group"
+          aria-label="Folders"
+          tabIndex={-1}
+          aria-busy={loading}
+        >
           {listing?.parent ? (
             <button
               type="button"
