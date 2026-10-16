@@ -17,8 +17,7 @@ function createHarness(sessionId = "session-a") {
   let api = { prompt, uploadAttachments, deleteAttachment } as unknown as Api;
   const patch = vi.fn();
   const notify = vi.fn();
-  const clearVisibleError = vi.fn();
-  const failVisible = vi.fn();
+  const notifyVisible = vi.fn();
   const handleAuthFailure = vi.fn();
   const restoreDraftIfEmpty = vi.fn().mockReturnValue(true);
   const controller = new ComposerController({
@@ -30,11 +29,8 @@ function createHarness(sessionId = "session-a") {
     notify,
     handleAuthFailure,
     restoreDraftIfEmpty,
-    clearVisibleError: (owner) => {
-      if (activeSessionId === owner) clearVisibleError();
-    },
-    failVisible: (owner, message) => {
-      if (activeSessionId === owner) failVisible(message);
+    notifyVisible: (owner, message) => {
+      if (activeSessionId === owner) notifyVisible(message);
     },
   });
   return {
@@ -43,8 +39,7 @@ function createHarness(sessionId = "session-a") {
     uploadAttachments,
     patch,
     notify,
-    clearVisibleError,
-    failVisible,
+    notifyVisible,
     handleAuthFailure,
     restoreDraftIfEmpty,
     deleteAttachment,
@@ -242,7 +237,7 @@ describe("ComposerController", () => {
     harness.activate("session-b");
 
     await expect(sending).resolves.toBe(false);
-    expect(harness.failVisible).not.toHaveBeenCalled();
+    expect(harness.notifyVisible).not.toHaveBeenCalled();
     expect(harness.slice()).toEqual({
       attachments: [],
       projectFiles: ["/workspace/message.ts"],
@@ -377,7 +372,7 @@ describe("ComposerController", () => {
 
     await expect(harness.controller.send("inspect first")).resolves.toBe(false);
     expect(harness.prompt).toHaveBeenCalledTimes(1);
-    expect(harness.failVisible).toHaveBeenLastCalledWith(
+    expect(harness.notifyVisible).toHaveBeenLastCalledWith(
       expect.stringContaining("Check the conversation"),
     );
 
@@ -398,7 +393,7 @@ describe("ComposerController", () => {
     await expect(harness.controller.send("send")).resolves.toBe(false);
 
     expect(harness.handleAuthFailure).toHaveBeenCalledOnce();
-    expect(harness.failVisible).not.toHaveBeenCalled();
+    expect(harness.notifyVisible).not.toHaveBeenCalled();
     expect(harness.slice()).toEqual({
       attachments: [],
       projectFiles: ["/workspace/message.ts"],
@@ -671,7 +666,7 @@ describe("ComposerController", () => {
       sending: false,
       failedDeliveryCount: 0,
     });
-    expect(harness.clearVisibleError).not.toHaveBeenCalled();
+    expect(harness.notifyVisible).not.toHaveBeenCalled();
   });
 
   it("rejects and reclaims an incomplete upload response", async () => {

@@ -1,5 +1,5 @@
 import { AlertTriangle, Download, Info, X, XCircle } from "lucide-react";
-import { memo, useCallback } from "react";
+import { memo, useCallback, useLayoutEffect, useRef } from "react";
 import type { Notice } from "../events";
 import { shallowEqual, store, useAppState } from "../store";
 import {
@@ -188,6 +188,9 @@ export const Notices = memo(function Notices({
   const state = useAppState(
     (source) => ({
       notices: source.notices,
+      error: source.error,
+      connection: source.connection,
+      readOnlyReason: source.readOnlyReason,
       inspireUpdateChecking: source.inspireUpdateChecking,
       piUpdateChecking: source.piUpdateChecking,
       updateSnoozedUntil: source.updateSnoozedUntil,
@@ -202,9 +205,39 @@ export const Notices = memo(function Notices({
     state.updateSnoozedUntil === null
       ? availableUpdates(state)
       : null;
+  const ref = useRef<HTMLDivElement>(null);
+  // Mobile notices float below the current workspace header, including any
+  // multiline banners. Rebind after feedback changes can replace those nodes.
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const boundaries = [
+      ...document.querySelectorAll<HTMLElement>(
+        "main > .topbar, main > .banner",
+      ),
+    ];
+    if (boundaries.length === 0) return;
+    const measure = () => {
+      const bottom = Math.max(
+        ...boundaries.map((node) => node.getBoundingClientRect().bottom),
+      );
+      element.style.setProperty("--notice-header-bottom", `${bottom}px`);
+    };
+    measure();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(measure);
+    boundaries.forEach((node) => observer?.observe(node));
+    window.addEventListener("resize", measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  });
   if (state.notices.length === 0 && !updates) return null;
   return (
-    <div className="notices" aria-live="polite">
+    <div ref={ref} className="notices" aria-live="polite">
       {state.notices.map((notice) => (
         <NoticeItem key={`${notice.kind}:${notice.text}`} notice={notice} />
       ))}

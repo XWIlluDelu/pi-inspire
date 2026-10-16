@@ -91,6 +91,8 @@ covers:
   - tests/web/app.test.tsx
   - tests/web/composer-*.test.tsx
   - tests/web/notices.test.tsx
+  - tests/web/store-feedback.test.ts
+  - tests/browser/feedback.spec.ts
   - tests/web/settings-navigation.test.tsx
   - tests/web/settings-loading.test.tsx
   - tests/browser/loading-states.spec.ts
@@ -306,6 +308,25 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 
   Rapid visibility/navigation changes and dismissal retire old request writebacks; pending or failed
   loads cannot confirm an earlier directory as the requested destination.
+
+## Feedback scope
+
+- Top banners describe a current workspace condition: lost connection, an unavailable session
+  refresh, projection failure, or a recoverable ownership conflict. Their action retries the
+  relevant read, reconnects, or recovers that condition. A successful authoritative observation
+  clears a refresh warning; a cached-state acknowledgement does so only when no projection
+  problem remains. An unrelated successful operation does not clear a synchronization warning.
+- Operation failures belong beside an available retry surface, such as deletion confirmation,
+  an extension question, a form, or a resource pane. Otherwise they use the existing notification
+  stack: send, Stop, Pending clear, and prompt-history failures do not overwrite the workspace
+  banner. Location expresses scope, not severity. An extension reply error remains inside the
+  same request's dialog, with entered content and retry/cancel controls intact; expiry, a newer
+  request, selection, or transport replacement cannot inherit it.
+- Expected lifecycle transitions do not report obsolete background reads as failures.
+  [[session-deletion]] owns the deletion boundary; real deletion failure and authentication loss
+  remain visible. Notifications remain bottom-right on desktop. On phones they stay below the
+  workspace header, clear of any current multiline banner and its controls, rather than moving
+  over the editor. [[design-system]] owns their visual treatment and dwell.
 
 ## Session-owned controls and command palette
 

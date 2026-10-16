@@ -89,8 +89,7 @@ interface ComposerControllerHost {
   transportGeneration(): number;
   patch(slice: ComposerSlice): void;
   notify(kind: "warning", text: string): void;
-  clearVisibleError(sessionId: string): void;
-  failVisible(sessionId: string, message: string): void;
+  notifyVisible(sessionId: string, message: string): void;
   handleAuthFailure(): void;
   restoreDraftIfEmpty(sessionId: string, message: string): boolean;
 }
@@ -513,7 +512,7 @@ export class ComposerController {
     const retained = composer.unknownDeliveries.get(signature);
     if (retained && retained.request.authorityId !== authorityId) {
       composer.unknownDeliveries.delete(signature);
-      this.host.failVisible(
+      this.host.notifyVisible(
         sessionId,
         "The Host restarted after this message had an unknown delivery outcome. Check the conversation before sending it again.",
       );
@@ -559,7 +558,6 @@ export class ComposerController {
       if (record.historyDraft)
         this.releaseAttachments(record.historyDraft.attachments);
       composer.unknownDeliveries.delete(signature);
-      this.host.clearVisibleError(sessionId);
       return { accepted: true, historyEntry: response.historyEntry };
     } catch (error) {
       if (!ownsTransport()) return false;
@@ -636,7 +634,7 @@ export class ComposerController {
         (independent
           ? (_sessionId: string, text: string) =>
               this.host.notify("warning", text)
-          : this.host.failVisible)(
+          : this.host.notifyVisible)(
           sessionId,
           acceptanceUnknown
             ? "INSΠRE could not confirm whether Pi accepted this message. Retry sends the same delivery safely while this Host remains running."

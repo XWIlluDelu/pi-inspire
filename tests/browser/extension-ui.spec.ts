@@ -180,6 +180,57 @@ const choice = {
   title: "Choose a review",
   options: ["Documentation", "Code", "Tests"],
 };
+for (const theme of ["light", "dark"] as const) {
+  test(`a failed extension response stays in its dialog and can be retried in ${theme}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({
+      width: theme === "light" ? 1280 : 390,
+      height: 844,
+    });
+    const fixture = await openExample(page, theme);
+    let refuse = true;
+    await page.route("**/api/extension-ui", async (route) => {
+      if (refuse)
+        await route.fulfill({
+          status: 409,
+          json: {
+            error:
+              "The extension could not accept this response. Please choose again.",
+          },
+        });
+      else await route.fallback();
+    });
+    fixture.question({ id: "retry-choice", ...choice });
+    const dialog = page.getByRole("dialog", { name: choice.title });
+    const option = dialog.getByRole("option", { name: "Code", exact: true });
+    await option.click();
+    await expect(dialog.getByRole("alert")).toContainText(
+      "Please choose again",
+    );
+    await expect(option).toBeEnabled();
+    await expect(page.getByRole("main").locator(".banner")).toHaveCount(0);
+    await expect(page.locator(".notice--error, .notice--warning")).toHaveCount(
+      0,
+    );
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: `output/playwright/feedback/dialog-${theme}.png`,
+    });
+    refuse = false;
+    await option.press("Enter");
+    await expect(dialog).toHaveCount(0);
+    expect(fixture.responses.at(-1)).toMatchObject({
+      id: "retry-choice",
+      value: "Code",
+    });
+  });
+}
+
 const summaryLines = [
   "Code: Shared interaction",
   "Run /ui-demo clear to remove the demo displays.",

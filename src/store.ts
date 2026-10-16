@@ -373,7 +373,7 @@ export class AppStore {
         preserveAppendHistory,
       ),
     handleAuthFailure: () => this.handleAuthFailure(),
-    fail: (message, severity) => this.fail(message, severity),
+    notify: (kind, message) => this.notify(kind, message),
   });
   /** ComposerController owns session-partitioned staged attachments, project
    * files, and delivery lifetime. AppStore remains the snapshot owner. */
@@ -384,11 +384,8 @@ export class AppStore {
     transportGeneration: () => this.transportGeneration,
     patch: (slice) => this.set(slice),
     notify: (kind, text) => this.notify(kind, text),
-    clearVisibleError: (sessionId) => {
-      if (this.state.sessionId === sessionId) this.set({ error: null });
-    },
-    failVisible: (sessionId, message) => {
-      if (this.state.sessionId === sessionId) this.fail(message);
+    notifyVisible: (sessionId, message) => {
+      if (this.state.sessionId === sessionId) this.notify("warning", message);
     },
     handleAuthFailure: () => this.handleAuthFailure(),
     restoreDraftIfEmpty: (sessionId, message) => {
@@ -409,6 +406,7 @@ export class AppStore {
     preserveLoadedSessions: (query, offset, total) =>
       this.catalog.preserve(query, offset, total),
     forgetSessions: (sessionIds) => this.forgetSessions(sessionIds),
+    pauseSessionReads: (ids) => this.pauseSessionReads(ids),
     flushPreferences: () => this.preferences.flush(),
     capturePreferenceOwners: () => this.preferences.captureOwners(),
     reconcilePreferences: (authoritative, owners) =>
@@ -440,6 +438,10 @@ export class AppStore {
       if (event.type === "snapshot") {
         this.updates.applySnapshot(event.updateStatus);
         if (event.unchanged !== true) this.runtimeEvents.apply(event);
+        // An authenticated cache acknowledgement reobserves the same state.
+        // It resolves a read warning, but not an existing projection problem.
+        else if (this.state.error && !this.state.projectionError)
+          this.dismissError();
       } else if (!this.updates.applyEvent(event)) {
         this.runtimeEvents.apply(event);
       }
@@ -481,6 +483,7 @@ export class AppStore {
    * never clear a newer owner. */
   private openingOwner: number | null = null;
   private resyncRequest = 0;
+  private pausedSessionReads: ReadonlySet<string> | null = null;
   private pendingActionRequest = 0;
   private thinkingLevelRequest = 0;
   private runtimeSettingRequest = 0;
@@ -503,10 +506,6 @@ export class AppStore {
     if (this.state.sessionId !== previousSessionId)
       this.connectionController.updateDetailInterest();
     for (const listener of this.listeners) listener();
-  }
-
-  private fail(message: string, severity: "error" | "warning" = "error"): void {
-    this.set({ error: message, errorSeverity: severity });
   }
 
   private notify(kind: Notice["kind"], text: string): void {
@@ -549,6 +548,8 @@ export class AppStore {
 
   dismissError = (): void => this.set({ error: null, errorSeverity: "error" });
 
+  refreshSession = (): Promise<void> => this.resync();
+
   /** Replace the visible composer's text through the same nonce channel used
    * by branch editing. The welcome flow uses this only after Pi assigns the
    * new session identity, preserving its first message if upload/send fails. */
@@ -560,6 +561,7 @@ export class AppStore {
 
   private invalidateTransportRequests(): void {
     this.resyncRequest += 1;
+    this.pausedSessionReads = null;
     this.transcriptData.invalidate();
     this.pendingActionRequest += 1;
     this.hostCommandRuns.clear();
@@ -891,8 +893,6 @@ export class AppStore {
       projectionConflictSeverity(projectionConflict) === "attention"
         ? "warning"
         : "error";
-    const clearedProjectionError =
-      !projectionError && this.state.error === this.state.projectionError;
     const sessionStatuses = snapshot.sessionStatuses;
     const extensionStatuses =
       parseExtensionStatuses(snapshot.extensionStatuses) ?? {};
@@ -977,11 +977,10 @@ export class AppStore {
       projectionHealth,
       projectionConflict,
       projectionError,
-      ...(projectionError
-        ? { error: projectionError, errorSeverity: projectionSeverity }
-        : clearedProjectionError
-          ? { error: null, errorSeverity: "error" }
-          : {}),
+      // A successful authoritative read resolves an old refresh warning;
+      // operation feedback lives beside its action or in Notices instead.
+      error: projectionError,
+      errorSeverity: projectionSeverity,
       streaming: Boolean(active?.isStreaming),
       bashRunning: snapshot.bashRunning === true,
       activeAssistantMessageKey:
@@ -1034,6 +1033,21 @@ export class AppStore {
       void this.git.refreshStatus();
   }
 
+  /** Deletion temporarily retires the target's projection. Fence older reads,
+   * skip new ones until it settles, then refresh any surviving selection. */
+  private pauseSessionReads(sessionIds: ReadonlySet<string>): () => void {
+    const paused = new Set(sessionIds);
+    this.pausedSessionReads = paused;
+    if (this.state.sessionId && paused.has(this.state.sessionId))
+      this.resyncRequest += 1;
+    return () => {
+      if (this.pausedSessionReads !== paused) return;
+      this.pausedSessionReads = null;
+      if (this.state.sessionId && paused.has(this.state.sessionId))
+        void this.resync();
+    };
+  }
+
   /** Authoritative reconcile after stream settlement or reconnect. */
   private async resync(
     expectedSessionId = this.state.sessionId,
@@ -1045,7 +1059,9 @@ export class AppStore {
     if (
       !api ||
       this.state.sessionId !== expectedSessionId ||
-      this.selectionGeneration !== expectedGeneration
+      this.selectionGeneration !== expectedGeneration ||
+      (expectedSessionId !== null &&
+        this.pausedSessionReads?.has(expectedSessionId))
     )
       return;
     const transportGeneration = this.transportGeneration;
@@ -1074,29 +1090,32 @@ export class AppStore {
         preserveAppendHistory ? "preserve" : "replace",
       );
     } catch (error) {
-      if (!ownsTransport() || request !== this.resyncRequest) return;
+      if (!ownsTransport()) return;
       if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
       } else {
-        // A failed read has the same selection owner as a successful one.
-        // Keep transport-wide authentication handling above this boundary.
+        // Authentication remains transport-wide; other read failures must
+        // still own this selection and not predate its deletion boundary.
         if (
+          request !== this.resyncRequest ||
           this.state.sessionId !== expectedSessionId ||
           this.selectionGeneration !== expectedGeneration
         )
           return;
         const currentProjectionError = this.state.projectionError;
-        this.fail(
-          currentProjectionError ??
+        this.set({
+          error:
+            currentProjectionError ??
             (error instanceof Error
               ? `Failed to refresh session: ${error.message}`
               : "Failed to refresh session"),
-          currentProjectionError &&
+          errorSeverity:
+            currentProjectionError &&
             projectionConflictSeverity(this.state.projectionConflict) ===
               "error"
-            ? "error"
-            : "warning",
-        );
+              ? "error"
+              : "warning",
+        });
       }
     }
   }
@@ -2045,7 +2064,7 @@ export class AppStore {
           this.state.sessionId === sessionId &&
           this.selectionGeneration === selectionGeneration
         )
-          this.fail(message);
+          this.notify("warning", `Stop could not be confirmed: ${message}`);
       }
     }
   };
@@ -2229,10 +2248,11 @@ export class AppStore {
       if (error instanceof ApiError && error.status === 401)
         this.handleAuthFailure();
       else
-        this.fail(
+        this.notify(
+          "warning",
           error instanceof Error
-            ? error.message
-            : "Failed to update Pending messages",
+            ? `Failed to clear Pending input: ${error.message}`
+            : "Failed to clear Pending input",
         );
       return false;
     } finally {
@@ -2790,16 +2810,17 @@ export class AppStore {
 
   // --- Extension UI ---
 
+  /** The owning dialog presents a response failure without a global banner. */
   respondExtensionUi = async (
     payload: Record<string, unknown>,
-  ): Promise<void> => {
+  ): Promise<string | null> => {
     const api = this.api;
     const transportGeneration = this.transportGeneration;
     const ownsTransport = (): boolean =>
       this.api === api && this.transportGeneration === transportGeneration;
-    if (!api || this.state.extensionUiRespondingId) return;
+    if (!api || this.state.extensionUiRespondingId) return null;
     const request = this.state.extensionUiRequests[0];
-    if (!request || payload.id !== request.id) return;
+    if (!request || payload.id !== request.id) return null;
     this.set({ extensionUiRespondingId: request.id });
     try {
       await api.respondExtensionUi({
@@ -2814,10 +2835,10 @@ export class AppStore {
         });
       }
     } catch (error) {
-      if (!ownsTransport()) return;
+      if (!ownsTransport()) return null;
       if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
-        return;
+        return null;
       }
       // Expiry, settle, replacement, or a successful duplicate response may
       // remove the owning request before the HTTP result arrives. That stale
@@ -2828,16 +2849,15 @@ export class AppStore {
           (candidate) => candidate.id === request.id,
         )
       ) {
-        this.fail(
-          error instanceof Error
-            ? error.message
-            : "Failed to answer the extension",
-        );
+        return error instanceof Error
+          ? error.message
+          : "Failed to answer the extension";
       }
     } finally {
       if (ownsTransport() && this.state.extensionUiRespondingId === request.id)
         this.set({ extensionUiRespondingId: null });
     }
+    return null;
   };
 
   checkInspireUpdate = (): void => this.updates.refreshInspire();

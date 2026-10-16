@@ -306,7 +306,7 @@ describe("shared extension interaction", () => {
   it("moves a visible selection with arrows, chooses with Enter or pointer, and restores modal focus", async () => {
     const respond = vi
       .spyOn(store, "respondExtensionUi")
-      .mockResolvedValue(undefined);
+      .mockResolvedValue(null);
     render(
       <>
         <button type="button">Opener</button>
@@ -442,7 +442,7 @@ describe("shared extension interaction", () => {
   it("keeps confirmation to No/Yes and preserves input submission and multiline Save", () => {
     const respond = vi
       .spyOn(store, "respondExtensionUi")
-      .mockResolvedValue(undefined);
+      .mockResolvedValue(null);
     render(<ExtensionUiDialog />);
     request({ id: "confirm", method: "confirm", title: "Continue?" });
     expect(

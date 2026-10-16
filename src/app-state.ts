@@ -202,8 +202,8 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   projectionHealth: ProjectionHealth;
   projectionConflict: ProjectionConflict | null;
   projectionError: string | null;
-  /** Global operation error. Projection conflicts use errorSeverity to
-   * distinguish safe external attention from integrity failures. */
+  /** Current session synchronization/projection error. Operation feedback
+   * stays local or uses Notices. Attention conflicts are warnings. */
   errorSeverity: "error" | "warning";
   /** Rendered union of chronological catalog pages and separately hydrated
    * curated/live identities. Only the chronological pages advance the cursor. */

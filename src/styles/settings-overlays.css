@@ -1410,6 +1410,14 @@
   padding-top: var(--space-2);
 }
 
+.dialog__error {
+  margin: var(--space-2) 0 0;
+  color: var(--error-ink);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .dialog__options .picker__row {
   overflow-wrap: anywhere;
 }
@@ -1666,6 +1674,7 @@
 /* --- Notices --- */
 
 .notices {
+  --notice-header-bottom: calc(var(--window-titlebar-height) + var(--topbar-h) + var(--safe-top));
   position: fixed;
   right: var(--space-4);
   bottom: var(--space-4);

@@ -32,6 +32,12 @@ files, and newer browser preferences. Navigation curation remains in [[session-c
   suspends projection reads before moving the file. Failure resumes the retained projection;
   committed deletion releases it and clears only that session's selection. The browser returns to
   New session only if it is still displaying the deleted identity; a newer open/new intent survives.
+  The browser fences older projection refreshes and pauses new reads of the confirmed targets
+  while deletion is in flight. Completion refreshes a still-selected surviving target, including
+  after partial batch failure; a committed deletion does not leave a stale refresh banner.
+  Authentication failures retain their transport-wide meaning rather than being suppressed as
+  deletion noise.
+
   Selection-reserved, running, queued, compacting, retrying, dialog-blocked, persistence-unknown,
   branch-leased, forking, and conflicted ownership still blocks deletion. An already-owned worker
   warmup is awaited and then retired inside the single-session deletion lane. After deletion, the

@@ -501,8 +501,8 @@ describe("runtime control completion ownership", () => {
 describe("resync failure ownership", () => {
   it.each([
     ["s2", null],
-    ["s2", "Current operation failed"],
-    ["s1", "Current operation failed"],
+    ["s2", "Current projection failed"],
+    ["s1", "Current projection failed"],
   ] as const)(
     "keeps %s's current error (%s) after an older selection's read fails",
     async (target, currentError) => {
@@ -513,8 +513,6 @@ describe("resync failure ownership", () => {
           return {
             body: activeSnapshot({ sessionId: String(jsonBody(init).id) }),
           };
-        if (url === "/api/control/abort")
-          return { status: 503, body: { error: currentError } };
         return baseRoutes(url, init);
       });
       const { store, socket } = await initStore();
@@ -528,7 +526,14 @@ describe("resync failure ownership", () => {
 
       await store.openSession("s2");
       if (target === "s1") await store.openSession("s1");
-      if (currentError) await store.abort();
+      if (currentError) {
+        const current = activeSnapshot({ sessionId: target });
+        current.active!.projectionHealth = {
+          status: "error",
+          message: currentError,
+        };
+        socket.emit({ type: "snapshot", data: current });
+      }
       expect(store.getState().error).toBe(currentError);
       pending.resolve({
         status: 503,

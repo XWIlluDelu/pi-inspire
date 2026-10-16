@@ -7,9 +7,7 @@ import type {
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 
-function cancel(request: ExtensionUiRequest): void {
-  void store.respondExtensionUi({ id: request.id, cancelled: true });
-}
+type Respond = (payload: Record<string, unknown>) => void;
 
 function RequestTime({ expiresAt }: { expiresAt: number }) {
   const [now, setNow] = useState(Date.now);
@@ -29,10 +27,12 @@ function Selection({
   request,
   title,
   responding,
+  onRespond,
 }: {
   request: SupportedExtensionUiRequest;
   title: string;
   responding: boolean;
+  onRespond: Respond;
 }) {
   const [selected, setSelected] = useState(0);
   const optionsRef = useRef<HTMLDivElement>(null);
@@ -63,7 +63,7 @@ function Selection({
             [next]?.focus();
         } else if (event.key === "Enter") {
           event.preventDefault();
-          void store.respondExtensionUi({
+          onRespond({
             id: request.id,
             value: options[selected],
           });
@@ -80,9 +80,7 @@ function Selection({
           className="picker__row"
           disabled={responding}
           onFocus={() => setSelected(index)}
-          onClick={() =>
-            void store.respondExtensionUi({ id: request.id, value: option })
-          }
+          onClick={() => onRespond({ id: request.id, value: option })}
         >
           <span className="extension-dialog__choice">{option}</span>
         </button>
@@ -94,9 +92,11 @@ function Selection({
 function DialogBody({
   request,
   responding,
+  onRespond,
 }: {
   request: ExtensionUiRequest;
   responding: boolean;
+  onRespond: Respond;
 }) {
   const [value, setValue] = useState(
     request.method === "editor" && "prefill" in request
@@ -104,6 +104,7 @@ function DialogBody({
       : "",
   );
 
+  const cancel = () => onRespond({ id: request.id, cancelled: true });
   const title =
     request.title ||
     (request.unsupported
@@ -130,7 +131,7 @@ function DialogBody({
             className="button button--primary"
             autoFocus
             disabled={responding}
-            onClick={() => cancel(request)}
+            onClick={cancel}
           >
             Close and cancel request
           </button>
@@ -143,13 +144,18 @@ function DialogBody({
     return (
       <>
         <h2 className="dialog__title">{title}</h2>
-        <Selection request={request} title={title} responding={responding} />
+        <Selection
+          request={request}
+          title={title}
+          responding={responding}
+          onRespond={onRespond}
+        />
         <div className="dialog__actions">
           <button
             type="button"
             className="button button--quiet"
             disabled={responding}
-            onClick={() => cancel(request)}
+            onClick={cancel}
           >
             Cancel
           </button>
@@ -171,7 +177,7 @@ function DialogBody({
             className="button"
             disabled={responding}
             onClick={() =>
-              void store.respondExtensionUi({
+              onRespond({
                 id: request.id,
                 confirmed: false,
               })
@@ -185,9 +191,7 @@ function DialogBody({
             autoFocus
             data-modal-autofocus
             disabled={responding}
-            onClick={() =>
-              void store.respondExtensionUi({ id: request.id, confirmed: true })
-            }
+            onClick={() => onRespond({ id: request.id, confirmed: true })}
           >
             Yes
           </button>
@@ -201,8 +205,7 @@ function DialogBody({
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        if (!responding)
-          void store.respondExtensionUi({ id: request.id, value });
+        if (!responding) onRespond({ id: request.id, value });
       }}
     >
       <h2 className="dialog__title">{title}</h2>
@@ -232,7 +235,7 @@ function DialogBody({
           type="button"
           className="button button--quiet"
           disabled={responding}
-          onClick={() => cancel(request)}
+          onClick={cancel}
         >
           Cancel
         </button>
@@ -260,6 +263,18 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog() {
   );
   const request = requests[0] ?? null;
   const responding = Boolean(respondingId);
+  const owner = request ? `${request.sessionId}:${request.id}` : null;
+  const [responseError, setResponseError] = useState<{
+    owner: string;
+    message: string;
+  } | null>(null);
+  const onRespond: Respond = (payload) => {
+    if (!owner) return;
+    setResponseError(null);
+    void store.respondExtensionUi(payload).then((message) => {
+      if (message) setResponseError({ owner, message });
+    });
+  };
   const dialogRef = useModalFocus<HTMLDivElement>(
     Boolean(request),
     request ? `${request.sessionId}:${request.id}` : null,
@@ -268,7 +283,7 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog() {
           // Conflict recovery is a host-owned Escape path and must remain
           // available even when this extension request is still visible.
           if (runState === "conflict") return false;
-          if (!responding) cancel(request);
+          if (!responding) onRespond({ id: request.id, cancelled: true });
         }
       : undefined,
   );
@@ -292,7 +307,13 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog() {
           key={`${request.sessionId}:${request.id}`}
           request={request}
           responding={responding}
+          onRespond={onRespond}
         />
+        {responseError?.owner === owner ? (
+          <p className="dialog__error" role="alert">
+            {responseError.message}
+          </p>
+        ) : null}
         {request.expiresAt !== undefined ? (
           <RequestTime
             key={`${request.sessionId}:${request.id}:${request.expiresAt}`}
