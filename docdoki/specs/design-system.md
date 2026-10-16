@@ -238,7 +238,8 @@ declaration.
   and proportional columns, keeping labels inside their selected surface. Count badges share
   the label baseline; the narrowest headers omit the optional badge but retain the exact Changes
   count in its title. Compact touch tabs are 34px tall, with adjacent 32px actions. Settings section
-  icons remain outside the font-dependent heading line box.
+  icons remain outside the font-dependent heading line box. Activity matrices/disclosure arrows
+  and Settings section icons align with the visible uppercase letters, not merely the line-box center.
   Navigation, file subsection headings, command-palette and completion/model-choice headings
   preserve authored casing and their established UI tiers. Technical identifiers retain their
   exact spelling; document typography is unchanged.
@@ -274,7 +275,9 @@ declaration.
   Comfortable 820px, and Wide 980px measures, and a contextual pane clamped
   from 340px to 760px. Responsive caps and the available center region still
   bound every selected measure. The 44px topbar aligns the regions without
-  turning the page into a dashboard of boxed panels.
+  turning the page into a dashboard of boxed panels. Connecting/reconnecting is a quiet, unboxed
+  transport hint, not an action button; compact headers retain its accessible label. Offline and
+  Host failures keep warning treatment, and the hint disappears when the connection recovers.
 
 ## Scrolling
 

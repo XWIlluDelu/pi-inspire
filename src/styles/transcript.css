@@ -686,6 +686,15 @@
   flex-shrink: 0;
 }
 
+/* Center marks on Rajdhani's uppercase ink, not its lower line-box center.
+   Move the marks only; disclosure hit areas and the content guide stay put. */
+.activity-fold__disclosure > svg,
+.activity-fold__boundary > svg,
+.activity-fold__omission > svg,
+.activity-fold__matrix {
+  transform: translateY(-1px);
+}
+
 :is(
   .activity-fold__disclosure,
   .activity-fold__boundary,
