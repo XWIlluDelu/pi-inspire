@@ -145,6 +145,26 @@ describe("composer history projection", () => {
     expect(message.content[0]?.text).toBe(sourceText);
   });
 
+  it("recalls files and images together when Pi appended a dimension note", () => {
+    const path = resolve("report.md");
+    const content =
+      addAttachmentContext("Inspect", [], [path]) +
+      "\n\n[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]";
+    const message = {
+      role: "user",
+      content: [
+        { type: "text", text: content },
+        { type: "image", data: "cGl4ZWxz", mimeType: "image/png" },
+      ],
+    };
+    const history = composerHistoryEntries([message]);
+    expect(history[0]?.text).toBe("Inspect");
+    expect(history[0]?.files).toHaveLength(1);
+    expect(history[0]?.files[0]?.reference).toBe("pi-file://0/0");
+    expect(history[0]?.images[0]?.reference).toBe("pi-embedded://0/1");
+    expect(message.content[0]?.text).toBe(content);
+  });
+
   it("projects ordinary and project files, including file-only prompts", () => {
     const projectFile = "/workspace/src/source.ts";
     const attachment = "/cache/uploads/report.pdf";

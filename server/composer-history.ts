@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { basename, relative, resolve } from "node:path";
+import { relative, resolve } from "node:path";
+import { fileReferenceName } from "../shared/attachment-context.js";
 import { composerArtifactReference } from "../shared/composer-artifact-references.js";
 import {
   type ComposerHistoryEntry,
@@ -9,7 +10,6 @@ import {
   MAX_COMPOSER_HISTORY_ENTRIES,
   MAX_COMPOSER_HISTORY_PAGE_BYTES,
 } from "../shared/contracts.js";
-import { stripImageDimensionNotes } from "../shared/image-dimension-notes.js";
 import { parseAttachmentContext } from "./attachments.js";
 import { escapesBase } from "./paths.js";
 import { requestError } from "./request-error.js";
@@ -38,7 +38,7 @@ function historyFile(
       : false;
   return {
     reference,
-    fileName: attachmentName ?? (basename(path) || "file"),
+    fileName: attachmentName ?? fileReferenceName(path),
     kind: project ? "project" : "attachment",
   };
 }
@@ -97,8 +97,8 @@ function userMessageEntry(
     });
   }
 
-  const parsed = parseAttachmentContext(content);
-  const text = stripImageDimensionNotes(parsed.text, images.length).trim();
+  const parsed = parseAttachmentContext(content, images.length);
+  const text = parsed.text.trim();
   const files = parsed.references.map((path, referenceIndex) =>
     historyFile(
       path,

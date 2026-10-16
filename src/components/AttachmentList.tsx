@@ -1,5 +1,6 @@
-import { AlertTriangle, FileText, X } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
 import type { PendingAttachment } from "../controllers/composer-controller";
+import { fileIconForPath } from "../file-icons";
 import { formatBytes } from "../format";
 import { transcriptProjectionKey } from "../transcript-projection-key";
 import { ImageGallery } from "./ImageGallery";
@@ -23,6 +24,7 @@ export function AttachmentList({
       <ul className="composer__attachments" aria-label="Attachments">
         {items.map((item) => {
           const image = item.kind === "image";
+          const FileIcon = fileIconForPath(item.fileName);
           const fileDetails =
             item.recalledArtifact?.type === "file"
               ? item.recalledArtifact.fileKind === "project"
@@ -65,7 +67,7 @@ export function AttachmentList({
                 )
               ) : (
                 <>
-                  <FileText size={13} aria-hidden />
+                  <FileIcon size={13} aria-hidden />
                   <span className="attachment__name">{item.fileName}</span>
                 </>
               )}

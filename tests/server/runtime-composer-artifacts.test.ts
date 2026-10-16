@@ -66,59 +66,72 @@ describe("composer-history artifacts", () => {
     }
   });
 
-  it("retains Host-owned attachments even when the project root contains the upload path", async () => {
-    const root = await realpath(
-      await mkdtemp(join(tmpdir(), "inspire-prompt-files-")),
-    );
-    roots.push(root);
-    const attachment = join(root, "owned.txt");
-    await writeFile(attachment, "owned attachment\n");
-    const prompt = addAttachmentContext(
-      "Use this file",
-      [{ kind: "file", path: attachment }],
-      [],
-    );
-    const slot = {
-      cwd: root,
-      viewId: "view-a",
-      navigationLease: null,
-      projection: {
-        incarnation: "incarnation-a",
-        leafId: null,
-        composerHistoryMessages: () => [
-          {
-            role: "user",
-            content: prompt,
-            __inspireMessageIndex: 0,
-          },
-        ],
-      },
-    } as unknown as RuntimeSlot;
+  it.each([false, true])(
+    "retains Host-owned attachments inside the project (image hint: %s)",
+    async (withImage) => {
+      const root = await realpath(
+        await mkdtemp(join(tmpdir(), "inspire-prompt-files-")),
+      );
+      roots.push(root);
+      const attachment = join(root, "owned.txt");
+      await writeFile(attachment, "owned attachment\n");
+      const prompt = addAttachmentContext(
+        "Use this file",
+        [{ kind: "file", path: attachment }],
+        [],
+      );
+      const slot = {
+        cwd: root,
+        viewId: "view-a",
+        navigationLease: null,
+        projection: {
+          incarnation: "incarnation-a",
+          leafId: null,
+          composerHistoryMessages: () => [
+            {
+              role: "user",
+              content: withImage
+                ? [
+                    {
+                      type: "text",
+                      text:
+                        prompt +
+                        "\n\n[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]",
+                    },
+                    { type: "image", data: "cGl4ZWxz", mimeType: "image/png" },
+                  ]
+                : prompt,
+              __inspireMessageIndex: 0,
+            },
+          ],
+        },
+      } as unknown as RuntimeSlot;
 
-    await expect(
-      resolveComposerHistoryArtifacts(
-        slot,
-        {
-          sessionId: "session-a",
-          message: "Use this file",
-          historyArtifacts: {
-            viewId: "view-a",
-            incarnation: "incarnation-a",
-            effectiveLeafId: null,
-            imageReferences: [],
-            fileReferences: ["pi-file://0/0"],
+      await expect(
+        resolveComposerHistoryArtifacts(
+          slot,
+          {
+            sessionId: "session-a",
+            message: "Use this file",
+            historyArtifacts: {
+              viewId: "view-a",
+              incarnation: "incarnation-a",
+              effectiveLeafId: null,
+              imageReferences: [],
+              fileReferences: ["pi-file://0/0"],
+            },
           },
-        },
-        {
-          ready: async () => {},
-          ownsPromptFile: (path) => path === attachment,
-        },
-      ),
-    ).resolves.toMatchObject({
-      files: [{ kind: "file", path: attachment }],
-      projectFiles: [],
-    });
-  });
+          {
+            ready: async () => {},
+            ownsPromptFile: (path) => path === attachment,
+          },
+        ),
+      ).resolves.toMatchObject({
+        files: [{ kind: "file", path: attachment }],
+        projectFiles: [],
+      });
+    },
+  );
 });
 
 describe("prompt project-file revalidation", () => {

@@ -165,7 +165,16 @@ function recalledFilePaths(
 ): string[] {
   return references.map((reference) => {
     const [messageIndex, referenceIndex] = referenceIndexes(reference, "file");
-    const path = parseAttachmentContext(promptText(userMessage(messageIndex)))
+    const message = userMessage(messageIndex);
+    const imageCount = Array.isArray(message.content)
+      ? message.content.filter(
+          (part) =>
+            part &&
+            typeof part === "object" &&
+            (part as UserMessage).type === "image",
+        ).length
+      : 0;
+    const path = parseAttachmentContext(promptText(message), imageCount)
       .references[referenceIndex];
     if (!path) {
       throw requestError(
