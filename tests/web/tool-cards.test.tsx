@@ -472,10 +472,28 @@ describe("native Pi tool cards", () => {
       />,
     );
     expect(screen.getByText("Not executed")).toBeInTheDocument();
+    expect(screen.getByLabelText("not executed")).toHaveAttribute(
+      "data-status",
+      "neutral",
+    );
     expect(screen.queryByLabelText("finished")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Copy write argument preview" }),
     ).toBeInTheDocument();
+    rerender(
+      <ToolCard
+        call={call("read", { path: "a.txt" })}
+        result={undefined}
+        activity={undefined}
+        live={false}
+        visibility="expanded"
+      />,
+    );
+    expect(screen.getByLabelText("no result")).toHaveAttribute(
+      "data-status",
+      "neutral",
+    );
+    expect(screen.getByText("No result recorded")).toBeInTheDocument();
   });
 
   it("keeps one loading glyph through argument generation, queueing and execution", () => {

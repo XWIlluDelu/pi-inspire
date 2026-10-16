@@ -65,7 +65,7 @@ it("preserves the caller's square slot and accessible label", () => {
   expect(icon).toHaveClass("status-icon");
 });
 
-it.each(["success", "error"] as const)(
+it.each(["success", "error", "neutral"] as const)(
   "keeps %s static and aligned with the loading slot",
   (status) => {
     const { getByLabelText } = render(
@@ -79,6 +79,17 @@ it.each(["success", "error"] as const)(
     expect(icon).toHaveAttribute("data-status", status);
   },
 );
+
+it("uses an empty-centered ring rather than a stopped loading pattern for neutral outcomes", () => {
+  const { getByLabelText } = render(
+    <PiStatus status="neutral" aria-label="not executed" />,
+  );
+  const icon = getByLabelText("not executed");
+  expect(icon.querySelectorAll("rect")).toHaveLength(8);
+  expect(icon.querySelector("path")).toBeNull();
+  expect(icon.querySelector('rect[x="7.1"][y="7.1"]')).toBeNull();
+  expect(icon).not.toHaveAttribute("data-variant");
+});
 
 it("can stay decorative alongside an existing status label", () => {
   const { container } = render(<PiLoader />);

@@ -259,6 +259,11 @@ test("native dialog keyboard/pointer flow, deadline reconnect and content-first 
       hoverChoice.evaluate((el) => getComputedStyle(el).backgroundColor),
     )
     .not.toBe(restingBackground);
+  expect(
+    await hoverChoice.evaluate(
+      (element) => getComputedStyle(element).boxShadow,
+    ),
+  ).not.toBe("none");
   await page.mouse.move(0, 0);
   expect(fixture.responses).toHaveLength(0);
   await page.keyboard.press("ArrowDown");

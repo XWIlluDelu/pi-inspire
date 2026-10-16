@@ -1,7 +1,6 @@
 import {
   Brain,
   ChevronRight,
-  Circle,
   FilePen,
   FilePlus2,
   FileSearch,
@@ -534,7 +533,7 @@ function statusIcon(status: ToolStatus) {
     case "waiting":
       return <PiLoader size={14} aria-label="waiting to execute" />;
     case "interrupted":
-      return <Circle size={12} aria-label="not executed" />;
+      return <PiStatus status="neutral" size={14} aria-label="not executed" />;
     case "running":
       return <PiLoader size={14} aria-label="running" />;
     case "success":
@@ -556,9 +555,7 @@ function statusIcon(status: ToolStatus) {
         />
       );
     default:
-      return (
-        <Circle size={12} className="status-unknown" aria-label="no result" />
-      );
+      return <PiStatus status="neutral" size={14} aria-label="no result" />;
   }
 }
 

@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { MAX_CHILD_CALLS, resultChildCalls } from "../../shared/tool-activity";
+import { ChildCalls } from "../../src/components/ChildCalls";
 import {
   ToolCard,
   ToolResultCard,
@@ -81,6 +82,31 @@ function toolCard(
     />
   );
 }
+
+it.each(["cancelled", "unfinished"] as const)(
+  "keeps %s child calls neutral and static without declaring failure",
+  (status) => {
+    const { container } = render(
+      <ChildCalls
+        running={false}
+        onRead={() => {}}
+        list={{
+          source: "nested",
+          complete: true,
+          calls: [{ key: "passive", name: "read", status }],
+        }}
+      />,
+    );
+    expect(container.querySelector(".child-call__status svg")).toHaveAttribute(
+      "data-status",
+      "neutral",
+    );
+    expect(container.querySelector(".pi-loading")).toBeNull();
+    expect(container.querySelector(".child-call__status")).toHaveTextContent(
+      status === "cancelled" ? "Cancelled" : "Unfinished",
+    );
+  },
+);
 
 it("separates Calls and Output and copies the complete tool block once from the header", async () => {
   const result = {

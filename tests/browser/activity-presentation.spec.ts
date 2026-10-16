@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from "@playwright/test";
+import { expect, type Locator, test } from "@playwright/test";
 import { activityReadingMessages } from "../web/fixtures/activity-reading";
 import { customMessageConfiguration } from "../web/fixtures/custom-message-presentation";
 import { openMockEventSession } from "./support/mock-host";
@@ -401,13 +401,21 @@ test("success and failure cues retain semantic color in tools and nested calls",
   );
   if (!code || !("details" in code) || !code.details?.calls)
     throw new Error("Missing nested activity fixture");
-  code.details.calls.push({
-    id: "failed-child",
-    name: "preview_check",
-    args: "{}",
-    status: "error",
-    durationMs: 30,
-  });
+  code.details.calls.push(
+    {
+      id: "failed-child",
+      name: "preview_check",
+      args: "{}",
+      status: "error",
+      durationMs: 30,
+    },
+    {
+      id: "cancelled-child",
+      name: "read",
+      args: '{"path":"notes.md"}',
+      status: "cancelled",
+    },
+  );
   // Model-call preview strings are intentionally not an expandable argument
   // payload, so this completed call has no detail control.
   code.details.calls.push({
@@ -416,7 +424,36 @@ test("success and failure cues retain semantic color in tools and nested calls",
     args: "fixture/classifier",
     status: "ok",
   });
-  send(...messages.map((message) => ({ type: "message_end", message })));
+  send(...messages.map((message) => ({ type: "message_end", message })), {
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "not-executed",
+          name: "read",
+          arguments: { path: "notes.md" },
+          __inspireToolCall: {
+            phase: "interrupted",
+            characters: 20,
+            truncated: false,
+          },
+        },
+        {
+          type: "toolCall",
+          id: "unrecorded",
+          name: "read",
+          arguments: { path: "notes.md" },
+        },
+      ],
+    },
+  });
+  for (const label of ["not executed", "no result"]) {
+    const mark = page.getByLabel(label, { exact: true });
+    await expect(mark).toHaveAttribute("data-status", "neutral");
+    await expect(mark).toHaveCSS("animation-name", "none");
+  }
   const codeCard = page
     .locator(".card--tool")
     .filter({ hasText: "CodeMode" })
@@ -473,6 +510,8 @@ test("success and failure cues retain semantic color in tools and nested calls",
       [".card__status .status-error", "--error"],
       [".child-call__status--ok", "--success"],
       [".child-call__status--error", "--error"],
+      ['.card__status .pi-status[data-status="neutral"]', "--muted"],
+      [".child-call__status--cancelled", "--muted"],
     ]) {
       const cue = page.locator(selector!).first();
       await expect(cue).toBeVisible();

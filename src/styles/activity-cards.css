@@ -382,10 +382,6 @@
   color: var(--activity-tool);
 }
 
-.status-unknown {
-  color: var(--faint);
-}
-
 .activity-strip__reveal {
   display: grid;
   grid-template-rows: 0fr;

@@ -1,4 +1,4 @@
-import { ChevronRight, Circle } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import type { ChildCall, ChildCallList } from "../../shared/tool-activity";
 import { stripTerminalSequences } from "../ansi";
@@ -46,7 +46,7 @@ function CallRow({ call }: { call: ChildCall }) {
     ) : call.status === "error" ? (
       <PiStatus status="error" size={12} aria-hidden />
     ) : (
-      <Circle size={12} aria-hidden />
+      <PiStatus status="neutral" size={12} aria-hidden />
     );
   const row = (
     <>
