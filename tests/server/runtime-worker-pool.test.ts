@@ -20,6 +20,94 @@ beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
 
 describe("worker and projection retention", () => {
+  it("retains cold views for every subscribing browser without selecting or starting a worker", async () => {
+    const spawn = vi.fn(() => {
+      throw new Error("Viewing must not launch Pi");
+    });
+    const runtime = new RuntimeController(
+      catalog(["a", "b"].map((id) => record(id, "/project"))),
+      trackedAttachmentStore(),
+      spawn,
+      preview,
+    );
+    const first = runtime.retainSessionView("a");
+    const second = runtime.retainSessionView("a");
+    const other = runtime.retainSessionView("b");
+    try {
+      const initial = await runtime.snapshot("a");
+      await runtime.snapshot("b");
+      await runtime.composerHistory("a");
+      await runtime.transcriptUserTurns("b");
+      expect(runtime.activeSessionId).toBeNull();
+      expect(spawn).not.toHaveBeenCalled();
+      const restart = runtime.reserveMaintenanceRestart();
+      expect(restart.kind).toBe("ready");
+      if (restart.kind === "ready")
+        runtime.releaseMaintenanceRestart(restart.leaseId);
+      expect((await runtime.snapshot("a")).active?.transcriptPage?.viewId).toBe(
+        initial.active?.transcriptPage?.viewId,
+      );
+
+      first();
+      first(); // One browser closing twice cannot release another's view.
+      await expect(runtime.composerHistory("a")).resolves.toMatchObject({
+        sessionId: "a",
+      });
+      second();
+      const slots = (runtime as unknown as { slots: Map<string, unknown> })
+        .slots;
+      await vi.waitFor(() => expect(slots.has("a")).toBe(false));
+      await expect(runtime.composerHistory("b")).resolves.toMatchObject({
+        sessionId: "b",
+      });
+      other();
+      await vi.waitFor(() => expect(slots.size).toBe(0));
+    } finally {
+      first();
+      second();
+      other();
+      await runtime.close();
+    }
+  });
+
+  it("keeps an idle worker viewed by another browser until its observer leaves", async () => {
+    const workers: FakeRpc[] = [];
+    const runtime = new RuntimeController(
+      catalog(
+        ["a", "b", "c", "d", "e", "f"].map((id) => record(id, "/project")),
+      ),
+      trackedAttachmentStore(),
+      (options) => {
+        const worker = new FakeRpc(options);
+        workers.push(worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    const release = runtime.retainSessionView("a");
+    try {
+      for (const id of ["a", "b", "c", "d", "e", "f"]) {
+        await runtime.openSession(id);
+        await waitForReady(runtime, id);
+      }
+      await vi.waitFor(() =>
+        expect(workers.find((worker) => worker.sessionId === "b")?.stops).toBe(
+          1,
+        ),
+      );
+      expect(workers.find((worker) => worker.sessionId === "a")?.stops).toBe(0);
+      release();
+      await vi.waitFor(() =>
+        expect(workers.find((worker) => worker.sessionId === "a")?.stops).toBe(
+          1,
+        ),
+      );
+    } finally {
+      release();
+      await runtime.close();
+    }
+  });
+
   it("keeps an accepted prompt non-evictable until its lifecycle event arrives", async () => {
     const store = trackedAttachmentStore();
     const ids = ["a", "b", "c", "d", "e", "f"];

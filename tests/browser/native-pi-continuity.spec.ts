@@ -21,17 +21,41 @@ test("continue the same native Pi in the browser without closing its terminal", 
   );
   test.setTimeout(60_000);
   const f = await nativeHerdrFixture({ streamDelayMs: 3000 });
-  const application = createInspireServer({
-    token: browserTestToken,
-    runtime: f.makeRuntime(),
-    catalog: f.catalog,
-    attachments: f.store,
-    preferences: new PreferencesStore(join(f.root, "preferences.json")),
-    resources: new ResourceStore(),
-    git: new GitInspectionService(),
-    mock: false,
-    version: "0.0.0-native-test",
-    piVersion: piInstallation.version,
+  const createApplication = () =>
+    createInspireServer({
+      token: browserTestToken,
+      runtime: f.makeRuntime(),
+      catalog: f.catalog,
+      attachments: f.store,
+      preferences: new PreferencesStore(join(f.root, "preferences.json")),
+      resources: new ResourceStore(),
+      git: new GitInspectionService(),
+      mock: false,
+      version: "0.0.0-native-test",
+      piVersion: piInstallation.version,
+    });
+  let application = createApplication();
+  let afterRestart = false;
+  let recoveredOutline = false;
+  const recoveredViews = new Set<string>();
+  page.on("response", (response) => {
+    const path = new URL(response.url()).pathname;
+    if (path === "/api/transcript/user-turns" && response.ok())
+      recoveredOutline = true;
+    if (
+      afterRestart &&
+      recoveredOutline &&
+      path === "/api/snapshot" &&
+      response.ok()
+    ) {
+      void response
+        .json()
+        .then((snapshot) => {
+          if (snapshot.active?.transcriptPage?.viewId)
+            recoveredViews.add(snapshot.active.transcriptPage.viewId);
+        })
+        .catch(() => undefined);
+    }
   });
   try {
     await new Promise<void>((resolve) =>
@@ -73,13 +97,30 @@ test("continue the same native Pi in the browser without closing its terminal", 
     await expect(
       page.getByText("global physical a reply", { exact: true }),
     ).toHaveCount(2);
-    await input.fill("Continue after reconnecting the browser");
+    await input.fill("Continue after restarting the Host");
+    await application.close();
+    afterRestart = true;
+    recoveredOutline = false;
+    application = createApplication();
+    await new Promise<void>((resolve) =>
+      application.server.listen(port, "127.0.0.1", resolve),
+    );
+    // A snapshot alone is not recovery: the new Host must retain the visible
+    // session for its subsequent reads and input, without a page refresh.
+    await expect.poll(() => recoveredOutline, { timeout: 15_000 }).toBe(true);
+    await expect(input).toHaveValue("Continue after restarting the Host");
+    await expect(
+      page.getByText("global physical a reply", { exact: true }),
+    ).toHaveCount(2);
     await page
       .getByRole("button", { name: "Send message", exact: true })
       .click();
     await expect(
       page.getByText("global physical a reply", { exact: true }),
     ).toHaveCount(3, { timeout: 15_000 });
+    // Recovery must not repeatedly recreate the transcript while history reads
+    // fail: a continuing conversation has one stable view after reconnect.
+    await expect.poll(() => recoveredViews.size).toBe(1);
     expect(
       (await f.observer.findNativeWriter(f.sessionId, f.sessionFile))?.pid,
     ).toBe(f.originalPid);
