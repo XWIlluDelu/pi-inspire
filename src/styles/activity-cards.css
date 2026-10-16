@@ -1605,10 +1605,35 @@ span.card__file-arg {
     background var(--dur-micro) var(--ease-standard);
 }
 
-.code-block__copy:hover,
-.code-block__terminal:hover {
+@media (hover: hover) {
+  .code-block__copy:hover,
+  .code-block__terminal:hover {
+    color: var(--ink);
+    background: var(--bg-inset);
+  }
+}
+
+.code-block__copy:active,
+.code-block__terminal:active {
   color: var(--ink);
   background: var(--bg-inset);
+}
+
+@media (pointer: coarse) {
+  .code-block__bar {
+    min-height: 40px;
+    padding-right: var(--space-2);
+  }
+
+  .code-block__actions {
+    gap: var(--space-2);
+  }
+
+  .code-block__copy,
+  .code-block__terminal {
+    width: 36px;
+    height: 36px;
+  }
 }
 
 .code-block__pre {

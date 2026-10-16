@@ -45,6 +45,7 @@ import {
   TranscriptSearchReveal,
   useTranscriptSearch,
 } from "./transcript-search";
+import { useTranscriptSearchHighlights } from "./transcript-search-highlights";
 import { useTranscriptViewport } from "./transcript-viewport";
 
 // --- Transcript with pinned auto-scroll ---
@@ -241,6 +242,15 @@ export const Transcript = memo(function Transcript({
         row?.scrollIntoView({ block: "center" });
       });
     },
+  });
+
+  useTranscriptSearchHighlights({
+    root: scrollport,
+    rows,
+    query: search.query,
+    scope: search.scope,
+    match: search.matches[search.currentMatch],
+    revealVersion: search.revealVersion,
   });
 
   const closeMobileTranscriptTool = useCallback(

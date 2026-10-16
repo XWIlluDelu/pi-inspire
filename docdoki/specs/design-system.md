@@ -488,6 +488,10 @@ are unchanged.
 
 ## Session and command search presentation
 
+Native search-clear glyphs use the field's theme ink and a consistent cross; clear and Escape
+semantics remain owned by each field. Workspace search keeps its explicit clear/loading control,
+without a second native clear button.
+
 Session titles and visible project names/context emphasize matching text at weight 600, without
 changing colors, backgrounds, ellipsis or direct Pin/Hide controls. Plain tokens follow Pi's greedy
 subsequence matching (including its letter/digit swap); quoted phrases preserve native whitespace
@@ -499,6 +503,13 @@ weight 500. Hints retain their secondary color, size and placement; aliases and 
 remain search inputs without requiring invented visible text. Ranking, search-time Results grouping,
 shortcuts, focus and keyboard selection remain unchanged. Its category headings stay transparent with a shared `--line` bottom
 rule; the rule replaces one pixel of bottom padding, preserving heading height and text position.
+
+## Extension question choices
+
+Immediate-submit choices distinguish current keyboard focus and pointer hover without a check
+that implies an answer has already been submitted. Focus retains a visible outline; hover and
+press use the shared control surface. Click/Enter submission and roving keyboard navigation
+remain unchanged.
 
 ## Content copying
 
@@ -542,6 +553,10 @@ rows without a description keep their title vertically centered within the touch
 Wide palettes retain their compact, right-aligned secondary column.
 
 ## Action-button presentation
+
+Code-block Copy and Insert in terminal remain compact 24px controls on mouse layouts.
+Coarse-pointer layouts use separate 36px targets with an 8px gap, without enlarging their glyphs
+or sharing a hit area. Hover feedback is mouse-only; touch has local pressed feedback.
 
 Copy, Fork, Pending Return/Clear and similar actions share three presentation types:
 

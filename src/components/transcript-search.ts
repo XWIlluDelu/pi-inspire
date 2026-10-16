@@ -38,18 +38,13 @@ export function findLiteralMatches(
   rowIndex: number,
 ): TranscriptSearchMatch[] {
   if (!query) return [];
-  const haystack = text.toLocaleLowerCase();
-  const needle = query.toLocaleLowerCase();
-  if (!needle) return [];
-  const matches: TranscriptSearchMatch[] = [];
-  let from = 0;
-  while (from <= haystack.length - needle.length) {
-    const offset = haystack.indexOf(needle, from);
-    if (offset < 0) break;
-    matches.push({ rowIndex, offset });
-    from = offset + needle.length;
-  }
-  return matches;
+  // Match the original string: lowercasing can change UTF-16 length (e.g. İ)
+  // and shift every subsequent highlight. Escaping keeps the query literal.
+  const literal = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return Array.from(text.matchAll(new RegExp(literal, "giu")), (match) => ({
+    rowIndex,
+    offset: match.index,
+  }));
 }
 
 interface TranscriptSearchOptions<Row extends TranscriptSearchRow> {

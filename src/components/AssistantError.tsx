@@ -1,12 +1,27 @@
 import { ChevronDown, CircleAlert } from "lucide-react";
-import { useId, useState } from "react";
+import { useContext, useId, useLayoutEffect, useState } from "react";
 import { CopyAction } from "./CopyAction";
+import { TranscriptSearchReveal } from "./transcript-search";
 
 /** Pi's message outcome, not a transient notice or collapsible activity. */
 export function AssistantError({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false);
   const detailsId = useId();
-  const firstParagraph = text.split(/\n\s*\n/)[0] || text;
+  const paragraphBreak = /\n\s*\n/.exec(text);
+  const firstParagraph =
+    paragraphBreak &&
+    paragraphBreak.index > 0 &&
+    paragraphBreak.index + paragraphBreak[0].length < text.length
+      ? text.slice(0, paragraphBreak.index)
+      : text;
+  const diagnostics =
+    firstParagraph !== text && paragraphBreak
+      ? text.slice(paragraphBreak.index + paragraphBreak[0].length)
+      : "";
+  const searchReveal = useContext(TranscriptSearchReveal);
+  useLayoutEffect(() => {
+    if (searchReveal !== null) setExpanded(true);
+  }, [searchReveal]);
   const preview = Array.from(firstParagraph.split("\n").slice(0, 3).join("\n"))
     .slice(0, 240)
     .join("");
@@ -28,9 +43,17 @@ export function AssistantError({ text }: { text: string }) {
         tabIndex={expanded ? 0 : undefined}
         className={`assistant-error__message${expanded ? " assistant-error__message--expanded" : ""}`}
       >
-        {expanded || !hasDetails
-          ? text
-          : `${preview}${preview.length < firstParagraph.length ? "…" : ""}`}
+        <span className="assistant-error__reason">
+          {expanded || !hasDetails
+            ? firstParagraph
+            : `${preview}${preview.length < firstParagraph.length ? "…" : ""}`}
+        </span>
+        {expanded && diagnostics ? (
+          <>
+            {paragraphBreak![0]}
+            <pre className="assistant-error__diagnostics">{diagnostics}</pre>
+          </>
+        ) : null}
       </section>
       {hasDetails ? (
         <button

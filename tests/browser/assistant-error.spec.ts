@@ -22,7 +22,16 @@ test("Pi errors remain visible after reopening and reload, with copyable long de
     page.getByText("WebSocket error", { exact: true }),
   ).toBeVisible();
   const error = page.getByRole("group", { name: "Pi error" }).last();
+  const reason = error.locator(".assistant-error__reason");
+  const reasonStyle = () =>
+    reason.evaluate((element) => {
+      const style = getComputedStyle(element);
+      const bounds = element.getBoundingClientRect();
+      return { font: style.font, left: bounds.left };
+    });
+  const collapsedReason = await reasonStyle();
   await error.getByRole("button", { name: "Show details" }).click();
+  expect(await reasonStyle()).toEqual(collapsedReason);
   const fullText = await error
     .locator(".assistant-error__message")
     .textContent();
