@@ -320,13 +320,23 @@
   width: 100%;
 }
 
+.settings__section-heading {
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
 .settings__section-action {
+  flex: none;
   margin-left: auto;
 }
 
 .settings__section-action .button { white-space: nowrap; }
 
 .settings__section-icon {
+  flex: none;
+  height: calc(var(--text-base) * var(--leading-ui));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1182,11 +1192,17 @@
 
   .palette__row {
     align-items: flex-start;
+    justify-content: center;
     flex-direction: column;
     gap: var(--space-1);
   }
 
+  .palette__title {
+    flex: none;
+  }
+
   .palette__hint-inline {
+    margin-left: 0;
     max-width: 100%;
     text-align: left;
   }

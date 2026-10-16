@@ -6,6 +6,7 @@ import {
   pairAndOpen,
   pairedPage,
 } from "./support/navigation";
+import { textMarkOffsets } from "./support/text-baseline";
 
 test("Settings headings sit outside their cards and nested fills follow the border", async ({
   page,
@@ -15,7 +16,8 @@ test("Settings headings sit outside their cards and nested fills follow the bord
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
 
-  for (const width of [1280, 390]) {
+  await page.evaluate(() => document.fonts.ready);
+  for (const width of [1280, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
     await settings
       .getByRole("button", { name: "Display", exact: true })
@@ -67,6 +69,16 @@ test("Settings headings sit outside their cards and nested fills follow the bord
       name: "Custom providers",
       exact: true,
     });
+    // Custom providers wraps beside its action at 320px. Its icon belongs
+    // to the first line, not the center of the whole multi-line heading.
+    const offsets = await providers
+      .locator(".settings__section-title-wrap")
+      .evaluate(textMarkOffsets, {
+        label: ".settings__section-title",
+        marks: ".settings__section-icon",
+      });
+    expect(offsets).toHaveLength(1);
+    expect(Math.abs(offsets[0]!)).toBeLessThanOrEqual(0.5);
     const show = providers.getByRole("button", { name: "Show", exact: true });
     if (await show.isVisible()) await show.click();
     const provider = settings.locator(".models-provider-config").first();

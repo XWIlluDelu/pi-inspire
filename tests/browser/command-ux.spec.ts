@@ -156,6 +156,51 @@ test("file completions keep full filenames readable beside or above their paths"
   }
 });
 
+test("narrow palette descriptions follow their titles while plain rows stay centered", async ({
+  page,
+  commandSession,
+}) => {
+  const palette = await openPalette(page);
+  const history = palette
+    .getByRole("option")
+    .filter({ hasText: "Open History" });
+  const plain = palette.getByRole("option").filter({ hasText: "New session" });
+  for (const width of [1280, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    const layout = await history.evaluate((row) => {
+      const title = row
+        .querySelector(".palette__title")!
+        .getBoundingClientRect();
+      const hint = row
+        .querySelector(".palette__hint-inline")!
+        .getBoundingClientRect();
+      const box = row.getBoundingClientRect();
+      return { title: title.toJSON(), hint: hint.toJSON(), row: box.toJSON() };
+    });
+    if (width <= 600) {
+      expect(layout.hint.x).toBeCloseTo(layout.title.x, 1);
+      expect(layout.hint.top).toBeGreaterThanOrEqual(layout.title.bottom);
+      expect(layout.hint.right).toBeLessThanOrEqual(layout.row.right);
+    } else {
+      expect(layout.hint.left).toBeGreaterThan(layout.title.left);
+      expect(layout.hint.top).toBeLessThan(layout.title.bottom);
+    }
+    const offset = await plain.evaluate((row) => {
+      const title = row
+        .querySelector(".palette__title")!
+        .getBoundingClientRect();
+      const box = row.getBoundingClientRect();
+      return title.y + title.height / 2 - (box.y + box.height / 2);
+    });
+    expect(Math.abs(offset)).toBeLessThanOrEqual(0.5);
+  }
+  // Layout changes do not consume drafts or alter pointer/keyboard destinations.
+  await palette.getByLabel("Filter commands").fill("Open History");
+  await palette.getByLabel("Filter commands").press("Enter");
+  await expect(palette).toHaveCount(0);
+  await commandSession.assertDraft();
+});
+
 test("ranks command destinations and opens the model picker without consuming a draft", async ({
   page,
   commandSession,
