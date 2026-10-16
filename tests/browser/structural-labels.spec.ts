@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { routeMockSnapshots } from "./support/mock-host";
 import { openMockSession, pairedPage } from "./support/navigation";
 import { textBaseline, textMarkOffsets } from "./support/text-baseline";
 
@@ -110,3 +111,55 @@ for (const width of [1440, 768, 390, 320]) {
       .toBe(true);
   });
 }
+
+test("resource count capsules center their numerals without shifting label baselines", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  let total = 1;
+  await routeMockSnapshots(page, {
+    bootstrap: (body) => {
+      body.preferences.contextPaneWidth = 560;
+      body.preferences.contextPaneOpen = false;
+    },
+  });
+  await page.route("**/api/git/status**", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    if (body.kind === "repository") body.total = total;
+    await route.fulfill({ response, json: body });
+  });
+  await pairedPage(page);
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  const modes = page.locator(".ctx__modes");
+  await modes.getByRole("button", { name: "Changes", exact: true }).click();
+  await page.evaluate(() => document.fonts.ready);
+  const count = modes.locator(".ctx__mode-badge");
+  for (const value of [1, 9, 10, 88, 123]) {
+    total = value;
+    await page.getByRole("button", { name: "Refresh context pane" }).click();
+    await expect(count).toHaveText(value > 99 ? "99+" : String(value));
+    for (const selected of ["Files", "Changes"]) {
+      await modes.getByRole("button", { name: selected, exact: true }).click();
+      await expect(count).toBeVisible();
+      const parent = count.locator("..");
+      const offsets = await parent.evaluate(textMarkOffsets, {
+        label: ".ctx__mode-badge",
+        marks: ".ctx__mode-badge",
+      });
+      expect(Math.abs(offsets[0]!)).toBeLessThan(0.5);
+      const nameBaseline = await parent
+        .locator("span")
+        .first()
+        .evaluate(textBaseline);
+      const countBaseline = await count.evaluate(textBaseline);
+      expect(Math.abs(nameBaseline - countBaseline)).toBeLessThan(0.5);
+      const box = (await count.boundingBox())!;
+      expect(box.height).toBe(14);
+      expect(box.width).toBeGreaterThanOrEqual(box.height);
+      await expect(parent).toHaveCSS("font-size", "13px");
+    }
+  }
+});

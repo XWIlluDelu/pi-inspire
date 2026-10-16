@@ -995,6 +995,11 @@
   max-width: 220px;
 }
 
+.attachment__meta {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .attachment__remove {
   display: inline-flex;
   align-items: center;

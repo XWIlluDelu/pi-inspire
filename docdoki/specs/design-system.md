@@ -180,9 +180,10 @@ declaration.
   source syntax or Diff additions/deletions retain semantic color. Syntax and Git
   text use luminosity-aware colors with AA contrast on their neutral or tinted
   reading surfaces.
-- Small status text over tinted backgrounds uses the corresponding `--warning-ink`,
-  `--info-ink` or `--error-ink` role, including chips, notices, recovery banners,
-  history and file boundaries. Outlined, quiet and menu danger actions use `--error-ink`
+- Small status text uses the corresponding `--success-ink`, `--warning-ink`,
+  `--info-ink` or `--error-ink` role on neutral or tinted surfaces, including chips,
+  Git change counts, copied-path text, notices, recovery banners, history and file boundaries.
+  Outlined, quiet and menu danger actions use `--error-ink`
   for text, retained through hover, press and focus; disabled actions use neutral ink.
   Semantic danger borders and hover tints retain `--error`.
   Activity-fold loading failures use `--error-ink`,

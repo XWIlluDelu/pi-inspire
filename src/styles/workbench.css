@@ -269,7 +269,8 @@ body.pane-resizing--vertical .nav {
   justify-content: center;
   min-width: 14px;
   height: 14px;
-  padding: 0 3px;
+  /* Center Rajdhani's high-set numerals without moving their text baseline. */
+  padding: 2px 3px 0;
   border-radius: var(--radius-pill);
   font-family: var(--font-label);
   font-size: var(--text-xs);
@@ -642,7 +643,7 @@ button.res__index-header--back:hover svg {
 }
 
 .res__index-summary--clean {
-  color: var(--success);
+  color: var(--success-ink);
   background: color-mix(in srgb, var(--success) 10%, transparent);
 }
 
@@ -700,7 +701,7 @@ button.res__index-header--back:hover svg {
 }
 
 .file-path-action--copied {
-  color: var(--success);
+  color: var(--success-ink);
 }
 
 .file-detail-header__actions {
@@ -1121,11 +1122,11 @@ button.res__more:hover {
 }
 
 .changes__additions {
-  color: var(--success);
+  color: var(--success-ink);
 }
 
 .changes__deletions {
-  color: var(--error);
+  color: var(--error-ink);
 }
 
 .changes__jump {

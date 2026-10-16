@@ -387,7 +387,14 @@ test.describe("touch project references", () => {
     expect(target.width).toBeGreaterThanOrEqual(32);
     expect(target.height).toBeGreaterThanOrEqual(32);
     expect(label.x + label.width).toBeLessThanOrEqual(target.x);
+    const meta = chip.locator(".attachment__meta");
+    await expect(meta).toHaveCSS("white-space", "nowrap");
+    const metaBox = (await meta.boundingBox())!;
+    expect(metaBox.height).toBeLessThan(20);
+    expect(label.x + label.width).toBeLessThanOrEqual(metaBox.x);
+    expect(metaBox.x + metaBox.width).toBeLessThanOrEqual(target.x);
     const bounds = (await chip.boundingBox())!;
+    expect(bounds.height).toBeLessThanOrEqual(34);
     expect(target.y).toBeGreaterThanOrEqual(bounds.y);
     expect(target.y + target.height).toBeLessThanOrEqual(
       bounds.y + bounds.height,

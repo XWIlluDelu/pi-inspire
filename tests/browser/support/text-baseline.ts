@@ -32,7 +32,9 @@ export function textMarkOffsets(
   label.replaceChildren(...nodes);
   const style = getComputedStyle(label);
   const ctx = document.createElement("canvas").getContext("2d")!;
-  ctx.font = style.font;
+  // Numeric variants can make the computed font shorthand serialize as empty.
+  ctx.font =
+    style.font || `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
   const text = label.textContent!;
   const ink = ctx.measureText(
     style.textTransform === "uppercase" ? text.toUpperCase() : text,

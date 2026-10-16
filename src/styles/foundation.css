@@ -110,6 +110,7 @@
   --error-fill-hover: color-mix(in srgb, var(--error) 90%, var(--solid-state-shade));
   --error-fill-active: color-mix(in srgb, var(--error) 80%, var(--solid-state-shade));
   /* Status marks keep their color; small text over a tint uses deeper/lifted ink. */
+  --success-ink: color-mix(in srgb, var(--success) 75%, var(--ink));
   --activity-success-ink: color-mix(in srgb, var(--activity-success) 85%, var(--ink));
   --warning-ink: color-mix(in srgb, var(--warning) 75%, var(--ink));
   --info-ink: color-mix(in srgb, var(--info) 68%, var(--ink));
