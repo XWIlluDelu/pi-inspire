@@ -31,6 +31,9 @@ independent project shells in [[terminal]].
   Desktop search floats at the top-right of the reading measure. On both desktop and narrow
   screens, search/navigation controls preserve vertical reading space rather than reserve a toolbar
   row. The floating `Jump to latest` text button remains bottom-centered within the transcript.
+  The transcript scroll thumb is separate from Prompt Map: its complete grab band fits the
+  trailing reading gutter without covering content, and its travel stays inside the scrollport
+  even in short windows. Native reading width, wheel and keyboard scrolling remain unchanged.
 
   On a narrow workbench, the floating rail is removed entirely: a top-right control floats over
   Transcript without reserving layout height, has no shared backdrop while its mutually exclusive
@@ -49,7 +52,8 @@ independent project shells in [[terminal]].
   file opens from inside navigation. The desktop surfaces retain their navigation and complementary
   landmarks. Opening a session also closes the drawer. The context pane keeps one shell and focus
   owner across deferred loading, content and failure; loading the module does not restart its entry
-  animation. The full-width context drawer needs no scrim. Shared motion and overlay roles are in
+  animation. Its narrow header and Close control keep the same geometry across loading,
+  ready and failure states. The full-width context drawer needs no scrim. Shared motion and overlay roles are in
   [[design-system]].
 
   Returning to desktop closes transient drawer state without overwriting the desktop collapsed

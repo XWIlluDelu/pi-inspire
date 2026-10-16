@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { openMockSession, pairedPage } from "./support/navigation";
 import { textMarkOffsets } from "./support/text-baseline";
 
-for (const width of [1440, 390, 320]) {
+for (const width of [1440, 768, 390, 320]) {
   test(`structural labels retain balanced controls and readable content at ${width}px`, async ({
     page,
   }) => {
@@ -60,15 +60,22 @@ for (const width of [1440, 390, 320]) {
           };
         }),
       );
+      const widths = items.map((item) => item.width);
+      expect(Math.max(...widths) - Math.min(...widths)).toBeLessThan(0.1);
       for (const item of items) {
         expect(item.left, JSON.stringify(item)).toBeGreaterThanOrEqual(2);
         expect(item.right, JSON.stringify(item)).toBeGreaterThanOrEqual(2);
         expect(Math.abs(item.center)).toBeLessThanOrEqual(1);
-        expect(item.overflow).toBe(false);
+        expect(item.overflow, JSON.stringify(item)).toBe(false);
         expect(item.height).toBeGreaterThanOrEqual(26);
       }
     }
-    if (width < 700) {
+    const modeBox = (await modes.boundingBox())!;
+    const actionsBox = (await page
+      .locator(".ctx__header-actions")
+      .boundingBox())!;
+    expect(actionsBox.x - modeBox.x - modeBox.width).toBeGreaterThanOrEqual(2);
+    if (width <= 900) {
       await page.locator(".ctx__close").click();
     }
     await page.getByRole("button", { name: "Settings", exact: true }).click();

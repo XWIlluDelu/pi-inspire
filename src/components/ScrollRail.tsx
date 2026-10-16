@@ -62,7 +62,12 @@ export function ScrollRail({
     };
 
     /** Thumb center line x plus travel top/height, in viewport coordinates. */
-    const geometry = () => {
+    const geometry = (): {
+      x: number;
+      top: number;
+      height: number;
+      hitWidth?: number;
+    } => {
       const rect = el!.getBoundingClientRect();
       if (variant === "nav") {
         return {
@@ -93,15 +98,28 @@ export function ScrollRail({
         ?.getBoundingClientRect();
       const columnRight = column ? column.right : rect.left + rect.width / 2;
       const gap = rect.right - columnRight;
-      const height = Math.max(
-        280,
-        Math.min(rect.height * 0.62, rect.height - 120),
+      const height = Math.min(
+        rect.height - 16,
+        Math.max(280, Math.min(rect.height * 0.62, rect.height - 120)),
       );
-      const x = Math.min(
+      const preferredX = Math.min(
         columnRight + Math.max(28, Math.min(gap * 0.5, 72)),
         rect.right - 14,
       );
-      return { x, top: rect.top + (rect.height - height) / 2, height };
+      // The painted thumb is narrower than its grab band. Fit the whole band
+      // into the existing gutter, including on phones with only 12px of padding;
+      // neither the invisible hit area nor the thumb may cover readable content.
+      const hitWidth = Math.min(16, Math.max(0, gap - 4));
+      const x = Math.min(
+        rect.right - 2 - hitWidth / 2,
+        Math.max(columnRight + 2 + hitWidth / 2, preferredX),
+      );
+      return {
+        x,
+        top: rect.top + (rect.height - height) / 2,
+        height,
+        hitWidth,
+      };
     };
 
     const sync = () => {
@@ -115,7 +133,7 @@ export function ScrollRail({
       const sh = el.scrollHeight;
       const ch = el.clientHeight;
       const g = geometry();
-      if (sh <= ch + 1 || g.height < 64) {
+      if (sh <= ch + 1 || g.height < 64 || g.hitWidth === 0) {
         rail.style.display = "none";
         geo = null;
         return;
@@ -127,6 +145,7 @@ export function ScrollRail({
       );
       const maxTop = g.height - th;
       rail.style.display = "block";
+      rail.style.width = g.hitWidth === undefined ? "" : `${g.hitWidth}px`;
       rail.style.left = `${Math.round(g.x)}px`;
       rail.style.top = `${Math.round(g.top)}px`;
       rail.style.height = `${Math.round(g.height)}px`;
