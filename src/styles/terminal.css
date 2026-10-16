@@ -464,8 +464,8 @@
   font: inherit;
 }
 
-.terminal-menu__popover .terminal-menu__danger {
-  color: var(--error);
+.terminal-menu__popover button.terminal-menu__danger:not(:disabled) {
+  color: var(--error-ink);
 }
 
 .terminal-menu__view:not(:empty) {
@@ -1135,8 +1135,8 @@
   gap: 6px;
 }
 
-.button--danger-quiet {
-  color: var(--error);
+.button--danger-quiet:not(:disabled) {
+  color: var(--error-ink);
 }
 
 @media (hover: none), (pointer: coarse), (max-width: 720px) {

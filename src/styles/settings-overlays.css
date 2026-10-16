@@ -1595,8 +1595,12 @@
   color: var(--ink);
 }
 
-.dirpicker__row:hover {
+.dirpicker__row:hover:where(:not(:disabled)) {
   background: var(--bg-inset);
+}
+
+.dirpicker__row:disabled {
+  color: var(--faint);
 }
 
 .dirpicker__row svg {

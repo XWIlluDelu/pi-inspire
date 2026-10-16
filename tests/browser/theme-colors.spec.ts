@@ -52,6 +52,9 @@ const controls = [
   ["primary", 4.5],
   ["danger", 4.5],
   ["danger-outline", 4.5],
+  ["danger-quiet", 4.5],
+  ["danger-menu", 4.5],
+  ["danger-provider", 4.5],
   ["ordinary", 4.5],
   ["reload", 4.5],
   ["send", 3],
@@ -93,6 +96,21 @@ for (const palette of PALETTE_PREFERENCES)
           <button class="button button--danger" id="danger">Delete</button>
           <section style="background:var(--bg-surface)">
             <button class="button button--danger-outline" id="danger-outline">Restart</button>
+            <button class="button button--danger-quiet" id="danger-quiet">Clear history</button>
+            <div class="terminal-menu__popover" style="position:static">
+              <button class="terminal-menu__danger" id="danger-menu">Force terminate</button>
+            </div>
+            <div class="models-auth"><button class="models-remove-credential" id="danger-provider">Remove credentials</button></div>
+          </section>
+          <section aria-label="Standalone and form control states">
+            <div class="dropdown dropdown--field"><button class="dropdown__trigger" id="field-dropdown" aria-expanded="false">Form value</button></div>
+            <div class="dropdown"><button class="dropdown__trigger" id="quiet-dropdown" aria-expanded="false">Composer value</button></div>
+            <div class="models-auth"><button class="models-text-button models-auth__connect" id="provider-connect">Connect provider</button></div>
+            <div class="attachment"><span>Attachment</span><button class="attachment__remove" id="attachment-remove">×</button></div>
+            <div class="dirpicker__list"><button class="dirpicker__row" id="directory-row">Folder</button></div>
+            <h1 class="topbar__title"><button class="topbar__title-button" id="session-title"><span>Session title</span></button></h1>
+            <div class="session-actions-menu" style="position:static"><button id="clone-action">Clone current branch</button></div>
+            <div class="composer__failed-delivery"><button id="restore-action">Restore</button></div>
           </section>
           <section aria-label="Icon button states">
             <button class="icon-button" id="icon" aria-label="Add files">+</button>
@@ -291,6 +309,52 @@ for (const palette of PALETTE_PREFERENCES)
         expect(await renderedColors(button)).toEqual(disabled);
         await page.mouse.up();
       }
+      // Independent controls and form variants must not bypass disabled state.
+      // Keep readable session titles rather than dimming every disabled label.
+      for (const [id, ink, hoverProperty, hoverValue] of [
+        ["field-dropdown", "faint", "color", roles.ink],
+        ["quiet-dropdown", "faint", "background-color", roles["bg-inset"]],
+        ["provider-connect", "faint", "text-decoration-line", "underline"],
+        ["attachment-remove", "faint", "color", roles.error],
+        ["directory-row", "faint", "background-color", roles["bg-inset"]],
+        ["session-title", "ink", "background-color", roles["bg-inset"]],
+        ["clone-action", "faint", "background-color", roles["bg-inset"]],
+        ["restore-action", "ink", "cursor", "pointer"],
+      ]) {
+        const button = page.locator(`#${id}`);
+        const appearance = () =>
+          button.evaluate((element) => {
+            const style = getComputedStyle(element);
+            return Object.fromEntries(
+              [
+                "color",
+                "background-color",
+                "border-color",
+                "box-shadow",
+                "text-decoration-line",
+                "opacity",
+                "cursor",
+              ].map((property) => [property, style.getPropertyValue(property)]),
+            );
+          });
+        await button.hover();
+        await expect(button).toHaveCSS(hoverProperty!, hoverValue!);
+        await button.evaluate((element: HTMLButtonElement) => {
+          element.disabled = true;
+        });
+        await page.mouse.move(0, 0);
+        const disabled = await appearance();
+        await expect(button).toHaveCSS("color", roles[ink!]!);
+        await expect(button).toHaveCSS("cursor", "default");
+        await button.hover({ force: true });
+        expect(await appearance(), `${id} disabled hover`).toEqual(disabled);
+        await page.mouse.down();
+        try {
+          expect(await appearance(), `${id} disabled press`).toEqual(disabled);
+        } finally {
+          await page.mouse.up();
+        }
+      }
       for (const [id, minimum] of controls) {
         const button = page.locator(`#${id}`);
         for (const state of ["rest", "hover", "pressed"]) {
@@ -298,7 +362,7 @@ for (const palette of PALETTE_PREFERENCES)
           if (state !== "rest") await button.hover();
           if (state === "pressed") await page.mouse.down();
           try {
-            if (id === "danger-outline")
+            if (id.startsWith("danger-"))
               await expect(button).toHaveCSS("color", roles["error-ink"]!);
             const colors = await renderedColors(button);
             expect(
@@ -314,12 +378,20 @@ for (const palette of PALETTE_PREFERENCES)
         );
         await page.mouse.move(0, 0);
         const disabled = await renderedColors(button);
+        const decoration = await button.evaluate(
+          (element) => getComputedStyle(element).textDecorationLine,
+        );
         const filter = await button.evaluate(
           (element) => getComputedStyle(element).filter,
         );
         await button.hover({ force: true });
         await page.mouse.down();
         expect(await renderedColors(button)).toEqual(disabled);
+        expect(
+          await button.evaluate(
+            (element) => getComputedStyle(element).textDecorationLine,
+          ),
+        ).toBe(decoration);
         expect(
           await button.evaluate((element) => getComputedStyle(element).filter),
         ).toBe(filter);

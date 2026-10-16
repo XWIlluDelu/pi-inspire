@@ -84,7 +84,7 @@
   cursor: pointer;
   text-align: left;
 }
-.models-auth__connect:hover { text-decoration: underline; }
+.models-auth__connect:hover:where(:not(:disabled)) { text-decoration: underline; }
 .models-auth__directory { margin-top: var(--space-2); }
 .models-provider-login__heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .models-provider-disclosure { flex-shrink: 0; }
@@ -107,7 +107,7 @@
 .models-auth .models-remove-credential {
   min-height: var(--set-control-h);
   padding: 0 var(--space-3);
-  color: var(--error);
+  color: var(--error-ink);
   font: inherit;
   font-size: var(--text-sm);
   background: var(--bg-surface);
@@ -115,9 +115,15 @@
   border-radius: var(--radius-control);
   cursor: pointer;
 }
-.models-auth .models-remove-credential:hover {
+.models-auth .models-remove-credential:hover:where(:not(:disabled)) {
   text-decoration: underline;
   background: transparent;
+}
+.models-auth .models-remove-credential:disabled {
+  background: var(--bg-inset);
+  border-color: var(--hairline);
+  color: var(--faint);
+  cursor: default;
 }
 .models-secret-input { display: flex; align-items: center; width: 100%; min-width: 0; gap: var(--space-1); }
 .models-secret-input input { flex: 1; }
@@ -147,6 +153,7 @@
 .models-text-button:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: 2px; }
 .models-icon-button:disabled,
 .models-text-button:disabled { opacity: 0.45; cursor: default; }
+.models-text-button:disabled { color: var(--faint); }
 
 .models-form__grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-3); }
 .models-default-value { min-width: 0; max-width: 100%; }

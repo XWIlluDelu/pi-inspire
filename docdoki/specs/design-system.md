@@ -148,6 +148,11 @@ declaration.
   Selected icon buttons keep their accent ink/tint through hover and press. Disabled
   icon buttons use neutral ink and the default cursor, without hover/pressed feedback;
   local action styles respect this state rather than overriding the shared control.
+  Quiet actions retain transparent backgrounds and borders when disabled.
+  Standalone actions and form variants also suppress disabled hover/pressed feedback,
+  including underlines and border changes. Read-only session headings retain their readable
+  text but lose the pointer cursor and action highlight. A dropdown that becomes disabled
+  closes its menu without changing the selected value.
   Focus indicators consume `--accent-focus`, including local outlines, focused input
   borders and inset focus strokes. Botanical palettes map this role to `--accent`;
   classic Jade and Amber map it to `--accent-deep`. Components use the role rather
@@ -177,8 +182,9 @@ declaration.
   reading surfaces.
 - Small status text over tinted backgrounds uses the corresponding `--warning-ink`,
   `--info-ink` or `--error-ink` role, including chips, notices, recovery banners,
-  history and file boundaries. Outlined danger actions use `--error-ink` for text
-  while retaining `--error` for their borders and hover tint.
+  history and file boundaries. Outlined, quiet and menu danger actions use `--error-ink`
+  for text, retained through hover, press and focus; disabled actions use neutral ink.
+  Semantic danger borders and hover tints retain `--error`.
   Activity-fold loading failures use `--error-ink`,
   retained through hover, pressed and focus states without recoloring Tool/Thinking marks.
   Successful command badges derive `--activity-success-ink`

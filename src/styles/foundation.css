@@ -856,6 +856,11 @@ button {
   cursor: pointer;
 }
 
+/* Standalone controls share the disabled cursor without dimming readable labels. */
+button:disabled {
+  cursor: default;
+}
+
 input,
 select,
 textarea {
