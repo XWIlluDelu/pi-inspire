@@ -529,8 +529,18 @@ export class AppStore {
       this.hostCommandRuns.delete(sessionId);
       this.composer.discard(sessionId);
     }
-    this.set({ commandActivities });
+    const externalSessionActivities = {
+      ...this.state.externalSessionActivities,
+    };
+    for (const sessionId of sessionIds)
+      delete externalSessionActivities[sessionId];
+    this.set({ commandActivities, externalSessionActivities });
     this.runtimeEvents.forgetAttention(sessionIds);
+    // Commit only the deleted identity's view. A newer open/new request keeps
+    // its selection owner and can still publish its own snapshot afterwards.
+    if (this.state.sessionId && sessionIds.has(this.state.sessionId)) {
+      this.applySnapshot({ active: null, runState: "idle", sessionStatuses });
+    }
     return sessionStatuses;
   }
 

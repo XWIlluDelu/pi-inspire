@@ -706,7 +706,7 @@ describe("session navigation controls", () => {
     expect(store.getState().sessionId).toBe(alpha.id);
   });
 
-  it("blocks deletion for the selected hidden folder without blocking an unrelated idle folder", async () => {
+  it("clears the selected idle folder directly and leaves unrelated Hidden folders intact", async () => {
     render(
       <Nav
         collapsed={false}
@@ -718,22 +718,30 @@ describe("session navigation controls", () => {
     fireEvent.click(list().getByRole("button", { name: "Hide folder alpha" }));
     fireEvent.click(list().getByRole("button", { name: "Hide folder beta" }));
     fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
-    expect(
-      screen
-        .getByRole("button", { name: "Clear Hidden" })
-        .hasAttribute("disabled"),
-    ).toBe(true);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Clear Hidden" }),
+      ).toBeEnabled(),
+    );
     const selected = screen.getByRole("button", {
       name: "Delete all sessions in folder alpha",
     });
-    const idle = screen.getByRole("button", {
-      name: "Delete all sessions in folder beta",
-    });
-    expect(selected.hasAttribute("disabled")).toBe(true);
-    await waitFor(() => expect(idle).toBeEnabled());
-    fireEvent.click(idle);
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(deletedSessions.size).toBe(0);
+    expect(selected).toBeEnabled();
+    expect(
+      screen.getByRole("button", {
+        name: "Delete all sessions in folder beta",
+      }),
+    ).toBeEnabled();
+    fireEvent.click(selected);
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).queryByText(/Pi terminal|Pi process/)).toBeNull();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Delete 1 session" }),
+    );
+    await waitFor(() => expect(deletedSessions).toEqual(new Set([alpha.id])));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(store.getState().sessionId).toBeNull();
+    expect(store.getState().prefs.hiddenProjectCwds).toEqual([beta.cwd]);
   });
 
   it("deletes only through Hidden after an explicit confirmation", async () => {
@@ -777,7 +785,7 @@ describe("session navigation controls", () => {
       "If Trash is unavailable, it will be permanently deleted.",
       "Forked sessions remain; project files are unchanged.",
     ]);
-    expect(within(dialog).getByText(/another Pi process/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/another Pi process/)).toBeNull();
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(
       screen.queryByRole("alertdialog", { name: "Delete session?" }),
@@ -1060,7 +1068,7 @@ describe("session navigation controls", () => {
     );
     expect(
       screen.getByRole("button", { name: 'Delete "Alpha session"' }),
-    ).toBeDisabled();
+    ).toBeEnabled();
     expect(store.getState().sessionId).toBe("alpha");
     expect(onSelect).not.toHaveBeenCalled();
   });

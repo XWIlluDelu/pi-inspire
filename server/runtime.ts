@@ -502,7 +502,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.deletions = new RuntimeSessionDeletionController({
       assertNotClosing: () => this.assertNotClosing(),
       withMaintenance: (operation) => this.withMaintenanceOperation(operation),
-      selectedSessionId: () => this.selectedSessionId,
+      clearSelection: (sessionId) => {
+        if (this.selectedSessionId !== sessionId) return;
+        this.selectedSessionId = null;
+        // Do not supersede a newer open/new request already in flight.
+        this.diagnostics.record("info", "deleted_session_deselected", {
+          sessionId,
+        });
+        this.scheduleIdleWorkerEviction();
+      },
       hasSelectionReservation: (sessionId) =>
         this.selectionReservations.has(sessionId),
       opening: (sessionId) => this.opening.get(sessionId),

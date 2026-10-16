@@ -19,10 +19,8 @@ const curation = (overrides: Partial<NavCuration> = {}): NavCuration => ({
 
 describe("hidden deletion eligibility", () => {
   const idle = (): Parameters<typeof hiddenDeletionBlockReason>[1] => ({
-    sessionId: "elsewhere",
     openingSessionId: null,
     sessionStatuses: {},
-    externalSessionActivities: {},
     sessionQuery: "",
     sessionListLoading: false,
     sessionListLoadingOlder: false,
@@ -34,7 +32,6 @@ describe("hidden deletion eligibility", () => {
   const targets = [sessionSummary({ id: "target" })];
 
   it.each([
-    ["selected", { sessionId: "target" }, /Switch/],
     ["opening", { openingSessionId: "target" }, /opening/],
     [
       "running",
@@ -44,11 +41,6 @@ describe("hidden deletion eligibility", () => {
         },
       },
       /working/,
-    ],
-    [
-      "external",
-      { externalSessionActivities: { target: "idle" } },
-      /Pi terminal/,
     ],
     ["partial catalog", { sessionListHydrating: true }, /loading/],
     ["search", { sessionQuery: "term" }, /searching/],
@@ -69,7 +61,6 @@ describe("hidden deletion eligibility", () => {
         sessionStatuses: {
           elsewhere: { runState: "running", indicator: "running" },
         },
-        externalSessionActivities: { other: "working" },
       }),
     ).toBeNull();
   });

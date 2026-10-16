@@ -821,12 +821,6 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   }
 
   async deleteSession(sessionId: string): Promise<SessionDeleteResponse> {
-    if (this.activeSessionId === sessionId) {
-      throw requestError(
-        "Switch to another session before deleting this one",
-        409,
-      );
-    }
     const status = this.state.sessionStatuses[sessionId];
     const pending = this.pendingBySession.get(sessionId);
     if (
@@ -847,6 +841,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     this.sessions.delete(sessionId);
     this.pendingBySession.delete(sessionId);
     delete this.state.sessionStatuses[sessionId];
+    if (this.activeSessionId === sessionId) await this.deselectSession();
     return { sessionId, disposition: "trashed" };
   }
 
@@ -870,12 +865,6 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       targets.some((session) => !expected.has(session.id))
     ) {
       throw requestError("Hidden changed; review it before clearing", 409);
-    }
-    if (targets.some((session) => session.id === this.activeSessionId)) {
-      throw requestError(
-        "Switch to another session before clearing Hidden",
-        409,
-      );
     }
     const deleted: Array<{
       sessionId: string;
