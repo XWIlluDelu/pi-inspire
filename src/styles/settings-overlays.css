@@ -1839,7 +1839,7 @@
 
 /* --- Restart controls --- */
 .button--danger-outline {
-  color: var(--error);
+  color: var(--error-ink);
   border-color: color-mix(in srgb, var(--error) 40%, var(--hairline-strong));
   background: transparent;
 }

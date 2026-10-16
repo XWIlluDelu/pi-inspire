@@ -214,7 +214,7 @@
 }
 
 @media (hover: hover) {
-  .card__copy.icon-button:hover {
+  .card__copy.icon-button:hover:where(:not(:disabled)) {
     color: var(--ink);
     background: var(--bg-inset);
   }
