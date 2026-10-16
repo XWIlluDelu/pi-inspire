@@ -46,6 +46,80 @@ describe("WebSocket observation and transport limits", () => {
     return observed;
   }
 
+  it("retains detail before synchronization and releases only the departing subscription", async () => {
+    const observers = new Map<string, number>();
+    Object.assign(runtime, {
+      retainSessionView: (id: string) => {
+        observers.set(id, (observers.get(id) ?? 0) + 1);
+        return () => {
+          const remaining = (observers.get(id) ?? 1) - 1;
+          if (remaining) observers.set(id, remaining);
+          else observers.delete(id);
+        };
+      },
+    });
+    await runtime.openSession("mock-active");
+    await runtime.openSession("mock-older");
+    const originalSnapshot = runtime.snapshot.bind(runtime);
+    vi.spyOn(runtime, "snapshot").mockImplementation(async (sessionId) => {
+      if (sessionId) expect(observers.get(sessionId)).toBeGreaterThan(0);
+      return originalSnapshot(sessionId);
+    });
+    const a = await connect("detail=mock-active");
+    const b = await connect("detail=mock-active");
+    try {
+      expect(observers.get("mock-active")).toBe(2);
+      a.socket.send(
+        JSON.stringify({
+          type: "detail_interest",
+          sessionId: "mock-older",
+          revision: 1,
+        }),
+      );
+      await vi.waitFor(() => expect(observers.get("mock-older")).toBe(1));
+      expect(observers.get("mock-active")).toBe(1);
+      b.socket.close();
+      await vi.waitFor(() => expect(observers.has("mock-active")).toBe(false));
+      expect(observers.get("mock-older")).toBe(1);
+      a.socket.send(
+        JSON.stringify({
+          type: "detail_interest",
+          sessionId: null,
+          revision: 2,
+        }),
+      );
+      await vi.waitFor(() => expect(observers.size).toBe(0));
+      a.socket.send(
+        JSON.stringify({
+          type: "detail_interest",
+          sessionId: "mock-active",
+          revision: 3,
+        }),
+      );
+      await vi.waitFor(() => expect(observers.get("mock-active")).toBe(1));
+      await application.close();
+      expect(observers.size).toBe(0);
+    } finally {
+      a.socket.close();
+      b.socket.close();
+    }
+  });
+
+  it("releases a retained view when the initial snapshot fails", async () => {
+    const release = vi.fn();
+    const retain = vi.fn(() => release);
+    Object.assign(runtime, { retainSessionView: retain });
+    vi.spyOn(runtime, "snapshot").mockRejectedValue(
+      new Error("Session is gone"),
+    );
+    const socket = eventSocket(
+      `${baseUrl.replace("http", "ws")}/events?detail=mock-active`,
+    );
+    await new Promise<void>((resolve) => socket.once("close", () => resolve()));
+    expect(retain).toHaveBeenCalledWith("mock-active");
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
+  });
+
   it("broadcasts one update acknowledgement to every connected view", async () => {
     await request(application.server)
       .get("/api/update")

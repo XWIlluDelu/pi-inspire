@@ -19,7 +19,7 @@ const STREAM_EVENT_BATCH_INTERVAL_MS = 16;
 const sessionIdField = z.string().min(1).max(MAX_SESSION_ID_CHARS);
 
 interface RuntimeEventSocketOptions {
-  runtime: Pick<RuntimeLike, "on" | "off" | "snapshot">;
+  runtime: Pick<RuntimeLike, "on" | "off" | "snapshot" | "retainSessionView">;
   updateCoordinator: Pick<UpdateCoordinatorLike, "status" | "subscribe">;
   authorityId: string;
   heartbeatIntervalMs: number;
@@ -54,6 +54,22 @@ export function createRuntimeEventSockets({
     WebSocket,
     { sessionId: string | null; revision: number }
   >();
+  const retainedViews = new WeakMap<WebSocket, () => void>();
+  const setDetailInterest = (
+    socket: WebSocket,
+    interest: { sessionId: string | null; revision: number },
+  ): void => {
+    // Acquire before releasing so a new subscription to the same session never
+    // briefly makes its live projection eligible for reclamation.
+    const release = interest.sessionId
+      ? runtime.retainSessionView?.(interest.sessionId)
+      : undefined;
+    const previous = retainedViews.get(socket);
+    if (release) retainedViews.set(socket, release);
+    else retainedViews.delete(socket);
+    detailInterests.set(socket, interest);
+    previous?.();
+  };
   const backgroundStatuses = new WeakMap<WebSocket, Map<string, string>>();
   const wantsDetail = (socket: WebSocket, sessionId: string): boolean =>
     detailInterests.get(socket)?.sessionId === sessionId;
@@ -74,6 +90,10 @@ export function createRuntimeEventSockets({
     sockets.delete(socket);
     joining.delete(socket);
     responsiveSockets.delete(socket);
+    detailInterests.delete(socket);
+    const release = retainedViews.get(socket);
+    retainedViews.delete(socket);
+    release?.();
   };
   const closeLaggingSocket = (socket: WebSocket, reason: string) => {
     joining.delete(socket);
@@ -530,7 +550,7 @@ export function createRuntimeEventSockets({
         // Flush under the OLD audience, then begin the NEW snapshot queue
         // synchronously, before any asynchronous runtime read can yield.
         flushStreamBatch();
-        detailInterests.set(socket, interest);
+        setDetailInterest(socket, interest);
         backgroundStatuses.delete(socket);
         requestedSnapshotDigests.set(socket, null);
         synchronize();
@@ -558,7 +578,7 @@ export function createRuntimeEventSockets({
         return;
       }
       websocket.handleUpgrade(request, socket, head, (client) => {
-        detailInterests.set(client, { sessionId: detail || null, revision: 0 });
+        setDetailInterest(client, { sessionId: detail || null, revision: 0 });
         const requestedDigest = url.searchParams.get("snapshot");
         requestedSnapshotDigests.set(
           client,
@@ -576,7 +596,10 @@ export function createRuntimeEventSockets({
       pendingStreamBatch = null;
       runtime.off("event", publishRuntimeEvent);
       unsubscribeUpdateStatus();
-      for (const socket of sockets) socket.close(1001, "Server shutting down");
+      for (const socket of sockets) {
+        forgetSocket(socket);
+        socket.close(1001, "Server shutting down");
+      }
     },
   };
 }

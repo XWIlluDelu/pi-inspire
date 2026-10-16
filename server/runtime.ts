@@ -341,6 +341,8 @@ export interface RuntimeLike {
   ): Promise<HostNativeCommandResponse>;
   extensionUiResponse(response: Record<string, unknown>): Promise<void>;
   snapshot(sessionId?: string | null): Promise<ActiveSnapshot>;
+  /** Retain a subscribed view without selecting it or starting a worker. */
+  retainSessionView?(sessionId: string): () => void;
   lastAssistantText(
     sessionId: string,
     viewId: string,
@@ -402,6 +404,7 @@ interface ForkReservation {
 
 export class RuntimeController extends EventEmitter implements RuntimeLike {
   private readonly slots = new Map<string, RuntimeSlot>();
+  private readonly sessionViewObservers = new Map<string, number>();
   private readonly workerStatuses = new WeakMap<
     PiRpcProcess,
     RuntimeWorkerStatus
@@ -738,6 +741,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.workerPool = new RuntimeWorkerPool({
       isClosing: () => this.closing,
       selectedSessionId: () => this.selectedSessionId,
+      isObserved: (sessionId) => this.sessionViewObservers.has(sessionId),
       slots: () => this.slots.values(),
       isOpening: (sessionId) => this.opening.has(sessionId),
       isLoading: (sessionId) => this.loadingSlots.has(sessionId),
@@ -4821,6 +4825,24 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       }
       return snapshot;
     });
+  }
+
+  retainSessionView(sessionId: string): () => void {
+    this.sessionViewObservers.set(
+      sessionId,
+      (this.sessionViewObservers.get(sessionId) ?? 0) + 1,
+    );
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const remaining = (this.sessionViewObservers.get(sessionId) ?? 1) - 1;
+      if (remaining > 0) this.sessionViewObservers.set(sessionId, remaining);
+      else {
+        this.sessionViewObservers.delete(sessionId);
+        this.scheduleIdleWorkerEviction();
+      }
+    };
   }
 
   async snapshot(sessionId?: string | null): Promise<ActiveSnapshot> {

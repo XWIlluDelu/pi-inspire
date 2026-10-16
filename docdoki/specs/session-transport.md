@@ -4,11 +4,13 @@ covers:
   - server/app.ts
   - server/runtime-event-sockets.ts
   - server/runtime.ts
+  - server/runtime-worker-pool.ts
   - shared/{contracts,assistant-stream,tool-argument-updates}.ts
   - server/{tool-argument-stream,tool-argument-batches,runtime-stream-budget}.ts
   - src/{api,events,store,snapshot-transition,transport-performance}.ts
   - src/controllers/{connection,session-selection,runtime-event,transcript-data}-controller.ts
-  - tests/server/{app-events,app-prompt-delivery}.test.ts
+  - tests/server/{app-events,app-prompt-delivery,runtime-worker-pool}.test.ts
+  - tests/browser/native-pi-continuity.spec.ts
   - tests/web/{events,store,store-transcript,store-navigation,store-async-ownership}.test.ts
 ---
 
@@ -28,6 +30,14 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
   outcomes, with an attention indicator for pending extension interaction, not
   message/tool/queue/dialog bodies. The Host filters before encoding those bodies and preserves its
   bounded joining backlog and event-batch ordering for interested clients.
+
+- A live detail subscription retains its session view before the initial snapshot read. Observed
+  views and their workers are not idle-reclamation candidates, independently of the Host's last
+  selection. Multiple browsers retain independently; switching interest, disconnecting, or closing
+  the Host releases only that subscription. Retention neither starts a worker nor changes shared
+  selection, and does not prevent explicit session deletion. After a Host restart, automatic
+  recovery must restore usable history and input without a page refresh; failed dependent reads
+  must not cause repeated reclamation and reconstruction of the visible conversation.
 
 - Foreground run state and navigation status adopt the Host's explicit `sessionStatus`, not an
   independently inferred event-name transition. Inferred transitions are a fallback only for
