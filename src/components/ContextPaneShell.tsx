@@ -76,15 +76,17 @@ export function ContextPaneLoading({
     <>
       <div className="ctx__header" ref={recoverModalFocus}>
         <span className="ctx__title">Context</span>
-        <button
-          type="button"
-          className="icon-button ctx__close"
-          title="Close"
-          aria-label="Close context pane"
-          onClick={onClose}
-        >
-          <X size={15} aria-hidden />
-        </button>
+        <div className="ctx__header-actions">
+          <button
+            type="button"
+            className="icon-button ctx__close"
+            title="Close"
+            aria-label="Close context pane"
+            onClick={onClose}
+          >
+            <X size={15} aria-hidden />
+          </button>
+        </div>
       </div>
       <ContextPaneState
         className={onRetry ? undefined : "deferred-loading"}

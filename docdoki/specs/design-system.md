@@ -234,10 +234,12 @@ declaration.
   headings, code, reasoning, tables, composer drafts, and text previews across
   this scale; interface controls keep their fixed tiers.
   Structural Rajdhani labels use 500 weight (600 for selected resource tabs), uppercase Latin
-  and restrained tracking. Resource tabs use 14px; narrow panes use 13px with reduced tracking
-  and proportional columns, keeping labels inside their selected surface. Count badges share
-  the label baseline; the narrowest headers omit the optional badge but retain the exact Changes
-  count in its title. Compact touch tabs are 34px tall, with adjacent 32px actions. Settings section
+  and restrained tracking. Resource tabs use four equal-width columns, with 14px labels;
+  narrow panes use 13px with reduced tracking, and the smallest groups use the untracked 12.5px
+  tier. Selected and unselected names fit without cropping or distorted letterforms. Count badges
+  share the label baseline; groups too narrow for the complete label and badge omit the optional
+  badge but retain the exact Changes count in its title. Compact touch tabs are 34px tall,
+  with adjacent 32px actions. Settings section
   icons remain outside the font-dependent heading line box. Activity matrices/disclosure arrows
   and Settings section icons align with the visible uppercase letters, not merely the line-box center.
   A wrapped Settings heading keeps its icon beside the first line; its action stays independent

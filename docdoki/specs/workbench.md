@@ -131,7 +131,7 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   expanded. The conversation stays dominant in the center, and the right contextual region opens
   only when requested. Its Changes selector shows the same authoritative total as the topbar,
   capped visually at `99+` and omitted when the header is too narrow; the tooltip retains the exact
-  count. On narrow screens the right drawer is at most 460px wide, while phones use the full width.
+  count. On narrow screens it uses the full-width modal drawer specified in [[workspace-layout]].
 
 - Navigation owns New session, search and its collapse/expand controls. [[design-system]] defines
   their shared alignment and the installed-window header variant. The desktop rail's leading

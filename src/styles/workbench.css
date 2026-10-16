@@ -153,6 +153,7 @@ body.pane-resizing--vertical .nav {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-2);
   padding: 0 var(--space-3);
   height: var(--topbar-h);
   border-bottom: 1px solid var(--hairline);
@@ -162,10 +163,11 @@ body.pane-resizing--vertical .nav {
 }
 
 .ctx__modes {
-  width: min(300px, calc(100% - 38px));
-  flex: 0 1 300px;
+  container: context-modes / inline-size;
+  width: min(400px, calc(100% - 38px));
+  flex: 0 1 400px;
   display: grid;
-  grid-template-columns: minmax(0, .75fr) minmax(0, 1.5fr) minmax(0, 1.1fr) minmax(0, 1.2fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: center;
   padding: 2px;
   gap: 2px;
@@ -230,7 +232,7 @@ body.pane-resizing--vertical .nav {
 .ctx__mode-label {
   display: inline-flex;
   align-items: baseline;
-  min-width: 0;
+  flex-shrink: 0;
   gap: 4px;
 }
 
@@ -251,15 +253,26 @@ body.pane-resizing--vertical .nav {
   color: var(--accent-deep);
 }
 
-@container context-header (max-width: 360px) {
-  /* Keep the mode names readable; the exact Changes count remains in its title. */
-  .ctx__mode-badge { display: none; }
-  .ctx__modes {
-    grid-template-columns: minmax(0, .75fr) minmax(0, 1.15fr) minmax(0, 1.1fr) minmax(0, 1.2fr);
+/* Count is supplementary; a narrow equal-width mode must retain its whole name.
+   Measure the mode group itself, since narrow headers also contain Close. */
+@container context-modes (max-width: 392px) {
+  .ctx__mode-badge {
+    display: none;
   }
+}
+
+@container context-header (max-width: 360px) {
   .ctx__modes button {
     font-size: 13px;
     letter-spacing: 0.04em;
+  }
+}
+
+/* At phone-minimum widths, native condensed letterforms need no extra tracking. */
+@container context-modes (max-width: 260px) {
+  .ctx__modes button {
+    font-size: var(--text-sm);
+    letter-spacing: 0;
   }
 }
 
@@ -1594,14 +1607,4 @@ button.res__more:hover {
   outline: none;
   border-color: var(--accent-focus);
   box-shadow: 0 0 0 3px var(--accent-tint);
-}
-
-@media (max-width: 900px) {
-  .ctx[role="dialog"] {
-    width: min(460px, 100vw);
-    left: auto;
-    right: 0;
-    border-left: 1px solid var(--line);
-    box-shadow: var(--shadow-overlay);
-  }
 }
