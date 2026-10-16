@@ -65,14 +65,16 @@ function StatusChip({
   className,
   label,
   title = label,
+  role,
 }: {
   children?: React.ReactNode;
   className: string;
   label: string;
   title?: string;
+  role?: "status";
 }) {
   return (
-    <span className={className} title={title}>
+    <span className={className} title={title} role={role}>
       {children}
       <span className="chip__label chip__label--responsive">{label}</span>
     </span>
@@ -455,8 +457,11 @@ export const AppTopbar = memo(function AppTopbar({
                           : "Connecting";
               return (
                 <StatusChip
-                  className={`chip chip--warning ${failure ? "" : "chip--live"}`}
+                  className={
+                    failure ? "chip chip--warning" : "topbar__connection"
+                  }
                   label={label}
+                  role="status"
                 >
                   {failure ? (
                     <AlertTriangle size={12} aria-hidden />

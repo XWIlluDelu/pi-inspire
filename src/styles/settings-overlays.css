@@ -331,6 +331,8 @@
   align-items: center;
   justify-content: center;
   color: var(--muted);
+  /* Match the uppercase heading's ink center rather than its line box. */
+  transform: translateY(-1px);
 }
 
 .settings__section-title {

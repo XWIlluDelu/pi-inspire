@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { openMockSession, pairedPage } from "./support/navigation";
+import { textMarkOffsets } from "./support/text-baseline";
 
 for (const width of [1440, 390, 320]) {
   test(`structural labels retain balanced controls and readable content at ${width}px`, async ({
@@ -78,6 +79,12 @@ for (const width of [1440, 390, 320]) {
       exact: true,
     });
     await expect(section).toHaveCSS("font-family", /Rajdhani/);
+    const offsets = await section.locator("..").evaluate(textMarkOffsets, {
+      label: ".settings__section-title",
+      marks: ".settings__section-icon",
+    });
+    expect(offsets).toHaveLength(1);
+    expect(Math.abs(offsets[0]!)).toBeLessThan(0.5);
     await expect(
       dialog.locator(".settings__field-label").first(),
     ).not.toHaveCSS("font-family", /Rajdhani/);

@@ -317,6 +317,19 @@
   max-width: 100%;
 }
 
+/* A reconnect is background transport work, not a warning-shaped button.
+   Faults keep their warning chip; the label remains accessible when compact. */
+.topbar__connection {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
 .topbar__extension-status {
   position: relative;
   display: flex;
