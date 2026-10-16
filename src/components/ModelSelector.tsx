@@ -56,6 +56,8 @@ export function ModelSelector({
   const [initialQuery, setInitialQuery] = useState("");
   const [refreshStatus, setRefreshStatus] = useState<string | null>(null);
   const refreshGeneration = useRef(0);
+  const isDisabled =
+    disabled || (!models.length && !refreshModels && !onManageModels);
   const resolveMenuTarget = useCallback(() => {
     const root = rootRef.current,
       trigger = triggerRef.current;
@@ -74,12 +76,15 @@ export function ModelSelector({
   useModalPortal(Boolean(open && placement), triggerRef, menuRef);
   const show = useCallback(
     (query = "") => {
-      if (!models.length && !refreshModels && !onManageModels) return;
+      if (isDisabled) return;
       setInitialQuery(query);
       setOpen(true);
     },
-    [models.length, refreshModels, onManageModels],
+    [isDisabled],
   );
+  useEffect(() => {
+    if (isDisabled) setOpen(false);
+  }, [isDisabled]);
   useEffect(() => {
     if (!openRequest || handledOpenRequest.current === openRequest.id) return;
     handledOpenRequest.current = openRequest.id;
@@ -88,7 +93,7 @@ export function ModelSelector({
   }, [disabled, openRequest, onOpenRequestHandled, show]);
   useEffect(() => {
     const generation = ++refreshGeneration.current;
-    if (!open || !refreshModels) return;
+    if (!open || isDisabled || !refreshModels) return;
     setRefreshStatus("Refreshing models…");
     void refreshModels().then(
       (warning) => {
@@ -103,7 +108,7 @@ export function ModelSelector({
     return () => {
       ++refreshGeneration.current;
     };
-  }, [open, refreshModels]);
+  }, [open, isDisabled, refreshModels]);
   useEffect(() => {
     if (!open) return;
     const close = (event: MouseEvent | FocusEvent) => {
@@ -126,6 +131,7 @@ export function ModelSelector({
       triggerRef.current?.focus({ preventScroll: true }),
     );
   const pick = (model: ModelOption) => {
+    if (isDisabled) return;
     setOpen(false);
     restoreTriggerFocus();
     if (
@@ -169,9 +175,7 @@ export function ModelSelector({
         aria-label="Model"
         aria-haspopup="listbox"
         aria-expanded={open}
-        disabled={
-          disabled || (!models.length && !refreshModels && !onManageModels)
-        }
+        disabled={isDisabled}
         title={
           value?.reasoning === false
             ? `${display} — thinking is not supported`
@@ -222,6 +226,7 @@ export function ModelSelector({
                   type="button"
                   className="model-picker__manage"
                   onClick={() => {
+                    if (isDisabled) return;
                     setOpen(false);
                     onManageModels();
                   }}
