@@ -3,7 +3,7 @@ scope:
   - .github/workflows/ci.yml
   - tests/browser/**
   - tests/launcher.test.ts
-  - tests/server/{mock,model-workflow.integration}.test.ts
+  - tests/server/{mock,model-workflow.integration,pi-session-activity}.test.ts
   - tests/web/{composer-delivery,overlay-and-palette,resources-pane}.test.tsx
   - server/mock*.ts
   - src/styles/composer.css
@@ -38,11 +38,13 @@ Complete CI on the finished source revision, then replace today's interim
   metadata tests allow the isolated worker's deadline and settle queries before
   removing their workspace. Cold launcher preparation has a separate budget and
   does not repeatedly spawn status processes before a Host state file exists.
-- Earlier candidate CI passed static checks, core suites, launcher checks and all
-  three packaged-release jobs. Known browser failures and Windows timing failures
-  have been corrected. Local rechecks pass: 21 cross-platform browser cases,
-  three native model-workflow cases, nine applicable launcher cases, types/lint.
-  Final full CI on one completed revision remains pending.
+- [Candidate CI](https://github.com/XWIlluDelu/pi-inspire/actions/runs/38902925284)
+  passed all three full Chromium suites, Linux/macOS core checks, launcher checks,
+  all three packaged-release jobs and size reporting. Its only remaining failure
+  was a Windows heartbeat fixture polling a file while it was being replaced.
+  The fixture now observes and awaits the real atomic publish before reading,
+  and asserts the precise heartbeat timestamp. All five activity cases and
+  types/lint pass locally. Full CI on the completed revision remains pending.
 
 ## Next actions
 
