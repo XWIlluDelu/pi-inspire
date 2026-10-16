@@ -22,6 +22,7 @@ import {
   projectNameFromCwd,
   type RunState,
 } from "../../shared/contracts";
+import { branchActionsBlocked } from "../controllers/branch-controller";
 import { type ChatMessage, userMessageDisplayText } from "../events";
 import { gitChangeCount, gitHeadLabel } from "../git-presentation";
 import { shallowEqual, store, useAppState } from "../store";
@@ -170,7 +171,7 @@ const SessionIdent = memo(function SessionIdent({
     cwd,
     project,
     projectDisplay,
-    cloneBusy,
+    cloneDisabled,
     readOnlyReason,
   } = useAppState((state) => {
     const catalogTitle = state.sessions.find(
@@ -188,7 +189,7 @@ const SessionIdent = memo(function SessionIdent({
       cwd: state.cwd,
       project: state.cwd ? projectNameFromCwd(state.cwd) : null,
       projectDisplay: state.prefs.projectDisplay,
-      cloneBusy: state.branchActionId !== null || state.branchTreeLoading,
+      cloneDisabled: branchActionsBlocked(state),
       readOnlyReason: state.readOnlyReason,
     };
   }, shallowEqual);
@@ -327,13 +328,20 @@ const SessionIdent = memo(function SessionIdent({
         {menuOpen && !readOnlyReason ? (
           <SessionActionsMenu
             anchorRef={titleRef}
-            cloneDisabled={cloneBusy}
+            cloneDisabled={cloneDisabled}
             onClose={closeMenu}
             onRename={startRename}
             onClone={() => {
-              closeMenu();
-              titleRef.current?.focus({ preventScroll: true });
-              void store.cloneCurrentBranch();
+              const trigger = document.activeElement;
+              void store.cloneCurrentBranch().then((cloned) => {
+                if (!cloned) return;
+                const returnFocus =
+                  document.activeElement === trigger ||
+                  document.activeElement === document.body;
+                closeMenu();
+                if (returnFocus)
+                  titleRef.current?.focus({ preventScroll: true });
+              });
             }}
             onExport={() => {
               closeMenu();

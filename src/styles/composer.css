@@ -997,11 +997,28 @@
 
 .attachment__remove {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 0;
   background: transparent;
   color: var(--faint);
   padding: 2px;
   border-radius: var(--radius-sm);
+}
+
+@media (pointer: coarse) {
+  .attachment:not(.attachment--image) {
+    min-height: 32px;
+  }
+  .attachment__remove {
+    width: 32px;
+    height: 32px;
+  }
+  .attachment:not(.attachment--image) .attachment__remove {
+    /* Give removal its own hit area without inflating the text chip's padding. */
+    margin-block: -4px;
+    margin-right: -4px;
+  }
 }
 
 .attachment__remove:hover:where(:not(:disabled)) {

@@ -147,7 +147,7 @@ proofing is disabled for technical input.
 
 Images accept paste, drop and file selection. Staged images are separate thumbnail tiles with overlay
 removal, not metadata chips. Ordinary file chips emphasize the filename, upload/error state and
-removal. Full filenames, MIME/size or recalled-file provenance stay in native tooltips rather than
+removal. Coarse-pointer removal actions have a 32px target without enlarging the text chip's padding. Full filenames, MIME/size or recalled-file provenance stay in native tooltips rather than
 repeating inline; errors retain their diagnostic and removal guidance. Filenames truncate without
 squeezing status/removal controls, and file chips do not stretch to adjacent image-tile height. Clipboard
 `files` is the complete source when non-empty; only an empty list falls back to file-kind `items`.
