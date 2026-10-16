@@ -11,11 +11,12 @@ export function SessionDeleteDialog({
   session: SessionSummary;
   onClose: () => void;
 }) {
-  const { deletingSessionId, error, reviewRequired } = useAppState(
+  const { deletingSessionId, error, reviewRequired, openInPi } = useAppState(
     (state) => ({
       deletingSessionId: state.deletingSessionId,
       error: state.sessionDeleteError,
       reviewRequired: state.sessionDeleteReviewRequired,
+      openInPi: state.externalSessionActivities[session.id] !== undefined,
     }),
     shallowEqual,
   );
@@ -40,7 +41,7 @@ export function SessionDeleteDialog({
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="session-delete-title"
-        aria-describedby="session-delete-description session-delete-warning"
+        aria-describedby={`session-delete-description${openInPi ? " session-delete-warning" : ""}`}
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
@@ -74,10 +75,12 @@ export function SessionDeleteDialog({
           <span>If Trash is unavailable, it will be permanently deleted.</span>
           <span>Forked sessions remain; project files are unchanged.</span>
         </p>
-        <p className="session-delete__warning" id="session-delete-warning">
-          <AlertTriangle size={14} aria-hidden />
-          Make sure this session is not open in another Pi process.
-        </p>
+        {openInPi ? (
+          <p className="session-delete__warning" id="session-delete-warning">
+            <AlertTriangle size={14} aria-hidden />
+            Pi may write this session again while its terminal remains open.
+          </p>
+        ) : null}
         {error ? (
           <p className="session-delete__error" role="alert">
             {error}

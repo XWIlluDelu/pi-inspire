@@ -187,10 +187,13 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   own nested indentation. Clear does not consume a content row. It clears the entire drawer
   through one count-bearing confirmation: it includes both individually hidden sessions and every
   session in complete hidden folders, never only one child folder. It is unavailable while search or curation hydration can
-  show only a partial selection, and while any target is selected, opening, working, conflicted,
-  or still open in an observed Pi terminal. A folder-level deletion applies the same conditions
-  to that folder, not to unrelated targets elsewhere in Hidden.
+  show only a partial selection, and while any target is opening, working in Inspire, or conflicted.
+  Viewing an idle target or observing it in an external Pi terminal does not block deletion;
+  [[session-deletion]] owns idle-worker retirement and the contextual terminal consequence.
+  A folder-level deletion applies the same conditions to that folder, not to unrelated targets elsewhere in Hidden.
   Session deletion leaves project files and project folders unchanged.
+
+### Search and pagination
 
 - The existing sidebar search reaches session name, cwd, ID, and complete retained user/assistant
   text through the Host catalog, using Pi's fuzzy keywords, quoted phrases, and `re:` regex. The

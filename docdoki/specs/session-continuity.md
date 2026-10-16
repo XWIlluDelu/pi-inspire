@@ -211,8 +211,8 @@ Let the user move between existing terminal Pi and inspire without losing histor
   execution, stop, restart or writer ownership. Failed/stalled observations and browser disconnect
   clear the independent activity map: missing evidence is unknown, not an invented idle or
   completion event. Repeated full maps supply reconnect baselines and hydrate catalog rows without
-  changing pagination. An observed live TUI disables row deletion, including when idle; existing
-  server writer-admission checks remain authoritative. Busy identities count once alongside managed
+  changing pagination. External activity remains observational: it does not block deletion.
+  [[session-deletion]] owns the contextual confirmation and managed-writer checks. Busy identities count once alongside managed
   workers for titlebar density under [[design-system]]; waiting for input does not increase the
   count. There is no second Herdr-specific activity source.
 

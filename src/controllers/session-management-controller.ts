@@ -173,7 +173,6 @@ export class SessionManagementController {
       this.host.state().deletingSessionId ||
       this.host.state().clearingHidden ||
       this.host.state().sessionDeleteReviewRequired ||
-      sessionId === this.host.state().sessionId ||
       !hidden
     )
       return null;

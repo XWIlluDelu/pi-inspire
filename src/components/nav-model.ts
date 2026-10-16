@@ -8,10 +8,8 @@ import type { AppState } from "../app-state";
 
 type HiddenDeletionState = Pick<
   AppState,
-  | "sessionId"
   | "openingSessionId"
   | "sessionStatuses"
-  | "externalSessionActivities"
   | "sessionQuery"
   | "sessionListLoading"
   | "sessionListLoadingOlder"
@@ -41,16 +39,8 @@ export function hiddenDeletionBlockReason(
   ) {
     return "Wait for Hidden sessions to finish loading";
   }
-  if (sessions.some((session) => session.id === state.sessionId))
-    return "Switch to another session before deleting";
   if (sessions.some((session) => session.id === state.openingSessionId))
     return "Wait for these sessions to finish opening";
-  if (
-    sessions.some(
-      (session) => state.externalSessionActivities[session.id] !== undefined,
-    )
-  )
-    return "Close the Pi terminal sessions before deleting";
   if (
     sessions.some((session) => {
       const status = state.sessionStatuses[session.id];

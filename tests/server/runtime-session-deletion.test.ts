@@ -328,11 +328,14 @@ describe("runtime session deletion", () => {
     await runtime.close();
   });
 
-  it("rejects a Hidden clear before moving any session when one is selected", async () => {
+  it("clears a complete Hidden set containing the selected idle session", async () => {
     const store = trackedAttachmentStore();
     const remove = vi.fn(async () => "trashed" as const);
     const runtime = new RuntimeController(
-      catalog([record("a", "/loose"), record("b", "/folder")]),
+      catalog([
+        await persistedRecord("a", "/loose"),
+        await persistedRecord("b", "/folder"),
+      ]),
       store,
       (options) => new FakeRpc(options) as unknown as PiRpcProcess,
       preview,
@@ -341,14 +344,15 @@ describe("runtime session deletion", () => {
       remove,
     );
     await runtime.openSession("a");
-
+    await waitForReady(runtime);
     await expect(
       runtime.clearHiddenSessions(["a", "b"], ["a"], [HIDDEN_FOLDER_CWD]),
-    ).rejects.toMatchObject({
-      status: 409,
-      message: "Switch to another session before clearing Hidden",
+    ).resolves.toMatchObject({
+      deleted: [{ sessionId: "a" }, { sessionId: "b" }],
     });
-    expect(remove).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledTimes(2);
+    expect(runtime.activeSessionId).toBeNull();
+    expect((await runtime.snapshot()).active).toBeNull();
     await runtime.close();
   });
 
@@ -415,7 +419,7 @@ describe("runtime session deletion", () => {
     await runtime.close();
   });
 
-  it("refuses to delete the selected session before touching its file", async () => {
+  it("retires the selected idle session and clears its selection after deletion commits", async () => {
     const store = trackedAttachmentStore();
     const remove = vi.fn(async () => "trashed" as const);
     const runtime = new RuntimeController(
@@ -429,13 +433,95 @@ describe("runtime session deletion", () => {
     );
 
     await runtime.openSession("a");
-    await expect(runtime.deleteSession("a")).rejects.toMatchObject({
-      message: "Switch to another session before deleting this one",
-      status: 409,
+    await waitForReady(runtime);
+    await expect(runtime.deleteSession("a")).resolves.toEqual({
+      sessionId: "a",
+      disposition: "trashed",
     });
-    expect(remove).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledOnce();
+    expect(runtime.activeSessionId).toBeNull();
+    expect((await runtime.snapshot()).active).toBeNull();
     await runtime.close();
   });
+
+  it("preserves the selected session after a filesystem deletion failure", async () => {
+    const workers: FakeRpc[] = [];
+    const remove = vi.fn(async () => {
+      throw new Error("Trash unavailable");
+    });
+    const runtime = new RuntimeController(
+      catalog([await persistedRecord("a")]),
+      trackedAttachmentStore(),
+      (options) => {
+        const worker = new FakeRpc(options);
+        workers.push(worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      undefined,
+      15_000,
+      undefined,
+      remove,
+    );
+    try {
+      await runtime.openSession("a");
+      await waitForReady(runtime);
+      await expect(runtime.deleteSession("a")).rejects.toThrow(
+        "Trash unavailable",
+      );
+      expect(workers[0]!.stops).toBe(1);
+      expect(runtime.activeSessionId).toBe("a");
+      expect((await runtime.snapshot()).active?.sessionId).toBe("a");
+      await runtime.openSession("a");
+      await waitForReady(runtime);
+      expect(workers).toHaveLength(2);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it.each(["settled", "in-flight"] as const)(
+    "preserves a newer %s selection when deletion commits",
+    async (phase) => {
+      const { promise: deleteGate, resolve: releaseDelete } = deferredSignal();
+      const { promise: previewGate, resolve: releasePreview } =
+        deferredSignal();
+      const { promise: started, resolve: deleteStarted } = deferredSignal();
+      const runtime = new RuntimeController(
+        catalog([record("a", "/tmp"), record("b", "/tmp")]),
+        trackedAttachmentStore(),
+        (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+        async (session) => {
+          if (session.id === "b" && phase === "in-flight") await previewGate;
+          return preview(session);
+        },
+        15_000,
+        undefined,
+        async () => {
+          deleteStarted();
+          await deleteGate;
+          return "trashed";
+        },
+      );
+      try {
+        await runtime.openSession("a");
+        await waitForReady(runtime);
+        const deleting = runtime.deleteSession("a");
+        await started;
+        const opening = runtime.openSession("b");
+        if (phase === "settled") await opening;
+        releaseDelete();
+        await deleting;
+        releasePreview();
+        await opening;
+        expect(runtime.activeSessionId).toBe("b");
+        expect((await runtime.snapshot()).active?.sessionId).toBe("b");
+      } finally {
+        releaseDelete();
+        releasePreview();
+        await runtime.close();
+      }
+    },
+  );
 
   it("makes the prior idle session deletable after New session deselects host ownership", async () => {
     const store = trackedAttachmentStore();

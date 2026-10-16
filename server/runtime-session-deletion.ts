@@ -1,10 +1,10 @@
-import { requestError } from "./request-error.js";
 import { resolve } from "node:path";
 import {
   type HiddenClearResponse,
   isBusyRunState,
   type SessionDeleteResponse,
 } from "../shared/contracts.js";
+import { requestError } from "./request-error.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 import type { SessionRecord } from "./session-catalog.js";
 import type { DeleteSessionRecord } from "./session-delete.js";
@@ -12,7 +12,7 @@ import type { DeleteSessionRecord } from "./session-delete.js";
 interface RuntimeSessionDeletionHost {
   assertNotClosing(): void;
   withMaintenance<T>(operation: () => Promise<T>): Promise<T>;
-  selectedSessionId(): string | null;
+  clearSelection(sessionId: string): void;
   hasSelectionReservation(sessionId: string): boolean;
   opening(sessionId: string): Promise<RuntimeSlot> | undefined;
   hasOpening(sessionId: string): boolean;
@@ -104,12 +104,6 @@ export class RuntimeSessionDeletionController {
     sessionId: string,
     authorizedSession?: SessionRecord,
   ): Promise<SessionDeleteResponse> {
-    if (this.host.selectedSessionId() === sessionId) {
-      throw requestError(
-        "Switch to another session before deleting this one",
-        409,
-      );
-    }
     if (
       this.host.hasSelectionReservation(sessionId) ||
       this.host.hasProvisionalReservation(sessionId)
@@ -119,14 +113,12 @@ export class RuntimeSessionDeletionController {
         409,
       );
     }
-    // Opening an existing session returns its read-only preview before the
-    // background Pi worker has necessarily finished startup. Once New session
-    // has deselected that preview, deletion waits for this already-owned warmup
-    // instead of exposing a transient, user-visible refusal.
+    // Preview selection can finish before its worker startup. Await that
+    // already-owned warmup instead of reporting an opening conflict for an
+    // otherwise idle session. Explicit selection reservations still fence it.
     await this.host.opening(sessionId)?.catch(() => undefined);
     await this.host.loadingSlot(sessionId)?.catch(() => undefined);
     if (
-      this.host.selectedSessionId() === sessionId ||
       this.host.hasSelectionReservation(sessionId) ||
       this.host.hasProvisionalReservation(sessionId)
     ) {
@@ -140,70 +132,65 @@ export class RuntimeSessionDeletionController {
       authorizedSession ?? (await this.deletionCatalogRecord(sessionId));
     const path = resolve(initial.path);
     await this.host.loadingPath(path)?.catch(() => undefined);
-    if (
-      this.host.selectedSessionId() === sessionId ||
-      this.isSessionOpeningOrChanging(sessionId, path)
-    ) {
+    if (this.isSessionOpeningOrChanging(sessionId, path)) {
       throw requestError("The session is still being opened or changed", 409);
     }
 
     const slot = this.host.slot(sessionId);
-    if (slot) {
-      if (slot.stopping) await slot.stopping;
-      if (slot.activeOperations > 0 || this.hasDeletionBlockingState(slot)) {
-        throw requestError(
-          "Wait for the session's active work or interaction to finish before deleting it",
-          409,
-        );
-      }
-      await this.host.mutateSlot(slot, async () => {
-        if (
-          this.host.selectedSessionId() === sessionId ||
-          this.host.slot(sessionId) !== slot
-        ) {
-          throw requestError(
-            "The session changed while deletion was being prepared",
-            409,
-          );
-        }
-        if (slot.activeOperations > 1 || this.hasDeletionBlockingState(slot)) {
+    let projection: RuntimeSlot["projection"] = null;
+    try {
+      if (slot) {
+        if (slot.stopping) await slot.stopping;
+        if (slot.activeOperations > 0 || this.hasDeletionBlockingState(slot))
           throw requestError(
             "Wait for the session's active work or interaction to finish before deleting it",
             409,
           );
-        }
-        await this.host.stopWriter(slot);
-        await slot.eventTail;
-        await slot.projectionTail;
-        const projection = slot.projection;
-        slot.projection = null;
-        slot.preview = null;
-        this.host.removeSlot(sessionId, slot);
-        await projection?.close();
-      });
-    }
+        projection = await this.host.mutateSlot(slot, async () => {
+          if (this.host.slot(sessionId) !== slot)
+            throw requestError(
+              "The session changed while deletion was being prepared",
+              409,
+            );
+          if (slot.activeOperations > 1 || this.hasDeletionBlockingState(slot))
+            throw requestError(
+              "Wait for the session to finish active work or interaction before deleting it",
+              409,
+            );
+          await this.host.stopWriter(slot);
+          await slot.eventTail;
+          await slot.projectionTail;
+          // Suspend reads/watchers and drain their file handles without losing
+          // the selected view. A failed move can resume this same projection.
+          const currentProjection = slot.projection;
+          await currentProjection?.suspendReconciliation();
+          return currentProjection;
+        });
+      }
 
-    if (
-      this.host.selectedSessionId() === sessionId ||
-      this.isSessionOpeningOrChanging(sessionId, path)
-    ) {
-      throw requestError(
-        "The session became active while deletion was being prepared",
-        409,
-      );
-    }
-    // The catalog lookup established one unambiguous id/path. The destructive
-    // adapter revalidates that exact file before moving it to a private
-    // quarantine for desktop Trash. Single deletion pins its current version
-    // after writer retirement: normal writes can outdate the catalog metadata.
-    // Hidden batches retain the exact version authorized by their preflight.
-    try {
+      if (this.isSessionOpeningOrChanging(sessionId, path))
+        throw requestError(
+          "The session changed while deletion was being prepared",
+          409,
+        );
+      // Single deletion pins the current file version after writer retirement;
+      // Hidden keeps the version authorized by its complete-set preflight.
       const disposition = await this.host.deleteSessionRecord(
         initial,
         authorizedSession ? "catalog" : "current",
       );
+      if (slot) {
+        slot.projection = null;
+        slot.preview = null;
+        this.host.removeSlot(sessionId, slot);
+      }
+      this.host.clearSelection(sessionId);
+      // Suspension already drained reconciliation and closed the watcher.
+      // Closing now releases only the committed session's retained projection.
+      await projection?.close();
       return { sessionId, disposition };
     } finally {
+      projection?.resumeReconciliation();
       this.host.invalidateCatalog();
     }
   }
@@ -277,12 +264,6 @@ export class RuntimeSessionDeletionController {
     for (const session of records) {
       const sessionId = session.id;
       const path = resolve(session.path);
-      if (this.host.selectedSessionId() === sessionId) {
-        throw requestError(
-          "Switch to another session before clearing Hidden",
-          409,
-        );
-      }
       if (this.isSessionOpeningOrChanging(sessionId, path)) {
         throw requestError(
           "Wait for every session in Hidden to finish opening or changing before clearing it",

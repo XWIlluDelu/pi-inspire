@@ -6,6 +6,56 @@ import { openMockSession, pairedPage } from "./support/navigation";
 
 test.use({ reducedMotion: "reduce", serviceWorkers: "block" });
 
+test("deletes the visible idle session through one confirmation and returns to New session", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  await openMockSession(page, /Calibration history fixture/);
+  const response = await hostRequest(page).get("/api/snapshot");
+  const id = (await response.json()).active.sessionId;
+  expect(
+    (
+      await hostRequest(page).patch("/api/preferences", {
+        data: { hiddenSessionIds: [id], hiddenProjectCwds: [] },
+      })
+    ).ok(),
+  ).toBe(true);
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: /^Session actions:/ }),
+  ).toHaveText("Calibration history fixture");
+  const navigation = page.getByRole("button", {
+    name: /^(Toggle|Expand|Collapse) navigation$/,
+    exact: true,
+  });
+  if (
+    (await navigation.getAttribute("aria-expanded")) === "false" ||
+    (await page.locator(".nav--rail").count())
+  )
+    await navigation.click();
+  const hidden = page.getByRole("button", { name: "Hidden", exact: true });
+  if ((await hidden.getAttribute("aria-expanded")) !== "true")
+    await hidden.click();
+  const remove = page.getByRole("button", {
+    name: 'Delete "Calibration history fixture"',
+    exact: true,
+  });
+  await expect(remove).toBeEnabled();
+  await remove.click();
+  const dialog = page.getByRole("alertdialog", { name: "Delete session?" });
+  await expect(dialog.locator(".session-delete__warning")).toHaveCount(0);
+  await dialog
+    .getByRole("button", { name: "Delete session", exact: true })
+    .click();
+  await expect(dialog).toBeHidden();
+  await expect(
+    page.getByRole("form", { name: "Start a session" }),
+  ).toBeVisible();
+  await expect(remove).toHaveCount(0);
+  const snapshot = await hostRequest(page).get("/api/snapshot");
+  expect((await snapshot.json()).active).toBeNull();
+});
+
 for (const touch of [false, true]) {
   test.describe(
     touch ? "touch Hidden hierarchy" : "pointer Hidden hierarchy",
@@ -57,7 +107,11 @@ for (const touch of [false, true]) {
         let preferences: Record<string, unknown> = {};
         // Browser projection owns hierarchy and the submitted scope. Real catalog
         // completeness, reservations and filesystem deletion are server regressions.
-        await routeMockSnapshots(page, {
+        let connected = false;
+        const transport = await routeMockSnapshots(page, {
+          event: (event) => {
+            if (event.type === "snapshot") connected = true;
+          },
           snapshot: (snapshot) => {
             if (snapshot.active)
               Object.assign(snapshot.active, {
@@ -119,6 +173,7 @@ for (const touch of [false, true]) {
           await route.fulfill({ json: preferences });
         });
         await page.reload();
+        await expect.poll(() => connected).toBe(true);
         await page.getByRole("button", { name: "Hidden", exact: true }).click();
         const drawer = page.locator(".nav__group--hidden");
         const target = drawer.locator(".nav__group").filter({
@@ -138,7 +193,7 @@ for (const touch of [false, true]) {
         await expect(trash).toBeEnabled();
         await expect(
           page.getByRole("button", { name: "Clear Hidden", exact: true }),
-        ).toBeDisabled();
+        ).toBeEnabled();
         // A pointer click must not keep one folder's actions revealed while
         // another is hovered. Keyboard focus still owns a visible action row.
         if (!touch) {
@@ -301,6 +356,11 @@ for (const touch of [false, true]) {
         await search.fill("Target one");
         await expect(trash).toBeDisabled();
         await search.clear();
+        transport.send({
+          type: "external_session_activity",
+          activities: { [first]: "working", [second]: "idle" },
+        });
+        await expect(target.getByRole("img", { name: /Pi/ })).toBeVisible();
         await expect(trash).toBeEnabled();
         await trash.focus();
         await trash.press("Enter");
@@ -309,6 +369,9 @@ for (const touch of [false, true]) {
         });
         await expect(dialog).toContainText("target · 2 sessions");
         await expect(dialog).toContainText(targetCwd);
+        await expect(dialog).toContainText(
+          "Open Pi terminals may write these sessions again.",
+        );
         await dialog
           .getByRole("button", { name: "Cancel", exact: true })
           .click();
