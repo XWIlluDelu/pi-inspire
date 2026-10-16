@@ -39,7 +39,14 @@ export function registerModelWorkflow(
   ) => {
     mark("request");
     const result = createAssistantMessageEventStream();
-    queueMicrotask(() => {
+    let finished = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settle = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      options?.signal?.removeEventListener("abort", settle);
+      const aborted = options?.signal?.aborted === true;
       const message: AssistantMessage = {
         role: "assistant",
         api: model.api,
@@ -47,7 +54,7 @@ export function registerModelWorkflow(
         model: model.id,
         thinkingLevel: options?.reasoning ?? "off",
         content: [{ type: "text", text: `${model.name} reply` }],
-        stopReason: "stop",
+        stopReason: aborted ? "aborted" : "stop",
         timestamp: Date.now(),
         usage: {
           input: model.id === "a" ? 1000 : 2000,
@@ -65,9 +72,19 @@ export function registerModelWorkflow(
         },
       };
       result.push({ type: "start", partial: message });
-      result.push({ type: "done", reason: "stop", message });
+      if (aborted)
+        result.push({ type: "error", reason: "aborted", error: message });
+      else result.push({ type: "done", reason: "stop", message });
       result.end();
-    });
+    };
+    const delay = Number(
+      process.env.INSPIRE_MODEL_FIXTURE_STREAM_DELAY_MS ?? 0,
+    );
+    if (delay > 0) {
+      options?.signal?.addEventListener("abort", settle, { once: true });
+      if (options?.signal?.aborted) queueMicrotask(settle);
+      else timer = setTimeout(settle, delay);
+    } else queueMicrotask(settle);
     return result;
   };
   pi.registerProvider({

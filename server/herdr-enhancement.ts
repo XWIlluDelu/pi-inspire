@@ -2,6 +2,8 @@ import { join, resolve } from "node:path";
 import type { HerdrEnhancementStatus } from "../shared/herdr.js";
 import { type DiagnosticLogger, nullDiagnosticLogger } from "./diagnostics.js";
 import { HerdrClient } from "./herdr-client.js";
+import { HerdrNativeSession } from "./herdr-native-session.js";
+import type { ExternalSessionConnection } from "./external-session.js";
 import {
   assertHerdrWorkerScopesAvailable,
   herdrProcessIsLive,
@@ -141,6 +143,23 @@ export class HerdrEnhancement {
       if (this.scopeCheck === attempt) this.scopeCheck = null;
     });
     return attempt;
+  }
+
+  async connectExternalSession(
+    sessionId: string,
+    sessionFile: string,
+  ): Promise<ExternalSessionConnection | null> {
+    if (
+      !this.options.enabled ||
+      this.options.mock ||
+      process.platform !== "linux"
+    )
+      return null;
+    if (this.closed) throw requestError("The Host is shutting down", 503);
+    const writer = await this.observer.findNativeWriter(sessionId, sessionFile);
+    return writer
+      ? new HerdrNativeSession(this.client, writer, sessionId, sessionFile)
+      : null;
   }
 
   createProcess(options: PiRpcOptions): PiRpcProcess {

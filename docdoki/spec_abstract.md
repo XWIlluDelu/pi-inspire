@@ -5,7 +5,7 @@
 Inspire is Pi's graphical interface. Pi and user configuration own tools, prompts, extensions and
 canonical session files. The authenticated Host adapts public RPC and owns privileged operations;
 browsers render recoverable projections of Host state. Direct Pi launch is the default; optional
-Herdr enhancement changes worker placement without changing agent ownership.
+Herdr enhancement changes worker placement and connects existing Pi terminals without taking ownership of them.
 
 [[northstar]] defines product intent. `specs/` holds decided behavior, including requirements not
 yet implemented; `notes/` explains reusable engineering choices; `stages/` tracks open work.

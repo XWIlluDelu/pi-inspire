@@ -40,6 +40,12 @@ function nativePiReference(
   return reference?.agent === "pi" && reference.source === "herdr:pi";
 }
 
+export interface HerdrNativeWriter {
+  serverId: string;
+  paneId: string;
+  pid: number;
+}
+
 export interface HerdrWorkerProjection {
   update(status: RuntimeWorkerStatus): void;
   dispose(): Promise<void>;
@@ -162,6 +168,47 @@ export class HerdrWorkerObserver {
         );
       }
     }
+  }
+
+  /** Locate a native terminal owner without acquiring its process lifetime. */
+  async findNativeWriter(
+    sessionId: string,
+    sessionFile: string,
+  ): Promise<HerdrNativeWriter | null> {
+    const observed = await this.options.client.inspectSessions();
+    if (!observed) return null;
+    const sessionPath = await canonicalPath(sessionFile);
+    const matches: HerdrNativeWriter[] = [];
+    for (const pane of observed.panes) {
+      const ref = pane.session;
+      if (pane.agent !== "pi" || !nativePiReference(ref)) continue;
+      if (
+        ref.kind === "id"
+          ? ref.value !== sessionId
+          : !isAbsolute(ref.value) ||
+            (await canonicalPath(ref.value)) !== sessionPath
+      )
+        continue;
+      const info = await this.options.client.inspectPaneProcess(
+        observed.serverId,
+        pane.paneId,
+      );
+      if (!this.liveForegroundPi(info)) continue;
+      const process = info.foregroundProcesses.find(
+        (item) => item.name === "pi" && item.argv?.[0] === "pi",
+      )!;
+      matches.push({
+        serverId: observed.serverId,
+        paneId: pane.paneId,
+        pid: process.pid,
+      });
+    }
+    if (matches.length > 1)
+      throw requestError(
+        "This session is open in more than one Pi terminal. Close the duplicate before sending a message.",
+        409,
+      );
+    return matches[0] ?? null;
   }
 
   private liveForegroundPi(info: HerdrPaneProcessInfo): boolean {
