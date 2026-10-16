@@ -5,6 +5,10 @@ import {
   MAX_ASSISTANT_STREAM_BATCH_EVENTS,
 } from "../shared/assistant-stream";
 import {
+  fileReferenceName,
+  parseAttachmentContext,
+} from "../shared/attachment-context";
+import {
   EXTENSION_ONE_WAY_METHODS,
   type ExtensionDisplay,
   type ExtensionUiRequest,
@@ -23,7 +27,6 @@ import {
   type RetryInfo,
   type RunState,
 } from "../shared/contracts";
-import { stripImageDimensionNotes } from "../shared/image-dimension-notes";
 import { structuralMessageIdentity } from "../shared/message-identity";
 import {
   type ActivityTool,
@@ -139,11 +142,22 @@ export function messageText(message: ChatMessage): string {
     .join("\n\n");
 }
 
-export function userMessageDisplayText(message: ChatMessage): string {
-  return stripImageDimensionNotes(
+export function userMessageDisplayContent(message: ChatMessage) {
+  return parseAttachmentContext(
     messageText(message),
     contentItems(message).filter((item) => item.type === "image").length,
   );
+}
+
+export function userMessageDisplayText(message: ChatMessage): string {
+  return userMessageDisplayContent(message).text;
+}
+
+export function userMessageSearchText(message: ChatMessage): string {
+  const { text, references } = userMessageDisplayContent(message);
+  return [...references.map(fileReferenceName), text]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function toolResultText(message: ChatMessage): string {

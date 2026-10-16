@@ -28,6 +28,10 @@ import { promisify } from "node:util";
 import type { Request } from "express";
 import type { StorageEngine } from "multer";
 import {
+  parseAttachmentContext as parseFileContext,
+  ATTACHMENT_CONTEXT_HEADING as REFERENCE_CONTEXT_HEADING,
+} from "../shared/attachment-context.js";
+import {
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENT_UPLOAD_BYTES,
   MAX_ATTACHMENTS,
@@ -1006,9 +1010,6 @@ export async function resolveProjectFiles(
   return [...new Set(resolved)];
 }
 
-const REFERENCE_CONTEXT_HEADING =
-  "Referenced files available to the agent (JSON paths):";
-
 export function addAttachmentContext(
   message: string,
   files: readonly AttachmentContextFile[],
@@ -1026,46 +1027,7 @@ export function addAttachmentContext(
   return message ? `${message}\n\n${context}` : context;
 }
 
-interface ParsedAttachmentContext {
-  text: string;
-  references: string[];
-}
-
-/** Recover editor text and exact file paths from INSΠRE's deterministic context. */
-export function parseAttachmentContext(
-  prompt: string,
-): ParsedAttachmentContext {
-  const heading = `${REFERENCE_CONTEXT_HEADING}\n`;
-  const marker = `\n\n${heading}`;
-  const trailingContext = prompt.lastIndexOf(marker);
-  const contextStart =
-    trailingContext >= 0
-      ? trailingContext
-      : prompt.startsWith(heading)
-        ? 0
-        : -1;
-  if (contextStart < 0) return { text: prompt, references: [] };
-  const referenceStart =
-    contextStart === 0 ? heading.length : contextStart + marker.length;
-  const references: string[] = [];
-  const lines = prompt.slice(referenceStart).split("\n");
-  if (
-    lines.length === 0 ||
-    lines.some((line) => {
-      if (!line.startsWith("- ")) return true;
-      try {
-        const path = JSON.parse(line.slice(2));
-        if (typeof path !== "string" || !isAbsolute(path)) return true;
-        references.push(path);
-        return false;
-      } catch {
-        return true;
-      }
-    })
-  )
-    return { text: prompt, references: [] };
-  return {
-    text: contextStart === 0 ? "" : prompt.slice(0, contextStart),
-    references,
-  };
+/** Keep Host-native absolute-path semantics at the artifact authority boundary. */
+export function parseAttachmentContext(prompt: string, imageCount = 0) {
+  return parseFileContext(prompt, imageCount, isAbsolute);
 }

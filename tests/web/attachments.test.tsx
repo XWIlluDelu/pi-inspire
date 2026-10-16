@@ -28,6 +28,65 @@ afterEach(() => {
 });
 
 describe("attachment presentation", () => {
+  it.each([
+    ["measurements.csv", "file-spreadsheet"],
+    ["config.json", "file-braces-corner"],
+    ["analysis.py", "file-code-corner"],
+    ["bundle.zip", "file-archive"],
+    ["recording.wav", "file-headphone"],
+    ["demo.webm", "file-play"],
+    ["diagram.svg", "file-image"],
+    ["report.pdf", "file-text"],
+    ["notes.md", "file-text"],
+    ["sample.unknown", "file-text"],
+  ])(
+    "keeps %s in the same file-icon family before and after sending",
+    async (fileName, icon) => {
+      render(
+        <>
+          <AttachmentList
+            sessionId="s"
+            items={[
+              {
+                localId: "attachment",
+                fileName,
+                mimeType: "application/octet-stream",
+                size: 42,
+                kind: "file",
+                status: "ready",
+              },
+            ]}
+            onRemove={() => {}}
+          />
+          <Transcript
+            sessionId="s"
+            messages={[
+              {
+                role: "user",
+                content: `Referenced files available to the agent (JSON paths):\n- "/workspace/${fileName}"`,
+              },
+            ]}
+            streaming={false}
+            thinkingVisibility="collapsed"
+            toolVisibility="collapsed"
+          />
+        </>,
+      );
+      const sent = await screen.findByRole("list", {
+        name: "Referenced files",
+      });
+      const staged = screen.getByRole("list", { name: "Attachments" });
+      for (const list of [staged, sent]) {
+        const iconElement = list.querySelector(`svg.lucide-${icon}`);
+        expect(iconElement).not.toBeNull();
+        expect(iconElement).toHaveAttribute("aria-hidden", "true");
+        expect(iconElement).toHaveAttribute("width", "13");
+        expect(iconElement).toHaveAttribute("height", "13");
+        expect(within(list).getByText(fileName)).toBeVisible();
+      }
+    },
+  );
+
   it("keeps filenames and status visible while moving file details into tooltips", () => {
     const fileName = "calibration-notes-with-a-long-descriptive-filename.md";
     const file: PendingAttachment = {

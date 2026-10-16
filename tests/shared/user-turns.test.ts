@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context";
 import { stripImageDimensionNotes } from "../../shared/image-dimension-notes";
 import {
   sequentialUserTurnAnchors,
@@ -9,6 +10,25 @@ const dimensionNote =
   "[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]";
 
 describe("user-turn projection", () => {
+  it("summarizes file prompts without their model-facing path instructions", () => {
+    const files = `${ATTACHMENT_CONTEXT_HEADING}\n- "/workspace/report.md"`;
+    expect(userTurnSummary({ content: `inspect\n\n${files}` })).toEqual({
+      snippet: "inspect",
+      attachmentCount: 1,
+    });
+    expect(userTurnSummary({ content: files })).toEqual({
+      snippet: "report.md",
+      attachmentCount: 1,
+    });
+    expect(
+      userTurnSummary({
+        content: [
+          { type: "text", text: `inspect\n\n${files}\n\n${dimensionNote}` },
+          { type: "image" },
+        ],
+      }),
+    ).toEqual({ snippet: "inspect", attachmentCount: 2 });
+  });
   it("omits Pi dimension suffixes only from image-prompt projections", () => {
     expect(stripImageDimensionNotes(`inspect\n\n${dimensionNote}`, 1)).toBe(
       "inspect",

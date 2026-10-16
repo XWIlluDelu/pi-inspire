@@ -1,5 +1,8 @@
+import {
+  fileReferenceName,
+  parseAttachmentContext,
+} from "./attachment-context.js";
 import type { UserTurnAnchor } from "./contracts.js";
-import { stripImageDimensionNotes } from "./image-dimension-notes.js";
 
 const USER_TURN_SNIPPET_CHARS = 180;
 
@@ -22,9 +25,9 @@ export function userTurnSummary(value: unknown): UserTurnSummary {
       else if (item.type === "image") attachmentCount += 1;
     }
   }
-  const normalized = stripImageDimensionNotes(
-    text.join("\n\n"),
-    attachmentCount,
+  const parsed = parseAttachmentContext(text.join("\n\n"), attachmentCount);
+  const normalized = (
+    parsed.text.trim() || parsed.references.map(fileReferenceName).join(", ")
   )
     .replace(/\s+/g, " ")
     .trim();
@@ -39,7 +42,7 @@ export function userTurnSummary(value: unknown): UserTurnSummary {
           ? "Image attachment"
           : `${attachmentCount} image attachments`
         : "User message"),
-    attachmentCount,
+    attachmentCount: attachmentCount + parsed.references.length,
   };
 }
 
