@@ -244,7 +244,7 @@
 }
 
 @media (hover: hover) {
-  .topbar__title-button:hover {
+  .topbar__title-button:hover:where(:not(:disabled)) {
     background: var(--bg-inset);
   }
 }
@@ -288,7 +288,7 @@
 .topbar__title-button,
 .session-actions-menu > button { -webkit-tap-highlight-color: transparent; }
 
-.session-actions-menu > button:hover,
+.session-actions-menu > button:hover:where(:not(:disabled)),
 .session-actions-menu > button:focus-visible {
   background: var(--bg-inset);
   outline: none;

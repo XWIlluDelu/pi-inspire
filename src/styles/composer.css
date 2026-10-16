@@ -588,8 +588,8 @@
     box-shadow var(--dur-micro) var(--ease-standard);
 }
 
-.dropdown__trigger:hover,
-.dropdown__trigger[aria-expanded="true"] {
+.dropdown__trigger:hover:where(:not(:disabled)),
+.dropdown__trigger[aria-expanded="true"]:where(:not(:disabled)) {
   background: var(--bg-inset);
   color: var(--ink);
 }
@@ -602,10 +602,6 @@
 .dropdown__trigger:disabled {
   color: var(--faint);
   cursor: default;
-}
-
-.dropdown__trigger:disabled:hover {
-  background: transparent;
 }
 
 .dropdown__trigger svg {
@@ -720,17 +716,21 @@
   color: var(--ink);
 }
 
-.dropdown--field .dropdown__trigger:hover {
+.dropdown--field .dropdown__trigger:hover:where(:not(:disabled)) {
   background: var(--bg-canvas);
   border-color: color-mix(in srgb, var(--ink) 28%, transparent);
 }
 
 .dropdown--field .dropdown__trigger:focus-visible,
-.dropdown--field .dropdown__trigger[aria-expanded="true"] {
+.dropdown--field .dropdown__trigger[aria-expanded="true"]:where(:not(:disabled)) {
   outline: none;
   background: var(--bg-canvas);
   border-color: var(--accent-focus);
   box-shadow: 0 0 0 3px var(--accent-tint);
+}
+
+.dropdown--field .dropdown__trigger:disabled {
+  color: var(--faint);
 }
 
 .composer__spacer {
@@ -1004,7 +1004,7 @@
   border-radius: var(--radius-sm);
 }
 
-.attachment__remove:hover {
+.attachment__remove:hover:where(:not(:disabled)) {
   color: var(--error);
 }
 
