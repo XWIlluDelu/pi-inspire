@@ -11,6 +11,45 @@ afterEach(() => {
 });
 
 describe("settled transcript search", () => {
+  it.each([
+    ["compactionSummary", "Context compacted"],
+    ["branchSummary", "Branch context"],
+  ])(
+    "reveals a collapsed %s on every deliberate search navigation",
+    (role, title) => {
+      const props = {
+        sessionId: "summary-search",
+        streaming: false,
+        thinkingVisibility: "collapsed" as const,
+        toolVisibility: "collapsed" as const,
+        messages: [
+          { role, summary: "Retained decisions and next steps", timestamp: 1 },
+        ],
+      };
+      const { rerender } = render(<Transcript {...props} />);
+      const toggle = screen.getByRole("button", { name: title });
+      const input = screen.getByRole("searchbox", {
+        name: "Search conversation",
+      });
+      const next = screen.getByRole("button", {
+        name: "Next transcript match",
+      });
+      fireEvent.change(input, { target: { value: "Retained decisions" } });
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(next);
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      expect(
+        screen.getByText("Retained decisions and next steps"),
+      ).toBeVisible();
+      fireEvent.click(toggle);
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      rerender(<Transcript {...props} />);
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(next);
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+    },
+  );
+
   it("keeps the compact floating search and filters all, user, or model text", () => {
     render(
       <Transcript

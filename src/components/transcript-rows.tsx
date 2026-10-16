@@ -8,7 +8,15 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { memo, type Ref, useEffect, useId, useState } from "react";
+import {
+  memo,
+  type Ref,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useState,
+} from "react";
 import type {
   GenericExtensionDisplay,
   PendingQueues,
@@ -45,6 +53,7 @@ import {
   ToolCard,
   ToolResultCard,
 } from "./transcript-cards";
+import { TranscriptSearchReveal } from "./transcript-search";
 
 export function relativeTime(timestamp: number | string): string {
   const time =
@@ -461,6 +470,10 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
       ? `${magicContext ? "History chunk" : "Before"} ≈ ${Math.round(message.tokensBefore).toLocaleString()} tokens`
       : null;
   const [open, setOpen] = useState(false);
+  const searchReveal = useContext(TranscriptSearchReveal);
+  useLayoutEffect(() => {
+    if (searchReveal !== null) setOpen(true);
+  }, [searchReveal]);
   const bodyId = useId();
   const metricId = `${bodyId}-metric`;
   const title = compacted
