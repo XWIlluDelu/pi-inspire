@@ -1189,13 +1189,13 @@ a {
 }
 
 @media (hover: hover) {
-  .icon-button:hover {
+  .icon-button:hover:where(:not(:disabled, .icon-button--active)) {
     background: var(--bg-inset);
     color: var(--ink);
   }
 }
 
-.icon-button:active {
+.icon-button:active:where(:not(:disabled, .icon-button--active)) {
   background: var(--bg-control);
   color: var(--ink);
 }
@@ -1203,6 +1203,13 @@ a {
 .icon-button--active {
   background: var(--accent-tint);
   color: var(--accent-deep);
+}
+
+/* Native disabled state outranks local icon colors without changing geometry. */
+button.icon-button:disabled {
+  background: transparent;
+  color: var(--faint);
+  cursor: default;
 }
 
 /* --- Chips & badges --- */

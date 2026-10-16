@@ -141,7 +141,7 @@
   min-height: 36px;
   border-radius: var(--radius-sm);
 }
-.models-icon-button:hover { background: var(--bg-control); color: var(--ink); }
+.models-icon-button:hover:where(:not(:disabled)) { background: var(--bg-control); color: var(--ink); }
 .models-text-button { padding: var(--space-2) 0; color: var(--accent-deep); font-size: var(--text-sm); }
 .models-icon-button:focus-visible,
 .models-text-button:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: 2px; }

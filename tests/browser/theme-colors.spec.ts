@@ -7,15 +7,17 @@ const css = (
   await Promise.all(
     [
       "foundation",
-      "composer",
-      "settings-overlays",
-      "transcript",
-      "terminal",
-      "workbench",
-      "history",
-      "topbar",
-      "navigation",
       "choice-input",
+      "navigation",
+      "topbar",
+      "transcript",
+      "activity-cards",
+      "composer",
+      "workbench",
+      "terminal",
+      "settings-overlays",
+      "model-settings",
+      "history",
     ].map((name) => readFile(`src/styles/${name}.css`, "utf8")),
   )
 ).join("\n");
@@ -49,6 +51,7 @@ const notices = [
 const controls = [
   ["primary", 4.5],
   ["danger", 4.5],
+  ["danger-outline", 4.5],
   ["ordinary", 4.5],
   ["reload", 4.5],
   ["send", 3],
@@ -88,6 +91,17 @@ for (const palette of PALETTE_PREFERENCES)
           </section>
           <button class="button button--primary" id="primary">Save</button>
           <button class="button button--danger" id="danger">Delete</button>
+          <section style="background:var(--bg-surface)">
+            <button class="button button--danger-outline" id="danger-outline">Restart</button>
+          </section>
+          <section aria-label="Icon button states">
+            <button class="icon-button" id="icon" aria-label="Add files">+</button>
+            <button class="icon-button icon-button--active" id="icon-selected" aria-label="Resources" aria-expanded="true">▤</button>
+            <button class="icon-button pending-group__control pending-group__control--clear" id="icon-clear" aria-label="Clear pending input">×</button>
+            <button class="models-icon-button" id="icon-model" aria-label="Move model up">↑</button>
+            <div class="file-detail-header"><button class="icon-button" id="icon-file" aria-label="File action">↗</button></div>
+            <div class="composer__input-wrap" style="width:36px;height:36px;flex:none"><button class="icon-button composer__expand" id="icon-expand" aria-label="Expand composer">↗</button></div>
+          </section>
           <button class="button" id="ordinary">Cancel</button>
           <div class="app-error"><button id="reload">Reload page</button></div>
           <button class="composer__send" id="send" aria-label="Send">↑</button>
@@ -157,6 +171,13 @@ for (const palette of PALETTE_PREFERENCES)
             "accent-fill",
             "on-accent",
             "error-ink",
+            "error",
+            "error-tint",
+            "accent-tint",
+            "ink",
+            "faint",
+            "bg-inset",
+            "bg-control",
           ].map((role) => {
             probe.style.color = `var(--${role})`;
             return [role, getComputedStyle(probe).color];
@@ -226,6 +247,50 @@ for (const palette of PALETTE_PREFERENCES)
         await expect(error).toHaveCSS("color", roles["error-ink"]!);
         await expect(error).toHaveCSS("outline-color", roles["accent-focus"]!);
       }
+      for (const [id, ink, background] of [
+        ["icon", "ink", "bg-inset"],
+        ["icon-selected", "accent-deep", "accent-tint"],
+        ["icon-clear", "error", "error-tint"],
+        ["icon-model", "ink", "bg-control"],
+        ["icon-file", "ink", "bg-inset"],
+        ["icon-expand", "ink", "bg-inset"],
+      ]) {
+        const button = page.locator(`#${id}`);
+        await button.hover();
+        // Shared state exclusions must not out-rank local action treatments.
+        await expect(button).toHaveCSS("color", roles[ink!]!);
+        await expect(button).toHaveCSS("background-color", roles[background!]!);
+        if (id === "icon-selected") {
+          await page.mouse.down();
+          await expect(button).toHaveCSS("color", roles["accent-deep"]!);
+          await expect(button).toHaveCSS(
+            "background-color",
+            roles["accent-tint"]!,
+          );
+          await page.mouse.up();
+          await page.keyboard.press("Tab");
+          await button.focus();
+          await expect(button).toHaveCSS(
+            "outline-color",
+            roles["accent-focus"]!,
+          );
+          await expect(button).toHaveAttribute("aria-expanded", "true");
+        }
+        await button.evaluate((element: HTMLButtonElement) => {
+          element.disabled = true;
+        });
+        await page.mouse.move(0, 0);
+        const disabled = await renderedColors(button);
+        await expect(button).toHaveCSS("cursor", "default");
+        await expect(button).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+        if (id !== "icon-model")
+          await expect(button).toHaveCSS("color", roles.faint!);
+        await button.hover({ force: true });
+        expect(await renderedColors(button)).toEqual(disabled);
+        await page.mouse.down();
+        expect(await renderedColors(button)).toEqual(disabled);
+        await page.mouse.up();
+      }
       for (const [id, minimum] of controls) {
         const button = page.locator(`#${id}`);
         for (const state of ["rest", "hover", "pressed"]) {
@@ -233,6 +298,8 @@ for (const palette of PALETTE_PREFERENCES)
           if (state !== "rest") await button.hover();
           if (state === "pressed") await page.mouse.down();
           try {
+            if (id === "danger-outline")
+              await expect(button).toHaveCSS("color", roles["error-ink"]!);
             const colors = await renderedColors(button);
             expect(
               colors.contrast,

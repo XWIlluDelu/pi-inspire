@@ -145,6 +145,9 @@ declaration.
   `--accent-hover/active` are not assumed safe behind small text. Error fills follow
   the same luminosity-aware state rule with `--on-status`. Disabled buttons use neutral
   roles; disabled switches retain their checked/off state with reduced opacity.
+  Selected icon buttons keep their accent ink/tint through hover and press. Disabled
+  icon buttons use neutral ink and the default cursor, without hover/pressed feedback;
+  local action styles respect this state rather than overriding the shared control.
   Focus indicators consume `--accent-focus`, including local outlines, focused input
   borders and inset focus strokes. Botanical palettes map this role to `--accent`;
   classic Jade and Amber map it to `--accent-deep`. Components use the role rather
@@ -174,7 +177,9 @@ declaration.
   reading surfaces.
 - Small status text over tinted backgrounds uses the corresponding `--warning-ink`,
   `--info-ink` or `--error-ink` role, including chips, notices, recovery banners,
-  history and file boundaries. Activity-fold loading failures use `--error-ink`,
+  history and file boundaries. Outlined danger actions use `--error-ink` for text
+  while retaining `--error` for their borders and hover tint.
+  Activity-fold loading failures use `--error-ink`,
   retained through hover, pressed and focus states without recoloring Tool/Thinking marks.
   Successful command badges derive `--activity-success-ink`
   from their activity status color. Status icons, borders and tints retain their status

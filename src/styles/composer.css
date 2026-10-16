@@ -309,7 +309,7 @@
 }
 
 @media (hover: hover) {
-  .extension-display__copy.icon-button:hover {
+  .extension-display__copy.icon-button:hover:where(:not(:disabled)) {
     color: var(--ink);
     background: var(--bg-inset);
   }
@@ -451,7 +451,7 @@
   color: var(--muted);
 }
 
-.composer__expand.icon-button:hover {
+.composer__expand.icon-button:hover:where(:not(:disabled)) {
   background: var(--bg-inset);
   color: var(--ink);
 }

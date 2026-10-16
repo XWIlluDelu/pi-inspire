@@ -1174,7 +1174,7 @@
   }
 }
 @media (hover: hover) {
-  .custom-message__copy.icon-button:hover {
+  .custom-message__copy.icon-button:hover:where(:not(:disabled)) {
     color: var(--ink);
     background: var(--bg-inset);
   }
@@ -1539,12 +1539,12 @@
 }
 
 @media (hover: hover) {
-  .pending-group__control.icon-button:hover {
+  .pending-group__control.icon-button:hover:where(:not(:disabled)) {
     color: var(--ink);
     background: var(--bg-control);
   }
 
-  .pending-group__control--clear.icon-button:hover {
+  .pending-group__control--clear.icon-button:hover:where(:not(:disabled)) {
     color: var(--error);
     background: var(--error-tint);
   }
@@ -1787,7 +1787,7 @@
    emphasis, without a second opacity layer on individual buttons. */
 
 @media (hover: hover) {
-  .pending-group__copy.icon-button:hover {
+  .pending-group__copy.icon-button:hover:where(:not(:disabled)) {
     color: var(--ink);
     background: var(--bg-inset);
   }
