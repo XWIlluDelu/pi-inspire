@@ -745,17 +745,17 @@ function RawToolDetails({
     return <PendingToolResult status={status} />;
   return (
     <>
-      <div className="card__section-label">
-        {call.__inspireToolCall ? "Arguments (partial)" : "Arguments"}
-      </div>
-      <RawArguments call={call} />
       {result ? (
         <>
           <div className="card__section-label">Result</div>
           <RawToolResult result={result} />
+          <ToolArguments call={call} />
         </>
       ) : (
-        <PendingToolResult status={status} />
+        <>
+          <PendingToolResult status={status} />
+          <RawArguments call={call} />
+        </>
       )}
     </>
   );
@@ -1889,7 +1889,7 @@ export function CollapsedActivityStrip({
               <section
                 key={rendered.key}
                 id={panelId}
-                className={`card card--tool activity-strip__detail ${toolStatus(rendered.result, rendered.activity, live, rendered.call) === "failure" ? "card--failed" : ""}`}
+                className={`card card--tool ${rendered.call.name === "codemode" ? "card--codemode" : ""} activity-strip__detail ${toolStatus(rendered.result, rendered.activity, live, rendered.call) === "failure" ? "card--failed" : ""}`}
               >
                 <CardHeader
                   expanded
@@ -1902,12 +1902,14 @@ export function CollapsedActivityStrip({
                   toggleLabel={`${toolDisplayName(rendered.call.name)} tool details`}
                   onToggle={() => setSelectedIndex(null)}
                   summary={
-                    <ToolCardSummary
-                      call={rendered.call}
-                      result={rendered.result}
-                      activity={rendered.activity}
-                      presentation={renderedPresentation}
-                    />
+                    renderedPresentation?.ruleId === "inspire.pi.codemode" ? (
+                      <ToolCardSummary
+                        call={rendered.call}
+                        result={rendered.result}
+                        activity={rendered.activity}
+                        presentation={renderedPresentation}
+                      />
+                    ) : undefined
                   }
                   status={statusIcon(
                     toolStatus(

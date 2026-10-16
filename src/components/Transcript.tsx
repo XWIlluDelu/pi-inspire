@@ -41,7 +41,10 @@ import {
 } from "./TranscriptUtilities";
 import { useTranscriptRows } from "./transcript-row-projection";
 import { ExtensionDisplaySurface, PendingQueueGroups } from "./transcript-rows";
-import { useTranscriptSearch } from "./transcript-search";
+import {
+  TranscriptSearchReveal,
+  useTranscriptSearch,
+} from "./transcript-search";
 import { useTranscriptViewport } from "./transcript-viewport";
 
 // --- Transcript with pinned auto-scroll ---
@@ -617,7 +620,16 @@ export const Transcript = memo(function Transcript({
                     className="transcript__virtual-row"
                     style={{ transform: `translateY(${item.start}px)` }}
                   >
-                    {rows[item.index]!.node}
+                    <TranscriptSearchReveal
+                      value={
+                        search.matches[search.currentMatch]?.rowIndex ===
+                        item.index
+                          ? search.revealVersion
+                          : null
+                      }
+                    >
+                      {rows[item.index]!.node}
+                    </TranscriptSearchReveal>
                   </div>
                 ))}
               </div>
@@ -631,7 +643,15 @@ export const Transcript = memo(function Transcript({
                     data-user-turn-index={row.turnOrdinal ?? undefined}
                     data-user-turn-id={row.turnId ?? undefined}
                   >
-                    {row.node}
+                    <TranscriptSearchReveal
+                      value={
+                        search.matches[search.currentMatch]?.rowIndex === index
+                          ? search.revealVersion
+                          : null
+                      }
+                    >
+                      {row.node}
+                    </TranscriptSearchReveal>
                   </div>
                 ))}
               </div>

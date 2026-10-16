@@ -651,6 +651,96 @@ test("large Markdown stays readable through a stream burst without losing the co
   expect(errors).toEqual([]);
 });
 
+test("compact tool details keep results first, parameters inspectable, and identity separate from failure", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const send = await openReview(page, { toolVisibility: "collapsed" });
+  const fallback = tool("preview_check", {
+    task: "Inspect the workspace",
+    instructions: "Long input that should not displace the outcome.\n".repeat(
+      20,
+    ),
+  });
+  const code = tool("codemode", { code: 'text("Workspace ready");' });
+  send(
+    { type: "message_end", message: assistant([fallback, code]) },
+    {
+      type: "message_end",
+      message: {
+        role: "toolResult",
+        toolCallId: fallback.id,
+        toolName: fallback.name,
+        content: [
+          {
+            type: "text",
+            text: "Preview unavailable: choose an existing directory.",
+          },
+        ],
+        isError: true,
+      },
+    },
+    {
+      type: "message_end",
+      message: {
+        role: "toolResult",
+        toolCallId: code.id,
+        toolName: code.name,
+        content: [{ type: "text", text: "Workspace ready" }],
+        isError: false,
+      },
+    },
+  );
+  const strip = page.locator(".activity-strip");
+  const controls = strip.locator(".activity-strip__item");
+  await expect(controls).toHaveCount(2);
+  await controls.first().click();
+  const card = strip.locator(".activity-strip__detail");
+  await expect(card.locator(".card__summary")).toHaveCount(0);
+  await expect(
+    card.getByText("Preview unavailable: choose an existing directory.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  const args = card
+    .locator("details")
+    .filter({ has: page.locator("summary", { hasText: "Arguments" }) });
+  await expect(args).not.toHaveAttribute("open", "");
+  const colors = await controls.first().evaluate((element) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--activity-tool)";
+    document.body.append(probe);
+    const identity = getComputedStyle(probe).color;
+    probe.remove();
+    return {
+      identity,
+      glyph: getComputedStyle(element.querySelector("svg")!).color,
+      outcome: getComputedStyle(element.querySelector(".pi-status")!).color,
+    };
+  });
+  expect(colors.glyph).toBe(colors.identity);
+  expect(colors.outcome).not.toBe(colors.identity);
+  const output = (await card
+    .getByRole("group", { name: "Result text" })
+    .boundingBox())!;
+  const argumentBox = (await args.boundingBox())!;
+  expect(argumentBox.y).toBeGreaterThanOrEqual(output.y + output.height);
+  await args.locator("summary").focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    card.getByText(/Long input that should not displace the outcome/),
+  ).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(args).not.toHaveAttribute("open", "");
+  await controls.nth(1).click();
+  await expect(card).toHaveClass(/card--codemode/);
+  await expect(card.locator(".card__summary")).toHaveCount(0);
+  await page.setViewportSize({ width: 320, height: 844 });
+  const bounds = (await card.boundingBox())!;
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
+});
+
 function tool(name: string, args: Record<string, unknown>): ToolCallContent {
   return { type: "toolCall", id: `review-${name}`, name, arguments: args };
 }

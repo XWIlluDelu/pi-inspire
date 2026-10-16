@@ -126,7 +126,8 @@ custom messages remain independent readable boundaries in this contract.
   previous/next navigation and jumps by transcript row through virtualization. The streaming tail
   and hidden thinking/tool payloads are excluded. An active selected match locks out geometric
   latest-follow across prepends and live appends until search is cleared or the user explicitly
-  jumps to latest.
+  jumps to latest. Deliberate search navigation opens the matching context-summary row so its
+  matched body is visible; unrelated rows and ordinary rendering do not expand it.
 
   Desktop search floats at the top-right of the reading measure. Its opaque surface fill is subtly
   distinct from the reading stage, with a quiet boundary and no elevation at rest. Hover strengthens

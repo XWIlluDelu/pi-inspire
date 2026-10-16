@@ -142,7 +142,8 @@ Native and generic tool images remain visible when loaded from saved history. Pe
 through their message/part references; both inline and persisted images open the existing image preview.
 
 Unknown tools and incompatible rules retain arguments, text, supported images, and structured
-details. Details serialize only when opened. A result whose call is outside loaded history retains
+details. Expanded generic cards lead with the result and place arguments behind their own disclosure;
+unsettled calls retain status and available arguments. Details serialize only when opened. A result whose call is outside loaded history retains
 its content without fabricated arguments. Invalid image MIME types, excessive data, or invalid base64
 characters produce a visible notice rather than an empty result.
 

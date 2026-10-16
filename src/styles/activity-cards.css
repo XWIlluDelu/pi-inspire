@@ -377,9 +377,9 @@
   border-color: var(--line);
 }
 
-.activity-strip__item--failed,
-.activity-strip__item--failed.activity-strip__item--active {
-  color: var(--activity-error);
+/* Identity and outcome remain separate in compact mode too. */
+.activity-strip__item > svg:first-child {
+  color: var(--activity-tool);
 }
 
 .status-unknown {
