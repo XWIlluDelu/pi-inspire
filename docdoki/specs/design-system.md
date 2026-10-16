@@ -507,9 +507,10 @@ rule; the rule replaces one pixel of bottom padding, preserving heading height a
 ## Extension question choices
 
 Immediate-submit choices distinguish current keyboard focus and pointer hover without a check
-that implies an answer has already been submitted. Focus retains a visible outline; hover and
-press use the shared control surface. Click/Enter submission and roving keyboard navigation
-remain unchanged.
+that implies an answer has already been submitted. Focus retains a visible accent outline;
+hover and press use the raised neutral surface with a fine neutral inset boundary so they remain
+distinct from the recessed list in light and dark themes. Click/Enter submission and roving
+keyboard navigation remain unchanged.
 
 ## Content copying
 
@@ -645,8 +646,11 @@ Content availability is a capability concern, not a fourth presentation type. Co
   so ordinary rerenders or status-label updates neither reselect nor interrupt the current cycle.
   This is animation-cycle selection, not one fixed pattern for an entire run.
   Reduced motion displays a static Π. Sidebar working states use it; unread completion/failure use matching linked-dot check/cross.
-  Tool rows and nested calls use the same settled glyphs. Point cells and resting glyph footprints
-  are square (1:1); light links keep a three-point check readable at 12/14px. Success/error
+  Tool rows and nested calls use the same settled glyphs. Not-executed and missing-result tools,
+  and cancelled/unfinished child calls, use a static eight-point perimeter with an empty center
+  in `--muted`; their distinct labels remain intact, without implying work, success or failure.
+  Point cells and resting glyph footprints are square (1:1); light links keep a three-point check
+  readable at 12/14px. Success/error
   colors and attention remain distinct, and reading still clears unread terminal cues. Generating, queued and executing tools keep one mounted glyph and
   uninterrupted cycle; tool status follows the name in both parent and nested rows. Refresh controls
   retain directional arrows at rest and replace them with Π while refreshing. Settings checks and
