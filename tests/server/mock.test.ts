@@ -8,6 +8,35 @@ afterEach(() => {
 });
 
 describe("MockRuntime History reads", () => {
+  it.each(["mock-history", HISTORY_FIXTURE_SESSION_ID])(
+    "keeps a warmed History index readable after continuing %s",
+    async (sessionId) => {
+      vi.useFakeTimers();
+      const runtime = new MockRuntime();
+      try {
+        await runtime.openSession(sessionId);
+        const before = await runtime.branchTree(sessionId);
+        await runtime.prompt({ sessionId, message: "Continue this branch" });
+        const during = await runtime.branchTree(sessionId);
+        expect(during.revision).toBeGreaterThan(before.revision);
+        expect(during.activePath).toContain(before.effectiveLeafId);
+        expect(during.effectiveLeafId).not.toBe(before.effectiveLeafId);
+        await vi.runAllTimersAsync();
+        const snapshot = await runtime.snapshot(sessionId);
+        const after = await runtime.branchTree(sessionId);
+        expect(after.effectiveLeafId).toBe(snapshot.active!.effectiveLeafId);
+        const detail = await runtime.branchEntry({
+          sessionId,
+          viewId: snapshot.active!.transcriptPage.viewId,
+          targetId: after.effectiveLeafId!,
+        });
+        expect(detail.text).toContain("Continue this branch");
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
+
   it("retains the complete saved branch after navigation and cloning", async () => {
     const runtime = new MockRuntime();
     let cloneId: string | undefined;

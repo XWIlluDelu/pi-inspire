@@ -4,7 +4,8 @@ scope:
   - tests/browser/**
   - server/mock*.ts
   - src/styles/composer.css
-  - tests/web/composer-delivery.test.tsx
+  - tests/web/{composer-delivery,overlay-and-palette,resources-pane}.test.tsx
+  - tests/server/mock.test.ts
   - package-lock.json
 ---
 
@@ -31,9 +32,17 @@ Git tag with that revision. This does not authorize publishing a new npm package
   precision, and a failed send asserts the current notification channel.
 - Coarse-pointer attachment tiles now keep preview centers clear of corner
   removal buttons; [[composer]] specifies the layout.
-- All 56 previously affected browser cases passed across focused runs. Static,
-  portable, unit/integration, launcher, build and packaged-release checks pass.
-  The complete Chromium suite is running against isolated fixtures.
+- Static, portable, unit/integration, launcher, build and packaged-release checks
+  pass locally. The first full browser run passed 233/237 cases; order-sensitive
+  failures traced to an in-place mock History append reusing an immutable tree
+  index, and positioning earlier code while Follow latest was still active.
+  Both causes are repaired and their ordered reproductions now pass. Two unit
+  regressions cover warm History reads through appending and settlement.
+- Candidate CI passed all three release-package jobs and size reporting.
+  The superseded run was cancelled after the browser failures were identified.
+  Windows exposed two readiness races: lazy Settings loading and independently
+  resolved recent-file observations. Their assertions now await the owning surface
+  rather than assuming another surface's readiness. Final full CI remains pending.
 - The lockfile now selects `proxy-addr` 2.0.8 for Express, fixing advisory
   GHSA-jqcg-44mw-7w3h. Production dependency auditing reports zero vulnerabilities.
 

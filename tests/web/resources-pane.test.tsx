@@ -628,9 +628,12 @@ describe("Files pane", () => {
     expect(
       within(pane).getByRole("heading", { name: "proj" }),
     ).toBeInTheDocument();
-    expect(
-      pane.querySelector('.recent-file[title="demo.html"] > svg'),
-    ).toHaveClass("lucide-file-code-corner");
+    // Recent-reference observations settle independently of the directory listing.
+    await waitFor(() =>
+      expect(
+        pane.querySelector('.recent-file[title="demo.html"] > svg'),
+      ).toHaveClass("lucide-file-code-corner"),
+    );
     const directory = await within(pane).findByRole("button", { name: "src" });
     expect(directory.querySelector(".lucide-folder")).not.toBeNull();
     fireEvent.click(directory);
