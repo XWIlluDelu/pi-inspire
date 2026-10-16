@@ -18,8 +18,8 @@ import {
 } from "vitest";
 import type { McpConfigSnapshot } from "../../shared/mcp";
 import type { ModelCatalogResponse } from "../../shared/model-settings";
-import { ApiError } from "../../src/api";
 import { App } from "../../src/App";
+import { ApiError } from "../../src/api";
 import { Composer } from "../../src/components/Composer";
 import { Welcome } from "../../src/components/Welcome";
 import {
@@ -518,32 +518,65 @@ describe("new-session start surface", () => {
     },
   );
 
-  it("does not offer creation for a path blocked by a regular file", async () => {
-    directoryFailure = "file";
-    act(() =>
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: { active: null, runState: "idle", sessionStatuses: {} },
-      }),
-    );
-    render(<Welcome />);
-    fireEvent.change(
-      screen.getByRole("textbox", { name: "Project directory" }),
-      {
-        target: { value: "/file/project" },
-      },
-    );
-    fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
-      target: { value: "Do not replace this file" },
-    });
-    await screen.findByText("Project path is not a directory");
-    expect(
-      screen.queryByRole("button", { name: "Create folder and start" }),
-    ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Start session" }),
-    ).toBeDisabled();
-  });
+  it.each([false, true])(
+    "blocks a regular-file path even with an inherited model (%s)",
+    async (inherited) => {
+      directoryFailure = "file";
+      act(() =>
+        FakeWebSocket.instances.at(-1)!.emit({
+          type: "snapshot",
+          data: { active: null, runState: "idle", sessionStatuses: {} },
+        }),
+      );
+      render(
+        <Welcome
+          inherited={
+            inherited
+              ? {
+                  cwd: "/previous",
+                  model: {
+                    provider: "anthropic",
+                    id: "claude-sonnet-4",
+                    reasoning: true,
+                  },
+                  thinkingLevel: "high",
+                  commands: [],
+                }
+              : null
+          }
+        />,
+      );
+      fireEvent.change(
+        screen.getByRole("textbox", { name: "Project directory" }),
+        {
+          target: { value: "/file/project" },
+        },
+      );
+      fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
+        target: { value: "Do not replace this file" },
+      });
+      await screen.findByText("Project path is not a directory");
+      expect(
+        screen.queryByRole("button", { name: "Create folder and start" }),
+      ).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Start session" }),
+      ).toBeDisabled();
+      directoryFailure = null;
+      fireEvent.change(
+        screen.getByRole("textbox", { name: "Project directory" }),
+        {
+          target: { value: "/valid-project" },
+        },
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Start session" }),
+        ).toBeEnabled(),
+      );
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    },
+  );
 
   it("retires a late missing-directory observation after the user chooses another path", async () => {
     act(() =>

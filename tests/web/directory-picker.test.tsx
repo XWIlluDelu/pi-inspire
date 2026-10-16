@@ -278,6 +278,9 @@ describe("hidden project directories", () => {
       "Cannot read that directory",
     );
     expect(confirm()).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "project" }),
+    ).not.toBeInTheDocument();
     fireEvent.click(toggle());
     await waitFor(() => expect(confirm()).toBeEnabled());
     expect(browse).toHaveBeenLastCalledWith(home.path, false);
@@ -300,6 +303,36 @@ describe("hidden project directories", () => {
     ).not.toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it("keeps keyboard navigation in the refreshed list without stealing moved focus", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<HostDirListing>();
+    vi.mocked(store.browseHostDirs).mockImplementation(async (path) =>
+      path === project.path ? pending.promise : home,
+    );
+    render(<DirectoryPicker onCancel={vi.fn()} onPick={vi.fn()} />);
+    const entry = await screen.findByRole("button", { name: "project" });
+    entry.focus();
+    await user.keyboard("{Enter}");
+    expect(
+      screen.queryByRole("button", { name: "project" }),
+    ).not.toBeInTheDocument();
+    await act(async () => pending.resolve(project));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: ".." })).toHaveFocus(),
+    );
+    await user.keyboard("{Enter}");
+    await screen.findByRole("button", { name: "project" });
+    expect(screen.getByRole("button", { name: ".." })).toHaveFocus();
+
+    const next = deferred<HostDirListing>();
+    vi.mocked(store.browseHostDirs).mockReturnValue(next.promise);
+    screen.getByRole("button", { name: "project" }).focus();
+    await user.keyboard("{Enter}");
+    toggle().focus();
+    await act(async () => next.resolve(project));
+    expect(toggle()).toHaveFocus();
   });
 
   it("does not start a late home fallback after dismissal", async () => {

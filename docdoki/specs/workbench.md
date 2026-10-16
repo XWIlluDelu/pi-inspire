@@ -167,7 +167,8 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   count at the trailing edge before the indicator. Each header precedes its own content; Hidden's
   independently scrolling body is bounded to leave room for ordinary navigation. Project identity
   remains on cross-project Hidden rows as quiet text rather than a filled badge. On phone-width or
-  non-hover layouts, these rows place project and age beneath the title so persistent actions do not
+  non-hover layouts, all cross-project rows (Pinned, search and Hidden) place project and age beneath
+  the title so persistent actions do not
   crowd it. Selection and search highlights cover the whole row, including its action area.
   The drawer opens on demand, starts closed
   again, and search reveals matching hidden sessions inside it instead of returning them to their
@@ -230,7 +231,8 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 
   Hydration or preservation failure retains the last confirmed union, identifies the operation
   truthfully, and retries that same operation; a standalone live-row failure is labeled session
-  hydration and never resets already loaded base pages.
+  hydration and never resets already loaded base pages. Loading and failure states suppress the
+  empty-result message until a successful empty response.
 
 ## Startup, welcome, and directory selection
 
@@ -271,9 +273,12 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   first-message/project-directory composer, so the prior session no longer owns topbar status,
   resources, attention acknowledgement, Escape, or delete protection even if its idle worker remains
   warm. A collapsible recent-session list appears only when navigation is unavailable or collapsed;
-  expanded desktop navigation already owns that route and is not duplicated. A missing project
-  directory produces a non-blocking warning notice. Failed open/create operations remain in the
-  navigation and start surfaces without replacing a transcript integrity error.
+  expanded desktop navigation already owns that route and is not duplicated. Recent sessions exclude
+  hidden sessions/folders and show up to six entries in activity order. A missing project
+  directory offers the explicit creation path in [[session-continuity]]. An invalid or inaccessible
+  directory instead shows its own retryable error and blocks Start, including when a model was
+  chosen manually. Failed open/create operations remain in the navigation and start surfaces
+  without replacing a transcript integrity error.
 
 - The project directory can be typed or chosen through a host-side directory picker: the host
   process lists its own filesystem (`GET /api/host/dirs`, authenticated,
@@ -285,7 +290,9 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   automatically wraps long text and grows/shrinks with content and available width. Enter browses the typed path without selecting it. Use this directory validates an edited path
   against the Host before selection instead of choosing the old listing. Errors retain the draft;
   editing clears the error for retry. While browsing, the path is temporarily read-only but retains
-  keyboard focus, and stale or dismissed requests cannot select a directory.
+  keyboard focus, and stale or dismissed requests cannot select a directory. Navigation withdraws
+  the old listing immediately. If list focus was displaced by loading, completion focuses the first
+  available folder (or list container) only while no newer control owns focus.
 
 - The directory picker places an eye-icon `Show hidden folders` toggle button immediately after
   the `Choose project directory` heading, with an accessible label, tooltip, and `aria-pressed`

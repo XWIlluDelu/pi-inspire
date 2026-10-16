@@ -709,23 +709,29 @@
     height: 34px;
   }
 
-  /* Cross-project Hidden rows need a second line when actions stay visible:
-     the title gets the full main column, with project and age beneath it. */
-  .nav__hidden-content .nav__row--cross-project .nav__row-main {
+  /* Cross-project rows (Pinned, search and Hidden) need a second line when
+     actions stay visible: identity leads, with project and age beneath it. */
+  .nav__row--cross-project .nav__row-main {
     flex-direction: column;
     align-items: stretch;
     gap: 2px;
     padding-block: 6px;
   }
 
-  .nav__hidden-content .nav__row--cross-project .nav__row-meta {
+  .nav__row--cross-project .nav__row-meta {
     opacity: 1;
   }
 
-  .nav__hidden-content .nav__row--cross-project .nav__row-project {
-    flex: 1;
+  .nav__row--cross-project .nav__row-project {
+    flex: 0 1 auto;
     max-width: none;
     color: var(--faint);
+  }
+
+  .nav__row-age {
+    /* Touch actions own a separate column; do not reserve their width twice. */
+    flex-basis: auto;
+    margin-left: auto;
   }
 }
 

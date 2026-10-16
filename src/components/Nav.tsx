@@ -557,7 +557,7 @@ export const Nav = memo(function Nav({
             ) : null}
           </div>
         ) : null}
-        {sessions.length === 0 ? (
+        {sessions.length === 0 && !sessionListBusy && !sessionListError ? (
           <div className="empty-state">
             {searching ? (
               <SearchX size={26} strokeWidth={1.5} aria-hidden />

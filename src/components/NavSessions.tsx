@@ -132,6 +132,7 @@ export const SessionRow = memo(function SessionRow({
         <span className="nav__row-title">
           {opening ? (
             <span
+              className="nav__row-state"
               role="img"
               aria-label="Opening session"
               title="Opening session"

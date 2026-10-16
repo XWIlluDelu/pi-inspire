@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { routeMockSnapshots } from "./support/mock-host";
 import { openMockSession, pairedPage } from "./support/navigation";
 
-test("sidebar work and unread outcomes share a stable matrix slot without animating attention", async ({
+test("sidebar work and unread outcomes share glyph geometry without animating attention", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -78,4 +78,41 @@ test("sidebar work and unread outcomes share a stable matrix slot without animat
   await expect(working.locator(".pi-loading")).toHaveCount(0);
   await openMockSession(page, /Prompt map long-session fixture/);
   await expect(page.locator(".nav__row--active .pi-status")).toHaveCount(0);
+
+  // Opening uses the same glyph centering, without a permanent idle slot.
+  const nextRow = page
+    .locator(".nav__row")
+    .filter({ hasText: "Formula rendering and spectral analysis" });
+  const idleInset = () =>
+    nextRow
+      .locator(".nav__row-name")
+      .evaluate(
+        (element) =>
+          element.getBoundingClientRect().left -
+          element.closest(".nav__row-title")!.getBoundingClientRect().left,
+      );
+  expect(await idleInset()).toBe(0);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/sessions/open", async (route) => {
+    await gate;
+    await route.continue();
+  });
+  await nextRow.locator(".nav__row-main").click();
+  const opening = nextRow.getByRole("img", {
+    name: "Opening session",
+    exact: true,
+  });
+  await expect(opening).toBeVisible();
+  const offset = await opening.evaluate((element) => {
+    const icon = element.querySelector("svg")!.getBoundingClientRect();
+    const title = element.closest(".nav__row-title")!.getBoundingClientRect();
+    return icon.y + icon.height / 2 - title.y - title.height / 2;
+  });
+  expect(Math.abs(offset)).toBeLessThanOrEqual(0.1);
+  release();
+  await expect(opening).toHaveCount(0);
+  expect(await idleInset()).toBe(0);
 });

@@ -35,6 +35,7 @@ import { ComposerInput } from "./ComposerInput";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { Dropdown } from "./Dropdown";
 import { ModelSelector } from "./ModelSelector";
+import { visibleSessions } from "./nav-model";
 import { PiLoader } from "./PiLoader";
 import { ProjectFileChips, ProjectFilePicker } from "./ProjectFiles";
 import { relativeTime } from "./transcript-rows";
@@ -166,13 +167,32 @@ export const Welcome = memo(function Welcome({
   const projectPickerButtonRef = useRef<HTMLButtonElement>(null);
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
-  const recent = state.sessions.slice(0, 6);
+  const recent = useMemo(
+    () =>
+      visibleSessions(state.sessions, {
+        hiddenSessionIds: state.prefs.hiddenSessionIds,
+        hiddenProjectCwds: state.prefs.hiddenProjectCwds,
+      })
+        .sort((a, b) => Date.parse(b.modified) - Date.parse(a.modified))
+        .slice(0, 6),
+    [
+      state.sessions,
+      state.prefs.hiddenSessionIds,
+      state.prefs.hiddenProjectCwds,
+    ],
+  );
   const effectiveDirectory = directory.trim();
   useEffect(() => {
     onDirectoryChange?.(effectiveDirectory);
   }, [effectiveDirectory, onDirectoryChange]);
   const [missingDirectory, setMissingDirectory] = useState<string | null>(null);
   const directoryMissing = missingDirectory === effectiveDirectory;
+  const [directoryError, setDirectoryError] = useState<{
+    path: string;
+    message: string;
+  } | null>(null);
+  const directoryProblem =
+    directoryError?.path === effectiveDirectory ? directoryError.message : null;
   const [catalog, setCatalog] = useState<ModelOption[] | null>(null);
   const [pickedModel, setPickedModel] = useState<ModelOption | null>(null);
   const [commonModels, setCommonModels] = useState<ModelIdentity[]>([]);
@@ -208,6 +228,13 @@ export const Welcome = memo(function Welcome({
             ? effectiveDirectory
             : null,
         );
+        setDirectoryError(
+          error instanceof ApiError &&
+            (error.status === 400 || error.status === 403) &&
+            error.code !== "PROJECT_DIRECTORY_MISSING"
+            ? { path: effectiveDirectory, message: error.message }
+            : null,
+        );
         if (!modelOwnedRef.current) {
           setModelWarning(
             error instanceof Error ? error.message : "Model discovery failed",
@@ -224,6 +251,7 @@ export const Welcome = memo(function Welcome({
     }
     if (catalogGeneration.current === generation) {
       setMissingDirectory(null);
+      setDirectoryError(null);
       setCatalog(result.models);
       setCommonModels(result.commonModels ?? []);
       if (!modelOwnedRef.current && result.defaults) {
@@ -462,6 +490,7 @@ export const Welcome = memo(function Welcome({
   const changeDirectory = (value: string) => {
     ++catalogGeneration.current;
     setMissingDirectory(null);
+    setDirectoryError(null);
     setDirectory(value);
     setShowHiddenFiles(false);
     setProjectFiles([]);
@@ -481,7 +510,8 @@ export const Welcome = memo(function Welcome({
   const thinkingDefault =
     directoryMissing && !thinkingTouched && modelStatus !== "ready";
   const startReadiness =
-    directoryMissing && !sourceUnresolved
+    directoryProblem ??
+    (directoryMissing && !sourceUnresolved
       ? null
       : starting
         ? "Starting session…"
@@ -493,11 +523,12 @@ export const Welcome = memo(function Welcome({
               ? (modelWarning ?? "Model resolution failed")
               : !selectedModel
                 ? "Select a model"
-                : null;
+                : null);
   const canStart = Boolean(
     hasInput &&
       effectiveDirectory &&
       !directoryMissing &&
+      !directoryProblem &&
       selectedModel &&
       modelStatus === "ready" &&
       !starting,
@@ -831,15 +862,20 @@ export const Welcome = memo(function Welcome({
         ) : null}
         {startReadiness ? (
           <div
-            className={`welcome__readiness ${modelStatus === "error" ? "welcome__readiness--error" : ""}`}
-            role="status"
+            className={`welcome__readiness ${directoryProblem || modelStatus === "error" ? "welcome__readiness--error" : ""}`}
+            role={directoryProblem ? "alert" : "status"}
           >
             <span>{startReadiness}</span>
-            {modelStatus === "error" && effectiveDirectory ? (
+            {(directoryProblem || modelStatus === "error") &&
+            effectiveDirectory ? (
               <button
                 type="button"
                 className="changes__inline-action"
                 onClick={() => {
+                  if (directoryProblem) {
+                    void refreshModels().catch(() => {});
+                    return;
+                  }
                   setModelStatus("loading");
                   if (modelOwnedRef.current)
                     setModelResolveAttempt((attempt) => attempt + 1);
