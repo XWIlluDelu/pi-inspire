@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 interface PaneResizeHandleProps {
   cssVar: string;
@@ -9,6 +9,9 @@ interface PaneResizeHandleProps {
   max: (viewportWidth: number) => number;
   label: string;
   variant: string;
+  /** Re-apply preferences when desktop pane membership changes, not on ordinary renders. */
+  layoutKey?: string;
+  peerPane?: { cssVar: string; paneSelector: string };
   /** Active native scroller(s) inside the adjacent pane. Wheel input over the
    * resize hit band is forwarded to the target under the pointer. */
   wheelTargetSelector?: string;
@@ -30,7 +33,7 @@ const KEYBOARD_STEP = 24;
 const WHEEL_LINE_PX = 16;
 
 function clamp(value: number, min: number, max: number): number {
-  return Math.round(Math.min(max, Math.max(min, value)));
+  return Math.min(max, Math.max(min, value));
 }
 
 function readStoredSize(storageKey: string): number | null {
@@ -70,10 +73,31 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
     return pane ? pane.getBoundingClientRect().width : null;
   };
 
-  const bounds = (): Pick<ResizeMetrics, "min" | "max"> => ({
+  const absoluteBounds = (): Pick<ResizeMetrics, "min" | "max"> => ({
     min: props.min,
     max: Math.max(props.min, props.max(window.innerWidth)),
   });
+
+  const bounds = (): Pick<ResizeMetrics, "min" | "max"> => {
+    const range = absoluteBounds();
+    const center = document.querySelector<HTMLElement>(".app > .center");
+    const current = rawSize();
+    if (!center || current === null) return range;
+    const reserve =
+      Number.parseFloat(
+        getComputedStyle(center).getPropertyValue("--conversation-min-w"),
+      ) || 0;
+    return {
+      ...range,
+      max: Math.max(
+        range.min,
+        Math.min(
+          range.max,
+          current + center.getBoundingClientRect().width - reserve,
+        ),
+      ),
+    };
+  };
 
   const measure = (): ResizeMetrics | null => {
     const current = rawSize();
@@ -90,17 +114,42 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
     document.documentElement.style.removeProperty(props.cssVar);
   };
 
+  // User resizing owns only this side. Freeze the peer's current rendered width
+  // (which may be temporarily clamped), without replacing its saved preference.
+  const holdAdjacentPane = () => {
+    const pane = paneElement();
+    const current = rawSize();
+    if (pane && current !== null) {
+      setLiveSize(current);
+      pane.style.flexShrink = "1";
+    }
+    if (!props.peerPane) return;
+    const peer = document.querySelector<HTMLElement>(
+      props.peerPane.paneSelector,
+    );
+    if (!peer) return;
+    document.documentElement.style.setProperty(
+      props.peerPane.cssVar,
+      `${peer.getBoundingClientRect().width}px`,
+    );
+    peer.style.flexShrink = "0";
+  };
+
   const applyResponsiveSize = () => {
+    // CSS shares insufficient space between the panes while preserving the
+    // conversation floor. Restore desired widths, not an order-dependent clamp
+    // against the peer's geometry from the previous window size.
+    paneElement()?.style.removeProperty("flex-shrink");
     const stored = readStoredSize(props.storageKey);
     if (stored === null) {
       clearLiveSize();
       const natural = rawSize();
       if (natural === null) return;
-      const range = bounds();
+      const range = absoluteBounds();
       const bounded = clamp(natural, range.min, range.max);
-      if (bounded !== Math.round(natural)) setLiveSize(bounded);
+      if (bounded !== natural) setLiveSize(bounded);
     } else {
-      const range = bounds();
+      const range = absoluteBounds();
       setLiveSize(clamp(stored, range.min, range.max));
     }
     const measured = measure();
@@ -114,18 +163,37 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
     if (measured) setMetrics({ ...measured, current: size });
   };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: both call sites provide mount-time handle configuration.
-  useEffect(() => {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: handle configuration is stable; only pane membership resets the live preference.
+  useLayoutEffect(() => {
     applyResponsiveSize();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            const measured = measure();
+            if (measured)
+              setMetrics((previous) =>
+                previous.current === measured.current &&
+                previous.max === measured.max
+                  ? previous
+                  : measured,
+              );
+          });
+    const pane = paneElement();
+    const center = document.querySelector(".app > .center");
+    if (pane) observer?.observe(pane);
+    if (center) observer?.observe(center);
     window.addEventListener("resize", applyResponsiveSize);
     return () => {
+      observer?.disconnect();
       window.removeEventListener("resize", applyResponsiveSize);
+      pane?.style.removeProperty("flex-shrink");
       document.body.classList.remove(
         "pane-resizing",
         "pane-resizing--vertical",
       );
     };
-  }, []);
+  }, [props.layoutKey]);
 
   const finishDrag = (target: HTMLDivElement, pointerId: number) => {
     const active = dragRef.current;
@@ -139,6 +207,7 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
   };
 
   const reset = () => {
+    holdAdjacentPane();
     writeStoredSize(props.storageKey, null);
     clearLiveSize();
     applyResponsiveSize();
@@ -202,6 +271,7 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
           const measured = measure();
           if (!measured || measured.max <= measured.min) return;
           event.preventDefault();
+          holdAdjacentPane();
           event.currentTarget.setPointerCapture(event.pointerId);
           dragRef.current = {
             startCoordinate: event.clientX,
@@ -218,15 +288,16 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
         onPointerMove={(event) => {
           const active = dragRef.current;
           if (!active) return;
+          const range = bounds();
           const size = clamp(
             active.metrics.current +
               direction * (event.clientX - active.startCoordinate),
-            active.metrics.min,
-            active.metrics.max,
+            range.min,
+            range.max,
           );
           active.size = size;
           setLiveSize(size);
-          setMetrics({ ...active.metrics, current: size });
+          setMetrics({ ...range, current: size });
         }}
         onPointerUp={(event) =>
           finishDrag(event.currentTarget, event.pointerId)
@@ -243,6 +314,7 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
           event.preventDefault();
           const coordinateDelta =
             event.key === "ArrowRight" ? KEYBOARD_STEP : -KEYBOARD_STEP;
+          holdAdjacentPane();
           commit(
             clamp(
               measured.current + direction * coordinateDelta,

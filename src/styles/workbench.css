@@ -70,7 +70,36 @@
 }
 
 @media (min-width: 901px) {
+  .app {
+    --conversation-min-w: 400px;
+    --navigation-min-w: 220px;
+    --context-min-w: 0px;
+  }
+
+  .app:has(> .nav--rail) {
+    --navigation-min-w: var(--nav-w-collapsed);
+  }
+
+  .app:has(> .ctx) {
+    --context-min-w: 320px;
+  }
+
+  .app > .center {
+    /* At the desktop breakpoint, reserve all space left by the two minimum
+       side widths. Above it, protect a usable conversation without overflow. */
+    min-width: min(var(--conversation-min-w), calc(
+      100% - var(--navigation-min-w) - var(--context-min-w) - 2 * var(--space-1)
+    ));
+  }
+
+  .app > .nav:not(.nav--rail) {
+    min-width: var(--navigation-min-w);
+    flex-shrink: 1;
+  }
+
   .ctx {
+    min-width: var(--context-min-w);
+    flex-shrink: 1;
     border-left: 0;
     border-radius: var(--radius-surface);
   }

@@ -64,7 +64,13 @@ independent project shells in [[terminal]].
   using focusable handles with pointer and keyboard control, persist across reloads, and reset to
   the default on double-click; each boundary's scroll thumb keeps grab priority where the two
   overlap. A saved width is clamped live as the window narrows without overwriting the user's
-  preference, then restored when space returns. Desktop panes are separated by 4px gutters
+  preference, then restored when space returns. The two desktop side panes share a width budget
+  that reserves 400px for the conversation, or all remaining width after their 220px/320px
+  minimums immediately above the drawer breakpoint. Resizing either side (pointer or keyboard)
+  holds the other side at its current rendered width and clamps only the active side. Window
+  resizing and pane visibility changes reflow the saved preferences together; they do not write
+  temporary widths back to storage. Double-click resets only the chosen side.
+  Desktop panes are separated by 4px gutters
   with 8px resize hit bands. Hover, keyboard focus and active dragging reveal a straight 2px
   divider with round caps and inset ends, not an outline wrapping the adjacent pane's corners.
   The session header shares the reading surface without a separate bottom seam.
