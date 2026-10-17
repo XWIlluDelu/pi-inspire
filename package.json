@@ -67,7 +67,6 @@
       "scripts/benchmark-rich-text.mjs",
       "tests/fixtures/rich-text-benchmark.tsx",
       "public/service-worker.js",
-      "docs/redesign/prototype/app.js",
       "tests/**/*.{test,spec}.{ts,tsx}",
       "tests/browser/fixtures/file-previews/interactive.js",
       "tests/browser/fixtures/terminal-theme.ts",
@@ -137,8 +136,8 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.11.1",
     "@biomejs/biome": "2.5.8",
-    "@earendil-works/pi-coding-agent": "1.0.0",
-    "@earendil-works/pi-tui": "0.87.0",
+    "@earendil-works/pi-coding-agent": "1.3.0",
+    "@earendil-works/pi-tui": "1.3.0",
     "@playwright/test": "1.62.1",
     "@tanstack/react-virtual": "^3.14.7",
     "@testing-library/jest-dom": "^7.0.0",
