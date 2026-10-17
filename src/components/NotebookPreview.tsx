@@ -1,7 +1,11 @@
-import { memo, useMemo } from "react";
+import { memo, useContext, useMemo } from "react";
 import { stripTerminalSequences } from "../ansi";
 import { highlightSource } from "../syntax-highlighting";
-import { MarkdownAttachmentsContext } from "./DocumentPreview";
+import {
+  DocumentResourceContext,
+  MarkdownAttachmentsContext,
+} from "./DocumentPreview";
+import { ImagePreview } from "./ImagePreview";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 
 const MAX_NOTEBOOK_CELLS = 200;
@@ -239,6 +243,11 @@ function NotebookOutputView({
   output: NotebookOutput;
   executionCount: string | null;
 }) {
+  const document = useContext(DocumentResourceContext);
+  // Incoming anchors wait for image layout; ordinary reading can defer outputs.
+  const imageLoading = document?.descriptor.reference.includes("#")
+    ? "eager"
+    : "lazy";
   if (output.kind === "unsupported")
     return (
       <div className="notebook-preview__unsupported">
@@ -256,10 +265,11 @@ function NotebookOutputView({
         {output.kind === "markdown" ? (
           <RichText text={output.text} variant="assistant" />
         ) : output.kind === "image" ? (
-          <img
+          <ImagePreview
+            inline
+            imageLoading={imageLoading}
             src={`data:${output.mimeType};base64,${output.base64}`}
             alt="Notebook output"
-            loading="lazy"
           />
         ) : (
           <pre>{output.text}</pre>

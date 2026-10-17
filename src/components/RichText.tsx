@@ -27,6 +27,7 @@ import { DocumentImage, DocumentResourceContext } from "./DocumentPreview";
 import { queueTerminalInsertion } from "../terminal-actions";
 import { useCopied } from "../use-copied";
 import { RichTextMath } from "./RichTextMath";
+import { ImageLinkContext } from "./ImagePreview";
 
 export type RichTextVariant = "assistant" | "user" | "thinking" | "extension";
 const ASYNC_MARKDOWN_MIN_CHARS = 32_000;
@@ -148,7 +149,12 @@ const components: Components = {
     children?: ReactNode;
   }) {
     const document = useContext(DocumentResourceContext);
-    if (document && href?.startsWith("#")) return <a href={href}>{children}</a>;
+    const content = (
+      <ImageLinkContext.Provider value={true}>
+        {children}
+      </ImageLinkContext.Provider>
+    );
+    if (document && href?.startsWith("#")) return <a href={href}>{content}</a>;
     if (
       href &&
       !/^[\\/]{2}/.test(href) &&
@@ -158,12 +164,12 @@ const components: Components = {
     )
       return (
         <a href={href} className="file-ref" data-file-path={href}>
-          {children}
+          {content}
         </a>
       );
     return (
       <a href={href} target="_blank" rel="noreferrer noopener">
-        {children}
+        {content}
       </a>
     );
   },

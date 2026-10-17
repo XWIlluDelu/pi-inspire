@@ -68,6 +68,7 @@ import {
 import { ChildCalls, childCallsSummary } from "./ChildCalls";
 import { CodeModeResult, codeModeDuration } from "./CodeModeResult";
 import { CopyAction } from "./CopyAction";
+import { ImageGallery } from "./ImageGallery";
 import {
   EmbeddedImageOwnerContext,
   ImagePreview,
@@ -834,18 +835,20 @@ export function ToolResultCard({
       }
       copyLabel={`${name} result`}
     >
-      {calls ? (
-        <PhaseToolDetails
-          calls={calls}
-          running={false}
-          settled
-          codemode={name === "codemode"}
-        >
-          {output}
-        </PhaseToolDetails>
-      ) : (
-        output
-      )}
+      <ImageGallery>
+        {calls ? (
+          <PhaseToolDetails
+            calls={calls}
+            running={false}
+            settled
+            codemode={name === "codemode"}
+          >
+            {output}
+          </PhaseToolDetails>
+        ) : (
+          output
+        )}
+      </ImageGallery>
     </CollapsibleCard>
   );
 }
@@ -1508,21 +1511,25 @@ function ToolDetailsContent({
   presentation: ResolvedToolPresentation | null;
   showPending?: boolean;
 }) {
-  if (!presentation)
-    return <RawToolDetails call={call} result={result} status={status} />;
-  const blocks = presentationBlocks(presentation);
-  if (!blocks)
-    return <RawToolDetails call={call} result={result} status={status} />;
+  const blocks = presentation ? presentationBlocks(presentation) : null;
   return (
-    <div className="tool-presentation" data-tool-rule={presentation.ruleId}>
-      {blocks.map((block, index) => (
-        <ToolPresentationBlockView
-          block={block}
-          key={`${block.type}:${index}`}
-        />
-      ))}
-      {!result && showPending ? <PendingToolResult status={status} /> : null}
-    </div>
+    <ImageGallery>
+      {blocks && presentation ? (
+        <div className="tool-presentation" data-tool-rule={presentation.ruleId}>
+          {blocks.map((block, index) => (
+            <ToolPresentationBlockView
+              block={block}
+              key={`${block.type}:${index}`}
+            />
+          ))}
+          {!result && showPending ? (
+            <PendingToolResult status={status} />
+          ) : null}
+        </div>
+      ) : (
+        <RawToolDetails call={call} result={result} status={status} />
+      )}
+    </ImageGallery>
   );
 }
 

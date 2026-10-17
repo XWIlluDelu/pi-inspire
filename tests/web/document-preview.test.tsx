@@ -63,6 +63,17 @@ describe("document Markdown", () => {
     expect(image).toHaveAttribute("src", "blob:document-image");
     expect(image).toHaveAttribute("title", "Validation MSE");
     expect(container.querySelector("p img")).toBeTruthy();
+    expect(container.querySelector("a button")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Preview curve.png" }));
+    expect(
+      screen.getByRole("dialog", { name: "Image preview" }),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Image preview" }),
+      ).toBeNull(),
+    );
     expect(store.loadDocumentImage).toHaveBeenCalledTimes(1);
     expect(store.loadDocumentImage).toHaveBeenCalledWith(
       "document-1",
@@ -109,20 +120,36 @@ describe("document Markdown", () => {
     expect(store.openResource).not.toHaveBeenCalled();
   });
 
-  it("follows an incoming document fragment after the lazy notebook renderer mounts", async () => {
+  it("follows an incoming fragment after lazy notebook content and eager output layout settle", async () => {
     render(
       <DocumentPreview
-        descriptor={{ ...descriptor, reference: "reports/README.md#results" }}
+        descriptor={{ ...descriptor, reference: "report.ipynb#results" }}
         className="test-document"
       >
         <NotebookPreview
           text={JSON.stringify({
-            cells: [{ cell_type: "markdown", source: "## Results" }],
+            cells: [
+              {
+                cell_type: "code",
+                source: "",
+                outputs: [
+                  {
+                    output_type: "display_data",
+                    data: { "image/png": raster },
+                  },
+                ],
+              },
+              { cell_type: "markdown", source: "## Results" },
+            ],
           })}
         />
       </DocumentPreview>,
     );
     await screen.findByRole("heading", { name: "Results" });
+    const image = screen.getByRole("img", { name: "Notebook output" });
+    expect(image).toHaveAttribute("loading", "eager");
+    Object.defineProperty(image, "complete", { value: true });
+    fireEvent.load(image);
     await waitFor(() =>
       expect(Element.prototype.scrollIntoView).toHaveBeenCalled(),
     );
@@ -330,6 +357,7 @@ describe("document Markdown", () => {
               output_type: "display_data",
               data: { "text/markdown": "![Output file](../output.png)" },
             },
+            { output_type: "display_data", data: { "image/png": raster } },
           ],
         },
       ],
@@ -347,6 +375,27 @@ describe("document Markdown", () => {
     ).toHaveAttribute("src", `data:image/png;base64,${raster}`);
     await within(notebook).findByRole("img", { name: "Cell file" });
     await within(notebook).findByRole("img", { name: "Output file" });
+    expect(
+      within(notebook).getByRole("img", { name: "Notebook output" }),
+    ).toHaveAttribute("loading", "lazy");
+    fireEvent.click(
+      within(notebook).getByRole("button", { name: "Preview Notebook output" }),
+    );
+    const viewer = screen.getByRole("dialog", { name: "Image preview" });
+    expect(viewer.querySelector("img")).not.toHaveAttribute("loading", "lazy");
+    expect(viewer.querySelector("img")).toHaveAttribute(
+      "src",
+      `data:image/png;base64,${raster}`,
+    );
+    expect(
+      within(viewer).getByRole("group", { name: "Image navigation" }),
+    ).toHaveTextContent("4 / 4");
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Image preview" }),
+      ).toBeNull(),
+    );
     expect(
       within(notebook).queryByRole("img", { name: "Other cell" }),
     ).toBeNull();

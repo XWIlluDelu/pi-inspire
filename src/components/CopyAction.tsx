@@ -9,6 +9,8 @@ interface CopyActionProps {
   getContent?: CopyLoader;
   label: string;
   className: string;
+  disabled?: boolean;
+  onError?: (message: string) => void;
 }
 
 /** Shared content action; availability never depends on a text-only projection. */
@@ -18,9 +20,11 @@ export function CopyAction({
   getContent,
   label,
   className,
+  disabled = false,
+  onError = store.reportCopyError,
 }: CopyActionProps) {
   const { copied, copying, copy } = useCopied({
-    onError: store.reportCopyError,
+    onError,
   });
   if (!text && !getText && !getContent) return null;
   return (
@@ -37,7 +41,7 @@ export function CopyAction({
       title={
         copying ? "Loading" : copied ? "Copied" : `Copy ${label.toLowerCase()}`
       }
-      disabled={copying}
+      disabled={disabled || copying}
       onClick={() =>
         void copy(getContent ?? getText ?? text ?? "", store.copyOwnership())
       }
