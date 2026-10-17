@@ -56,6 +56,10 @@ envelope, not a fixed protocol size. See `tests/web/connection-controller.test.t
 These counters measure serialization and payload volume; use the browser benchmark for rendering
 time and a paired deployment for network latency.
 
+The browser combines adjacent projection and settlement snapshot reads in a fixed 16 ms window.
+It keeps the greatest required revision and invalidates older HTTP observations as soon as a newer
+event arrives. Live event state updates remain immediate.
+
 ## Independent history bounds
 
 Persisted entries, active-branch projections and child RPC frames need independent limits:

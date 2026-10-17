@@ -32,6 +32,7 @@ interface RuntimeEventHost {
   refreshGitStatus(): Promise<void>;
   markProjectionStale(): void;
   selectionGeneration(): number;
+  invalidateResync(): void;
   resync(
     sessionId: string | null,
     generation: number,
@@ -49,6 +50,12 @@ export class RuntimeEventController {
     Set<"agent" | "compaction">
   >();
   private readonly titleAttention = new Set<string>();
+  private resyncTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingResync: {
+    sessionId: string | null;
+    generation: number;
+    minimumRevision?: number;
+  } | null = null;
 
   constructor(private readonly host: RuntimeEventHost) {}
 
@@ -206,8 +213,49 @@ export class RuntimeEventController {
     }
   }
 
-  clearLiveAttention(): void {
+  invalidateTransport(): void {
     this.attentionArms.clear();
+    this.cancelScheduledResync();
+  }
+
+  private cancelScheduledResync(): void {
+    if (this.resyncTimer !== null) clearTimeout(this.resyncTimer);
+    this.resyncTimer = null;
+    this.pendingResync = null;
+  }
+
+  private scheduleResync(
+    sessionId: string | null,
+    minimumRevision?: number,
+  ): void {
+    // Fence an older response as soon as the event arrives, even while the
+    // next observation is waiting for the rest of this event burst.
+    this.host.invalidateResync();
+    const generation = this.host.selectionGeneration();
+    const pending = this.pendingResync;
+    if (pending?.sessionId === sessionId && pending.generation === generation) {
+      if (minimumRevision !== undefined)
+        pending.minimumRevision = Math.max(
+          pending.minimumRevision ?? minimumRevision,
+          minimumRevision,
+        );
+      return;
+    }
+    this.cancelScheduledResync();
+    const request = { sessionId, generation, minimumRevision };
+    this.pendingResync = request;
+    // Pi can publish the final projection and agent_settled within a single
+    // frame. Keep one fixed deadline so live projection changes cannot defer
+    // their authoritative refresh indefinitely.
+    this.resyncTimer = setTimeout(() => {
+      this.resyncTimer = null;
+      this.pendingResync = null;
+      void this.host.resync(
+        request.sessionId,
+        request.generation,
+        request.minimumRevision,
+      );
+    }, 16);
   }
 
   clearTitleAttention(): void {
@@ -411,9 +459,8 @@ export class RuntimeEventController {
       this.host.markProjectionStale();
       const revision =
         typeof event.revision === "number" ? event.revision : undefined;
-      void this.host.resync(
+      this.scheduleResync(
         eventSessionId ?? this.host.state().sessionId,
-        this.host.selectionGeneration(),
         revision,
       );
       return;
@@ -460,11 +507,11 @@ export class RuntimeEventController {
     } else if (sessionStatuses) {
       this.host.patch({ sessionStatuses });
     }
-    if (resync)
-      void this.host.resync(
-        eventSessionId ?? this.host.state().sessionId,
-        this.host.selectionGeneration(),
-      );
+    if (resync) {
+      const sessionId = eventSessionId ?? this.host.state().sessionId;
+      if (event.type === "agent_settled") this.scheduleResync(sessionId);
+      else void this.host.resync(sessionId, this.host.selectionGeneration());
+    }
   }
 
   /** Merge an event's sessionStatus into the map; null when nothing changed. */
