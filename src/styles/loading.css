@@ -1,4 +1,4 @@
-/* A square 3×3 grid underlies Π loading and linked completion/error marks.
+/* A square 3×3 grid underlies Π loading and static outcome marks.
    The visible glyph is 11.6×11.6 within the existing square icon slot. */
 .pi-loading,
 .pi-status {
@@ -6,6 +6,11 @@
   flex: 0 0 auto;
   vertical-align: middle;
   overflow: visible;
+}
+
+/* Missing/unfinished outcomes are readable but neither busy nor failed. */
+.pi-status[data-status="neutral"] {
+  color: var(--muted);
 }
 
 /* A nonvisual clock switches patterns only after a complete dot sequence. */

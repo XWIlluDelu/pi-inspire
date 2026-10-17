@@ -1,7 +1,6 @@
 import {
   Brain,
   ChevronRight,
-  Circle,
   FilePen,
   FilePlus2,
   FileSearch,
@@ -534,7 +533,7 @@ function statusIcon(status: ToolStatus) {
     case "waiting":
       return <PiLoader size={14} aria-label="waiting to execute" />;
     case "interrupted":
-      return <Circle size={12} aria-label="not executed" />;
+      return <PiStatus status="neutral" size={14} aria-label="not executed" />;
     case "running":
       return <PiLoader size={14} aria-label="running" />;
     case "success":
@@ -556,9 +555,7 @@ function statusIcon(status: ToolStatus) {
         />
       );
     default:
-      return (
-        <Circle size={12} className="status-unknown" aria-label="no result" />
-      );
+      return <PiStatus status="neutral" size={14} aria-label="no result" />;
   }
 }
 
@@ -745,17 +742,17 @@ function RawToolDetails({
     return <PendingToolResult status={status} />;
   return (
     <>
-      <div className="card__section-label">
-        {call.__inspireToolCall ? "Arguments (partial)" : "Arguments"}
-      </div>
-      <RawArguments call={call} />
       {result ? (
         <>
           <div className="card__section-label">Result</div>
           <RawToolResult result={result} />
+          <ToolArguments call={call} />
         </>
       ) : (
-        <PendingToolResult status={status} />
+        <>
+          <PendingToolResult status={status} />
+          <RawArguments call={call} />
+        </>
       )}
     </>
   );
@@ -1889,7 +1886,7 @@ export function CollapsedActivityStrip({
               <section
                 key={rendered.key}
                 id={panelId}
-                className={`card card--tool activity-strip__detail ${toolStatus(rendered.result, rendered.activity, live, rendered.call) === "failure" ? "card--failed" : ""}`}
+                className={`card card--tool ${rendered.call.name === "codemode" ? "card--codemode" : ""} activity-strip__detail ${toolStatus(rendered.result, rendered.activity, live, rendered.call) === "failure" ? "card--failed" : ""}`}
               >
                 <CardHeader
                   expanded
@@ -1902,12 +1899,14 @@ export function CollapsedActivityStrip({
                   toggleLabel={`${toolDisplayName(rendered.call.name)} tool details`}
                   onToggle={() => setSelectedIndex(null)}
                   summary={
-                    <ToolCardSummary
-                      call={rendered.call}
-                      result={rendered.result}
-                      activity={rendered.activity}
-                      presentation={renderedPresentation}
-                    />
+                    renderedPresentation?.ruleId === "inspire.pi.codemode" ? (
+                      <ToolCardSummary
+                        call={rendered.call}
+                        result={rendered.result}
+                        activity={rendered.activity}
+                        presentation={renderedPresentation}
+                      />
+                    ) : undefined
                   }
                   status={statusIcon(
                     toolStatus(

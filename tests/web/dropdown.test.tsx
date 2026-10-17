@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { Dropdown } from "../../src/components/Dropdown";
 
-describe("dropdown navigation highlight", () => {
+describe("dropdown interactions", () => {
   it("clears pointer highlight on leave and keeps selection separate from keyboard navigation", () => {
     const change = vi.fn();
     render(
@@ -44,6 +44,36 @@ describe("dropdown navigation highlight", () => {
     expect(change).toHaveBeenCalledWith("low");
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+
+  it("closes an open menu when disabled without changing or reopening the selection", () => {
+    const change = vi.fn();
+    const props = {
+      label: "Delivery",
+      value: "all",
+      options: [
+        { value: "all", label: "All at once" },
+        { value: "one", label: "One at a time" },
+      ],
+      onChange: change,
+    };
+    const view = render(<Dropdown {...props} />);
+    const trigger = screen.getByRole("combobox", { name: "Delivery" });
+    fireEvent.click(trigger);
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+
+    view.rerender(<Dropdown {...props} disabled />);
+    expect(trigger).toBeDisabled();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(change).not.toHaveBeenCalled();
+
+    view.rerender(<Dropdown {...props} />);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(trigger).toHaveTextContent("All at once");
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("option", { name: "One at a time" }));
+    expect(change).toHaveBeenCalledExactlyOnceWith("one");
   });
 
   it("portals outside a clipped field and flips/clamps a bottom-edge trigger", () => {

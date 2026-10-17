@@ -155,8 +155,8 @@ body.srail-dragging {
   .app--narrow .ctx__header {
     gap: var(--space-1);
     height: auto;
-    min-height: var(--topbar-h);
-    /* Include the taller touch tabs and their frame instead of clipping it. */
+    /* Reserve the 40px tab frame, vertical inset and border even while loading. */
+    min-height: calc(var(--topbar-h) + 1px);
     padding: 2px var(--space-2);
   }
 
@@ -448,7 +448,7 @@ body.srail-dragging {
   }
 
   .notices {
-    top: calc(var(--window-titlebar-height) + var(--topbar-h) + var(--safe-top) + var(--space-2));
+    top: calc(var(--notice-header-bottom) + var(--space-2));
     right: max(var(--space-3), var(--safe-right));
     bottom: auto;
     width: min(
@@ -887,6 +887,11 @@ body.srail-dragging {
 }
 
 @media (max-width: 420px) {
+  .app--narrow .ctx__header,
+  .app--narrow .ctx__header-actions {
+    gap: 2px;
+  }
+
   .transcript-search {
     gap: 2px;
   }

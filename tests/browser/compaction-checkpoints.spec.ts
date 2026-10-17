@@ -8,6 +8,27 @@ async function openFixture(page: Page) {
   await expect(page.locator(".context-checkpoint")).toBeVisible();
 }
 
+test("search opens the actual retained summary and can reopen the same match", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  await openFixture(page);
+  const toggle = page.locator(".context-checkpoint__toggle");
+  const search = page.getByRole("searchbox", { name: "Search conversation" });
+  await search.fill("remaining work");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await search.press("Enter");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    page.getByText("Keep the parser decisions and remaining work."),
+  ).toBeVisible();
+  await expect(search).toBeFocused();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await page.getByRole("button", { name: "Next transcript match" }).click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+});
+
 test("compaction checkpoints retain independent disclosure/copy order through responsive layout and reload", async ({
   page,
 }) => {

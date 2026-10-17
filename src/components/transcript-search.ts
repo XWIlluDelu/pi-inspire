@@ -1,4 +1,13 @@
-import { useEffect, useMemo, useState, type MutableRefObject } from "react";
+import {
+  createContext,
+  type MutableRefObject,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
+/** Changes only when this row receives a deliberate search navigation. */
+export const TranscriptSearchReveal = createContext<number | null>(null);
 
 interface TranscriptSearchMatch {
   rowIndex: number;
@@ -29,18 +38,13 @@ export function findLiteralMatches(
   rowIndex: number,
 ): TranscriptSearchMatch[] {
   if (!query) return [];
-  const haystack = text.toLocaleLowerCase();
-  const needle = query.toLocaleLowerCase();
-  if (!needle) return [];
-  const matches: TranscriptSearchMatch[] = [];
-  let from = 0;
-  while (from <= haystack.length - needle.length) {
-    const offset = haystack.indexOf(needle, from);
-    if (offset < 0) break;
-    matches.push({ rowIndex, offset });
-    from = offset + needle.length;
-  }
-  return matches;
+  // Match the original string: lowercasing can change UTF-16 length (e.g. İ)
+  // and shift every subsequent highlight. Escaping keeps the query literal.
+  const literal = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return Array.from(text.matchAll(new RegExp(literal, "giu")), (match) => ({
+    rowIndex,
+    offset: match.index,
+  }));
 }
 
 interface TranscriptSearchOptions<Row extends TranscriptSearchRow> {
@@ -67,6 +71,11 @@ export function useTranscriptSearch<Row extends TranscriptSearchRow>({
   const [query, setQueryState] = useState("");
   const [scope, setScopeState] = useState<TranscriptSearchScope>("all");
   const [currentMatch, setCurrentMatch] = useState(-1);
+  const [reveal, setReveal] = useState<{
+    sessionId: string;
+    viewId: string;
+    version: number;
+  } | null>(null);
   searchOwnsViewportRef.current = query.length > 0 && currentMatch >= 0;
 
   const matches = useMemo(
@@ -126,6 +135,11 @@ export function useTranscriptSearch<Row extends TranscriptSearchRow>({
           : matches.length - 1
         : (currentMatch + direction + matches.length) % matches.length;
     setCurrentMatch(next);
+    setReveal((previous) => ({
+      sessionId,
+      viewId,
+      version: (previous?.version ?? 0) + 1,
+    }));
     onNavigate(matches[next]!.rowIndex);
   };
 
@@ -133,6 +147,10 @@ export function useTranscriptSearch<Row extends TranscriptSearchRow>({
     query,
     scope,
     currentMatch,
+    revealVersion:
+      reveal?.sessionId === sessionId && reveal?.viewId === viewId
+        ? reveal.version
+        : null,
     matches,
     clear,
     setQuery,

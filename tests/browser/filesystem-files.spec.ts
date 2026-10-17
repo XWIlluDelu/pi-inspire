@@ -1,9 +1,9 @@
-import { hostRequest } from "./support/host-request";
 import { execFile } from "node:child_process";
 import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { expect, test } from "@playwright/test";
+import { hostRequest } from "./support/host-request";
 import { openMockSession, pairedPage } from "./support/navigation";
 
 const root = resolve(
@@ -343,6 +343,65 @@ test("hidden inline references send unchanged text; only explicit picker selecti
   const picked = await submit();
   expect(picked.message).toBe(prompt);
   expect(picked.projectFiles).toEqual([".settings/config.txt"]);
+});
+
+test.describe("touch project references", () => {
+  test.use({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+  });
+  test("project file removal has a usable target without swallowing its label", async ({
+    page,
+  }) => {
+    await pairedPage(page);
+    const created = await hostRequest(page).post("/api/sessions/new", {
+      data: { cwd: root, name: "Touch reference fixture" },
+    });
+    expect(created.ok()).toBe(true);
+    await page.reload();
+    await page
+      .getByRole("button", { name: "Add project files", exact: true })
+      .click();
+    const picker = page.getByRole("dialog", { name: "Add project files" });
+    await picker
+      .getByRole("combobox", { name: "Search project files" })
+      .fill("large-document");
+    await picker
+      .getByRole("option", {
+        name: "large-document.md, large-document.md",
+        exact: true,
+      })
+      .click();
+    await page.keyboard.press("Escape");
+    const chip = page
+      .getByRole("list", { name: "Referenced project files" })
+      .locator(".attachment");
+    const remove = chip.getByRole("button", {
+      name: "Remove large-document.md",
+      exact: true,
+    });
+    await expect(remove).toBeVisible();
+    const target = (await remove.boundingBox())!;
+    const label = (await chip.locator(".attachment__name").boundingBox())!;
+    expect(target.width).toBeGreaterThanOrEqual(32);
+    expect(target.height).toBeGreaterThanOrEqual(32);
+    expect(label.x + label.width).toBeLessThanOrEqual(target.x);
+    const meta = chip.locator(".attachment__meta");
+    await expect(meta).toHaveCSS("white-space", "nowrap");
+    const metaBox = (await meta.boundingBox())!;
+    expect(metaBox.height).toBeLessThan(20);
+    expect(label.x + label.width).toBeLessThanOrEqual(metaBox.x);
+    expect(metaBox.x + metaBox.width).toBeLessThanOrEqual(target.x);
+    const bounds = (await chip.boundingBox())!;
+    expect(bounds.height).toBeLessThanOrEqual(34);
+    expect(target.y).toBeGreaterThanOrEqual(bounds.y);
+    expect(target.y + target.height).toBeLessThanOrEqual(
+      bounds.y + bounds.height,
+    );
+    await remove.tap();
+    await expect(chip).toHaveCount(0);
+  });
 });
 
 test("files navigation preserves context across desktop and narrow workspaces", async ({

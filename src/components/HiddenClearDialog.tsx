@@ -13,11 +13,14 @@ export function HiddenClearDialog({
   projectCwd?: string;
   onClose: () => void;
 }) {
-  const { deleting, error, reviewRequired } = useAppState(
+  const { deleting, error, reviewRequired, openInPi } = useAppState(
     (state) => ({
       deleting: state.clearingHidden,
       error: state.sessionDeleteError,
       reviewRequired: state.sessionDeleteReviewRequired,
+      openInPi: sessionIds.some(
+        (id) => state.externalSessionActivities[id] !== undefined,
+      ),
     }),
     shallowEqual,
   );
@@ -46,7 +49,7 @@ export function HiddenClearDialog({
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="hidden-clear-title"
-        aria-describedby="hidden-clear-description hidden-clear-warning"
+        aria-describedby={`hidden-clear-description${openInPi ? " hidden-clear-warning" : ""}`}
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
@@ -86,10 +89,12 @@ export function HiddenClearDialog({
           </span>
           <span>Project files and project folders are unchanged.</span>
         </p>
-        <p className="session-delete__warning" id="hidden-clear-warning">
-          <AlertTriangle size={14} aria-hidden />
-          Make sure none of these sessions is open in another Pi process.
-        </p>
+        {openInPi ? (
+          <p className="session-delete__warning" id="hidden-clear-warning">
+            <AlertTriangle size={14} aria-hidden />
+            Open Pi terminals may write these sessions again.
+          </p>
+        ) : null}
         {error ? (
           <p className="session-delete__error" role="alert">
             {error}

@@ -3,7 +3,9 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { countBusySessions } from "../../shared/session-activity";
 import { type AppState, createInitialAppState } from "../../src/app-state";
+import { HiddenClearDialog } from "../../src/components/HiddenClearDialog";
 import { SessionRow } from "../../src/components/NavSessions";
+import { SessionDeleteDialog } from "../../src/components/SessionDeleteDialog";
 import { RuntimeEventController } from "../../src/controllers/runtime-event-controller";
 import { useAppState } from "../../src/store";
 import { sessionSummary } from "./helpers";
@@ -98,11 +100,71 @@ describe("session activity presentation", () => {
     expect(attention.querySelector(".pi-loading,.pi-status")).toBeNull();
   });
 
+  it.each(["idle", "working", "blocked"] as const)(
+    "allows deletion of an external %s session with a contextual consequence, not a close requirement",
+    (activity) => {
+      state.prefs.hiddenSessionIds = [external.id];
+      state.externalSessionActivities = { [external.id]: activity };
+      const view = render(
+        <>
+          <SessionRow
+            session={external}
+            selectedSessionId="s1"
+            onSelect={() => {}}
+            onDelete={vi.fn()}
+          />
+          <SessionDeleteDialog session={external} onClose={vi.fn()} />
+        </>,
+      );
+      expect(
+        screen.getByRole("button", { name: 'Delete "External Pi"' }),
+      ).toBeEnabled();
+      expect(
+        screen.getByRole("button", { name: "Delete session" }),
+      ).toBeEnabled();
+      expect(screen.getByText(/Pi may write this session again/)).toBeVisible();
+      view.rerender(
+        <HiddenClearDialog sessionIds={[external.id]} onClose={vi.fn()} />,
+      );
+      expect(
+        screen.getByText(/Open Pi terminals may write these sessions again/),
+      ).toBeVisible();
+      expect(
+        screen.getByRole("button", { name: "Delete 1 session" }),
+      ).toBeEnabled();
+
+      view.rerender(
+        <HiddenClearDialog sessionIds={["other"]} onClose={vi.fn()} />,
+      );
+      expect(screen.queryByText(/Open Pi terminals/)).toBeNull();
+      state.externalSessionActivities = {};
+      view.rerender(
+        <SessionDeleteDialog session={external} onClose={vi.fn()} />,
+      );
+      expect(screen.queryByText(/Pi may write/)).toBeNull();
+      expect(screen.getByRole("alertdialog")).toHaveAttribute(
+        "aria-describedby",
+        "session-delete-description",
+      );
+    },
+  );
+
   it("keeps managed input-blocked work static without enabling deletion", () => {
     state.sessionStatuses = {
       external: { runState: "running", indicator: "running", needsInput: true },
     };
-    const view = render(row());
+    state.prefs.hiddenSessionIds = [external.id];
+    const view = render(
+      <SessionRow
+        session={external}
+        selectedSessionId="s1"
+        onSelect={() => {}}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: 'Delete "External Pi"' }),
+    ).toBeDisabled();
     expect(screen.getByRole("img", { name: "Waiting for input" })).toHaveClass(
       "nav__row-dot--attention",
     );

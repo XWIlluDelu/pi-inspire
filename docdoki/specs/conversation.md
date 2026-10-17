@@ -30,6 +30,7 @@ covers:
   - tests/web/native-shell.test.tsx
   - tests/browser/native-shell.spec.ts
   - src/components/transcript-search.ts
+  - src/components/transcript-search-highlights.ts
   - src/components/transcript-viewport.ts
   - src/components/ActivityBar.tsx
   - src/components/EarlierBranchBanner.tsx
@@ -126,7 +127,13 @@ custom messages remain independent readable boundaries in this contract.
   previous/next navigation and jumps by transcript row through virtualization. The streaming tail
   and hidden thinking/tool payloads are excluded. An active selected match locks out geometric
   latest-follow across prepends and live appends until search is cleared or the user explicitly
-  jumps to latest.
+  jumps to latest. Deliberate search navigation opens the matching context-summary row so its
+  matched body is visible; unrelated rows and ordinary rendering do not expand it.
+  Rendered occurrences receive theme-aware highlights without changing message markup, source
+  copy or geometry. The current occurrence is stronger and is brought into view within a long
+  message or local horizontal reader. Virtual rows and deferred rich text acquire highlights when
+  mounted; clearing search or leaving the transcript removes them. Source-only Markdown matches
+  still navigate to their row, without assigning an ambiguous source hit to unrelated visible text.
 
   Desktop search floats at the top-right of the reading measure. Its opaque surface fill is subtly
   distinct from the reading stage, with a quiet boundary and no elevation at rest. Hover strengthens
@@ -219,7 +226,10 @@ custom messages remain independent readable boundaries in this contract.
   The error uses a compact neutral surface with a subtle error-tinted boundary, no shadow,
   a semantic icon/label, adjacent Copy, and a readable reason. Its preview uses the first paragraph, bounded to three lines and
   240 Unicode code points; an intact paragraph does not gain a trailing ellipsis solely because
-  diagnostics follow. Expanded diagnostics use a bounded, scrollable local monospace surface.
+  diagnostics follow. Expansion keeps the reason in its reading font and at the same horizontal
+  anchor. A separately supplied paragraph after the reason becomes a local monospace diagnostic
+  surface; unstructured text stays in the reading font. Expanded content is bounded and keyboard
+  scrollable. Search navigation also reveals an error's matching details.
   The label, body and details action share a reading anchor; secondary controls use 24px mouse and
   32px touch targets. Semantic error icons and color remain distinct from tool identity.
 

@@ -31,6 +31,9 @@ independent project shells in [[terminal]].
   Desktop search floats at the top-right of the reading measure. On both desktop and narrow
   screens, search/navigation controls preserve vertical reading space rather than reserve a toolbar
   row. The floating `Jump to latest` text button remains bottom-centered within the transcript.
+  The transcript scroll thumb is separate from Prompt Map: its complete grab band fits the
+  trailing reading gutter without covering content, and its travel stays inside the scrollport
+  even in short windows. Native reading width, wheel and keyboard scrolling remain unchanged.
 
   On a narrow workbench, the floating rail is removed entirely: a top-right control floats over
   Transcript without reserving layout height, has no shared backdrop while its mutually exclusive
@@ -49,7 +52,8 @@ independent project shells in [[terminal]].
   file opens from inside navigation. The desktop surfaces retain their navigation and complementary
   landmarks. Opening a session also closes the drawer. The context pane keeps one shell and focus
   owner across deferred loading, content and failure; loading the module does not restart its entry
-  animation. The full-width context drawer needs no scrim. Shared motion and overlay roles are in
+  animation. Its narrow header and Close control keep the same geometry across loading,
+  ready and failure states. The full-width context drawer needs no scrim. Shared motion and overlay roles are in
   [[design-system]].
 
   Returning to desktop closes transient drawer state without overwriting the desktop collapsed
@@ -60,7 +64,13 @@ independent project shells in [[terminal]].
   using focusable handles with pointer and keyboard control, persist across reloads, and reset to
   the default on double-click; each boundary's scroll thumb keeps grab priority where the two
   overlap. A saved width is clamped live as the window narrows without overwriting the user's
-  preference, then restored when space returns. Desktop panes are separated by 4px gutters
+  preference, then restored when space returns. The two desktop side panes share a width budget
+  that reserves 400px for the conversation, or all remaining width after their 220px/320px
+  minimums immediately above the drawer breakpoint. Resizing either side (pointer or keyboard)
+  holds the other side at its current rendered width and clamps only the active side. Window
+  resizing and pane visibility changes reflow the saved preferences together; they do not write
+  temporary widths back to storage. Double-click resets only the chosen side.
+  Desktop panes are separated by 4px gutters
   with 8px resize hit bands. Hover, keyboard focus and active dragging reveal a straight 2px
   divider with round caps and inset ends, not an outline wrapping the adjacent pane's corners.
   The session header shares the reading surface without a separate bottom seam.
@@ -112,7 +122,8 @@ independent project shells in [[terminal]].
   The title menu also offers Clone and Export while leaving the title visible. It opens with
   Rename focused; arrows, Enter and Escape operate the menu, and keyboard dismissal returns focus
   to the title. Export opens the shared format-and-download dialog without reading or changing
-  the message draft.
+  the message draft. Clone shares History's readiness checks. Refusal or failure leaves the menu
+  open; successful navigation closes it without stealing focus from a newer choice.
   `/clone`, the command palette and the earlier-branch notice's `Clone from here` reach the same
   endpoint-inclusive action. It creates an independent copy of the recorded active branch without
   sending a model prompt or changing the source's work, pending input or draft. [[session-branches]]

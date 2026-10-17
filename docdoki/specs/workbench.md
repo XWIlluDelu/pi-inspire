@@ -91,6 +91,8 @@ covers:
   - tests/web/app.test.tsx
   - tests/web/composer-*.test.tsx
   - tests/web/notices.test.tsx
+  - tests/web/store-feedback.test.ts
+  - tests/browser/feedback.spec.ts
   - tests/web/settings-navigation.test.tsx
   - tests/web/settings-loading.test.tsx
   - tests/browser/loading-states.spec.ts
@@ -131,7 +133,7 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   expanded. The conversation stays dominant in the center, and the right contextual region opens
   only when requested. Its Changes selector shows the same authoritative total as the topbar,
   capped visually at `99+` and omitted when the header is too narrow; the tooltip retains the exact
-  count. On narrow screens the right drawer is at most 460px wide, while phones use the full width.
+  count. On narrow screens it uses the full-width modal drawer specified in [[workspace-layout]].
 
 - Navigation owns New session, search and its collapse/expand controls. [[design-system]] defines
   their shared alignment and the installed-window header variant. The desktop rail's leading
@@ -167,7 +169,8 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   count at the trailing edge before the indicator. Each header precedes its own content; Hidden's
   independently scrolling body is bounded to leave room for ordinary navigation. Project identity
   remains on cross-project Hidden rows as quiet text rather than a filled badge. On phone-width or
-  non-hover layouts, these rows place project and age beneath the title so persistent actions do not
+  non-hover layouts, all cross-project rows (Pinned, search and Hidden) place project and age beneath
+  the title so persistent actions do not
   crowd it. Selection and search highlights cover the whole row, including its action area.
   The drawer opens on demand, starts closed
   again, and search reveals matching hidden sessions inside it instead of returning them to their
@@ -187,10 +190,13 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   own nested indentation. Clear does not consume a content row. It clears the entire drawer
   through one count-bearing confirmation: it includes both individually hidden sessions and every
   session in complete hidden folders, never only one child folder. It is unavailable while search or curation hydration can
-  show only a partial selection, and while any target is selected, opening, working, conflicted,
-  or still open in an observed Pi terminal. A folder-level deletion applies the same conditions
-  to that folder, not to unrelated targets elsewhere in Hidden.
+  show only a partial selection, and while any target is opening, working in Inspire, or conflicted.
+  Viewing an idle target or observing it in an external Pi terminal does not block deletion;
+  [[session-deletion]] owns idle-worker retirement and the contextual terminal consequence.
+  A folder-level deletion applies the same conditions to that folder, not to unrelated targets elsewhere in Hidden.
   Session deletion leaves project files and project folders unchanged.
+
+### Search and pagination
 
 - The existing sidebar search reaches session name, cwd, ID, and complete retained user/assistant
   text through the Host catalog, using Pi's fuzzy keywords, quoted phrases, and `re:` regex. The
@@ -227,7 +233,8 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 
   Hydration or preservation failure retains the last confirmed union, identifies the operation
   truthfully, and retries that same operation; a standalone live-row failure is labeled session
-  hydration and never resets already loaded base pages.
+  hydration and never resets already loaded base pages. Loading and failure states suppress the
+  empty-result message until a successful empty response.
 
 ## Startup, welcome, and directory selection
 
@@ -268,9 +275,12 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   first-message/project-directory composer, so the prior session no longer owns topbar status,
   resources, attention acknowledgement, Escape, or delete protection even if its idle worker remains
   warm. A collapsible recent-session list appears only when navigation is unavailable or collapsed;
-  expanded desktop navigation already owns that route and is not duplicated. A missing project
-  directory produces a non-blocking warning notice. Failed open/create operations remain in the
-  navigation and start surfaces without replacing a transcript integrity error.
+  expanded desktop navigation already owns that route and is not duplicated. Recent sessions exclude
+  hidden sessions/folders and show up to six entries in activity order. A missing project
+  directory offers the explicit creation path in [[session-continuity]]. An invalid or inaccessible
+  directory instead shows its own retryable error and blocks Start, including when a model was
+  chosen manually. Failed open/create operations remain in the navigation and start surfaces
+  without replacing a transcript integrity error.
 
 - The project directory can be typed or chosen through a host-side directory picker: the host
   process lists its own filesystem (`GET /api/host/dirs`, authenticated,
@@ -282,7 +292,9 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   automatically wraps long text and grows/shrinks with content and available width. Enter browses the typed path without selecting it. Use this directory validates an edited path
   against the Host before selection instead of choosing the old listing. Errors retain the draft;
   editing clears the error for retry. While browsing, the path is temporarily read-only but retains
-  keyboard focus, and stale or dismissed requests cannot select a directory.
+  keyboard focus, and stale or dismissed requests cannot select a directory. Navigation withdraws
+  the old listing immediately. If list focus was displaced by loading, completion focuses the first
+  available folder (or list container) only while no newer control owns focus.
 
 - The directory picker places an eye-icon `Show hidden folders` toggle button immediately after
   the `Choose project directory` heading, with an accessible label, tooltip, and `aria-pressed`
@@ -296,6 +308,25 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 
   Rapid visibility/navigation changes and dismissal retire old request writebacks; pending or failed
   loads cannot confirm an earlier directory as the requested destination.
+
+## Feedback scope
+
+- Top banners describe a current workspace condition: lost connection, an unavailable session
+  refresh, projection failure, or a recoverable ownership conflict. Their action retries the
+  relevant read, reconnects, or recovers that condition. A successful authoritative observation
+  clears a refresh warning; a cached-state acknowledgement does so only when no projection
+  problem remains. An unrelated successful operation does not clear a synchronization warning.
+- Operation failures belong beside an available retry surface, such as deletion confirmation,
+  an extension question, a form, or a resource pane. Otherwise they use the existing notification
+  stack: send, Stop, Pending clear, and prompt-history failures do not overwrite the workspace
+  banner. Location expresses scope, not severity. An extension reply error remains inside the
+  same request's dialog, with entered content and retry/cancel controls intact; expiry, a newer
+  request, selection, or transport replacement cannot inherit it.
+- Expected lifecycle transitions do not report obsolete background reads as failures.
+  [[session-deletion]] owns the deletion boundary; real deletion failure and authentication loss
+  remain visible. Notifications remain bottom-right on desktop. On phones they stay below the
+  workspace header, clear of any current multiline banner and its controls, rather than moving
+  over the editor. [[design-system]] owns their visual treatment and dwell.
 
 ## Session-owned controls and command palette
 

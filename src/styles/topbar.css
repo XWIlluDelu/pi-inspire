@@ -244,7 +244,7 @@
 }
 
 @media (hover: hover) {
-  .topbar__title-button:hover {
+  .topbar__title-button:hover:where(:not(:disabled)) {
     background: var(--bg-inset);
   }
 }
@@ -288,7 +288,7 @@
 .topbar__title-button,
 .session-actions-menu > button { -webkit-tap-highlight-color: transparent; }
 
-.session-actions-menu > button:hover,
+.session-actions-menu > button:hover:where(:not(:disabled)),
 .session-actions-menu > button:focus-visible {
   background: var(--bg-inset);
   outline: none;
@@ -315,6 +315,19 @@
 .topbar__status > .chip {
   min-width: 0;
   max-width: 100%;
+}
+
+/* A reconnect is background transport work, not a warning-shaped button.
+   Faults keep their warning chip; the label remains accessible when compact. */
+.topbar__connection {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
 }
 
 .topbar__extension-status {
@@ -481,6 +494,13 @@
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.banner__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
   gap: var(--space-2);
 }
 

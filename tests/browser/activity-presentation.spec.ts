@@ -1,8 +1,18 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Locator, test } from "@playwright/test";
 import { activityReadingMessages } from "../web/fixtures/activity-reading";
 import { customMessageConfiguration } from "../web/fixtures/custom-message-presentation";
 import { openMockEventSession } from "./support/mock-host";
 import { openMockSession, pairedPage } from "./support/navigation";
+import { textMarkOffsets } from "./support/text-baseline";
+
+async function expectActivityMarksCentered(control: Locator) {
+  const offsets = await control.evaluate(textMarkOffsets, {
+    label: ":scope > span:not(.activity-fold__matrix)",
+    marks: ":scope > svg, :scope > .activity-fold__matrix",
+  });
+  expect(offsets.length).toBeGreaterThan(0);
+  for (const offset of offsets) expect(Math.abs(offset)).toBeLessThan(0.5);
+}
 
 test("the full activity header discloses content with Copy beside its text", async ({
   page,
@@ -133,6 +143,8 @@ test("activity kind cues stay local, respect reduced motion and disclose with ke
     .locator(".activity-fold__matrix")
     .boundingBox();
   expect(matrix!.width).toBe(matrix!.height);
+  await page.evaluate(() => document.fonts.ready);
+  await expectActivityMarksCentered(disclosure);
   const kind = fold.locator(".activity-fold__kind").first();
   // Unit tests establish which kinds are live. Here isolate the CSS animation
   // from the mock worker's timing and verify that it never moves the control.
@@ -170,6 +182,9 @@ test("activity kind cues stay local, respect reduced motion and disclose with ke
     await disclosure.press("Enter");
     const content = fold.locator(".activity-fold__content");
     await expect(content).toBeVisible();
+    await expectActivityMarksCentered(
+      fold.locator(".activity-fold__boundary--upper"),
+    );
     const groupingGaps = await content.evaluate((element) => [
       getComputedStyle(element).rowGap,
       ...Array.from(
@@ -203,6 +218,7 @@ test("activity kind cues stay local, respect reduced motion and disclose with ke
     });
     await expect(lower).toHaveCSS("font-family", /Rajdhani/);
     await lower.scrollIntoViewIfNeeded();
+    await expectActivityMarksCentered(lower);
     await lower.focus();
     expect(
       await lower.evaluate((element) => getComputedStyle(element).outlineStyle),
@@ -356,6 +372,8 @@ test("Earlier activity expands the hidden prefix independently of the visible ta
   await expect(earlier).toBeVisible();
   await expect(earlier).toHaveCSS("font-family", /Rajdhani/);
   await expect(earlier).toHaveCSS("text-transform", "uppercase");
+  await page.evaluate(() => document.fonts.ready);
+  await expectActivityMarksCentered(earlier);
   await expect(page.locator(".card--thinking:visible")).toHaveCount(24);
   await earlier.click();
   await expect(earlier).toHaveCount(0);
@@ -383,13 +401,21 @@ test("success and failure cues retain semantic color in tools and nested calls",
   );
   if (!code || !("details" in code) || !code.details?.calls)
     throw new Error("Missing nested activity fixture");
-  code.details.calls.push({
-    id: "failed-child",
-    name: "preview_check",
-    args: "{}",
-    status: "error",
-    durationMs: 30,
-  });
+  code.details.calls.push(
+    {
+      id: "failed-child",
+      name: "preview_check",
+      args: "{}",
+      status: "error",
+      durationMs: 30,
+    },
+    {
+      id: "cancelled-child",
+      name: "read",
+      args: '{"path":"notes.md"}',
+      status: "cancelled",
+    },
+  );
   // Model-call preview strings are intentionally not an expandable argument
   // payload, so this completed call has no detail control.
   code.details.calls.push({
@@ -398,7 +424,36 @@ test("success and failure cues retain semantic color in tools and nested calls",
     args: "fixture/classifier",
     status: "ok",
   });
-  send(...messages.map((message) => ({ type: "message_end", message })));
+  send(...messages.map((message) => ({ type: "message_end", message })), {
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "not-executed",
+          name: "read",
+          arguments: { path: "notes.md" },
+          __inspireToolCall: {
+            phase: "interrupted",
+            characters: 20,
+            truncated: false,
+          },
+        },
+        {
+          type: "toolCall",
+          id: "unrecorded",
+          name: "read",
+          arguments: { path: "notes.md" },
+        },
+      ],
+    },
+  });
+  for (const label of ["not executed", "no result"]) {
+    const mark = page.getByLabel(label, { exact: true });
+    await expect(mark).toHaveAttribute("data-status", "neutral");
+    await expect(mark).toHaveCSS("animation-name", "none");
+  }
   const codeCard = page
     .locator(".card--tool")
     .filter({ hasText: "CodeMode" })
@@ -455,6 +510,8 @@ test("success and failure cues retain semantic color in tools and nested calls",
       [".card__status .status-error", "--error"],
       [".child-call__status--ok", "--success"],
       [".child-call__status--error", "--error"],
+      ['.card__status .pi-status[data-status="neutral"]', "--muted"],
+      [".child-call__status--cancelled", "--muted"],
     ]) {
       const cue = page.locator(selector!).first();
       await expect(cue).toBeVisible();

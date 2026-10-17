@@ -42,7 +42,6 @@ export function presentSessionActivity(
     indicator,
     externalLabel,
     conflicted,
-    busy: managedBusy || externalActivity === "working",
     label:
       status?.needsInput && !conflicted
         ? "Waiting for input"

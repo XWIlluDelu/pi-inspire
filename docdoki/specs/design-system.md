@@ -148,6 +148,11 @@ declaration.
   Selected icon buttons keep their accent ink/tint through hover and press. Disabled
   icon buttons use neutral ink and the default cursor, without hover/pressed feedback;
   local action styles respect this state rather than overriding the shared control.
+  Quiet actions retain transparent backgrounds and borders when disabled.
+  Standalone actions and form variants also suppress disabled hover/pressed feedback,
+  including underlines and border changes. Read-only session headings retain their readable
+  text but lose the pointer cursor and action highlight. A dropdown that becomes disabled
+  closes its menu without changing the selected value.
   Focus indicators consume `--accent-focus`, including local outlines, focused input
   borders and inset focus strokes. Botanical palettes map this role to `--accent`;
   classic Jade and Amber map it to `--accent-deep`. Components use the role rather
@@ -175,10 +180,12 @@ declaration.
   source syntax or Diff additions/deletions retain semantic color. Syntax and Git
   text use luminosity-aware colors with AA contrast on their neutral or tinted
   reading surfaces.
-- Small status text over tinted backgrounds uses the corresponding `--warning-ink`,
-  `--info-ink` or `--error-ink` role, including chips, notices, recovery banners,
-  history and file boundaries. Outlined danger actions use `--error-ink` for text
-  while retaining `--error` for their borders and hover tint.
+- Small status text uses the corresponding `--success-ink`, `--warning-ink`,
+  `--info-ink` or `--error-ink` role on neutral or tinted surfaces, including chips,
+  Git change counts, copied-path text, notices, recovery banners, history and file boundaries.
+  Outlined, quiet and menu danger actions use `--error-ink`
+  for text, retained through hover, press and focus; disabled actions use neutral ink.
+  Semantic danger borders and hover tints retain `--error`.
   Activity-fold loading failures use `--error-ink`,
   retained through hover, pressed and focus states without recoloring Tool/Thinking marks.
   Successful command badges derive `--activity-success-ink`
@@ -234,11 +241,17 @@ declaration.
   headings, code, reasoning, tables, composer drafts, and text previews across
   this scale; interface controls keep their fixed tiers.
   Structural Rajdhani labels use 500 weight (600 for selected resource tabs), uppercase Latin
-  and restrained tracking. Resource tabs use 14px; narrow panes use 13px with reduced tracking
-  and proportional columns, keeping labels inside their selected surface. Count badges share
-  the label baseline; the narrowest headers omit the optional badge but retain the exact Changes
-  count in its title. Compact touch tabs are 34px tall, with adjacent 32px actions. Settings section
-  icons remain outside the font-dependent heading line box.
+  and restrained tracking. Resource tabs use four equal-width columns, with compact 13px labels;
+  the smallest groups use the untracked 12.5px tier. Selected and unselected names fit without
+  cropping or distorted letterforms. Count capsules use `--accent-tint`/`--accent-deep` with
+  smaller text on the label baseline and a distinct gap from the name.
+  Groups too narrow for the complete label and count omit the optional count but retain the
+  exact Changes count in its title. Desktop tabs are 28px tall; compact touch tabs are 34px tall,
+  with adjacent 32px actions. Settings section
+  icons remain outside the font-dependent heading line box. Activity matrices/disclosure arrows
+  and Settings section icons align with the visible uppercase letters, not merely the line-box center.
+  A wrapped Settings heading keeps its icon beside the first line; its action stays independent
+  of the icon/title group rather than centering the icon between multiple lines.
   Navigation, file subsection headings, command-palette and completion/model-choice headings
   preserve authored casing and their established UI tiers. Technical identifiers retain their
   exact spelling; document typography is unchanged.
@@ -274,7 +287,9 @@ declaration.
   Comfortable 820px, and Wide 980px measures, and a contextual pane clamped
   from 340px to 760px. Responsive caps and the available center region still
   bound every selected measure. The 44px topbar aligns the regions without
-  turning the page into a dashboard of boxed panels.
+  turning the page into a dashboard of boxed panels. Connecting/reconnecting is a quiet, unboxed
+  transport hint, not an action button; compact headers retain its accessible label. Offline and
+  Host failures keep warning treatment, and the hint disappears when the connection recovers.
 
 ## Scrolling
 
@@ -475,6 +490,10 @@ are unchanged.
 
 ## Session and command search presentation
 
+Native search-clear glyphs use the field's theme ink and a consistent cross; clear and Escape
+semantics remain owned by each field. Workspace search keeps its explicit clear/loading control,
+without a second native clear button.
+
 Session titles and visible project names/context emphasize matching text at weight 600, without
 changing colors, backgrounds, ellipsis or direct Pin/Hide controls. Plain tokens follow Pi's greedy
 subsequence matching (including its letter/digit swap); quoted phrases preserve native whitespace
@@ -486,6 +505,14 @@ weight 500. Hints retain their secondary color, size and placement; aliases and 
 remain search inputs without requiring invented visible text. Ranking, search-time Results grouping,
 shortcuts, focus and keyboard selection remain unchanged. Its category headings stay transparent with a shared `--line` bottom
 rule; the rule replaces one pixel of bottom padding, preserving heading height and text position.
+
+## Extension question choices
+
+Immediate-submit choices distinguish current keyboard focus and pointer hover without a check
+that implies an answer has already been submitted. Focus retains a visible accent outline;
+hover and press use the raised neutral surface with a fine neutral inset boundary so they remain
+distinct from the recessed list in light and dark themes. Click/Enter submission and roving
+keyboard navigation remain unchanged.
 
 ## Content copying
 
@@ -524,7 +551,15 @@ command editing still focus their input. Returning to the palette list follows t
 rule. Modal containment, nested portals, keyboard navigation and opener restoration remain intact;
 result updates and viewport resizing must not steal focus from a field the user has entered.
 
+Narrow Command Palette rows stack descriptions below their titles on the same left edge;
+rows without a description keep their title vertically centered within the touch target.
+Wide palettes retain their compact, right-aligned secondary column.
+
 ## Action-button presentation
+
+Code-block Copy and Insert in terminal remain compact 24px controls on mouse layouts.
+Coarse-pointer layouts use separate 36px targets with an 8px gap, without enlarging their glyphs
+or sharing a hit area. Hover feedback is mouse-only; touch has local pressed feedback.
 
 Copy, Fork, Pending Return/Clear and similar actions share three presentation types:
 
@@ -613,8 +648,11 @@ Content availability is a capability concern, not a fourth presentation type. Co
   so ordinary rerenders or status-label updates neither reselect nor interrupt the current cycle.
   This is animation-cycle selection, not one fixed pattern for an entire run.
   Reduced motion displays a static Π. Sidebar working states use it; unread completion/failure use matching linked-dot check/cross.
-  Tool rows and nested calls use the same settled glyphs. Point cells and resting glyph footprints
-  are square (1:1); light links keep a three-point check readable at 12/14px. Success/error
+  Tool rows and nested calls use the same settled glyphs. Not-executed and missing-result tools,
+  and cancelled/unfinished child calls, use a static eight-point perimeter with an empty center
+  in `--muted`; their distinct labels remain intact, without implying work, success or failure.
+  Point cells and resting glyph footprints are square (1:1); light links keep a three-point check
+  readable at 12/14px. Success/error
   colors and attention remain distinct, and reading still clears unread terminal cues. Generating, queued and executing tools keep one mounted glyph and
   uninterrupted cycle; tool status follows the name in both parent and nested rows. Refresh controls
   retain directional arrows at rest and replace them with Π while refreshing. Settings checks and

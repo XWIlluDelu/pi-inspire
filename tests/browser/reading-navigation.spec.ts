@@ -376,3 +376,107 @@ test("prompt map navigates user turns and adapts to the narrow workbench", async
     .evaluate((element) => element.scrollWidth - element.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
 });
+
+for (const viewport of [
+  { width: 1440, height: 960 },
+  { width: 390, height: 844 },
+  { width: 320, height: 700 },
+  { width: 844, height: 390 },
+]) {
+  test(`reading scroll thumb stays outside content and inside the scrollport at ${viewport.width}×${viewport.height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await pairedPage(page);
+    await openMockSession(page, /Formula rendering and spectral analysis/);
+    const log = page.getByRole("log");
+    const rail = page.locator(".transcript-wrap > .srail");
+    const thumb = rail.locator(".srail__thumb");
+    await log.locator("pre").waitFor();
+    await page.evaluate(() => document.fonts.ready);
+    await expect(rail).toBeVisible();
+
+    for (const fraction of [0, 0.5, 1]) {
+      await log.evaluate((el, value) => {
+        el.scrollTop = (el.scrollHeight - el.clientHeight) * value;
+      }, fraction);
+      await expect
+        .poll(() =>
+          page.locator(".transcript-wrap").evaluate((wrap) => {
+            const viewport = wrap
+              .querySelector(".transcript")!
+              .getBoundingClientRect();
+            const column = wrap
+              .querySelector(".transcript__column")!
+              .getBoundingClientRect();
+            const rail = wrap.querySelector(".srail")!.getBoundingClientRect();
+            const thumb = wrap
+              .querySelector(".srail__thumb")!
+              .getBoundingClientRect();
+            return {
+              clearOfContent: thumb.left >= column.right + 1,
+              insideHorizontalGutter: thumb.right <= viewport.right - 1,
+              insideVerticalScrollport:
+                rail.top >= viewport.top &&
+                rail.bottom <= viewport.bottom &&
+                thumb.top >= viewport.top &&
+                thumb.bottom <= viewport.bottom,
+            };
+          }),
+        )
+        .toEqual({
+          clearOfContent: true,
+          insideHorizontalGutter: true,
+          insideVerticalScrollport: true,
+        });
+    }
+
+    // This fixture's visible code intersects the thumb vertically on a phone.
+    // Its trailing text must receive pointer/selection input, not the invisible grab band.
+    if (viewport.width === 390) {
+      await expect
+        .poll(() =>
+          log.evaluate((el) => {
+            const code = el.querySelector("pre")!;
+            const bounds = code.getBoundingClientRect();
+            const thumb = el
+              .parentElement!.querySelector(".srail__thumb")!
+              .getBoundingClientRect();
+            const top = Math.max(bounds.top, thumb.top);
+            const bottom = Math.min(bounds.bottom, thumb.bottom);
+            return (
+              bottom > top &&
+              code.contains(
+                document.elementFromPoint(bounds.right - 2, (top + bottom) / 2),
+              )
+            );
+          }),
+        )
+        .toBe(true);
+    }
+
+    const beforeDrag = await log.evaluate((el) => el.scrollTop);
+    const box = (await thumb.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - 32, {
+      steps: 4,
+    });
+    await page.mouse.up();
+    await expect
+      .poll(() => log.evaluate((el) => el.scrollTop))
+      .toBeLessThan(beforeDrag);
+    await expect(page.locator("body")).not.toHaveClass(/srail-dragging/);
+
+    const beforeWheel = await log.evaluate((el) => {
+      el.scrollTop = (el.scrollHeight - el.clientHeight) / 2;
+      return el.scrollTop;
+    });
+    await thumb.hover();
+    await page.mouse.wheel(0, 48);
+    await expect
+      .poll(() => log.evaluate((el) => el.scrollTop))
+      .toBeGreaterThan(beforeWheel);
+  });
+}

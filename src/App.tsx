@@ -857,6 +857,8 @@ export function App() {
           max={() => 460}
           label="Resize navigation"
           variant="nav"
+          layoutKey={String(state.resourcesOpen)}
+          peerPane={{ cssVar: "--ctx-w", paneSelector: ".ctx" }}
         />
       ) : null}
       <main className="center" inert={isAnyDrawerModal ? true : undefined}>
@@ -888,15 +890,25 @@ export function App() {
                 </span>
               ) : null}
             </span>
-            {state.projectionConflict ? (
-              <button type="button" onClick={() => void store.abort()}>
-                Recover
-              </button>
-            ) : (
-              <button type="button" onClick={() => store.dismissError()}>
-                Dismiss
-              </button>
-            )}
+            <div className="banner__actions">
+              {state.projectionConflict ? (
+                <button type="button" onClick={() => void store.abort()}>
+                  Recover
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void store.refreshSession()}
+                  >
+                    Retry
+                  </button>
+                  <button type="button" onClick={() => store.dismissError()}>
+                    Dismiss
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         ) : null}
         {state.connection !== "open" && !state.error ? (
@@ -941,9 +953,14 @@ export function App() {
               paneSelector=".ctx"
               edge="start"
               min={320}
-              max={(viewport) => Math.min(920, viewport - 640)}
+              max={() => 920}
               label="Resize files panel"
               variant="ctx"
+              layoutKey={String(navCollapsed)}
+              peerPane={{
+                cssVar: "--nav-w",
+                paneSelector: ".nav:not(.nav--rail)",
+              }}
               wheelTargetSelector="#context-pane [data-pane-scroll-active='true']"
             />
           ) : null}

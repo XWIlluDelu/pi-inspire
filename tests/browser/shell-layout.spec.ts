@@ -88,6 +88,142 @@ test("desktop pane gutters remain pointer and keyboard resize targets", async ({
   ).toHaveCount(0);
 });
 
+test("saved side widths share a reading budget without changing preferences on resize", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("inspire.nav-width", "460");
+    localStorage.setItem("inspire.ctx-width", "800");
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await expect(page.locator(".ctx__modes")).toBeVisible();
+
+  for (const width of [1280, 901, 980, 1600, 2200, 840, 1280, 2200]) {
+    await page.setViewportSize({ width, height: 900 });
+    if (width <= 900) {
+      await expect(
+        page.getByRole("dialog", { name: "Context panel" }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("separator", { name: "Resize files panel" }),
+      ).toHaveCount(0);
+    } else {
+      const minimum = Math.min(400, width - 220 - 320 - 12);
+      await expect
+        .poll(async () => (await page.locator(".center").boundingBox())!.width)
+        .toBeGreaterThanOrEqual(minimum - 1);
+      await expect
+        .poll(async () => (await page.locator(".ctx").boundingBox())!.width)
+        .toBeGreaterThanOrEqual(320);
+      await expect
+        .poll(async () => (await page.locator(".nav").boundingBox())!.width)
+        .toBeGreaterThanOrEqual(220);
+      const right = await page
+        .locator(".ctx")
+        .evaluate((el) => el.getBoundingClientRect().right);
+      expect(right).toBeLessThanOrEqual(width);
+    }
+    expect(
+      await page.evaluate(() => [
+        localStorage.getItem("inspire.nav-width"),
+        localStorage.getItem("inspire.ctx-width"),
+      ]),
+    ).toEqual(["460", "800"]);
+  }
+  expect((await page.locator(".nav").boundingBox())!.width).toBe(460);
+  expect((await page.locator(".ctx").boundingBox())!.width).toBe(800);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await expect
+    .poll(async () => (await page.locator(".nav").boundingBox())!.width)
+    .toBe(460);
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await expect
+    .poll(async () => (await page.locator(".center").boundingBox())!.width)
+    .toBeGreaterThanOrEqual(400);
+
+  await page.getByRole("button", { name: "Collapse navigation" }).click();
+  await expect(page.locator(".nav--rail")).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect
+    .poll(async () => (await page.locator(".center").boundingBox())!.width)
+    .toBeGreaterThanOrEqual(400);
+  await page.getByRole("button", { name: "Expand navigation" }).click();
+  await expect
+    .poll(async () => (await page.locator(".nav").boundingBox())!.width)
+    .toBeGreaterThanOrEqual(220);
+  await expect
+    .poll(async () => (await page.locator(".center").boundingBox())!.width)
+    .toBeGreaterThanOrEqual(400);
+});
+
+test("resizing one side holds its peer still and exposes only the remaining reading budget", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.addInitScript(() => {
+    localStorage.setItem("inspire.nav-width", "460");
+    localStorage.setItem("inspire.ctx-width", "800");
+  });
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await expect(page.locator(".ctx__modes")).toBeVisible();
+  const nav = page.locator(".nav");
+  const ctx = page.locator(".ctx");
+  const left = page.getByRole("separator", {
+    name: "Resize navigation",
+    exact: true,
+  });
+  const right = page.getByRole("separator", {
+    name: "Resize files panel",
+    exact: true,
+  });
+  const originalNav = (await nav.boundingBox())!.width;
+  const originalContext = (await ctx.boundingBox())!.width;
+
+  await left.focus();
+  await left.press("ArrowLeft");
+  await expect
+    .poll(async () => (await nav.boundingBox())!.width)
+    .toBeCloseTo(originalNav - 24, 0);
+  expect((await ctx.boundingBox())!.width).toBeCloseTo(originalContext, 1);
+  expect(
+    await page.evaluate(() => localStorage.getItem("inspire.ctx-width")),
+  ).toBe("800");
+  await expect
+    .poll(async () => Number(await right.getAttribute("aria-valuemax")))
+    .toBeCloseTo(originalContext + 24, 1);
+
+  const handleBox = (await right.boundingBox())!;
+  const x = handleBox.x + handleBox.width / 2;
+  const y = handleBox.y + 24;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x - 400, y, { steps: 8 });
+  await page.mouse.up();
+  expect((await nav.boundingBox())!.width).toBeCloseTo(originalNav - 24, 0);
+  expect(
+    (await page.locator(".center").boundingBox())!.width,
+  ).toBeGreaterThanOrEqual(400);
+  expect((await ctx.boundingBox())!.width).toBeCloseTo(originalContext + 24, 0);
+  const pinnedContext = (await ctx.boundingBox())!.width;
+  await left.press("ArrowRight");
+  expect((await ctx.boundingBox())!.width).toBe(pinnedContext);
+  expect((await nav.boundingBox())!.width).toBeCloseTo(originalNav - 24, 0);
+
+  await right.dblclick({ position: { x: 4, y: 24 } });
+  expect(
+    await page.evaluate(() => localStorage.getItem("inspire.ctx-width")),
+  ).toBeNull();
+  expect((await nav.boundingBox())!.width).toBeCloseTo(originalNav - 24, 0);
+  await page.setViewportSize({ width: 2200, height: 900 });
+  await expect.poll(async () => (await ctx.boundingBox())!.width).toBe(760);
+});
+
 test("sidebar owns desktop toggles and creation while phones keep a full drawer", async ({
   page,
 }) => {

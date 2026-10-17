@@ -8,10 +8,8 @@ import type { AppState } from "../app-state";
 
 type HiddenDeletionState = Pick<
   AppState,
-  | "sessionId"
   | "openingSessionId"
   | "sessionStatuses"
-  | "externalSessionActivities"
   | "sessionQuery"
   | "sessionListLoading"
   | "sessionListLoadingOlder"
@@ -41,16 +39,8 @@ export function hiddenDeletionBlockReason(
   ) {
     return "Wait for Hidden sessions to finish loading";
   }
-  if (sessions.some((session) => session.id === state.sessionId))
-    return "Switch to another session before deleting";
   if (sessions.some((session) => session.id === state.openingSessionId))
     return "Wait for these sessions to finish opening";
-  if (
-    sessions.some(
-      (session) => state.externalSessionActivities[session.id] !== undefined,
-    )
-  )
-    return "Close the Pi terminal sessions before deleting";
   if (
     sessions.some((session) => {
       const status = state.sessionStatuses[session.id];
@@ -119,6 +109,18 @@ interface NavSections {
   hidden: SessionSummary[];
 }
 
+/** Hiding applies to every session-entry surface, not just the sidebar. */
+export function visibleSessions(
+  sessions: readonly SessionSummary[],
+  curation: Pick<NavCuration, "hiddenProjectCwds" | "hiddenSessionIds">,
+): SessionSummary[] {
+  const hiddenCwds = new Set(curation.hiddenProjectCwds);
+  const hiddenIds = new Set(curation.hiddenSessionIds);
+  return sessions.filter(
+    (session) => !hiddenCwds.has(session.cwd) && !hiddenIds.has(session.id),
+  );
+}
+
 /** Partition the list into navigation sections with one display owner per
  * session. A hidden folder outranks both session-level states; individual
  * hiding then outranks pinning, and an individual pin outranks a folder pin. */
@@ -132,9 +134,7 @@ export function splitNavSections(
   const hiddenCwds = new Set(curation.hiddenProjectCwds);
   const byRecency = (a: SessionSummary, b: SessionSummary) =>
     Date.parse(b.modified) - Date.parse(a.modified);
-  const visible = sessions.filter(
-    (session) => !hiddenCwds.has(session.cwd) && !hiddenIds.has(session.id),
-  );
+  const visible = visibleSessions(sessions, curation);
   const groups = groupSessionsByCwd(
     visible.filter((session) => !pinnedIds.has(session.id)),
   );

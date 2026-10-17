@@ -28,11 +28,21 @@ files, and newer browser preferences. Navigation curation remains in [[session-c
   of the normal individual interaction path, then relies on the deletion adapter's path-local
   inode/version/header revalidation immediately before its Trash-first operation.
 
-  It rejects ownership that is selected, selection-reserved, running, queued, compacting, retrying,
-  dialog-blocked, persistence-unknown, branch-leased, forking, or conflicted. An already-owned
-  background worker warmup that began before host deselection is awaited and then retired inside the
-  deletion lane instead of producing a transient opening error. After deletion, the host removes the
-  id from persistent hidden and pinned metadata so navigation state cannot outlive the session. The
+  Viewing an idle session does not block deletion. The host retires its owned idle worker and
+  suspends projection reads before moving the file. Failure resumes the retained projection;
+  committed deletion releases it and clears only that session's selection. The browser returns to
+  New session only if it is still displaying the deleted identity; a newer open/new intent survives.
+  The browser fences older projection refreshes and pauses new reads of the confirmed targets
+  while deletion is in flight. Completion refreshes a still-selected surviving target, including
+  after partial batch failure; a committed deletion does not leave a stale refresh banner.
+  Authentication failures retain their transport-wide meaning rather than being suppressed as
+  deletion noise.
+
+  Selection-reserved, running, queued, compacting, retrying, dialog-blocked, persistence-unknown,
+  branch-leased, forking, and conflicted ownership still blocks deletion. An already-owned worker
+  warmup is awaited and then retired inside the single-session deletion lane. After deletion, the
+  host removes the id from persistent hidden and pinned metadata so navigation state cannot outlive
+  the session. The
   catalog-authorized path must be a non-symlink `.jsonl` regular file whose first record is the
   matching Pi session header. For individual deletion, the catalog pins device/inode rather than
   historical size/timestamps: after writer retirement, inspection pins the current version so normal
@@ -65,19 +75,21 @@ files, and newer browser preferences. Navigation curation remains in [[session-c
   collection. A collection outcome cannot turn committed deletion into a retryable operation.
 
   If durable preference cleanup fails after the file outcome is known, the response marks that
-  failure and the browser warns without retrying the destructive operation. The host cannot prove
-  that an external terminal Pi process has no open descriptor, so the confirmation carries that
-  warning and the one-writer operating rule remains mandatory. The top-level Hidden drawer
-  separately exposes one count-bearing Clear action over its complete hydrated selection; search and
-  incomplete curation hydration cannot admit it. The reviewed identity set includes both
+  failure and the browser warns without retrying the destructive operation. Observed external Pi
+  activity never blocks deletion, including working or input-blocked terminals. Only a confirmation
+  whose targets include an observed terminal adds the short consequence that Pi may write again;
+  no extra confirmation or external-process shutdown is imposed. Unobserved terminals do not add a
+  generic warning. This does not change the one-writer rule for continuing a session.
+  The top-level Hidden drawer exposes one count-bearing Clear action over its complete hydrated
+  selection; search and incomplete curation hydration cannot admit it. The reviewed identity set includes both
   individually hidden sessions and every catalog session whose exact cwd is curated as a hidden
   folder.
 
   At route admission the host reads the current curation, then takes one authoritative catalog
   snapshot and reconstructs that union itself; changed membership rejects before any move rather
   than omitting an off-page target or silently expanding the confirmation. It reserves every target
-  identity and rejects the entire batch before any move if a target is selected, opening, working,
-  queued, dialog-blocked, persistence-unknown, branch-leased, forking, or conflicted. Once admitted,
+  identity and rejects the entire batch before any move if a target is opening, running, queued,
+  dialog-blocked, persistence-unknown, branch-leased, forking, or conflicted. Once admitted,
   it reports an exact committed subset if a later filesystem failure prevents completion; full
   success removes the reviewed individual and folder curation, while a partial result removes only
   committed session identities and keeps folder curation for what remains.

@@ -100,9 +100,14 @@ export function Dropdown({
   };
 
   const pick = (option: DropdownOption) => {
+    if (disabled) return;
     setOpen(false);
     if (option.value !== value) onChange(option.value);
   };
+
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
 
   useEffect(() => {
     if (openRequest === undefined || handledOpenRequest.current === openRequest)

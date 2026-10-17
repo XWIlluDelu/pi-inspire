@@ -70,7 +70,36 @@
 }
 
 @media (min-width: 901px) {
+  .app {
+    --conversation-min-w: 400px;
+    --navigation-min-w: 220px;
+    --context-min-w: 0px;
+  }
+
+  .app:has(> .nav--rail) {
+    --navigation-min-w: var(--nav-w-collapsed);
+  }
+
+  .app:has(> .ctx) {
+    --context-min-w: 320px;
+  }
+
+  .app > .center {
+    /* At the desktop breakpoint, reserve all space left by the two minimum
+       side widths. Above it, protect a usable conversation without overflow. */
+    min-width: min(var(--conversation-min-w), calc(
+      100% - var(--navigation-min-w) - var(--context-min-w) - 2 * var(--space-1)
+    ));
+  }
+
+  .app > .nav:not(.nav--rail) {
+    min-width: var(--navigation-min-w);
+    flex-shrink: 1;
+  }
+
   .ctx {
+    min-width: var(--context-min-w);
+    flex-shrink: 1;
     border-left: 0;
     border-radius: var(--radius-surface);
   }
@@ -148,11 +177,11 @@ body.pane-resizing--vertical .nav {
 }
 
 .ctx__header {
-  container: context-header / inline-size;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-2);
   padding: 0 var(--space-3);
   height: var(--topbar-h);
   border-bottom: 1px solid var(--hairline);
@@ -162,10 +191,11 @@ body.pane-resizing--vertical .nav {
 }
 
 .ctx__modes {
-  width: min(300px, calc(100% - 38px));
-  flex: 0 1 300px;
+  container: context-modes / inline-size;
+  width: min(400px, calc(100% - 38px));
+  flex: 0 1 400px;
   display: grid;
-  grid-template-columns: minmax(0, .75fr) minmax(0, 1.5fr) minmax(0, 1.1fr) minmax(0, 1.2fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: center;
   padding: 2px;
   gap: 2px;
@@ -186,18 +216,18 @@ body.pane-resizing--vertical .nav {
 
 .ctx__modes button {
   min-width: 0;
-  height: 26px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
   border: 0;
-  border-radius: var(--radius-xs);
+  border-radius: calc(var(--radius-control) - 3px);
   padding: 0 var(--space-1);
   background: transparent;
   color: var(--muted);
-  font: 500 var(--text-base)/var(--leading-ui) var(--font-label);
-  letter-spacing: 0.06em;
+  font: 500 13px/var(--leading-ui) var(--font-label);
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   white-space: nowrap;
   text-align: center;
@@ -217,7 +247,6 @@ body.pane-resizing--vertical .nav {
 .ctx__modes button.segmented__item--active {
   color: var(--ink);
   background: var(--bg-surface);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   font-weight: 600;
 }
 
@@ -230,8 +259,8 @@ body.pane-resizing--vertical .nav {
 .ctx__mode-label {
   display: inline-flex;
   align-items: baseline;
-  min-width: 0;
-  gap: 4px;
+  flex-shrink: 0;
+  gap: 6px;
 }
 
 .ctx__mode-badge {
@@ -240,26 +269,32 @@ body.pane-resizing--vertical .nav {
   justify-content: center;
   min-width: 14px;
   height: 14px;
-  padding: 0 3px;
+  /* Center Rajdhani's high-set numerals without moving their text baseline. */
+  padding: 2px 3px 0;
   border-radius: var(--radius-pill);
   font-family: var(--font-label);
   font-size: var(--text-xs);
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
   letter-spacing: 0;
   line-height: 1;
   background: var(--accent-tint);
   color: var(--accent-deep);
 }
 
-@container context-header (max-width: 360px) {
-  /* Keep the mode names readable; the exact Changes count remains in its title. */
-  .ctx__mode-badge { display: none; }
-  .ctx__modes {
-    grid-template-columns: minmax(0, .75fr) minmax(0, 1.15fr) minmax(0, 1.1fr) minmax(0, 1.2fr);
+/* Count is supplementary; a narrow equal-width mode must retain its whole name.
+   Measure the mode group itself, since narrow headers also contain Close. */
+@container context-modes (max-width: 392px) {
+  .ctx__mode-badge {
+    display: none;
   }
+}
+
+/* At phone-minimum widths, native condensed letterforms need no extra tracking. */
+@container context-modes (max-width: 260px) {
   .ctx__modes button {
-    font-size: 13px;
-    letter-spacing: 0.04em;
+    font-size: var(--text-sm);
+    letter-spacing: 0;
   }
 }
 
@@ -608,7 +643,7 @@ button.res__index-header--back:hover svg {
 }
 
 .res__index-summary--clean {
-  color: var(--success);
+  color: var(--success-ink);
   background: color-mix(in srgb, var(--success) 10%, transparent);
 }
 
@@ -666,7 +701,7 @@ button.res__index-header--back:hover svg {
 }
 
 .file-path-action--copied {
-  color: var(--success);
+  color: var(--success-ink);
 }
 
 .file-detail-header__actions {
@@ -1087,11 +1122,11 @@ button.res__more:hover {
 }
 
 .changes__additions {
-  color: var(--success);
+  color: var(--success-ink);
 }
 
 .changes__deletions {
-  color: var(--error);
+  color: var(--error-ink);
 }
 
 .changes__jump {
@@ -1594,14 +1629,4 @@ button.res__more:hover {
   outline: none;
   border-color: var(--accent-focus);
   box-shadow: 0 0 0 3px var(--accent-tint);
-}
-
-@media (max-width: 900px) {
-  .ctx[role="dialog"] {
-    width: min(460px, 100vw);
-    left: auto;
-    right: 0;
-    border-left: 1px solid var(--line);
-    box-shadow: var(--shadow-overlay);
-  }
 }

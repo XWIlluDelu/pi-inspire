@@ -112,6 +112,15 @@
   display: none;
 }
 
+.transcript ::highlight(transcript-match) {
+  background-color: var(--selection);
+}
+
+.transcript ::highlight(transcript-current-match) {
+  background-color: var(--accent-fill);
+  color: var(--on-accent);
+}
+
 .transcript-search {
   position: absolute;
   z-index: 3;
@@ -684,6 +693,15 @@
 .activity-fold__boundary > svg,
 .activity-fold__omission > svg {
   flex-shrink: 0;
+}
+
+/* Center marks on Rajdhani's uppercase ink, not its lower line-box center.
+   Move the marks only; disclosure hit areas and the content guide stay put. */
+.activity-fold__disclosure > svg,
+.activity-fold__boundary > svg,
+.activity-fold__omission > svg,
+.activity-fold__matrix {
+  transform: translateY(-1px);
 }
 
 :is(
@@ -1279,25 +1297,32 @@
 
 .assistant-error__message {
   margin-left: calc(14px + var(--space-2));
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--body);
   font-size: var(--text-reading-small);
   line-height: var(--leading-reading);
 }
 
-/* Only the requested diagnostic payload gets a bounded local reading surface. */
+.assistant-error__reason {
+  white-space: pre-wrap;
+}
+
+/* Expanding keeps the reason in place and in its reading font. Only a
+   separately supplied diagnostic paragraph gets the local code treatment. */
 .assistant-error__message--expanded {
   max-height: min(24rem, 50dvh);
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+.assistant-error__diagnostics {
+  margin: var(--space-2) 0 0;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-control);
   background: var(--bg-inset);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  line-height: var(--leading-mono);
+  white-space: pre-wrap;
+  font: var(--text-reading-code)/var(--leading-mono) var(--font-mono);
 }
 
 .assistant-error__message--expanded:focus-visible {

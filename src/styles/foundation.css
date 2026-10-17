@@ -110,6 +110,7 @@
   --error-fill-hover: color-mix(in srgb, var(--error) 90%, var(--solid-state-shade));
   --error-fill-active: color-mix(in srgb, var(--error) 80%, var(--solid-state-shade));
   /* Status marks keep their color; small text over a tint uses deeper/lifted ink. */
+  --success-ink: color-mix(in srgb, var(--success) 75%, var(--ink));
   --activity-success-ink: color-mix(in srgb, var(--activity-success) 85%, var(--ink));
   --warning-ink: color-mix(in srgb, var(--warning) 75%, var(--ink));
   --info-ink: color-mix(in srgb, var(--info) 68%, var(--ink));
@@ -856,6 +857,11 @@ button {
   cursor: pointer;
 }
 
+/* Standalone controls share the disabled cursor without dimming readable labels. */
+button:disabled {
+  cursor: default;
+}
+
 input,
 select,
 textarea {
@@ -879,6 +885,31 @@ a {
 
 ::selection {
   background: var(--selection);
+}
+
+/* Keep native search clearing (including its keyboard behavior), but draw its
+   glyph in the field's theme ink. Workspace search already hides this in
+   favor of its explicit clear/loading control. */
+input[type="search"]::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-inline: var(--space-1) 0;
+  border-radius: var(--radius-control);
+  background: var(--muted);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m7 7 10 10M17 7 7 17' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+  cursor: pointer;
+}
+
+input[type="search"]::-webkit-search-cancel-button:hover {
+  background: var(--ink);
+}
+
+@media (pointer: coarse) {
+  input[type="search"]::-webkit-search-cancel-button {
+    width: 28px;
+    height: 28px;
+  }
 }
 
 .app-error {
@@ -1112,7 +1143,8 @@ a {
   cursor: default;
 }
 
-.button--quiet {
+.button--quiet,
+.button--quiet:disabled {
   border-color: transparent;
   background: transparent;
 }

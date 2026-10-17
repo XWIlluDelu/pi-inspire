@@ -124,7 +124,6 @@ export const Nav = memo(function Nav({
     activeSessionId,
     openingSessionId,
     sessionStatuses,
-    externalSessionActivities,
     sessionQuery,
     sessionListNextOffset,
     sessionListTotal,
@@ -147,7 +146,6 @@ export const Nav = memo(function Nav({
       activeSessionId: state.sessionId,
       openingSessionId: state.openingSessionId,
       sessionStatuses: state.sessionStatuses,
-      externalSessionActivities: state.externalSessionActivities,
       sessionQuery: state.sessionQuery,
       sessionListNextOffset: state.sessionListNextOffset,
       sessionListTotal: state.sessionListTotal,
@@ -335,10 +333,8 @@ export const Nav = memo(function Nav({
   const hiddenSessionIds = hiddenSessions.map((session) => session.id);
   const hiddenCount = hiddenSessions.length;
   const deletionState = {
-    sessionId: activeSessionId,
     openingSessionId,
     sessionStatuses,
-    externalSessionActivities,
     sessionQuery,
     sessionListLoading,
     sessionListLoadingOlder,
@@ -561,7 +557,7 @@ export const Nav = memo(function Nav({
             ) : null}
           </div>
         ) : null}
-        {sessions.length === 0 ? (
+        {sessions.length === 0 && !sessionListBusy && !sessionListError ? (
           <div className="empty-state">
             {searching ? (
               <SearchX size={26} strokeWidth={1.5} aria-hidden />

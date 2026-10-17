@@ -17,7 +17,10 @@ import {
 } from "vitest";
 import { toolPresentationConfigurationSchema } from "../../shared/tool-presentation-config";
 import { Transcript } from "../../src/components/Transcript";
-import { ToolCard } from "../../src/components/transcript-cards";
+import {
+  CollapsedActivityStrip,
+  ToolCard,
+} from "../../src/components/transcript-cards";
 import { UnpairedToolResultRow } from "../../src/components/transcript-rows";
 import * as clipboard from "../../src/content-copy";
 import type { ChatMessage, ToolCallContent } from "../../src/events";
@@ -54,6 +57,80 @@ function card(
     />
   );
 }
+
+describe("tool disclosure consistency", () => {
+  it("puts an unknown tool's result before its inspectable arguments", async () => {
+    const { container } = render(
+      card(
+        call("custom_tool", { payload: "long input" }),
+        result("short result"),
+      ),
+    );
+    const output = screen.getByText("short result");
+    const args = container.querySelector("details")!;
+    expect(args).not.toHaveAttribute("open");
+    expect(screen.queryByText(/long input/)).not.toBeInTheDocument();
+    expect(
+      output.compareDocumentPosition(args) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    fireEvent.click(within(args).getByText("Arguments"));
+    expect(await screen.findByText(/long input/)).toBeVisible();
+  });
+
+  it("keeps an unknown tool's live partial arguments directly visible", () => {
+    const partial: ToolCallContent = {
+      ...call("custom_tool", { prompt: "incoming argument text" }),
+      __inspireToolCall: {
+        phase: "streaming",
+        characters: 40,
+        truncated: false,
+      },
+    };
+    render(
+      <ToolCard
+        call={partial}
+        result={undefined}
+        activity={undefined}
+        live
+        visibility="expanded"
+      />,
+    );
+    expect(screen.getByText(/incoming argument text/)).toBeVisible();
+    expect(screen.queryByText("Result")).not.toBeInTheDocument();
+  });
+
+  it("does not repeat ordinary summaries in a strip detail and retains CodeMode identity", () => {
+    const activities = [
+      {
+        kind: "tool" as const,
+        key: "read",
+        call: call("read", { path: "src/example.ts" }),
+        result: result("output"),
+      },
+      {
+        kind: "tool" as const,
+        key: "codemode",
+        call: call("codemode", { code: "return 1" }),
+        result: result(
+          "Script completed\\nWall time 0.2 seconds\\nOutput:\\n1",
+        ),
+      },
+    ];
+    const { container } = render(
+      <CollapsedActivityStrip activities={activities} live={false} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^read: finished/ }));
+    expect(
+      container.querySelector(".activity-strip__detail .card__summary"),
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: /^CodeMode: finished/ }),
+    );
+    expect(container.querySelector(".activity-strip__detail")).toHaveClass(
+      "card--codemode",
+    );
+  });
+});
 
 describe("saved tool resources", () => {
   let fixture: Awaited<ReturnType<typeof toolResultResourcesFixture>>;
@@ -395,10 +472,28 @@ describe("native Pi tool cards", () => {
       />,
     );
     expect(screen.getByText("Not executed")).toBeInTheDocument();
+    expect(screen.getByLabelText("not executed")).toHaveAttribute(
+      "data-status",
+      "neutral",
+    );
     expect(screen.queryByLabelText("finished")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Copy write argument preview" }),
     ).toBeInTheDocument();
+    rerender(
+      <ToolCard
+        call={call("read", { path: "a.txt" })}
+        result={undefined}
+        activity={undefined}
+        live={false}
+        visibility="expanded"
+      />,
+    );
+    expect(screen.getByLabelText("no result")).toHaveAttribute(
+      "data-status",
+      "neutral",
+    );
+    expect(screen.getByText("No result recorded")).toBeInTheDocument();
   });
 
   it("keeps one loading glyph through argument generation, queueing and execution", () => {
@@ -577,7 +672,7 @@ describe("native Pi tool cards", () => {
     expect(screen.queryByText("Arguments")).not.toBeInTheDocument();
   });
 
-  it("returns an incompatible selected native rule to the generic raw card", () => {
+  it("returns an incompatible selected native rule to the generic raw card", async () => {
     render(
       card(
         call("edit", {
@@ -591,7 +686,8 @@ describe("native Pi tool cards", () => {
     expect(screen.getByText("Arguments")).toBeInTheDocument();
     expect(screen.getByText("Result")).toBeInTheDocument();
     expect(screen.getByText("done")).toBeInTheDocument();
-    const resource = screen.getByRole("button", { name: "src/app.ts" });
+    fireEvent.click(screen.getByText("Arguments"));
+    const resource = await screen.findByRole("button", { name: "src/app.ts" });
     expect(resource.querySelector(".resource-path__visible")).toHaveTextContent(
       "src/app.ts",
     );

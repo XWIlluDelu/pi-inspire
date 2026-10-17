@@ -20,6 +20,7 @@ interface SessionManagementHost {
     total: number,
   ): Promise<void>;
   forgetSessions(sessionIds: ReadonlySet<string>): AppState["sessionStatuses"];
+  pauseSessionReads(sessionIds: ReadonlySet<string>): () => void;
   flushPreferences(): Promise<unknown>;
   capturePreferenceOwners(): ReadonlyMap<keyof InspirePreferences, number>;
   reconcilePreferences(
@@ -173,13 +174,13 @@ export class SessionManagementController {
       this.host.state().deletingSessionId ||
       this.host.state().clearingHidden ||
       this.host.state().sessionDeleteReviewRequired ||
-      sessionId === this.host.state().sessionId ||
       !hidden
     )
       return null;
     const preserveQuery = this.host.state().sessionQuery;
     const preserveOffset = this.host.state().sessionListNextOffset;
     const preserveTotal = this.host.state().sessionListTotal;
+    let resumeReads: (() => void) | undefined;
     this.host.patch({ deletingSessionId: sessionId, sessionDeleteError: null });
     try {
       // Hiding is an optimistic preference write. Fence it before DELETE so a
@@ -202,6 +203,7 @@ export class SessionManagementController {
         return null;
       }
       const preferenceOwners = this.host.capturePreferenceOwners();
+      resumeReads = this.host.pauseSessionReads(new Set([sessionId]));
       const result = await api.deleteSession(sessionId);
       if (!ownsTransport()) return null;
       const deleted = new Set([sessionId]);
@@ -251,6 +253,7 @@ export class SessionManagementController {
     } finally {
       if (ownsTransport() && this.host.state().deletingSessionId === sessionId)
         this.host.patch({ deletingSessionId: null });
+      resumeReads?.();
     }
   };
 
@@ -279,6 +282,7 @@ export class SessionManagementController {
     const preserveQuery = this.host.state().sessionQuery;
     const preserveOffset = this.host.state().sessionListNextOffset;
     const preserveTotal = this.host.state().sessionListTotal;
+    let resumeReads: (() => void) | undefined;
     this.host.patch({ clearingHidden: true, sessionDeleteError: null });
     try {
       // Hiding is optimistic. Fence every outstanding curation write before
@@ -320,6 +324,7 @@ export class SessionManagementController {
       }
 
       const preferenceOwners = this.host.capturePreferenceOwners();
+      resumeReads = this.host.pauseSessionReads(reviewed);
       const result = await api.clearHiddenSessions(sessionIds, projectCwd);
       if (!ownsTransport()) return null;
       const deleted = new Set(
@@ -403,6 +408,7 @@ export class SessionManagementController {
       return null;
     } finally {
       if (ownsTransport()) this.host.patch({ clearingHidden: false });
+      resumeReads?.();
     }
   };
 }

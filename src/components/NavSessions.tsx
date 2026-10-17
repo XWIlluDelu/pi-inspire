@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { memo } from "react";
 import {
+  isBusyRunState,
   projectNameFromCwd,
   type SessionSummary,
 } from "../../shared/contracts";
@@ -51,7 +52,6 @@ export const SessionRow = memo(function SessionRow({
   onDelete?: (session: SessionSummary) => void;
 }) {
   const {
-    activeSessionId,
     openingSessionId,
     pinned,
     individuallyHidden,
@@ -62,7 +62,6 @@ export const SessionRow = memo(function SessionRow({
     clearingHidden,
   } = useAppState(
     (state) => ({
-      activeSessionId: state.sessionId,
       openingSessionId: state.openingSessionId,
       pinned: state.prefs.pinnedSessionIds.includes(session.id),
       individuallyHidden: state.prefs.hiddenSessionIds.includes(session.id),
@@ -74,7 +73,6 @@ export const SessionRow = memo(function SessionRow({
     }),
     shallowEqual,
   );
-  const active = session.id === activeSessionId;
   const selected = session.id === selectedSessionId;
   const opening = openingSessionId === session.id;
   const hidden = individuallyHidden || projectHidden;
@@ -82,28 +80,22 @@ export const SessionRow = memo(function SessionRow({
     conflicted,
     indicator,
     externalLabel,
-    busy,
     label: indicatorLabel,
   } = presentSessionActivity(runtimeStatus, externalActivity);
+  const busy = runtimeStatus ? isBusyRunState(runtimeStatus.runState) : false;
   const deleteDisabled =
-    active ||
     opening ||
     busy ||
-    externalActivity !== undefined ||
     conflicted ||
     deletingSessionId !== null ||
     clearingHidden;
-  const deleteTitle = active
-    ? "Switch to another session before deleting"
-    : conflicted
-      ? "Resolve the session conflict before deleting"
-      : externalActivity !== undefined
-        ? "Close the Pi terminal session before deleting"
-        : busy
-          ? "Wait for this session to finish working"
-          : opening
-            ? "Wait for this session to finish opening"
-            : "Delete session";
+  const deleteTitle = conflicted
+    ? "Resolve the session conflict before deleting"
+    : busy
+      ? "Wait for this session to finish working"
+      : opening
+        ? "Wait for this session to finish opening"
+        : "Delete session";
   // Yellow stays on while a session works or needs external-change recovery,
   // including the visible one; green and red are unseen completion attention
   // and clear once the row is viewed.
@@ -140,6 +132,7 @@ export const SessionRow = memo(function SessionRow({
         <span className="nav__row-title">
           {opening ? (
             <span
+              className="nav__row-state"
               role="img"
               aria-label="Opening session"
               title="Opening session"

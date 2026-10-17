@@ -22,6 +22,7 @@ import {
   projectNameFromCwd,
   type RunState,
 } from "../../shared/contracts";
+import { branchActionsBlocked } from "../controllers/branch-controller";
 import { type ChatMessage, userMessageDisplayText } from "../events";
 import { gitChangeCount, gitHeadLabel } from "../git-presentation";
 import { shallowEqual, store, useAppState } from "../store";
@@ -65,14 +66,16 @@ function StatusChip({
   className,
   label,
   title = label,
+  role,
 }: {
   children?: React.ReactNode;
   className: string;
   label: string;
   title?: string;
+  role?: "status";
 }) {
   return (
-    <span className={className} title={title}>
+    <span className={className} title={title} role={role}>
       {children}
       <span className="chip__label chip__label--responsive">{label}</span>
     </span>
@@ -168,7 +171,7 @@ const SessionIdent = memo(function SessionIdent({
     cwd,
     project,
     projectDisplay,
-    cloneBusy,
+    cloneDisabled,
     readOnlyReason,
   } = useAppState((state) => {
     const catalogTitle = state.sessions.find(
@@ -186,7 +189,7 @@ const SessionIdent = memo(function SessionIdent({
       cwd: state.cwd,
       project: state.cwd ? projectNameFromCwd(state.cwd) : null,
       projectDisplay: state.prefs.projectDisplay,
-      cloneBusy: state.branchActionId !== null || state.branchTreeLoading,
+      cloneDisabled: branchActionsBlocked(state),
       readOnlyReason: state.readOnlyReason,
     };
   }, shallowEqual);
@@ -325,13 +328,20 @@ const SessionIdent = memo(function SessionIdent({
         {menuOpen && !readOnlyReason ? (
           <SessionActionsMenu
             anchorRef={titleRef}
-            cloneDisabled={cloneBusy}
+            cloneDisabled={cloneDisabled}
             onClose={closeMenu}
             onRename={startRename}
             onClone={() => {
-              closeMenu();
-              titleRef.current?.focus({ preventScroll: true });
-              void store.cloneCurrentBranch();
+              const trigger = document.activeElement;
+              void store.cloneCurrentBranch().then((cloned) => {
+                if (!cloned) return;
+                const returnFocus =
+                  document.activeElement === trigger ||
+                  document.activeElement === document.body;
+                closeMenu();
+                if (returnFocus)
+                  titleRef.current?.focus({ preventScroll: true });
+              });
             }}
             onExport={() => {
               closeMenu();
@@ -455,8 +465,11 @@ export const AppTopbar = memo(function AppTopbar({
                           : "Connecting";
               return (
                 <StatusChip
-                  className={`chip chip--warning ${failure ? "" : "chip--live"}`}
+                  className={
+                    failure ? "chip chip--warning" : "topbar__connection"
+                  }
                   label={label}
+                  role="status"
                 >
                   {failure ? (
                     <AlertTriangle size={12} aria-hidden />
