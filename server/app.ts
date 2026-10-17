@@ -36,6 +36,15 @@ import {
 } from "../shared/resource-references.js";
 import { emptyToolPresentationConfiguration } from "../shared/tool-presentation-config.js";
 import type { AttachmentStore } from "./attachments.js";
+import {
+  BrowserAuth,
+  canonicalOrigin,
+  challengeSchema,
+  exchangeSchema,
+  registrationSchema,
+  socketTicketSchema,
+  secretMatches as tokenMatches,
+} from "./browser-auth.js";
 import { GeneratedExportStore } from "./generated-exports.js";
 import type { GitInspectionLike } from "./git-inspection.js";
 import { listHostDirectories, listHostRoots } from "./host-dirs.js";
@@ -72,15 +81,6 @@ import {
   type UpdateCoordinatorLike,
 } from "./update-coordinator.js";
 
-import {
-  BrowserAuth,
-  canonicalOrigin,
-  challengeSchema,
-  exchangeSchema,
-  registrationSchema,
-  secretMatches as tokenMatches,
-  socketTicketSchema,
-} from "./browser-auth.js";
 const updateSnoozeSchema = z
   .object({
     identity: z
@@ -101,6 +101,7 @@ const clearHiddenSchema = z
       .array(z.string().min(1).max(MAX_SESSION_ID_CHARS))
       .min(1)
       .max(MAX_CURATED_SESSION_RESULTS),
+    projectCwd: z.string().min(1).max(4_096).optional(),
   })
   .strict();
 const newSchema = z
@@ -1120,10 +1121,25 @@ export function createInspireServer(deps: AppDependencies): {
     }
   });
   app.post("/api/sessions/clear-hidden", async (request, response) => {
-    const { sessionIds } = clearHiddenSchema.parse(request.body);
+    const { sessionIds, projectCwd } = clearHiddenSchema.parse(request.body);
     const current = await deps.preferences.inspect();
-    const reviewedHiddenSessionIds = current.preferences.hiddenSessionIds;
-    const reviewedHiddenProjectCwds = current.preferences.hiddenProjectCwds;
+    if (
+      projectCwd !== undefined &&
+      !current.preferences.hiddenProjectCwds.includes(projectCwd)
+    ) {
+      return response.status(409).json({
+        error: "The folder is no longer hidden; review it before deleting",
+        code: "HIDDEN_SELECTION_CHANGED",
+      });
+    }
+    // The optional scope is an existing Hidden folder, never an arbitrary cwd
+    // or a client-supplied subset of the catalog. Runtime validates every id.
+    const reviewedHiddenSessionIds =
+      projectCwd === undefined ? current.preferences.hiddenSessionIds : [];
+    const reviewedHiddenProjectCwds =
+      projectCwd === undefined
+        ? current.preferences.hiddenProjectCwds
+        : [projectCwd];
     if (
       reviewedHiddenSessionIds.length === 0 &&
       reviewedHiddenProjectCwds.length === 0

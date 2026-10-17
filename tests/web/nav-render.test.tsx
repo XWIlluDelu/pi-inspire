@@ -139,7 +139,10 @@ describe("session navigation controls", () => {
         );
         for (const session of targets) deletedSessions.add(session.id);
         const prefs = store.getState().prefs;
-        const hiddenProjectCwds = new Set(prefs.hiddenProjectCwds);
+        const projectCwd = jsonBody(init).projectCwd as string | undefined;
+        const hiddenProjectCwds = new Set(
+          projectCwd === undefined ? prefs.hiddenProjectCwds : [projectCwd],
+        );
         return {
           body: {
             deleted: targets.map((session) => ({
@@ -151,11 +154,16 @@ describe("session navigation controls", () => {
               pinnedSessionIds: prefs.pinnedSessionIds.filter(
                 (id) => !sessionIds.has(id),
               ),
-              hiddenSessionIds: [],
+              hiddenSessionIds:
+                projectCwd === undefined
+                  ? []
+                  : prefs.hiddenSessionIds.filter((id) => !sessionIds.has(id)),
               pinnedProjectCwds: prefs.pinnedProjectCwds.filter(
                 (cwd) => !hiddenProjectCwds.has(cwd),
               ),
-              hiddenProjectCwds: [],
+              hiddenProjectCwds: prefs.hiddenProjectCwds.filter(
+                (cwd) => !hiddenProjectCwds.has(cwd),
+              ),
               navCollapsedGroups: prefs.navCollapsedGroups.filter(
                 (cwd) => !hiddenProjectCwds.has(cwd),
               ),
@@ -646,6 +654,86 @@ describe("session navigation controls", () => {
     expect(deletedSessions).toEqual(new Set(["beta", "gamma"]));
     expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
     expect(store.getState().prefs.hiddenProjectCwds).toEqual([]);
+  });
+
+  it("clears one hidden folder without deleting other folders or independent hidden sessions", async () => {
+    const other = sessionSummary({
+      id: "gamma",
+      title: "Other folder",
+      cwd: "/work/gamma",
+    });
+    const standalone = sessionSummary({
+      id: "standalone",
+      title: "Independent",
+      cwd: "/work/independent",
+    });
+    extraSessions = [other, standalone];
+    render(
+      <Nav
+        collapsed={false}
+        onToggleNavigation={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+      />,
+    );
+    await store.refreshSessions();
+    await screen.findByText("Independent");
+    fireEvent.click(list().getByRole("button", { name: "Hide folder beta" }));
+    fireEvent.click(list().getByRole("button", { name: "Hide folder gamma" }));
+    fireEvent.click(list().getByRole("button", { name: 'Hide "Independent"' }));
+    fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Delete all sessions in folder beta",
+      }),
+    );
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Clear hidden folder?",
+    });
+    expect(within(dialog).getByText("beta · 1 session")).toBeTruthy();
+    expect(
+      within(dialog).getByText(
+        /Other hidden sessions and folders are unchanged/,
+      ),
+    ).toBeTruthy();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Delete 1 session" }),
+    );
+    await waitFor(() => expect(deletedSessions).toEqual(new Set([beta.id])));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(store.getState().prefs.hiddenProjectCwds).toEqual([other.cwd]);
+    expect(store.getState().prefs.hiddenSessionIds).toEqual([standalone.id]);
+    expect(store.getState().sessionId).toBe(alpha.id);
+  });
+
+  it("blocks deletion for the selected hidden folder without blocking an unrelated idle folder", async () => {
+    render(
+      <Nav
+        collapsed={false}
+        onToggleNavigation={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+      />,
+    );
+    fireEvent.click(list().getByRole("button", { name: "Hide folder alpha" }));
+    fireEvent.click(list().getByRole("button", { name: "Hide folder beta" }));
+    fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+    expect(
+      screen
+        .getByRole("button", { name: "Clear Hidden" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    const selected = screen.getByRole("button", {
+      name: "Delete all sessions in folder alpha",
+    });
+    const idle = screen.getByRole("button", {
+      name: "Delete all sessions in folder beta",
+    });
+    expect(selected.hasAttribute("disabled")).toBe(true);
+    await waitFor(() => expect(idle).toBeEnabled());
+    fireEvent.click(idle);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(deletedSessions.size).toBe(0);
   });
 
   it("deletes only through Hidden after an explicit confirmation", async () => {

@@ -1,8 +1,8 @@
 /* --- Left navigation --- */
 
 .nav {
-  /* Shared 16px icon slot, 8px label gap and 4px inner inset. */
-  --nav-label-inset: calc(var(--space-1) + var(--space-4) + var(--space-2));
+  /* Shared 16px icon slot, 8px label gap and 8px inner inset. */
+  --nav-label-inset: calc(var(--space-2) + var(--space-4) + var(--space-2));
   width: var(--nav-w);
   flex: 0 0 auto;
   display: flex;
@@ -425,6 +425,7 @@
     flex: 0 0 auto;
     transform: none;
     gap: 2px;
+    margin-right: 4px;
     opacity: 1;
     pointer-events: auto;
   }
@@ -519,9 +520,11 @@
 
 /* The actions occupy this column; the meta yields rather than sitting under
    them. */
-.nav__row:hover .nav__row-meta,
-.nav__row:focus-within .nav__row-meta {
-  opacity: 0;
+@media (hover: hover) and (min-width: 601px) {
+  .nav__row:hover .nav__row-meta,
+  .nav__row:focus-within .nav__row-meta {
+    opacity: 0;
+  }
 }
 
 .nav__row-age {
@@ -657,9 +660,10 @@
   margin-top: var(--space-2);
 }
 
-/* Hidden's direct sessions share its label axis; nested folders add one step. */
+/* Independent Hidden sessions start shallower than folder contents, so a
+   preceding collapsed folder does not appear to own the following row. */
 .nav__hidden-content > .nav__row > .nav__row-main {
-  padding-left: var(--nav-label-inset);
+  padding-left: var(--space-4);
 }
 
 .nav__hidden-content > .nav__group > .nav__row > .nav__row-main {
@@ -1054,7 +1058,7 @@ button.workspace-tree__status:hover {
 
 .nav__group--pinned > .nav__group-title {
   gap: var(--space-2);
-  padding: 0 var(--space-2) 0 var(--space-1);
+  padding: 0 var(--space-2);
 }
 
 /* A collapsed folder hiding the active session carries the highlight. */
@@ -1083,11 +1087,16 @@ button.workspace-tree__status:hover {
   border: 0;
   border-radius: inherit;
   background: transparent;
-  padding: 0 var(--space-2) 0 var(--space-1);
+  /* Reserve a clear gutter beside the inset active marker. */
+  padding: 0 var(--space-2);
   font: inherit;
   color: inherit;
   cursor: pointer;
   text-align: left;
+}
+
+.nav__group-toggle > svg {
+  flex: 0 0 auto;
 }
 
 .nav__group-toggle:focus-visible {
@@ -1138,7 +1147,7 @@ button.workspace-tree__status:hover {
   opacity: 0;
 }
 
-@media (hover: none) {
+@media (hover: none), (max-width: 600px) {
   .nav__group-title {
     height: 36px;
   }
@@ -1148,12 +1157,14 @@ button.workspace-tree__status:hover {
   }
 
   .nav__group-title--folder .nav__group-actions {
+    gap: 2px;
     opacity: 1;
     pointer-events: auto;
   }
 
   .nav__group-title--folder .nav__group-count {
-    opacity: 0;
+    /* Actions already reserve their column; a hidden count must not reserve it twice. */
+    display: none;
   }
 }
 
