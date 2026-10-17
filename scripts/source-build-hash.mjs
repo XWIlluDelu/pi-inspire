@@ -13,7 +13,13 @@ const buildInputs = [
   "tsconfig.json",
   "tsconfig.web.json",
   "tsconfig.server.json",
+  "package.json",
   "package-lock.json",
+  "scripts/build-web.mjs",
+  "scripts/web-build-output.mjs",
+  "scripts/vite-license-notices.ts",
+  "scripts/vite-pdf-assets.ts",
+  "scripts/licenses",
 ];
 
 async function filesUnder(root, relativePath) {
@@ -35,7 +41,7 @@ async function filesUnder(root, relativePath) {
   return nested.flat();
 }
 
-/** Fingerprints exactly the source inputs that can alter the Vite client.
+/** Fingerprint the source and build inputs that can alter the Vite client.
  * The source launcher and ordinary build command share this implementation so
  * a successful source build never triggers a redundant client rebuild. */
 export async function sourceBuildHash(root = defaultRoot) {

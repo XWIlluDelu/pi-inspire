@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { publishWebBuild } from "../../scripts/web-build-output.mjs";
+import { sourceBuildHash } from "../../scripts/source-build-hash.mjs";
 
 const temporaryDirectories = [];
 
@@ -36,6 +37,29 @@ afterEach(async () => {
       .splice(0)
       .map((path) => rm(path, { recursive: true, force: true })),
   );
+});
+
+describe("source build freshness", () => {
+  it("invalidates the cached build when its asset plugin changes", async () => {
+    const root = await directory("inspire-build-inputs-");
+    await put(
+      root,
+      "vite.config.ts",
+      'import { pdfAssets } from "./scripts/vite-pdf-assets.js";\n',
+    );
+    await put(
+      root,
+      "scripts/vite-pdf-assets.ts",
+      'export const prefix = "assets/pdfjs-old/";\n',
+    );
+    const before = await sourceBuildHash(root);
+    await put(
+      root,
+      "scripts/vite-pdf-assets.ts",
+      'export const prefix = "assets/pdfjs-new/";\n',
+    );
+    assert.notEqual(await sourceBuildHash(root), before);
+  });
 });
 
 describe("web build publication", () => {

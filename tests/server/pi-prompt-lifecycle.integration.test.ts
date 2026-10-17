@@ -59,8 +59,9 @@ describe("native prompt admission and extension dialogs", () => {
     await vi.waitFor(() =>
       expect(eventsOf(f.piEvents, "compaction_start")).toHaveLength(1),
     );
+    // Pi reports the entire active run, including preflight, as streaming.
     expect(await f.workers[0]!.request({ type: "get_state" })).toMatchObject({
-      isStreaming: false,
+      isStreaming: true,
       isCompacting: true,
     });
     const follow = {
@@ -147,7 +148,7 @@ describe("native prompt admission and extension dialogs", () => {
     expect(eventsOf(f.piEvents, "agent_start")).toHaveLength(0);
     await expect(worker.request({ type: "get_state" })).resolves.toMatchObject({
       sessionId: f.sessionId,
-      isStreaming: false,
+      isStreaming: true,
       isCompacting: true,
     });
     expect(f.observations[0]).toMatchObject({
