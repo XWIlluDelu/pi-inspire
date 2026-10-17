@@ -43,6 +43,7 @@ import {
   type HostNativeCommandResponse,
   isBusyRunState,
   MAX_PROJECT_FILES,
+  MAX_PROMPT_CHARS,
   MAX_SESSION_ID_CHARS,
   type ModelOption,
   type NewSessionDefaults,
@@ -88,6 +89,8 @@ import {
   revalidateProjectFiles,
 } from "./runtime-composer-artifacts.js";
 import { RuntimeEventController } from "./runtime-events.js";
+import type { ConnectExternalSession } from "./external-session.js";
+import { RuntimeExternalSessions } from "./runtime-external-sessions.js";
 import { RuntimeExtensionUiController } from "./runtime-extension-ui.js";
 import {
   compactionMatcher,
@@ -180,7 +183,6 @@ const BRANCH_EXTENSION_PATH = fileURLToPath(
     import.meta.url,
   ),
 );
-const MAX_PROMPT_CHARS = 500_000;
 const MAX_DEFERRED_PROMPTS = 16;
 const MAINTENANCE_RESTART_LEASE_MS = 30_000;
 const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
@@ -339,6 +341,8 @@ export interface RuntimeLike {
   ): Promise<HostNativeCommandResponse>;
   extensionUiResponse(response: Record<string, unknown>): Promise<void>;
   snapshot(sessionId?: string | null): Promise<ActiveSnapshot>;
+  /** Retain a subscribed view without selecting it or starting a worker. */
+  retainSessionView?(sessionId: string): () => void;
   lastAssistantText(
     sessionId: string,
     viewId: string,
@@ -400,6 +404,7 @@ interface ForkReservation {
 
 export class RuntimeController extends EventEmitter implements RuntimeLike {
   private readonly slots = new Map<string, RuntimeSlot>();
+  private readonly sessionViewObservers = new Map<string, number>();
   private readonly workerStatuses = new WeakMap<
     PiRpcProcess,
     RuntimeWorkerStatus
@@ -425,6 +430,29 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     RuntimeSlot,
     Promise<void>
   >();
+
+  private externalSessions: RuntimeExternalSessions | null = null;
+
+  setExternalSessionConnector(connector: ConnectExternalSession): this {
+    this.externalSessions?.close();
+    this.externalSessions = new RuntimeExternalSessions(
+      connector,
+      {
+        current: (slot) => !this.closing && this.slots.get(slot.id) === slot,
+        emit: (slot, event) => this.emitSlotEvent(slot, event),
+        reconcile: (slot) => this.reconcileSlot(slot, true),
+        assertUsable: (slot) => {
+          if (this.deletions.isDeleting(slot.id))
+            throw requestError("That session is being deleted", 409);
+          this.throwIfConflicted(slot);
+        },
+        log: (slot, error) =>
+          this.logRuntimeError(slot.id, error, "external_session_connection"),
+      },
+      this.attachments,
+    );
+    return this;
+  }
 
   setModelMetadataCatalog(catalog: ModelMetadataCatalog): this {
     this.modelMetadata = catalog;
@@ -526,6 +554,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.forkReservationsByPath.has(path),
       slot: (sessionId) => this.slots.get(sessionId),
       removeSlot: (sessionId, expected) => {
+        this.externalSessions?.detach(expected);
         if (this.slots.get(sessionId) === expected)
           this.slots.delete(sessionId);
       },
@@ -712,6 +741,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.workerPool = new RuntimeWorkerPool({
       isClosing: () => this.closing,
       selectedSessionId: () => this.selectedSessionId,
+      isObserved: (sessionId) => this.sessionViewObservers.has(sessionId),
       slots: () => this.slots.values(),
       isOpening: (sessionId) => this.opening.has(sessionId),
       isLoading: (sessionId) => this.loadingSlots.has(sessionId),
@@ -811,10 +841,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private hasActiveRuntimeWork(): boolean {
     return [...this.slots.values()].some(
       (slot) =>
-        isBusyRunState(slot.runState) ||
-        slot.runState === "conflict" ||
-        slot.pendingExtensionUiRequests.size > 0 ||
-        slot.pendingQueues.totalCount > 0,
+        !this.externalSessions?.has(slot) &&
+        (isBusyRunState(slot.runState) ||
+          slot.runState === "conflict" ||
+          slot.pendingExtensionUiRequests.size > 0 ||
+          slot.pendingQueues.totalCount > 0),
     );
   }
 
@@ -1342,6 +1373,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot: RuntimeSlot,
   ): Promise<RuntimeSlot & { process: PiRpcProcess }> {
     this.requireWorkspace(slot);
+    if (this.externalSessions?.has(slot))
+      throw requestError(
+        "Use the Pi terminal for this action while this session is running there.",
+        409,
+      );
     return this.workerLifecycle.ensureFreshWriter(slot);
   }
 
@@ -1548,7 +1584,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     } else {
       indicator = slot.attention ?? undefined;
     }
-    const needsInput = this.extensionUi.pendingRequests(slot).length > 0;
+    const needsInput =
+      this.extensionUi.pendingRequests(slot).length > 0 ||
+      this.externalSessions?.needsInput(slot) === true;
     if (needsInput) indicator = "attention";
     return {
       runState: slot.runState,
@@ -2120,9 +2158,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const pending = this.opening.get(slot.id);
     if (pending) return pending;
 
-    const opening = this.mutateSlot(slot, async () =>
-      this.ensureFreshWriterInsideGate(slot),
-    );
+    const opening = this.mutateSlot(slot, async () => {
+      if (!slot.process && (await this.externalSessions?.connect(slot)))
+        return slot;
+      return this.ensureFreshWriterInsideGate(slot);
+    });
     this.opening.set(slot.id, opening);
     try {
       return await opening;
@@ -2485,8 +2525,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     onDispatched?: () => void,
   ): Promise<ComposerHistoryEntry | null> {
     const slot = this.requireSlot(request.sessionId);
-    const entered = request.message.trim();
     const stopEpoch = slot.inputStopEpoch;
+    if (this.externalSessions && !slot.process) {
+      await this.ensureProcess(slot);
+      if (this.externalSessions.has(slot))
+        return this.useSlot(slot, () =>
+          this.deliverySlot(slot, () =>
+            this.externalSessions!.prompt(slot, request, stopEpoch),
+          ),
+        );
+    }
+    const entered = request.message.trim();
     const navigationEpoch = slot.deliveryNavigationEpoch;
     if (slot.stoppingInput)
       throw requestError(
@@ -3852,6 +3901,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private async abortInside(sessionId: string): Promise<PendingRecovery> {
+    const externalSlot = this.requireSlot(sessionId);
+    if (this.externalSessions?.has(externalSlot)) {
+      await this.externalSessions.abort(externalSlot);
+      return { steering: [], followUp: [] };
+    }
     const initialSlot = this.requireSlot(sessionId);
     if (initialSlot.conflict) {
       await this.useSlot(initialSlot, async () => {
@@ -4356,6 +4410,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private async renameInside(sessionId: string, name: string): Promise<void> {
     const slot = this.requireSlot(sessionId);
+    if (this.externalSessions && !slot.process) {
+      await this.ensureProcess(slot);
+      if (this.externalSessions.has(slot)) {
+        await this.externalSessions.command(
+          slot,
+          `/name ${name.trim().slice(0, 160)}`,
+        );
+        this.catalog.invalidate();
+        return;
+      }
+    }
     await this.mutateSlot(slot, async () => {
       const ready = await this.ensureFreshWriterInsideGate(slot);
       const persistedName = name.trim().slice(0, 160);
@@ -4762,6 +4827,24 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
+  retainSessionView(sessionId: string): () => void {
+    this.sessionViewObservers.set(
+      sessionId,
+      (this.sessionViewObservers.get(sessionId) ?? 0) + 1,
+    );
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const remaining = (this.sessionViewObservers.get(sessionId) ?? 1) - 1;
+      if (remaining > 0) this.sessionViewObservers.set(sessionId, remaining);
+      else {
+        this.sessionViewObservers.delete(sessionId);
+        this.scheduleIdleWorkerEviction();
+      }
+    };
+  }
+
   async snapshot(sessionId?: string | null): Promise<ActiveSnapshot> {
     if (sessionId) {
       this.assertNotClosing();
@@ -4828,6 +4911,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.maintenanceRestartTimer = null;
     this.maintenanceRestart = null;
     this.closing = true;
+    this.externalSessions?.close();
     this.selectionSequence += 1;
     this.closePromise = this.closeInside();
     return this.closePromise;

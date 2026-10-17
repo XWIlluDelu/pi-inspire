@@ -13,6 +13,7 @@ export const MAX_IDLE_WORKERS = 3;
 interface RuntimeWorkerPoolHost {
   isClosing(): boolean;
   selectedSessionId(): string | null;
+  isObserved(sessionId: string): boolean;
   slots(): Iterable<RuntimeSlot>;
   isOpening(sessionId: string): boolean;
   isLoading(sessionId: string): boolean;
@@ -94,6 +95,7 @@ export class RuntimeWorkerPool {
   private isRetirableDormantSlot(slot: RuntimeSlot): boolean {
     return (
       slot.id !== this.host.selectedSessionId() &&
+      !this.host.isObserved(slot.id) &&
       !slot.process &&
       !slot.stopping &&
       slot.activeOperations === 0 &&
@@ -155,6 +157,7 @@ export class RuntimeWorkerPool {
       slot.process &&
         slot.ready &&
         slot.id !== this.host.selectedSessionId() &&
+        !this.host.isObserved(slot.id) &&
         !isBusyRunState(slot.runState) &&
         slot.pendingExtensionUiRequests.size === 0 &&
         slot.pendingQueues.totalCount === 0 &&

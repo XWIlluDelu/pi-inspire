@@ -92,7 +92,7 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Herdr topology for Inspire-owned RPC workers, never an agent/TUI adapter. */
+/** Addressed Herdr control; only explicitly allocated worker panes are owned. */
 export class HerdrClient {
   private readonly binary: string;
   private readonly environment: NodeJS.ProcessEnv;
@@ -612,6 +612,29 @@ export class HerdrClient {
         };
       }),
     };
+  }
+
+  /** Native-agent control never adds the pane to the owned-pane registry. */
+  async nativeAgentRequest(
+    serverId: string,
+    paneId: string,
+    method:
+      | "agent.get"
+      | "agent.read"
+      | "agent.prompt"
+      | "agent.send_keys"
+      | "pane.send_text",
+    params: Record<string, unknown> = {},
+  ): Promise<Record<string, unknown>> {
+    const control = await this.connection();
+    if (control.identity !== serverId)
+      throw new Error("The Herdr server for this Pi session has changed");
+    return control.request(method, {
+      ...params,
+      ...(method === "pane.send_text"
+        ? { pane_id: paneId }
+        : { target: paneId }),
+    });
   }
 
   async closePane(pane: HerdrWorkerPane): Promise<void> {
