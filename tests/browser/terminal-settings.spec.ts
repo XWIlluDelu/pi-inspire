@@ -21,7 +21,7 @@ async function openTerminalSettings(page: Page) {
 }
 
 test.use({ serviceWorkers: "block" });
-for (const width of [1280, 320]) {
+for (const width of [1280, 390, 320]) {
   test.describe(`terminal settings · ${width}px`, () => {
     test.use({ viewport: { width, height: 900 }, hasTouch: width < 600 });
     test("isolates categories, resets their scroll and excludes hidden controls from Tab", async ({
@@ -34,8 +34,55 @@ for (const width of [1280, 320]) {
         }),
       );
       await pairAndOpen(page);
+      await page.getByRole("button", { name: "Settings", exact: true }).click();
+      const sharedInsets = await page
+        .getByRole("dialog", { name: "Settings", exact: true })
+        .evaluate((el) =>
+          [".settings__header", ".settings__content", ".settings__footer"].map(
+            (selector) => {
+              const style = getComputedStyle(el.querySelector(selector)!);
+              return [style.paddingLeft, style.paddingRight];
+            },
+          ),
+        );
+      await page
+        .getByRole("button", { name: "Close settings", exact: true })
+        .click();
       const settings = await openTerminalSettings(page);
+      expect(
+        await settings.evaluate((el) =>
+          [
+            ".terminal-settings__header",
+            ".terminal-settings__body",
+            ".terminal-settings__footer",
+          ].map((selector) => {
+            const style = getComputedStyle(el.querySelector(selector)!);
+            return [style.paddingLeft, style.paddingRight];
+          }),
+        ),
+      ).toEqual(sharedInsets);
       if (width < 600) {
+        const choices = await settings
+          .locator(".settings__field:has(.segmented)")
+          .evaluateAll((fields) =>
+            fields.map((field) => {
+              const label = field
+                .querySelector(".settings__field-label")!
+                .getBoundingClientRect();
+              const control = field
+                .querySelector(".segmented")!
+                .getBoundingClientRect();
+              return {
+                x: control.x,
+                width: control.width,
+                belowLabel: control.top >= label.bottom,
+              };
+            }),
+          );
+        expect(choices).toHaveLength(2);
+        expect(choices.every((choice) => choice.belowLabel)).toBe(true);
+        expect(choices[0]!.x).toBe(choices[1]!.x);
+        expect(choices[0]!.width).toBe(choices[1]!.width);
         const frame = (await settings.boundingBox())!;
         const available = await settings.locator("..").evaluate((el) => {
           const style = getComputedStyle(el);

@@ -23,7 +23,6 @@ function transcript(messages: ChatMessage[], streaming = false) {
       thinkingVisibility="hidden"
       toolVisibility="hidden"
       activityFoldVisibility="collapsed"
-      assistantRoundDisplay="divider"
     />
   );
 }
@@ -80,7 +79,6 @@ describe("Pi assistant errors", () => {
         thinkingVisibility="expanded"
         toolVisibility="expanded"
         activityFoldVisibility="collapsed"
-        assistantRoundDisplay="divider"
       />,
     );
     expect(screen.getByText("first passage")).toBeVisible();
@@ -160,6 +158,32 @@ describe("Pi assistant errors", () => {
     expect(error.querySelector("html")).toBeNull();
     fireEvent.click(toggle);
     expect(toggle).toHaveTextContent("Show details");
+  });
+
+  it("keeps a complete reason paragraph readable without trailing ellipsis, with diagnostics on demand", () => {
+    const reason = "fetch failed\nThe provider closed the connection.";
+    render(
+      transcript([
+        {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorMessage:
+            reason + "\n\nDiagnostic line: provider connection reset",
+        },
+      ]),
+    );
+    const error = screen.getByRole("group", { name: "PI error" });
+    expect(error.querySelector(".assistant-error__message")?.textContent).toBe(
+      reason,
+    );
+    expect(error).not.toHaveTextContent("Diagnostic line");
+    fireEvent.click(
+      within(error).getByRole("button", { name: "Show details" }),
+    );
+    expect(error).toHaveTextContent(
+      "Diagnostic line: provider connection reset",
+    );
   });
 
   it("offers details for many short lines, but no disclosure for a short error", () => {

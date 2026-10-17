@@ -118,6 +118,17 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
   const card = page.getByRole("region", { name: "Shell command" });
   await expect(card).toBeVisible();
   await expect(card.getByText("Running", { exact: true })).toBeVisible();
+  const sectionSpacing = await card.evaluate((el) => {
+    const head = el
+      .querySelector(".shell-execution__header")!
+      .getBoundingClientRect();
+    const command = el
+      .querySelector(".shell-execution__command")!
+      .getBoundingClientRect();
+    return { headerHeight: head.height, gap: command.top - head.bottom };
+  });
+  expect(sectionSpacing.headerHeight).toBe(40);
+  expect(sectionSpacing.gap).toBe(0);
   await expect(card.getByText("Excluded from context")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Abort running task", exact: true }),

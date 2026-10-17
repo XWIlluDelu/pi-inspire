@@ -102,9 +102,8 @@ interface CardHeaderProps {
   controlsId?: string;
 }
 
-/** Activity headers retain one semantic disclosure button while the remaining
- * non-interactive header area shares its toggle. Nested controls keep their
- * own actions without also changing disclosure state. */
+/** A stretched native disclosure owns the header row. Independent copy and
+ * resource controls are siblings above its hit area, never nested buttons. */
 function CardHeader({
   expanded,
   icon,
@@ -120,20 +119,7 @@ function CardHeader({
 }: CardHeaderProps) {
   const action = expanded ? "Collapse" : "Expand";
   return (
-    <div
-      className="card__header"
-      onClick={(event) => {
-        const target = event.target;
-        if (
-          target instanceof Element &&
-          target.closest(
-            "a, button, input, select, textarea, [role='button'], [role='link']",
-          )
-        )
-          return;
-        onToggle();
-      }}
-    >
+    <div className="card__header">
       <button
         type="button"
         className="card__disclosure"
@@ -155,8 +141,7 @@ function CardHeader({
         <span className="card__status">{status}</span>
       </button>
       {summary}
-      <span className="card__header-spacer" aria-hidden />
-      {copyText ? (
+      {expanded && copyText ? (
         <CopyAction
           text={typeof copyText === "string" ? copyText : undefined}
           getText={
@@ -280,8 +265,8 @@ function CollapsibleCard({
         <div
           id={bodyId}
           className={`card__reveal ${bodyOpen ? "card__reveal--open" : ""}`}
-          aria-hidden={!bodyOpen}
-          inert={!bodyOpen}
+          aria-hidden={!open || !bodyOpen}
+          inert={!open || !bodyOpen}
         >
           <div className="card__reveal-inner">
             <div className="card__body">
@@ -320,8 +305,9 @@ export function ThinkingCard({
     () => thinkingPresentationRegistry.resolve(clean),
     [clean, thinkingPresentationRegistry],
   );
+  const hasContent = Boolean(clean.trim()) || presentation !== null;
   const dynamicOpen = useDynamicCardOpen(
-    visibility === "dynamic",
+    visibility === "dynamic" && hasContent,
     dynamicActive,
     !dynamicActive,
     DYNAMIC_THINKING_EXPANDED_MIN_MS,
@@ -329,11 +315,13 @@ export function ThinkingCard({
     DYNAMIC_THINKING_CLOSE_DELAY_MS,
   );
   const resolvedVisibility: StaticVisibility =
-    visibility === "dynamic"
-      ? dynamicOpen
-        ? "expanded"
-        : "collapsed"
-      : visibility;
+    !hasContent && visibility !== "hidden"
+      ? "collapsed"
+      : visibility === "dynamic"
+        ? dynamicOpen
+          ? "expanded"
+          : "collapsed"
+        : visibility;
   return (
     <CollapsibleCard
       defaultVisibility={resolvedVisibility}

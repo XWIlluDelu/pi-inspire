@@ -683,7 +683,7 @@ describe("navigation curation", () => {
           body: {
             ...bootstrapPayload().preferences,
             ...jsonBody(init),
-            palette: "teal",
+            palette: "hydrangea",
           },
         };
       }
@@ -692,9 +692,11 @@ describe("navigation curation", () => {
     const { store } = await initStore();
 
     store.setTheme("dark");
-    await vi.waitFor(() => expect(store.getState().prefs.palette).toBe("teal"));
+    await vi.waitFor(() =>
+      expect(store.getState().prefs.palette).toBe("hydrangea"),
+    );
 
-    store.setPalette("amber");
+    store.setPalette("chimonanthus");
     await vi.waitFor(() =>
       expect(
         store
@@ -704,7 +706,7 @@ describe("navigation curation", () => {
           ),
       ).toBe(true),
     );
-    expect(store.getState().prefs.palette).toBe("teal");
+    expect(store.getState().prefs.palette).toBe("hydrangea");
   });
 });
 

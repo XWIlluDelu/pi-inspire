@@ -1,6 +1,5 @@
 import {
   type ActivityFoldVisibilityPreference,
-  type AssistantRoundDisplayPreference,
   type CompletionAttentionPreference,
   type ContentTextSizePreference,
   type DesktopSendKeyPreference,
@@ -388,12 +387,6 @@ export class PreferenceController {
     this.save({ activityFoldVisibility });
   }
 
-  setAssistantRoundDisplay(
-    assistantRoundDisplay: AssistantRoundDisplayPreference,
-  ): void {
-    this.save({ assistantRoundDisplay });
-  }
-
   restoreDefaults(): void {
     this.completionAttentionRequest += 1;
     this.host.clearCompletionAttention();
@@ -430,7 +423,14 @@ export class PreferenceController {
 
   toggleSessionHidden(id: string): void {
     if (this.curationMutationBlocked()) return;
-    const { pinnedSessionIds, hiddenSessionIds } = this.host.state().prefs;
+    const state = this.host.state();
+    const { pinnedSessionIds, hiddenSessionIds, hiddenProjectCwds } =
+      state.prefs;
+    const session = state.sessions.find((candidate) => candidate.id === id);
+    if (session && hiddenProjectCwds.includes(session.cwd)) {
+      void this.restoreSessionFromHiddenFolder(id, session.cwd);
+      return;
+    }
     const hidden = hiddenSessionIds.includes(id);
     this.save({
       hiddenSessionIds: hidden
@@ -444,6 +444,79 @@ export class PreferenceController {
           }
         : {}),
     });
+  }
+
+  private async restoreSessionFromHiddenFolder(
+    id: string,
+    cwd: string,
+  ): Promise<void> {
+    const api = this.host.api();
+    if (!api) return;
+    const generation = this.host.transportGeneration();
+    const owners = this.captureOwners();
+    try {
+      // A visible page or search result is not the complete folder. Resolve its
+      // full catalog membership before leaving the other sessions in Hidden.
+      const { sessions } = await api.sessionsByCwds([cwd]);
+      if (
+        this.host.api() !== api ||
+        this.host.transportGeneration() !== generation
+      )
+        return;
+      const prefs = this.host.state().prefs;
+      if (
+        !prefs.hiddenProjectCwds.includes(cwd) ||
+        this.curationMutationBlocked()
+      )
+        return;
+      if (
+        ["hiddenSessionIds", "hiddenProjectCwds"].some(
+          (field) =>
+            this.fieldOwners.get(field as keyof InspirePreferences) !==
+            owners.get(field as keyof InspirePreferences),
+        )
+      ) {
+        this.host.notify(
+          "info",
+          "Hidden changed while loading this folder. Try restoring the session again.",
+        );
+        return;
+      }
+      const folder = sessions.filter((session) => session.cwd === cwd);
+      if (!folder.some((session) => session.id === id)) {
+        this.host.notify(
+          "warning",
+          "This session is no longer available in the folder. Refresh the session list.",
+        );
+        return;
+      }
+      this.save({
+        hiddenProjectCwds: prefs.hiddenProjectCwds.filter(
+          (item) => item !== cwd,
+        ),
+        hiddenSessionIds: [
+          ...new Set([
+            ...prefs.hiddenSessionIds,
+            ...folder.map((session) => session.id),
+          ]),
+        ].filter((candidate) => candidate !== id),
+      });
+    } catch (error) {
+      if (
+        this.host.api() !== api ||
+        this.host.transportGeneration() !== generation
+      )
+        return;
+      if (error instanceof ApiError && error.status === 401)
+        this.host.handleAuthFailure();
+      else
+        this.host.notify(
+          "error",
+          error instanceof Error
+            ? error.message
+            : "Could not restore the session",
+        );
+    }
   }
 
   toggleProjectPin(cwd: string): void {

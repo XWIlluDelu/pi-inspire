@@ -1,3 +1,4 @@
+import { Puzzle } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -30,12 +31,16 @@ function TextWidget({ display }: { display: ExtensionWidgetDisplay }) {
       role="group"
       aria-label="Extension widget"
     >
+      <div className="extension-display__head">
+        <Puzzle size={13} aria-hidden />
+        <span>Extension</span>
+        <CopyAction
+          text={text}
+          label="extension widget"
+          className="extension-display__copy"
+        />
+      </div>
       <pre className="extension-display__text">{text}</pre>
-      <CopyAction
-        text={text}
-        label="extension widget"
-        className="extension-display__copy"
-      />
     </div>
   );
 }

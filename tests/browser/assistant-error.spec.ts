@@ -53,10 +53,14 @@ test("Pi errors remain visible after reopening and reload, with copyable long de
   ).toBeVisible();
 
   for (const [palette, theme] of [
-    ["amber", "light"],
-    ["amber", "dark"],
-    ["teal", "light"],
-    ["teal", "dark"],
+    ["chimonanthus", "light"],
+    ["chimonanthus", "dark"],
+    ["hydrangea", "light"],
+    ["hydrangea", "dark"],
+    ["wisteria", "light"],
+    ["wisteria", "dark"],
+    ["lycoris", "light"],
+    ["lycoris", "dark"],
   ]) {
     await page.evaluate(
       ({ palette, theme }) => {
@@ -79,6 +83,17 @@ test("Pi errors remain visible after reopening and reload, with copyable long de
           (element) => element.scrollWidth <= element.clientWidth,
         ),
       ).toBe(true);
+      const diagnostics = error.getByRole("region", { name: "Error details" });
+      await diagnostics.focus();
+      await expect(diagnostics).toBeFocused();
+      if (
+        await diagnostics.evaluate((el) => el.scrollHeight > el.clientHeight)
+      ) {
+        await diagnostics.press("PageDown");
+        await expect
+          .poll(() => diagnostics.evaluate((el) => el.scrollTop))
+          .toBeGreaterThan(0);
+      }
       expect(
         (await new AxeBuilder({ page }).include(".assistant-error").analyze())
           .violations,

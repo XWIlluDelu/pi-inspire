@@ -320,11 +320,32 @@ test.describe("scalar default rows", () => {
       expect(defaultBox.y + defaultBox.height).toBeLessThanOrEqual(
         rowBox.y + rowBox.height,
       );
+      const available = settings.locator(".models-available");
+      const groupStart = await available
+        .locator(".model-picker__heading")
+        .first()
+        .evaluate(
+          (el) =>
+            el.getBoundingClientRect().left +
+            Number.parseFloat(getComputedStyle(el).paddingLeft),
+        );
+      const itemStart = (await available
+        .locator(".model-picker__name-text")
+        .first()
+        .boundingBox())!.x;
+      expect(Math.abs(groupStart - itemStart)).toBeLessThanOrEqual(1);
       if (width >= 540) {
         const emptyValue = (await defaults
           .locator(".models-default-result")
           .boundingBox())!;
         expect(emptyValue.x).toBe((await thinking.boundingBox())!.x);
+      } else {
+        // The passive status must not squeeze its description into a narrow
+        // column just to reserve the width of a dropdown that is not present.
+        expect(
+          (await defaults.locator(".models-default-result").boundingBox())!
+            .width,
+        ).toBeLessThan(80);
       }
       expect(
         await settings
@@ -380,6 +401,11 @@ test.describe("touch model editor", () => {
     const body = editor.locator(".models-form__body");
     await expect(search).toBeHidden();
     await expect(editor.getByLabel("Model ID", { exact: true })).toBeFocused();
+    const heading = await editor
+      .locator(".models-editor__header h3")
+      .boundingBox();
+    const firstField = await body.locator("label").first().boundingBox();
+    expect(Math.abs(heading!.x - firstField!.x)).toBeLessThanOrEqual(1);
     expect(await body.evaluate((el) => el.scrollTop)).toBe(0);
     await editor.getByLabel("Display name").fill("Retained draft");
     await nav.getByRole("button", { name: "Display", exact: true }).click();

@@ -1,3 +1,4 @@
+import { Check, Puzzle } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import type {
   ExtensionUiRequest,
@@ -83,7 +84,8 @@ function Selection({
             void store.respondExtensionUi({ id: request.id, value: option })
           }
         >
-          {option}
+          <span className="extension-dialog__choice">{option}</span>
+          {selected === index ? <Check size={15} aria-hidden /> : null}
         </button>
       ))}
     </div>
@@ -276,13 +278,16 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog() {
     <div className="overlay" role="presentation">
       <div
         ref={dialogRef}
-        className="dialog"
+        className="dialog extension-dialog"
         role="dialog"
         aria-modal="true"
         aria-label={request.title || "Pi extension request"}
         aria-busy={responding}
         tabIndex={-1}
       >
+        <div className="extension-dialog__identity">
+          <Puzzle size={14} aria-hidden /> Extension request
+        </div>
         {/* key remounts the form state per request */}
         <DialogBody
           key={`${request.sessionId}:${request.id}`}

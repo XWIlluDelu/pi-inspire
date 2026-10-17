@@ -11,7 +11,7 @@ export async function pairedPage(page: Page) {
 
 export async function openMockSession(page: Page, title: RegExp) {
   const toggle = page.getByRole("button", {
-    name: "Toggle navigation",
+    name: /^(Toggle|Expand|Collapse) navigation$/,
     exact: true,
   });
   if (

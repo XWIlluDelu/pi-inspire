@@ -16,7 +16,7 @@ Inspire is a local graphical workbench for [Pi Coding Agent](https://github.com/
 - **Inspectable activity:** live tool output, native and customizable tool cards, and independent Thinking/tool detail settings. Adaptive mode shows current work and compacts completed activity.
 - **Files and Changes:** browse the workspace, inspect Git diffs, and preview images, Markdown, notebooks, HTML, PDF, source, audio, and video beside the conversation.
 - **Persistent terminals:** project-scoped shell tabs survive browser disconnects and Host-only restarts.
-- **Desktop and narrow layouts:** resizable panes, a command palette, keyboard shortcuts, and Amber/Jade light and dark themes.
+- **Desktop and narrow layouts:** resizable panes, a command palette, keyboard shortcuts, and Wisteria, Hydrangea, Lycoris, Chimonanthus, and classic Jade/Amber palettes, each in light and dark.
 
 <table>
   <tr>
@@ -30,12 +30,12 @@ Inspire is a local graphical workbench for [Pi Coding Agent](https://github.com/
     <td align="center"><em>Settings</em></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/conversation-jade-light.png" alt="Jade light conversation"></td>
+    <td><img src="docs/screenshots/conversation-hydrangea-light.png" alt="Light conversation"></td>
     <td><img src="docs/screenshots/resources-dark.png" alt="Files and resource preview"></td>
-    <td><img src="docs/screenshots/mobile-amber-light.png" alt="390px workbench"></td>
+    <td><img src="docs/screenshots/mobile-chimonanthus-light.png" alt="390px workbench"></td>
   </tr>
   <tr>
-    <td align="center"><em>Jade palette</em></td>
+    <td align="center"><em>Hydrangea palette</em></td>
     <td align="center"><em>Resources</em></td>
     <td align="center"><em>Narrow layout</em></td>
   </tr>
@@ -87,6 +87,7 @@ See [Running and maintaining Inspire](docs/host.md) for service behavior, shell 
 
 - [Pi commands](docs/pi-commands.md): browser controls, compaction/export/reload, and terminal-only commands.
 - [Extension adaptation](docs/extensions.md): supported RPC UI, session lifecycle, text-widget recipes, and source customization.
+- [MCP configuration](docdoki/specs/mcp.md): scoped native server forms, protected values, and explicit Reload.
 - [Tool presentations](docs/tool-presentations.md): local JSON rules for custom tools and Thinking cards, including exact tool-name overrides.
 
 Tools, prompts, models, credentials, and extensions remain configured in Pi. Tool-presentation files customize the GUI; they do not select which extensions run.
@@ -111,7 +112,7 @@ npm run check     # Formatting, lint, types, build, unit and launcher tests
 npm run ci        # Also runs browser tests
 ```
 
-`npm run inspire -- mock` opens the demonstration workspace; choose a separate `INSPIRE_PORT` if the normal Host is running. Development uses a fixed loopback-only token; normal launches use a private installation-scoped token and browser pairing cookie.
+`npm run inspire -- mock` opens the demonstration workspace; choose a separate `INSPIRE_PORT` if the normal Host is running. For the Vite development page, pair once using the fixed loopback-only token `inspire-dev-token`; normal launches pair an origin-scoped browser signing key using a private installation-scoped token. See [browser pairing and migration](docs/host.md#browser-pairing).
 
 The [design overview](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/spec_abstract.md) links to current contracts and open work. [Host operations](docs/host.md#build-and-install-a-package) covers release packaging.
 

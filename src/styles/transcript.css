@@ -125,25 +125,36 @@
   padding: 3px 5px 3px var(--space-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
+  /* A distinct opaque surface stays legible over scrolling conversation content. */
   background: var(--bg-surface);
-  box-shadow: var(--shadow-2);
-  color: var(--faint);
+  box-shadow: var(--shadow-1);
+  color: var(--muted);
   opacity: 1;
   transition:
+    background var(--dur-micro) var(--ease-standard),
     border-color var(--dur-micro) var(--ease-standard),
+    box-shadow var(--dur-micro) var(--ease-standard),
     color var(--dur-micro) var(--ease-standard);
 }
 
 .transcript-search:hover {
-  border-color: var(--line-strong);
-  color: var(--muted);
+  border-color: var(--line);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-1);
+  color: var(--ink);
 }
 
 .transcript-search:focus-within,
 .transcript-search--active {
   opacity: 1;
-  border-color: var(--accent);
+  border-color: var(--accent-deep);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-1);
   color: var(--ink);
+}
+
+.transcript-search output:empty {
+  display: none;
 }
 
 .transcript-search__icon {
@@ -176,6 +187,11 @@
   font-size: var(--text-sm);
 }
 
+.transcript-search input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
 .transcript-search output {
   min-width: 6.5em;
   font-size: var(--text-xs);
@@ -191,7 +207,7 @@
   width: 24px;
   height: 24px;
   border: 0;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -370,7 +386,7 @@
 }
 
 .prompt-map__toggle:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-deep);
   outline-offset: 2px;
 }
 
@@ -438,7 +454,7 @@
 }
 
 .prompt-map__list:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-deep);
   outline-offset: -2px;
   border-radius: var(--radius-sm);
 }
@@ -609,185 +625,120 @@
   }
 }
 
-/* Open activity has independent boundary controls. Collapsed rails and dots
-   share one disclosure, retaining the original visual stack. */
+/* Lightweight activity groups. The preserved paired-track skin lives in
+   legacy-activity.css and is not loaded by the transcript. */
 .activity-fold {
   display: flex;
   min-width: 0;
   flex-direction: column;
+  align-items: stretch;
 }
 
-.activity-fold--collapsed {
-  gap: 0;
-  padding: 0;
-}
-
-.activity-fold__disclosure {
+.activity-fold__disclosure,
+.activity-fold__boundary,
+.activity-fold__omission {
   display: flex;
   width: 100%;
-  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 4px var(--space-1);
   border: 0;
-  padding: 0;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+  text-align: left;
   cursor: pointer;
-  font-family: var(--font-mono);
-}
-
-.activity-fold__rail {
-  position: relative;
-  display: flex;
-  width: 100%;
-  height: 14px;
-  flex: 0 0 14px;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.activity-fold__track {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  pointer-events: none;
-}
-
-.activity-fold__line {
-  display: block;
-  width: 100%;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--hairline);
-  transition: background-color var(--dur-micro) var(--ease-standard);
-}
-
-.activity-fold__telemetry {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  height: 2px;
-  gap: 3px;
-  padding: 0 var(--space-2);
-}
-
-.activity-fold__segment {
-  display: block;
-  flex: 1 1 0;
-  height: 2px;
-  min-width: 2px;
-  border-radius: 1px;
-  opacity: 0.72;
-  transition:
-    opacity var(--dur-micro) var(--ease-standard),
-    transform var(--dur-micro) var(--ease-standard);
-}
-
-.activity-fold:is(.activity-fold--expanded, .activity-fold--compact)
-  .activity-fold__segment {
-  opacity: 0.85;
-}
-
-.activity-fold__segment--thinking {
-  background: var(--activity-think);
-}
-
-.activity-fold__segment--tool {
-  background: var(--activity-tool);
-}
-
-.activity-fold__segment--live {
-  opacity: 1;
-  animation: activity-segment-pulse 1.2s ease-in-out infinite;
-}
-
-.activity-fold__handle {
-  position: relative;
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 14px;
-  padding: 0 8px;
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  transition: transform var(--dur-micro) var(--ease-standard);
-}
-
-/* Mask the telemetry with a direction-matched trapezoid. Its 10:14 side
-   slope follows the rendered glyph's 3.2:4.5 edge, so the bar ends and
-   triangle read as one continuous control instead of a rectangular cutout. */
-.activity-fold__handle::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: var(--bg-stage);
-}
-
-.activity-fold__handle--up::before {
-  clip-path: polygon(calc(50% - 2px) 0, calc(50% + 2px) 0, 100% 100%, 0 100%);
-}
-
-.activity-fold__handle--down::before {
-  clip-path: polygon(0 0, 100% 0, calc(50% + 2px) 100%, calc(50% - 2px) 100%);
-}
-
-.activity-fold__glyph {
-  position: relative;
-  z-index: 1;
-  display: block;
-  fill: currentColor;
-  opacity: 0.6;
+  -webkit-tap-highlight-color: transparent;
   transition:
     color var(--dur-micro) var(--ease-standard),
-    opacity var(--dur-micro) var(--ease-standard),
-    transform var(--dur-micro) var(--ease-standard);
+    background var(--dur-micro) var(--ease-standard);
 }
 
-:is(button.activity-fold__rail, .activity-fold__disclosure):hover .activity-fold__line,
-:is(button.activity-fold__rail, .activity-fold__disclosure):focus-visible .activity-fold__line {
-  background: color-mix(in srgb, var(--accent) 45%, var(--hairline));
+.activity-fold__boundary--lower,
+.activity-fold__omission {
+  font-size: var(--text-xs);
 }
 
-:is(button.activity-fold__rail, .activity-fold__disclosure):hover .activity-fold__segment,
-:is(button.activity-fold__rail, .activity-fold__disclosure):focus-visible .activity-fold__segment {
-  opacity: 1;
+.activity-fold__disclosure > svg,
+.activity-fold__boundary > svg {
+  flex-shrink: 0;
 }
 
-:is(button.activity-fold__rail, .activity-fold__disclosure):hover .activity-fold__handle,
-:is(button.activity-fold__rail, .activity-fold__disclosure):focus-visible .activity-fold__handle {
-  transform: scale(1.15);
+:is(
+  .activity-fold__disclosure,
+  .activity-fold__boundary,
+  .activity-fold__omission
+):active {
+  color: var(--ink);
 }
 
-:is(button.activity-fold__rail, .activity-fold__disclosure):hover .activity-fold__glyph,
-:is(button.activity-fold__rail, .activity-fold__disclosure):focus-visible .activity-fold__glyph {
-  color: var(--accent);
-  opacity: 1;
+@media (hover: hover) {
+  :is(.activity-fold__disclosure, .activity-fold__boundary, .activity-fold__omission):hover {
+    color: var(--ink);
+  }
 }
 
-:is(button.activity-fold__rail, .activity-fold__disclosure):focus-visible {
-  outline: none;
+:is(
+  .activity-fold__disclosure,
+  .activity-fold__boundary,
+  .activity-fold__omission
+):focus-visible {
+  outline: 2px solid var(--accent-deep);
+  outline-offset: -2px;
+  color: var(--ink);
 }
 
-button.activity-fold__rail:focus-visible .activity-fold__handle {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-  color: var(--accent-deep);
+.activity-fold__kinds {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline-start: 2px;
+}
+
+.activity-fold__kind {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  opacity: 0.7;
+}
+.activity-fold__kind--thinking {
+  background: var(--activity-think);
+}
+.activity-fold__kind--tool {
+  background: var(--activity-tool);
+}
+.activity-fold__kind--live {
+  animation: activity-kind-pulse 1.8s ease-in-out infinite;
+}
+@keyframes activity-kind-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .activity-fold__content {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-2) 0;
+  gap: var(--space-1);
+  /* Center the guide below the 14px disclosure chevron; children start at 24px. */
+  margin: 2px 0 2px 11px;
+  border-left: 1px solid var(--hairline);
+  padding: 2px 0 2px var(--space-3);
+}
+
+/* Message boundaries no longer carry turn chrome or a different activity rhythm.
+   Keep prose/detail spacing outside this activity-only wrapper unchanged. */
+.activity-fold__content .assistant-doc {
+  gap: var(--space-1);
 }
 
 .activity-fold__content[hidden] {
@@ -797,51 +748,24 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 .activity-item-boundary {
   display: contents;
 }
-
 .activity-item-boundary[hidden] {
   display: none;
 }
 
-.activity-fold__omission {
-  display: flex;
-  width: 100%;
-  min-height: 22px;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--faint);
-  cursor: pointer;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  opacity: 0.72;
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    opacity var(--dur-micro) var(--ease-standard);
-}
-
-.activity-fold__omission:hover {
-  color: var(--accent);
-  opacity: 1;
-}
-
-.activity-fold__omission:focus-visible {
-  border-radius: var(--radius-xs);
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-  color: var(--accent-deep);
-  opacity: 1;
-}
-
-.activity-fold__omission--loading > span {
+.activity-fold__omission--loading > .activity-fold__dots {
   animation: activity-omission-pulse 0.9s ease-in-out infinite;
 }
-
 .activity-fold__omission--error,
-.activity-fold__disclosure--error .activity-fold__summary-badge {
+.activity-fold__disclosure--error {
   color: var(--danger);
-  opacity: 0.9;
+}
+
+@media (pointer: coarse) {
+  .activity-fold__disclosure,
+  .activity-fold__boundary,
+  .activity-fold__omission {
+    min-height: 32px;
+  }
 }
 
 .activity-fold__dots {
@@ -895,62 +819,6 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   }
 }
 
-.activity-fold__summary {
-  display: flex;
-  width: 100%;
-  min-height: 14px;
-  height: 14px;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font-family: var(--font-mono);
-}
-
-.activity-fold__summary-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 4px;
-  border: 0;
-  background: transparent;
-  color: var(--faint);
-  font-size: 11px;
-  opacity: 0.65;
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    opacity var(--dur-micro) var(--ease-standard),
-    transform var(--dur-micro) var(--ease-standard);
-}
-
-.activity-fold__disclosure:hover .activity-fold__summary-badge {
-  color: var(--accent);
-  opacity: 1;
-  transform: scale(1.08);
-}
-
-.activity-fold__disclosure:focus-visible .activity-fold__summary-badge {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-  border-radius: var(--radius-xs);
-  color: var(--accent-deep);
-}
-
-@keyframes activity-segment-pulse {
-  0%,
-  100% {
-    opacity: 0.72;
-    transform: scaleY(1);
-  }
-  50% {
-    opacity: 1;
-    transform: scaleY(1.4);
-  }
-}
-
 /* User turns read as compact bubbles; assistant turns are open documents.
    Extra space before each user turn groups every prompt with its response. */
 .turn {
@@ -960,150 +828,156 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 }
 
 .turn--user {
-  align-items: flex-start;
+  flex-flow: row-reverse wrap;
+  justify-content: flex-start;
+  /* Align the action targets with the bubble's lower edge; their internal
+     padding keeps the glyphs inset. Wrapped actions retain their own row. */
+  align-items: flex-end;
+  gap: var(--space-1) var(--space-2);
   padding-top: var(--space-2);
 }
 
-.turn--checkpoint {
-  padding: var(--space-2) 0;
-}
-
+/* Context boundaries are transcript events, not full-width message cards. */
 .context-checkpoint {
-  position: relative;
-  container: context-checkpoint / inline-size;
+  --checkpoint-indent: 44px;
   min-width: 0;
-  background: var(--bg-surface);
-  border: 1px solid var(--line);
-  border-left: var(--witness) solid var(--info);
-  border-radius: var(--radius-surface);
   color: var(--muted);
-  overflow: hidden;
-  animation: card-in var(--dur-standard) var(--ease-standard);
 }
 
-.context-checkpoint__disclosure > summary {
-  min-height: calc(var(--activity-row-h) - 2px);
-  padding: 4px var(--space-2);
+.context-checkpoint__head {
+  position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
+  gap: 0 6px;
+  /* A hanging disclosure keeps wrapped metadata on the title's reading axis,
+     without reserving an extra indent when both groups fit on one line. */
+  padding-inline-start: var(--checkpoint-indent);
+}
+
+.context-checkpoint__toggle {
+  display: flex;
+  flex: 0 0 auto;
+  margin-inline-start: calc(-1 * var(--checkpoint-indent));
+  max-width: calc(100% + var(--checkpoint-indent));
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted);
   cursor: pointer;
-  list-style: none;
-  font-size: var(--text-sm);
-  user-select: none;
-  transition: background var(--dur-micro) var(--ease-standard);
+  font: 500 var(--text-sm)/var(--leading-ui) var(--font-sans);
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.context-checkpoint__disclosure > summary::-webkit-details-marker,
-.context-checkpoint__disclosure > summary::marker {
-  display: none;
+@media (hover: hover) {
+  .context-checkpoint__toggle:hover {
+    color: var(--ink);
+  }
+  .context-checkpoint__toggle:hover .context-checkpoint__chevron {
+    color: var(--ink);
+  }
+  .context-checkpoint__toggle:hover ~ .context-checkpoint__details .context-checkpoint__metric {
+    color: var(--body);
+  }
 }
 
-.context-checkpoint__disclosure > summary:hover,
-.context-checkpoint__disclosure > summary:focus-visible {
-  background: var(--bg-inset);
+.context-checkpoint__toggle:active,
+.context-checkpoint__toggle:active .context-checkpoint__chevron {
   color: var(--ink);
-  outline: none;
 }
 
-.context-checkpoint__disclosure > summary:focus-visible {
-  outline: 2px solid var(--accent);
+.context-checkpoint__toggle::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-control);
+}
+
+.context-checkpoint__toggle:focus-visible {
+  outline: none;
+  color: var(--ink);
+}
+
+.context-checkpoint__toggle:focus-visible::after {
+  outline: 2px solid var(--accent-deep);
   outline-offset: -2px;
 }
 
-.context-checkpoint__disclosure > summary:is(:hover, :focus-visible)
-  .context-checkpoint__metric {
-  color: var(--body);
+.context-checkpoint__icon,
+.context-checkpoint__chevron {
+  flex: 0 0 auto;
 }
 
 .context-checkpoint__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
   color: var(--info);
 }
 
-.context-checkpoint__title {
-  color: var(--ink);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  line-height: var(--leading-ui);
-  white-space: nowrap;
-}
-
-.context-checkpoint__metric {
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  line-height: var(--leading-ui);
-  white-space: nowrap;
-}
-
-.context-checkpoint__spacer {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-/* Reserve the sibling clipboard control's footprint in the disclosure row. */
-.context-checkpoint__copy-slot {
-  width: 24px;
-  height: 24px;
-  flex: 0 0 auto;
-}
-
-.context-checkpoint__copy.icon-button {
-  position: absolute;
-  top: 4px;
-  right: calc(var(--space-2) * 2 + 13px);
-  width: 24px;
-  height: 24px;
-  flex: 0 0 auto;
-  color: var(--faint);
-  border-radius: var(--radius-xs);
-  opacity: 0;
-  transition:
-    opacity var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard);
-}
-
-/* Copy is a sibling of the native disclosure; only its header and the
-   independent clipboard control reveal it, not the expanded summary body. */
-.context-checkpoint:has(
-    > .context-checkpoint__disclosure > summary:is(:hover, :focus-within)
-  )
-  .context-checkpoint__copy,
-.context-checkpoint__copy.icon-button:is(:hover, :focus-within) {
-  opacity: 1;
-}
-
-.context-checkpoint__copy.icon-button:hover,
-.context-checkpoint__copy.icon-button:focus-visible {
-  background: var(--bg-inset);
-  color: var(--ink);
-}
-
 .context-checkpoint__chevron {
-  flex: 0 0 auto;
-  color: var(--muted);
+  color: var(--faint);
   transition: transform var(--dur-micro) var(--ease-standard);
 }
 
-.context-checkpoint__disclosure[open] .context-checkpoint__chevron {
+.context-checkpoint__toggle[aria-expanded="true"] .context-checkpoint__chevron {
   transform: rotate(90deg);
 }
 
+.context-checkpoint__title {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.context-checkpoint__details {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.context-checkpoint__metric {
+  min-width: 0;
+  align-self: center;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-ui);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.context-checkpoint__copy.icon-button {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  color: var(--faint);
+  opacity: 0;
+  transition: opacity var(--dur-micro) var(--ease-standard);
+}
+
+.context-checkpoint__head:is(:hover, :focus-within) .context-checkpoint__copy {
+  opacity: 1;
+}
+
 .context-checkpoint__body {
-  padding: var(--space-2) var(--space-3) var(--space-3);
-  border-top: 1px solid var(--hairline);
-  background: var(--bg-activity);
+  margin: var(--space-1) 0 var(--space-2) var(--checkpoint-indent);
+  color: var(--body);
+  font-size: var(--text-reading-small);
 }
 
 .context-checkpoint__body > p {
   margin: 0;
   color: var(--muted);
-  font-size: var(--text-sm);
 }
 
 .context-checkpoint__body .rich-text > :first-child {
@@ -1116,106 +990,21 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 
 @media (hover: none) {
   .context-checkpoint__copy.icon-button {
-    opacity: 0.75;
+    opacity: 1;
   }
 }
 
 @media (pointer: coarse) {
-  .context-checkpoint__disclosure > summary {
-    min-height: 38px;
-  }
-
-  .context-checkpoint__copy.icon-button::after {
-    content: "";
-    position: absolute;
-    inset: -6px;
-  }
-}
-
-/* Keep the checkpoint controls visible when sidebars or a narrow viewport
-   leave too little room for a single-line heading. */
-@container context-checkpoint (max-width: 480px) {
-  .context-checkpoint__disclosure > summary {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto 13px;
-    row-gap: 2px;
-  }
-
-  .context-checkpoint__icon {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
+  .context-checkpoint__toggle,
   .context-checkpoint__title {
-    grid-column: 2;
-    grid-row: 1;
-    min-width: 0;
-    white-space: normal;
-    overflow-wrap: anywhere;
+    min-height: 32px;
   }
 
-  .context-checkpoint__metric {
-    grid-column: 2;
-    grid-row: 2;
-    min-width: 0;
-    white-space: normal;
-    overflow-wrap: anywhere;
+  .context-checkpoint__copy.icon-button {
+    margin-top: 0;
+    width: 32px;
+    height: 32px;
   }
-
-  .context-checkpoint__spacer {
-    display: none;
-  }
-
-  .context-checkpoint__copy-slot {
-    justify-self: end;
-    grid-column: 3;
-    grid-row: 1;
-  }
-
-  .context-checkpoint__chevron {
-    grid-column: 4;
-    grid-row: 1;
-  }
-}
-
-/* One attribution line above the answer carries who, model, and time; the
-   model appears exactly once per turn. */
-.turn__head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  margin-bottom: 2px;
-}
-
-.turn--round-divider {
-  margin-top: calc(-1 * var(--space-2));
-  gap: 4px;
-}
-
-.turn__divider {
-  width: 24px;
-  height: 1px;
-  flex: 0 0 1px;
-  border-radius: 1px;
-  /* Divider mode carries no hidden status; keep the rule purely structural. */
-  background: var(--line);
-}
-
-.turn__who {
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.turn__detail {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--faint);
-}
-
-.turn__flag {
-  font-size: var(--text-xs);
-  color: var(--warning);
 }
 
 /* Message actions stay quiet until the turn is pointed or keyboard-focused.
@@ -1229,10 +1018,13 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   transition: opacity var(--dur-micro) var(--ease-standard);
 }
 
+/* The bubble keeps its content width. Actions use the spare space to its left,
+   or wrap below at the same right edge when the whole group no longer fits.
+   DOM order remains message first, then Copy/Fork. */
 .turn--user > .turn__actions {
-  margin-top: 2px;
-  margin-left: 0;
-  align-self: flex-end;
+  flex: 0 0 auto;
+  gap: 4px;
+  margin: 0;
 }
 
 .turn__actions--response {
@@ -1276,19 +1068,31 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   }
 }
 
-.user-bubble {
-  width: 100%;
-  max-width: 100%;
+.turn--user .user-bubble {
+  flex: 0 0 auto;
+  width: fit-content;
+  max-width: 84%;
   min-width: 0;
   overflow-wrap: break-word;
   background: var(--bg-prompt);
   border: 1px solid var(--line);
-  border-left: 2px solid var(--accent);
-  border-radius: var(--radius-sm);
-  padding: 10px 14px;
+  border-radius: 14px;
+  padding: 12px 18px;
   font-size: var(--text-reading);
   line-height: var(--leading-reading);
   color: var(--ink);
+}
+
+@media (max-width: 600px), (pointer: coarse) {
+  .turn--user .user-bubble {
+    max-width: 100%;
+    padding: 10px 12px;
+  }
+
+  .turn--user .turn__action.icon-button {
+    width: 32px;
+    height: 32px;
+  }
 }
 
 .user-bubble__images {
@@ -1314,8 +1118,7 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 .custom-message {
   min-width: 0;
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--line);
-  border-left: var(--witness) solid var(--info);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-surface);
   background: var(--bg-surface);
 }
@@ -1353,8 +1156,8 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   overflow-wrap: anywhere;
 }
 .custom-message__copy.icon-button {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   color: var(--muted);
   border-radius: var(--radius-control);
   opacity: 0;
@@ -1372,20 +1175,25 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
     opacity: 0.75;
   }
 }
-.custom-message__copy.icon-button:hover {
-  color: var(--ink);
-  background: var(--bg-inset);
+@media (hover: hover) {
+  .custom-message__copy.icon-button:hover {
+    color: var(--ink);
+    background: var(--bg-inset);
+  }
 }
 .custom-message__body,
 .custom-message__details {
   min-width: 0;
   margin-left: calc(14px + var(--space-2));
 }
-.custom-message__body > .rich-text:first-child > :first-child { margin-top: 0; }
-.custom-message__body > .rich-text:last-child > :last-child { margin-bottom: 0; }
+.custom-message__body > .rich-text:first-child > :first-child {
+  margin-top: 0;
+}
+.custom-message__body > .rich-text:last-child > :last-child {
+  margin-bottom: 0;
+}
 .custom-message__details {
   margin-top: var(--space-2);
-  border-top: 1px solid var(--hairline);
   color: var(--muted);
   font-size: var(--text-xs);
 }
@@ -1393,16 +1201,29 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   width: fit-content;
   min-height: 28px;
   padding: var(--space-1) 0;
+  border-radius: var(--radius-control);
+  -webkit-tap-highlight-color: transparent;
   cursor: pointer;
 }
-.custom-message__details > summary:hover { color: var(--ink); }
+@media (hover: hover) {
+  .custom-message__details > summary:hover {
+    color: var(--ink);
+  }
+}
+.custom-message__details > summary:active {
+  color: var(--ink);
+}
 .custom-message__details > summary:focus-visible,
 .custom-message__copy.icon-button:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-deep);
   outline-offset: 2px;
 }
 .custom-message__raw {
   margin: var(--space-1) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--bg-inset);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: var(--font-mono);
@@ -1411,124 +1232,126 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   color: var(--body);
 }
 @media (pointer: coarse) {
-  .custom-message__copy.icon-button { width: 44px; height: 44px; }
-  .custom-message__identity { min-height: 44px; }
-  .custom-message__details > summary { min-height: 44px; align-content: center; }
+  .custom-message__copy.icon-button {
+    width: 32px;
+    height: 32px;
+    /* The card padding accommodates the hit area without a taller header. */
+    margin-block: calc(-1 * var(--space-1));
+  }
+  .custom-message__details > summary {
+    min-height: 32px;
+    align-content: center;
+  }
 }
 
+/* Errors need a readable local boundary, not elevation or an all-red panel. */
 .assistant-error {
   min-width: 0;
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--line);
-  border-left: var(--witness) solid var(--error);
+  border: 1px solid color-mix(in srgb, var(--error) 24%, var(--hairline));
   border-radius: var(--radius-surface);
   background: var(--bg-surface);
-  animation: card-in var(--dur-standard) var(--ease-standard);
 }
 
 .assistant-error__head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   min-height: 24px;
   margin-bottom: var(--space-1);
-  color: var(--error);
 }
 
 .assistant-error__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   flex: 0 0 auto;
   color: var(--error);
 }
 
 .assistant-error__label {
-  font-family: var(--font-sans);
   font-size: var(--text-sm);
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-weight: 500;
   line-height: var(--leading-ui);
-  color: color-mix(in srgb, var(--error) 80%, var(--ink));
+  color: var(--error);
 }
 
 .assistant-error__copy.icon-button {
-  margin-left: auto;
   width: 24px;
   height: 24px;
   color: var(--muted);
-  border-radius: var(--radius-xs);
-  transition:
-    background var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard);
-}
-
-.assistant-error__copy.icon-button:hover,
-.assistant-error__copy.icon-button:focus-visible {
-  background: var(--bg-inset);
-  color: var(--ink);
 }
 
 .assistant-error__message {
-  margin: 0;
+  margin-left: calc(14px + var(--space-2));
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  word-break: break-word;
-  color: var(--ink);
-  font-family: var(--font-mono);
+  color: var(--body);
   font-size: var(--text-reading-small);
+  line-height: var(--leading-reading);
+}
+
+/* Only the requested diagnostic payload gets a bounded local reading surface. */
+.assistant-error__message--expanded {
+  max-height: min(24rem, 50dvh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--bg-inset);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
   line-height: var(--leading-mono);
+}
+
+.assistant-error__message--expanded:focus-visible {
+  outline: 2px solid var(--accent-deep);
+  outline-offset: 1px;
 }
 
 .assistant-error__disclosure {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  height: 24px;
-  margin-top: 6px;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--hairline);
+  gap: var(--space-1);
+  min-height: 24px;
+  margin: var(--space-1) 0 0 calc(14px + var(--space-2) - var(--space-1));
+  padding: 0 var(--space-1);
+  border: 0;
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--muted);
-  font-family: var(--font-sans);
-  font-size: var(--text-xs);
-  font-weight: 500;
-  line-height: var(--leading-ui);
+  font: 400 var(--text-xs)/var(--leading-ui) var(--font-sans);
   cursor: pointer;
-  transition:
-    background var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard),
-    border-color var(--dur-micro) var(--ease-standard);
+  -webkit-tap-highlight-color: transparent;
 }
 
-.assistant-error__disclosure:hover {
-  background: var(--bg-inset);
+@media (hover: hover) {
+  .assistant-error__disclosure:hover {
+    color: var(--ink);
+  }
+}
+
+.assistant-error__disclosure:active {
+  background: var(--bg-control);
   color: var(--ink);
-  border-color: var(--line-strong);
 }
 
 .assistant-error__disclosure:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-deep);
   outline-offset: 1px;
 }
 
+.assistant-error__disclosure[aria-expanded="true"] > svg {
+  transform: rotate(180deg);
+}
+
 @media (pointer: coarse) {
-  .assistant-error__copy.icon-button::after {
-    content: "";
-    position: absolute;
-    inset: -10px;
+  .assistant-error__copy.icon-button {
+    width: 32px;
+    height: 32px;
+    margin-block: calc(-1 * var(--space-1));
   }
 
   .assistant-error__disclosure {
-    min-height: 36px;
-    padding: 0 var(--space-3);
-  }
-}
-
-@media (max-width: 600px) {
-  .assistant-error {
-    padding: var(--space-2) 10px;
+    min-height: 32px;
   }
 }
 
@@ -1577,7 +1400,7 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 
 .transcript__older-retry:hover,
 .transcript__older-retry:focus-visible {
-  border-color: var(--accent);
+  border-color: var(--accent-deep);
   color: var(--ink);
   background: var(--bg-inset);
 }
@@ -1607,7 +1430,7 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 
 .jump-to-latest:hover {
   color: var(--accent-deep);
-  border-color: var(--accent);
+  border-color: var(--accent-deep);
   background: var(--bg-inset);
 }
 
@@ -1625,7 +1448,12 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   transition:
     opacity var(--dur-standard) var(--ease-standard),
     background var(--dur-standard) var(--ease-standard),
-    border-color var(--dur-standard) var(--ease-standard);
+    border-color var(--dur-standard) var(--ease-standard),
+    box-shadow var(--dur-standard) var(--ease-standard);
+}
+
+.extension-surface {
+  box-shadow: var(--shadow-1);
 }
 
 /* Pending is secondary at rest; direct interaction brings it forward. */
@@ -1640,6 +1468,7 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   opacity: 1;
   background: var(--bg-surface);
   border-color: var(--hairline);
+  box-shadow: var(--shadow-1);
 }
 
 .pending-groups__head,
@@ -1704,14 +1533,16 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
     border-color var(--dur-micro) var(--ease-standard);
 }
 
-.pending-group__control.icon-button:hover {
-  color: var(--ink);
-  background: var(--bg-control);
-}
+@media (hover: hover) {
+  .pending-group__control.icon-button:hover {
+    color: var(--ink);
+    background: var(--bg-control);
+  }
 
-.pending-group__control--clear.icon-button:hover {
-  color: var(--error);
-  background: var(--error-tint);
+  .pending-group__control--clear.icon-button:hover {
+    color: var(--error);
+    background: var(--error-tint);
+  }
 }
 
 .pending-groups__confirm {
@@ -1878,11 +1709,11 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 }
 
 .pending-group__image:hover {
-  border-color: var(--accent);
+  border-color: var(--accent-deep);
 }
 
 .pending-group__image:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-deep);
   outline-offset: 2px;
 }
 
@@ -1908,12 +1739,13 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  height: 20px;
+  min-height: 20px;
 }
 
 .pending-group__copy.icon-button {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
+  margin-block: -2px;
   border-radius: var(--radius-xs);
   color: var(--muted);
   transition:
@@ -1921,12 +1753,39 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
     background var(--dur-micro) var(--ease-standard);
 }
 
+@media (pointer: coarse) {
+  .pending-groups__head {
+    flex-wrap: wrap;
+  }
+  .pending-groups__actions {
+    margin-left: auto;
+  }
+  .pending-group__copy.icon-button,
+  .pending-group__control.icon-button,
+  .pending-groups__confirm-cancel {
+    width: 32px;
+    height: 32px;
+  }
+  .pending-groups__confirm-btn {
+    height: 32px;
+  }
+  .pending-group__item {
+    padding-block: var(--space-2);
+  }
+  .pending-group__copy.icon-button {
+    /* Center on the first 20px line without pushing long previews down. */
+    margin-block: -6px;
+  }
+}
+
 /* All Pending actions stay visible and inherit the panel's 0.75 → 1
    emphasis, without a second opacity layer on individual buttons. */
 
-.pending-group__copy.icon-button:hover {
-  color: var(--ink);
-  background: var(--bg-inset);
+@media (hover: hover) {
+  .pending-group__copy.icon-button:hover {
+    color: var(--ink);
+    background: var(--bg-inset);
+  }
 }
 
 .extension-surface__item {
@@ -1944,6 +1803,12 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
   cursor: pointer;
   color: var(--muted);
   font-size: var(--text-sm);
+  transition: background var(--dur-micro) var(--ease-standard);
+}
+
+.extension-surface__item summary:hover {
+  background: var(--bg-inset);
+  color: var(--ink);
 }
 
 .extension-surface__item summary code {
@@ -1953,9 +1818,13 @@ button.activity-fold__rail:focus-visible .activity-fold__handle {
 .extension-surface__item > pre {
   max-height: 280px;
   overflow: auto;
-  padding: var(--space-3);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--hairline);
   background: var(--bg-inset);
+  font-family: var(--font-mono);
+  font-size: var(--text-reading-small);
+  line-height: var(--leading-mono);
 }
 
 .empty-state--conversation {

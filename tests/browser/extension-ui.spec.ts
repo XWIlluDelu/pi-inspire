@@ -447,6 +447,32 @@ test.describe("narrow touch reading", () => {
 
     await summary.tap();
     await expect(full).toBeHidden();
+    for (const widget of await page.locator(".extension-display").all()) {
+      const spacing = await widget.evaluate((el) => {
+        const card = el.getBoundingClientRect();
+        const head = el
+          .querySelector(".extension-display__head")!
+          .getBoundingClientRect();
+        const body = el
+          .querySelector(".extension-display__text")!
+          .getBoundingClientRect();
+        const copy = el
+          .querySelector(".extension-display__copy")!
+          .getBoundingClientRect();
+        return {
+          headerHeight: head.height,
+          gap: body.top - head.bottom,
+          verticalBalance: head.top - card.top - (card.bottom - body.bottom),
+          copyHeight: copy.height,
+          copyInside: copy.top >= card.top + 2 && copy.bottom <= body.top,
+        };
+      });
+      expect(spacing.headerHeight).toBe(24);
+      expect(spacing.gap).toBe(4);
+      expect(Math.abs(spacing.verticalBalance)).toBeLessThanOrEqual(1);
+      expect(spacing.copyHeight).toBeGreaterThanOrEqual(32);
+      expect(spacing.copyInside).toBe(true);
+    }
     const below = page.getByRole("region", {
       name: "Extension content below composer",
       exact: true,

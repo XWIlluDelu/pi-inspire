@@ -21,6 +21,7 @@ function firstPaint(
   stored: string | null,
   systemDark = false,
   themeColor = { content: "" },
+  overlay = false,
 ): Record<string, string> {
   const dataset: Record<string, string> = {};
   runInNewContext(themeInit, {
@@ -29,12 +30,33 @@ function firstPaint(
       querySelector: () => themeColor,
     },
     localStorage: { getItem: () => stored },
-    matchMedia: () => ({ matches: systemDark }),
+    matchMedia: (query: string) => ({
+      matches: query.includes("display-mode") ? overlay : systemDark,
+    }),
   });
   return dataset;
 }
 
 describe("first-paint visual preferences", () => {
+  it.each([
+    "wisteria",
+    "hydrangea",
+    "lycoris",
+    "chimonanthus",
+    "classic-jade",
+    "classic-amber",
+  ])(
+    "paints the %s palette in either luminosity before bootstrap",
+    (palette) => {
+      for (const theme of ["light", "dark"]) {
+        expect(firstPaint(JSON.stringify({ palette, theme }))).toMatchObject({
+          palette,
+          theme,
+        });
+      }
+    },
+  );
+
   it("uses valid cached visual preferences before React boots", () => {
     expect(
       firstPaint(
@@ -42,13 +64,13 @@ describe("first-paint visual preferences", () => {
       ),
     ).toEqual({
       theme: "dark",
-      palette: "teal",
+      palette: "hydrangea",
       contentTextSize: "large",
       readingWidth: "wide",
     });
     expect(firstPaint('{"theme":"system","palette":"amber"}', true)).toEqual({
       theme: "dark",
-      palette: "amber",
+      palette: "chimonanthus",
       contentTextSize: "comfortable",
       readingWidth: "comfortable",
     });
@@ -57,7 +79,7 @@ describe("first-paint visual preferences", () => {
   it("falls back safely for malformed or unsupported cached values", () => {
     expect(firstPaint("not json", true)).toEqual({
       theme: "dark",
-      palette: "amber",
+      palette: "chimonanthus",
       contentTextSize: "comfortable",
       readingWidth: "comfortable",
     });
@@ -67,7 +89,7 @@ describe("first-paint visual preferences", () => {
       ),
     ).toEqual({
       theme: "light",
-      palette: "amber",
+      palette: "chimonanthus",
       contentTextSize: "comfortable",
       readingWidth: "comfortable",
     });
@@ -102,6 +124,44 @@ describe("first-paint visual preferences", () => {
     },
   );
 
+  it.each([
+    ["chimonanthus", "#F3EFEA", "#151311"],
+    ["wisteria", "#EDEDF5", "#131317"],
+    ["hydrangea", "#EBF2EF", "#111514"],
+    ["lycoris", "#F4EDED", "#161213"],
+    ["classic-amber", "#EFEEEB", "#13161A"],
+    ["classic-jade", "#EDF1EF", "#131815"],
+  ])(
+    "uses the %s outer frame before CSS and after bootstrap in Overlay",
+    (palette, light, dark) => {
+      for (const [theme, color] of [
+        ["light", light],
+        ["dark", dark],
+      ]) {
+        const themeColor = { content: "" };
+        firstPaint(JSON.stringify({ theme, palette }), false, themeColor, true);
+        expect(themeColor.content).toBe(color);
+        vi.stubGlobal("document", {
+          documentElement: { dataset: { palette } },
+          querySelector: () => themeColor,
+        });
+        vi.stubGlobal("getComputedStyle", () => ({
+          getPropertyValue: () => color,
+        }));
+        try {
+          applyBrowserTheme(theme as "light" | "dark", true);
+          expect(themeColor.content).toBe(color);
+          applyBrowserTheme(theme as "light" | "dark", false);
+          expect(themeColor.content).toBe(
+            theme === "dark" ? "#14171A" : "#F4F5F6",
+          );
+        } finally {
+          vi.unstubAllGlobals();
+        }
+      }
+    },
+  );
+
   it("uses the neutral light fallback in the HTML and install manifest", async () => {
     const html = await readFile(
       new URL("../../index.html", import.meta.url),
@@ -129,13 +189,13 @@ describe("first-paint visual preferences", () => {
     });
     cacheVisualPreferences({
       theme: "light",
-      palette: "teal",
+      palette: "hydrangea",
       contentTextSize: "compact",
       readingWidth: "narrow",
     });
     expect(JSON.parse(values.get(VISUAL_PREFERENCES_STORAGE_KEY)!)).toEqual({
       theme: "light",
-      palette: "teal",
+      palette: "hydrangea",
       contentTextSize: "compact",
       readingWidth: "narrow",
     });

@@ -36,126 +36,24 @@ describe("transcript density preferences", () => {
       },
     ],
   };
-  it("replaces only the assistant attribution row with a divider", () => {
-    const { container, rerender } = render(
+  it("renders activity and answers without assistant attribution or divider rows", () => {
+    const { container } = render(
       <Transcript
         messages={[assistant]}
         streaming={false}
         thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
-        assistantRoundDisplay="divider"
+        toolVisibility="compact"
+        activityFoldVisibility="expanded"
       />,
     );
-    expect(container.querySelectorAll(".turn__divider")).toHaveLength(1);
+    expect(container.querySelector(".turn__head, .turn__divider")).toBeNull();
     expect(screen.queryByText("Pi")).not.toBeInTheDocument();
     expect(screen.queryByText("gpt-test")).not.toBeInTheDocument();
     expect(screen.queryByText("toolUse")).not.toBeInTheDocument();
-
-    rerender(
-      <Transcript
-        messages={[assistant]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
-        assistantRoundDisplay="details"
-      />,
-    );
-    expect(container.querySelector(".turn__divider")).toBeNull();
-    expect(screen.getByText("Pi")).toBeInTheDocument();
-    expect(screen.getByText("gpt-test")).toBeInTheDocument();
-    expect(screen.getByText("toolUse")).toBeInTheDocument();
-  });
-
-  it("keeps the assistant attribution with a response when leading activity is folded", () => {
-    const { container } = render(
-      <Transcript
-        messages={[
-          {
-            role: "assistant",
-            model: "gpt-test",
-            timestamp: 2,
-            content: [
-              { type: "thinking", thinking: "hidden reasoning" },
-              { type: "text", text: "visible response" },
-            ],
-          },
-        ]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
-        activityFoldVisibility="collapsed"
-        assistantRoundDisplay="details"
-      />,
-    );
-
-    expect(container.querySelector("[data-activity-fold]")).toHaveAttribute(
-      "data-activity-fold",
-      "closed",
-    );
-    expect(screen.getByText("Pi").closest("[data-activity-fold]")).toBeNull();
-    expect(screen.getByText("gpt-test")).toBeVisible();
-    expect(screen.getByText("visible response")).toBeVisible();
-    expect(screen.queryByText("hidden reasoning")).toBeNull();
-  });
-
-  it("toggles thinking and tool cards from non-interactive header space", () => {
-    render(
-      <Transcript
-        messages={[
-          {
-            role: "assistant",
-            timestamp: 12,
-            content: [
-              { type: "thinking", thinking: "reasoning details" },
-              {
-                type: "toolCall",
-                id: "header-tool",
-                name: "read",
-                arguments: { path: "src/header.ts" },
-              },
-              { type: "text", text: "answer" },
-            ],
-          },
-          {
-            role: "toolResult",
-            toolCallId: "header-tool",
-            content: "file body",
-            timestamp: 13,
-          },
-          {
-            role: "custom",
-            customType: "intercom_message",
-            content: "custom details",
-            display: true,
-            timestamp: 14,
-          },
-        ]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
-      />,
-    );
-
-    const cards = [
-      screen
-        .getByText("Thinking", { selector: ".card__label" })
-        .closest(".card") as HTMLElement,
-      screen
-        .getByText("read", { selector: ".card__tool-name" })
-        .closest(".card") as HTMLElement,
-    ];
-    for (const card of cards) {
-      const disclosure = card.querySelector(
-        ".card__disclosure",
-      ) as HTMLButtonElement;
-      expect(disclosure).toHaveAttribute("aria-expanded", "false");
-      fireEvent.click(
-        card.querySelector(".card__header-spacer") as HTMLElement,
-      );
-      expect(disclosure).toHaveAttribute("aria-expanded", "true");
-      fireEvent.click(card.querySelector(".card__header") as HTMLElement);
-      expect(disclosure).toHaveAttribute("aria-expanded", "false");
-    }
+    expect(screen.getByText("between tool runs")).toBeVisible();
+    expect(
+      screen.getAllByRole("button", { name: /Expand .* tool$/ }),
+    ).toHaveLength(3);
   });
 
   it("holds fast Thinking for 1800 ms and parallel tools for 1500 ms before lifecycle collapse", () => {

@@ -1,4 +1,4 @@
-import { CircleAlert } from "lucide-react";
+import { ChevronDown, CircleAlert } from "lucide-react";
 import { useId, useState } from "react";
 import { CopyAction } from "./CopyAction";
 
@@ -6,8 +6,9 @@ import { CopyAction } from "./CopyAction";
 export function AssistantError({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false);
   const detailsId = useId();
-  const preview = Array.from(text.split("\n").slice(0, 5).join("\n"))
-    .slice(0, 400)
+  const firstParagraph = text.split(/\n\s*\n/)[0] || text;
+  const preview = Array.from(firstParagraph.split("\n").slice(0, 3).join("\n"))
+    .slice(0, 240)
     .join("");
   const hasDetails = preview.length < text.length;
   return (
@@ -21,9 +22,16 @@ export function AssistantError({ text }: { text: string }) {
           className="assistant-error__copy"
         />
       </div>
-      <div id={detailsId} className="assistant-error__message">
-        {expanded || !hasDetails ? text : `${preview}…`}
-      </div>
+      <section
+        id={detailsId}
+        aria-label={expanded ? "Error details" : undefined}
+        tabIndex={expanded ? 0 : undefined}
+        className={`assistant-error__message${expanded ? " assistant-error__message--expanded" : ""}`}
+      >
+        {expanded || !hasDetails
+          ? text
+          : `${preview}${preview.length < firstParagraph.length ? "…" : ""}`}
+      </section>
       {hasDetails ? (
         <button
           type="button"
@@ -32,6 +40,7 @@ export function AssistantError({ text }: { text: string }) {
           aria-controls={detailsId}
           onClick={() => setExpanded(!expanded)}
         >
+          <ChevronDown size={12} aria-hidden />
           {expanded ? "Hide details" : "Show details"}
         </button>
       ) : null}

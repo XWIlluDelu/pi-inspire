@@ -1,6 +1,63 @@
 import { expect, test } from "@playwright/test";
 import { openMockSession, pairedPage } from "./support/navigation";
 
+test("running halo animates independently and retains focus and reduced-motion feedback", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+  const composer = page.getByRole("form", { name: "Message composer" });
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.focus();
+  const focusedBorder = await composer.evaluate((el) => {
+    for (const transition of el.getAnimations()) transition.finish();
+    return getComputedStyle(el).borderColor;
+  });
+  // State-to-class mapping is covered by Composer unit tests; isolate this
+  // presentation check from the mock worker's short execution lifetime.
+  await composer.evaluate((el) => el.classList.add("composer--running"));
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect(composer).toHaveCSS("border-color", focusedBorder);
+  const frames = await composer.evaluate((el) => {
+    const animation = el
+      .getAnimations({ subtree: true })
+      .find(
+        (a) =>
+          a instanceof CSSAnimation &&
+          a.animationName === "composer-running-breathe",
+      )!;
+    animation.pause();
+    return [0, 1800].map((time) => {
+      animation.currentTime = time;
+      const halo = getComputedStyle(el, "::before");
+      return {
+        opacity: Number(halo.opacity),
+        shadow: halo.boxShadow,
+        pointer: halo.pointerEvents,
+      };
+    });
+  });
+  expect(frames[1]!.opacity).toBeGreaterThan(frames[0]!.opacity);
+  expect(frames[0]!.shadow).toBe(frames[1]!.shadow);
+  expect(frames[0]!.pointer).toBe("none");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const staticHalo = await composer.evaluate((el) => {
+    const halo = getComputedStyle(el, "::before");
+    return {
+      animation: halo.animationName,
+      opacity: Number(halo.opacity),
+      shadow: halo.boxShadow,
+    };
+  });
+  expect(staticHalo.animation).toBe("none");
+  expect(staticHalo.opacity).toBeGreaterThan(0);
+  expect(staticHalo.shadow).not.toBe("none");
+  await input.fill("Halo does not intercept editing");
+  await expect(input).toBeFocused();
+  await composer.evaluate((el) => el.classList.remove("composer--running"));
+  await input.fill("");
+});
+
 test("composer text drafts survive reload and stay partitioned through switching, history, sending and clearing", async ({
   page,
 }) => {

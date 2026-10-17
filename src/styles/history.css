@@ -24,7 +24,7 @@
   color: var(--muted);
   background: var(--bg-stage);
 }
-.branch-tree__search:focus-within { border-color: var(--accent); }
+.branch-tree__search:focus-within { border-color: var(--accent-deep); }
 .branch-tree__search input {
   min-width: 0;
   flex: 1 1 auto;
@@ -90,7 +90,7 @@
 .history-result:focus-visible,
 .history-entry:focus-visible,
 .history-route:focus-visible,
-.history-disclosure:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.history-disclosure:focus-visible { outline: 1px solid var(--accent-deep); outline-offset: -1px; }
 .history-disclosure {
   min-height: 30px;
   display: inline-flex;

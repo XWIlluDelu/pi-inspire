@@ -6,6 +6,7 @@ import type { UploadedAttachment } from "../../shared/contracts";
 import { pendingTextSummary } from "../../shared/pending-preview";
 import { clipboardLines } from "./support/clipboard";
 import { openMockSession, pairedPage } from "./support/navigation";
+import { routeMockSnapshots } from "./support/mock-host";
 
 const token = "inspire-browser-test-token";
 const pixel = Buffer.from(
@@ -71,21 +72,10 @@ test("Pending image thumbnails open the shared viewer and wrap at narrow widths"
     ],
     followUp: [],
   };
-  await page.route("**/api/sessions/open", async (route) => {
-    const response = await route.fetch();
-    await route.fulfill({
-      response,
-      json: { ...(await response.json()), pendingQueues: pendingProjection },
-    });
-  });
-  await page.routeWebSocket("**/events**", (socket) => {
-    const server = socket.connectToServer();
-    server.onMessage((message) => {
-      const frame = JSON.parse(String(message));
-      if (frame.type === "snapshot" && frame.data?.active)
-        frame.data.pendingQueues = pendingProjection;
-      socket.send(JSON.stringify(frame));
-    });
+  await routeMockSnapshots(page, {
+    snapshot: (value) => {
+      if (value.active) value.pendingQueues = pendingProjection;
+    },
   });
   try {
     const { pending } = await openPendingSession(page);
@@ -565,4 +555,84 @@ test("running composer exposes steer, queue, and abort controls", async ({
   await expect(
     page.getByRole("button", { name: "Abort running task" }),
   ).toBeHidden();
+});
+
+test.describe("touch Pending layout", () => {
+  test.use({ hasTouch: true, isMobile: true });
+  test("wrapped items align numbers, text and reachable actions without clipping confirmation", async ({
+    page,
+  }) => {
+    await routeMockSnapshots(page, {
+      snapshot: (snapshot) => {
+        snapshot.pendingQueues = {
+          revision: 9,
+          totalCount: 2,
+          steering: [
+            { id: "layout-short", ...pendingTextSummary("A short direction.") },
+          ],
+          followUp: [
+            {
+              id: "layout-wrapped",
+              ...pendingTextSummary(
+                "Keep the full direction readable when it wraps onto several lines in the narrow reading column.",
+              ),
+            },
+          ],
+        };
+      },
+    });
+    await openPendingSession(page);
+    const pending = page.getByRole("region", {
+      name: "Pending input",
+      exact: true,
+    });
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await expect(pending).toBeVisible();
+      for (const item of await pending.locator(".pending-group__item").all()) {
+        const geometry = await item.evaluate((el) => {
+          const number = el
+            .querySelector(".pending-group__number")!
+            .getBoundingClientRect();
+          const text = el.querySelector("pre")!.getBoundingClientRect();
+          const copy = el
+            .querySelector(".pending-group__copy")!
+            .getBoundingClientRect();
+          const row = el.getBoundingClientRect();
+          return {
+            width: copy.width,
+            height: copy.height,
+            verticalBalance: (text.top - row.top) - (row.bottom - text.bottom),
+            baseline: number.top - text.top,
+            firstLine: copy.y + copy.height / 2 - (text.top + 10),
+            contained:
+              copy.top >= row.top && copy.bottom <= row.bottom && copy.right <= row.right,
+          };
+        });
+        expect(geometry.width).toBeGreaterThanOrEqual(32);
+        expect(geometry.height).toBeGreaterThanOrEqual(32);
+        expect(Math.abs(geometry.verticalBalance)).toBeLessThanOrEqual(1);
+        expect(Math.abs(geometry.baseline)).toBeLessThanOrEqual(1);
+        expect(Math.abs(geometry.firstLine)).toBeLessThanOrEqual(1);
+        expect(geometry.contained).toBe(true);
+      }
+      await pending
+        .getByRole("button", { name: "Clear all Pending input", exact: true })
+        .tap();
+      const confirm = pending.getByRole("button", {
+        name: "Clear all",
+        exact: true,
+      });
+      expect((await confirm.boundingBox())!.height).toBeGreaterThanOrEqual(32);
+      expect(
+        await pending.evaluate((el) => el.scrollWidth - el.clientWidth),
+      ).toBeLessThanOrEqual(1);
+      await pending
+        .getByRole("button", {
+          name: "Cancel clearing Pending input",
+          exact: true,
+        })
+        .tap();
+    }
+  });
 });

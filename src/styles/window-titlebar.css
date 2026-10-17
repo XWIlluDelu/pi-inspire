@@ -11,6 +11,7 @@
   }
 
   .window-titlebar {
+    --chrome-bg: var(--bg-rail);
     position: fixed;
     inset: 0 0 auto;
     z-index: 70;
@@ -25,6 +26,7 @@
 
   /* The browser reports the usable rectangle on either side of native controls. */
   .window-titlebar__safe {
+    container: window-titlebar / inline-size;
     position: absolute;
     top: env(titlebar-area-y, 0px);
     left: env(titlebar-area-x, 0px);
@@ -36,7 +38,8 @@
     app-region: drag;
   }
 
-  /* Buffon's needles Easter-egg layer lives within the safe rectangle behind the brand. */
+  /* Buffon's needles retain the legacy paired-track Tool/Thinking colors.
+     The Easter-egg layer lives within the safe rectangle behind the brand. */
   .window-titlebar__needles {
     position: absolute;
     inset: 0;
@@ -56,11 +59,11 @@
   }
 
   .window-titlebar__needle--tool {
-    background-color: var(--activity-tool);
+    background-color: var(--needle-tool, var(--activity-tool));
   }
 
   .window-titlebar__needle--think {
-    background-color: var(--activity-think);
+    background-color: var(--needle-think, var(--activity-think));
   }
 
   @keyframes titlebar-needle-fade {
@@ -73,6 +76,17 @@
     100% {
       opacity: 0;
     }
+  }
+
+  .window-titlebar__corner-logo {
+    position: absolute;
+    inset: 0 auto 0 12px;
+    display: flex;
+    align-items: center;
+    width: 18px;
+    color: var(--chrome-ink);
+    pointer-events: none;
+    z-index: 1;
   }
 
   .window-titlebar__identity {
@@ -92,6 +106,14 @@
     justify-content: center;
     pointer-events: none;
     z-index: 1;
+  }
+
+  /* Native controls can leave very little width in a narrow/zoomed window.
+     Keep the corner mark rather than crowding it with the optional wordmark. */
+  @container window-titlebar (max-width: 160px) {
+    .window-titlebar__identity {
+      display: none;
+    }
   }
 
   .window-titlebar__brand-button {
@@ -117,8 +139,8 @@
   }
 
   .window-titlebar__brand-button:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
+    outline: 2px solid var(--accent-deep);
+    outline-offset: 0;
   }
 
   .window-titlebar .wordmark {
