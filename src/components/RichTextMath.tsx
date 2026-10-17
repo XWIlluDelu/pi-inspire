@@ -37,10 +37,11 @@ export const RichTextMath = memo(function RichTextMath({
   // KaTeX's trust:false output is generated markup, not model HTML. This is
   // the same HAST-to-React converter used by react-markdown, without another
   // Markdown parse or an unnecessary HTML string/DOM boundary.
-  return toJsxRuntime(mathProcessor.runSync(tree) as Root, {
+  const rendered = toJsxRuntime(mathProcessor.runSync(tree) as Root, {
     Fragment,
     jsx,
     jsxs,
     ignoreInvalidStyle: true,
   });
+  return display ? rendered : <span className="inline-math">{rendered}</span>;
 });
