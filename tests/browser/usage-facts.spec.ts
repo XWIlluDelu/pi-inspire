@@ -25,6 +25,88 @@ for (const width of [1280, 390, 320]) {
       viewport: { width, height: 844 },
       hasTouch: true,
     });
+    test("anchors the occupancy ring as unknown and numeric readings change", async ({
+      page,
+    }) => {
+      let source!: ActiveSnapshot;
+      let envelope!: { type: string };
+      const transport = await routeMockSnapshots(page, {
+        snapshot(snapshot) {
+          if (snapshot.active) source = structuredClone(snapshot);
+        },
+        event(event) {
+          if (event.type === "snapshot") envelope = { ...event };
+        },
+      });
+      await pairedPage(page);
+      await openMockSession(page, /Calibration history fixture/);
+      await expect
+        .poll(() => source?.active?.sessionId)
+        .toBe(HISTORY_FIXTURE_SESSION_ID);
+      await expect.poll(() => envelope?.type).toBe("snapshot");
+      await page.evaluate(() => document.fonts.ready);
+      const meter = page.getByRole("button", {
+        name: /^Session & usage, context/,
+      });
+      const setUsage = (percent: number | null, running: boolean) => {
+        const next = structuredClone(source);
+        next.runState = running ? "running" : "idle";
+        next.active!.isStreaming = running;
+        next.sessionStatuses[next.active!.sessionId] = {
+          runState: next.runState,
+        };
+        next.active!.stats = {
+          contextUsage: {
+            tokens: percent === null ? null : percent * 2000,
+            contextWindow: 200_000,
+            percent,
+          },
+        };
+        transport.send({ ...envelope, unchanged: false, data: next });
+      };
+      for (const running of [false, true]) {
+        let anchor: { ring: number; send: number } | undefined;
+        for (const percent of [null, 0, 9, 85, 100, 150]) {
+          setUsage(percent, running);
+          await expect(meter).toHaveAccessibleName(
+            `Session & usage, context ${percent === null ? "unknown" : percent + " percent full"}`,
+          );
+          await expect(
+            page.getByRole("button", { name: "Abort running task" }),
+          ).toHaveCount(running ? 1 : 0);
+          const ring = (await page.locator(".meter__ring").boundingBox())!;
+          const send = (await page
+            .locator(".composer__send")
+            .last()
+            .boundingBox())!;
+          if (anchor) {
+            expect(ring.x).toBeCloseTo(anchor.ring, 1);
+            expect(send.x).toBeCloseTo(anchor.send, 1);
+          } else anchor = { ring: ring.x, send: send.x };
+          expect(
+            Math.abs(ring.y + ring.height / 2 - send.y - send.height / 2),
+          ).toBeLessThan(0.5);
+          expect(
+            await page
+              .locator(".composer")
+              .evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+          ).toBe(true);
+        }
+      }
+      // Native values beyond the reserved three digits must still be readable.
+      setUsage(1200, true);
+      const value = meter.locator(".meter__value");
+      await expect(value).toHaveText("1200%");
+      expect(
+        await value.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+      ).toBe(true);
+      await meter.focus();
+      await expect(page.getByRole("tooltip")).toContainText("1200%");
+      await meter.press("Escape");
+      await expect(page.getByRole("tooltip")).toHaveCount(0);
+      await expect(meter).toBeFocused();
+    });
+
     test("refreshes usage in place and scrolls distinct query results without losing the draft", async ({
       page,
     }) => {

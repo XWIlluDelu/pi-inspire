@@ -47,7 +47,7 @@ describe("Pi assistant errors", () => {
     const rows = [...container.querySelectorAll("[data-transcript-row]")];
     expect(rows).toHaveLength(3);
     expect(rows[0]).toHaveTextContent("first prompt");
-    expect(rows[1]).toHaveTextContent("PI errorfetch failed");
+    expect(rows[1]).toHaveTextContent("Pi errorfetch failed");
     expect(rows[2]).toHaveTextContent("later response");
     expect(screen.queryByText("Working…")).not.toBeInTheDocument();
   });
@@ -83,7 +83,7 @@ describe("Pi assistant errors", () => {
     );
     expect(screen.getByText("first passage")).toBeVisible();
     expect(screen.getByText("partial last passage")).toBeVisible();
-    const error = screen.getByRole("group", { name: "PI error" });
+    const error = screen.getByRole("group", { name: "Pi error" });
     expect(error).toBeVisible();
     expect(error.closest(".response-activity-fold")).toBeNull();
     expect(
@@ -100,7 +100,7 @@ describe("Pi assistant errors", () => {
       transcript(start.slice.messages, start.slice.streaming),
     );
     expect(
-      screen.queryByRole("group", { name: "PI error" }),
+      screen.queryByRole("group", { name: "Pi error" }),
     ).not.toBeInTheDocument();
     const end = reduceEvent(start.slice, new Set(), {
       type: "message_end",
@@ -117,7 +117,7 @@ describe("Pi assistant errors", () => {
     expect(screen.getByText("terminated")).toBeVisible();
     view.unmount();
     render(transcript(JSON.parse(JSON.stringify(end.slice.messages))));
-    expect(screen.getAllByRole("group", { name: "PI error" })).toHaveLength(1);
+    expect(screen.getAllByRole("group", { name: "Pi error" })).toHaveLength(1);
     expect(screen.getByText("terminated")).toBeVisible();
   });
 
@@ -139,7 +139,7 @@ describe("Pi assistant errors", () => {
         },
       ]),
     );
-    const error = screen.getByRole("group", { name: "PI error" });
+    const error = screen.getByRole("group", { name: "Pi error" });
     const toggle = within(error).getByRole("button", { name: "Show details" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(error).not.toHaveTextContent("not markup");
@@ -173,7 +173,7 @@ describe("Pi assistant errors", () => {
         },
       ]),
     );
-    const error = screen.getByRole("group", { name: "PI error" });
+    const error = screen.getByRole("group", { name: "Pi error" });
     expect(error.querySelector(".assistant-error__message")?.textContent).toBe(
       reason,
     );
@@ -225,8 +225,8 @@ describe("Pi assistant errors", () => {
         },
       ]),
     );
-    expect(screen.getAllByRole("group", { name: "PI error" })).toHaveLength(1);
-    expect(screen.getByText("PI did not provide error details.")).toBeVisible();
+    expect(screen.getAllByRole("group", { name: "Pi error" })).toHaveLength(1);
+    expect(screen.getByText("Pi did not provide error details.")).toBeVisible();
     expect(screen.queryByText("Request aborted")).not.toBeInTheDocument();
   });
 });
@@ -250,7 +250,7 @@ it("shows settled empty Pi errors without treating them as the active empty call
     />,
   );
   expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(3);
-  expect(screen.getAllByRole("group", { name: "PI error" })).toHaveLength(1);
+  expect(screen.getAllByRole("group", { name: "Pi error" })).toHaveLength(1);
   expect(container.querySelectorAll(".turn--assistant")).toHaveLength(1);
 
   const settledRetry = {
@@ -271,7 +271,7 @@ it("shows settled empty Pi errors without treating them as the active empty call
     />,
   );
   expect(screen.queryByText("Working…")).not.toBeInTheDocument();
-  expect(screen.getAllByRole("group", { name: "PI error" })).toHaveLength(2);
+  expect(screen.getAllByRole("group", { name: "Pi error" })).toHaveLength(2);
   expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(4);
 
   const activeRetry = {

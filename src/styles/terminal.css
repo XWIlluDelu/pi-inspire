@@ -176,7 +176,7 @@
 }
 
 .terminal-tab__select:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
 }
 
@@ -185,7 +185,7 @@
   width: calc(100% - 32px);
   height: 23px;
   margin-left: 4px;
-  border: 1px solid var(--accent-deep);
+  border: 1px solid var(--accent-focus);
   border-radius: var(--radius-xs);
   padding: 0 5px;
   color: var(--ink);
@@ -449,7 +449,7 @@
 
 .terminal-menu__popover button:focus-visible,
 .terminal-menu summary:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
 }
 
@@ -656,7 +656,7 @@
 
 .terminal-selection button:focus-visible,
 .terminal-view__control:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
 }
 
@@ -721,7 +721,7 @@
 }
 
 .terminal-search input:focus {
-  border-color: var(--accent-deep);
+  border-color: var(--accent-focus);
 }
 
 .terminal-search__option {
@@ -817,7 +817,7 @@
   border: 1px solid color-mix(in srgb, var(--error) 50%, var(--hairline));
   border-radius: var(--radius-control);
   padding: 7px 9px;
-  color: var(--error);
+  color: var(--error-ink);
   background: color-mix(in srgb, var(--error-tint) 85%, var(--bg-raised));
   box-shadow: var(--shadow-2);
   font: var(--text-xs)/var(--leading-ui) var(--font-sans);
@@ -1013,7 +1013,7 @@
 }
 
 .terminal-text-dialog__text:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
 }
 
@@ -1354,7 +1354,7 @@
   }
 
   .terminal-touch-keys button:focus-visible {
-    outline: 2px solid var(--accent-deep);
+    outline: 2px solid var(--accent-focus);
     outline-offset: -2px;
   }
 

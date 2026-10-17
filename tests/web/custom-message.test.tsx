@@ -64,14 +64,14 @@ describe("extension context messages", () => {
     expect(container).not.toHaveTextContent("seq 42");
     expect(container).not.toHaveTextContent("2030-");
     expect(container).not.toHaveTextContent("/home/reviewer");
-    fireEvent.click(screen.getByText("Details", { selector: "summary" }));
+    fireEvent.click(screen.getByText("Details"));
     const raw = container.querySelector(".custom-message__raw")!.textContent!;
     expect(JSON.parse(raw)).toEqual({
       customType: message.customType,
       content: message.content,
       details: message.details,
     });
-    fireEvent.click(screen.getByText("Details", { selector: "summary" }));
+    fireEvent.click(screen.getByText("Details"));
     expect(container.querySelector(".custom-message__raw")).toBeNull();
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { clipboard: { writeText } });
@@ -95,7 +95,7 @@ describe("extension context messages", () => {
     const message = incomingIntercom();
     const { container } = render(component(message));
     expect(container.querySelector(".custom-message__type")).toBeNull();
-    fireEvent.click(screen.getByText("Details", { selector: "summary" }));
+    fireEvent.click(screen.getByText("Details"));
     act(() => configureToolPresentationRegistry(customMessageConfiguration));
     expect(
       screen.getByRole("article", { name: "Inspire: composer editing" }),

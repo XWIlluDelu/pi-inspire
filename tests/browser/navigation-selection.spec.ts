@@ -27,6 +27,23 @@ for (const touch of [false, true]) {
             .getBoundingClientRect().left,
         }));
         expect(Math.abs(axes.folder - axes.session)).toBeLessThanOrEqual(1);
+        if (!touch && width === 1440) {
+          const rows = group.locator(".nav__row");
+          await rows.nth(0).locator(".nav__row-main").click();
+          await rows.nth(1).hover();
+          await expect(rows.nth(0).locator(".nav__row-actions")).toHaveCSS(
+            "opacity",
+            "0",
+          );
+          await expect(rows.nth(0).locator(".nav__row-meta")).toHaveCSS(
+            "opacity",
+            "1",
+          );
+          await expect(rows.nth(1).locator(".nav__row-actions")).toHaveCSS(
+            "opacity",
+            "1",
+          );
+        }
         const toggle = group.locator(".nav__group-toggle");
         await toggle.click();
         await expect(group.locator(".nav__group-title")).toHaveClass(

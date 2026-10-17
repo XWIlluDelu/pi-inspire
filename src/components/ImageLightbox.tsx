@@ -3,7 +3,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
-  Loader2,
   Maximize,
   Minus,
   Plus,
@@ -16,6 +15,7 @@ import { MAX_IMAGE_SCALE } from "../image-viewport";
 import { useImageViewport } from "../use-image-viewport";
 import { useModalFocus } from "../use-modal-focus";
 import { CopyAction } from "./CopyAction";
+import { PiLoader } from "./PiLoader";
 
 export interface PreviewImage {
   src: string;
@@ -222,7 +222,7 @@ export function ImageLightbox({
             <div className="image-lightbox__status" role="status">
               {status === "loading" ? (
                 <>
-                  <Loader2 className="spin" size={24} aria-hidden />
+                  <PiLoader size={24} aria-hidden />
                   <span>Loading image…</span>
                 </>
               ) : (

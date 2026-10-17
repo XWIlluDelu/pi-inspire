@@ -142,8 +142,8 @@ const ContextMeter = memo(function ContextMeter() {
               />
             )}
           </svg>
-          <span aria-hidden>
-            {percent === null ? "—" : `${Math.round(percent)}%`}
+          <span className="meter__value" aria-hidden>
+            <span>{percent === null ? "—" : `${Math.round(percent)}%`}</span>
           </span>
         </span>
       </button>

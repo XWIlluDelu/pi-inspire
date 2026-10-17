@@ -2,6 +2,8 @@
 import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { PALETTE_PREFERENCES } from "../../shared/contracts";
+import { paletteTokens } from "./palette-css";
 import {
   applyBrowserTheme,
   cacheVisualPreferences,
@@ -124,20 +126,12 @@ describe("first-paint visual preferences", () => {
     },
   );
 
-  it.each([
-    ["chimonanthus", "#F3EFEA", "#151311"],
-    ["wisteria", "#EDEDF5", "#131317"],
-    ["hydrangea", "#EBF2EF", "#111514"],
-    ["lycoris", "#F4EDED", "#161213"],
-    ["classic-amber", "#EFEEEB", "#13161A"],
-    ["classic-jade", "#EDF1EF", "#131815"],
-  ])(
-    "uses the %s outer frame before CSS and after bootstrap in Overlay",
-    (palette, light, dark) => {
-      for (const [theme, color] of [
-        ["light", light],
-        ["dark", dark],
-      ]) {
+  it.each(PALETTE_PREFERENCES)(
+    "uses the actual %s CSS outer frame before and after bootstrap in Overlay",
+    (palette) => {
+      for (const theme of ["light", "dark"] as const) {
+        const values = paletteTokens(palette, theme);
+        const color = values["--bg-rail"];
         const themeColor = { content: "" };
         firstPaint(JSON.stringify({ theme, palette }), false, themeColor, true);
         expect(themeColor.content).toBe(color);
@@ -146,7 +140,7 @@ describe("first-paint visual preferences", () => {
           querySelector: () => themeColor,
         });
         vi.stubGlobal("getComputedStyle", () => ({
-          getPropertyValue: () => color,
+          getPropertyValue: (name: string) => values[name] ?? "",
         }));
         try {
           applyBrowserTheme(theme as "light" | "dark", true);

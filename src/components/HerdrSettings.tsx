@@ -3,6 +3,7 @@ import { type ReactNode, useCallback, useEffect, useState } from "react";
 import type { HerdrEnhancementStatus } from "../../shared/herdr";
 import { createApi } from "../api";
 import { store, useAppState } from "../store";
+import { PiLoader } from "./PiLoader";
 import { SettingField, SettingsSwitch } from "./SettingsControls";
 
 const readStatus = () => createApi().herdrStatus();
@@ -87,13 +88,14 @@ export function HerdrSettings({
                 className="models-text-button"
                 aria-label="Recheck availability"
                 disabled={loading}
+                aria-busy={loading}
                 onClick={() => void refresh()}
               >
-                <RefreshCw
-                  size={12}
-                  className={loading ? "spin" : undefined}
-                  aria-hidden
-                />{" "}
+                {loading ? (
+                  <PiLoader size={12} aria-hidden />
+                ) : (
+                  <RefreshCw size={12} aria-hidden />
+                )}{" "}
                 Recheck
               </button>
             ) : null}

@@ -124,7 +124,7 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
   width: 100%;
   min-height: var(--activity-row-h);
   padding: 2px 4px 2px 0;
@@ -162,7 +162,8 @@
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  padding: 1px 4px;
+  padding: 1px 0 1px 4px;
+  line-height: var(--leading-ui);
   color: inherit;
   text-align: left;
   transition: background var(--dur-micro) var(--ease-standard);
@@ -185,7 +186,7 @@
 }
 
 .card__disclosure:focus-visible::after {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
 }
 
@@ -208,12 +209,12 @@
 }
 
 .card__header:hover .card__copy,
-.card__header:focus-within .card__copy {
+.card__header:has(:focus-visible) .card__copy {
   opacity: 1;
 }
 
 @media (hover: hover) {
-  .card__copy.icon-button:hover {
+  .card__copy.icon-button:hover:where(:not(:disabled)) {
     color: var(--ink);
     background: var(--bg-inset);
   }
@@ -259,6 +260,17 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.activity-fold .card__label,
+.activity-fold .card__tool-name {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/* Separate identity/status from its summary without moving adjacent Copy. */
+.card__disclosure + :is(.card__summary, .card__generic-kind) {
+  margin-inline-start: 6px;
 }
 
 .card__summary {
@@ -465,6 +477,15 @@
   font-size: 1em;
 }
 
+.activity-fold .card__summary--prose {
+  max-width: none;
+  color: var(--body);
+  font-size: var(--text-sm);
+}
+.activity-fold .card__summary--prose :is(strong, b) {
+  font-weight: 400;
+}
+
 .card__status {
   display: inline-flex;
   flex: 0 0 auto;
@@ -507,6 +528,36 @@
   animation: body-in var(--dur-standard) var(--ease-standard);
 }
 
+/* Only output owns a local surface in the active flow. The shared framed
+   defaults remain available to the preserved legacy presentation. */
+.activity-fold .card__body {
+  margin: 0;
+  /* Match the label after the leading chevron and identity icon. */
+  padding: var(--space-1) var(--space-3) var(--space-1) 44px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--body);
+  box-shadow: none;
+}
+.activity-fold .card--thinking .card__body {
+  padding-top: 0;
+}
+.activity-fold .card__body .rich-text--thinking {
+  color: inherit;
+}
+.activity-fold .rich-text--thinking > p {
+  margin-block: var(--space-1);
+}
+.activity-fold .rich-text--thinking > p:first-child {
+  margin-top: 0;
+}
+.activity-fold .rich-text--thinking > p:last-child {
+  margin-bottom: 0;
+}
+.activity-fold .card__body .rich-text :is(strong, b) {
+  font-weight: 500;
+}
 
 @keyframes body-in {
   from {
@@ -595,7 +646,14 @@
 .card__pending {
   color: var(--muted);
   font-size: var(--text-sm);
-  padding: var(--space-2) 0;
+  line-height: var(--leading-ui);
+  padding: var(--space-1) 0;
+}
+
+/* Structured and phase layouts already separate status from adjacent details. */
+.tool-presentation > .card__pending,
+.tool-call-result > .card__pending:only-child {
+  padding-block: 0;
 }
 
 .card__show-all {
@@ -711,6 +769,15 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.activity-fold .tool-summary__resource {
+  color: var(--activity-tool);
+}
+@media (hover: hover) {
+  .activity-fold .tool-summary__resource:hover {
+    color: var(--ink);
+  }
 }
 
 .resource-path {
@@ -864,6 +931,26 @@
   max-height: min(24rem, 45vh);
 }
 
+/* Local disclosures share the same chevron, baseline and hit-row grammar. */
+.detail-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 28px;
+  list-style: none;
+  line-height: var(--leading-ui);
+}
+.detail-summary::-webkit-details-marker {
+  display: none;
+}
+.detail-summary__chevron {
+  flex: 0 0 auto;
+  transition: transform var(--dur-standard) var(--ease-standard);
+}
+details[open] > .detail-summary .detail-summary__chevron {
+  transform: rotate(90deg);
+}
+
 .tool-result-details > summary,
 .tool-call-script > details > summary {
   border-radius: var(--radius-control);
@@ -948,6 +1035,12 @@ summary.child-call__row:active {
   display: inline-flex;
 }
 
+.activity-fold .child-calls {
+  margin-top: 0;
+  border-left: 1px solid var(--hairline);
+  padding-inline-start: var(--space-2);
+}
+
 .child-call__status--ok {
   color: var(--success);
 }
@@ -975,8 +1068,9 @@ summary.child-call__row:active {
   color: var(--muted);
 }
 
-.child-call__chevron {
-  margin-left: auto;
+.child-call > div.child-call__row {
+  /* Rows without retained detail keep the same name axis. Status follows it. */
+  padding-inline-start: 24px;
 }
 
 .child-call[open] .child-call__chevron {
@@ -1079,10 +1173,6 @@ span.card__file-arg {
 .codemode-duration {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
-}
-
-.tool-call-layout--codemode {
-  gap: var(--space-3);
 }
 
 .tool-call-layout--codemode .child-calls {

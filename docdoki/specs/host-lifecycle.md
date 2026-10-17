@@ -8,6 +8,11 @@ covers:
   - server/{app,index,pi-rpc,pi-installation,preferences,access-token,terminal-daemon-launcher}.ts
   - server/user-environment.{mjs,d.mts}
   - server/runtime-event-sockets.ts
+  - server/browser-auth.ts
+  - src/{api,browser-auth,terminal-connection}.ts
+  - src/controllers/{connection-controller,terminal-operation-controller}.ts
+  - tests/server/{app-auth,browser-auth,terminal-transport}.test.ts
+  - tests/browser/pairing.spec.ts
   - server/{runtime,runtime-worker-lifecycle,runtime-events}.ts
   - server/{host-restart,host-restart-systemd,restart-preflight}.ts
   - shared/host-restart.ts
@@ -95,28 +100,52 @@ capture mechanism and service handoff.
 
 ## Pairing and authenticated ingress
 
-- Browser authentication is a one-time pairing, not an absent loopback boundary. Without an explicit
-  `INSPIRE_TOKEN`, the host creates one 64-character base64url token (48 cryptographic random bytes)
-  keyed by checkout/host/port under the user state directory, requires its containing directory and
-  file to be current-user private (`0700`/`0600`), and reuses it across ordinary host and machine
-  restarts. Prior generated token lengths rotate on the next host start. A direct loopback launcher
-  URL or the Pair form proves that token once and receives an origin-scoped `HttpOnly;
-  SameSite=Strict` cookie; a trusted loopback HTTPS proxy strips token URLs without pairing, emits
-  `Secure` cookies through Pair, and authenticates WebSockets only by that cookie.
+- Browser pairing registers a non-extractable P-256 ECDSA key, persisted in the browser origin's
+  IndexedDB with a public HMAC-SHA256 Host certificate binding the public key and canonical origin.
+  The Pair form proves the Host master token once. A direct loopback launch instead replaces its
+  token query with a one-use, 30-second origin-bound bootstrap fragment; the bundle removes it from
+  history before registration. HTTPS proxies strip token queries without pairing.
 
-  A forwarded query token neither authenticates the socket nor vetoes an independently valid cookie.
-  The bootstrap bearer is removed from browser history, retired from browser memory after it
-  establishes the cookie, and never enters durable JavaScript storage. APIs require the cookie or an
-  explicit bearer; WebSockets permit an explicit query bearer only on direct loopback, and all
-  browser requests retain the exact-origin check. An invalid cookie is expired only for that Host
-  origin so a rotated token returns to Pair without requiring broad browser-data deletion. A
-  noninteractive host service suppresses token-bearing startup output so it is not written to the
-  service journal. A missing or rotated token returns to the pairing surface rather than retrying as
-  a connectivity failure.
+- A valid certificate admits a random, origin-bound 30-second challenge, consumed once before
+  signature verification. A successful SHA-256 signature yields a five-minute API bearer held only
+  in page memory. Certificates and access bearers use separate MAC domains/types. They survive
+  Host restart with the same master token; rotation invalidates both immediately. The browser
+  refreshes credentials before dispatch and never transparently replays a request after 401 or an
+  uncertain mutation outcome. Reconnect obtains authoritative snapshots and retains prompt receipt
+  semantics. Same-origin tabs share a stored key but acquire independent memory bearers.
 
-- Browser pairing cookies are qualified by the normalized request host and port. Multiple Inspire
-  hosts on one browser hostname therefore keep independent credentials instead of overwriting one
-  shared cookie name; cookie lookup accepts only that origin-specific name.
+- API reads/mutations, including resource previews and export blobs, require an explicit bearer.
+  Browser transport refuses foreign-origin inputs and redirects, omits cookies, and never persists
+  API bearers. Browser events and terminal upgrades require a 15-second single-use ticket bound to
+  canonical origin and audience, minted through an authenticated exact-origin POST. Terminal
+  attachment separately retains its terminal-bound, origin-bound one-use attach ticket and daemon
+  ownership rules. Trusted non-browser API clients and launcher health retain explicit master
+  bearer headers; non-browser event clients may also use a master bearer header without Origin.
+  Master/API bearer query tokens and cookies never authenticate APIs or sockets. Native file
+  downloads use a separately bounded 15-second one-use transfer ticket minted by authenticated
+  fetch, bound to canonical origin, session and resource. Consumption requires an exact Origin or
+  same-origin Fetch Metadata and rechecks resource/view authority before streaming raw bytes.
+  Selecting another resource/session/view/transport retires pending issuance; no preview size cap
+  or JavaScript file buffering is introduced. Interactive preview grants remain
+  revocable session/view-scoped document capabilities, not Host credentials.
+
+- Pending challenges, bootstrap transfers, socket tickets and download tickets each have a 1,024-entry process-local
+  bound. Expired entries are pruned before admission; capacity fails closed without replacing live
+  entries. Restart retires these one-use grants. Pairing requires WebCrypto and origin IndexedDB;
+  unsupported or blocked storage produces useful Pair feedback, never a weaker fallback.
+
+- Without explicit `INSPIRE_TOKEN`, generated tokens contain 64 cryptographic random bytes
+  (86 base64url characters), in a current-user-private `0700` directory and `0600` plain-text
+  `.token` file keyed by installation/host/port. All cookie-era generated lengths, including 64
+  characters, rotate once on the next Host start; later starts reuse the new generation. Explicit
+  configured tokens are never silently rewritten: operators must rotate a formerly cookie-paired
+  configured token to revoke leaked explicit-bearer authority. See
+  [migration guidance](../../docs/host.md#migration-from-cookie-pairing).
+
+- Responses expire only the current Host's qualified legacy cookie and the old unqualified
+  `inspire_access` cookie when present, leaving unrelated data/other qualified Host cookies alone.
+  Old bundles fail safely and must reload/pair, without insecure compatibility. Noninteractive Host
+  services suppress token-bearing startup output so it cannot enter their journal.
 
 ## Process, lock, and service ownership
 

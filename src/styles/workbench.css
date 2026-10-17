@@ -165,7 +165,7 @@ body.pane-resizing--vertical .nav {
   width: min(300px, calc(100% - 38px));
   flex: 0 1 300px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, .75fr) minmax(0, 1.5fr) minmax(0, 1.1fr) minmax(0, 1.2fr);
   align-items: center;
   padding: 2px;
   gap: 2px;
@@ -196,7 +196,10 @@ body.pane-resizing--vertical .nav {
   padding: 0 var(--space-1);
   background: transparent;
   color: var(--muted);
-  font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
+  font: 500 var(--text-base)/var(--leading-ui) var(--font-label);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
   text-align: center;
   cursor: pointer;
   transition:
@@ -223,6 +226,14 @@ body.pane-resizing--vertical .nav {
   cursor: not-allowed;
 }
 
+/* Center the label group as a unit, then align its mixed-size text by baseline. */
+.ctx__mode-label {
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 4px;
+}
+
 .ctx__mode-badge {
   display: inline-flex;
   align-items: center;
@@ -231,16 +242,25 @@ body.pane-resizing--vertical .nav {
   height: 14px;
   padding: 0 3px;
   border-radius: var(--radius-pill);
-  font-family: var(--font-mono);
-  font-size: 10px;
+  font-family: var(--font-label);
+  font-size: var(--text-xs);
   font-weight: 600;
+  letter-spacing: 0;
   line-height: 1;
   background: var(--accent-tint);
   color: var(--accent-deep);
 }
 
 @container context-header (max-width: 360px) {
+  /* Keep the mode names readable; the exact Changes count remains in its title. */
   .ctx__mode-badge { display: none; }
+  .ctx__modes {
+    grid-template-columns: minmax(0, .75fr) minmax(0, 1.15fr) minmax(0, 1.1fr) minmax(0, 1.2fr);
+  }
+  .ctx__modes button {
+    font-size: 13px;
+    letter-spacing: 0.04em;
+  }
 }
 
 .segmented {
@@ -593,12 +613,12 @@ button.res__index-header--back:hover svg {
 }
 
 .res__index-summary--dirty {
-  color: var(--warning);
+  color: var(--warning-ink);
   background: color-mix(in srgb, var(--warning) 10%, transparent);
 }
 
 .res__index-summary--conflict {
-  color: var(--error);
+  color: var(--error-ink);
   background: color-mix(in srgb, var(--error) 12%, transparent);
   font-weight: 600;
 }
@@ -738,7 +758,7 @@ button.res__index-header--back:hover svg {
   border: 1px solid color-mix(in srgb, var(--warning) 24%, transparent);
   border-radius: var(--radius-xs);
   background: var(--warning-tint);
-  color: var(--warning);
+  color: var(--warning-ink);
   font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
   text-align: center;
 }
@@ -806,7 +826,7 @@ button.res__index-header--back:hover svg {
   padding: var(--space-2);
   border-top: 1px solid var(--hairline);
   background: var(--warning-tint);
-  color: var(--warning);
+  color: var(--warning-ink);
   font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
   text-align: center;
 }
@@ -989,7 +1009,7 @@ button.res__more:hover {
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
   background: var(--warning-tint);
-  color: var(--warning);
+  color: var(--warning-ink);
   font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
 }
 
@@ -1185,7 +1205,7 @@ button.res__more:hover {
   padding: var(--space-2);
   border-top: 1px solid var(--hairline);
   background: var(--warning-tint);
-  color: var(--warning);
+  color: var(--warning-ink);
   font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
   text-align: center;
 }
@@ -1572,7 +1592,7 @@ button.res__more:hover {
 
 .token-gate input:focus-visible {
   outline: none;
-  border-color: var(--accent-deep);
+  border-color: var(--accent-focus);
   box-shadow: 0 0 0 3px var(--accent-tint);
 }
 

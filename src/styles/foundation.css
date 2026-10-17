@@ -41,6 +41,7 @@
   --content-max: var(--reading-width-max);
   --composer-max: var(--reading-width-max);
   --font-sans: "IBM Plex Sans SC", system-ui, sans-serif;
+  --font-label: "Rajdhani", var(--font-sans);
   --font-mono: "Flux Mono SC", ui-monospace, monospace;
   --text-xs: 11.5px;
   --text-sm: 12.5px;
@@ -94,353 +95,479 @@
   --reading-width-max: 980px;
 }
 
-/* Muted botanical accents sit on near-neutral workbench surfaces.
-   Accent-deep is readable text/icon/focus ink; fills pair with on-accent. */
+/* Botanical and classic palettes share semantic roles without sharing hues.
+   Accent-deep is readable text/icon ink; solid fills pair with on-accent. */
 :root {
   --brand-accent: var(--accent-deep);
   --accent-fill: var(--accent);
   --accent-tint: color-mix(in srgb, var(--accent) 9%, transparent);
   --selection: color-mix(in srgb, var(--accent) 22%, transparent);
+  /* Solid controls keep their foreground/background pair through every state.
+     Decorative hover accents are not necessarily readable under small text. */
+  --solid-state-shade: #000;
+  --accent-fill-hover: color-mix(in srgb, var(--accent-fill) 90%, var(--solid-state-shade));
+  --accent-fill-active: color-mix(in srgb, var(--accent-fill) 80%, var(--solid-state-shade));
+  --error-fill-hover: color-mix(in srgb, var(--error) 90%, var(--solid-state-shade));
+  --error-fill-active: color-mix(in srgb, var(--error) 80%, var(--solid-state-shade));
+  /* Status marks keep their color; small text over a tint uses deeper/lifted ink. */
+  --activity-success-ink: color-mix(in srgb, var(--activity-success) 85%, var(--ink));
+  --warning-ink: color-mix(in srgb, var(--warning) 75%, var(--ink));
+  --info-ink: color-mix(in srgb, var(--info) 68%, var(--ink));
+  --error-ink: color-mix(in srgb, var(--error) 75%, var(--ink));
+}
+
+:root[data-theme="dark"] {
+  --solid-state-shade: #fff;
 }
 
 :root,
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg-canvas: #E4E4E4;
-  --bg-rail: #F3EFEA;
-  --bg-nav: #F3EFEA;
-  --bg-context: #F2F2F2;
-  --bg-stage: #F5F5F5;
+  --bg-canvas: #F7F5F0;
+  --bg-rail: #EFECE4;
+  --bg-nav: #EFECE4;
+  --bg-context: #F4F1E9;
+  --bg-stage: #FCFBF8;
   --bg-surface: #FFFFFF;
   --bg-raised: #FFFFFF;
-  --bg-inset: #ECECEC;
-  --bg-control: #EDE8E1;
-  --bg-prompt: #FFFFFF;
-  --bg-activity: #F2F2F2;
-  --bg-code: #ECECEC;
-  --ink: #333333;
-  --body: #333333;
-  --muted: #54494B;
-  --faint: #5E5E5E;
-  --accent: #966844;
-  --accent-deep: #82522E;
-  --accent-hover: #855A39;
-  --accent-active: #6E492D;
-  --accent-soft: #D8C5B4;
-  --accent-focus: #B96728;
-  --nav-active-bg: #E6D8C8;
-  --running-glow: #D98238;
+  --bg-inset: #E6E2D8;
+  --bg-control: #EBE7DF;
+  --bg-prompt: #EFECE4;
+  --bg-activity: #F5F2EB;
+  --bg-code: #ECE7DD;
+  --ink: #161412;
+  --body: #2E2B26;
+  --muted: #635E56;
+  --faint: #635E56;
+  --accent: #B36010;
+  --accent-deep: #8A4605;
+  --accent-hover: #C46C17;
+  --accent-active: #753B04;
+  --accent-soft: transparent;
+  --accent-focus: var(--accent);
+  --nav-active-bg: var(--accent-tint);
+  --running-glow: #B36010;
   --on-accent: #FFFFFF;
   --chrome-bg: #F4F5F6;
   --chrome-ink: #63676C;
-  --brand-ink: #131517;
+  --brand-ink: #161412;
   --bg-file-canvas: #FAFAFA;
   --bg-file-surface: #FFFFFF;
   --bg-file-inset: #F1F1F1;
-  --bg-overlay: rgba(19, 21, 23, 0.4);
-  --line: #D4CEC5;
-  --line-subtle: #D4CEC566;
-  --line-strong: #B5AEA3;
-  --success: #125F3D;
-  --warning: #7D4905;
-  --error: #A61D42;
+  --bg-overlay: rgba(22, 20, 18, 0.4);
+  --line: #DFDAD0;
+  --line-subtle: var(--line);
+  --line-strong: #AFAAA0;
+  --success: #247A54;
+  --warning: #B45309;
+  --error: #BE123C;
   --on-status: #FFFFFF;
-  --info: #1B56A3;
-  --activity-tool: var(--accent-deep);
-  --activity-think: #6343B4;
-  --think: var(--activity-think);
-  --activity-success: var(--success);
-  --activity-warning: var(--warning);
-  --activity-error: var(--error);
-  --needle-tool: #914407;
-  --needle-think: #6343B4;
-  --error-tint: color-mix(in srgb, var(--error) 8%, transparent);
-  --think-tint: color-mix(in srgb, var(--think) 8%, transparent);
-  --warning-tint: color-mix(in srgb, var(--warning) 8%, transparent);
+  --info: #0284C7;
+  --activity-tool: #A6570B;
+  --activity-think: #6652BA;
+  --think: #6652BA;
+  --activity-success: #1B7E5A;
+  --activity-warning: #B45309;
+  --activity-error: #C53B38;
+  --error-tint: rgba(190, 18, 60, 0.08);
+  --think-tint: rgba(102, 82, 186, 0.08);
+  --warning-tint: rgba(180, 83, 9, 0.08);
   --git-modified: #914009;
   --git-untracked: #176A47;
   --git-conflict: var(--error);
-  --shadow-1: 0 1px 2px rgba(19, 21, 23, 0.03), 0 2px 6px rgba(19, 21, 23, 0.02);
-  --shadow-2: 0 4px 12px -2px rgba(19, 21, 23, 0.08), 0 1px 4px -1px rgba(19, 21, 23, 0.04);
+  --shadow-1: 0 1px 2px rgba(22, 20, 18, 0.04);
+  --shadow-2: 0 3px 12px rgba(22, 20, 18, 0.08);
   --shadow-overlay: 0 20px 48px -12px rgba(19, 21, 23, 0.16), 0 6px 16px -4px rgba(19, 21, 23, 0.06);
   --thumb: color-mix(in srgb, var(--ink) 16%, transparent);
+  --brand-accent: #B36010;
+  --accent-fill: #A8580C;
+  --accent-tint: rgba(179, 96, 16, 0.08);
+  --selection: rgba(179, 96, 16, 0.18);
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg-canvas: #0F0F0F;
-  --bg-rail: #151311;
-  --bg-nav: #151311;
-  --bg-context: #161616;
-  --bg-stage: #191919;
-  --bg-surface: #202020;
-  --bg-raised: #272727;
-  --bg-inset: #141414;
-  --bg-control: #242424;
-  --bg-prompt: #202020;
-  --bg-activity: #161616;
-  --bg-code: #141414;
-  --ink: #F0F0F0;
-  --body: #CCCCCC;
-  --muted: #A0A0A0;
-  --faint: #9A9A9A;
-  --accent: #B58E6D;
-  --accent-deep: #C9A689;
-  --accent-hover: #C49F7E;
-  --accent-active: #A37D5D;
-  --accent-soft: #574332;
-  --accent-focus: #DEAA80;
-  --nav-active-bg: #352C24;
-  --running-glow: #D98238;
-  --on-accent: #101010;
+  --bg-canvas: #0C0B09;
+  --bg-rail: #12100E;
+  --bg-nav: #12100E;
+  --bg-context: #151310;
+  --bg-stage: #181613;
+  --bg-surface: #201D19;
+  --bg-raised: #28241F;
+  --bg-inset: #090807;
+  --bg-control: #24201C;
+  --bg-prompt: #1E1B17;
+  --bg-activity: #161411;
+  --bg-code: #090807;
+  --ink: #F5F2ED;
+  --body: #D4CEC5;
+  --muted: #968E83;
+  --faint: #938C83;
+  --accent: #EAA03E;
+  --accent-deep: #F2B25C;
+  --accent-hover: #F2B056;
+  --accent-active: #C97F20;
+  --accent-soft: transparent;
+  --accent-focus: var(--accent);
+  --nav-active-bg: var(--accent-tint);
+  --running-glow: #EAA03E;
+  --on-accent: #1A1206;
   --chrome-bg: #14171A;
   --chrome-ink: #B9C0C7;
-  --brand-ink: #F4F6F8;
+  --brand-ink: #F5F2ED;
   --bg-file-canvas: #151515;
   --bg-file-surface: #1D1D1D;
   --bg-file-inset: #0F0F0F;
-  --bg-overlay: rgba(0, 0, 0, 0.65);
-  --line: #3B4048;
-  --line-subtle: #A5AFBD26;
-  --line-strong: #555D69;
-  --success: #47CC9A;
-  --warning: #F7B038;
-  --error: #FF83A7;
-  --on-status: #2A1018;
-  --info: #75B9F0;
-  --activity-tool: var(--accent-deep);
-  --activity-think: #B6A3FF;
-  --think: var(--activity-think);
-  --activity-success: var(--success);
-  --activity-warning: var(--warning);
-  --activity-error: var(--error);
-  --needle-tool: #FF9647;
-  --needle-think: #B6A3FF;
-  --error-tint: color-mix(in srgb, var(--error) 12%, transparent);
-  --think-tint: color-mix(in srgb, var(--think) 10%, transparent);
-  --warning-tint: color-mix(in srgb, var(--warning) 12%, transparent);
+  --bg-overlay: rgba(0, 0, 0, 0.62);
+  --line: #353029;
+  --line-subtle: var(--line);
+  --line-strong: #433C34;
+  --success: #63C78E;
+  --warning: #F59E0B;
+  --error: #F43F5E;
+  --on-status: #1A1206;
+  --info: #38BDF8;
+  --activity-tool: #EAA03E;
+  --activity-think: #A490F0;
+  --think: #A490F0;
+  --activity-success: #4EBA88;
+  --activity-warning: #F59E0B;
+  --activity-error: #F06A65;
+  --error-tint: rgba(244, 63, 94, 0.12);
+  --think-tint: rgba(164, 144, 240, 0.11);
+  --warning-tint: rgba(245, 158, 11, 0.12);
   --git-modified: var(--warning);
   --git-untracked: var(--success);
   --git-conflict: var(--error);
   --shadow-1: none;
-  --shadow-2: 0 8px 24px -4px rgba(0, 0, 0, 0.36), 0 2px 6px rgba(0, 0, 0, 0.24);
+  --shadow-2: none;
   --shadow-overlay: 0 20px 48px -12px rgba(0, 0, 0, 0.50), 0 6px 16px -4px rgba(0, 0, 0, 0.28);
   --thumb: color-mix(in srgb, var(--ink) 14%, transparent);
+  --brand-accent: #EAA03E;
+  --accent-fill: #DF9330;
+  --accent-tint: rgba(234, 160, 62, 0.1);
+  --selection: rgba(234, 160, 62, 0.25);
 }
 
 :root[data-palette="wisteria"],
 :root[data-theme="light"][data-palette="wisteria"] {
-  --bg-canvas: #E4E4E4;
-  --bg-rail: #EDEDF5;
-  --bg-nav: #EDEDF5;
-  --bg-context: #F2F2F2;
-  --bg-stage: #F5F5F5;
+  --bg-canvas: #F5F4F8;
+  --bg-rail: #ECEAF2;
+  --bg-nav: #ECEAF2;
+  --bg-context: #F1EFF6;
+  --bg-stage: #FAF9FC;
   --bg-surface: #FFFFFF;
   --bg-raised: #FFFFFF;
-  --bg-inset: #ECECEC;
-  --bg-control: #EDE8EF;
-  --bg-prompt: #FFFFFF;
-  --bg-activity: #F2F2F2;
-  --bg-code: #ECECEC;
-  --ink: #333333;
-  --body: #333333;
-  --muted: #54494B;
-  --faint: #5E5E5E;
-  --accent: #705697;
-  --accent-deep: #684E8F;
-  --accent-hover: #634B87;
-  --accent-active: #4E3C69;
-  --accent-soft: #C4B7D7;
-  --accent-focus: #9769DC;
-  --nav-active-bg: #DFD9EC;
-  --running-glow: #9769DC;
-  --line: #C9D0D9;
-  --line-subtle: #C9D0D966;
-  --line-strong: #ADAFB7;
-  --activity-tool: var(--accent-deep);
-  --activity-think: #2D6662;
-  --think: var(--activity-think);
-  --think-tint: color-mix(in srgb, var(--activity-think) 8%, transparent);
+  --bg-inset: #E3E0EC;
+  --bg-control: #E7E4F0;
+  --bg-prompt: #ECEAF2;
+  --bg-activity: #F2F0F7;
+  --bg-code: #EAE7F1;
+  --ink: #16141C;
+  --body: #2D2A35;
+  --muted: #625E6E;
+  --faint: #625E6E;
+  --accent: #6E5494;
+  --accent-deep: #543D78;
+  --accent-hover: #7C61A4;
+  --accent-active: #473268;
+  --accent-soft: transparent;
+  --accent-focus: var(--accent);
+  --nav-active-bg: var(--accent-tint);
+  --running-glow: #6E5494;
+  --line: #DAD6E4;
+  --line-subtle: var(--line);
+  --line-strong: #ABA5BA;
+  --activity-tool: #684E8E;
+  --activity-think: #4663AC;
+  --think: #4663AC;
+  --think-tint: rgba(70, 99, 172, 0.08);
   --on-accent: #FFFFFF;
+  --brand-ink: #16141C;
+  --brand-accent: #6E5494;
+  --bg-overlay: rgba(22, 20, 28, 0.4);
+  --accent-fill: #684E8E;
+  --accent-tint: rgba(110, 84, 148, 0.08);
+  --success: #2D7A53;
+  --warning: #B45309;
+  --error: #B83342;
+  --on-status: #FFFFFF;
+  --error-tint: rgba(184, 51, 66, 0.08);
+  --info: #3B669E;
+  --warning-tint: rgba(180, 83, 9, 0.08);
+  --selection: rgba(110, 84, 148, 0.18);
+  --activity-success: #23764E;
+  --activity-warning: #B45309;
+  --activity-error: #C23B48;
+  --shadow-1: 0 1px 2px rgba(22, 20, 28, 0.04);
+  --shadow-2: 0 3px 12px rgba(22, 20, 28, 0.08);
 }
 
 :root[data-theme="dark"][data-palette="wisteria"] {
-  --bg-canvas: #0F0F0F;
-  --bg-rail: #131317;
-  --bg-nav: #131317;
-  --bg-context: #161616;
-  --bg-stage: #191919;
-  --bg-surface: #202020;
-  --bg-raised: #272727;
-  --bg-inset: #141414;
-  --bg-control: #242424;
-  --bg-prompt: #202020;
-  --bg-activity: #161616;
-  --bg-code: #141414;
-  --ink: #F0F0F0;
-  --body: #CCCCCC;
-  --muted: #A0A0A0;
-  --faint: #9A9A9A;
-  --accent: #8B74B0;
-  --accent-deep: #A692C8;
-  --accent-hover: #9B85BF;
-  --accent-active: #8872AF;
-  --accent-soft: #4A3D61;
-  --accent-focus: #BCA0EC;
-  --nav-active-bg: #2D2737;
-  --running-glow: #9769DC;
-  --line: #3B4048;
-  --line-subtle: #A5AFBD26;
-  --line-strong: #555D69;
-  --activity-tool: var(--accent-deep);
-  --activity-think: #6DC4BE;
-  --think: var(--activity-think);
-  --think-tint: color-mix(in srgb, var(--activity-think) 10%, transparent);
-  --on-accent: #101010;
+  --bg-canvas: #0C0B10;
+  --bg-rail: #111017;
+  --bg-nav: #111017;
+  --bg-context: #14121B;
+  --bg-stage: #16151D;
+  --bg-surface: #1D1B26;
+  --bg-raised: #24222F;
+  --bg-inset: #09080C;
+  --bg-control: #221F2C;
+  --bg-prompt: #1C1A25;
+  --bg-activity: #15131C;
+  --bg-code: #09080C;
+  --ink: #F2F0F7;
+  --body: #CCC8D8;
+  --muted: #9690A6;
+  --faint: #8F899D;
+  --accent: #B39DDB;
+  --accent-deep: #C2B0E6;
+  --accent-hover: #C4B1E6;
+  --accent-active: #9378C6;
+  --accent-soft: transparent;
+  --accent-focus: var(--accent);
+  --nav-active-bg: var(--accent-tint);
+  --running-glow: #B39DDB;
+  --line: #312E3E;
+  --line-subtle: var(--line);
+  --line-strong: #3D394D;
+  --activity-tool: #B39DDB;
+  --activity-think: #7AA2F7;
+  --think: #7AA2F7;
+  --think-tint: rgba(122, 162, 247, 0.11);
+  --on-accent: #151120;
+  --brand-ink: #F2F0F7;
+  --brand-accent: #B39DDB;
+  --bg-overlay: rgba(0, 0, 0, 0.62);
+  --accent-fill: #A58CD3;
+  --accent-tint: rgba(179, 157, 219, 0.1);
+  --success: #63C78E;
+  --warning: #F59E0B;
+  --error: #EA8A82;
+  --on-status: #151120;
+  --error-tint: rgba(234, 138, 130, 0.12);
+  --info: #7AA2F7;
+  --warning-tint: rgba(245, 158, 11, 0.12);
+  --selection: rgba(179, 157, 219, 0.26);
+  --activity-success: #4EBA88;
+  --activity-warning: #F59E0B;
+  --activity-error: #F06A65;
+  --shadow-1: none;
+  --shadow-2: none;
 }
 
 :root[data-palette="hydrangea"],
 :root[data-theme="light"][data-palette="hydrangea"] {
-  --bg-canvas: #E4E4E4;
-  --bg-rail: #EBF2EF;
-  --bg-nav: #EBF2EF;
-  --bg-context: #F2F2F2;
-  --bg-stage: #F5F5F5;
+  --bg-canvas: #F4F6F3;
+  --bg-rail: #EAECE7;
+  --bg-nav: #EAECE7;
+  --bg-context: #F0F2EE;
+  --bg-stage: #FBFBF9;
   --bg-surface: #FFFFFF;
   --bg-raised: #FFFFFF;
-  --bg-inset: #ECECEC;
-  --bg-control: #E4ECE9;
-  --bg-prompt: #FFFFFF;
-  --bg-activity: #F2F2F2;
-  --bg-code: #ECECEC;
-  --ink: #333333;
-  --body: #333333;
-  --muted: #54494B;
-  --faint: #5E5E5E;
-  --accent: #4F7D6B;
-  --accent-deep: #3E6756;
-  --accent-hover: #436C5C;
-  --accent-active: #36594B;
-  --accent-soft: #B8D4C9;
-  --accent-focus: #3D946F;
-  --nav-active-bg: #CFE0DA;
-  --running-glow: #4EA885;
-  --line: #C6D1CD;
-  --line-subtle: #C6D1CD66;
-  --line-strong: #A6B5B0;
-  --activity-tool: var(--accent-deep);
-  --activity-think: #6343B4;
-  --think: var(--activity-think);
-  --think-tint: color-mix(in srgb, var(--activity-think) 8%, transparent);
-  --accent-fill: var(--accent);
+  --bg-inset: #E0E4DD;
+  --bg-control: #E5E9E2;
+  --bg-prompt: #EAECE7;
+  --bg-activity: #EFF2ED;
+  --bg-code: #E6EAE3;
+  --ink: #131715;
+  --body: #2A312D;
+  --muted: #5E6761;
+  --faint: #5E6761;
+  --accent: #1F7A68;
+  --accent-deep: #155B4D;
+  --accent-hover: #258975;
+  --accent-active: #104A3E;
+  --accent-soft: transparent;
+  --accent-focus: var(--accent);
+  --nav-active-bg: var(--accent-tint);
+  --running-glow: #1F7A68;
+  --line: #D6DDD4;
+  --line-subtle: var(--line);
+  --line-strong: #A6B0A4;
+  --activity-tool: #1E7564;
+  --activity-think: #6554B8;
+  --think: #6554B8;
+  --think-tint: rgba(101, 84, 184, 0.08);
+  --accent-fill: #1C705F;
   --on-accent: #FFFFFF;
+  --brand-ink: #131715;
+  --brand-accent: #1F7A68;
+  --bg-overlay: rgba(19, 23, 21, 0.4);
+  --accent-tint: rgba(31, 122, 104, 0.07);
+  --success: #2D774C;
+  --warning: #B45309;
+  --error: #B43731;
+  --on-status: #FFFFFF;
+  --error-tint: rgba(180, 55, 49, 0.08);
+  --info: #2563EB;
+  --warning-tint: rgba(180, 83, 9, 0.08);
+  --selection: rgba(31, 122, 104, 0.19);
+  --activity-success: #1B7E5A;
+  --activity-warning: #B45309;
+  --activity-error: #C53B38;
+  --shadow-1: 0 1px 2px rgba(19, 23, 21, 0.04);
+  --shadow-2: 0 3px 12px rgba(19, 23, 21, 0.08);
 }
 
 :root[data-theme="dark"][data-palette="hydrangea"] {
-  --bg-canvas: #0F0F0F;
-  --bg-rail: #111514;
-  --bg-nav: #111514;
-  --bg-context: #161616;
-  --bg-stage: #191919;
-  --bg-surface: #202020;
-  --bg-raised: #272727;
-  --bg-inset: #141414;
-  --bg-control: #242424;
-  --bg-prompt: #202020;
-  --bg-activity: #161616;
-  --bg-code: #141414;
-  --ink: #F0F0F0;
-  --body: #CCCCCC;
-  --muted: #A0A0A0;
-  --faint: #9A9A9A;
-  --accent: #639A88;
-  --accent-deep: #82B5A4;
-  --accent-hover: #74AB99;
-  --accent-active: #548978;
-  --accent-soft: #35544A;
-  --accent-focus: #7FC8A8;
-  --nav-active-bg: #25352E;
-  --running-glow: #4EA885;
-  --line: #3B4048;
-  --line-subtle: #A5AFBD26;
-  --line-strong: #555D69;
-  --activity-tool: var(--accent-deep);
-  --activity-think: #B6A3FF;
-  --think: var(--activity-think);
-  --think-tint: color-mix(in srgb, var(--activity-think) 10%, transparent);
-  --accent-fill: var(--accent);
-  --on-accent: #101010;
+  --bg-canvas: #0B0E0C;
+  --bg-rail: #101412;
+  --bg-nav: #101412;
+  --bg-context: #131815;
+  --bg-stage: #151A17;
+  --bg-surface: #1B211E;
+  --bg-raised: #222925;
+  --bg-inset: #080B09;
+  --bg-control: #1F2622;
+  --bg-prompt: #1A211D;
+  --bg-activity: #141916;
+  --bg-code: #080B09;
+  --ink: #F0F3F1;
+  --body: #CBD3CE;
+  --muted: #8E9992;
+  --faint: #88928C;
+  --accent: #5EC4AE;
+  --accent-deep: #74D2BE;
+  --accent-hover: #74D2BE;
+  --accent-active: #3FA28D;
+  --accent-soft: transparent;
+  --accent-focus: var(--accent);
+  --nav-active-bg: var(--accent-tint);
+  --running-glow: #5EC4AE;
+  --line: #2F3933;
+  --line-subtle: var(--line);
+  --line-strong: #3A453E;
+  --activity-tool: #5EC4AE;
+  --activity-think: #A393EB;
+  --think: #A393EB;
+  --think-tint: rgba(163, 147, 235, 0.11);
+  --accent-fill: #50B8A2;
+  --on-accent: #081C17;
+  --brand-ink: #F0F3F1;
+  --brand-accent: #5EC4AE;
+  --bg-overlay: rgba(0, 0, 0, 0.6);
+  --accent-tint: rgba(94, 196, 174, 0.09);
+  --success: #63C78E;
+  --warning: #F59E0B;
+  --error: #EA8A82;
+  --on-status: #081C17;
+  --error-tint: rgba(234, 138, 130, 0.12);
+  --info: #60A5FA;
+  --warning-tint: rgba(245, 158, 11, 0.12);
+  --selection: rgba(94, 196, 174, 0.26);
+  --activity-success: #4EBA88;
+  --activity-warning: #F59E0B;
+  --activity-error: #F06A65;
+  --shadow-1: none;
+  --shadow-2: none;
 }
 
 :root[data-palette="lycoris"],
 :root[data-theme="light"][data-palette="lycoris"] {
-  --bg-canvas: #E4E4E4;
-  --bg-rail: #F4EDED;
-  --bg-nav: #F4EDED;
-  --bg-context: #F2F2F2;
-  --bg-stage: #F5F5F5;
+  --bg-canvas: #F8F5F3;
+  --bg-rail: #EFE9E6;
+  --bg-nav: #EFE9E6;
+  --bg-context: #F4EFEC;
+  --bg-stage: #FCFBF9;
   --bg-surface: #FFFFFF;
   --bg-raised: #FFFFFF;
-  --bg-inset: #ECECEC;
-  --bg-control: #EFE7E8;
-  --bg-prompt: #FFFFFF;
-  --bg-activity: #F2F2F2;
-  --bg-code: #ECECEC;
-  --ink: #333333;
-  --body: #333333;
-  --muted: #54494B;
-  --faint: #5E5E5E;
-  --accent: #965254;
-  --accent-deep: #8C4648;
-  --accent-hover: #854648;
-  --accent-active: #6E393B;
-  --accent-soft: #DABABC;
-  --accent-focus: #DC4C4C;
-  --nav-active-bg: #E8D6D7;
-  --running-glow: #FF6363;
-  --line: #D6CACE;
-  --line-subtle: #D6CACE66;
-  --line-strong: #B8A9AE;
-  --activity-tool: var(--accent-deep);
-  --activity-think: #524673;
-  --think: var(--activity-think);
-  --think-tint: color-mix(in srgb, var(--activity-think) 8%, transparent);
+  --bg-inset: #E7DFDC;
+  --bg-control: #ECE5E2;
+  --bg-prompt: #EFE9E6;
+  --bg-activity: #F5F0ED;
+  --bg-code: #ECE5E1;
+  --ink: #191414;
+  --body: #322A29;
+  --muted: #685D5B;
+  --faint: #685D5B;
+  --accent: #BC5042;
+  --accent-deep: #94362A;
+  --accent-hover: #CA5C4E;
+  --accent-active: #802D22;
+  --accent-soft: transparent;
+  --accent-focus: var(--accent);
+  --nav-active-bg: var(--accent-tint);
+  --running-glow: #BC5042;
+  --line: #E0D6D2;
+  --line-subtle: var(--line);
+  --line-strong: #B3A6A1;
+  --activity-tool: #B5493B;
+  --activity-think: #4A6696;
+  --think: #4A6696;
+  --think-tint: rgba(74, 102, 150, 0.08);
   --on-accent: #FFFFFF;
+  --brand-ink: #191414;
+  --brand-accent: #BC5042;
+  --bg-overlay: rgba(25, 20, 20, 0.4);
+  --accent-fill: #B5493B;
+  --accent-tint: rgba(188, 80, 66, 0.08);
+  --success: #267853;
+  --warning: #B45309;
+  --error: #B91C47;
+  --on-status: #FFFFFF;
+  --error-tint: rgba(185, 28, 71, 0.08);
+  --info: #2B6CB0;
+  --warning-tint: rgba(180, 83, 9, 0.08);
+  --selection: rgba(188, 80, 66, 0.18);
+  --activity-success: #1B7E5A;
+  --activity-warning: #B45309;
+  --activity-error: #B91C47;
+  --shadow-1: 0 1px 2px rgba(25, 20, 20, 0.04);
+  --shadow-2: 0 3px 12px rgba(25, 20, 20, 0.08);
 }
 
 :root[data-theme="dark"][data-palette="lycoris"] {
-  --bg-canvas: #0F0F0F;
-  --bg-rail: #161213;
-  --bg-nav: #161213;
-  --bg-context: #161616;
-  --bg-stage: #191919;
-  --bg-surface: #202020;
-  --bg-raised: #272727;
-  --bg-inset: #141414;
-  --bg-control: #242424;
-  --bg-prompt: #202020;
-  --bg-activity: #161616;
-  --bg-code: #141414;
-  --ink: #F0F0F0;
-  --body: #CCCCCC;
-  --muted: #A0A0A0;
-  --faint: #9A9A9A;
-  --accent: #B37274;
-  --accent-deep: #C98F91;
-  --accent-hover: #C28385;
-  --accent-active: #AB6C6E;
-  --accent-soft: #593839;
-  --accent-focus: #EE9294;
-  --nav-active-bg: #352729;
-  --running-glow: #FF6363;
-  --line: #3B4048;
-  --line-subtle: #A5AFBD26;
-  --line-strong: #555D69;
-  --activity-tool: var(--accent-deep);
-  --activity-think: #A89AC9;
-  --think: var(--activity-think);
-  --think-tint: color-mix(in srgb, var(--activity-think) 10%, transparent);
-  --on-accent: #101010;
+  --bg-canvas: #0E0B0B;
+  --bg-rail: #141010;
+  --bg-nav: #141010;
+  --bg-context: #171313;
+  --bg-stage: #1A1515;
+  --bg-surface: #221C1C;
+  --bg-raised: #2A2222;
+  --bg-inset: #0A0808;
+  --bg-control: #261F1F;
+  --bg-prompt: #201A1A;
+  --bg-activity: #181313;
+  --bg-code: #0A0808;
+  --ink: #F6F1F0;
+  --body: #D6CBC9;
+  --muted: #9B8D8B;
+  --faint: #958988;
+  --accent: #EE8474;
+  --accent-deep: #F49B8E;
+  --accent-hover: #F49789;
+  --accent-active: #D16454;
+  --accent-soft: transparent;
+  --accent-focus: var(--accent);
+  --nav-active-bg: var(--accent-tint);
+  --running-glow: #EE8474;
+  --line: #382E2E;
+  --line-subtle: var(--line);
+  --line-strong: #463939;
+  --activity-tool: #EE8474;
+  --activity-think: #88A4E0;
+  --think: #88A4E0;
+  --think-tint: rgba(136, 164, 224, 0.11);
+  --on-accent: #1F0D0B;
+  --brand-ink: #F6F1F0;
+  --brand-accent: #EE8474;
+  --bg-overlay: rgba(0, 0, 0, 0.62);
+  --accent-fill: #E47666;
+  --accent-tint: rgba(238, 132, 116, 0.1);
+  --success: #63C78E;
+  --warning: #F59E0B;
+  --error: #F43F5E;
+  --on-status: #1F0D0B;
+  --error-tint: rgba(244, 63, 94, 0.12);
+  --info: #60A5FA;
+  --warning-tint: rgba(245, 158, 11, 0.12);
+  --selection: rgba(238, 132, 116, 0.25);
+  --activity-success: #4EBA88;
+  --activity-warning: #F59E0B;
+  --activity-error: #F43F5E;
+  --shadow-1: none;
+  --shadow-2: none;
 }
 
 /* Original Amber and Jade palette tokens, retained as independent choices.
@@ -474,8 +601,8 @@
   --faint: #606469;
   --accent: #D95A00;
   --accent-hover: #E8660C;
-  --accent-fill: #D95A00;
-  --accent-deep: #AA4200;
+  --accent-fill: #C44F00;
+  --accent-deep: #A23E00;
   --accent-active: #993B00;
   --accent-tint: rgba(217, 90, 0, 0.08);
   --on-accent: #FFFFFF;
@@ -492,8 +619,6 @@
   --activity-tool: var(--accent-deep);
   --activity-think: #6854C4;
   --think: var(--activity-think);
-  --needle-tool: #BA4D00;
-  --needle-think: #6854C4;
   --activity-success: #1B7E5A;
   --activity-warning: #B45309;
   --activity-error: #C53B38;
@@ -536,7 +661,7 @@
   --ink: #F4F6F8;
   --body: #CAD0D8;
   --muted: #8A94A1;
-  --faint: #737D8A;
+  --faint: #89929D;
   --accent: #FF781F;
   --accent-hover: #FF8F3D;
   --accent-fill: #FF781F;
@@ -557,8 +682,6 @@
   --activity-tool: var(--accent-deep);
   --activity-think: #A290F5;
   --think: var(--activity-think);
-  --needle-tool: #FF8F3D;
-  --needle-think: #A290F5;
   --activity-success: #4EBA88;
   --activity-warning: #F59E0B;
   --activity-error: #F06A65;
@@ -622,8 +745,6 @@
   --activity-tool: var(--accent-deep);
   --activity-think: #6854C4;
   --think: var(--activity-think);
-  --needle-tool: #007D78;
-  --needle-think: #6854C4;
   --activity-success: #1B7E5A;
   --activity-warning: #B45309;
   --activity-error: #C53B38;
@@ -666,7 +787,7 @@
   --ink: #F0F3F1;
   --body: #CBD3CE;
   --muted: #8E9A93;
-  --faint: #818D86;
+  --faint: #89948D;
   --accent: #52D2C9;
   --accent-hover: #6DE2D9;
   --accent-fill: #42C5BC;
@@ -687,8 +808,6 @@
   --activity-tool: var(--accent-deep);
   --activity-think: #A290F5;
   --think: var(--activity-think);
-  --needle-tool: #52D2C9;
-  --needle-think: #A290F5;
   --activity-success: #4EBA88;
   --activity-warning: #F59E0B;
   --activity-error: #F06A65;
@@ -813,9 +932,14 @@ a {
   font-weight: 600;
 }
 
-.app-error button:hover {
-  border-color: var(--accent-hover);
-  background: var(--accent-hover);
+.app-error button:hover:not(:disabled) {
+  border-color: var(--accent-fill-hover);
+  background: var(--accent-fill-hover);
+}
+
+.app-error button:active:not(:disabled) {
+  border-color: var(--accent-fill-active);
+  background: var(--accent-fill-active);
 }
 
 .brand-logo {
@@ -1009,8 +1133,13 @@ a {
   color: var(--on-accent);
 }
 
-.button--primary:hover {
-  background: var(--accent-hover);
+.button--primary:hover:not(:disabled) {
+  background: var(--accent-fill-hover);
+  border-color: transparent;
+}
+
+.button--primary:active:not(:disabled) {
+  background: var(--accent-fill-active);
   border-color: transparent;
 }
 
@@ -1025,9 +1154,14 @@ a {
   color: var(--on-status);
 }
 
-.button--danger:hover {
+.button--danger:hover:not(:disabled) {
   border-color: transparent;
-  background: color-mix(in srgb, var(--error) 86%, #000);
+  background: var(--error-fill-hover);
+}
+
+.button--danger:active:not(:disabled) {
+  border-color: transparent;
+  background: var(--error-fill-active);
 }
 
 .button--danger:disabled {
@@ -1055,13 +1189,13 @@ a {
 }
 
 @media (hover: hover) {
-  .icon-button:hover {
+  .icon-button:hover:where(:not(:disabled, .icon-button--active)) {
     background: var(--bg-inset);
     color: var(--ink);
   }
 }
 
-.icon-button:active {
+.icon-button:active:where(:not(:disabled, .icon-button--active)) {
   background: var(--bg-control);
   color: var(--ink);
 }
@@ -1069,6 +1203,13 @@ a {
 .icon-button--active {
   background: var(--accent-tint);
   color: var(--accent-deep);
+}
+
+/* Native disabled state outranks local icon colors without changing geometry. */
+button.icon-button:disabled {
+  background: transparent;
+  color: var(--faint);
+  cursor: default;
 }
 
 /* --- Chips & badges --- */
@@ -1099,21 +1240,21 @@ a {
 }
 
 .chip--warning {
-  color: var(--warning);
+  color: var(--warning-ink);
   background: color-mix(in srgb, var(--warning) 10%, transparent);
   border-color: color-mix(in srgb, var(--warning) 22%, transparent);
   --chip-glow: var(--warning);
 }
 
 .chip--info {
-  color: var(--info);
+  color: var(--info-ink);
   background: color-mix(in srgb, var(--info) 10%, transparent);
   border-color: color-mix(in srgb, var(--info) 22%, transparent);
   --chip-glow: var(--info);
 }
 
 .chip--error {
-  color: var(--error);
+  color: var(--error-ink);
   background: color-mix(in srgb, var(--error) 10%, transparent);
   border-color: color-mix(in srgb, var(--error) 22%, transparent);
 }

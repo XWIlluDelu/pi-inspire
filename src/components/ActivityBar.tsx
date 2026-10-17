@@ -1,6 +1,7 @@
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { memo } from "react";
 import { shallowEqual, useAppState } from "../store";
+import { PiLoader } from "./PiLoader";
 
 function RetryStatus({
   label,
@@ -11,15 +12,11 @@ function RetryStatus({
   reason?: string;
   tone: "info" | "warning";
 }) {
-  const Icon = tone === "info" ? Loader2 : AlertTriangle;
+  const Icon = tone === "info" ? PiLoader : AlertTriangle;
   return (
     <span className={`chip chip--${tone} chip--live activity__retry`}>
       <span className="activity__retry-label">
-        <Icon
-          size={12}
-          className={tone === "info" ? "spin" : undefined}
-          aria-hidden
-        />
+        <Icon size={12} aria-hidden />
         {label}
       </span>
       {reason ? (

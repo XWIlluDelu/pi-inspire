@@ -23,6 +23,7 @@ import { BranchTree } from "./BranchTree";
 import { ChangesPane, type ChangesReadingPositions } from "./ChangesPane";
 import { selectContextPaneView } from "./context-pane-view";
 import { FilesPane } from "./FilesPane";
+import { PiLoader } from "./PiLoader";
 
 const TerminalPane = lazy(() =>
   import("./TerminalPane").then((module) => ({ default: module.TerminalPane })),
@@ -247,12 +248,14 @@ export const ContextPane = memo(function ContextPane({
                   }
                   onClick={() => store.setContextMode(mode)}
                 >
-                  <span>{label}</span>
-                  {changesCount > 0 ? (
-                    <span className="ctx__mode-badge" aria-hidden="true">
-                      {changesCount > 99 ? "99+" : changesCount}
-                    </span>
-                  ) : null}
+                  <span className="ctx__mode-label">
+                    <span>{label}</span>
+                    {changesCount > 0 ? (
+                      <span className="ctx__mode-badge" aria-hidden="true">
+                        {changesCount > 99 ? "99+" : changesCount}
+                      </span>
+                    ) : null}
+                  </span>
                 </button>
               );
             },
@@ -265,6 +268,7 @@ export const ContextPane = memo(function ContextPane({
             title="Refresh"
             aria-label="Refresh context pane"
             onClick={handleRefresh}
+            aria-busy={refreshing}
             disabled={
               refreshing ||
               (state.contextMode !== "terminal" && !state.sessionId) ||
@@ -272,11 +276,11 @@ export const ContextPane = memo(function ContextPane({
                 state.branchActionId !== null)
             }
           >
-            <RefreshCw
-              size={14}
-              className={refreshing ? "spin" : ""}
-              aria-hidden
-            />
+            {refreshing ? (
+              <PiLoader size={14} aria-hidden />
+            ) : (
+              <RefreshCw size={14} aria-hidden />
+            )}
           </button>
           {onClose ? (
             <button
@@ -308,7 +312,11 @@ export const ContextPane = memo(function ContextPane({
       ) : (
         <Suspense
           fallback={
-            <div className="terminal-empty terminal-empty--loading">
+            <div
+              className="terminal-empty terminal-empty--loading"
+              role="status"
+            >
+              <PiLoader size={17} aria-hidden />
               Loading terminal…
             </div>
           }

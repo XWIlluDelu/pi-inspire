@@ -53,6 +53,13 @@
   gap: var(--space-1);
 }
 
+/* The sans title's visible ink sits higher than the small mono metadata.
+   Move its control/editor together, without changing the row or type scale. */
+.topbar__heading,
+.topbar__rename {
+  transform: translateY(1px);
+}
+
 .topbar__title {
   flex: 0 1 auto;
   margin: 0;
@@ -243,7 +250,7 @@
 }
 
 .topbar__title-button:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
 }
 
@@ -345,7 +352,7 @@
 }
 
 .topbar__extension-status:has(button:hover) { background: var(--bg-inset); }
-.topbar__extension-toggle:focus-visible { outline: 2px solid var(--accent-deep); outline-offset: -2px; }
+.topbar__extension-toggle:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: -2px; }
 
 .extension-status-popover {
   position: fixed;
@@ -370,7 +377,7 @@
 }
 
 .extension-status-popover > p + p { margin-top: var(--space-2); }
-.extension-status-popover:focus-visible { outline: 2px solid var(--accent-deep); outline-offset: -2px; }
+.extension-status-popover:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: -2px; }
 
 @container (max-width: 360px) {
   .topbar__workspace-meta { display: none; }
@@ -421,7 +428,7 @@
 
 .topbar__rename input:focus-visible {
   outline: none;
-  border-color: var(--accent-deep);
+  border-color: var(--accent-focus);
   box-shadow: 0 0 0 3px var(--accent-tint);
 }
 
@@ -487,7 +494,7 @@
 }
 
 .banner--error {
-  color: var(--error);
+  color: var(--error-ink);
   background: var(--error-tint);
 }
 
@@ -506,11 +513,11 @@
 
 .banner--error button:hover,
 .banner--error button:focus-visible {
-  background: color-mix(in srgb, currentColor 14%, transparent);
+  background: color-mix(in srgb, var(--error) 8%, transparent);
 }
 
 .banner--warning {
-  color: var(--warning);
+  color: var(--warning-ink);
   background: var(--warning-tint);
 }
 
@@ -529,5 +536,5 @@
 
 .banner--warning button:hover,
 .banner--warning button:focus-visible {
-  background: color-mix(in srgb, currentColor 14%, transparent);
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
 }

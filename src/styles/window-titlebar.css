@@ -38,7 +38,7 @@
     app-region: drag;
   }
 
-  /* Buffon's needles retain the legacy paired-track Tool/Thinking colors.
+  /* Needles share the active theme's Tool/Thinking identity colors.
      The Easter-egg layer lives within the safe rectangle behind the brand. */
   .window-titlebar__needles {
     position: absolute;
@@ -59,11 +59,11 @@
   }
 
   .window-titlebar__needle--tool {
-    background-color: var(--needle-tool, var(--activity-tool));
+    background-color: var(--activity-tool);
   }
 
   .window-titlebar__needle--think {
-    background-color: var(--needle-think, var(--activity-think));
+    background-color: var(--activity-think);
   }
 
   @keyframes titlebar-needle-fade {
@@ -80,10 +80,15 @@
 
   .window-titlebar__corner-logo {
     position: absolute;
-    inset: 0 auto 0 12px;
+    inset: 0 auto 0;
+    /* Follow the sidebar icon axis unless native left-hand controls occupy it. */
+    left: max(
+      12px,
+      calc(var(--nav-w-collapsed) / 2 - 8px - env(titlebar-area-x, 0px))
+    );
     display: flex;
     align-items: center;
-    width: 18px;
+    width: 16px;
     color: var(--chrome-ink);
     pointer-events: none;
     z-index: 1;
@@ -139,7 +144,7 @@
   }
 
   .window-titlebar__brand-button:focus-visible {
-    outline: 2px solid var(--accent-deep);
+    outline: 2px solid var(--accent-focus);
     outline-offset: 0;
   }
 

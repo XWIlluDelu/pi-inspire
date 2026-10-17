@@ -1,6 +1,5 @@
 import {
   Brain,
-  CheckCircle2,
   ChevronRight,
   Circle,
   FilePen,
@@ -9,12 +8,10 @@ import {
   FileText,
   Folder,
   List,
-  Loader2,
   Package,
   Search,
   SquareTerminal,
   Wrench,
-  XCircle,
 } from "lucide-react";
 import {
   createContext,
@@ -68,12 +65,15 @@ import {
 import { ChildCalls, childCallsSummary } from "./ChildCalls";
 import { CodeModeResult, codeModeDuration } from "./CodeModeResult";
 import { CopyAction } from "./CopyAction";
+import { DetailSummary } from "./DetailSummary";
 import { ImageGallery } from "./ImageGallery";
 import {
   EmbeddedImageOwnerContext,
   ImagePreview,
   PersistedImage,
 } from "./ImagePreview";
+import { PiLoader } from "./PiLoader";
+import { PiStatus } from "./PiStatus";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 import {
@@ -139,7 +139,7 @@ function CardHeader({
         </span>
         <span className="card__icon">{icon}</span>
         <span className="card__label">{label}</span>
-        <span className="card__status">{status}</span>
+        {status ? <span className="card__status">{status}</span> : null}
       </button>
       {summary}
       {expanded && copyText ? (
@@ -530,25 +530,31 @@ function toolStatus(
 function statusIcon(status: ToolStatus) {
   switch (status) {
     case "generating":
-      return (
-        <Loader2 size={14} className="spin" aria-label="generating arguments" />
-      );
+      return <PiLoader size={14} aria-label="generating arguments" />;
     case "waiting":
-      return <Circle size={12} aria-label="waiting to execute" />;
+      return <PiLoader size={14} aria-label="waiting to execute" />;
     case "interrupted":
       return <Circle size={12} aria-label="not executed" />;
     case "running":
-      return <Loader2 size={14} className="spin" aria-label="running" />;
+      return <PiLoader size={14} aria-label="running" />;
     case "success":
       return (
-        <CheckCircle2
+        <PiStatus
+          status="success"
           size={14}
           className="status-success"
           aria-label="finished"
         />
       );
     case "failure":
-      return <XCircle size={14} className="status-error" aria-label="failed" />;
+      return (
+        <PiStatus
+          status="error"
+          size={14}
+          className="status-error"
+          aria-label="failed"
+        />
+      );
     default:
       return (
         <Circle size={12} className="status-unknown" aria-label="no result" />
@@ -615,7 +621,7 @@ function RawResultData({ value }: { value: unknown }) {
       className="tool-result-details"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary>Result details</summary>
+      <DetailSummary>Result details</DetailSummary>
       {open ? (
         <pre
           className="card__mono"
@@ -1402,9 +1408,9 @@ function ToolArguments({ call }: { call: ToolCallContent }) {
       className="tool-result-details"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary>
+      <DetailSummary>
         {call.__inspireToolCall ? "Arguments (partial)" : "Arguments"}
-      </summary>
+      </DetailSummary>
       {open ? <RawArguments call={call} /> : null}
     </details>
   );
@@ -1418,7 +1424,9 @@ function ToolScript({ call }: { call: ToolCallContent }) {
       className="tool-result-details"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary>Script{call.__inspireToolCall ? " (partial)" : ""}</summary>
+      <DetailSummary>
+        Script{call.__inspireToolCall ? " (partial)" : ""}
+      </DetailSummary>
       {open ? (
         <ToolPresentationBlockView
           block={{

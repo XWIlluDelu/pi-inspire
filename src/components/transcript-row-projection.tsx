@@ -714,12 +714,21 @@ export function useTranscriptRows({
                 label: "Thinking",
               });
             } else if (item.type === "toolCall") {
+              const call = item as ToolCallContent;
+              const phase = toolActivity[call.id]?.phase;
               segmentTelemetry.push({
                 id: activityItemIds[itemIndex]!,
                 kind: "tool",
-                label: (item as ToolCallContent).name
-                  ? `Tool: ${(item as ToolCallContent).name}`
-                  : "Tool call",
+                label: call.name ? `Tool: ${call.name}` : "Tool call",
+                live:
+                  runBusy &&
+                  !toolResults.has(call.id) &&
+                  phase !== "done" &&
+                  phase !== "error" &&
+                  (phase === "running" ||
+                    phase === "queued" ||
+                    (assistantDynamicActive &&
+                      call.__inspireToolCall?.phase !== "interrupted")),
               });
             } else if (genericContentTitle(item) !== null) {
               segmentTelemetry.push({
@@ -729,14 +738,11 @@ export function useTranscriptRows({
               });
             }
           });
-          if (
-            (assistantDynamicActive || segmentStreaming) &&
-            segmentTelemetry.length > 0
-          ) {
-            segmentTelemetry[segmentTelemetry.length - 1] = {
-              ...segmentTelemetry[segmentTelemetry.length - 1]!,
-              live: true,
-            };
+          // Thinking is live only while its own trailing block is streaming,
+          // not merely because a later tool in the same message is still running.
+          if (segmentStreaming && fragmentItems.at(-1)?.type === "thinking") {
+            const last = segmentTelemetry.at(-1);
+            if (last) last.live = true;
           }
           appendActivity(
             segmentKey,
@@ -762,7 +768,7 @@ export function useTranscriptRows({
             typeof message.errorMessage === "string" &&
             message.errorMessage.trim()
               ? message.errorMessage
-              : "PI did not provide error details.";
+              : "Pi did not provide error details.";
           built.push({
             key: `error:${projectedKey}`,
             node: <AssistantError text={errorText} />,

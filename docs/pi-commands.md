@@ -23,6 +23,15 @@ Graphical actions open their existing controls. Selecting an extension, template
 
 Native commands take precedence over an extension, prompt, or skill with the same name, matching Pi's interactive client. Use namespaced extension commands to avoid collisions. Typed native commands reject staged attachments and project-file references; palette actions do not borrow those artifacts. Unknown slash commands are reported rather than sent to the model.
 
+## New projects
+
+Enter the project directory and your first message on **New session**. If the directory does not
+exist, **Create folder and start** creates it, including missing parent folders, then starts the
+session with your message and selected model/thinking choices. Typing a path or browsing does not
+create folders. If model defaults cannot be previewed before creation, Pi resolves them in the new
+directory. A startup failure can leave the created folder in place; untransferred input remains
+available to retry.
+
 ## History and independent copies
 
 **History** in the contextual pane shows a compact outline led by your inputs. Expand replies and
@@ -59,11 +68,11 @@ per-model/global thinking defaults and supported-level clamping. For example, `x
 becomes `high` on a model supporting through `high`, rather than disabling thinking. You can still
 choose another effort afterward. These are session choices, not writes to saved defaults.
 
-Virtual models are marked **Router**. The picker and New inheritance retain your selected router;
-reply headers and usage describe the physical model that answered. If a router is no longer
-registered, reopened sessions follow Pi's physical-response recovery. Prospective-workspace discovery
-includes global and already-trusted project extensions; untrusted project resources are skipped with
-a warning. New trust decisions remain part of Pi startup.
+Virtual models are marked **Router**. The picker and New inheritance retain your selected router
+when a physical model answers. If a router is no longer registered, reopened sessions follow Pi's
+physical-response recovery. Prospective-workspace discovery includes global and already-trusted
+project extensions; untrusted project resources are skipped with a warning. New trust decisions
+remain part of Pi startup.
 
 ## Model settings and login
 
@@ -102,9 +111,11 @@ Configuration remains usable independently of login availability.
 ## Runtime behavior settings
 
 Settings → Behavior applies Pi delivery, automatic-compaction and retry changes to the selected
-session's worker. Pi's setters also update global settings, subject to project overrides; other running
-workers keep their own loaded values. Pi's acknowledgment confirms the applied value, not a successful
-settings-file save. These controls are separate from Inspire's interface preferences.
+session's worker and request a global settings save, subject to project overrides; other running
+workers keep their own loaded values. The scope note beside these controls distinguishes the applied
+value from a confirmed settings-file save. Pi currently does not provide that save result to Inspire.
+An invalid-settings startup warning identifies the file to repair before Reload. These controls are
+separate from Inspire's interface preferences.
 
 ## Direct shell input
 
@@ -186,9 +197,23 @@ even if the output file later changes. Re-export after a Host restart or an expi
 
 ## Compaction and reload
 
-`/compact` uses the same state-owned compaction indicator as automatic compaction and retains a completion receipt. Pi determines its duration; the Composer can retain Steer/Queue input meanwhile. **Stop** or Escape uses Pi's native cancellation and recovers unconsumed Pending input so it does not restart the task. Cooperative cancellation keeps the session's worker and extension state and shows a neutral cancelled receipt. An unresponsive extension hook may require retiring that worker and starting a fresh one on next use. A checkpoint already committed before Stop remains completed.
+`/compact` uses the same compaction indicator as automatic compaction. Pi determines its duration;
+the Composer can retain Steer/Queue input meanwhile. Successful Compact and Reload show a brief
+confirmation when their session is selected, rather than retaining a dock receipt. Compact's persisted
+checkpoint remains in the conversation. Cancellation, failure and unknown outcomes retain their
+command result.
 
-The small context ring shows occupancy, not compaction progress. Hover or focus it—or tap it on touch—to see the model and Pi's used tokens/context capacity. Tap outside to dismiss. When Pi temporarily reports unknown usage after compaction, the ring shows `—` while the hint retains known capacity and explains that the count updates after the next reply.
+**Stop** or Escape uses Pi's native cancellation and recovers unconsumed Pending input so it does not
+restart the task. Cooperative cancellation keeps the worker and extension state. An unresponsive
+extension hook may require retiring that worker and starting a fresh one on next use. A checkpoint
+already committed before Stop remains completed.
+
+The small context ring shows occupancy, not compaction progress. Hover or focus it to see the model
+and Pi's used tokens/context capacity. Click, tap or activate it with the keyboard to open
+**Session & usage**, also available through `/session` and the command palette. This local query
+preserves your draft and does not call a model. When Pi temporarily reports unknown usage after
+compaction, the ring shows `—` while the hint retains known capacity and explains that the count
+updates after the next reply.
 
 `/reload` is available when the selected Pi session is idle. It reloads extensions, skills, prompts, and context files by replacing that worker, resetting worker-local extension state. It does not restart the Host or other sessions. A Host restart reloads all workers and applies changed Host environment/configuration.
 

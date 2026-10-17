@@ -147,10 +147,17 @@
 .transcript-search:focus-within,
 .transcript-search--active {
   opacity: 1;
-  border-color: var(--accent-deep);
   background: var(--bg-surface);
   box-shadow: var(--shadow-1);
   color: var(--ink);
+}
+
+.transcript-search--active {
+  border-color: var(--accent-deep);
+}
+
+.transcript-search:focus-within {
+  border-color: var(--accent-focus);
 }
 
 .transcript-search output:empty {
@@ -386,7 +393,7 @@
 }
 
 .prompt-map__toggle:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 2px;
 }
 
@@ -454,7 +461,7 @@
 }
 
 .prompt-map__list:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
   border-radius: var(--radius-sm);
 }
@@ -568,7 +575,7 @@
   border: 1px solid color-mix(in srgb, var(--error) 28%, var(--hairline));
   border-radius: var(--radius-sm);
   background: var(--error-tint);
-  color: var(--error);
+  color: var(--error-ink);
   font: inherit;
   cursor: pointer;
 }
@@ -658,13 +665,24 @@
     background var(--dur-micro) var(--ease-standard);
 }
 
-.activity-fold__boundary--lower,
+.activity-fold__disclosure,
+.activity-fold__boundary,
 .activity-fold__omission {
-  font-size: var(--text-xs);
+  font-size: var(--text-base);
+  font-weight: 400;
+}
+.activity-fold__boundary,
+.activity-fold__disclosure,
+.activity-fold__omission {
+  font-family: var(--font-label);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .activity-fold__disclosure > svg,
-.activity-fold__boundary > svg {
+.activity-fold__boundary > svg,
+.activity-fold__omission > svg {
   flex-shrink: 0;
 }
 
@@ -687,29 +705,52 @@
   .activity-fold__boundary,
   .activity-fold__omission
 ):focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
   color: var(--ink);
 }
 
-.activity-fold__kinds {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+.activity-fold__matrix {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: repeat(3, 2px);
+  grid-template-rows: repeat(3, 2px);
+  gap: 2px;
+  width: 10px;
+  height: 10px;
   margin-inline-start: 2px;
 }
 
-.activity-fold__kind {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  opacity: 0.7;
+.activity-fold__kind,
+.activity-fold__cell-empty {
+  width: 2px;
+  height: 2px;
+  border-radius: .6px;
+}
+
+.activity-fold__cell-empty {
+  background: var(--hairline);
 }
 .activity-fold__kind--thinking {
-  background: var(--activity-think);
+  color: var(--activity-think);
+  background: currentColor;
 }
 .activity-fold__kind--tool {
-  background: var(--activity-tool);
+  color: var(--activity-tool);
+  background: currentColor;
+}
+.activity-fold__matrix--full .activity-fold__kind {
+  box-shadow: 0 0 2px color-mix(in srgb, currentColor 35%, transparent);
+}
+.activity-fold__matrix--lighting {
+  animation: activity-matrix-filled .8s ease-out;
+}
+@keyframes activity-matrix-filled {
+  0%, 100% { filter: brightness(1); }
+  40% { filter: brightness(1.35); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .activity-fold__matrix--lighting { animation: none; }
 }
 .activity-fold__kind--live {
   animation: activity-kind-pulse 1.8s ease-in-out infinite;
@@ -729,10 +770,11 @@
   min-width: 0;
   flex-direction: column;
   gap: var(--space-1);
-  /* Center the guide below the 14px disclosure chevron; children start at 24px. */
+  /* The guide follows the disclosure axis; nested rows start under the label.
+     4px control inset + half the 14px chevron = 11px. */
   margin: 2px 0 2px 11px;
-  border-left: 1px solid var(--hairline);
-  padding: 2px 0 2px var(--space-3);
+  border-left: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+  padding: 2px 0 2px 12px;
 }
 
 /* Message boundaries no longer carry turn chrome or a different activity rhythm.
@@ -752,12 +794,10 @@
   display: none;
 }
 
-.activity-fold__omission--loading > .activity-fold__dots {
-  animation: activity-omission-pulse 0.9s ease-in-out infinite;
-}
-.activity-fold__omission--error,
-.activity-fold__disclosure--error {
-  color: var(--danger);
+/* Keep the error role through the generic hover, pressed and focus ink treatment. */
+.activity-fold__omission.activity-fold__omission--error,
+.activity-fold__disclosure.activity-fold__disclosure--error {
+  color: var(--error-ink);
 }
 
 @media (pointer: coarse) {
@@ -765,57 +805,6 @@
   .activity-fold__boundary,
   .activity-fold__omission {
     min-height: 32px;
-  }
-}
-
-.activity-fold__dots {
-  display: inline-flex;
-  align-items: center;
-}
-
-.activity-fold__dots > span {
-  display: grid;
-  place-items: center;
-  width: 1ch;
-  height: 1em;
-  margin-inline-end: 0.25em;
-}
-
-.activity-fold__dots > span::before {
-  content: "";
-  width: 2px;
-  height: 2px;
-  background: currentColor;
-}
-
-/* Local activity feedback: no layout changes or JavaScript animation clock. */
-.activity-fold__dots--active > span {
-  color: var(--activity-tool);
-  animation: activity-dots-swap 2s steps(1, end) infinite;
-}
-
-.activity-fold__dots--active > span:nth-child(2) {
-  color: var(--activity-think);
-  animation-delay: -1s;
-}
-
-@keyframes activity-dots-swap {
-  0%,
-  100% {
-    color: var(--activity-tool);
-  }
-  50% {
-    color: var(--activity-think);
-  }
-}
-
-@keyframes activity-omission-pulse {
-  0%,
-  100% {
-    opacity: 0.42;
-  }
-  50% {
-    opacity: 1;
   }
 }
 
@@ -848,7 +837,8 @@
   position: relative;
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  /* Align mixed-size text by its baseline, not by the disclosure hit box. */
+  align-items: baseline;
   gap: 0 6px;
   /* A hanging disclosure keeps wrapped metadata on the title's reading axis,
      without reserving an extra indent when both groups fit on one line. */
@@ -905,7 +895,7 @@
 }
 
 .context-checkpoint__toggle:focus-visible::after {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
 }
 
@@ -930,6 +920,8 @@
 .context-checkpoint__title {
   display: flex;
   align-items: center;
+  /* The title supplies the toggle's baseline; the leading SVG must not. */
+  align-self: baseline;
   min-height: 28px;
   flex: 0 1 auto;
   min-width: 0;
@@ -942,6 +934,11 @@
   gap: 6px;
   min-width: 0;
   max-width: 100%;
+}
+
+.context-checkpoint__details:not(:has(.context-checkpoint__metric)) {
+  /* A standalone Copy is a control, not a second text baseline. */
+  align-self: center;
 }
 
 .context-checkpoint__metric {
@@ -965,7 +962,7 @@
   transition: opacity var(--dur-micro) var(--ease-standard);
 }
 
-.context-checkpoint__head:is(:hover, :focus-within) .context-checkpoint__copy {
+.context-checkpoint__head:is(:hover, :has(:focus-visible)) .context-checkpoint__copy {
   opacity: 1;
 }
 
@@ -990,7 +987,7 @@
 
 @media (hover: none) {
   .context-checkpoint__copy.icon-button {
-    opacity: 1;
+    opacity: 0.75;
   }
 }
 
@@ -1035,7 +1032,8 @@
 }
 
 .turn:hover .turn__actions,
-.turn:focus-within .turn__actions {
+.turn--user:has(:focus-visible) .turn__actions,
+.turn:not(.turn--user):focus-within .turn__actions {
   opacity: 1;
 }
 
@@ -1077,7 +1075,7 @@
   background: var(--bg-prompt);
   border: 1px solid var(--line);
   border-radius: 14px;
-  padding: 12px 18px;
+  padding: 10px 14px;
   font-size: var(--text-reading);
   line-height: var(--leading-reading);
   color: var(--ink);
@@ -1167,7 +1165,7 @@
     background var(--dur-micro) var(--ease-standard);
 }
 .custom-message__head:hover .custom-message__copy,
-.custom-message__head:focus-within .custom-message__copy {
+.custom-message__head:has(:focus-visible) .custom-message__copy {
   opacity: 1;
 }
 @media (hover: none) {
@@ -1176,7 +1174,7 @@
   }
 }
 @media (hover: hover) {
-  .custom-message__copy.icon-button:hover {
+  .custom-message__copy.icon-button:hover:where(:not(:disabled)) {
     color: var(--ink);
     background: var(--bg-inset);
   }
@@ -1215,7 +1213,7 @@
 }
 .custom-message__details > summary:focus-visible,
 .custom-message__copy.icon-button:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 2px;
 }
 .custom-message__raw {
@@ -1303,7 +1301,7 @@
 }
 
 .assistant-error__message--expanded:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 1px;
 }
 
@@ -1335,7 +1333,7 @@
 }
 
 .assistant-error__disclosure:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 1px;
 }
 
@@ -1400,9 +1398,16 @@
 
 .transcript__older-retry:hover,
 .transcript__older-retry:focus-visible {
-  border-color: var(--accent-deep);
   color: var(--ink);
   background: var(--bg-inset);
+}
+
+.transcript__older-retry:hover {
+  border-color: var(--accent-deep);
+}
+
+.transcript__older-retry:focus-visible {
+  border-color: var(--accent-focus);
 }
 
 .jump-to-latest {
@@ -1534,12 +1539,12 @@
 }
 
 @media (hover: hover) {
-  .pending-group__control.icon-button:hover {
+  .pending-group__control.icon-button:hover:where(:not(:disabled)) {
     color: var(--ink);
     background: var(--bg-control);
   }
 
-  .pending-group__control--clear.icon-button:hover {
+  .pending-group__control--clear.icon-button:hover:where(:not(:disabled)) {
     color: var(--error);
     background: var(--error-tint);
   }
@@ -1713,7 +1718,7 @@
 }
 
 .pending-group__image:focus-visible {
-  outline: 2px solid var(--accent-deep);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 2px;
 }
 
@@ -1782,7 +1787,7 @@
    emphasis, without a second opacity layer on individual buttons. */
 
 @media (hover: hover) {
-  .pending-group__copy.icon-button:hover {
+  .pending-group__copy.icon-button:hover:where(:not(:disabled)) {
     color: var(--ink);
     background: var(--bg-inset);
   }

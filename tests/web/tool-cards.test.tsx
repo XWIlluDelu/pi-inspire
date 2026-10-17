@@ -401,6 +401,55 @@ describe("native Pi tool cards", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps one loading glyph through argument generation, queueing and execution", () => {
+    const tool = call("read", { path: "src/a.ts" });
+    const { rerender } = render(
+      <ToolCard
+        call={{
+          ...tool,
+          __inspireToolCall: {
+            phase: "streaming",
+            characters: 20,
+            truncated: false,
+          },
+        }}
+        result={undefined}
+        activity={undefined}
+        live
+        visibility="collapsed"
+      />,
+    );
+    const glyph = screen.getByLabelText("generating arguments");
+    expect(glyph).toHaveClass("pi-loading");
+    const pattern = glyph.getAttribute("data-variant");
+    for (const phase of ["queued", "running"] as const) {
+      rerender(
+        <ToolCard
+          call={tool}
+          result={undefined}
+          activity={{ id: tool.id, name: tool.name, phase }}
+          live
+          visibility="collapsed"
+        />,
+      );
+      const next = screen.getByLabelText(
+        phase === "queued" ? "waiting to execute" : "running",
+      );
+      expect(next).toBe(glyph);
+      expect(next).toHaveAttribute("data-variant", pattern);
+    }
+    rerender(
+      <ToolCard
+        call={tool}
+        result={result("done")}
+        activity={undefined}
+        live={false}
+        visibility="collapsed"
+      />,
+    );
+    expect(screen.getByLabelText("finished")).not.toHaveClass("pi-loading");
+  });
+
   it("does not materialize a growing code body while collapsed", () => {
     const partial: ToolCallContent = {
       ...call("write", { path: "src/new.ts", content: "line\n".repeat(1_000) }),

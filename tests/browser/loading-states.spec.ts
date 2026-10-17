@@ -70,9 +70,11 @@ for (const viewport of [
       ).toBe(true);
       expect(
         await dialog
-          .locator(".spin")
-          .evaluate((element) => getComputedStyle(element).animationName),
-      ).toBe("none");
+          .locator(".pi-loading__dot")
+          .evaluateAll((elements) =>
+            elements.map((element) => getComputedStyle(element).animationName),
+          ),
+      ).toEqual(Array(7).fill("none"));
       expect(
         (await new AxeBuilder({ page }).include(".settings").analyze())
           .violations,
@@ -97,6 +99,53 @@ for (const viewport of [
     }
   });
 }
+
+test("Π chooses again at a complete animation boundary and stays static with reduced motion", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(() => {
+    Math.random = () => 0;
+  });
+  await pairedPage(page);
+  const release = await holdRequests(page, settingsModule);
+  try {
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const loader = page
+      .getByRole("dialog", { name: "Settings", exact: true })
+      .getByRole("status")
+      .locator(".pi-loading");
+    await expect(loader).toHaveAttribute("data-variant", "rows");
+    await expect(loader).toHaveCSS("animation-duration", "2.4s");
+    await page
+      .getByRole("dialog", { name: "Settings", exact: true })
+      .evaluate((el) =>
+        Promise.all(el.getAnimations().map((animation) => animation.finished)),
+      );
+    const before = await loader.boundingBox();
+    await page.evaluate(() => {
+      Math.random = () => 0.999;
+    });
+    // Real CSS iteration, including the standard AnimationEvent path in Chromium.
+    await expect(loader).toHaveAttribute("data-variant", "gather", {
+      timeout: 4000,
+    });
+    expect(await loader.boundingBox()).toEqual(before);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(loader).toHaveCSS("animation-name", "none");
+    expect(
+      await loader
+        .locator("rect")
+        .evaluateAll((nodes) =>
+          nodes.every(
+            (node) => getComputedStyle(node).animationName === "none",
+          ),
+        ),
+    ).toBe(true);
+  } finally {
+    release();
+  }
+});
 
 test("Settings deferred failure has a styled recovery action and remains dismissible", async ({
   page,

@@ -3,7 +3,6 @@ import {
   Check,
   Download,
   FileText,
-  Loader2,
   RotateCw,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -19,6 +18,7 @@ import { DocumentPreview } from "./DocumentPreview";
 import { ImagePreview } from "./ImagePreview";
 import { NotebookPreview } from "./NotebookPreview";
 import { PdfPreview } from "./PdfPreview";
+import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 
@@ -304,7 +304,7 @@ export function ResourcePreviewContent({
   if (preview.status === "loading")
     return (
       <ContextPaneState
-        icon={<Loader2 className="spin" size={17} aria-hidden />}
+        icon={<PiLoader size={17} aria-hidden />}
         title="Loading preview"
         hint={preview.reference}
       />

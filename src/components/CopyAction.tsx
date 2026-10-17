@@ -1,7 +1,8 @@
-import { Check, Copy, Loader2 } from "lucide-react";
+import { Check, Copy } from "lucide-react";
 import type { CopyLoader } from "../content-copy";
 import { store } from "../store";
 import { useCopied } from "../use-copied";
+import { PiLoader } from "./PiLoader";
 
 interface CopyActionProps {
   text?: string;
@@ -47,7 +48,7 @@ export function CopyAction({
       }
     >
       {copying ? (
-        <Loader2 className="spin" size={13} aria-hidden />
+        <PiLoader size={13} aria-hidden />
       ) : copied ? (
         <Check size={13} aria-hidden />
       ) : (

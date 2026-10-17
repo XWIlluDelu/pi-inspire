@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { openMockSession, pairedPage } from "./support/navigation";
+import { textBaseline } from "./support/text-baseline";
 
 test("desktop pane gutters remain pointer and keyboard resize targets", async ({
   page,
@@ -191,7 +192,7 @@ test("sidebar owns desktop toggles and creation while phones keep a full drawer"
   await expect(phoneToggle).toHaveCount(0);
 });
 
-test("narrow workbench preserves primary controls and drawer dismissal", async ({
+test("workbench headers preserve controls, text baselines and drawer dismissal", async ({
   page,
 }) => {
   await page.route("**/api/git/status?**", async (route) => {
@@ -276,4 +277,19 @@ test("narrow workbench preserves primary controls and drawer dismissal", async (
       }),
     );
   expect(Math.min(...labelInsets)).toBeGreaterThanOrEqual(0);
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const badge = page.locator(".ctx__mode-badge");
+  await expect(badge).toBeVisible();
+  await page.evaluate(() => document.fonts.ready);
+  const label = page
+    .getByRole("button", { name: "Changes", exact: true })
+    .locator(".ctx__mode-label > span")
+    .first();
+  expect(
+    Math.abs(
+      (await badge.evaluate(textBaseline)) -
+        (await label.evaluate(textBaseline)),
+    ),
+  ).toBeLessThan(0.25);
 });

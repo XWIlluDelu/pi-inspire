@@ -1,5 +1,4 @@
 import { FitAddon } from "@xterm/addon-fit";
-import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { type IMarker, type ITheme, Terminal } from "@xterm/xterm";
@@ -9,12 +8,12 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
+  Circle,
   ClipboardPaste,
   Copy,
   Eraser,
   Eye,
   Keyboard,
-  LoaderCircle,
   MessageSquareQuote,
   Monitor,
   RotateCcw,
@@ -70,7 +69,13 @@ import {
   terminalCommandOutput,
 } from "../terminal-output";
 import type { TerminalUiSettings } from "../terminal-settings";
+import {
+  TerminalSearchAddon,
+  terminalSearchOptions,
+  terminalSelectionColor,
+} from "../terminal-theme";
 import { useCopied } from "../use-copied";
+import { PiLoader } from "./PiLoader";
 import { TerminalTextDialog } from "./TerminalTextDialog";
 import { TerminalTouchKeys } from "./TerminalTouchKeys";
 
@@ -134,7 +139,10 @@ function terminalTheme(): ITheme {
     foreground: cssColor("--terminal-fg", "#cad0d8"),
     cursor: cssColor("--terminal-cursor", "#ff781f"),
     cursorAccent: cssColor("--terminal-bg", "#0a0c0f"),
-    selectionBackground: cssColor("--terminal-selection", "#5b331f"),
+    selectionBackground: terminalSelectionColor(
+      cssColor("--terminal-selection", "#5b331f"),
+      "#5b331f",
+    ),
     black: cssColor("--terminal-black", "#20252b"),
     red: cssColor("--terminal-red", "#f06a65"),
     green: cssColor("--terminal-green", "#4eba88"),
@@ -224,7 +232,7 @@ export const TerminalView = memo(function TerminalView({
   const hostRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
-  const searchRef = useRef<SearchAddon | null>(null);
+  const searchRef = useRef<TerminalSearchAddon | null>(null);
   const connectionRef = useRef<TerminalConnection | null>(null);
   const descriptorRef = useRef(descriptor);
   const activeRef = useRef(active);
@@ -250,6 +258,8 @@ export const TerminalView = memo(function TerminalView({
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState<SearchState>(initialSearch);
+  const searchStateRef = useRef(search);
+  searchStateRef.current = search;
   const [modifiers, setModifiers] = useState(NO_TERMINAL_MODIFIERS);
   const [textSnapshot, setTextSnapshot] = useState<{
     text: string;
@@ -436,7 +446,7 @@ export const TerminalView = memo(function TerminalView({
       theme: terminalTheme(),
     });
     const fit = new FitAddon();
-    const searchAddon = new SearchAddon();
+    const searchAddon = new TerminalSearchAddon();
     xterm.loadAddon(fit);
     xterm.loadAddon(searchAddon);
     xterm.loadAddon(
@@ -545,6 +555,7 @@ export const TerminalView = memo(function TerminalView({
     const updateTheme = () => {
       xterm.options.theme = terminalTheme();
       xterm.options.fontFamily = terminalFontFamily();
+      searchAddon.refreshTheme(searchStateRef.current);
     };
     const refitAfterFontLoad = () => {
       if (xtermRef.current !== xterm) return;
@@ -810,21 +821,6 @@ export const TerminalView = memo(function TerminalView({
       !writable || !ready || descriptor.status !== "running";
   }, [descriptor.status, ready, writable]);
 
-  const optionsForSearch = (value: SearchState) => ({
-    caseSensitive: value.caseSensitive,
-    regex: value.regex,
-    wholeWord: value.wholeWord,
-    decorations: {
-      matchOverviewRuler: cssColor("--terminal-search", "#e4b65a"),
-      activeMatchColorOverviewRuler: cssColor(
-        "--terminal-search-active",
-        "#ff781f",
-      ),
-      matchBackground: cssColor("--terminal-search-bg", "#5b4a24"),
-      activeMatchBackground: cssColor("--terminal-search-active-bg", "#8a431d"),
-    },
-  });
-  const searchOptions = optionsForSearch(search);
   const toggleSearchOption = (
     option: "caseSensitive" | "regex" | "wholeWord",
   ) => {
@@ -832,15 +828,16 @@ export const TerminalView = memo(function TerminalView({
     setSearch(next);
     if (next.query)
       searchRef.current?.findNext(next.query, {
-        ...optionsForSearch(next),
+        ...terminalSearchOptions(next),
         incremental: true,
       });
   };
   const find = (direction: "next" | "previous") => {
     const addon = searchRef.current;
     if (!addon || !search.query) return;
-    if (direction === "next") addon.findNext(search.query, searchOptions);
-    else addon.findPrevious(search.query, searchOptions);
+    const options = terminalSearchOptions(search);
+    if (direction === "next") addon.findNext(search.query, options);
+    else addon.findPrevious(search.query, options);
   };
   const closeSearch = (returnToInput: boolean) => {
     searchRef.current?.clearDecorations();
@@ -960,7 +957,11 @@ export const TerminalView = memo(function TerminalView({
                 {descriptor.status === "exited" ? (
                   <Square size={12} aria-hidden />
                 ) : transport !== "connected" ? (
-                  <LoaderCircle size={14} aria-hidden />
+                  transport === "offline" ? (
+                    <Circle size={14} aria-hidden />
+                  ) : (
+                    <PiLoader size={14} aria-hidden />
+                  )
                 ) : writable ? (
                   <button
                     type="button"
@@ -1092,7 +1093,7 @@ export const TerminalView = memo(function TerminalView({
                   setSearch((current) => ({ ...current, query }));
                   if (query)
                     searchRef.current?.findNext(query, {
-                      ...searchOptions,
+                      ...terminalSearchOptions(search),
                       incremental: true,
                     });
                   else searchRef.current?.clearDecorations();

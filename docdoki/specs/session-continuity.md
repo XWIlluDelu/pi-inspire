@@ -2,6 +2,11 @@
 purpose: Existing Pi JSONL session trees remain the single conversation authority while inspire adds fast discovery, switching, continuation, and safe handoff.
 covers:
   - shared/contracts.ts
+  - shared/session-activity.ts
+  - server/pi-session-activity.ts
+  - docs/examples/session-activity.ts
+  - tests/server/pi-session-activity.test.ts
+  - tests/web/session-activity.test.tsx
   - shared/assistant-stream.ts
   - server/session-catalog.ts
   - server/pi-session-directory.ts
@@ -65,6 +70,8 @@ covers:
   - tests/browser/session-navigation.spec.ts
   - tests/server/session-projection.test.ts
   - tests/web/app.test.tsx
+  - tests/web/readonly-session.test.tsx
+  - tests/browser/readonly-session.spec.ts
   - tests/web/nav-render.test.tsx
   - tests/web/store*.test.ts
   - tests/web/connection-controller.test.ts
@@ -113,7 +120,14 @@ Let the user move between existing terminal Pi and inspire without losing histor
   the worker cwd for creation, snapshots, and startup identity checks.
 
 - A session can be listed, searched, opened, continued, named, and switched using Pi’s identity and
-  tree rather than copied into another conversation store.
+  tree rather than copied into another conversation store. A missing project directory does not
+  prevent reading retained history; [[session-persistence]] separates that read from worker admission.
+
+- A workspace-unavailable session keeps its transcript, History inspection, Copy and local
+  information queries. Replace the composer with one short neutral read-only explanation in the
+  same location, not an error page or recovery wizard. Session-writing/execution controls are
+  unavailable; preference and navigation controls remain usable. Reselecting this read-only session
+  requests a fresh open so a restored directory can become available again.
 
 - Session listing retains only bounded name, first-user-text, working-directory, count, and
   timestamp metadata. The host keys each rebuildable JSONL summary by filesystem identity and stat
@@ -130,17 +144,7 @@ Let the user move between existing terminal Pi and inspire without losing histor
   chronological catalog order with authoritative totals and explicit pagination, not a filter over
   the browser's already-loaded rows.
 
-  Search presentation reveals the immediate parent directory beside a project group when that
-  parent has a visible token/phrase match but the project basename does not. Existing context for
-  colliding basenames remains. Both group contexts use `project @parent`, with the `@` marker in
-  the secondary style and excluded from search emphasis. Cross-project Pinned/Hidden locations
-  retain their neutral capsule background, control radius and horizontal inset, separating project
-  identity from the session title and age; they do not use an `@` prefix. Location normally means
-  the project basename; it becomes `parent/project` only when the parent matches and neither the
-  title nor project basename does. This expanded location temporarily
-  replaces age metadata to preserve title space. Ordinary browsing restores basename and age.
-  All rows stay single-line; native filtering/order, curation, and unhighlighted regex behavior
-  are unchanged.
+  [[workbench]] owns navigation labels, match emphasis and search interaction.
 
   Search reads one session's complete admitted JSONL prefix at a time without retaining a
   whole-catalog conversation cache. Same-inode append may continue while that prefix is read under
@@ -189,11 +193,48 @@ Let the user move between existing terminal Pi and inspire without losing histor
   indicator for as long as the conflicted session is in the background; selecting it moves recovery
   to the topbar chip and persistent banner, and only explicit recovery clears the conflict.
 
+- Native Pi TUI activity appears on existing catalog rows through one optional, user-enabled Pi
+  extension, independently of the terminal, launcher or Herdr enhancement. It uses supported Pi
+  lifecycle and aggregate UI-prompt events; it adds no tools, prompts or session entries.
+  The Host does not install or inject it automatically. The enable/reload procedure is in
+  [the extension guide](../../docs/extensions.md#show-terminal-session-activity).
+
+  Reports contain only session identity/file, process id, activity and heartbeat time in the local
+  user's private cache. Publication is atomic and serialized. Factory-only discovery has no runtime
+  side effects; shutdown/reload/replacement releases timers and removes reports. Final settlement,
+  not `agent_end`, clears work, so retries and queued continuations remain busy. Blocking input is
+  distinct from active work. Heartbeats maintain liveness without model traffic; eight-second-old
+  reports and exited processes no longer count.
+
+  The Host polls about every two seconds and matches both native session id and absolute file
+  against the unambiguous discovery catalog. Reports do not expand storage roots or confer
+  execution, stop, restart or writer ownership. Failed/stalled observations and browser disconnect
+  clear the independent activity map: missing evidence is unknown, not an invented idle or
+  completion event. Repeated full maps supply reconnect baselines and hydrate catalog rows without
+  changing pagination. An observed live TUI disables row deletion, including when idle; existing
+  server writer-admission checks remain authoritative. Busy identities count once alongside managed
+  workers for titlebar density under [[design-system]]; waiting for input does not increase the
+  count. There is no second Herdr-specific activity source.
+
+  Regression checks cover lifecycle and input waits, heartbeats, session replacement and shutdown,
+  catalog identity/path matching, duplicate identities, expiry, process exit, delayed results and
+  UI state isolation.
+
 - Persistent pin, folder pin/Hidden, session Hidden, and folder-collapse metadata belongs to inspire
   preferences, not Pi JSONL. Curated sessions are hydrated by id and curated folders by exact
   working directory, so off-page pins stay reachable, Hidden remains reversible, and a folder
   curated as a whole stays complete. Folder-level state is independent of per-session state,
   bounded, and never dependent on the first chronological catalog page.
+
+## New project creation
+
+The New composer can explicitly create a missing project directory and start a session there.
+Model/file discovery remains observational, and opening existing history never recreates its cwd.
+The requested path is created recursively only after the user activates **Create folder and start**,
+then resolves to the normal canonical directory before discovery registration and Pi admission.
+Existing files are neither replaced nor treated as missing directories. Directory creation and
+session startup are not atomic: a startup failure can leave the requested folder in place, while
+the browser retains its untransferred input. [[composer]] owns the contextual action and handoff.
 
 ## Non-goals
 

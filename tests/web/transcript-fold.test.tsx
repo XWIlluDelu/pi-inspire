@@ -68,69 +68,74 @@ describe("response activity folds", () => {
     focus.mockRestore();
   });
 
-  it.each(["compact"] as const)(
-    "animates only a live fold's %s omission dots and stops on settlement or error",
-    (visibility) => {
-      const props = {
-        visibility,
-        closeRequested: false,
-        telemetry: Array.from({ length: 25 }, (_, index) => ({
-          id: String(index),
-          kind: "tool" as const,
-        })),
-      };
-      const view = (live: boolean, error = false) => (
-        <>
-          <ResponseActivityFold
-            {...props}
-            lifecycleActive={live}
-            deferredRanges={
-              error
-                ? [
-                    {
-                      cursor: "failed-range",
-                      afterMessageId: "response",
-                      messageCount: 1,
-                      kinds: ["tool"],
-                      status: "error",
-                      error: "Cannot load history",
-                    },
-                  ]
-                : []
-            }
-          >
-            Activity
-          </ResponseActivityFold>
-          <ResponseActivityFold {...props} lifecycleActive={false}>
-            Settled activity
-          </ResponseActivityFold>
-        </>
+  it("summarizes the last nine hidden records separately from the latest visible tail", () => {
+    const telemetry = Array.from({ length: 40 }, (_, index) => ({
+      id: String(index),
+      kind: "tool" as const,
+      live: index === 15,
+    }));
+    const view = (active: boolean) => (
+      <ResponseActivityFold
+        visibility="compact"
+        closeRequested={false}
+        lifecycleActive={active}
+        telemetry={telemetry}
+      >
+        Activity
+      </ResponseActivityFold>
+    );
+    const { container, rerender } = render(view(true));
+    const ids = (selector: string) =>
+      [...container.querySelectorAll(selector)].map((cell) =>
+        cell.getAttribute("data-activity-id"),
       );
-      const { container, rerender } = render(view(true));
-      const active = () =>
-        container.querySelectorAll(".activity-fold__dots--active");
-      expect(active()).toHaveLength(1);
-      expect(active()[0]!.children).toHaveLength(3);
-      expect(active()[0]).toHaveAttribute("aria-hidden", "true");
-      rerender(view(false));
-      expect(active()).toHaveLength(0);
-      rerender(view(true, true));
-      expect(active()).toHaveLength(0);
-    },
-  );
+    expect(ids(".activity-fold__boundary--upper .activity-fold__kind")).toEqual(
+      Array.from({ length: 9 }, (_, i) => String(31 + i)),
+    );
+    expect(ids(".activity-fold__omission .activity-fold__kind")).toEqual(
+      Array.from({ length: 9 }, (_, i) => String(7 + i)),
+    );
+    expect(
+      container.querySelectorAll(
+        ".activity-fold__omission .activity-fold__kind--live",
+      ),
+    ).toHaveLength(1);
+    rerender(view(false));
+    expect(container.querySelector(".activity-fold__kind--live")).toBeNull();
+  });
 
-  it("does not add dots to an expanded live fold with nothing omitted", () => {
+  it("does not fill an omitted history matrix from deferred hints or from the visible tail", () => {
     const { container } = render(
       <ResponseActivityFold
-        visibility="expanded"
+        visibility="compact"
         lifecycleActive
         closeRequested={false}
+        telemetry={[
+          { id: "old-known", kind: "thinking" },
+          { id: "opaque", kind: "tool", deferred: true },
+          ...Array.from({ length: 24 }, (_, i) => ({
+            id: String(i),
+            kind: "tool" as const,
+          })),
+        ]}
       >
         Activity
       </ResponseActivityFold>,
     );
-    expect(container.querySelector(".activity-fold__dots--active")).toBeNull();
-    expect(container.querySelector(".activity-fold__dots")).toBeNull();
+    const omission = container.querySelector(".activity-fold__omission")!;
+    expect(
+      omission.querySelectorAll(".activity-fold__cell-empty"),
+    ).toHaveLength(9);
+    expect(omission.querySelector(".activity-fold__kind")).toBeNull();
+    expect(omission).toHaveAttribute(
+      "aria-description",
+      "Expand to load earlier activity.",
+    );
+    expect(
+      container.querySelectorAll(
+        ".activity-fold__boundary--upper .activity-fold__kind",
+      ),
+    ).toHaveLength(9);
   });
 
   it.each([
@@ -518,7 +523,7 @@ describe("response activity folds", () => {
     ).toBe(true);
   });
 
-  it("keeps deferred plurality after hiding the other kind", () => {
+  it("does not turn deferred presence hints into individual matrix records", () => {
     const { container } = render(
       transcript([], "collapsed", {
         toolVisibility: "hidden",
@@ -535,16 +540,21 @@ describe("response activity folds", () => {
       }),
     );
     const dots = container.querySelectorAll(".activity-fold__kind");
-    expect(dots).toHaveLength(2);
-    for (const dot of dots)
-      expect(dot).toHaveClass("activity-fold__kind--thinking");
+    expect(dots).toHaveLength(0);
+    expect(
+      container.querySelectorAll(".activity-fold__cell-empty"),
+    ).toHaveLength(9);
+    expect(container.querySelector(".activity-fold__matrix")).toHaveAttribute(
+      "title",
+      "Expand to load recent activity.",
+    );
   });
 
   it.each([
     [["tool"], ["tool"]],
     [
       ["tool", "tool", "tool"],
-      ["tool", "tool"],
+      ["tool", "tool", "tool"],
     ],
     [["thinking"], ["thinking"]],
     [
@@ -553,11 +563,11 @@ describe("response activity folds", () => {
     ],
     [
       ["tool", "tool", "thinking", "tool"],
-      ["tool", "thinking"],
+      ["tool", "tool", "thinking", "tool"],
     ],
     [
       ["thinking", "tool", "thinking"],
-      ["thinking", "tool"],
+      ["thinking", "tool", "thinking"],
     ],
   ])("summarizes %j as chronological kind dots %j", (input, expected) => {
     const content = input.map((kind, index) =>
@@ -581,7 +591,7 @@ describe("response activity folds", () => {
   });
 
   it.each(["expanded", "collapsed"] as const)(
-    "shows kind presence once in a %s group and pulses only live kinds",
+    "shows ordered records once in a %s group and pulses only unfinished calls",
     (density) => {
       const active = {
         role: "assistant",
@@ -610,14 +620,18 @@ describe("response activity folds", () => {
         }),
       );
       const kinds = container.querySelectorAll(".activity-fold__kind");
-      expect(kinds).toHaveLength(2);
+      expect(kinds).toHaveLength(3);
       expect(kinds[0]).toHaveClass("activity-fold__kind--thinking");
       expect(kinds[0]).not.toHaveClass("activity-fold__kind--live");
       expect(kinds[1]).toHaveClass(
         "activity-fold__kind--tool",
         "activity-fold__kind--live",
       );
-      expect(container.querySelector(".activity-fold__kinds")).toHaveAttribute(
+      expect(kinds[2]).toHaveClass(
+        "activity-fold__kind--tool",
+        "activity-fold__kind--live",
+      );
+      expect(container.querySelector(".activity-fold__matrix")).toHaveAttribute(
         "aria-hidden",
         "true",
       );
@@ -626,6 +640,107 @@ describe("response activity folds", () => {
       expect(container.querySelector(".activity-fold__kind--live")).toBeNull();
     },
   );
+
+  it("keeps the newest nine records in reading order without inventing deferred entries", () => {
+    const items = Array.from({ length: 12 }, (_, i) => ({
+      id: `entry-${i}`,
+      kind: i % 2 ? ("tool" as const) : ("thinking" as const),
+    }));
+    const renderFold = (telemetry: typeof items) => (
+      <ResponseActivityFold
+        visibility="collapsed"
+        lifecycleActive={false}
+        closeRequested={false}
+        telemetry={telemetry}
+      >
+        Content
+      </ResponseActivityFold>
+    );
+    const { container, rerender } = render(renderFold(items));
+    const ids = () =>
+      [...container.querySelectorAll(".activity-fold__kind")].map((el) =>
+        el.getAttribute("data-activity-id"),
+      );
+    expect(ids()).toEqual(items.slice(-9).map((item) => item.id));
+    rerender(renderFold([...items, { id: "entry-12", kind: "thinking" }]));
+    expect(ids()).toEqual([
+      ...items.slice(-8).map((item) => item.id),
+      "entry-12",
+    ]);
+    expect(container.querySelector(".activity-fold__kind--live")).toBeNull();
+  });
+
+  it("illuminates a newly filled matrix once, not each rolling update or history mount", () => {
+    vi.useFakeTimers();
+    const items = Array.from({ length: 10 }, (_, index) => ({
+      id: `cell-${index}`,
+      kind: "tool" as const,
+    }));
+    const fold = (start: number, end: number) => (
+      <ResponseActivityFold
+        visibility="collapsed"
+        lifecycleActive={false}
+        closeRequested={false}
+        telemetry={items.slice(start, end)}
+      >
+        Content
+      </ResponseActivityFold>
+    );
+    const { container, rerender, unmount } = render(fold(0, 8));
+    const matrix = () => container.querySelector(".activity-fold__matrix");
+    expect(matrix()).not.toHaveClass("activity-fold__matrix--full");
+    rerender(fold(0, 9));
+    expect(matrix()).toHaveClass(
+      "activity-fold__matrix--full",
+      "activity-fold__matrix--lighting",
+    );
+    act(() => vi.advanceTimersByTime(800));
+    expect(matrix()).not.toHaveClass("activity-fold__matrix--lighting");
+    rerender(fold(1, 10));
+    expect(matrix()).toHaveClass("activity-fold__matrix--full");
+    expect(matrix()).not.toHaveClass("activity-fold__matrix--lighting");
+    unmount();
+    const history = render(fold(0, 9));
+    expect(
+      history.container.querySelector(".activity-fold__matrix"),
+    ).not.toHaveClass("activity-fold__matrix--lighting");
+  });
+
+  it("settles finished tool cells while a later call is active", () => {
+    const assistant = {
+      role: "assistant",
+      __inspireLiveId: "two-calls",
+      content: [
+        { type: "toolCall", id: "done", name: "read", arguments: {} },
+        { type: "toolCall", id: "running", name: "bash", arguments: {} },
+      ],
+    };
+    const { container } = render(
+      transcript(
+        [
+          assistant,
+          {
+            role: "toolResult",
+            toolCallId: "done",
+            toolName: "read",
+            content: "done",
+          },
+        ],
+        "collapsed",
+        {
+          runState: "running",
+          activeAssistantMessageKey: "live:two-calls",
+          toolActivity: {
+            running: { id: "running", name: "bash", phase: "running" },
+          },
+        },
+      ),
+    );
+    const cells = container.querySelectorAll(".activity-fold__kind");
+    expect(cells).toHaveLength(2);
+    expect(cells[0]).not.toHaveClass("activity-fold__kind--live");
+    expect(cells[1]).toHaveClass("activity-fold__kind--live");
+  });
 
   it("does not make group Expanded override individual Thinking and Tool preferences", () => {
     render(
@@ -1175,7 +1290,7 @@ describe("response activity folds", () => {
       name: "Expand assistant activity",
     });
     expect(summary).toBeVisible();
-    expect(summary.querySelectorAll(".activity-fold__kind")).toHaveLength(2);
+    expect(summary.querySelectorAll(".activity-fold__kind")).toHaveLength(4);
     expect(screen.getByText("opening response")).toBeVisible();
     expect(screen.getByText("closing response")).toBeVisible();
 

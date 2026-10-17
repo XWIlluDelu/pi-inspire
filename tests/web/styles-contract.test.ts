@@ -16,12 +16,28 @@ async function readStylesheet(
   return [css, ...dependencies].join("\n");
 }
 
+function declaredVariables(css: string): Set<string> {
+  // A declaration starts a block or follows a semicolon. BEM selectors such as
+  // .button--danger:hover are not custom-property declarations.
+  const declarations = css
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .matchAll(/(?:^|[;{])\s*--([a-z0-9-]+)\s*:/gim);
+  return new Set([...declarations].map((match) => match[1]!));
+}
+
 describe("static asset contracts", () => {
+  it("distinguishes custom properties from BEM selectors and comments", () => {
+    const css = `
+      /* --danger: red; */
+      :root { --accent: blue; --accent-focus: var(--accent); }
+      .button--danger:hover { color: var(--danger); }
+    `;
+    expect([...declaredVariables(css)]).toEqual(["accent", "accent-focus"]);
+  });
+
   it("does not reference undeclared project CSS variables", async () => {
-    const css = await readStylesheet();
-    const declared = new Set(
-      [...css.matchAll(/--([a-z0-9-]+)\s*:/gi)].map((match) => match[1]),
-    );
+    const css = (await readStylesheet()).replace(/\/\*[\s\S]*?\*\//g, "");
+    const declared = declaredVariables(css);
     // These controls supply their option/visible-key counts inline.
     for (const owner of ["SettingsControls", "TerminalTouchKeys"]) {
       const source = await readFile(

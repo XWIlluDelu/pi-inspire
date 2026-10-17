@@ -18,7 +18,7 @@ covers:
   - tests/web/{document-preview,pdf-preview,resources-pane,search-match-text,changes-pane,pane-resize,rich-text}.test.tsx
   - tests/web/{source-diff,file-icons,syntax-highlighting}.test.ts
   - tests/server/html-preview.test.ts
-  - tests/browser/{filesystem-files,pdf-preview,html-preview}.spec.ts
+  - tests/browser/{filesystem-files,document-images,pdf-preview,html-preview}.spec.ts
 ---
 
 # Resource preview
@@ -151,8 +151,12 @@ Browse or another context mode, and interactive HTML never inherits its retired 
 | Image, PDF, audio, video | Preview only. |
 | Unsupported binary | File information. |
 
-The selected-file header stays above scrolling content. Its path copies the path, Download streams
-through the authenticated attachment route, and dual-view files retain one reciprocal view action
+The selected-file header stays above scrolling content. Its path copies the path; Download mints a
+15-second single-use origin/session/resource transfer ticket through authenticated fetch, then uses
+the browser's native download to stream complete raw bytes. Consumption rechecks current session/view
+authority and file membership; the URL carries no master/API bearer. Pending issuance is retired
+when selection, session, view or transport changes. Downloads do not inherit preview byte limits or
+buffer arbitrary files in JavaScript. Dual-view files retain one reciprocal view action
 in a fixed trailing slot. Files with no alternative view omit that action. Source uses highlighting and line numbers; `:line` and `#Lline`
 open Source at that position, including for files that normally open in Preview. Files does not
 duplicate Changes with a Diff mode or add file-editing controls. Files Source and Changes share an unframed, full-width source canvas below the fixed header, without
@@ -162,7 +166,7 @@ Source, Markdown code blocks and
 Notebook cells highlight recognized languages up to 64 Ki characters per leaf; larger leaves retain
 text and copying without highlighting.
 
-Host-owned Preview, Source, and Changes use a luminosity-aware neutral canvas across Amber and Jade.
+Host-owned Preview, Source, and Changes use a luminosity-aware neutral canvas across all botanical palettes.
 Authored backgrounds and semantic source/diff colors remain intact. Images use a neutral checkerboard
 behind their pixels; full-viewer background options follow [[composer]]. The bounded media button
 respects intrinsic aspect ratio, including viewBox-only SVGs, without tinting letterboxing.
@@ -174,10 +178,14 @@ resolve-time size estimate.
 ### Documents and local images
 
 Notebook Preview statically renders Markdown cells, highlighted code, execution counts, text/error
-output, and images. Highlighting uses notebook language metadata, with common kernel-name recovery;
+output, and images. Highlighting prefers `language_info.name`, then `kernelspec.language`, then recognized
+`kernelspec.name` identifiers (including versioned Python/Julia, IR, Deno/TypeScript,
+JavaScript/Node.js, Bash, Ruby and common compiled-language kernels). Unknown names stay plain text;
+Julia is registered alongside the common syntax grammars. Kernel display names are not language authority;
 error traces retain line breaks and omit ANSI escapes. Markdown cells leave the prompt gutter empty
-while retaining the common cell-body alignment. Notebook code is not executed. Markdown raw HTML is
-disabled.
+while retaining the common cell-body alignment. Notebook output thumbnails load lazily; readers opened
+at a fragment retain eager image layout for reliable anchor positioning. Gallery inspection loads the
+selected full image eagerly. Notebook code is not executed. Markdown raw HTML is disabled.
 
 Local document images load inline through independently authorized resource requests and document-owned
 blob URLs. Reading a document does not authorize linked files. Each mounted document deduplicates at
@@ -185,6 +193,12 @@ most 64 image references, runs four transfers concurrently, retains at most 64 M
 and keeps the 32 MiB per-image cap. Loading, transfer/authorization/limit errors, and decode failures
 retain the image description. Replacement, Source switching, close, or session/view/transport change
 retires transfers and URLs; compatible appends do not.
+
+Local Markdown figures, Notebook attachments, Markdown-output figures and raster outputs open the
+shared image inspector and participate in their document gallery ([[composer]]). Authored image
+links retain link navigation rather than nesting inspection buttons inside anchors; their loaded
+images remain reachable through gallery navigation. Inspection never adds image transfers or
+extends document/source ownership.
 
 Notebook `attachment:` images use only that cell's bounded canonical Base64 raster MIME bundles.
 External and protocol-relative images are explicit links; unsupported protocols and unrecognized
@@ -214,7 +228,7 @@ The Host serves interactive documents from a separate preview route with its own
 `sandbox allow-scripts`; the iframe independently uses the same sandbox. Neither grants
 `allow-same-origin`, popup, top-navigation, form or download privileges. Main-application CSP and
 API origin checks are unchanged. The opaque-origin document cannot read Inspire's DOM, origin
-storage or pairing cookie, and receives no Host credentials or internal control bridge. HTTP(S)
+storage or browser pairing key, and receives no Host credentials or internal control bridge. HTTP(S)
 and WebSocket networking is allowed, not represented as offline execution.
 
 An authenticated start creates a revocable random capability for the exact loaded HTML snapshot.

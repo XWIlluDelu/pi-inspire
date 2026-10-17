@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useId } from "react";
 
 export function SettingsSection({
   id,
@@ -10,23 +10,26 @@ export function SettingsSection({
 }: {
   id?: string;
   icon: ReactNode;
-  title: string;
+  title: ReactNode;
   description?: string;
   headerAction?: ReactNode;
   children: ReactNode;
 }) {
+  const headingId = useId();
   return (
     <section
       id={id ? `settings-section-${id}` : undefined}
       className="settings__section"
-      aria-label={title}
+      aria-labelledby={headingId}
     >
       <div className="settings__section-header">
         <div className="settings__section-title-wrap">
           <span className="settings__section-icon" aria-hidden>
             {icon}
           </span>
-          <h3 className="settings__section-title">{title}</h3>
+          <h3 id={headingId} className="settings__section-title">
+            {title}
+          </h3>
           {headerAction ? (
             <div className="settings__section-action">{headerAction}</div>
           ) : null}

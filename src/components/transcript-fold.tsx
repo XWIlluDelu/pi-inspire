@@ -1,4 +1,9 @@
-import { ChevronDown, ChevronRight, ChevronUp } from "lucide-react";
+import {
+  AlertCircle,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -13,6 +18,8 @@ import type {
   ActivityMaterializationMode,
   TranscriptActivityRangeState,
 } from "../store";
+import { ActivityMatrix, summarizeActivityMatrix } from "./ActivityMatrix";
+import { PiLoader } from "./PiLoader";
 import {
   DYNAMIC_FOLD_CLOSE_DELAY_MS,
   DYNAMIC_FOLD_EXPANDED_MIN_MS,
@@ -34,22 +41,10 @@ export type ActivityTelemetryItem = {
 
 export type ActivityFoldPresentation = "expanded" | "compact" | "collapsed";
 
-function ActivityFoldDots({ active }: { active: boolean }) {
-  return (
-    <span
-      className={`activity-fold__dots${active ? " activity-fold__dots--active" : ""}`}
-      aria-hidden
-    >
-      <span />
-      <span />
-      <span />
-    </span>
-  );
-}
-
 function ActivityFoldOmission({
   contentId,
   active,
+  matrix,
   status,
   label,
   title,
@@ -57,6 +52,7 @@ function ActivityFoldOmission({
 }: {
   contentId: string;
   active: boolean;
+  matrix: ReturnType<typeof summarizeActivityMatrix>;
   status: "idle" | "loading" | "error";
   label: string;
   title: string;
@@ -86,13 +82,20 @@ function ActivityFoldOmission({
       aria-controls={contentId}
       aria-expanded="false"
       aria-label={label}
+      aria-description={matrix.description}
       aria-busy={status === "loading"}
       title={title}
       data-activity-fold-anchor="start"
       data-activity-range={status}
       onClick={onClick}
     >
-      <ActivityFoldDots active={active && status !== "error"} />
+      {status === "loading" ? (
+        <PiLoader size={14} aria-hidden />
+      ) : status === "error" ? (
+        <AlertCircle size={14} aria-hidden />
+      ) : (
+        <ChevronRight size={14} aria-hidden />
+      )}
       <span>
         {status === "loading"
           ? "Loading earlier activity…"
@@ -100,6 +103,7 @@ function ActivityFoldOmission({
             ? "Retry earlier activity"
             : "Earlier activity"}
       </span>
+      <ActivityMatrix {...matrix} active={active} />
     </button>
   );
 }
@@ -188,26 +192,19 @@ export function ResponseActivityFold({
     (range) => range.status === "loading",
   );
 
-  // Two compact cues: one item => one dot, same-kind plurality => two;
-  // mixed kinds => one of each, ordered by first appearance.
-  const kinds = [...new Set(telemetry.map((item) => item.kind))];
-  if (kinds.length === 1 && telemetry.length > 1) kinds.push(kinds[0]!);
+  const latestMatrix = summarizeActivityMatrix(telemetry, lifecycleActive);
+  const matrixDescription = latestMatrix.description;
   const kindIndicators = (
-    <span className="activity-fold__kinds" aria-hidden>
-      {kinds.map((kind, index) => (
-        <span
-          key={`${kind}:${index}`}
-          title={kind === "thinking" ? "Thinking" : "Tools"}
-          className={`activity-fold__kind activity-fold__kind--${kind}${
-            lifecycleActive &&
-            !deferredError &&
-            telemetry.some((item) => item.kind === kind && item.live)
-              ? " activity-fold__kind--live"
-              : ""
-          }`}
-        />
-      ))}
-    </span>
+    <ActivityMatrix {...latestMatrix} active={lifecycleActive} />
+  );
+  // The omission owns only the hidden prefix, never the already visible tail.
+  const earlierMatrix = summarizeActivityMatrix(
+    telemetry.filter(
+      (item) =>
+        item.deferred || (compactVisibleIds && !compactVisibleIds.has(item.id)),
+    ),
+    lifecycleActive,
+    "Earlier",
   );
 
   const requestMaterialization = useCallback(
@@ -306,6 +303,7 @@ export function ResponseActivityFold({
         aria-controls={contentId}
         aria-expanded="true"
         aria-label={`${action} assistant activity from the ${edge} boundary`}
+        aria-description={edge === "upper" ? matrixDescription : undefined}
         title={`${action} activity`}
         data-activity-fold-anchor={edge === "upper" ? "start" : "end"}
         onClick={() => choosePresentation(collapseTarget, edge)}
@@ -357,6 +355,7 @@ export function ResponseActivityFold({
           aria-controls={contentId}
           aria-expanded="false"
           aria-label="Expand assistant activity"
+          aria-description={matrixDescription}
           title={deferredError?.error ?? "Show recent assistant activity"}
           data-activity-fold-anchor="center"
           onClick={() => expandToCompact("upper", "center")}
@@ -371,6 +370,7 @@ export function ResponseActivityFold({
           <ActivityFoldOmission
             contentId={contentId}
             active={lifecycleActive}
+            matrix={earlierMatrix}
             status={omissionStatus}
             label={omissionLabel}
             title={deferredError?.error ?? omissionLabel}

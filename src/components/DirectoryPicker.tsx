@@ -1,15 +1,9 @@
-import {
-  CornerLeftUp,
-  Eye,
-  EyeOff,
-  Folder,
-  HardDrive,
-  Loader2,
-} from "lucide-react";
+import { CornerLeftUp, Eye, EyeOff, Folder, HardDrive } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { HostDirEntry, HostDirListing } from "../../shared/contracts";
 import { store } from "../store";
 import { useModalFocus } from "../use-modal-focus";
+import { PiLoader } from "./PiLoader";
 
 /**
  * Host-side directory browser for the session-start surface. The host
@@ -213,7 +207,7 @@ export function DirectoryPicker({
           ))}
           {loading ? (
             <div className="dirpicker__note" role="status">
-              <Loader2 size={12} className="spin" aria-hidden /> Loading…
+              <PiLoader size={12} aria-hidden /> Loading…
             </div>
           ) : error ? (
             <div

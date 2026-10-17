@@ -2,6 +2,7 @@ import { Check, RefreshCw } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
+import { PiLoader } from "./PiLoader";
 import { SettingsSection } from "./SettingsSection";
 
 function UpdateCommand({ command }: { command: string }) {
@@ -132,16 +133,17 @@ export function SystemVersionsCard() {
           className="button system-versions__check"
           aria-label="Check for updates"
           disabled={pending || checking}
+          aria-busy={pending || checking}
           onClick={() => {
             void store.checkPiUpdate();
             void store.checkInspireUpdate();
           }}
         >
-          <RefreshCw
-            size={13}
-            className={pending || checking ? "spin" : undefined}
-            aria-hidden
-          />
+          {pending || checking ? (
+            <PiLoader size={13} aria-hidden />
+          ) : (
+            <RefreshCw size={13} aria-hidden />
+          )}
           {pending
             ? "Submitting…"
             : checking

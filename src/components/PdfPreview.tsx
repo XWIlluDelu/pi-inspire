@@ -2,7 +2,6 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
-  Loader2,
   Minus,
   Plus,
 } from "lucide-react";
@@ -14,6 +13,7 @@ import type {
 } from "pdfjs-dist";
 import { useEffect, useRef, useState } from "react";
 import { ContextPaneState } from "./ContextPaneState";
+import { PiLoader } from "./PiLoader";
 import "../styles/pdf-preview.css";
 
 interface LoadedPdf {
@@ -172,7 +172,7 @@ function PdfPage({
           <ContextPaneState
             icon={
               status === "loading" ? (
-                <Loader2 size={17} className="spin" aria-hidden />
+                <PiLoader size={17} aria-hidden />
               ) : (
                 <AlertTriangle size={17} aria-hidden />
               )
@@ -294,7 +294,7 @@ export function PdfPreview({ blob, name }: { blob: Blob; name: string }) {
             error ? (
               <AlertTriangle size={17} aria-hidden />
             ) : (
-              <Loader2 size={17} className="spin" aria-hidden />
+              <PiLoader size={17} aria-hidden />
             )
           }
           title={error ? "PDF preview unavailable" : "Loading PDF"}

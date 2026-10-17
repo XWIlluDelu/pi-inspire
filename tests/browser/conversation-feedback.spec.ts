@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import { conversationFeedbackMessages } from "../web/fixtures/conversation-feedback";
 import { openMockEventSession } from "./support/mock-host";
+import { textBaseline } from "./support/text-baseline";
 
 test.use({ serviceWorkers: "block", reducedMotion: "reduce" });
 
@@ -29,8 +30,9 @@ for (const touch of [false, true]) {
         })),
       );
       const checkpoint = page.locator(".context-checkpoint");
-      const error = page.getByRole("group", { name: "PI error" });
+      const error = page.getByRole("group", { name: "Pi error" });
       await expect(checkpoint).toContainText("History chunk ≈ 42,500 tokens");
+      await page.evaluate(() => document.fonts.ready);
       for (const width of [1440, 520, 480, 440, 390, 320]) {
         await page.setViewportSize({ width, height: 1000 });
         const alignment = await checkpoint.evaluate((el) => {
@@ -44,8 +46,15 @@ for (const touch of [false, true]) {
             .querySelector(".context-checkpoint__metric")!
             .getBoundingClientRect();
           const fold = document.querySelector(".activity-fold")!;
+          const groupLabel = fold
+            .querySelector(
+              ".activity-fold__boundary--upper > span, .activity-fold__disclosure > span",
+            )!
+            .getBoundingClientRect();
           const groupChevron = fold
-            .querySelector("button > svg")!
+            .querySelector(
+              ".activity-fold__boundary--upper > svg, .activity-fold__disclosure > svg",
+            )!
             .getBoundingClientRect();
           const children = fold.querySelector(".activity-fold__content")!;
           const first = children
@@ -64,23 +73,34 @@ for (const touch of [false, true]) {
                 Math.round(rect.top),
               ),
             ).size,
-            chevrons: chevron.left - groupChevron.left,
-            nested: first.left - fold.getBoundingClientRect().left,
+            leadingEdge: chevron.left - groupChevron.left,
+            nested: first.left - groupLabel.left,
+            guideAxis:
+              children.getBoundingClientRect().left +
+              0.5 -
+              (groupChevron.left + groupChevron.right) / 2,
             metricWraps: metric.top >= title.bottom,
-            metricCenter:
-              (metric.top + metric.bottom - title.top - title.bottom) / 2,
             metricStart: metric.left - title.left,
             metricGap: metric.left - title.right,
           };
         });
         expect(Math.abs(alignment.outerInset)).toBeLessThanOrEqual(1);
         expect(alignment.titleLines).toBe(1);
-        expect(Math.abs(alignment.chevrons)).toBeLessThanOrEqual(1);
-        expect(alignment.nested).toBe(24);
+        expect(Math.abs(alignment.leadingEdge)).toBeLessThanOrEqual(1);
+        expect(Math.abs(alignment.nested)).toBeLessThanOrEqual(1);
+        expect(Math.abs(alignment.guideAxis)).toBeLessThanOrEqual(1);
         if (alignment.metricWraps)
           expect(Math.abs(alignment.metricStart)).toBeLessThanOrEqual(1);
         else {
-          expect(Math.abs(alignment.metricCenter)).toBeLessThanOrEqual(1);
+          const [titleBaseline, metricBaseline] = await Promise.all([
+            checkpoint
+              .locator(".context-checkpoint__title")
+              .evaluate(textBaseline),
+            checkpoint
+              .locator(".context-checkpoint__metric")
+              .evaluate(textBaseline),
+          ]);
+          expect(Math.abs(titleBaseline - metricBaseline)).toBeLessThan(0.1);
           expect(alignment.metricGap).toBeGreaterThanOrEqual(4);
           expect(alignment.metricGap).toBeLessThanOrEqual(12);
         }
@@ -156,7 +176,33 @@ for (const touch of [false, true]) {
           (await notice
             .getByRole("button", { name: "Dismiss notification" })
             .boundingBox())!.height,
-        ).toBeGreaterThanOrEqual(44);
+          // Transformed notice DOMRects can report 31.999996 for a 32px target.
+        ).toBeGreaterThanOrEqual(31.99);
+      const noticeLayout = await notice.evaluate((element) => {
+        const head = element
+          .querySelector(".notice__head")!
+          .getBoundingClientRect();
+        const title = element
+          .querySelector(".notice__title")!
+          .getBoundingClientRect();
+        const bounds = element.getBoundingClientRect();
+        return {
+          extraHeadHeight: head.height - Math.max(title.height, 24),
+          controlsInside: [...element.querySelectorAll("button")].every(
+            (button) => {
+              const rect = button.getBoundingClientRect();
+              return (
+                rect.top >= bounds.top &&
+                rect.bottom <= bounds.bottom &&
+                rect.left >= bounds.left &&
+                rect.right <= bounds.right
+              );
+            },
+          ),
+        };
+      });
+      expect(noticeLayout.extraHeadHeight).toBeLessThanOrEqual(1);
+      expect(noticeLayout.controlsInside).toBe(true);
       await notice
         .getByRole("button", { name: "Dismiss notification" })
         .click();
