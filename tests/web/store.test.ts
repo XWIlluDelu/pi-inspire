@@ -1037,6 +1037,7 @@ describe("multi-session event routing", () => {
       revision: 2,
       sessionStatus: { runState: "idle" },
     });
+    await vi.waitFor(() => expect(calls).toBe(1));
     socket.emit({
       type: "session_projection_changed",
       sessionId: "s1",
@@ -1051,6 +1052,130 @@ describe("multi-session event routing", () => {
     expect(store.getState().transcriptRevision).toBe(3);
     expect(store.getState().messages.at(-1)?.content).toBe("revision 3");
   });
+
+  it.each([2, 3])(
+    "coalesces settlement refreshes and retains the latest revision bound when the Host returns revision %s",
+    async (responseRevision) => {
+      vi.useFakeTimers();
+      try {
+        const message = {
+          role: "assistant",
+          content: `projected revision ${responseRevision}`,
+          timestamp: 8,
+        };
+        const snapshot = activeSnapshot({
+          transcriptPage: {
+            revision: responseRevision,
+            messages: [message],
+          },
+        });
+        let calls = 0;
+        installFetch((url, init) => {
+          if (url.startsWith("/api/snapshot")) {
+            calls += 1;
+            return { body: snapshot };
+          }
+          return baseRoutes(url, init);
+        });
+        const { store, socket } = await initStore();
+        const initialMessages = store.getState().messages;
+        socket.emit({
+          type: "session_projection_changed",
+          sessionId: "s1",
+          revision: 2,
+        });
+        await vi.advanceTimersByTimeAsync(1);
+        socket.emit({
+          type: "session_projection_changed",
+          sessionId: "s1",
+          revision: 3,
+        });
+        await vi.advanceTimersByTimeAsync(1);
+        socket.emit({ type: "agent_settled", sessionId: "s1" });
+        await vi.advanceTimersByTimeAsync(16);
+        expect(calls).toBe(1);
+        expect(store.getState().messages).toEqual(
+          responseRevision === 3 ? [message] : initialMessages,
+        );
+      } finally {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("retires an older resync while a newer projection refresh is still scheduled", async () => {
+    vi.useFakeTimers();
+    try {
+      const first = deferred<RouteResponse>();
+      let calls = 0;
+      installFetch((url, init) => {
+        if (url.startsWith("/api/snapshot")) {
+          calls += 1;
+          return calls === 1
+            ? first.promise
+            : { body: activeSnapshot({ transcriptPage: { revision: 3 } }) };
+        }
+        return baseRoutes(url, init);
+      });
+      const { store, socket } = await initStore();
+      socket.emit({
+        type: "session_projection_changed",
+        sessionId: "s1",
+        revision: 2,
+      });
+      await vi.advanceTimersByTimeAsync(16);
+      expect(calls).toBe(1);
+      socket.emit({
+        type: "session_projection_changed",
+        sessionId: "s1",
+        revision: 3,
+      });
+      first.resolve({
+        body: activeSnapshot({ transcriptPage: { revision: 2 } }),
+      });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(store.getState().transcriptRevision).toBe(1);
+      await vi.advanceTimersByTimeAsync(15);
+      expect(calls).toBe(2);
+      expect(store.getState().transcriptRevision).toBe(3);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["selection", "disconnect"] as const)(
+    "retires a queued projection refresh at the %s boundary",
+    async (boundary) => {
+      vi.useFakeTimers();
+      try {
+        let calls = 0;
+        installFetch((url, init) => {
+          if (url.startsWith("/api/sessions/open"))
+            return { body: activeSnapshot({ sessionId: "s2" }) };
+          if (url.startsWith("/api/snapshot")) calls += 1;
+          return baseRoutes(url, init);
+        });
+        const { store, socket } = await initStore();
+        socket.emit({
+          type: "session_projection_changed",
+          sessionId: "s1",
+          revision: 2,
+        });
+        if (boundary === "selection") await store.openSession("s2");
+        else socket.onclose?.();
+        await vi.advanceTimersByTimeAsync(16);
+        expect(calls).toBe(0);
+        expect(store.getState().sessionId).toBe(
+          boundary === "selection" ? "s2" : "s1",
+        );
+      } finally {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("surfaces projection health immediately and retains it when non-auth resync fails", async () => {
     let snapshots = 0;

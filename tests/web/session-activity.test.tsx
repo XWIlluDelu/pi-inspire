@@ -47,6 +47,7 @@ beforeEach(() => {
     refreshGitStatus: vi.fn(async () => {}),
     markProjectionStale: vi.fn(),
     selectionGeneration: () => 0,
+    invalidateResync: vi.fn(),
     resync: vi.fn(async () => {}),
   });
 });
