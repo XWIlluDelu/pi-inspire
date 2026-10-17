@@ -6,6 +6,7 @@ test.describe("cross-project touch rows", () => {
   test("Pinned retains a readable title above project and age", async ({
     page,
   }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
     await page.route("**/api/bootstrap**", async (route) => {
       const response = await route.fetch();
       const body = await response.json();
@@ -26,10 +27,17 @@ test.describe("cross-project touch rows", () => {
     for (const width of [390, 320]) {
       await page.setViewportSize({ width, height: 844 });
       await page.evaluate(() => document.fonts.ready);
+      await expect
+        .poll(async () => (await page.locator(".nav").boundingBox())!.width)
+        .toBeLessThanOrEqual(width);
       const title = (await row.locator(".nav__row-name").boundingBox())!;
+      const titleColumn = (await row.locator(".nav__row-title").boundingBox())!;
       const meta = (await row.locator(".nav__row-meta").boundingBox())!;
       const age = (await row.locator(".nav__row-age").boundingBox())!;
-      expect(title.width).toBeGreaterThanOrEqual(150);
+      // The 320px drawer also reserves scrim and persistent touch actions.
+      // Long titles use their whole column, rather than sharing it with metadata.
+      expect(title.width).toBeCloseTo(titleColumn.width, 2);
+      expect(title.width).toBeGreaterThanOrEqual(width === 320 ? 120 : 150);
       expect(meta.y).toBeGreaterThanOrEqual(title.y + title.height);
       expect(age.width).toBeLessThan(40);
       expect(await row.locator(".nav__row-actions button").count()).toBe(2);

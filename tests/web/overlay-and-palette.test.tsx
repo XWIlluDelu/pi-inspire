@@ -94,6 +94,8 @@ describe("botanical palette controls", () => {
   it("offers botanical and classic swatches and persists each selection without changing theme", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    // Swatch behavior starts after the lazy Settings module has loaded.
+    await screen.findByRole("button", { name: "Wisteria" }, { timeout: 5000 });
     const theme = store.getState().prefs.theme;
     for (const [palette, label] of [
       ["wisteria", "Wisteria"],

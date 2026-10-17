@@ -1349,13 +1349,18 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     const entries = this.mockEntries(active.sessionId);
     const id = `mock-point-${active.sessionId}-${entries.length}`;
     message.entryId = id;
-    entries.push({
-      type: "message",
-      id,
-      parentId: active.effectiveLeafId ?? null,
-      timestamp: new Date().toISOString(),
-      message,
-    } as unknown as SessionEntry);
+    // History indexes belong to immutable entry-array revisions, just as in
+    // SessionProjection. An append must not reuse the previous index's array.
+    this.historyEntries.set(active.sessionId, [
+      ...entries,
+      {
+        type: "message",
+        id,
+        parentId: active.effectiveLeafId ?? null,
+        timestamp: new Date().toISOString(),
+        message,
+      } as unknown as SessionEntry,
+    ]);
     active.durableLeafId = active.effectiveLeafId = id;
     active.navigationLeased = false;
     active.transcriptPage = {

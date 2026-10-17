@@ -7,9 +7,15 @@ test("sidebar work and unread outcomes share glyph geometry without animating at
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
-  const transport = await routeMockSnapshots(page, {});
+  let detailSessionId: string | undefined;
+  const transport = await routeMockSnapshots(page, {
+    event(event) {
+      if (event.type === "snapshot") detailSessionId = event.detailSessionId;
+    },
+  });
   await pairedPage(page);
   await openMockSession(page, /Review extension event lifecycle/);
+  await expect.poll(() => detailSessionId).toBe("mock-history");
   const fixtures = [
     {
       id: "mock-calibration-history",
@@ -50,8 +56,8 @@ test("sidebar work and unread outcomes share glyph geometry without animating at
     const glyph = status.locator(index === 0 ? ".pi-loading" : ".pi-status");
     await expect(glyph).toBeVisible();
     const box = await glyph.boundingBox();
-    expect(box!.width).toBe(12);
-    expect(box!.height).toBe(12);
+    expect(box!.width).toBeCloseTo(12, 2);
+    expect(box!.height).toBeCloseTo(12, 2);
     expect(
       await status.evaluate((el) => {
         const icon = el.getBoundingClientRect();

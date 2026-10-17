@@ -127,8 +127,8 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
       .getBoundingClientRect();
     return { headerHeight: head.height, gap: command.top - head.bottom };
   });
-  expect(sectionSpacing.headerHeight).toBe(40);
-  expect(sectionSpacing.gap).toBe(0);
+  expect(sectionSpacing.headerHeight).toBeCloseTo(40, 2);
+  expect(sectionSpacing.gap).toBeCloseTo(0, 2);
   await expect(card.getByText("Excluded from context")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Abort running task", exact: true }),

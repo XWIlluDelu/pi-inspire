@@ -432,9 +432,32 @@ for (const viewport of [
         });
     }
 
-    // This fixture's visible code intersects the thumb vertically on a phone.
-    // Its trailing text must receive pointer/selection input, not the invisible grab band.
+    // Align the code with the thumb explicitly: previous conversations and font
+    // metrics must not decide whether this hit-testing scenario is exercised.
+    // Its trailing text must receive input, not the invisible grab band.
     if (viewport.width === 390) {
+      // Leave Follow latest through real input before positioning earlier text.
+      const bottom = await log.evaluate((el) => el.scrollTop);
+      await log.hover();
+      await page.mouse.wheel(0, -120);
+      await expect
+        .poll(() => log.evaluate((el) => el.scrollTop))
+        .toBeLessThan(bottom);
+      await log.evaluate((el) => {
+        const code = el.querySelector("pre")!.getBoundingClientRect();
+        const rail = el.parentElement!.querySelector(".srail")!;
+        const railBounds = rail.getBoundingClientRect();
+        const thumb = rail
+          .querySelector(".srail__thumb")!
+          .getBoundingClientRect();
+        const viewport = el.getBoundingClientRect();
+        const range = el.scrollHeight - el.clientHeight;
+        const codeCenter =
+          el.scrollTop + code.top - viewport.top + code.height / 2;
+        const thumbOrigin = railBounds.top - viewport.top + thumb.height / 2;
+        const thumbTravel = railBounds.height - thumb.height;
+        el.scrollTop = (codeCenter - thumbOrigin) / (1 + thumbTravel / range);
+      });
       await expect
         .poll(() =>
           log.evaluate((el) => {
@@ -445,15 +468,15 @@ for (const viewport of [
               .getBoundingClientRect();
             const top = Math.max(bounds.top, thumb.top);
             const bottom = Math.min(bounds.bottom, thumb.bottom);
-            return (
-              bottom > top &&
-              code.contains(
+            return {
+              overlaps: bottom > top,
+              receivesPointer: code.contains(
                 document.elementFromPoint(bounds.right - 2, (top + bottom) / 2),
-              )
-            );
+              ),
+            };
           }),
         )
-        .toBe(true);
+        .toEqual({ overlaps: true, receivesPointer: true });
     }
 
     const beforeDrag = await log.evaluate((el) => el.scrollTop);
