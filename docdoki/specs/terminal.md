@@ -242,6 +242,7 @@ describe the outcome without exposing output content.
 Tab metadata and Host-wide history settings live in current-user-private state. Raw output persistence
 defaults off. Opt-in history has size/age bounds, disabling it clears retained logs, and Settings offers
 explicit clearing. Logs above 32 MiB trim to a 24 MiB tail with a reset prefix, leaving append headroom.
+Writes run one batch at a time; output arriving during a slow write stays in the bounded pending buffer.
 Browser-local preferences never become process authority.
 
 Source, npm-release, direct-launch, and installed Linux service paths include the daemon and its runtime

@@ -36,6 +36,7 @@ export class TerminalHistoryStore implements TerminalHistoryBackend {
   private readonly pending = new Map<string, Buffer[]>();
   private readonly pendingSizes = new Map<string, number>();
   private tail = Promise.resolve();
+  private writing: Promise<void> | null = null;
   private timer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -177,25 +178,35 @@ export class TerminalHistoryStore implements TerminalHistoryBackend {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    // A slow write keeps later output in the bounded pending buffer. Wait for
+    // it before capturing the remaining bytes received by this flush call.
+    if (this.writing) await this.writing;
     this.enqueuePending();
     await this.tail;
   }
 
   private enqueuePending(): void {
-    if (this.pending.size === 0) return;
+    if (this.writing || this.pending.size === 0) return;
     const batches = [...this.pending].map(([id, chunks]) => [
       id,
       Buffer.concat(chunks),
     ]) as Array<[string, Buffer]>;
     this.pending.clear();
     this.pendingSizes.clear();
-    this.tail = this.tail
+    const writing = this.tail
       .then(async () => {
         await ensurePrivateDirectory(this.directory);
         for (const [terminalId, data] of batches)
           await this.appendBatch(terminalId, data);
       })
       .catch((error) => this.onError(error));
+    this.writing = writing;
+    this.tail = writing;
+    const finished = (): void => {
+      this.writing = null;
+      if (!this.timer) this.enqueuePending();
+    };
+    void writing.then(finished, finished);
   }
 
   private async appendBatch(terminalId: string, data: Buffer): Promise<void> {

@@ -405,7 +405,10 @@ export const TerminalView = memo(function TerminalView({
       if (!xterm) return;
       if (frame.kind === "snapshot" && !snapshotStartedRef.current) {
         clearCommandOutput();
-        xterm.reset();
+        // A retired connection can still have output in xterm's parser queue.
+        // Reset at the same ordered boundary as the replacement snapshot;
+        // synchronous reset() would let those queued bytes repaint it.
+        xterm.write("\u001bc");
         snapshotStartedRef.current = true;
       }
       xterm.write(frame.data, () => {

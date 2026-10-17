@@ -4,12 +4,107 @@ import { expect, test } from "@playwright/test";
 import {
   decodeTerminalInputFrame,
   decodeTerminalServerDataFrame,
+  encodeTerminalServerDataFrame,
 } from "../../shared/terminal-contracts";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { openMockSession, pairedPage } from "./support/navigation";
 import { terminalWriteCommand } from "./support/terminal-command";
 import { terminalMutationHeaders } from "./support/terminal-operations";
 import { terminalTransportFixture } from "./support/terminal-transport";
+
+test("a replacement terminal snapshot retires output still waiting in xterm's parser", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "inspire:terminal-ui-settings:v1",
+      JSON.stringify({ screenReaderMode: true }),
+    );
+  });
+  const [terminal] = await terminalTransportFixture(page, browserWorkspace, [
+    "snapshot-replay",
+  ]);
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  await page.evaluate(() => {
+    let terminalSocket: WebSocket | undefined;
+    const NativeWebSocket = window.WebSocket;
+    window.WebSocket = class extends NativeWebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        if (new URL(String(url)).pathname === "/terminal")
+          terminalSocket = this;
+      }
+    };
+    // Deliver a replay boundary before xterm's asynchronous parser can drain
+    // the retired output. Network/timer scheduling must not decide this race.
+    window.addEventListener("inspire-test-terminal-replay", (event) => {
+      if (!terminalSocket) throw new Error("Terminal socket is unavailable");
+      for (const frame of (event as CustomEvent<Array<string | number[]>>)
+        .detail) {
+        terminalSocket.dispatchEvent(
+          new MessageEvent("message", {
+            data:
+              typeof frame === "string" ? frame : Uint8Array.from(frame).buffer,
+          }),
+        );
+      }
+    });
+  });
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await expect(
+    page.getByRole("status", { name: "Controlling", exact: true }),
+  ).toBeVisible();
+  await expect.poll(() => terminal!.resizes.length).toBeGreaterThan(0);
+  terminal!.write("INITIAL_OUTPUT\r\n");
+  await expect(
+    page.locator(".terminal-view--active .xterm-accessibility-tree"),
+  ).toContainText("INITIAL_OUTPUT");
+  const descriptor = terminal!.descriptor;
+  const frame = (kind: "output" | "snapshot", text: string) =>
+    Array.from(
+      encodeTerminalServerDataFrame(
+        kind,
+        descriptor.resizeRevision,
+        descriptor.nextOutputOffset,
+        Buffer.from(text),
+      ),
+    );
+  await page.evaluate(
+    (frames) =>
+      window.dispatchEvent(
+        new CustomEvent("inspire-test-terminal-replay", { detail: frames }),
+      ),
+    [
+      frame("output", "RETIRED_OUTPUT\r\n"),
+      JSON.stringify({
+        type: "attached",
+        terminal: descriptor,
+        attachmentId: "replacement-attachment",
+        writable: true,
+        ownerToken: "replacement-owner",
+        nextInputSequence: 1,
+        replay: "snapshot",
+      }),
+      frame("snapshot", "CURRENT_SNAPSHOT"),
+      JSON.stringify({
+        type: "replay_complete",
+        nextOutputOffset: descriptor.nextOutputOffset,
+      }),
+    ],
+  );
+  const output = page.locator(
+    ".terminal-view--active .xterm-accessibility-tree",
+  );
+  await expect(output).toContainText("CURRENT_SNAPSHOT");
+  await expect(output).not.toContainText("RETIRED_OUTPUT");
+  terminal!.write("\r\nLIVE_TAIL");
+  await expect(output).toContainText("LIVE_TAIL");
+  await expect(
+    page.getByRole("status", { name: "Controlling", exact: true }),
+  ).toBeVisible();
+});
 
 test("project terminals survive browser detach and keep multiple tabs", async ({
   context,
