@@ -218,9 +218,6 @@ for (const theme of ["light", "dark"] as const) {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
-    await page.screenshot({
-      path: `output/playwright/feedback/dialog-${theme}.png`,
-    });
     refuse = false;
     await option.press("Enter");
     await expect(dialog).toHaveCount(0);

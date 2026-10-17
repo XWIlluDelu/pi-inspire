@@ -75,7 +75,7 @@ for (const touch of [false, true]) {
       test.use({ hasTouch: touch });
       test("independent rows stay distinct and folder deletion is scoped", async ({
         page,
-      }, testInfo) => {
+      }) => {
         await pairedPage(page);
         await openMockSession(page, /Formula rendering and spectral analysis/);
         const initial = await (
@@ -223,9 +223,6 @@ for (const touch of [false, true]) {
           expect(
             await toggle.evaluate((el) => el.matches(":focus-visible")),
           ).toBe(false);
-          await drawer.screenshot({
-            path: testInfo.outputPath("pointer-actions.png"),
-          });
           await expect(target.locator(".nav__group-actions")).toHaveCSS(
             "opacity",
             "0",
@@ -337,21 +334,6 @@ for (const touch of [false, true]) {
                   geometry.independentActions[slot]!,
               ),
             ).toBeLessThanOrEqual(1);
-          }
-          if (width === 390) {
-            await page.mouse.move(0, 0);
-            await drawer.screenshot({
-              path: testInfo.outputPath("hidden-light.png"),
-            });
-            await page.evaluate(
-              () => (document.documentElement.dataset.theme = "dark"),
-            );
-            await drawer.screenshot({
-              path: testInfo.outputPath("hidden-dark.png"),
-            });
-            await page.evaluate(
-              () => (document.documentElement.dataset.theme = "light"),
-            );
           }
           if (width < 768)
             await page

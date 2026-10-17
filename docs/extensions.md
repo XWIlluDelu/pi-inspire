@@ -204,7 +204,7 @@ For interactions that need a dedicated control, modify the relevant source owner
 | Dialog focus | `src/use-modal-focus.ts` |
 | Styling | Tokens in `src/styles/foundation.css` and the relevant `src/styles/*.css` component sheet |
 
-A pinned command button should reuse command dispatch, for example `store.sendPrompt("/goal")`, and be disabled when that command is absent. Put occasional or argument-taking actions in the palette/Composer instead of adding permanent controls.
+A pinned command button should use `store.sendPreparedCommand("/goal")`, which dispatches independently of the Composer's draft, attachments, and project-file references. Disable the button when the command is absent. Put occasional or argument-taking actions in the palette/Composer instead of adding permanent controls.
 
 Reuse existing icons, tokens, modal focus, and responsive drawers. Keep runtime widgets near the Composer, tool results in their cards, and project details in Resources. Settings is for persisted preferences. Match neighboring controls' accessible labels and keyboard behavior, retain 44px coarse-pointer targets, and respect reduced motion.
 
