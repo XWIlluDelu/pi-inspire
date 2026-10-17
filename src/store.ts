@@ -355,6 +355,9 @@ export class AppStore {
     refreshGitStatus: () => this.git.refreshStatus(),
     markProjectionStale: () => this.branches.markProjectionStale(),
     selectionGeneration: () => this.selectionGeneration,
+    invalidateResync: () => {
+      this.resyncRequest += 1;
+    },
     resync: (sessionId, generation, minimumRevision) =>
       this.resync(sessionId, generation, minimumRevision),
   });
@@ -453,14 +456,14 @@ export class AppStore {
       this.snapshotDigest = null;
     },
     onTransportReplaced: () => {
-      this.runtimeEvents.clearLiveAttention();
+      this.runtimeEvents.invalidateTransport();
       this.set({ externalSessionActivities: {} });
     },
     onTransportClosed: () => {
       // A later terminal event cannot be correlated across a lost stream.
       // The reconnect snapshot may remove stale state but must not recreate
       // ownership from historical active status.
-      this.runtimeEvents.clearLiveAttention();
+      this.runtimeEvents.invalidateTransport();
       this.branches.markConnectionInterrupted();
       this.set({
         connection: "reconnecting",
@@ -627,7 +630,7 @@ export class AppStore {
     this.invalidateTransportControllers();
     this.catalog.invalidate();
     this.invalidateTransportRequests();
-    this.runtimeEvents.clearLiveAttention();
+    this.runtimeEvents.invalidateTransport();
     return generation;
   }
 
