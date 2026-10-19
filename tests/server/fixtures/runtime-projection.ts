@@ -2,8 +2,7 @@ import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, vi } from "vitest";
-import { RETRY_STATE_SUFFIX } from "../../../shared/branch-bridge-protocol.js";
-import { AttachmentStore } from "../../../server/attachments.js";
+import type { AttachmentStore } from "../../../server/attachments.js";
 import type { DiagnosticLogger } from "../../../server/diagnostics.js";
 import {
   type PiRpcOptions,
@@ -11,8 +10,9 @@ import {
 } from "../../../server/pi-rpc.js";
 import { RuntimeController } from "../../../server/runtime.js";
 import type { SessionRecord } from "../../../server/session-catalog.js";
+import { RETRY_STATE_SUFFIX } from "../../../shared/branch-bridge-protocol.js";
 
-import { catalog, FakeRpc } from "./runtime.js";
+import { catalog, FakeRpc, workerAttachmentStore } from "./runtime.js";
 
 export const directories: string[] = [];
 export const stores: AttachmentStore[] = [];
@@ -249,7 +249,10 @@ export async function setupNewSession(
   );
   directories.push(directory);
   const path = join(directory, "future-session.jsonl");
-  const attachments = new AttachmentStore(join(directory, "uploads"));
+  const attachments = workerAttachmentStore(
+    join(directory, "uploads"),
+    directory,
+  );
   stores.push(attachments);
   let worker!: NewSessionRpc;
   const runtime = new RuntimeController(catalog([]), attachments, (options) => {
@@ -311,7 +314,10 @@ export async function setup(
     searchText: "original",
   };
   const source = catalog([record]);
-  const attachments = new AttachmentStore(join(directory, "uploads"));
+  const attachments = workerAttachmentStore(
+    join(directory, "uploads"),
+    directory,
+  );
   stores.push(attachments);
   const workers: ProjectionRpc[] = [];
   const sequence: string[] = [];

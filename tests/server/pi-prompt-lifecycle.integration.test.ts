@@ -18,6 +18,7 @@ import {
 afterEach(disposeOperationFixture);
 
 describe("native prompt admission and extension dialogs", () => {
+  // Real Pi startup and native before/after volume proofs for last-reference GC.
   it("settles handled input without agent events or an immortal upload reference", async () => {
     const f = await fixture(false);
     const file = await f.attachments.add({
@@ -50,7 +51,7 @@ describe("native prompt admission and extension dialogs", () => {
     ).resolves.toMatchObject({ accepted: true });
     await settled(f, 1);
     expect(f.modelRequests).toHaveLength(1);
-  });
+  }, 30_000);
 
   it("holds follow-up behind a real Pi preflight auto-compaction and its original prompt", async () => {
     const f = await fixture(true, 1_000);

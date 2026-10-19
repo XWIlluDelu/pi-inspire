@@ -2,29 +2,30 @@ import { execFile as execFileCallback } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import {
-  chmod,
   type FileHandle,
   link,
   lstat,
-  mkdir,
   open,
   rm,
   unlink,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { supportsPosixPermissions } from "./platform-paths.mjs";
+import { type LinuxTrashOptions, selectLinuxTrash } from "./linux-trash.js";
+import { windowsPowerShellCommand } from "./platform-environment.mjs";
+import { prepareSessionRecovery } from "./session-recovery.js";
 
 const execFile = promisify(execFileCallback);
-const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 
 interface DesktopTrashOptions {
   platform?: NodeJS.Platform;
   environment?: NodeJS.ProcessEnv;
   home?: string;
-  windowsRecycle?: (path: string) => Promise<void>;
+  linux?: Pick<LinuxTrashOptions, "mounts" | "uid">;
+  windowsRecycle?: (directory: string) => Promise<void>;
+  macosRecycle?: (directory: string) => Promise<void>;
 }
 
 function percentEncodePath(path: string): string {
@@ -46,20 +47,6 @@ function localDeletionDate(date = new Date()): string {
   );
 }
 
-async function ensurePrivateDirectory(
-  path: string,
-  platform: NodeJS.Platform,
-): Promise<void> {
-  await mkdir(path, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
-  const stats = await lstat(path);
-  if (!stats.isDirectory() || stats.isSymbolicLink())
-    throw new Error("The desktop Trash path is not a directory");
-  if (typeof process.getuid === "function" && stats.uid !== process.getuid())
-    throw new Error("The desktop Trash path is not owned by the current user");
-  if (supportsPosixPermissions(platform) && (stats.mode & 0o077) !== 0)
-    await chmod(path, PRIVATE_DIRECTORY_MODE);
-}
-
 async function moveByHardLink(
   payloadPath: string,
   destination: string,
@@ -79,21 +66,15 @@ async function moveByHardLink(
 async function freedesktopTrash(
   payloadPath: string,
   originalPath: string,
-  options: Required<Pick<DesktopTrashOptions, "platform" | "home">> & {
-    environment: NodeJS.ProcessEnv;
-  },
+  options: LinuxTrashOptions,
 ): Promise<void> {
-  const configuredDataHome = options.environment.XDG_DATA_HOME;
-  const dataHome =
-    configuredDataHome && isAbsolute(configuredDataHome)
-      ? configuredDataHome
-      : join(options.home, ".local", "share");
-  const trashRoot = join(dataHome, "Trash");
+  const { root: trashRoot, restorePath } = await selectLinuxTrash(
+    payloadPath,
+    originalPath,
+    options,
+  );
   const filesDirectory = join(trashRoot, "files");
   const infoDirectory = join(trashRoot, "info");
-  await ensurePrivateDirectory(trashRoot, options.platform);
-  await ensurePrivateDirectory(filesDirectory, options.platform);
-  await ensurePrivateDirectory(infoDirectory, options.platform);
 
   const originalName = basename(originalPath) || "session.jsonl";
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -118,7 +99,7 @@ async function freedesktopTrash(
     try {
       try {
         await info.writeFile(
-          `[Trash Info]\nPath=${percentEncodePath(originalPath)}\nDeletionDate=${localDeletionDate()}\n`,
+          `[Trash Info]\nPath=${percentEncodePath(restorePath)}\nDeletionDate=${localDeletionDate()}\n`,
           "utf8",
         );
         await info.sync();
@@ -136,43 +117,39 @@ async function freedesktopTrash(
   throw new Error("Unable to reserve a unique desktop Trash entry");
 }
 
-async function macosTrash(
-  payloadPath: string,
-  originalPath: string,
-  home: string,
-): Promise<void> {
-  const trashRoot = join(home, ".Trash");
-  await ensurePrivateDirectory(trashRoot, "darwin");
-  const originalName = basename(originalPath) || "session.jsonl";
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const destination = join(
-      trashRoot,
-      `${originalName}.${randomBytes(9).toString("base64url")}`,
-    );
-    try {
-      await moveByHardLink(payloadPath, destination);
-      return;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
-      throw error;
-    }
-  }
-  throw new Error("Unable to reserve a unique macOS Trash entry");
+async function recycleOnMacos(directory: string): Promise<void> {
+  // Foundation owns native Trash placement (including per-volume Trash).
+  // No Finder automation permission or private .DS_Store metadata is needed.
+  await execFile(
+    "/usr/bin/osascript",
+    [
+      "-l",
+      "JavaScript",
+      "-e",
+      [
+        'ObjC.import("Foundation");',
+        "function run(argv) {",
+        "  const error = Ref();",
+        "  const url = $.NSURL.fileURLWithPath(argv[0]);",
+        "  if (!$.NSFileManager.defaultManager.trashItemAtURLResultingItemURLError(url, null, error))",
+        "    throw new Error(ObjC.unwrap(error[0].localizedDescription));",
+        "}",
+      ].join("\n"),
+      directory,
+    ],
+    {
+      encoding: "utf8",
+      timeout: 10_000,
+      maxBuffer: 64 * 1024,
+    },
+  );
 }
 
 async function recycleOnWindows(
   path: string,
   environment: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const command = environment.SystemRoot
-    ? join(
-        environment.SystemRoot,
-        "System32",
-        "WindowsPowerShell",
-        "v1.0",
-        "powershell.exe",
-      )
-    : "powershell.exe";
+  const command = windowsPowerShellCommand(environment);
   await execFile(
     command,
     [
@@ -182,8 +159,8 @@ async function recycleOnWindows(
       "-Command",
       [
         "$ErrorActionPreference = 'Stop'",
-        "Add-Type -AssemblyName Microsoft.VisualBasic",
-        "[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($env:INSPIRE_TRASH_PATH, [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)",
+        "Microsoft.PowerShell.Utility\\Add-Type -AssemblyName Microsoft.VisualBasic",
+        "[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($env:INSPIRE_TRASH_PATH, [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs, [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)",
       ].join("; "),
     ],
     {
@@ -196,9 +173,9 @@ async function recycleOnWindows(
   );
 }
 
-/** Move an already-private payload into the native desktop Trash. Unsupported
- * or cross-volume moves throw so the caller can apply its identity-checked
- * permanent-delete fallback rather than creating a fake Trash directory. */
+/** Move an already-private payload into desktop Trash. Native Windows/macOS
+ * APIs consume its private recovery bundle, never the original public pathname.
+ * Unsupported moves throw for the caller's identity-checked permanent fallback. */
 export async function moveToDesktopTrash(
   payloadPath: string,
   originalPath: string,
@@ -209,25 +186,27 @@ export async function moveToDesktopTrash(
   const home = suppliedOptions.home ?? homedir();
   if (platform === "linux") {
     await freedesktopTrash(payloadPath, originalPath, {
-      platform,
+      ...suppliedOptions.linux,
       environment,
       home,
     });
     return;
   }
-  if (platform === "darwin") {
-    await macosTrash(payloadPath, originalPath, home);
-    return;
-  }
-  if (platform === "win32") {
-    if (suppliedOptions.windowsRecycle) {
-      await suppliedOptions.windowsRecycle(payloadPath);
+  if (platform === "darwin" || platform === "win32") {
+    await prepareSessionRecovery(payloadPath, originalPath);
+    const directory = dirname(payloadPath);
+    if (platform === "darwin") {
+      await (suppliedOptions.macosRecycle ?? recycleOnMacos)(directory);
+    } else if (suppliedOptions.windowsRecycle) {
+      await suppliedOptions.windowsRecycle(directory);
     } else {
-      await recycleOnWindows(payloadPath, environment);
+      await recycleOnWindows(directory, environment);
     }
     await lstat(payloadPath).then(
       () => {
-        throw new Error("Windows Recycle Bin did not consume the payload");
+        throw new Error(
+          "Native Trash did not consume the session recovery bundle",
+        );
       },
       (error: NodeJS.ErrnoException) => {
         if (error.code !== "ENOENT") throw error;

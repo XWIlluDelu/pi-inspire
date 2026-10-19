@@ -2,7 +2,9 @@ import {
   appendFile,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
+  realpath,
   rename,
   rm,
   stat,
@@ -13,8 +15,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { moveToDesktopTrash } from "../../server/desktop-trash.js";
 import type { SessionRecord } from "../../server/session-catalog.js";
 import { deleteSessionFile } from "../../server/session-delete.js";
+import {
+  RECOVERY_MANIFEST,
+  recoverSessionBundle,
+} from "../../server/session-recovery.js";
 
 const temporary: string[] = [];
 
@@ -40,7 +47,7 @@ afterEach(async () => {
 async function fixture(
   id = "session-a",
 ): Promise<{ dir: string; path: string; session: SessionRecord }> {
-  const dir = await mkdtemp(join(tmpdir(), "inspire delete-"));
+  const dir = await mkdtemp(join(await realpath(tmpdir()), "inspire delete-"));
   temporary.push(dir);
   const path = join(dir, `${id}.jsonl`);
   await writeFile(
@@ -92,6 +99,62 @@ describe("session file deletion", () => {
     await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(trashed, "utf8")).toContain('"id":"session-a"');
   });
+
+  it.each(["darwin", "win32"] as const)(
+    "recovers a %s deleted session from its complete native recovery bundle",
+    async (platform) => {
+      const { dir, path, session } = await fixture();
+      const original = await readFile(path, "utf8");
+      const bundle = join(dir, "isolated native trash bundle");
+      const recycle = async (directory: string) => rename(directory, bundle);
+      await expect(
+        deleteSessionFile(session, (payload, origin) =>
+          moveToDesktopTrash(payload, origin, {
+            platform,
+            environment: {},
+            home: dir,
+            windowsRecycle: recycle,
+            macosRecycle: recycle,
+          }),
+        ),
+      ).resolves.toBe("trashed");
+      await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+      const manifest = JSON.parse(
+        await readFile(join(bundle, RECOVERY_MANIFEST), "utf8"),
+      );
+      expect(manifest.originalPath).toBe(path);
+      expect(
+        (await readdir(dir)).filter((name) =>
+          name.startsWith(".inspire-delete-"),
+        ),
+      ).toEqual([]);
+      await expect(recoverSessionBundle(bundle)).resolves.toBe(path);
+      expect(await readFile(path, "utf8")).toBe(original);
+    },
+  );
+
+  it.each(["darwin", "win32"] as const)(
+    "cleans %s recovery metadata after identity-checked permanent fallback",
+    async (platform) => {
+      const { dir, path, session } = await fixture();
+      const failRecycle = async () => {
+        throw new Error("native Trash unavailable");
+      };
+      await expect(
+        deleteSessionFile(session, (payload, origin) =>
+          moveToDesktopTrash(payload, origin, {
+            platform,
+            environment: {},
+            home: dir,
+            windowsRecycle: failRecycle,
+            macosRecycle: failRecycle,
+          }),
+        ),
+      ).resolves.toBe("deleted");
+      await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readdir(dir)).toEqual([]);
+    },
+  );
 
   it("falls back to permanent unlink after a failed Trash command", async () => {
     const { path, session } = await fixture();
