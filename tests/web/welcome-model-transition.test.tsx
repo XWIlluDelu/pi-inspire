@@ -99,6 +99,9 @@ it("inherits the selected router and its effective effort without reapplying wor
   fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
     target: { value: "continue selected router" },
   });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled(),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Start session" }));
   await waitFor(() =>
     expect(start).toHaveBeenCalledWith("/one", {
@@ -341,6 +344,9 @@ it("treats choosing the displayed default as an explicit selection without reset
   fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
     target: { value: "explicit model" },
   });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled(),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Start session" }));
   await waitFor(() =>
     expect(start).toHaveBeenCalledWith("/one", {

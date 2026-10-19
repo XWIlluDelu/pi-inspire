@@ -235,9 +235,15 @@ async function waitForExit(child, timeoutMs = 10_000) {
   });
 }
 
-const temporary = await mkdtemp(join(tmpdir(), "inspire-release-smoke-"));
+const temporary = await realpath(
+  await mkdtemp(join(tmpdir(), "inspire-release-smoke-")),
+);
 let host = null;
 let hostOutput = "";
+let terminalOwner = null;
+let terminalOwnerOutput = "";
+let terminalClient = null;
+let terminalControl = null;
 try {
   const packDirectory = join(temporary, "pack");
   const installDirectory = join(temporary, "install");
@@ -307,11 +313,18 @@ try {
     "build/server/host-restart-preparation.js",
     "build/server/launcher-restart.mjs",
     "build/server/platform-paths.mjs",
+    "build/server/platform-environment.mjs",
     "build/server/process-tree.mjs",
     "build/server/static-asset-cache.mjs",
     "build/server/user-environment.mjs",
     "build/server/session-fork.js",
     "build/server/session-fork-worker.js",
+    "build/server/session-recovery-entry.js",
+    "build/server/terminal-control-entry.js",
+    "build/server/terminal-daemon-control.js",
+    "build/server/attachment-retention-entry.js",
+    "build/server/attachment-retention-identity.js",
+    "build/server/storage-volume.js",
     "connections/dispatch.mjs",
     "connections/ssh-reverse/manifest.json",
     "connections/ssh-reverse/runner.mjs",
@@ -587,6 +600,8 @@ try {
     INSPIRE_PORT: String(port),
     INSPIRE_TOKEN: token,
     INSPIRE_OPEN: "0",
+    INSPIRE_ENVIRONMENT: "inherit",
+    INSPIRE_TERMINAL_ID: undefined,
     INSPIRE_STATE_PATH: join(stateDirectory, "instance.json"),
     INSPIRE_PREFERENCES_PATH: join(stateDirectory, "preferences.json"),
     INSPIRE_LOG_PATH: join(stateDirectory, "diagnostics.jsonl"),
@@ -606,6 +621,125 @@ try {
     // must leave no process behind.
     INSPIRE_TERMINAL_IN_PROCESS: "1",
   };
+  const instanceModule = await import(
+    pathToFileURL(join(installedRoot, "build/server/instance-state.mjs")).href
+  );
+  const maintenanceModule = await import(
+    pathToFileURL(
+      join(installedRoot, "deploy/systemd/idle-maintenance-restart.mjs"),
+    ).href
+  );
+  // Exercise the installed CLI against a disposable Host-shaped impostor.
+  // Only random fixture credentials exist here; no user endpoint is contacted.
+  const probes = [];
+  const impostor = createHttpServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += String(chunk);
+    probes.push({ authorization: request.headers.authorization, body });
+    response.setHeader("Content-Type", "application/json");
+    response.end(JSON.stringify({ appName: "inspire", mock: false }));
+  });
+  await new Promise((resolve) => impostor.listen(0, "127.0.0.1", resolve));
+  try {
+    const fakeState = {
+      schemaVersion: 1,
+      root: installedRoot,
+      host: "127.0.0.1",
+      port: impostor.address().port,
+      token: randomBytes(64).toString("base64url"),
+      pid: process.pid,
+      processStartTime: await instanceModule.processStartIdentity(process.pid),
+      startedAt: new Date().toISOString(),
+      mock: false,
+      httpControlVersion: 1,
+    };
+    const fakePath = join(stateDirectory, "impostor.json");
+    await instanceModule.writeInstanceState(fakePath, fakeState);
+    for (const command of ["status", "token"]) {
+      const rejected = await execFile(process.execPath, [bin, command], {
+        cwd: temporary,
+        env: {
+          ...environment,
+          INSPIRE_STATE_PATH: fakePath,
+          INSPIRE_PORT: String(fakeState.port),
+        },
+      }).then(
+        () => null,
+        (error) => error,
+      );
+      if (
+        !rejected ||
+        rejected.code !== 1 ||
+        rejected.stdout.includes(fakeState.token) ||
+        rejected.stderr.includes(fakeState.token)
+      )
+        throw new Error(
+          "Installed CLI trusted an unauthenticated readiness peer",
+        );
+    }
+    if ((await maintenanceModule.requestMaintenance(fakeState)) !== null)
+      throw new Error("Installed maintenance trusted an unauthenticated peer");
+    if (
+      probes.length !== 3 ||
+      probes.some(
+        (probe) =>
+          probe.authorization !== undefined ||
+          probe.body.includes(fakeState.token),
+      )
+    )
+      throw new Error("Installed lifecycle disclosed its reusable credential");
+  } finally {
+    impostor.closeAllConnections();
+    await new Promise((resolve) => impostor.close(resolve));
+  }
+
+  // Recovery must work in the production-only package and resolve a relative
+  // folder against the caller, not the launcher's installation directory.
+  const recoveryModule = await import(
+    pathToFileURL(join(installedRoot, "build/server/session-recovery.js")).href
+  );
+  for (const recovery of [
+    {
+      parent: temporary,
+      name: "relative recovery bundle",
+      argument: "relative recovery bundle",
+      id: "relative",
+    },
+    {
+      parent: homeDirectory,
+      name: "home recovery bundle",
+      argument:
+        process.platform === "win32"
+          ? "~\\home recovery bundle"
+          : "~/home recovery bundle",
+      id: "home",
+    },
+  ]) {
+    const recoveryBundle = join(recovery.parent, recovery.name);
+    await mkdir(recoveryBundle);
+    const fileName = `recovered-${recovery.id}.jsonl`;
+    const recoveredPath = join(temporary, fileName);
+    const recoveryContents =
+      JSON.stringify({
+        type: "session",
+        id: "release-recovery-" + recovery.id,
+        cwd: temporary,
+      }) + "\n";
+    const recoveryPayload = join(recoveryBundle, fileName);
+    await writeFile(recoveryPayload, recoveryContents);
+    await recoveryModule.prepareSessionRecovery(recoveryPayload, recoveredPath);
+    const recovered = await execFile(
+      process.execPath,
+      [bin, "recover-session", recovery.argument],
+      { cwd: temporary, env: environment, maxBuffer: 1024 * 1024 },
+    );
+    if (
+      !recovered.stdout.includes("Recovered session: ") ||
+      (await readFile(recoveredPath, "utf8")) !== recoveryContents
+    )
+      throw new Error("Installed session recovery failed for " + recovery.id);
+  }
+
   const preparation = await execFile(
     process.execPath,
     [bin, "prepare-restart"],
@@ -737,7 +871,91 @@ try {
     INSPIRE_STATE_PATH: join(stateDirectory, "instance-real.json"),
     INSPIRE_PREFERENCES_PATH: join(stateDirectory, "preferences-real.json"),
     INSPIRE_LOG_PATH: join(stateDirectory, "diagnostics-real.jsonl"),
+    INSPIRE_TERMINAL_IN_PROCESS: "0",
   };
+  for (const key of [
+    "INSPIRE_TERMINAL_DAEMON_ADDRESS",
+    "INSPIRE_TERMINAL_TOKEN_PATH",
+    "INSPIRE_TERMINAL_STATE_PATH",
+  ])
+    delete realEnvironment[key];
+  // Keep auto-launch isolated from the developer's systemd user manager.
+  realEnvironment.DBUS_SESSION_BUS_ADDRESS =
+    "unix:path=" + join(temporary, "no-user-bus");
+  delete realEnvironment.NOTIFY_SOCKET;
+  delete realEnvironment.INVOCATION_ID;
+  terminalControl = { bin, environment: realEnvironment };
+  // Own the real daemon as an explicit fixture process. It still uses the
+  // product's default address, state and authentication, but cannot escape
+  // cleanup as an intentionally detached production owner would.
+  terminalOwner = spawn(
+    process.execPath,
+    [
+      bin,
+      "terminal-daemon",
+      "--root",
+      installedRoot,
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(realPort),
+    ],
+    {
+      cwd: temporary,
+      env: realEnvironment,
+      ...isolatedProcessOptions(),
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  for (const stream of [terminalOwner.stdout, terminalOwner.stderr])
+    stream?.on("data", (chunk) => {
+      terminalOwnerOutput = (terminalOwnerOutput + String(chunk)).slice(-8192);
+    });
+  const daemonProtocol = await import(
+    pathToFileURL(
+      join(installedRoot, "build/server/terminal-daemon-protocol.js"),
+    ).href
+  );
+  const { TerminalDaemonClient } = await import(
+    pathToFileURL(join(installedRoot, "build/server/terminal-daemon-client.js"))
+      .href
+  );
+  const paths = { environment: realEnvironment, home: homeDirectory };
+  const daemonAddress = daemonProtocol.defaultTerminalDaemonAddress(
+    installedRoot,
+    "127.0.0.1",
+    realPort,
+    paths,
+  );
+  const { terminalDaemonSecretPath } = await import(
+    pathToFileURL(join(installedRoot, "build/server/terminal-daemon-tls.js"))
+      .href
+  );
+  const daemonTokenPath = daemonProtocol.defaultTerminalDaemonTokenPath(
+    installedRoot,
+    "127.0.0.1",
+    realPort,
+    paths,
+  );
+  const daemonDeadline = Date.now() + 20_000;
+  while (!terminalClient) {
+    if (
+      terminalOwner.exitCode !== null ||
+      terminalOwner.signalCode !== null ||
+      Date.now() > daemonDeadline
+    )
+      throw new Error("Installed default terminal daemon did not start");
+    try {
+      const daemonToken = (
+        await readFile(terminalDaemonSecretPath(daemonTokenPath), "utf8")
+      ).trim();
+      const candidate = new TerminalDaemonClient(daemonAddress, daemonToken);
+      await candidate.probe();
+      terminalClient = candidate;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
   host = spawn(process.execPath, [bin], {
     cwd: canonicalWorkspace,
     env: realEnvironment,
@@ -754,6 +972,65 @@ try {
   await waitForHealth(`${realOrigin}/api/health`, token, false);
   await waitForInstanceState(realEnvironment.INSPIRE_STATE_PATH);
   const headers = { Authorization: `Bearer ${token}` };
+  async function daemonMutationHeaders() {
+    const epochResponse = await fetch(realOrigin + "/api/terminal-operations", {
+      headers,
+    });
+    const { epoch } = await epochResponse.json();
+    return {
+      ...headers,
+      "Content-Type": "application/json",
+      "X-Terminal-Operation": JSON.stringify({ id: randomUUID(), epoch }),
+    };
+  }
+  const daemonTerminalResponse = await fetch(realOrigin + "/api/terminals", {
+    method: "POST",
+    headers: await daemonMutationHeaders(),
+    body: JSON.stringify({ cwd: canonicalWorkspace, cols: 80, rows: 24 }),
+  });
+  if (!daemonTerminalResponse.ok)
+    throw new Error(
+      "Packaged default-daemon PTY creation failed: " +
+        (await daemonTerminalResponse.text()),
+    );
+  const daemonTerminal = await daemonTerminalResponse.json();
+  const { decodeTerminalServerDataFrame } = await import(
+    pathToFileURL(join(installedRoot, "build/shared/terminal-contracts.js"))
+      .href
+  );
+  let daemonOutput = "";
+  const attachment = await terminalClient.attach(
+    {
+      terminalId: daemonTerminal.id,
+      clientId: randomUUID(),
+      cols: 80,
+      rows: 24,
+    },
+    {
+      sendData(data) {
+        daemonOutput = (
+          daemonOutput +
+          Buffer.from(decodeTerminalServerDataFrame(data).data).toString("utf8")
+        ).slice(-8192);
+      },
+      sendControl() {},
+      close() {},
+    },
+  );
+  const echoCommand =
+    daemonTerminal.profileId === "cmd"
+      ? "echo INSPIRE_DAEMON_BE^FORE\r"
+      : 'echo INSPIRE_DAEMON_"BEFORE"\r';
+  attachment.writeInput(1, Buffer.from(echoCommand));
+  const outputDeadline = Date.now() + 15_000;
+  while (!daemonOutput.includes("INSPIRE_DAEMON_BEFORE")) {
+    if (Date.now() > outputDeadline)
+      throw new Error(
+        "Packaged default daemon did not deliver real PTY output",
+      );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  attachment.detach();
   const defaultsResponse = await fetch(
     `${realOrigin}/api/models?cwd=${encodeURIComponent(canonicalWorkspace)}`,
     { headers },
@@ -783,6 +1060,92 @@ try {
     throw new Error(
       "Packaged real Pi session startup returned the wrong owner",
     );
+  // Cross-platform CI must exercise the user-facing page lifecycle, not just
+  // startup/status/stop. An idle owned Pi worker must retire before replacement.
+  const previousState = JSON.parse(
+    await readFile(realEnvironment.INSPIRE_STATE_PATH, "utf8"),
+  );
+  const previousRestart = await fetch(`${realOrigin}/api/host/restart`, {
+    headers,
+  }).then((response) => response.json());
+  if (!previousRestart.available || previousRestart.allAvailable)
+    throw new Error("Installed direct Host reported incorrect restart scopes");
+  const restartResponse = await fetch(`${realOrigin}/api/host/restart`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      hostId: previousRestart.hostId,
+      operationId: randomUUID(),
+      scope: "host",
+    }),
+  });
+  if (restartResponse.status !== 202)
+    throw new Error(
+      `Packaged page restart failed with ${restartResponse.status}`,
+    );
+  const restartDeadline = Date.now() + 60_000;
+  let replaced = false;
+  while (Date.now() < restartDeadline) {
+    let operation;
+    try {
+      const response = await fetch(`${realOrigin}/api/host/restart`, {
+        headers,
+      });
+      const current = await response.json();
+      operation = current.operation;
+      const state = JSON.parse(
+        await readFile(realEnvironment.INSPIRE_STATE_PATH, "utf8"),
+      );
+      if (
+        response.ok &&
+        current.hostId !== previousRestart.hostId &&
+        current.available &&
+        state.pid !== previousState.pid &&
+        state.token === previousState.token
+      ) {
+        replaced = true;
+        break;
+      }
+    } catch (error) {
+      if (host.exitCode !== null || host.signalCode !== null)
+        throw new Error(
+          `Packaged launcher exited during page restart: ${error}`,
+        );
+    }
+    if (operation?.phase === "rejected" || operation?.phase === "unknown")
+      throw new Error(operation.error || "Page restart was not submitted");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  if (!replaced)
+    throw new Error("Packaged page restart did not replace the Host");
+  await waitForHealth(`${realOrigin}/api/health`, token, false);
+  const retainedTerminals = await fetch(
+    realOrigin + "/api/terminals?cwd=" + encodeURIComponent(canonicalWorkspace),
+    { headers },
+  ).then((response) => response.json());
+  if (
+    !retainedTerminals.terminals.some(
+      (terminal) =>
+        terminal.id === daemonTerminal.id && terminal.status === "running",
+    ) ||
+    terminalOwner.exitCode !== null ||
+    terminalOwner.signalCode !== null
+  )
+    throw new Error(
+      "Page restart did not preserve the real default-daemon PTY",
+    );
+  const removedDaemonTerminal = await fetch(
+    realOrigin +
+      "/api/terminals/" +
+      encodeURIComponent(daemonTerminal.id) +
+      "?force=1",
+    {
+      method: "DELETE",
+      headers: await daemonMutationHeaders(),
+    },
+  );
+  if (!removedDaemonTerminal.ok)
+    throw new Error("Packaged default-daemon PTY cleanup failed");
   await execFile(process.execPath, [bin, "status"], {
     cwd: canonicalWorkspace,
     env: realEnvironment,
@@ -796,6 +1159,108 @@ try {
   await waitForExit(host);
   if (host.exitCode !== 0)
     throw new Error(`Packaged real host exited with ${host.exitCode}`);
+
+  // Exercise the installed offline migration entry with no source loader/SDK
+  // and no Host sharing its completely separate attachment parent.
+  const retentionHome = join(temporary, "retention-home");
+  const retentionEnvironment = {
+    ...realEnvironment,
+    HOME: retentionHome,
+    USERPROFILE: retentionHome,
+    XDG_STATE_HOME: join(retentionHome, "state"),
+    LOCALAPPDATA: join(retentionHome, "local"),
+    APPDATA: join(retentionHome, "roaming"),
+  };
+  const installedPaths = await import(
+    pathToFileURL(join(installedRoot, "build/server/platform-paths.mjs")).href
+  );
+  const retentionParent = join(
+    installedPaths.inspireStateDirectory({
+      environment: retentionEnvironment,
+      home: retentionHome,
+    }),
+    "attachments",
+  );
+  const retainedRoot = join(retentionParent, "98765431-1234-installed-smoke");
+  const retainedSessions = join(temporary, "retained sessions");
+  await mkdir(retainedRoot, { recursive: true });
+  await mkdir(retainedSessions);
+  const retainedRegistryPath = join(retainedRoot, ".session-directories.json");
+  const legacyRegistry = JSON.stringify({
+    version: 2,
+    directories: [retainedSessions],
+    linuxMounts: {},
+  });
+  await writeFile(retainedRegistryPath, legacyRegistry);
+  const preview = await execFile(
+    process.execPath,
+    [bin, "uploads", "trust-session-directory", "retained sessions"],
+    {
+      cwd: temporary,
+      env: retentionEnvironment,
+      timeout: 30_000,
+    },
+  );
+  if (
+    !preview.stdout.includes("No files changed") ||
+    (await readFile(retainedRegistryPath, "utf8")) !== legacyRegistry
+  )
+    throw new Error("Packaged retention preview changed storage");
+  await execFile(
+    process.execPath,
+    [
+      bin,
+      "uploads",
+      "trust-session-directory",
+      process.platform === "win32"
+        ? "~\\..\\retained sessions"
+        : "~/../retained sessions",
+      "--confirm",
+    ],
+    {
+      cwd: temporary,
+      env: retentionEnvironment,
+      timeout: 30_000,
+    },
+  );
+  const trustedRegistry = JSON.parse(
+    await readFile(retainedRegistryPath, "utf8"),
+  );
+  if (
+    trustedRegistry.version !== 3 ||
+    !trustedRegistry.identities?.[retainedSessions]?.volume
+  )
+    throw new Error(
+      "Packaged retention migration did not bind volume/namespace continuity",
+    );
+
+  const previousDaemonInfo = await terminalClient.daemonInfo();
+  const terminalStatus = await execFile(
+    process.execPath,
+    [bin, "terminal", "status"],
+    {
+      env: realEnvironment,
+      timeout: 30_000,
+    },
+  );
+  if (!terminalStatus.stdout.includes(previousDaemonInfo.instanceId))
+    throw new Error(
+      "Packaged terminal status did not identify the actual owner",
+    );
+  await execFile(process.execPath, [bin, "terminal", "restart"], {
+    env: realEnvironment,
+    timeout: 40_000,
+  });
+  const replacementDaemonInfo = await terminalClient.daemonInfo();
+  if (replacementDaemonInfo.instanceId === previousDaemonInfo.instanceId)
+    throw new Error("Packaged terminal restart did not replace the owner");
+  await execFile(process.execPath, [bin, "terminal", "stop"], {
+    env: realEnvironment,
+    timeout: 30_000,
+  });
+  await waitForExit(terminalOwner);
+  if (terminalOwner.exitCode !== 0)
+    throw new Error("Packaged terminal daemon did not exit cleanly");
 
   console.log(
     JSON.stringify({
@@ -811,7 +1276,18 @@ try {
       installMode: "production dependencies only; Pi not bundled",
       portableCliEntry: "npm shim and JS entry resolved",
       mockHealth: "ok",
-      terminalPty: "ok",
+      readinessPeer:
+        "fresh mutual proofs; impostor rejected without bearer disclosure",
+      localPairing:
+        "one-use fragment; explicit token output only when requested",
+      terminalPty: "in-process and default authenticated daemon",
+      terminalHostRestart: "same live daemon PTY retained",
+      terminalLifecycle:
+        "authenticated scoped status/restart/stop; confirmed clean exit",
+      sessionRecoveryCli:
+        "original paths from caller-relative and Host-home bundles",
+      retentionMigrationCli:
+        "zero-write preview and explicit namespace/volume trust",
       realPiStartup: "ok",
       sessionForkWorker: "ok",
       publishDryRun: "accepted without metadata correction",
@@ -821,14 +1297,37 @@ try {
   );
 } catch (error) {
   if (hostOutput) console.error(hostOutput);
+  if (terminalOwnerOutput) console.error(terminalOwnerOutput);
   throw error;
 } finally {
+  if (terminalControl)
+    await execFile(
+      process.execPath,
+      [terminalControl.bin, "terminal", "stop", "--force"],
+      {
+        env: terminalControl.environment,
+        timeout: 30_000,
+      },
+    ).catch(() => undefined);
+  await terminalClient?.close();
   if (host && host.exitCode === null && host.signalCode === null) {
     await signalProcessTree(host, "SIGTERM", { isolated: true });
     await waitForExit(host, 5_000).catch(() => undefined);
     if (host.exitCode === null && host.signalCode === null) {
       await signalProcessTree(host, "SIGKILL", { isolated: true });
       await waitForExit(host).catch(() => undefined);
+    }
+  }
+  if (
+    terminalOwner &&
+    terminalOwner.exitCode === null &&
+    terminalOwner.signalCode === null
+  ) {
+    await signalProcessTree(terminalOwner, "SIGTERM", { isolated: true });
+    await waitForExit(terminalOwner, 5_000).catch(() => undefined);
+    if (terminalOwner.exitCode === null && terminalOwner.signalCode === null) {
+      await signalProcessTree(terminalOwner, "SIGKILL", { isolated: true });
+      await waitForExit(terminalOwner).catch(() => undefined);
     }
   }
   await rm(temporary, { recursive: true, force: true });

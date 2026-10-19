@@ -68,6 +68,102 @@ test("deletes the visible idle session through one confirmation and returns to N
   expect((await snapshot.json()).active).toBeNull();
 });
 
+test("failed deletion wraps a literal path inside the confirmation", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  const source = (await (await hostRequest(page).get("/api/snapshot")).json())
+    .active;
+  const created = await hostRequest(page).post("/api/branches/clone", {
+    data: {
+      sessionId: source.sessionId,
+      revision: source.transcriptPage.revision,
+    },
+  });
+  expect(created.ok()).toBe(true);
+  const clone = await created.json();
+  const id = clone.sessionId;
+  const name = clone.snapshot.active.sessionName;
+  expect(
+    (
+      await hostRequest(page).patch("/api/preferences", {
+        data: { hiddenSessionIds: [id], hiddenProjectCwds: [] },
+      })
+    ).ok(),
+  ).toBe(true);
+  await page.reload();
+  const navigation = page.getByRole("button", {
+    name: /^(Toggle|Expand|Collapse) navigation$/,
+    exact: true,
+  });
+  if ((await navigation.getAttribute("aria-expanded")) === "false")
+    await navigation.click();
+  const hidden = page.getByRole("button", { name: "Hidden", exact: true });
+  if ((await hidden.getAttribute("aria-expanded")) !== "true")
+    await hidden.click();
+  const diagnostic =
+    "Cannot delete /workspace/calibration/reference_measurement_comparison_for_multichannel_calibration_and_residual_validation_2026_10_17_results.json because the project is locked.";
+  let attempted = 0;
+  await page.route(
+    `**/api/sessions/${encodeURIComponent(id)}`,
+    async (route) => {
+      if (route.request().method() !== "DELETE") return route.fallback();
+      attempted++;
+      await route.fulfill({ status: 409, json: { error: diagnostic } });
+    },
+  );
+  await page
+    .locator(".nav__group--hidden")
+    .getByRole("button", {
+      name: `Delete "${name}"`,
+      exact: true,
+    })
+    .click();
+  const dialog = page.getByRole("alertdialog", {
+    name: "Delete session?",
+    exact: true,
+  });
+  await dialog
+    .getByRole("button", { name: "Delete session", exact: true })
+    .click();
+  const alert = dialog.getByRole("alert");
+  await expect(alert).toHaveText(diagnostic);
+  const geometry = await alert.evaluate((node) => {
+    const b = node.getBoundingClientRect(),
+      style = getComputedStyle(node),
+      range = document.createRange();
+    range.selectNodeContents(node);
+    const left =
+      b.left +
+      Number.parseFloat(style.borderLeftWidth) +
+      Number.parseFloat(style.paddingLeft);
+    const right =
+      b.right -
+      Number.parseFloat(style.borderRightWidth) -
+      Number.parseFloat(style.paddingRight);
+    return {
+      textFits: [...range.getClientRects()].every(
+        (rect) => rect.left >= left - 0.5 && rect.right <= right + 0.5,
+      ),
+      client: node.closest(".dialog")!.clientWidth,
+      scroll: node.closest(".dialog")!.scrollWidth,
+    };
+  });
+  expect(geometry.textFits).toBe(true);
+  expect(geometry.scroll).toBeLessThanOrEqual(geometry.client);
+  expect(attempted).toBe(1);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  // Even a deliberately failed delete must not hide or consume shared data.
+  expect(
+    (
+      await hostRequest(page).delete(`/api/sessions/${encodeURIComponent(id)}`)
+    ).ok(),
+  ).toBe(true);
+});
+
 for (const touch of [false, true]) {
   test.describe(
     touch ? "touch Hidden hierarchy" : "pointer Hidden hierarchy",

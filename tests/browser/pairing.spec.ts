@@ -129,7 +129,7 @@ test("expires only current Host legacy names, and ignores cookie authentication"
 }, async ({ page, context }) => {
   await page.goto("/");
   const origin = new URL(page.url()).origin;
-  // Seed the exact legacy qualified name to exercise migration in Chromium.
+  // Seed the exact legacy qualified name to exercise migration across engines.
   const { createHash } = await import("node:crypto");
   const suffix = createHash("sha256")
     .update(new URL(origin).host)
@@ -227,9 +227,9 @@ test("direct launch bootstrap is stripped before application requests, one-use, 
   await expect(page.getByRole("main")).toBeVisible();
 });
 
-test("socket tickets are exact-origin, audience-bound and single-use in Chromium", async ({
-  page,
-}) => {
+test("socket tickets are exact-origin, audience-bound and single-use", {
+  tag: "@cross-browser",
+}, async ({ page }) => {
   await pairedPage(page);
   // Capture a genuine memory bearer only inside this isolated security test.
   let bearer = "";

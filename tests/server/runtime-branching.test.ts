@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AttachmentStore } from "../../server/attachments.js";
+import type { AttachmentStore } from "../../server/attachments.js";
 import type {
   PiRpcOptions,
   PiRpcProcess,
@@ -29,6 +29,7 @@ import type {
 import { SessionProjection } from "../../server/session-projection.js";
 import { RETRY_STATE_SUFFIX } from "../../shared/branch-bridge-protocol.js";
 import { nativeNavigationLeaf } from "../../shared/branch-node-actions.js";
+import { workerAttachmentStore } from "./fixtures/runtime.js";
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const FORK_SESSION_ID = "22222222-2222-4222-8222-222222222222";
@@ -339,7 +340,10 @@ async function setup(
     listByCwds: async () => [],
     invalidate() {},
   };
-  const attachments = new AttachmentStore(join(directory, "uploads"));
+  const attachments = workerAttachmentStore(
+    join(directory, "uploads"),
+    directory,
+  );
   stores.push(attachments);
   let worker!: BranchRpc;
   const workers: BranchRpc[] = [];

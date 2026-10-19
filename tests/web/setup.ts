@@ -3,7 +3,7 @@ import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
 // UI/receipt tests start at the authenticated transport boundary. Cryptographic
-// protocol/isolation is exercised by browser-auth server and Chromium tests.
+// protocol/isolation is exercised by browser-auth server and browser-engine tests.
 vi.mock("../../src/browser-auth", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/browser-auth")>()),
   authenticatedFetch: (

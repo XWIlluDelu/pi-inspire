@@ -4,14 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as git from "../../server/git-runner.js";
+import * as hidden from "../../server/host-hidden-dirs.js";
 import {
   invalidateProjectFiles,
   listProjectDirectory,
   searchProjectFiles,
   workspaceBasenameMatches,
 } from "../../server/project-files.js";
-import * as hidden from "../../server/host-hidden-dirs.js";
-import * as git from "../../server/git-runner.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
@@ -84,6 +84,9 @@ describe("filesystem discovery, independent of Git", () => {
   it.each([false, true])(
     "lists actual directories and applies only hidden visibility (git=%s)",
     async (repository) => {
+      // This case owns Git/dot-name policy, not OS attribute-query latency.
+      // Native attributes have separate adapter and real-host regressions.
+      vi.spyOn(hidden, "listNativeHiddenNames").mockResolvedValue(new Set());
       const root = await scratch();
       for (const name of ["empty", "dist", "node_modules", ".config"])
         await fs.mkdir(join(root, name));
