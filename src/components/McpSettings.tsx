@@ -7,12 +7,14 @@ import {
   Trash2,
 } from "lucide-react";
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
+import { isBusyRunState } from "../../shared/contracts";
 import type {
   McpConfigEdit,
   McpConfigEntry,
@@ -38,6 +40,8 @@ export function McpSettings({
   const state = useAppState(
     (source) => ({
       readOnlyReason: source.readOnlyReason,
+      sessionId: source.sessionId,
+      runState: source.runState,
       transport: source.transportGeneration,
     }),
     shallowEqual,
@@ -47,7 +51,12 @@ export function McpSettings({
       key={JSON.stringify([owner, state.transport])}
       owner={owner}
       active={active}
-      canReload={Boolean(owner.sessionId && !state.readOnlyReason)}
+      canReload={Boolean(
+        owner.sessionId &&
+          owner.sessionId === state.sessionId &&
+          !state.readOnlyReason,
+      )}
+      reloadBlocked={isBusyRunState(state.runState)}
     />
   );
 }
@@ -55,10 +64,12 @@ function McpConfiguration({
   owner,
   active,
   canReload,
+  reloadBlocked,
 }: {
   owner: Owner;
   active: boolean;
   canReload: boolean;
+  reloadBlocked: boolean;
 }) {
   const [snapshot, setSnapshot] = useState<McpConfigSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -215,6 +226,7 @@ function McpConfiguration({
                   onClick={(event) => {
                     opener.current = event.currentTarget;
                     setError(null);
+                    setConfirmReload(false);
                     setEditor({ scope: "user", entry: null });
                   }}
                 >
@@ -240,6 +252,7 @@ function McpConfiguration({
                   <button
                     type="button"
                     className="models-text-button"
+                    disabled={reloadBlocked || busy}
                     onClick={() => setConfirmReload(!confirmReload)}
                   >
                     Reload selected session…
@@ -249,6 +262,12 @@ function McpConfiguration({
                     New Pi workers read the saved configuration.
                   </p>
                 )}
+                {canReload && reloadBlocked ? (
+                  <p className="models-status">
+                    Wait for the current Pi operation to finish before
+                    reloading.
+                  </p>
+                ) : null}
               </div>
             ) : null}
             {confirmReload ? (
@@ -262,8 +281,26 @@ function McpConfiguration({
                   <button
                     type="button"
                     className="button button--primary"
+                    disabled={!canReload || reloadBlocked || busy}
                     onClick={() => {
-                      store.runPaletteNativeCommand("/reload");
+                      setError(null);
+                      const current = store.getState();
+                      if (
+                        current.sessionId !== owner.sessionId ||
+                        current.readOnlyReason ||
+                        isBusyRunState(current.runState)
+                      ) {
+                        setError(
+                          "The selected session must be available and idle before reloading.",
+                        );
+                        return;
+                      }
+                      if (!store.runPaletteNativeCommand("/reload")) {
+                        setError(
+                          "Reload could not be started. Check the selected session and try again.",
+                        );
+                        return;
+                      }
                       setConfirmReload(false);
                       setSaved(
                         "Reload requested. Check its result in the conversation.",
@@ -315,103 +352,110 @@ function McpConfiguration({
                   <p className="models-status">No servers in this file.</p>
                 ) : (
                   file.entries.map((entry) => (
-                    <div className="models-declared-model" key={entry.name}>
-                      <div className="models-declared-model__copy">
-                        <span>{entry.name}</span>
-                        <span className="models-status">
-                          {entry.policyOnly
-                            ? "Policy override"
-                            : entry.transport === "http"
-                              ? "HTTP"
-                              : entry.transport === "stdio"
-                                ? "Stdio"
-                                : "Unsupported entry"}
-                          {entry.enabled === false ? " · disabled in file" : ""}
-                          {file.scope === "user" &&
-                          snapshot.files
-                            .find((item) => item.scope === "project")
-                            ?.entries.some((item) => item.name === entry.name)
-                            ? " · project override exists"
-                            : ""}
-                        </span>
+                    <Fragment key={entry.name}>
+                      <div className="models-declared-model">
+                        <div className="models-declared-model__copy">
+                          <span>{entry.name}</span>
+                          <span className="models-status">
+                            {entry.policyOnly
+                              ? "Policy override"
+                              : entry.transport === "http"
+                                ? "HTTP"
+                                : entry.transport === "stdio"
+                                  ? "Stdio"
+                                  : "Unsupported entry"}
+                            {entry.enabled === false
+                              ? " · disabled in file"
+                              : ""}
+                            {file.scope === "user" &&
+                            snapshot.files
+                              .find((item) => item.scope === "project")
+                              ?.entries.some((item) => item.name === entry.name)
+                              ? " · project override exists"
+                              : ""}
+                          </span>
+                        </div>
+                        <div className="models-actions">
+                          <button
+                            type="button"
+                            className="models-icon-button"
+                            aria-label={`Edit ${file.scope} server ${entry.name}`}
+                            disabled={
+                              busy || (!entry.transport && !entry.policyOnly)
+                            }
+                            onClick={(event) => {
+                              opener.current = event.currentTarget;
+                              setError(null);
+                              setConfirmReload(false);
+                              setEditor({ scope: file.scope, entry });
+                            }}
+                          >
+                            <Pencil size={14} aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            className="models-icon-button"
+                            aria-label={`Remove ${file.scope} server ${entry.name}`}
+                            disabled={busy}
+                            onClick={(event) => {
+                              opener.current = event.currentTarget;
+                              setError(null);
+                              setConfirmReload(false);
+                              setRemoving({ scope: file.scope, entry });
+                            }}
+                          >
+                            <Trash2 size={14} aria-hidden />
+                          </button>
+                        </div>
                       </div>
-                      <div className="models-actions">
-                        <button
-                          type="button"
-                          className="models-icon-button"
-                          aria-label={`Edit ${file.scope} server ${entry.name}`}
-                          disabled={
-                            busy || (!entry.transport && !entry.policyOnly)
-                          }
-                          onClick={(event) => {
-                            opener.current = event.currentTarget;
-                            setError(null);
-                            setEditor({ scope: file.scope, entry });
-                          }}
+                      {removing?.scope === file.scope &&
+                      removing.entry?.name === entry.name ? (
+                        <div
+                          className="models-confirm"
+                          role="group"
+                          aria-label="Remove MCP configuration"
                         >
-                          <Pencil size={14} aria-hidden />
-                        </button>
-                        <button
-                          type="button"
-                          className="models-icon-button"
-                          aria-label={`Remove ${file.scope} server ${entry.name}`}
-                          disabled={busy}
-                          onClick={(event) => {
-                            opener.current = event.currentTarget;
-                            setError(null);
-                            setRemoving({ scope: file.scope, entry });
-                          }}
-                        >
-                          <Trash2 size={14} aria-hidden />
-                        </button>
-                      </div>
-                    </div>
+                          <p>
+                            Remove {removing.entry.name} from the{" "}
+                            {removing.scope} file? Stored OAuth credentials and
+                            running connections are unchanged.
+                          </p>
+                          <div className="models-actions">
+                            <button
+                              type="button"
+                              className="button button--danger"
+                              disabled={busy}
+                              onClick={() => {
+                                const file = snapshot?.files.find(
+                                  (file) => file.scope === removing.scope,
+                                );
+                                if (file)
+                                  void save({
+                                    scope: file.scope,
+                                    name: removing.entry!.name,
+                                    operation: "remove",
+                                    revision: file.revision,
+                                  });
+                              }}
+                            >
+                              Remove configuration
+                            </button>
+                            <button
+                              type="button"
+                              className="button button--quiet"
+                              disabled={busy}
+                              onClick={closeEditor}
+                            >
+                              Keep server
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </Fragment>
                   ))
                 )}
               </section>
             ))}
-            {removing?.entry ? (
-              <div
-                className="models-confirm"
-                role="group"
-                aria-label="Remove MCP configuration"
-              >
-                <p>
-                  Remove {removing.entry.name} from the {removing.scope} file?
-                  Stored OAuth credentials and running connections are
-                  unchanged.
-                </p>
-                <div className="models-actions">
-                  <button
-                    type="button"
-                    className="button button--danger"
-                    disabled={busy}
-                    onClick={() => {
-                      const file = snapshot?.files.find(
-                        (file) => file.scope === removing.scope,
-                      );
-                      if (file)
-                        void save({
-                          scope: file.scope,
-                          name: removing.entry!.name,
-                          operation: "remove",
-                          revision: file.revision,
-                        });
-                    }}
-                  >
-                    Remove configuration
-                  </button>
-                  <button
-                    type="button"
-                    className="button button--quiet"
-                    disabled={busy}
-                    onClick={closeEditor}
-                  >
-                    Keep server
-                  </button>
-                </div>
-              </div>
-            ) : null}
           </div>
         </SettingsSection>
       </div>

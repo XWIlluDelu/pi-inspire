@@ -245,7 +245,6 @@ body.pane-resizing--vertical .nav {
 .ctx__modes button[aria-pressed="true"],
 .ctx__modes button[aria-selected="true"],
 .ctx__modes button.segmented__item--active {
-  color: var(--ink);
   background: var(--bg-surface);
   font-weight: 600;
 }
@@ -336,10 +335,16 @@ body.pane-resizing--vertical .nav {
 .segmented button[aria-selected="true"],
 .segmented .segmented__item--active,
 .segmented__item--active {
-  color: var(--accent-deep);
   background: var(--bg-surface);
   box-shadow: var(--shadow-1);
   font-weight: 600;
+}
+
+/* One selected-ink rule for value choices and compact view-mode groups. */
+:is(.segmented, .ctx__modes, .palette-picker)
+  > button:is([aria-pressed="true"], [aria-selected="true"], .segmented__item--active):not(:disabled),
+.segmented__item--active:not(:disabled) {
+  color: var(--accent-deep);
 }
 
 .segmented button:disabled,
@@ -396,6 +401,12 @@ body.pane-resizing--vertical .nav {
   background: var(--bg-inset);
 }
 
+/* These controls touch the clipped index edge; keep keyboard outlines inside. */
+button.res__index-header--back:focus-visible,
+.file-search-controls > .icon-button:focus-visible {
+  outline-offset: -2px;
+}
+
 .files-browser__search {
   height: auto;
   box-sizing: border-box;
@@ -403,6 +414,19 @@ body.pane-resizing--vertical .nav {
   border-bottom: none;
   padding: var(--space-1) var(--space-3) var(--space-3);
   background: transparent;
+}
+
+/* Preserve file-control spacing and centre the 28px visibility target on the
+   24px resource-action column when sharing the neutral index header. */
+.res__index > .file-search-controls {
+  gap: 4px;
+  padding-left: 0;
+  padding-right: var(--space-3);
+}
+
+.files-browser__search > .icon-button,
+.res__index > .file-search-controls > .icon-button {
+  margin-right: calc((24px - 28px) / 2);
 }
 
 .files-browser__scroll {
@@ -457,8 +481,12 @@ body.pane-resizing--vertical .nav {
 
 .files-browser__note--action {
   width: 100%;
-  color: var(--warning);
+  color: var(--warning-ink);
   cursor: pointer;
+}
+
+.files-browser__note--action > svg {
+  color: var(--warning);
 }
 
 .recent-files {
@@ -567,10 +595,10 @@ body.pane-resizing--vertical .nav {
   gap: var(--space-2);
   border-bottom: 1px solid var(--hairline);
   padding: 0 var(--space-3);
-  background: var(--bg-stage);
 }
 
 .file-detail-header {
+  background: var(--bg-surface);
   height: 34px;
   min-height: 34px;
   flex: 0 0 34px;
@@ -578,6 +606,7 @@ body.pane-resizing--vertical .nav {
 }
 
 .res__index-header {
+  background: var(--bg-context);
   height: var(--files-section-title-size);
   min-height: var(--files-section-title-size);
   flex: 0 0 var(--files-section-title-size);
@@ -586,11 +615,14 @@ body.pane-resizing--vertical .nav {
 }
 
 button.res__index-header--back {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   width: 100%;
-  height: var(--files-section-title-size);
-  min-height: var(--files-section-title-size);
-  flex: 0 0 var(--files-section-title-size);
+  height: 100%;
+  min-height: 0;
   border: 0;
+  background: transparent;
   padding: 0 var(--space-3);
   color: var(--body);
   text-align: left;
@@ -688,6 +720,11 @@ button.res__index-header--back:hover svg {
   background: var(--bg-inset);
 }
 
+.file-path-action:focus-visible {
+  /* The path column clips overflow to preserve the fixed action slots. */
+  outline-offset: -2px;
+}
+
 .file-path-action__text {
   min-width: 0;
   overflow: hidden;
@@ -749,6 +786,7 @@ button.res__index-header--back:hover svg {
 }
 
 .file-detail-header__interaction {
+  gap: var(--space-1);
   width: auto;
   flex-basis: auto;
   white-space: nowrap;
@@ -786,7 +824,16 @@ button.res__index-header--back:hover svg {
   padding: var(--space-3);
 }
 
+/* Keep natural state size and room for focus rings when short readers scroll to actions. */
+.file-preview__content:has(> .res__state),
+.changes__content:has(> .res__state) {
+  overflow: auto;
+  overscroll-behavior: contain;
+  scroll-padding-block: var(--space-2);
+}
+
 .file-preview__notice {
+  overflow-wrap: anywhere;
   flex: 0 0 auto;
   margin-bottom: var(--space-2);
   padding: var(--space-2);
@@ -1169,7 +1216,7 @@ button.res__more:hover {
   display: grid;
   min-height: 22px;
   grid-template-columns: auto minmax(max-content, 1fr);
-  align-items: center;
+  align-items: start;
   font-size: var(--text-reading-code);
 }
 
@@ -1178,8 +1225,8 @@ button.res__more:hover {
   left: 0;
   z-index: 1;
   display: grid;
-  grid-template-columns: 3.5ch 3.5ch 16px;
-  align-items: center;
+  grid-template-columns: repeat(2, minmax(3.5ch, max-content)) 16px;
+  align-items: baseline;
   align-self: stretch;
   background: var(--bg-surface);
 }
@@ -1194,16 +1241,23 @@ button.res__more:hover {
 }
 
 .source-diff__number {
+  min-width: calc(var(--diff-line-digits, 1) * 1ch + 2 * var(--space-1));
   border-right: none;
   background: transparent;
   font-size: 11px;
+  line-height: 1;
 }
 
 .source-diff__mark {
   padding-inline: 0;
   text-align: center;
-  font-weight: 600;
-  font-size: 12px;
+  /* The mark supplies the source-sized baseline for the smaller line numbers. */
+  font: inherit;
+}
+
+.source-diff__mark:empty::before {
+  content: "0";
+  visibility: hidden;
 }
 
 .source-diff__line code {
@@ -1294,6 +1348,12 @@ button.res__more:hover {
   padding: var(--space-2);
 }
 
+.res__preview-document,
+.notebook-preview .rich-text {
+  font-size: var(--text-reading);
+  line-height: var(--leading-reading);
+}
+
 .document-image {
   max-width: 100%;
   height: auto;
@@ -1311,6 +1371,9 @@ button.res__more:hover {
 }
 
 .notebook-preview {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: start;
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -1321,19 +1384,24 @@ button.res__more:hover {
 }
 
 .notebook-preview__cell {
+  grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: 4.75rem minmax(0, 1fr);
+  grid-template-columns: subgrid;
   align-items: start;
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--hairline);
 }
 
+/* Share an intrinsic gutter across cells and outputs. Bound unusual prompts
+   so they wrap rather than consume the source column. */
 .notebook-preview__prompt {
+  min-width: 4.75rem;
+  max-width: 14ch;
   padding: var(--space-2) var(--space-3) 0 0;
   color: var(--muted);
   font: 500 var(--text-xs) / var(--leading-mono) var(--font-mono);
   text-align: right;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .notebook-preview__cell-body,
@@ -1364,10 +1432,18 @@ button.res__more:hover {
   padding: 0 var(--space-2);
 }
 
+/* A smaller execution prompt shares the first code line, not the cell top.
+   Keep image and rich-document outputs top-aligned instead of using their bottom baseline. */
+.notebook-preview__cell--code,
+.notebook-preview__cell--raw,
+.notebook-preview__output:has(> .notebook-preview__output-body > pre) {
+  align-items: first baseline;
+}
+
 .notebook-preview__output {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: 4.75rem minmax(0, 1fr);
+  grid-template-columns: subgrid;
   align-items: start;
   margin-top: var(--space-2);
 }
@@ -1381,7 +1457,7 @@ button.res__more:hover {
 
 .notebook-preview__output--error .notebook-preview__output-body > pre {
   border-color: color-mix(in srgb, var(--error) 24%, transparent);
-  color: var(--error);
+  color: var(--error-ink);
 }
 
 .notebook-preview__output-body img {
@@ -1403,7 +1479,8 @@ button.res__more:hover {
 }
 
 .notebook-preview__more {
-  padding: var(--space-4) 0 0 4.75rem;
+  grid-column: 2;
+  padding: var(--space-4) 0 0;
 }
 
 .notebook-preview--state {
@@ -1422,17 +1499,9 @@ button.res__more:hover {
 }
 
 @container (max-width: 360px) {
-  .notebook-preview__cell,
-  .notebook-preview__output {
-    grid-template-columns: 3.5rem minmax(0, 1fr);
-  }
-
   .notebook-preview__prompt {
+    min-width: 3.5rem;
     padding-right: var(--space-2);
-  }
-
-  .notebook-preview__more {
-    padding-left: 3.5rem;
   }
 }
 
@@ -1509,7 +1578,7 @@ button.res__more:hover {
 
 .file-ref--image {
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--space-1);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
@@ -1517,6 +1586,7 @@ button.res__more:hover {
   padding: var(--space-1) var(--space-2);
   font: inherit;
   font-size: var(--text-sm);
+  text-align: start;
   color: var(--ink);
   cursor: pointer;
   transition: border-color var(--dur-micro) var(--ease-standard);
@@ -1563,7 +1633,7 @@ button.res__more:hover {
 
 .token-gate__error {
   margin: 0;
-  color: var(--error);
+  color: var(--error-ink);
   font-size: var(--text-sm);
 }
 

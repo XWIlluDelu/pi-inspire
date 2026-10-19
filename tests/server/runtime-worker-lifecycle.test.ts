@@ -613,6 +613,7 @@ describe("worker startup and retirement", () => {
       const lookup = vi.spyOn(sessions, "get");
       const workers: FakeRpc[] = [];
       const disconnected = new Error("Transport lost before commit");
+      const stopping = deferredSignal();
       let finishStop!: (error?: Error) => void;
       const stopped = new Promise<void>((resolve, reject) => {
         finishStop = (error) => (error ? reject(error) : resolve());
@@ -625,6 +626,7 @@ describe("worker startup and retirement", () => {
           if (workers.length === 0) {
             worker.stop = () => {
               worker.stops += 1;
+              stopping.resolve();
               return stopped;
             };
             worker.responseOverrides.set(
@@ -641,7 +643,8 @@ describe("worker startup and retirement", () => {
         preview,
       );
       const creating = runtime.newSession(TEST_CWD).catch((error) => error);
-      await vi.waitFor(() => expect(workers[0]?.stops).toBe(1));
+      await stopping.promise;
+      expect(workers[0]?.stops).toBe(1);
       const opening = runtime.openSession("new-id").catch((error) => error);
       await vi.waitFor(() => expect(lookup).toHaveBeenCalledWith("new-id"));
       await new Promise<void>((resolve) => setImmediate(resolve));

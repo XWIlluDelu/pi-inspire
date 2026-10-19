@@ -1164,7 +1164,7 @@ export const TerminalView = memo(function TerminalView({
               </button>
               <button
                 type="button"
-                className="icon-button"
+                className="icon-button terminal-search__close"
                 onClick={() => closeSearch(false)}
                 aria-label="Close terminal search"
                 title="Close search"

@@ -215,7 +215,10 @@ preserves your draft and does not call a model. When Pi temporarily reports unkn
 compaction, the ring shows `—` while the hint retains known capacity and explains that the count
 updates after the next reply.
 
-`/reload` is available when the selected Pi session is idle. It reloads extensions, skills, prompts, and context files by replacing that worker, resetting worker-local extension state. It does not restart the Host or other sessions. A Host restart reloads all workers and applies changed Host environment/configuration.
+For an idle Inspire-owned session, `/reload` replaces its worker to reload extensions, skills,
+prompts and context files, resetting worker-local extension state. Other sessions and the Host stay
+unchanged. A Host restart replaces all Inspire-owned workers and applies changed Host configuration;
+connected external Pi sessions keep their original processes.
 
 `/export` remains available during a run and captures the Pi content available at invocation, not a future completed answer.
 
@@ -223,6 +226,9 @@ updates after the next reply.
 
 The History pane handles same-file navigation and independent Fork/Clone copies. Both copy actions leave the source session running and open a separate worker; extension authors should check the [lifecycle differences](extensions.md#session-lifecycle).
 
-Keep one writer per Pi session. Stop the Host before continuing one of its sessions in a native Pi terminal; switching conversations alone does not release a cached worker. Project terminal tabs are separate shells, not attachments to the running Pi worker.
+Keep one writer per Pi session. Stop the Host before continuing one of its owned sessions in a native
+Pi terminal; switching conversations alone does not release a cached worker. With Herdr enhancement,
+Inspire can instead connect to an already running native Pi: Composer and Stop use that same process;
+Reload and worker settings stay in its terminal. Project terminal tabs remain separate shells.
 
 For extension commands, dialogs, and widgets, see [Extension adaptation](extensions.md).

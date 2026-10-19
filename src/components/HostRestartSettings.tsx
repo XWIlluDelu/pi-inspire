@@ -76,7 +76,11 @@ function RestartConfirmation({
   );
 }
 
-export function HostRestartSettings() {
+export function HostRestartSettings({
+  suspended = false,
+}: {
+  suspended?: boolean;
+}) {
   const state = useSyncExternalStore(
     hostRestartClient.subscribe,
     hostRestartClient.snapshot,
@@ -260,7 +264,7 @@ export function HostRestartSettings() {
           ) : null}
         </div>
       ) : null}
-      {confirmation ? (
+      {confirmation && !suspended ? (
         <RestartConfirmation
           scope={confirmation.scope}
           interruptWork={confirmation.interruptWork}

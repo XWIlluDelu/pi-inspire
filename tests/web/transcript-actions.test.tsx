@@ -7,9 +7,10 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context";
 import { Transcript } from "../../src/components/Transcript";
-import * as messageCopy from "../../src/message-copy";
 import { store } from "../../src/store";
+import { captureClipboardSource } from "./fixtures/clipboard-source";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -17,33 +18,19 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("message actions", () => {
-  it("hides image dimension notes while keeping the image and exact source for Copy", async () => {
-    const sourceText =
-      "inspect\n\n[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]";
+  it("presents referenced filenames instead of transport instructions, and copies the exact source", async () => {
+    const path =
+      "/cache/123-1792213034751-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb-AGENTS 1.md";
+    const source = `Inspect this\n\n${ATTACHMENT_CONTEXT_HEADING}\n- ${JSON.stringify(path)}\n- "/workspace/design.md"`;
     const writeText = vi.fn(async () => undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText },
     });
-    vi.spyOn(store, "loadEmbeddedImage").mockResolvedValue(
-      new Blob(["png"], { type: "image/png" }),
-    );
-    // Image clipboard delivery has its own tests; inspect the text supplied by
-    // this presentation's Copy action without depending on that browser API.
-    vi.spyOn(messageCopy, "messageCopyContent").mockImplementation(
-      async (_message, text) => ({ text }),
-    );
     render(
       <Transcript
         messages={[
-          {
-            role: "user",
-            __inspireMessageIndex: 0,
-            content: [
-              { type: "text", text: sourceText },
-              { type: "image", mimeType: "image/png" },
-            ],
-          },
+          { role: "user", content: source, __inspireEntryId: "input-files" },
         ]}
         sessionId="s"
         viewId="v"
@@ -52,25 +39,134 @@ describe("message actions", () => {
         toolVisibility="collapsed"
       />,
     );
-    expect(await screen.findByText("inspect")).toBeInTheDocument();
-    expect(screen.queryByText(/Multiply coordinates/)).not.toBeInTheDocument();
+    expect(await screen.findByText("Inspect this")).toBeInTheDocument();
+    const files = screen.getByRole("list", { name: "Referenced files" });
     expect(
-      screen.getByRole("group", { name: "Attached images" }),
-    ).toBeInTheDocument();
+      files.compareDocumentPosition(screen.getByText("Inspect this")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      within(files).getByText("AGENTS 1.md").closest("li"),
+    ).toHaveAttribute("title", path);
+    expect(within(files).getByText("design.md")).toBeInTheDocument();
+    expect(
+      screen.queryByText(ATTACHMENT_CONTEXT_HEADING),
+    ).not.toBeInTheDocument();
     const search = screen.getByRole("searchbox", {
       name: "Search conversation",
     });
-    fireEvent.change(search, { target: { value: "Multiply coordinates" } });
-    expect(
-      screen.getByLabelText("Transcript search matches"),
-    ).toHaveTextContent("No matches");
-    fireEvent.change(search, { target: { value: "inspect" } });
+    fireEvent.change(search, { target: { value: "AGENTS" } });
     expect(
       screen.getByLabelText("Transcript search matches"),
     ).toHaveTextContent("1 match");
+    fireEvent.change(search, { target: { value: "JSON paths" } });
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("No matches");
     fireEvent.click(screen.getByRole("button", { name: "Copy message" }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(sourceText));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(source));
+    expect(
+      screen.getByRole("button", { name: "Fork session from this input" }),
+    ).toBeInTheDocument();
   });
+
+  it("keeps a file-only user turn visible as an attachment", async () => {
+    render(
+      <Transcript
+        messages={[
+          {
+            role: "user",
+            content: `${ATTACHMENT_CONTEXT_HEADING}\n- "/workspace/report.pdf"`,
+          },
+        ]}
+        sessionId="s"
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+    expect(
+      await screen.findByRole("list", { name: "Referenced files" }),
+    ).toHaveTextContent("report.pdf");
+    expect(
+      screen.queryByText(ATTACHMENT_CONTEXT_HEADING),
+    ).not.toBeInTheDocument();
+  });
+  it.each([false, true])(
+    "hides image dimension notes while keeping attachments and exact Copy (with files: %s)",
+    async (withFiles) => {
+      const sourceText = [
+        "inspect",
+        ...(withFiles
+          ? [`${ATTACHMENT_CONTEXT_HEADING}\n- "/workspace/report.md"`]
+          : []),
+        "[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]",
+      ].join("\n\n");
+      const { written } = captureClipboardSource();
+      vi.spyOn(store, "loadEmbeddedImage").mockResolvedValue(
+        new Blob(["png"], { type: "image/png" }),
+      );
+      render(
+        <Transcript
+          messages={[
+            {
+              role: "user",
+              __inspireMessageIndex: 0,
+              content: [
+                { type: "text", text: sourceText },
+                { type: "image", mimeType: "image/png" },
+              ],
+            },
+          ]}
+          sessionId="s"
+          viewId="v"
+          streaming={false}
+          thinkingVisibility="collapsed"
+          toolVisibility="collapsed"
+        />,
+      );
+      expect(await screen.findByText("inspect")).toBeInTheDocument();
+      expect(
+        screen.queryByText(/Multiply coordinates/),
+      ).not.toBeInTheDocument();
+      if (withFiles) {
+        const files = screen.getByRole("list", { name: "Referenced files" });
+        const images = screen.getByRole("group", { name: "Attached images" });
+        expect(files).toHaveTextContent("report.md");
+        expect(
+          images.compareDocumentPosition(files) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+        expect(
+          files.compareDocumentPosition(screen.getByText("inspect")) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+        expect(
+          screen.queryByText(ATTACHMENT_CONTEXT_HEADING),
+        ).not.toBeInTheDocument();
+      }
+      expect(
+        screen.getByRole("group", { name: "Attached images" }),
+      ).toBeInTheDocument();
+      const search = screen.getByRole("searchbox", {
+        name: "Search conversation",
+      });
+      fireEvent.change(search, { target: { value: "Multiply coordinates" } });
+      expect(
+        screen.getByLabelText("Transcript search matches"),
+      ).toHaveTextContent("No matches");
+      fireEvent.change(search, { target: { value: "inspect" } });
+      expect(
+        screen.getByLabelText("Transcript search matches"),
+      ).toHaveTextContent("1 match");
+      fireEvent.click(screen.getByRole("button", { name: "Copy message" }));
+      await waitFor(() =>
+        expect(written).toHaveBeenCalledWith(
+          expect.objectContaining({ text: sourceText }),
+        ),
+      );
+    },
+  );
 
   it("copies each conversation message and forks through its authoritative entry id", async () => {
     const writeText = vi.fn(async () => undefined);

@@ -10,9 +10,9 @@ function RetryStatus({
 }: {
   label: string;
   reason?: string;
-  tone: "info" | "warning";
+  tone: "activity-event" | "warning";
 }) {
-  const Icon = tone === "info" ? PiLoader : AlertTriangle;
+  const Icon = tone === "warning" ? AlertTriangle : PiLoader;
   return (
     <span className={`chip chip--${tone} chip--live activity__retry`}>
       <span className="activity__retry-label">
@@ -62,7 +62,7 @@ export const ActivityBar = memo(function ActivityBar({
           aria-label="Context compaction status"
         >
           <RetryStatus
-            tone="info"
+            tone="activity-event"
             label={
               summaryRetry
                 ? `Compaction retry ${summaryRetry.attempt}/${summaryRetry.maxAttempts} — waiting`

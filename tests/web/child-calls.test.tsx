@@ -108,6 +108,27 @@ it.each(["cancelled", "unfinished"] as const)(
   },
 );
 
+it("separates the failure-count text role from child status marks", () => {
+  const { container } = render(
+    <ToolResultCard
+      result={{
+        ...final,
+        toolName: "orchestrator",
+        __inspireCalls: resultChildCalls(final),
+      }}
+      visibility="expanded"
+    />,
+  );
+  const heading = container.querySelector(".tool-call-list__heading")!;
+  expect(within(heading as HTMLElement).getByText("· 1 failed")).toHaveClass(
+    "tool-call-list__error-count",
+  );
+  expect(heading.querySelector(".child-call__status--error")).toBeNull();
+  expect(
+    container.querySelector(".child-call__status--error svg"),
+  ).toHaveAttribute("data-status", "error");
+});
+
 it("separates Calls and Output and copies the complete tool block once from the header", async () => {
   const result = {
     ...final,

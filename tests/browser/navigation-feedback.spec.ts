@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { navigationGroupsFixture } from "./fixtures/navigation-groups";
+import { focusRingClipping } from "./support/focus-bounds";
 import { openMockSession, pairedPage } from "./support/navigation";
 
 test.describe("cross-project touch rows", () => {
@@ -121,3 +123,81 @@ test("hiding a session removes it from Welcome Recent as well as the normal list
     "Formula rendering and spectral analysis",
   );
 });
+
+for (const touch of [false, true]) {
+  test.describe(`navigation dock focus · ${touch ? "coarse" : "fine"} pointer`, () => {
+    test.use({
+      viewport: { width: 1366, height: 900 },
+      hasTouch: touch,
+      deviceScaleFactor: touch ? 2 : 1,
+      reducedMotion: "reduce",
+      serviceWorkers: "block",
+    });
+
+    test("workspace and Hidden retain a complete outline without moving their headers", async ({
+      page,
+    }) => {
+      await navigationGroupsFixture(page);
+      await pairedPage(page);
+      const group = page.locator(".nav__list").getByRole("button", {
+        name: "calibration",
+        exact: true,
+      });
+      if ((await group.getAttribute("aria-expanded")) !== "true")
+        await group.click();
+      await openMockSession(page, /Geometry session/);
+      await page.addStyleTag({
+        content:
+          "*, *::before, *::after { transition: none !important; animation: none !important; }",
+      });
+      const nav = page.locator(".nav");
+      for (const [width, height] of [
+        [1366, 900],
+        [1024, 768],
+        [390, 844],
+        [320, 640],
+        [568, 320],
+      ]) {
+        await page.setViewportSize({ width, height });
+        if (width <= 900) {
+          const open = page.getByRole("button", {
+            name: "Toggle navigation",
+            exact: true,
+          });
+          await expect(open).toBeVisible();
+          if (!(await nav.isVisible())) await open.click();
+        }
+        await expect(nav).toBeVisible();
+        const hidden = nav.getByRole("button", { name: "Hidden", exact: true });
+        for (const control of [nav.locator(".explorer__header"), hidden]) {
+          const before = (await control.boundingBox())!;
+          await page.keyboard.press("Tab");
+          await control.focus();
+          await expect(control).toBeFocused();
+          await expect(control).toHaveCSS("outline-style", "solid");
+          await expect(control).toHaveCSS("outline-width", "2px");
+          expect(await control.evaluate(focusRingClipping)).toBeLessThanOrEqual(
+            0.5,
+          );
+          const after = (await control.boundingBox())!;
+          for (const key of ["x", "y", "width", "height"] as const)
+            expect(after[key]).toBeCloseTo(before[key], 1);
+        }
+        // Changing disclosure state must retain focus and the inset contour.
+        const expanded = await hidden.getAttribute("aria-expanded");
+        await hidden.press("Enter");
+        await expect(hidden).toHaveAttribute(
+          "aria-expanded",
+          expanded === "true" ? "false" : "true",
+        );
+        await expect(hidden).toBeFocused();
+        expect(await hidden.evaluate(focusRingClipping)).toBeLessThanOrEqual(
+          0.5,
+        );
+        await expect(
+          nav.getByRole("button", { name: "Clear Hidden", exact: true }),
+        ).toBeVisible();
+      }
+    });
+  });
+}

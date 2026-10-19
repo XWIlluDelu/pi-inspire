@@ -4,9 +4,9 @@ import { pairedPage } from "./support/navigation";
 test.use({ serviceWorkers: "block", reducedMotion: "reduce" });
 
 for (const width of [1440, 320]) {
-  test(`connection feedback stays quiet while reconnecting but warns when offline at ${width}px`, async ({
-    page,
-  }) => {
+  test(`connection feedback stays quiet while reconnecting but warns when offline at ${width}px`, {
+    tag: "@cross-browser",
+  }, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     let socket!: WebSocketRoute;
     let hold = false;

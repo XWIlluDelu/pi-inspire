@@ -464,6 +464,7 @@ function AuthenticationPanel({
         <button
           type="button"
           className="button button--quiet"
+          disabled={loading}
           onClick={() =>
             void onRefresh().catch((error) => setError(messageOf(error)))
           }
@@ -633,13 +634,18 @@ function AuthenticationPanel({
             >
               {saved.map((provider) => providerRow(provider))}
             </section>
-          ) : (
+          ) : loaded && !loading && !loadError ? (
             <p className="models-auth__empty">No connected providers.</p>
-          )}
+          ) : null}
           <button
             type="button"
             className="models-text-button models-auth__connect"
-            disabled={busy}
+            disabled={
+              busy ||
+              !loaded ||
+              loading ||
+              Boolean(loadError && !providers.length)
+            }
             onClick={() => {
               setRemoving(null);
               setView({ kind: "connect" });
@@ -697,7 +703,9 @@ function AuthenticationPanel({
                       )}
                     </div>
                   ) : null}
-                  {!available.length ? (
+                  {!available.length &&
+                  !loading &&
+                  (!loadError || providers.length > 0) ? (
                     <p className="settings__field-help">
                       {query.trim()
                         ? `No available providers matching "${query.trim()}"`

@@ -41,6 +41,7 @@ import {
   BrowserAuth,
   canonicalOrigin,
   challengeSchema,
+  downloadOriginAllowed,
   exchangeSchema,
   registrationSchema,
   socketTicketSchema,
@@ -858,9 +859,11 @@ export function createInspireServer(deps: AppDependencies): {
   app.get("/api/resource-downloads/:ticket", async (request, response) => {
     const origin = requestOrigin(request);
     if (
-      request.get("origin")
-        ? request.get("origin") !== origin
-        : request.get("sec-fetch-site") !== "same-origin"
+      !downloadOriginAllowed(origin, {
+        origin: request.get("origin"),
+        fetchSite: request.get("sec-fetch-site"),
+        referer: request.get("referer"),
+      })
     )
       return response
         .status(403)
@@ -1251,6 +1254,7 @@ export function createInspireServer(deps: AppDependencies): {
   });
 
   const upload = multer({
+    defParamCharset: "utf8",
     storage: deps.attachments.multerStorage(),
     limits: {
       fileSize: MAX_ATTACHMENT_FILE_BYTES,

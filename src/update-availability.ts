@@ -5,6 +5,33 @@ import type {
   UpdateCheckResponse,
 } from "../shared/contracts";
 
+export function updateDetailsText(updates: AvailableUpdates): string {
+  const lines: string[] = [];
+  if (updates.pi) {
+    lines.push(
+      `Pi ${updates.pi.currentVersion} → ${updates.pi.latestVersion}`,
+      "Run pi update",
+      updates.pi.releaseUrl,
+    );
+  }
+  if (updates.extensions.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push(
+      "Extensions",
+      ...updates.extensions.map((update) => `- ${update.displayName}`),
+      "Run pi update --extensions",
+    );
+  }
+  if (updates.inspire) {
+    if (lines.length > 0) lines.push("");
+    lines.push(
+      `INSΠRE ${updates.inspire.currentVersion} → ${updates.inspire.latestVersion}`,
+      updates.inspire.releaseUrl,
+    );
+  }
+  return lines.join("\n");
+}
+
 interface UpdateAvailabilityState {
   inspireUpdateCheck: UpdateCheckResponse | null;
   piUpdateCheck: PiUpdateCheckResponse | null;

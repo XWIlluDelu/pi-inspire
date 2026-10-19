@@ -3,7 +3,9 @@
 .topbar {
   display: grid;
   grid-template-columns: [identity] fit-content(56%) [status] minmax(auto, 1fr) [actions] auto;
-  align-items: center;
+  align-items: baseline;
+  align-content: center;
+  grid-template-rows: max-content;
   gap: var(--space-2);
   height: var(--topbar-h);
   padding: 0 var(--space-3) 0 var(--space-4);
@@ -31,7 +33,7 @@
 .topbar__ident {
   grid-column: identity;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--space-3);
   min-width: 0;
   overflow: hidden;
@@ -40,7 +42,7 @@
 .topbar__workspace-meta {
   flex: 0 1 auto;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--space-1);
   min-width: 0;
 }
@@ -53,13 +55,8 @@
   gap: var(--space-1);
 }
 
-/* The sans title's visible ink sits higher than the small mono metadata.
-   Move its control/editor together, without changing the row or type scale. */
-.topbar__heading,
-.topbar__rename {
-  transform: translateY(1px);
-}
-
+/* Identity and status share a text baseline across their nested controls.
+   Keep icons/actions centered independently instead of offsetting the title. */
 .topbar__title {
   flex: 0 1 auto;
   margin: 0;
@@ -132,19 +129,21 @@
 
 @media (hover: hover) {
   .topbar__project:hover,
-  .topbar__git:hover {
+  .topbar__git:hover:where(:not(.topbar__git--stale)) {
     color: var(--ink);
   }
 }
 
 .topbar__git {
-  flex: 0 0 auto;
+  align-items: baseline;
+  flex: 0 1 auto;
   gap: var(--space-1);
   max-width: 180px;
   cursor: pointer;
 }
 
 .topbar__git-icon {
+  align-self: center;
   flex: 0 0 auto;
 }
 
@@ -214,10 +213,14 @@
 /* Ordinary changes remain location context. Color is reserved for the two
    exceptional states that need recognition before opening the Changes pane. */
 .topbar__git--conflict .topbar__git-count {
-  color: var(--error);
+  color: var(--error-ink);
 }
 
 .topbar__git--stale {
+  color: var(--warning-ink);
+}
+
+.topbar__git--stale .topbar__git-icon {
   color: var(--warning);
 }
 
@@ -303,7 +306,7 @@
 .topbar__status {
   grid-column: status;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: flex-start;
   gap: var(--space-2);
   min-width: 0;
@@ -405,10 +408,19 @@
   .topbar__actions > .icon-button { min-width: 44px; height: 44px; }
 }
 
-.topbar > .icon-button { grid-column: navigation; }
+/* Compact headers clip overflow; keep keyboard rings within their controls. */
+.topbar :is(.icon-button, .topbar__project, .topbar__git):focus-visible {
+  outline-offset: -2px;
+}
+
+.topbar > .icon-button {
+  grid-column: navigation;
+  align-self: center;
+}
 
 .topbar__actions {
   grid-column: actions;
+  align-self: center;
   display: flex;
   align-items: center;
   gap: var(--space-2);

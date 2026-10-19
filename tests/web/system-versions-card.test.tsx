@@ -28,6 +28,7 @@ vi.mock("../../src/store", () => ({
   store: {
     checkPiUpdate: fixture.checkPiUpdate,
     checkInspireUpdate: fixture.checkInspireUpdate,
+    copyOwnership: () => () => true,
   },
 }));
 
@@ -139,6 +140,9 @@ describe("System versions", () => {
     const check = screen.getByRole("button", { name: "Check for updates" });
     expect(check).toHaveTextContent("Submitting…");
     expect(check).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Copy update details" }),
+    ).toBeDisabled();
     expect(row("Pi").getByText("Submitting…")).toBeVisible();
     expect(row("Extensions").getByText("Submitting…")).toBeVisible();
     expect(row("INSΠRE").getByText("Checking…")).toBeVisible();
@@ -204,6 +208,9 @@ describe("System versions", () => {
       expect(row("INSΠRE").getByText(inspireText)).toBeVisible();
       expect(row("Extensions").getByText(extensionsText)).toBeVisible();
       expect(screen.queryByRole("button", { name: /^Copy pi/ })).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "Copy update details" }),
+      ).toBeNull();
     },
   );
 
@@ -227,6 +234,89 @@ describe("System versions", () => {
     ]);
     expect(fixture.checkPiUpdate).not.toHaveBeenCalled();
     expect(fixture.checkInspireUpdate).not.toHaveBeenCalled();
+  });
+
+  it("copies the notice's complete report without submitting update commands", async () => {
+    availableUpdates();
+    if (fixture.state.piUpdateCheck?.extensions.kind === "available")
+      fixture.state.piUpdateCheck.extensions.updates.reverse();
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    render(<SystemVersionsCard />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy update details" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Update details copied" }),
+    ).toBeVisible();
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(
+      [
+        "Pi 1.0.0 → 1.1.0",
+        "Run pi update",
+        "https://pi.dev/changelog",
+        "",
+        "Extensions",
+        "- @example/pi-tools",
+        "- github.com/example/pi-tools",
+        "Run pi update --extensions",
+        "",
+        "INSΠRE 0.4.0 → 0.5.0",
+        "https://example.com/inspire/release",
+      ].join("\n"),
+    );
+    expect(fixture.checkPiUpdate).not.toHaveBeenCalled();
+    expect(fixture.checkInspireUpdate).not.toHaveBeenCalled();
+  });
+
+  it("copies extension-only observations without inventing release sections", async () => {
+    availableUpdates();
+    fixture.state.piUpdateCheck!.pi = {
+      kind: "current",
+      latestVersion: "1.0.0",
+    };
+    fixture.state.inspireUpdateCheck = { kind: "unreleased" };
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    render(<SystemVersionsCard />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy update details" }),
+    );
+    await screen.findByRole("button", { name: "Update details copied" });
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(
+      [
+        "Extensions",
+        "- @example/pi-tools",
+        "- github.com/example/pi-tools",
+        "Run pi update --extensions",
+      ].join("\n"),
+    );
+  });
+
+  it("shows report-copy failures locally and clears the error on a successful retry", async () => {
+    availableUpdates();
+    const writeText = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Clipboard denied"))
+      .mockResolvedValueOnce(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    render(<SystemVersionsCard />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy update details" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Clipboard denied",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Update details copied" }),
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy update details" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Update details copied" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(writeText).toHaveBeenCalledTimes(2);
   });
 
   it("reports clipboard failure without confirming a copy", async () => {

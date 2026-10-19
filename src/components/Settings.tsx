@@ -20,6 +20,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   ACTIVITY_FOLD_VISIBILITIES,
   type ActivityFoldVisibilityPreference,
@@ -45,6 +46,7 @@ import {
 } from "../install-app";
 import { PALETTE_LABELS, preferenceChoiceLabel } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
+import { useModalFocus } from "../use-modal-focus";
 import { Dropdown } from "./Dropdown";
 import { HerdrSettings } from "./HerdrSettings";
 import { HostRestartSettings } from "./HostRestartSettings";
@@ -58,6 +60,56 @@ import {
 } from "./SettingsControls";
 import { SettingsSection as Section } from "./SettingsSection";
 import { SystemVersionsCard } from "./SystemVersionsCard";
+
+function ResetPreferencesConfirmation({
+  onClose,
+  onConfirm,
+}: {
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const ref = useModalFocus<HTMLDivElement>(true, "reset-preferences", onClose);
+  return createPortal(
+    <div className="overlay" role="presentation" onClick={onClose}>
+      <div
+        ref={ref}
+        className="dialog host-restart-confirm"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="reset-preferences-title"
+        aria-describedby="reset-preferences-description"
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 className="dialog__title" id="reset-preferences-title">
+          Reset preferences?
+        </h2>
+        <p className="dialog__message" id="reset-preferences-description">
+          Restore Display, Conversation, Behavior, and Herdr preferences to
+          their defaults. Pi session settings, models, credentials, MCP servers,
+          and pinned or hidden sessions stay unchanged.
+        </p>
+        <div className="host-restart__actions">
+          <button
+            type="button"
+            className="button button--quiet"
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="button button--danger"
+            onClick={onConfirm}
+          >
+            Reset preferences
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
 
 const THEMES: Choice<ThemePreference>[] = [
   { value: "light", label: "Light", icon: <Sun size={13} aria-hidden /> },
@@ -182,10 +234,12 @@ const CATEGORIES: Array<{
 /** Persistent workbench preferences grouped by user purpose, with secondary
  * install/about/reset utilities kept outside the settings taxonomy. */
 export const SettingsContent = memo(function SettingsContent({
+  suspended = false,
   initialCategory = "display",
   modelDestination,
   workspaceOwner,
 }: {
+  suspended?: boolean;
   initialCategory?: SettingsCategoryId;
   modelDestination?: ModelSettingsDestination;
   workspaceOwner: { sessionId?: string; cwd?: string };
@@ -207,6 +261,7 @@ export const SettingsContent = memo(function SettingsContent({
     category: CategoryId;
     section?: string;
   }>({ category: initialCategory });
+  const [confirmingReset, setConfirmingReset] = useState(false);
   const activeCategory = navigation.category;
   const contentRef = useRef<HTMLElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
@@ -240,13 +295,23 @@ export const SettingsContent = memo(function SettingsContent({
         : 0,
       behavior: "instant",
     });
-    sidebarRef.current
-      ?.querySelector<HTMLElement>('[aria-current="location"]')
-      ?.scrollIntoView({
+    const sidebar = sidebarRef.current;
+    const selected = sidebar?.querySelector<HTMLElement>(
+      '[aria-current="location"]',
+    );
+    if (!sidebar || !selected) return;
+    const reveal = () =>
+      selected.scrollIntoView({
         block: "nearest",
         inline: "nearest",
         behavior: "instant",
       });
+    reveal();
+    // A viewport change can turn this sidebar into a clipped horizontal strip.
+    // Re-reveal only on size/navigation changes, not deliberate strip scrolling.
+    const observer = new ResizeObserver(reveal);
+    observer.observe(sidebar);
+    return () => observer.disconnect();
   }, [navigation]);
 
   return (
@@ -317,19 +382,8 @@ export const SettingsContent = memo(function SettingsContent({
               </SettingField>
 
               <SettingField
-                label="Titlebar needles"
-                description="Animated needles in the installed app's title bar."
-              >
-                <SettingsSwitch
-                  label="Titlebar needles"
-                  checked={state.prefs.titlebarNeedles}
-                  onChange={store.setTitlebarNeedles}
-                />
-              </SettingField>
-
-              <SettingField
                 label="Content text size"
-                description="Applies to messages, input, code, and previews."
+                description="Applies to messages, input, code and previews."
               >
                 <SegmentedControl
                   label="Content text size"
@@ -341,7 +395,7 @@ export const SettingsContent = memo(function SettingsContent({
 
               <SettingField
                 label="Reading width"
-                description="Maximum width for conversation and input."
+                description="Maximum width for messages and input."
               >
                 <SegmentedControl
                   label="Reading width"
@@ -353,13 +407,24 @@ export const SettingsContent = memo(function SettingsContent({
 
               <SettingField
                 label="Project location"
-                description="How the project appears in the title bar."
+                description="Project name or path in the workbench header."
               >
                 <SegmentedControl
                   label="Project location"
                   value={state.prefs.projectDisplay}
                   options={PROJECT_DISPLAYS}
                   onChange={store.setProjectDisplay}
+                />
+              </SettingField>
+
+              <SettingField
+                label="Titlebar needles"
+                description="Animated needles in the installed app's title bar."
+              >
+                <SettingsSwitch
+                  label="Titlebar needles"
+                  checked={state.prefs.titlebarNeedles}
+                  onChange={store.setTitlebarNeedles}
                 />
               </SettingField>
             </Section>
@@ -377,7 +442,7 @@ export const SettingsContent = memo(function SettingsContent({
             >
               <SettingField
                 label="Reasoning detail"
-                description="How much model reasoning to show by default."
+                description="How much model thinking to show by default."
               >
                 <Dropdown
                   label="Reasoning detail"
@@ -392,7 +457,7 @@ export const SettingsContent = memo(function SettingsContent({
 
               <SettingField
                 label="Tool activity"
-                description="Detail shown for individual tool calls."
+                description="How much detail to show for each tool call."
               >
                 <Dropdown
                   label="Tool activity"
@@ -407,7 +472,7 @@ export const SettingsContent = memo(function SettingsContent({
 
               <SettingField
                 label="Activity groups"
-                description="Detail shown for grouped activity."
+                description="Whether grouped steps start expanded or collapsed."
               >
                 <Dropdown
                   label="Activity groups"
@@ -424,7 +489,7 @@ export const SettingsContent = memo(function SettingsContent({
 
               <SettingField
                 label="Send key"
-                description="On touch keyboards, Return adds a new line."
+                description="Shortcut to send a message on desktop. Touch keyboards always insert a new line with Return."
               >
                 <SegmentedControl
                   label="Send key"
@@ -448,7 +513,7 @@ export const SettingsContent = memo(function SettingsContent({
             >
               <SettingField
                 label="On launch"
-                description="What to show when INSΠRE opens."
+                description="What to open when INSΠRE starts."
               >
                 <Dropdown
                   label="On launch"
@@ -463,7 +528,7 @@ export const SettingsContent = memo(function SettingsContent({
 
               <SettingField
                 label="Completion alerts"
-                description="Notify when work finishes in the background."
+                description="Notify when a background response finishes."
               >
                 <Dropdown
                   label="Completion alerts"
@@ -477,11 +542,6 @@ export const SettingsContent = memo(function SettingsContent({
                   }
                 />
               </SettingField>
-              <HerdrSettings
-                onNavigateRestart={() =>
-                  navigate("updates", "settings-host-restart")
-                }
-              />
             </Section>
 
             <Section
@@ -492,11 +552,11 @@ export const SettingsContent = memo(function SettingsContent({
                   <span data-authored-case>Pi</span> session settings
                 </>
               }
-              description="Applies to the active session and asks Pi to update global settings. Project overrides may differ."
+              description="Changes apply to the current session; Pi manages defaults and project overrides."
             >
               <SettingField
                 label="Steering delivery"
-                description="How Steer messages reach Pi during a task."
+                description="How steering messages are delivered while Pi is responding."
               >
                 <Dropdown
                   label="Steering delivery"
@@ -522,7 +582,7 @@ export const SettingsContent = memo(function SettingsContent({
 
               <SettingField
                 label="Follow-up delivery"
-                description="How queued messages reach Pi after a task."
+                description="How queued follow-up messages are delivered after a response."
               >
                 <Dropdown
                   label="Follow-up delivery"
@@ -548,7 +608,7 @@ export const SettingsContent = memo(function SettingsContent({
 
               <SettingField
                 label="Automatic context compaction"
-                description="Summarize older context near the model's limit."
+                description="Summarize older messages when approaching the context limit."
                 status={
                   !state.sessionId ||
                   state.runtimeSettings?.autoCompactionEnabled == null
@@ -571,7 +631,7 @@ export const SettingsContent = memo(function SettingsContent({
 
               <SettingField
                 label="Automatic retry"
-                description="Retry temporary provider errors."
+                description="Retry automatically when a provider returns a temporary error."
                 status={
                   !state.sessionId ||
                   state.runtimeSettings?.autoRetryEnabled == null
@@ -624,8 +684,13 @@ export const SettingsContent = memo(function SettingsContent({
           >
             <SystemVersionsCard />
 
-            <Section icon={<RefreshCw size={14} />} title="Restart">
-              <HostRestartSettings />
+            <Section id="herdr" icon={<Server size={14} />} title="Host">
+              <HerdrSettings
+                onNavigateRestart={() =>
+                  navigate("updates", "settings-host-restart")
+                }
+              />
+              <HostRestartSettings suspended={suspended} />
             </Section>
           </div>
         </main>
@@ -655,7 +720,7 @@ export const SettingsContent = memo(function SettingsContent({
             <button
               type="button"
               className="settings__utility settings__utility--reset"
-              onClick={store.restoreDefaultSettings}
+              onClick={() => setConfirmingReset(true)}
               title="Reset appearance and behavior preferences"
             >
               Reset preferences
@@ -663,6 +728,15 @@ export const SettingsContent = memo(function SettingsContent({
           </div>
         </footer>
       </div>
+      {confirmingReset && !suspended ? (
+        <ResetPreferencesConfirmation
+          onClose={() => setConfirmingReset(false)}
+          onConfirm={() => {
+            store.restoreDefaultSettings();
+            setConfirmingReset(false);
+          }}
+        />
+      ) : null}
     </div>
   );
 });

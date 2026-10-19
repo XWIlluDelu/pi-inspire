@@ -42,8 +42,8 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-rows: var(--topbar-h) auto;
-    gap: var(--space-1) var(--space-2);
-    padding: 0 var(--space-3) var(--space-3);
+    gap: var(--space-2);
+    padding: 0 var(--space-3) var(--space-4);
   }
 
   .nav__top .nav__header,
@@ -218,8 +218,8 @@
 .nav__controls {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-1) var(--space-3) var(--space-3);
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) var(--space-4);
 }
 
 .nav__error {
@@ -379,6 +379,7 @@
 }
 
 .nav__row-action {
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -609,6 +610,11 @@
 .nav__dock-toggle:hover:not(:disabled) {
   background: var(--bg-control);
   color: var(--ink);
+}
+
+.nav__dock-toggle:focus-visible {
+  /* Full-width dock headers meet the app/drawer edge; keep every side visible. */
+  outline-offset: -2px;
 }
 
 .nav__dock-toggle:disabled {
@@ -882,10 +888,17 @@ button.workspace-tree__status {
 
 button.workspace-tree__status:hover {
   background: var(--bg-inset);
+}
+
+button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) {
   color: var(--ink);
 }
 
 .workspace-tree__status--error {
+  color: var(--warning-ink);
+}
+
+.workspace-tree__status--error > svg {
   color: var(--warning);
 }
 
@@ -1019,7 +1032,7 @@ button.workspace-tree__status:hover {
   justify-content: center;
   gap: var(--space-1);
   border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--muted);
   font: inherit;
@@ -1085,12 +1098,12 @@ button.workspace-tree__status:hover {
   color: var(--ink);
 }
 
-.nav__group--pinned + .nav__group {
+.nav__list > .nav__group--pinned + .nav__group {
   margin-top: var(--space-5);
 }
 
 /* Pinned folders sit above ordinary ones; a step marks where they end. */
-.nav__group--pinned-folder + .nav__group:not(.nav__group--pinned-folder) {
+.nav__list > .nav__group--pinned-folder + .nav__group:not(.nav__group--pinned-folder) {
   margin-top: var(--space-5);
 }
 

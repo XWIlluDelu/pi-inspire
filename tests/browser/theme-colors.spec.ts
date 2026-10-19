@@ -13,10 +13,13 @@ const css = (
       "transcript",
       "activity-cards",
       "composer",
+      "image-preview",
       "workbench",
       "terminal",
+      "welcome",
       "settings-overlays",
       "model-settings",
+      "system-settings",
       "history",
     ].map((name) => readFile(`src/styles/${name}.css`, "utf8")),
   )
@@ -52,6 +55,40 @@ const notices = [
   ["file-path-action file-path-action--copied", "stage"],
   ["res__index-summary--conflict", "stage"],
 ];
+// Plain status messages need text ink too: a neutral panel is not always white
+// or the darkest surface. Keep decorative marks out of this text-role contract.
+const statusMessages = [
+  ["chip chip--activity-event", "stage", "activity-event-ink"],
+  ["tool-notice tool-notice--warning", "stage", "warning-ink"],
+  ["tool-notice tool-notice--error", "stage", "error-ink"],
+  ["composer__failed-delivery", "surface", "error-ink"],
+  ["completion__empty completion__empty--error", "raised", "error-ink"],
+  ["image-lightbox__error", "raised", "error-ink"],
+  ["models-status", "surface", "error-ink"],
+  ["settings__error", "surface", "error-ink"],
+  ["settings__field-status", "surface", "warning-ink"],
+  ["export-dialog__error", "raised", "error-ink"],
+  ["dirpicker__note dirpicker__note--error", "raised", "error-ink"],
+  ["models-default-value__warning", "surface", "warning-ink"],
+  ["system-versions__error", "surface", "error-ink"],
+  ["terminal-text-dialog__error", "raised", "error-ink"],
+  ["terminal-settings__footer", "raised", "error-ink"],
+  ["earlier-branch-banner__error", "surface", "error-ink"],
+  ["assistant-error__label", "surface", "error-ink"],
+  ["pending-groups__confirm-label", "surface", "error-ink"],
+  ["welcome__error", "stage", "error-ink"],
+  ["welcome__readiness welcome__readiness--error", "stage", "error-ink"],
+  ["files-browser__note files-browser__note--action", "context", "warning-ink"],
+  ["token-gate__error", "surface", "error-ink"],
+] as const;
+const commandStates = [
+  ["info", "info-ink", "info"],
+  ["running", "accent-deep", "accent-deep"],
+  ["success", "success-ink", "success"],
+  ["warning", "warning-ink", "warning"],
+  ["cancelled", "muted", "muted"],
+  ["error", "error-ink", "error"],
+] as const;
 const controls = [
   ["primary", 4.5],
   ["danger", 4.5],
@@ -64,6 +101,22 @@ const controls = [
   ["send", 3],
   ["abort", 3],
   ["recover", 3],
+] as const;
+
+// Same selection semantics, including surfaces with local geometry overrides.
+const choiceGroups = [
+  ["default", "", "segmented", "segmented__item"],
+  ["settings", "dialog settings", "segmented", "segmented__item"],
+  [
+    "terminal-settings",
+    "dialog terminal-settings",
+    "segmented",
+    "segmented__item",
+  ],
+  ["composer", "composer__delivery", "segmented", ""],
+  ["prepared-prompt", "palette__prepare", "segmented", ""],
+  ["resource-mode", "", "ctx__modes", ""],
+  ["palette", "dialog settings", "palette-picker", "palette-picker__choice"],
 ] as const;
 
 for (const palette of PALETTE_PREFERENCES)
@@ -114,7 +167,29 @@ for (const palette of PALETTE_PREFERENCES)
             <div class="dirpicker__list"><button class="dirpicker__row" id="directory-row">Folder</button></div>
             <h1 class="topbar__title"><button class="topbar__title-button" id="session-title"><span>Session title</span></button></h1>
             <div class="session-actions-menu" style="position:static"><button id="clone-action">Clone current branch</button></div>
-            <div class="composer__failed-delivery"><button id="restore-action">Restore</button></div>
+            <div class="composer__failed-delivery"><button class="button button--quiet" id="restore-action">Restore</button></div>
+          </section>
+          <section aria-label="Status actions" style="background:var(--bg-stage)">
+            <button class="topbar__git" id="git-normal"><span class="topbar__git-branch">main</span></button>
+            <button class="topbar__git topbar__git--stale" id="git-stale">
+              <svg class="topbar__git-icon" width="13" height="13" aria-hidden="true"></svg>
+              <span class="topbar__git-branch">main</span><span class="topbar__git-count">3 changes</span>
+            </button>
+            <button class="topbar__git topbar__git--conflict" id="git-conflict">
+              <span class="topbar__git-branch">main</span><span class="topbar__git-count">1 conflict</span>
+            </button>
+            <button class="meter meter--warning" id="meter-warning"><svg class="meter__ring" aria-hidden="true"><circle class="meter__ring-fill"></circle></svg><span>70%</span></button>
+            <button class="meter meter--error" id="meter-error"><svg class="meter__ring" aria-hidden="true"><circle class="meter__ring-fill"></circle></svg><span>90%</span></button>
+          </section>
+          <section style="background:var(--bg-rail)">
+            <button class="workspace-tree__status workspace-tree__status--error" id="workspace-error">
+              <svg width="11" height="11" aria-hidden="true"></svg><span>Directory unavailable</span>
+            </button>
+          </section>
+          <section style="background:var(--bg-context)">
+            <button class="files-browser__note files-browser__note--action" id="files-retry">
+              <svg width="12" height="12" aria-hidden="true"></svg>Retry recent files
+            </button>
           </section>
           <section aria-label="Icon button states">
             <button class="icon-button" id="icon" aria-label="Add files">+</button>
@@ -123,6 +198,20 @@ for (const palette of PALETTE_PREFERENCES)
             <button class="models-icon-button" id="icon-model" aria-label="Move model up">↑</button>
             <div class="file-detail-header"><button class="icon-button" id="icon-file" aria-label="File action">↗</button></div>
             <div class="composer__input-wrap" style="width:36px;height:36px;flex:none"><button class="icon-button composer__expand" id="icon-expand" aria-label="Expand composer">↗</button></div>
+          </section>
+          <section aria-label="Choice selection states">
+            ${choiceGroups
+              .map(
+                ([id, parent, group, item]) => `
+              <div class="${parent}" style="position:static;width:auto;height:auto;display:block">
+                <div class="${group}" id="choices-${id}" role="group" aria-label="${id}" style="width:320px;flex:none">
+                  <button class="${item}" aria-pressed="true"><svg width="12" height="12" aria-hidden="true"></svg>Selected</button>
+                  <button class="${item}" aria-pressed="false">Other</button>
+                </div>
+              </div>`,
+              )
+              .join("")}
+            <span class="settings__section-icon" id="section-icon"><svg width="14" height="14" aria-hidden="true"></svg></span>
           </section>
           <button class="button" id="ordinary">Cancel</button>
           <div class="app-error"><button id="reload">Reload page</button></div>
@@ -153,7 +242,66 @@ for (const palette of PALETTE_PREFERENCES)
           </section>`,
             )
             .join("")}
+          ${statusMessages
+            .map(
+              ([
+                name,
+                surface,
+                ink,
+              ]) => `<section style="background:var(--bg-${surface})">
+            <div class="${name}" ${name === "models-status" ? 'role="alert"' : ""} data-role="${name}" data-ink="${ink}">Status message</div>
+          </section>`,
+            )
+            .join("")}
+          <section aria-label="Command result states" style="background:var(--bg-stage)">
+            ${commandStates
+              .map(
+                ([status, ink, mark]) => `
+              <article class="command-activity__item command-activity__item--${status}">
+                <div class="command-activity__icon"><svg data-state-mark="${mark}" width="14" height="14" aria-hidden="true"></svg></div>
+                <div class="command-activity__body">
+                  <div class="command-activity__heading">
+                    <code>/session</code>
+                    <span class="command-activity__state" data-role="command-${status}" data-ink="${ink}">Command status</span>
+                  </div>
+                </div>
+              </article>`,
+              )
+              .join("")}
+          </section>
+          <section aria-label="Context and extension identities" style="background:var(--bg-stage)">
+            <div class="context-checkpoint">
+              <svg class="context-checkpoint__icon" data-state-mark="activity-event" width="14" height="14" aria-hidden="true"></svg>
+            </div>
+            <div class="custom-message"><div class="custom-message__head">
+              <svg data-state-mark="activity-event" width="14" height="14" aria-hidden="true"></svg>
+              <span class="custom-message__title" data-role="extension-title" data-ink="ink">Extension message</span>
+              <span class="custom-message__source" data-role="extension-source" data-ink="muted">Intercom</span>
+            </div></div>
+            <form class="composer composer--compacting" id="compacting-identity"><input aria-label="Compacting draft"></form>
+          </section>
+          <section class="shell-execution card card--failed">
+            <div class="shell-execution__header"><span class="shell-execution__status" data-role="shell-failed-status" data-ink="error-ink">Exit code 1</span></div>
+            <p class="shell-execution__error" data-role="shell-error" data-ink="error-ink">Shell request failed</p>
+          </section>
+          <section class="card card--tool card--failed">
+            <svg class="card__icon" data-state-mark="activity-tool" width="14" height="14" aria-hidden="true"></svg>
+            <div class="tool-call-list__heading">Calls <span class="tool-call-list__error-count" data-role="failed-call-count" data-ink="error-ink">1 failed</span></div>
+            <span class="child-call__status child-call__status--error" data-state-mark="error"><svg width="12" height="12" aria-hidden="true"></svg></span>
+            <span class="child-call__status child-call__status--ok" data-state-mark="success"><svg width="12" height="12" aria-hidden="true"></svg></span>
+            <div class="child-call__detail"><pre class="card__mono card__mono--error" data-role="child-error" data-ink="error-ink">Call failed</pre></div>
+            <pre class="card__mono card__mono--error" data-role="fallback-error" data-ink="error-ink">Tool failed</pre>
+            <pre class="tool-text tool-text--error" data-role="tool-text-error" data-ink="error-ink">Tool returned an error</pre>
+            <pre class="tool-terminal tool-terminal--error"><span data-role="tool-terminal-error" data-ink="error-ink">Command failed</span><span data-authored-color style="color:rgb(205,49,49)">Explicit ANSI color</span></pre>
+            <div class="tool-markdown tool-markdown--error"><div class="rich-text"><p data-role="tool-markdown-error" data-ink="error-ink">Request failed</p></div></div>
+          </section>
+          <section class="res__preview">
+            <div class="notebook-preview__output notebook-preview__output--error">
+              <div class="notebook-preview__output-body"><pre data-role="notebook-error" data-ink="error-ink">Traceback</pre></div>
+            </div>
+          </section>
           <section style="background:var(--bg-raised)">
+            <div class="terminal-settings__loading"><p role="alert" data-role="terminal-settings-loading" data-ink="error-ink">Failed to load settings</p></div>
             ${["info", "warning", "error"]
               .map(
                 (status) => `
@@ -168,6 +316,18 @@ for (const palette of PALETTE_PREFERENCES)
               <span class="history-shell__status" data-outcome="${status}" data-role="history-${status}">Command status</span>`,
               )
               .join("")}
+          </section>
+          <section style="background:var(--bg-context)">
+            <div class="history-turn" data-current="true">
+              <button class="history-prompt"><span>Prompt</span><small data-history-label data-role="history-current-conversation" data-ink="accent-deep">Current conversation</small></button>
+            </div>
+            <button class="history-entry"><span>Activity</span><span class="history-position" data-history-label data-role="history-current-point" data-ink="accent-deep">Current point</span></button>
+          </section>
+          <section class="terminal-pane" style="background:var(--bg-stage)">
+            <section class="terminal-pending" aria-label="Unconfirmed terminal controls">
+              <div class="terminal-pending__row"><span class="terminal-pending__description">Outcome unknown</span><button class="button button--quiet">Retry same operation</button></div>
+            </section>
+            <button class="terminal-pane__error" data-role="terminal-pending-error" data-ink="error-ink">Terminal outcome remains unknown</button>
           </section>
           <section style="background:var(--bg-canvas)">
             ${["warning", "error"]
@@ -194,6 +354,16 @@ for (const palette of PALETTE_PREFERENCES)
             "on-accent",
             "error-ink",
             "error",
+            "warning-ink",
+            "warning",
+            "info-ink",
+            "info",
+            "success-ink",
+            "success",
+            "muted",
+            "activity-tool",
+            "activity-event",
+            "activity-event-ink",
             "error-tint",
             "accent-tint",
             "ink",
@@ -237,7 +407,62 @@ for (const palette of PALETTE_PREFERENCES)
         roles["on-accent"]!,
       );
 
+      for (const [id] of choiceGroups) {
+        const group = page.locator(`#choices-${id}`);
+        const selected = group.locator('[aria-pressed="true"]');
+        const other = group.locator('[aria-pressed="false"]');
+        await expect(selected).toHaveCSS("color", roles["accent-deep"]!);
+        await expect(selected.locator("svg")).toHaveCSS(
+          "color",
+          roles["accent-deep"]!,
+        );
+        expect(
+          (await renderedColors(selected)).contrast,
+          id,
+        ).toBeGreaterThanOrEqual(4.5);
+        const selectedFill = await selected.evaluate(
+          (el) => getComputedStyle(el).backgroundColor,
+        );
+        await expect(other).not.toHaveCSS("color", roles["accent-deep"]!);
+        await expect(other).not.toHaveCSS("background-color", selectedFill);
+        await selected.focus();
+        await selected.hover();
+        await page.mouse.down();
+        await expect(selected).toHaveCSS("color", roles["accent-deep"]!);
+        await expect(selected).toHaveCSS("background-color", selectedFill);
+        await page.mouse.up();
+        // Palette buttons are never disabled; native segments and view modes can be.
+        if (id !== "palette") {
+          await selected.evaluate((el: HTMLButtonElement) => {
+            el.disabled = true;
+          });
+          await expect(selected).toHaveCSS("color", roles.faint!);
+        }
+      }
+      await expect(page.locator("#section-icon")).toHaveCSS(
+        "color",
+        roles["accent-deep"]!,
+      );
+
+      for (const label of await page.locator("[data-history-label]").all()) {
+        const action = label.locator("..");
+        for (const state of ["hover", "press", "focus"]) {
+          if (state === "hover") await action.hover();
+          else if (state === "press") await page.mouse.down();
+          else {
+            await page.mouse.up();
+            await page.keyboard.press("Tab");
+            await action.focus();
+          }
+          await expect(label).toHaveCSS("color", roles["accent-deep"]!);
+          expect((await renderedColors(label)).contrast).toBeGreaterThanOrEqual(
+            4.5,
+          );
+        }
+      }
+
       const pagination = page.locator("#focus-pagination");
+      await expect(pagination).toHaveCSS("border-radius", "6px");
       await pagination.hover();
       await expect(pagination).toHaveCSS("border-color", roles["accent-deep"]!);
       await pagination.focus();
@@ -269,6 +494,57 @@ for (const palette of PALETTE_PREFERENCES)
         await expect(error).toHaveCSS("color", roles["error-ink"]!);
         await expect(error).toHaveCSS("outline-color", roles["accent-focus"]!);
       }
+      // Interaction changes affordance, not the meaning of warning/error text.
+      for (const [id, text, ink, mark, markProperty, markRole] of [
+        [
+          "git-stale",
+          ".topbar__git-branch, .topbar__git-count",
+          "warning-ink",
+          "svg",
+          "color",
+          "warning",
+        ],
+        ["git-conflict", ".topbar__git-count", "error-ink", null, null, null],
+        ["workspace-error", "span", "warning-ink", "svg", "color", "warning"],
+        ["meter-warning", "span", "warning-ink", "circle", "stroke", "warning"],
+        ["meter-error", "span", "error-ink", "circle", "stroke", "error"],
+        ["files-retry", null, "warning-ink", "svg", "color", "warning"],
+      ] as const) {
+        const action = page.locator(`#${id}`);
+        for (const state of ["rest", "hover", "pressed", "focus"]) {
+          await page.mouse.move(0, 0);
+          if (state === "hover" || state === "pressed") await action.hover();
+          if (state === "pressed") await page.mouse.down();
+          if (state === "focus") {
+            await page.keyboard.press("Tab");
+            await action.focus();
+          }
+          try {
+            const labels = text ? await action.locator(text).all() : [action];
+            for (const label of labels) {
+              await expect(label).toHaveCSS("color", roles[ink]!);
+              expect(
+                (await renderedColors(label)).contrast,
+                `${id} ${state}`,
+              ).toBeGreaterThanOrEqual(4.5);
+            }
+            if (mark)
+              await expect(action.locator(mark)).toHaveCSS(
+                markProperty!,
+                roles[markRole!]!,
+              );
+            if (state === "focus")
+              await expect(action).toHaveCSS(
+                "outline-color",
+                roles["accent-focus"]!,
+              );
+          } finally {
+            await page.mouse.up();
+          }
+        }
+      }
+      await page.locator("#git-normal").hover();
+      await expect(page.locator("#git-normal")).toHaveCSS("color", roles.ink!);
       for (const [id, ink, background] of [
         ["icon", "ink", "bg-inset"],
         ["icon-selected", "accent-deep", "accent-tint"],
@@ -282,6 +558,23 @@ for (const palette of PALETTE_PREFERENCES)
         // Shared state exclusions must not out-rank local action treatments.
         await expect(button).toHaveCSS("color", roles[ink!]!);
         await expect(button).toHaveCSS("background-color", roles[background!]!);
+        if (id === "icon-clear") {
+          await page.mouse.move(0, 0);
+          await page.keyboard.press("Tab");
+          await button.focus();
+          await expect(button).toHaveCSS("color", roles.error!);
+          await expect(button).toHaveCSS(
+            "background-color",
+            roles["error-tint"]!,
+          );
+          await expect(button).toHaveCSS(
+            "outline-color",
+            roles["accent-focus"]!,
+          );
+          expect(
+            (await renderedColors(button)).contrast,
+          ).toBeGreaterThanOrEqual(3);
+        }
         if (id === "icon-selected") {
           await page.mouse.down();
           await expect(button).toHaveCSS("color", roles["accent-deep"]!);
@@ -323,7 +616,7 @@ for (const palette of PALETTE_PREFERENCES)
         ["directory-row", "faint", "background-color", roles["bg-inset"]],
         ["session-title", "ink", "background-color", roles["bg-inset"]],
         ["clone-action", "faint", "background-color", roles["bg-inset"]],
-        ["restore-action", "ink", "cursor", "pointer"],
+        ["restore-action", "faint", "background-color", roles["bg-inset"]],
       ]) {
         const button = page.locator(`#${id}`);
         const appearance = () =>
@@ -401,7 +694,33 @@ for (const palette of PALETTE_PREFERENCES)
         ).toBe(filter);
         await page.mouse.up();
       }
+      const compacting = page.locator("#compacting-identity");
+      await expect(compacting).toHaveCSS(
+        "border-color",
+        roles["activity-event"]!,
+      );
+      await compacting.getByRole("textbox").focus();
+      await expect(compacting).toHaveCSS(
+        "border-color",
+        roles["activity-event"]!,
+      );
+      await compacting.getByRole("textbox").blur();
+      for (const marker of await page.locator("[data-state-mark]").all()) {
+        const role = (await marker.getAttribute("data-state-mark"))!;
+        await expect(marker).toHaveCSS("color", roles[role]!);
+        if (role === "activity-event")
+          expect(
+            (await renderedColors(marker)).contrast,
+          ).toBeGreaterThanOrEqual(3);
+      }
+      // Theme-owned fallback text must not overwrite explicit terminal colors.
+      await expect(page.locator("[data-authored-color]")).toHaveCSS(
+        "color",
+        "rgb(205, 49, 49)",
+      );
       for (const label of await page.locator("[data-role]").all()) {
+        const ink = await label.getAttribute("data-ink");
+        if (ink) await expect(label).toHaveCSS("color", roles[ink]!);
         const colors = await renderedColors(label);
         const description = await label.evaluate(
           (el) =>

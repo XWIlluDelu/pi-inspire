@@ -1,6 +1,10 @@
 /* --- Settings dialog --- */
 
-.overlay.settings-overlay { overflow: clip; }
+/* Portalled menus keep one fixed containing block even without backdrop blur. */
+.overlay.settings-overlay {
+  contain: layout;
+  overflow: clip;
+}
 
 .host-restart__actions {
   display: flex;
@@ -37,12 +41,12 @@
 .dialog.terminal-settings {
   --set-control-h: 32px;
   --set-icon-btn: 28px;
-  --set-row-pad: 10px 14px;
-  --set-row-min-h: 48px;
-  --set-dropdown-w: 168px;
+  --set-row-pad: 11px 16px;
+  --set-row-min-h: 50px;
+  --set-choice-w: 264px;
   width: min(820px, 94vw);
   height: min(660px, 88dvh);
-  max-height: 88dvh;
+  max-height: 100%;
   padding: 0;
   gap: 0;
   display: flex;
@@ -72,8 +76,8 @@
   min-height: 52px;
   flex: 0 0 auto;
   padding: var(--space-3) var(--space-5);
-  border-bottom: 1px solid var(--hairline);
-  background: var(--bg-surface);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-raised);
 }
 
 .settings__title {
@@ -154,11 +158,11 @@
 }
 
 .settings__sidebar {
-  width: 174px;
-  flex: 0 0 174px;
+  width: 180px;
+  flex: 0 0 180px;
   overflow-y: auto;
   padding: var(--space-3) var(--space-2);
-  border-right: 1px solid var(--hairline);
+  border-right: 1px solid var(--line);
   background: var(--bg-nav);
   user-select: none;
 }
@@ -166,7 +170,7 @@
 .settings__nav-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
 .settings__nav-item {
@@ -175,14 +179,14 @@
   align-items: center;
   gap: var(--space-2);
   width: 100%;
-  min-height: 34px;
+  min-height: 36px;
   padding: var(--space-2) var(--space-3);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted);
   font-size: var(--text-sm);
-  font-weight: 450;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
   transition:
@@ -204,9 +208,13 @@
 .settings__nav-item--active {
   border-color: var(--line);
   background: var(--bg-surface);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--shadow-1);
   color: var(--ink);
   font-weight: 600;
+}
+
+.settings__nav-item--active .settings__nav-icon {
+  color: var(--accent-deep);
 }
 
 .settings__nav-item--active::before {
@@ -256,14 +264,14 @@
   overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
-  gap: var(--space-6);
+  gap: var(--space-5);
   scroll-behavior: smooth;
 }
 
 .settings__page {
   display: flex;
   flex-direction: column;
-  gap: var(--space-6);
+  gap: var(--space-5);
 }
 
 /* Keep category drafts mounted without exposing inactive controls. */
@@ -340,7 +348,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--muted);
+  color: var(--accent-deep);
   /* Match the uppercase heading's ink center rather than its line box. */
   transform: translateY(-1px);
 }
@@ -350,7 +358,7 @@
   margin: 0;
   color: var(--ink);
   font: 500 var(--text-base)/var(--leading-ui) var(--font-label);
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   overflow-wrap: anywhere;
 }
@@ -365,16 +373,19 @@
     calc(var(--space-1) - var(--ui-text-offset));
 }
 
-.dialog.settings .button {
+.dialog.settings .button,
+.dialog.settings .settings-section-action .button,
+.dialog.settings .host-restart .button {
   /* These controls already have a fixed height and zero vertical padding. */
   padding-block: calc(2 * var(--ui-text-offset)) 0;
 }
 
 .settings__section-desc {
   margin: 0;
+  max-width: 62ch;
   color: var(--muted);
   font-size: var(--text-xs);
-  line-height: var(--leading-ui);
+  line-height: 1.45;
 }
 
 /* The content scroller, not each card, bounds open setting menus. */
@@ -383,7 +394,7 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-surface);
   background: var(--bg-surface);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  box-shadow: var(--shadow-1);
 }
 
 .settings__field {
@@ -419,8 +430,23 @@
   gap: 2px var(--space-3);
 }
 
+.settings__field:has(.settings-switch):has(
+    .settings__field-help,
+    .settings__field-status
+  ) {
+  align-items: start;
+}
+
+.settings__field:has(.settings-switch):has(
+    .settings__field-help,
+    .settings__field-status
+  )
+  .settings-switch {
+  margin-block: calc((13px * var(--leading-ui) - var(--set-control-h)) / 2);
+}
+
 .settings__error {
-  color: var(--error);
+  color: var(--error-ink);
   font-size: var(--text-sm);
   overflow-wrap: anywhere;
 }
@@ -444,7 +470,8 @@
   grid-column: 1;
   font-size: 12px;
   line-height: 1.4;
-  color: var(--warning);
+  color: var(--warning-ink);
+  overflow-wrap: anywhere;
 }
 
 .settings__field-status-block {
@@ -486,12 +513,17 @@
   flex: 1;
 }
 
+.settings__field-control > .dropdown--field {
+  width: var(--set-choice-w);
+  max-width: 100%;
+}
+
 .settings__field-control > .dropdown--field .dropdown__trigger {
   width: 100%;
 }
 
 .settings__field .dropdown--field .dropdown__trigger {
-  min-width: var(--set-dropdown-w);
+  min-width: 0;
   min-height: var(--set-control-h);
   height: var(--set-control-h);
 }
@@ -500,7 +532,7 @@
   display: inline-grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(0, 1fr);
-  width: calc(var(--choice-count) * 88px);
+  width: var(--set-choice-w);
   max-width: 100%;
   height: var(--set-control-h);
   padding: 3px;
@@ -541,12 +573,12 @@
 
 }
 
-/* Named swatches stay legible and reflow as a bounded two-column grid. */
+/* Named palettes remain independent tiles, not a recessed segmented group. */
 .palette-picker {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-1);
-  width: 304px;
+  gap: 6px;
+  width: var(--set-choice-w);
   max-width: 100%;
 }
 
@@ -562,6 +594,7 @@
   background: var(--bg-surface);
   color: var(--body);
   font-size: var(--text-sm);
+  font-weight: 500;
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
@@ -579,9 +612,24 @@
 .palette-picker__choice[aria-pressed="true"] {
   background: var(--accent-tint);
   border-color: var(--accent-deep);
-  color: var(--ink);
   font-weight: 600;
-  box-shadow: inset 0 0 0 1px var(--accent-deep);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+}
+
+/* Scope this choice grammar to settings, including MCP's inline mode choices. */
+.dialog:is(.settings, .terminal-settings) .segmented button {
+  border: 1px solid transparent;
+}
+
+.dialog:is(.settings, .terminal-settings) .segmented button[aria-pressed="true"] {
+  background: var(--bg-surface);
+  border-color: var(--hairline);
+  font-weight: 600;
+  box-shadow: var(--shadow-1);
+}
+
+.dialog:is(.settings, .terminal-settings) .segmented button:disabled {
+  color: var(--faint);
 }
 
 .palette-picker__swatch {
@@ -750,15 +798,15 @@
 }
 
 .settings__footer {
-  min-height: 48px;
+  min-height: 46px;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-4);
-  border-top: 1px solid var(--hairline);
-  background: var(--bg-surface);
+  border-top: 1px solid var(--line);
+  background: var(--bg-raised);
 }
 
 .settings__footer-status,
@@ -892,8 +940,8 @@
 
 .palette__input {
   border: 0;
-  border-bottom: 1px solid var(--hairline);
-  background: transparent;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-raised);
   min-height: 50px;
   padding: var(--space-3) var(--space-4);
   font-family: var(--font-sans);
@@ -912,7 +960,7 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  padding: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-3);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -920,15 +968,16 @@
 
 .palette__row {
   display: flex;
-  min-height: 38px;
+  min-height: 36px;
   width: 100%;
   align-items: center;
   gap: var(--space-3);
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  padding: 6px var(--space-3);
+  padding: 6px var(--space-3) 6px var(--space-4);
   font-size: var(--text-sm);
+  font-weight: 450;
   text-align: left;
   color: var(--ink);
   position: relative;
@@ -939,14 +988,14 @@
 }
 
 .palette__row--active {
-  background: var(--bg-control);
+  background: var(--accent-tint);
   color: var(--ink);
 }
 
 .palette__row--active::before {
   content: "";
   position: absolute;
-  left: 2px;
+  left: 4px;
   top: 7px;
   bottom: 7px;
   width: 2.5px;
@@ -956,7 +1005,7 @@
 
 @media (hover: hover) {
   .palette__list[data-keyboard-active="false"] .palette__row:hover {
-    background: var(--bg-control);
+    background: var(--accent-tint);
   }
 }
 
@@ -967,20 +1016,32 @@
 }
 
 .palette__section + .palette__section {
-  margin-top: var(--space-2);
+  margin-top: var(--space-3);
 }
 
 .palette__group {
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--text-xs);
-  font-weight: 600;
+  margin: 0 var(--space-2) 2px;
+  padding: var(--space-2) var(--space-1) calc(var(--space-1) + 1px);
+  font: 600 var(--text-xs)/var(--leading-ui) var(--font-label);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
-  border-bottom: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.palette__group [data-authored-case] {
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .palette__title {
   flex: 1;
   min-width: 0;
+  max-width: 100%;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   overflow-wrap: anywhere;
 }
 
@@ -993,10 +1054,11 @@
 }
 
 .palette__hint-inline {
+  flex: 0 0 auto;
   margin-left: auto;
   font-size: var(--text-xs);
   color: var(--muted);
-  max-width: 50%;
+  max-width: 46%;
   text-align: right;
   line-height: 1.45;
   white-space: nowrap;
@@ -1122,6 +1184,7 @@
 .command-help__body dl > div {
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  align-items: baseline;
   gap: var(--space-2);
   padding: var(--space-2) 0;
   border-bottom: 1px solid var(--hairline);
@@ -1199,6 +1262,7 @@
 
   .palette__title {
     flex: none;
+    width: 100%;
   }
 
   .palette__hint-inline {
@@ -1229,6 +1293,7 @@
 
 .dialog__title {
   margin: 0;
+  overflow-wrap: anywhere;
   font-size: var(--text-lg);
   font-weight: 600;
 }
@@ -1243,6 +1308,7 @@
 
 .dialog__message {
   margin: 0;
+  overflow-wrap: anywhere;
   color: var(--muted);
   font-size: var(--text-base);
   line-height: 1.6;
@@ -1334,6 +1400,7 @@
 
 .session-delete__error {
   margin: 0;
+  overflow-wrap: anywhere;
   padding: var(--space-2) var(--space-3);
   border: 1px solid color-mix(in srgb, var(--error) 28%, transparent);
   border-radius: var(--radius-md);
@@ -1472,14 +1539,21 @@
 
 .export-dialog__formats input { margin: 0; }
 
+.export-dialog__format-copy {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
 .export-dialog__formats small {
   color: var(--muted);
   font-size: var(--text-sm);
 }
 
 .export-dialog__error {
-  color: var(--error);
+  color: var(--error-ink);
   font-size: var(--text-sm);
+  overflow-wrap: anywhere;
 }
 
 /* --- Directory picker (session start) --- */
@@ -1637,7 +1711,7 @@
 }
 
 .dirpicker__note--error {
-  color: var(--error);
+  color: var(--error-ink);
 }
 
 .dialog__input,
@@ -1677,15 +1751,29 @@
   --notice-header-bottom: calc(var(--window-titlebar-height) + var(--topbar-h) + var(--safe-top));
   position: fixed;
   right: var(--space-4);
-  bottom: var(--space-4);
+  bottom: max(var(--space-4), var(--safe-bottom));
   z-index: 60;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   width: min(380px, calc(100vw - 2 * var(--space-4)));
+  max-height: max(
+    0px,
+    calc(
+      100dvh - var(--notice-header-bottom) - var(--space-2) -
+        max(var(--space-4), var(--safe-bottom))
+    )
+  );
+}
+
+.notices--scrollable {
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .notice {
+  --notice-title-line-h: calc(var(--text-sm) * var(--leading-ui));
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -1697,6 +1785,16 @@
   padding: var(--space-2) var(--space-3);
   font-size: var(--text-sm);
   animation: float-in var(--dur-standard) var(--ease-standard);
+}
+
+/* Workspace drawers sit at 40, below dialog overlays. */
+.app:has(> .nav[aria-modal="true"], > .ctx[aria-modal="true"]) .notices {
+  z-index: 38;
+}
+
+/* Non-modal feedback must not cover the current modal focus owner. */
+.app:has(.overlay > [aria-modal="true"]) .notices {
+  z-index: 49;
 }
 
 .feedback--leaving {
@@ -1721,15 +1819,18 @@
 
 .notice__head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-2);
-  min-height: 20px;
+  min-height: 24px;
 }
 
 .notice__title {
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
+  /* Preserve the single-line position while anchoring wrapped titles to line one. */
+  padding-top: calc((24px - var(--notice-title-line-h)) / 2);
+  line-height: var(--leading-ui);
   min-width: 0;
   gap: var(--space-2);
   overflow-wrap: anywhere;
@@ -1740,6 +1841,7 @@
 
 .notice__title > svg {
   flex-shrink: 0;
+  margin-top: calc((var(--notice-title-line-h) - 14px) / 2);
 }
 
 .notice--info .notice__title {
@@ -1868,7 +1970,7 @@
 }
 
 .models-default-value__warning {
-  color: var(--warning);
+  color: var(--warning-ink);
   font-size: var(--text-xs);
   font-weight: 500;
 }
@@ -1896,6 +1998,7 @@
   border-radius: 0 0 calc(var(--radius-surface) - 1px) calc(var(--radius-surface) - 1px);
   background: var(--bg-control);
   font-size: var(--text-xs);
+  overflow-wrap: anywhere;
 }
 
 /* --- Terminal Settings stepper --- */

@@ -91,11 +91,13 @@ function DeferredContextPane({
 }
 
 function DeferredSettings({
+  suspended,
   initialCategory,
   modelDestination,
   workspaceOwner,
   onClose,
 }: {
+  suspended: boolean;
   initialCategory: SettingsCategoryId;
   modelDestination?: ModelSettingsDestination;
   workspaceOwner: { sessionId?: string; cwd?: string };
@@ -103,7 +105,7 @@ function DeferredSettings({
 }) {
   const showContent = useDeferredValue(true, false);
   return (
-    <SettingsDialog onClose={onClose}>
+    <SettingsDialog suspended={suspended} onClose={onClose}>
       <RenderErrorBoundary
         onError={reportDeferredSurfaceError}
         fallback={<SettingsLoading onRetry={() => window.location.reload()} />}
@@ -111,6 +113,7 @@ function DeferredSettings({
         <Suspense fallback={<SettingsLoading />}>
           {showContent ? (
             <DeferredSettingsSurface
+              suspended={suspended}
               initialCategory={initialCategory}
               modelDestination={modelDestination}
               workspaceOwner={workspaceOwner}
@@ -577,11 +580,10 @@ export function App() {
       setMobileNavOpen(false);
   }, [mobileNavOpen, narrowViewport, state.resourcesOpen]);
 
-  // Native dialogs temporarily own focus. Keep the palette mounted but inactive
-  // so unsubmitted preparation (and a pending rejection) retains its own draft.
+  // Native questions take priority without discarding Settings, palette or
+  // export drafts. Read-only command help can close instead of resuming.
   useEffect(() => {
     if (!extensionOverlayOpen) return;
-    setSettingsOpen(false);
     setCommandHelp(null);
   }, [extensionOverlayOpen]);
 
@@ -924,14 +926,6 @@ export function App() {
             </button>
           </div>
         ) : null}
-        {settingsOpen && !extensionOverlayOpen ? (
-          <DeferredSettings
-            initialCategory={settingsCategory}
-            modelDestination={modelDestination}
-            workspaceOwner={settingsOwner}
-            onClose={closeSettings}
-          />
-        ) : null}
         {state.sessionId ? (
           <ConversationStage />
         ) : (
@@ -964,6 +958,15 @@ export function App() {
           ) : null}
           {resourcesContent}
         </>
+      ) : null}
+      {settingsOpen ? (
+        <DeferredSettings
+          suspended={extensionOverlayOpen}
+          initialCategory={settingsCategory}
+          modelDestination={modelDestination}
+          workspaceOwner={settingsOwner}
+          onClose={closeSettings}
+        />
       ) : null}
       {exportSessionId && exportSessionId === state.sessionId ? (
         <ExportDialog

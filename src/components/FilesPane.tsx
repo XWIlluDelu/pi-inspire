@@ -229,10 +229,10 @@ function FileBrowser({
 function WorkspaceIndexHeader({ state }: { state: ContextPaneView }) {
   const projectLabel = workspaceLabel(state.cwd);
   return (
-    <div className="file-search-controls">
+    <div className="file-search-controls res__index-header">
       <button
         type="button"
-        className="res__index-header res__index-header--back"
+        className="res__index-header--back"
         aria-label={`Back to file browser for ${projectLabel}`}
         title={state.cwd ?? projectLabel}
         onClick={() => store.showFileBrowser()}

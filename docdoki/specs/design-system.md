@@ -34,6 +34,7 @@ covers:
   - tests/browser/{shell-layout,settings-layout,reading-navigation,palette-preferences,theme-colors}.spec.ts
   - tests/browser/support/colors.ts
   - tests/browser/loading-states.spec.ts
+  - tests/browser/icon-controls.spec.ts
 ---
 
 # Design system
@@ -94,8 +95,11 @@ declaration.
   colors directly through `--activity-tool` and `--activity-think`. Arrival frequency is 3.6 × (1 + busy session count) per second
   for 2400 drawable CSS pixels. Count all managed and observed native Pi sessions once per identity,
   not just the selected one.
-  Waiting for input does not add to the count. Frequency scales with drawable titlebar width,
-  excluding native controls and fixed-size clearances around the corner icon and wordmark. Needle dimensions use
+  Waiting for input does not add to the count. Frequency scales with the full decorative titlebar
+  width, with only a 2px edge inset. The background is sampled uniformly behind foreground
+  controls, including the corner icon and wordmark: no control exclusion zones, safe-rectangle
+  clipping, or opaque mark backplates are added. The layer never receives pointer events;
+  browser-owned chrome can still paint above web content. Needle dimensions use
   CSS pixels and lifetime distributions remain unchanged across displays. Particle limits scale with
   density rather than throttling wide windows at a fixed small count. Resize and run-state changes
   retime future arrivals without clearing existing fades. No spinning or falling motion is added.
@@ -150,6 +154,12 @@ declaration.
   Selected icon buttons keep their accent ink/tint through hover and press. Disabled
   icon buttons use neutral ink and the default cursor, without hover/pressed feedback;
   local action styles respect this state rather than overriding the shared control.
+  Segmented choices use `--accent-deep` for selected text and accompanying icons;
+  unselected options stay neutral. The shared rule covers Settings and Terminal settings,
+  named palette choices, composer and prepared-prompt Steer/Queue, and resource mode choices.
+  Selection also retains its surface and weight cues; hover, press and focus do not replace
+  its accent ink. Disabled segments use neutral ink. This rule does not recolor arbitrary
+  selected lists or semantic status indicators.
   Quiet actions retain transparent backgrounds and borders when disabled.
   Standalone actions and form variants also suppress disabled hover/pressed feedback,
   including underlines and border changes. Read-only session headings retain their readable
@@ -173,8 +183,8 @@ declaration.
   full tinted card, and custom extension messages use `--bg-surface` with a boundary.
   Classic Jade and Amber retain their characteristic accents and surfaces; readability corrections
   belong to the same control/text roles as other palettes. File-preview neutrality is unchanged.
-  Resting navigation search uses `--bg-control`; the topbar uses the reading-stage role.
-  Components use shared roles, never locally invented palette values.
+  Resting navigation search uses `--bg-control`; the topbar blends 88% `--bg-stage` with
+  `--bg-rail`. Components use shared roles rather than local palette values.
 - File inspection is the deliberate exception: its host-owned Preview, Source,
   and Changes canvases use the luminosity-aware `--bg-file-*` neutral ladder,
   which is identical across all supported palettes. Product chrome remains
@@ -194,11 +204,22 @@ declaration.
   from their activity status color. Status icons, borders and tints retain their status
   color; interaction overlays must not erase text contrast. Disabled solid controls,
   including Composer recovery, retain their neutral appearance on hover.
+  Direct-shell output notes keep inline metadata actions at 24px for a fine pointer and 44px
+  for a coarse pointer, without imposing a touch-sized line on desktop prose. This does not
+  shrink the separate tool-result notice action.
   Readability checks cover actual foreground/background pairs and interaction states, not just
   standalone swatches. Faint text remains readable on its supported workbench surfaces.
 - Success, warning and error remain independent status roles. Tool identity follows the
   selected theme family through a dedicated `--activity-tool` shade; Thinking has its own harmonious contrasting
   ink, with matching tint, in every palette/luminosity. Neither identity changes on failure.
+  Context-event icons (including Pi and Magic Context), extension-message glyphs (including
+  Intercom), and the ongoing compaction indicator use `--activity-event`, an identity alias of
+  the current palette's `--activity-tool`. Compact progress text uses the corresponding
+  `--activity-event-ink` on its tint; context and extension glyphs keep the unmixed identity color.
+  This does not make extension messages tool executions:
+  their icons, attribution, surfaces and disclosure behavior remain distinct. Ordinary information
+  notices and command outcomes retain `--info`/`--info-ink`; success, warning and error keep their
+  outcome roles rather than inheriting the activity identity.
   The PWA needle animation shares these same Tool/Thinking colors, including on live theme changes.
   Error/Stop uses raspberry-red rather than Lycoris's decorative red. Light semantic ink is deeper
   than decorative accent fills; dark semantic ink is lifted for readability. Navigation state combines its positioned status mark
@@ -257,6 +278,10 @@ declaration.
   Navigation, file subsection headings, command-palette and completion/model-choice headings
   preserve authored casing and their established UI tiers. Technical identifiers retain their
   exact spelling; document typography is unchanged.
+  Dialog titles, prose, and deletion errors wrap long literal paths or identifiers within their
+  shared content edges instead of overflowing the frame. Settings status and Host availability
+  explanations likewise stay within their own text columns. Field widths, action geometry, and the
+  original payload text remain unchanged.
 - The 4px spacing scale is the only general rhythm. Shared geometry uses
   2px inline corners, 6px controls, 10px resting surfaces, and 12px overlays.
   `999px` is reserved for genuinely round/capsule affordances such as status
@@ -278,17 +303,18 @@ declaration.
   surfaces avoid theatrical shadow; the reading stage is a content field, not one giant card.
   Shared elevation combines a small contact shadow with a softer ambient shadow:
   `--shadow-1` stays faint on small resting surfaces (and absent in dark mode);
-  `--shadow-2` lifts menus and notices; `--shadow-overlay` gives dialogs and drawers
-  broader separation. The Composer stays integrated with the workspace: no resting shadow,
+  `--shadow-2` lifts menus and notices in light and classic dark palettes; botanical dark
+  palettes use borders and surface contrast instead. `--shadow-overlay` separates dialogs and drawers.
+  The Composer stays integrated with the workspace: no resting shadow,
   a crisp focus boundary with a faint close ring, and no separate floating-island shadow,
   while its running/retry/compaction/error treatments retain ownership of state feedback.
   Shadows supplement existing borders rather than adding a second outline; they do not
   add elevation to the reading stage, navigation or contextual pane shells.
-- Desktop is a three-region workbench: a 220–272px navigation column (48px
-  collapsed rail), a centered reading/composer field with Narrow 680px,
-  Comfortable 820px, and Wide 980px measures, and a contextual pane clamped
-  from 340px to 760px. Responsive caps and the available center region still
-  bound every selected measure. The 44px topbar aligns the regions without
+- Desktop is a three-region workbench. Automatic widths use 220–272px for navigation
+  (48px collapsed) and 340–760px for context; manual resizing and their shared width budget
+  follow [[workspace-layout]]. The centered reading/composer field offers Narrow 680px,
+  Comfortable 820px, and Wide 980px measures, bounded by the available center region.
+  The 44px topbar aligns the regions without
   turning the page into a dashboard of boxed panels. Connecting/reconnecting is a quiet, unboxed
   transport hint, not an action button; compact headers retain its accessible label. Offline and
   Host failures keep warning treatment, and the hint disappears when the connection recovers.
@@ -324,6 +350,8 @@ keep their existing behavior. Embedded documents retain their own styles.
   The header has no horizontal divider above these controls.
   New session and session search share row height, font size, a 16px icon slot and label baseline;
   the creation label stays slightly heavier while its plus icon uses neutral rather than brand color.
+  Give the creation/search rows an 8px gap and leave 16px below search before the project list.
+  The desktop Overlay header applies the same breathing room without changing its titlebar alignment.
   The collapse control uses the plain sidebar-outline icon, matching the panel-toggle family.
   On the desktop rail the mark expands navigation; a separate plus control sits below it.
   Expanded and rail logos share the same size and primary icon axis. New session, search, group
@@ -342,21 +370,30 @@ keep their existing behavior. Embedded documents retain their own styles.
   remains neutral. The outer session row owns its selection fill, including while its select
   button is disabled. Folder headings and rows share the control
   radius, with the folder's keyboard outline inside its clipping boundary.
+  Full-width Workspace and Hidden dock headers also keep their keyboard outlines inset,
+  so window and drawer edges do not clip the feedback; their geometry and actions stay stable.
   Folder icons leave a clear gutter beside the inset selection marker; folder names and their
   session names retain a common text axis, including inside Hidden.
-  Existing 12px catalog side insets and session row heights remain; adjacent group margins use 16px, with
-  a 20px break after pinned sessions or the last pinned folder. Project/session hierarchy, curation
-  and runtime state remain legible without duplicating a session into a separate status group.
+  Existing catalog side insets, session row heights and project separation remain. Adjacent
+  project groups use a 16px section margin on top of the 2px catalog gap, with a 20px margin
+  after pinned sessions or the last pinned folder; closing a folder does not compress this rhythm.
+  Hidden retains its compact drawer spacing, independent of a hidden folder's previous pin.
+  Project/session hierarchy, curation and runtime state remain legible without duplicating a
+  session into a separate status group.
 - User messages form right-aligned, content-sized bubbles with 14px corners, a neutral border and
   no accent edge. Copy/Fork form a compact horizontal group to the bubble's left when its existing
   spare space fits the group plus an 8px gap. Their targets align with the bubble's lower edge,
-  while the buttons' internal padding keeps the glyphs inset. The same rule applies to short,
+  while the glyphs remain centered and inset within their targets. The same rule applies to short,
   long and image-only bubbles. If the group does not fit, it wraps below at the same right edge
   with a 4px gap. Buttons do not shrink the bubble or change its
   text wrapping; short, long and image-bearing messages use the same content-driven rule.
   These secondary controls keep 13px glyphs, 24px mouse targets and 32px narrow/touch targets with a
   4px gap; hover/focus reveals them and touch keeps them visible.
-  Long content and attachments remain bounded.
+  Long content and attachments remain bounded. Icon-only controls remove native button padding
+  and keep their SVGs from shrinking: the declared square glyph stays centered without changing
+  the control hit area. This includes compact content actions, catalog actions and search navigation.
+  Uploaded and sent file tags reuse the file-category icons from the workspace tree, Changes and
+  file pickers; unknown types keep the neutral document fallback. Images retain their thumbnails.
   Assistant prose is an open document flow. Thinking/tool activity,
   extension-authored context messages, code, tables, math, notices, and the
   composer each use a compact structure with shared surfaces, borders, type, and
@@ -407,7 +444,16 @@ keep their existing behavior. Embedded documents retain their own styles.
 - Feedback expires by meaning, not by Info tint alone. Session & usage has a 30-second reading
   dwell; bare Name and Quit guidance have 15 seconds; ordinary INFO confirmations have 8 seconds.
   Notice Copy/dismiss use 24px mouse or 32px touch targets; touch targets borrow from the existing
-  inset instead of stretching the header. Body text aligns with the title after its icon column.
+  inset instead of stretching the header. A wrapped notice title keeps the icon and actions aligned
+  with its first line; body text starts at the title text after its icon column. Non-modal notices
+  sit below active modal dialogs rather than covering their content or controls.
+  Navigation and resource drawers also own modal interaction on narrow layouts: notices sit
+  below the drawers and any scrim, retaining their contents and returning to the normal layer
+  on dismissal.
+  Bound the stack below the workspace header/current banners and above the bottom safe inset.
+  Only an overflowing stack scrolls, without compressing cards or discarding diagnostic text;
+  fitting stacks retain their normal width, shadows and placement. Additional notices preserve
+  an existing reading position. Copy, dismiss and keyboard scrolling remain reachable.
   Exact repeated notices coalesce in place and renew their dwell. Hover, focus within, an active
   pointer press and a hidden document pause the clock; resuming keeps the remaining time with
   at least 3 seconds to finish reading. Expiry uses only a standard 150ms opacity fade, omitted
@@ -419,6 +465,9 @@ keep their existing behavior. Embedded documents retain their own styles.
   state ahead of technical metadata. Pending deliberately dims at rest and gains full emphasis on
   hover or focus within; preserve this attention hierarchy while simplifying repeated labels/counts.
   [[composer]] owns its visual states, bounded-summary and action semantics.
+- Notebook execution prompts share one intrinsic gutter across cells and outputs. Retain the
+  existing desktop/narrow minimums and first-source-line baseline; wider counts grow the shared
+  gutter instead of painting over source. Unusually long prompts wrap within a bounded text width.
 - Files, Changes, History, and Terminal share the contextual pane. Resource
   safety and change semantics belong to [[resource-preview]]; branch behavior
   belongs to [[session-branches]].
@@ -436,16 +485,22 @@ keep their existing behavior. Embedded documents retain their own styles.
   dismissing the panel or blurring its search field. Checkmarks and `aria-selected` identify committed
   values independently of that candidate highlight. Settings model search stays neutral until keyboard
   navigation or an explicit row action.
-- Command Palette group headings use the existing muted semibold type and spacing without
-  full-width shaded bands. A shared neutral bottom rule distinguishes groups. Labels guide scanning; the accent-tinted command candidate
-  remains the action highlight, and shortcut hints remain separate. Input and overlay boundaries stay
-  intact.
+- Command Palette groups use compact overline headings, neutral bottom rules and indented rows,
+  without full-width shaded bands. Default groups distinguish `Actions`, `Workspace` and `Sessions`.
+  Long titles use up to two lines; project/age metadata stays secondary and moves below titles on
+  narrow screens. Omit redundant action descriptions without removing useful search aliases.
+  The accent-tinted candidate remains the action highlight; shortcut hints stay separate.
 - Command Palette, Settings, extension dialogs, pickers, and destructive
   confirmation use the shared overlay grammar: the overlay radius, hairline,
   elevated shadow, restrained scrim with a 2px backdrop blur, and a short
   0.97→1 pop-in. Modal focus/keyboard ownership is behaviorally centralized in
   `useModalFocus`; a visual overlay never leaves shell shortcuts active below
-  it. Settings update checks use the same section/card geometry as preferences, with compact rows
+  it. An incoming extension question suspends Settings without discarding its selected page,
+  project owner or unsaved forms. Its subordinate confirmations also yield while the question
+  owns focus, then resume without implicitly saving configuration or restarting the Host.
+  Anchored menus inside filtered overlays convert viewport measurements into the
+  overlay's fixed-position coordinates, accounting for its scroll offset and reserved
+  window chrome without changing the trigger gap. Settings update checks use the same section/card geometry as preferences, with compact rows
   for Pi, Extensions, and INSΠRE. Settings and Terminal settings categories show one page at a time
   within their dialog frame, with fixed navigation and utility footer. Both use the same safe-area-aware
   narrow frame. Narrow category selection uses one accent underline without a selected card fill,
@@ -482,8 +537,9 @@ disabled/noninteractive but keep opacity 1: a recorded task state is not an unav
 ## Model-list hierarchy
 
 The shared model picker uses transparent provider/group headings with a thin bottom rule for distinct groups,
-retaining heading typography, spacing and 28px virtual-row height. The bottom rule uses the shared
-ordinary stroke in both luminosities; no picker-specific dark-mode override is needed.
+retaining heading typography, spacing and 28px virtual-row height. Long headings stay on one
+ellipsized line; the title and accessible group label retain the full provider name. The bottom rule
+uses the shared ordinary stroke in both luminosities; no picker-specific dark-mode override is needed.
 Settings' provider headings
 already use transparent surfaces and retain their existing typography. Recent, Router and
 No thinking labels use muted, normal-weight text without a filled badge, retaining their placement
@@ -520,8 +576,9 @@ keyboard navigation remain unchanged.
 
 Copy availability follows the content, not a text-only projection. Image-only user messages and
 image-bearing tool/custom content keep their established Copy action; the shared image viewer
-also offers a constant Copy for an inspected saved or attached image. Text-only copies retain
-their existing plain-text payloads. Copy does not recover Pending entries, transfer image
+also offers a constant Copy for an inspected saved or attached image. Its Copy, Download and Close
+actions share the viewer's icon scale, including Copy's loading and success feedback. Text-only copies
+retain their existing plain-text payloads. Copy does not recover Pending entries, transfer image
 ownership, or alter the draft.
 
 Browsers accept PNG clipboard images, not a general list of image files. PNG is copied directly;
@@ -568,7 +625,8 @@ Wide palettes retain their compact, right-aligned secondary column.
 
 Code-block Copy and Insert in terminal remain compact 24px controls on mouse layouts.
 Coarse-pointer layouts use separate 36px targets with an 8px gap, without enlarging their glyphs
-or sharing a hit area. Hover feedback is mouse-only; touch has local pressed feedback.
+or sharing a hit area. Their 13px square glyphs remain centered and do not shrink into browser-default
+button padding. Hover feedback is mouse-only; touch has local pressed feedback.
 
 Copy, Fork, Pending Return/Clear and similar actions share three presentation types:
 
@@ -672,7 +730,9 @@ Content availability is a capability concern, not a fourth presentation type. Co
   negligible duration; each live-state surface retains a static indication.
 - Text meets WCAG AA contrast, and graphical focus/status cues meet their UI
   contrast threshold. `:focus-visible` uses the shared 2px accent outline;
-  controls retain named roles, native semantic structure, visible keyboard
+  clipped headers and file-path columns keep it inside the target without growing controls,
+  shifting reading boundaries, or scrolling an ancestor to reveal the ring.
+  Controls retain named roles, native semantic structure, visible keyboard
   focus, and focus restoration after overlay close. Touch controls occupy real
   layout space rather than overlapping pseudo-targets.
 

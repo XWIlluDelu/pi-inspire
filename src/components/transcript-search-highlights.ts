@@ -8,6 +8,7 @@ import {
 // A row can contain several rich passages; nested bodies are visited only once.
 const bodies = [
   ".rich-text",
+  ".user-bubble__files",
   ".custom-message__body",
   ".assistant-error__message",
   ".shell-execution__command",

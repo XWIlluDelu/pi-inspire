@@ -159,8 +159,13 @@ describe("Host project discovery continuity", () => {
           },
         }),
       );
-      const attachments = new AttachmentStore(join(root, "uploads"));
-      let current = host(startup, preferencesPath, attachments);
+      const reconstruct = () =>
+        host(
+          startup,
+          preferencesPath,
+          new AttachmentStore(join(root, "uploads")),
+        );
+      let current = reconstruct();
       try {
         const created = await api(current.application)
           .newSession(project)
@@ -186,7 +191,7 @@ describe("Host project discovery continuity", () => {
           { timeout: 10_000 },
         );
         await current.application.close();
-        current = host(startup, preferencesPath, attachments);
+        current = reconstruct();
         expect(
           (await current.catalog.list()).sessions.map((row) => row.id),
         ).toEqual([id]);
@@ -217,7 +222,7 @@ describe("Host project discovery continuity", () => {
           .curate({ hiddenProjectCwds: [] })
           .expect(200);
         await current.application.close();
-        current = host(startup, preferencesPath, attachments);
+        current = reconstruct();
         expect(
           (await current.catalog.list()).sessions.map((row) => row.id),
         ).toEqual([id]);
@@ -235,14 +240,13 @@ describe("Host project discovery continuity", () => {
         await rm(join(project, "sessions"), { recursive: true });
         expect(await current.catalog.refresh(true)).toEqual([]);
         await current.application.close();
-        current = host(startup, preferencesPath, attachments);
+        current = reconstruct();
         expect(await current.catalog.refresh()).toEqual([]);
         expect(await current.preferences.projectDirectories.read()).toContain(
           project,
         );
       } finally {
         await current.application.close();
-        await attachments.close();
         await new Promise<void>((done, reject) =>
           model.close((error) => (error ? reject(error) : done())),
         );

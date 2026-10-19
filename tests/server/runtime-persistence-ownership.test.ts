@@ -28,10 +28,14 @@ describe("writer persistence ownership", () => {
   it("waits for the stale writer's confirmed retirement before starting its sole replacement", async () => {
     const { runtime, workers, path } = await setup();
     const retirement = deferredSignal();
-    const stop = vi
-      .spyOn(workers[0]!, "stop")
-      .mockImplementation(() => retirement.promise);
+    const stopping = deferredSignal();
+    const stop = vi.spyOn(workers[0]!, "stop").mockImplementation(() => {
+      stopping.resolve();
+      return retirement.promise;
+    });
     try {
+      // Mutate an established writer, not a projection still being attested at startup.
+      await waitForReady(runtime, "session-a");
       const external = {
         type: "message",
         id: "external",
@@ -45,7 +49,8 @@ describe("writer persistence ownership", () => {
         message: "continue",
       });
       const accepted = expect(prompting).resolves.toBeNull();
-      await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce());
+      await stopping.promise;
+      expect(stop).toHaveBeenCalledOnce();
       // Calling stop is not exit confirmation. No new writer may even start.
       await new Promise<void>((tick) => setImmediate(tick));
       expect(workers).toHaveLength(1);

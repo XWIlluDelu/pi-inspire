@@ -1001,7 +1001,9 @@ describe("Models settings configuration and ownership", () => {
     const before = fixture.host.refreshModels.mock.calls.length;
     fixture.state = { sessionId: "two", cwd: "/two", transportGeneration: 2 };
     view.rerender(<ModelsSettings />);
-    fireEvent.click(screen.getByRole("button", { name: "Connect provider" }));
+    const connect = screen.getByRole("button", { name: "Connect provider" });
+    await waitFor(() => expect(connect).toBeEnabled());
+    fireEvent.click(connect);
     await screen.findByText("New owner provider");
     const afterChange = fixture.host.refreshModels.mock.calls.length;
     expect(afterChange).toBeGreaterThan(before);

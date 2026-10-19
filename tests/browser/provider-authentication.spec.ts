@@ -2,6 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import { modelSettingsScenario } from "./fixtures/model-settings";
 import { openCommandPalette, pairAndOpen } from "./support/navigation";
+import { firstTextBaseline } from "./support/text-baseline";
 
 test.use({ serviceWorkers: "block" });
 for (const [name, width, height, theme] of [
@@ -259,5 +260,123 @@ for (const [name, width, height, theme] of [
       expect(scenario.modelChanges).toEqual([]);
       expect(scenario.errors).toEqual([]);
     });
+  });
+}
+
+for (const kind of ["normal", "long", "CJK"] as const) {
+  test(`login captions keep their baselines and bounds with a ${kind} provider name`, async ({
+    page,
+  }) => {
+    const scenario = await modelSettingsScenario(page);
+    const provider = scenario
+      .providers()
+      .find((value) => value.id === "anthropic")!;
+    if (kind === "long")
+      provider.name = "RegionalCalibrationReferenceDeviceAuthorizationProvider";
+    if (kind === "CJK") provider.name = "区域标定参考模型服务（共享工作区）";
+    await pairAndOpen(page);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const settings = page.getByRole("dialog", {
+      name: "Settings",
+      exact: true,
+    });
+    await settings
+      .getByRole("navigation", { name: "Settings categories" })
+      .getByRole("button", { name: "Models", exact: true })
+      .click();
+    await settings
+      .getByRole("button", { name: `Manage ${provider.name}`, exact: true })
+      .click();
+    await settings
+      .getByRole("button", { name: "Claude authorization", exact: true })
+      .click();
+    const login = settings.getByRole("group", {
+      name: "Login to anthropic",
+      exact: true,
+    });
+    const header = login.locator(":scope > .models-subheading");
+    const checkLayout = async (hasPrompt: boolean) => {
+      for (const width of [1280, 820, 390, 320]) {
+        await page.setViewportSize({ width, height: 900 });
+        await login.scrollIntoViewIfNeeded();
+        await page.evaluate(() => document.fonts.ready);
+        const geometry = await header.evaluate((root) => {
+          const frame = root.getBoundingClientRect();
+          const name = root.querySelector("h4")!,
+            status = root.querySelector(".models-status")!;
+          const n = name.getBoundingClientRect(),
+            s = status.getBoundingClientRect();
+          return {
+            sameRow: s.left >= n.right - 0.5,
+            stacked: s.top >= n.bottom - 0.5,
+            textFits: [name, status].every((element) => {
+              const range = document.createRange();
+              range.selectNodeContents(element);
+              return [...range.getClientRects()].every(
+                (rect) =>
+                  rect.left >= frame.left - 0.5 &&
+                  rect.right <= frame.right + 0.5,
+              );
+            }),
+            client: root.clientWidth,
+            scroll: root.scrollWidth,
+          };
+        });
+        expect(geometry.textFits).toBe(true);
+        expect(geometry.scroll).toBeLessThanOrEqual(geometry.client);
+        if (geometry.sameRow) {
+          const nameBaseline = await header
+            .locator("h4")
+            .evaluate(firstTextBaseline, ".models-subheading");
+          const statusBaseline = await header
+            .locator(".models-status")
+            .evaluate(firstTextBaseline, ".models-subheading");
+          expect(Math.abs(nameBaseline! - statusBaseline!)).toBeLessThanOrEqual(
+            0.5,
+          );
+        } else expect(geometry.stacked).toBe(true);
+        if (hasPrompt) {
+          const spacing = await login
+            .locator(".models-login__methods")
+            .evaluate((root) => {
+              const prompt = root
+                .querySelector(":scope > p")!
+                .getBoundingClientRect();
+              const firstMethod = root
+                .querySelector(".models-login__method")!
+                .getBoundingClientRect();
+              return {
+                actual: firstMethod.top - prompt.bottom,
+                gap: Number.parseFloat(getComputedStyle(root).rowGap),
+              };
+            });
+          expect(Math.abs(spacing.actual - spacing.gap)).toBeLessThanOrEqual(
+            0.5,
+          );
+        }
+      }
+    };
+    await checkLayout(true);
+    if (kind === "long") {
+      const failure =
+        "AuthorizationRejectedBecauseThisCalibrationServiceRequiresAdditionalOrganizationApproval";
+      scenario.failLogin(failure);
+      await expect(header.getByRole("status")).toHaveText(failure);
+    } else {
+      await login
+        .getByRole("button", { name: "Copy authorization code", exact: true })
+        .click();
+      await login
+        .getByLabel("Paste the authorization code")
+        .fill("SYNTHETIC_AUTH_CODE");
+      await login
+        .getByRole("button", { name: "Continue", exact: true })
+        .click();
+      await expect(header.getByRole("status")).toHaveText("Login complete.");
+    }
+    await checkLayout(false);
+    await login.getByRole("button", { name: "Dismiss", exact: true }).click();
+    await expect(login).toHaveCount(0);
+    expect(scenario.errors).toEqual([]);
   });
 }

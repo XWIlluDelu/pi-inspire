@@ -227,9 +227,9 @@ for (const narrow of [false, true]) {
   });
 }
 
-test("native authenticated download streams complete bytes beyond the media preview cap", async ({
-  page,
-}) => {
+test("native authenticated download streams complete bytes beyond the media preview cap", {
+  tag: "@cross-browser",
+}, async ({ page }) => {
   await pairedPage(page);
   const created = await hostRequest(page).post("/api/sessions/new", {
     data: { cwd: root, name: "Large download fixture" },
@@ -264,9 +264,9 @@ test("native authenticated download streams complete bytes beyond the media prev
   expect(replay.status()).toBe(401);
 });
 
-test("hidden inline references send unchanged text; only explicit picker selections deliver files", async ({
-  page,
-}) => {
+test("hidden inline references send unchanged text; only explicit picker selections deliver files", {
+  tag: "@cross-browser",
+}, async ({ page }) => {
   await pairedPage(page);
   const created = await hostRequest(page).post("/api/sessions/new", {
     data: { cwd: root, name: "Project file delivery fixture" },

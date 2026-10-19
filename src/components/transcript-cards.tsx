@@ -1366,7 +1366,7 @@ function PhaseToolDetails({
             Calls{" "}
             <span className="tool-call-list__count">{calls.calls.length}</span>
             {failed ? (
-              <span className="child-call__status--error">
+              <span className="tool-call-list__error-count">
                 · {failed} failed
               </span>
             ) : null}

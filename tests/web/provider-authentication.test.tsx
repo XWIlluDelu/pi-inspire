@@ -34,6 +34,36 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("provider directory", () => {
+  it("keeps discovery unavailable until an initial provider read succeeds", () => {
+    const props = {
+      owner: {},
+      providers: [],
+      onRefresh: refresh,
+      loaded: false,
+    };
+    const view = render(<ProviderAuthentication {...props} loading />);
+    expect(
+      screen.getByRole("button", { name: "Connect provider" }),
+    ).toBeDisabled();
+    expect(screen.queryByText("No connected providers.")).toBeNull();
+    view.rerender(
+      <ProviderAuthentication
+        {...props}
+        loadError="Provider service unavailable"
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Connect provider" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(screen.queryByText("No connected providers.")).toBeNull();
+    view.rerender(<ProviderAuthentication {...props} loaded />);
+    expect(
+      screen.getByRole("button", { name: "Connect provider" }),
+    ).toBeEnabled();
+    expect(screen.getByText("No connected providers.")).toBeVisible();
+  });
+
   it("emphasizes directory name matches and explains ID-only results without changing method titles", () => {
     const { container } = render(
       <ProviderAuthentication

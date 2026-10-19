@@ -149,6 +149,8 @@
 }
 .models-icon-button:hover:where(:not(:disabled)) { background: var(--bg-control); color: var(--ink); }
 .models-text-button { padding: var(--space-2) 0; color: var(--accent-deep); font-size: var(--text-sm); }
+.models-text-button:has(> svg) { display: inline-flex; align-items: center; gap: var(--space-1); padding-block: calc(var(--space-2) + var(--ui-text-offset)) calc(var(--space-2) - var(--ui-text-offset)); }
+.models-text-button > svg { flex: 0 0 auto; translate: 0 calc(-1 * var(--ui-text-offset)); }
 .models-icon-button:focus-visible,
 .models-text-button:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: 2px; }
 .models-icon-button:disabled,
@@ -157,7 +159,7 @@
 
 .models-form__grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-3); }
 .models-default-value { min-width: 0; max-width: 100%; }
-.models-default-result { width: var(--set-dropdown-w); padding-inline: var(--space-2); font-size: var(--text-sm); overflow-wrap: anywhere; text-align: left; }
+.models-default-result { width: var(--set-choice-w); padding-inline: var(--space-2); font-size: var(--text-sm); overflow-wrap: anywhere; text-align: left; }
 .models-default-result--muted { color: var(--muted); }
 @container settings-card (max-width: 400px) {
   /* Empty defaults are status text, not a reserved dropdown slot. */
@@ -329,11 +331,20 @@
 .models-settings input:focus-visible,
 .models-auth input:focus-visible,
 .models-form input:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: 1px; }
+.models-form .dropdown--field { width: 100%; }
+.models-form :where(.dropdown--field) .dropdown__trigger {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  border-color: var(--line);
+  background: var(--bg-control);
+}
 .models-settings .models-checkbox { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); margin: var(--space-2) 0; font-size: var(--text-sm); }
 .models-confirm { padding: var(--space-3); margin: var(--space-3) 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-surface); font-size: var(--text-sm); }
 .models-confirm p { margin: 0 0 var(--space-3); }
 .models-status { font-size: var(--text-sm); color: var(--muted); overflow-wrap: anywhere; }
-.models-status[role=alert] { color: var(--error); }
+.models-status[role=alert] { color: var(--error-ink); }
 .models-search { margin: 0 0 var(--space-2); }
 .models-auth__back { display: inline-flex; align-items: center; gap: var(--space-1); min-height: 36px; }
 .models-auth__provider-detail { border-top: 1px solid var(--hairline); }
@@ -346,12 +357,15 @@
 .models-provider-login:last-child { border-bottom: 0; }
 .models-provider-login__copy { display: flex; min-width: 0; align-items: baseline; flex-wrap: wrap; gap: var(--space-1) var(--space-2); font-size: var(--text-sm); overflow-wrap: anywhere; }
 .models-login { padding: var(--space-3); margin: var(--space-3) 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-surface); }
+.models-login > .models-subheading { align-items: baseline; flex-wrap: wrap; }
+.models-login > .models-subheading > h4 { min-width: 0; max-width: 100%; margin: 0; overflow-wrap: anywhere; }
 .models-login__event { font-size: var(--text-sm); overflow-wrap: anywhere; margin-bottom: var(--space-2); }
 .models-login__event p { margin: var(--space-2) 0; }
 .models-login a { color: var(--accent-deep); }
 .models-login__code { font-family: var(--font-mono); font-size: var(--text-lg); letter-spacing: 0.08em; }
 .models-login__method { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-width: 0; font-size: var(--text-sm); }
 .models-login__methods { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-3) 0; }
+.models-login__methods > p { margin: 0; }
 .models-login__input { display: flex; min-width: 0; flex-direction: column; align-items: stretch; gap: var(--space-2); margin: var(--space-3) 0; }
 .models-login__input > button { align-self: flex-start; }
 .models-remote { display: inline-flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); min-width: 0; color: var(--muted); font-size: var(--text-xs); }
@@ -372,6 +386,7 @@
   .models-settings .button,
   .models-auth .button,
   .models-auth input,
+  .models-form .dropdown--field .dropdown__trigger,
   .models-icon-button,
   .models-settings input:where(:not([type=checkbox], [type=radio])),
   .models-text-button,

@@ -18,6 +18,35 @@ const longTurns = Array.from({ length: 21 }, (_, ordinal) => ({
 }));
 
 describe("Prompt Map", () => {
+  it("sizes the ordinal column from the known total rather than the loaded slice", () => {
+    const props = {
+      turns,
+      activeOrdinal: 0,
+      loadedStarts: [0],
+      loadingStarts: [] as number[],
+      navigatingOrdinal: null,
+      error: null,
+      onLoad: vi.fn(async () => turns),
+      onNavigate: vi.fn(async () => true),
+    };
+    const { rerender } = render(<PromptMap {...props} total={100} />);
+    const nav = screen.getByRole("navigation", {
+      name: "User prompt navigation",
+    });
+    expect(nav.style.getPropertyValue("--prompt-map-ordinal-chars")).toBe("4");
+    for (const [total, characters] of [
+      [9, "2"],
+      [10, "3"],
+      [99, "3"],
+      [100, "4"],
+    ] as const) {
+      rerender(<PromptMap {...props} total={total} />);
+      expect(nav.style.getPropertyValue("--prompt-map-ordinal-chars")).toBe(
+        characters,
+      );
+    }
+  });
+
   it("navigates without wrapping and exposes disabled boundaries semantically", async () => {
     const onLoad = vi.fn(async () => turns);
     const onNavigate = vi.fn(async () => true);

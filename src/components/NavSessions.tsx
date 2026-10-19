@@ -82,7 +82,10 @@ export const SessionRow = memo(function SessionRow({
     externalLabel,
     label: indicatorLabel,
   } = presentSessionActivity(runtimeStatus, externalActivity);
-  const busy = runtimeStatus ? isBusyRunState(runtimeStatus.runState) : false;
+  const busy =
+    runtimeStatus && !runtimeStatus.external
+      ? isBusyRunState(runtimeStatus.runState)
+      : false;
   const deleteDisabled =
     opening ||
     busy ||

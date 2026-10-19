@@ -6,7 +6,7 @@ covers:
   - src/controllers/{preference,update,runtime-event}-controller.ts
   - src/{visual-preferences,update-availability,use-modal-focus}.ts
   - src/components/{Settings,SettingsControls,SettingsDialog,SettingsSection}.tsx
-  - src/styles/settings-overlays.css
+  - src/styles/{settings-overlays,responsive}.css
   - tests/server/{preferences,update-checker,pi-update-checker,update-coordinator}.test.ts
   - tests/web/{settings-navigation,settings-loading,notices,update-controller,attention,modal-focus}.test.ts*
   - tests/browser/{settings-layout,loading-states}.spec.ts
@@ -38,19 +38,19 @@ selected-state markers. These are presentation choices, not changes to preferenc
 
 | Category | Controls |
 | --- | --- |
-| Display | Theme, palette, titlebar needles, content text size, shared transcript/composer reading width, project-location form. |
-| Conversation | Reasoning detail, tool activity, activity groups, desktop send key. |
-| Behavior | Launch behavior, completion alerts, Pi delivery/compaction/retry, optional Herdr enhancement. |
+| Display | One field group: `Theme`, `Color palette`, `Content text size`, `Reading width`, `Project location`, then `Titlebar needles`. The workbench header and installed-window title bar have distinct scopes, explained beside their controls rather than combined under a location-based heading. |
+| Conversation | One field group: activity visibility (`Reasoning detail`, `Tool activity`, `Activity groups`), then `Send key`. |
+| Behavior | App behavior (`On launch`, `Completion alerts`) and `Pi session settings` (`Steering delivery`, `Follow-up delivery`, `Automatic context compaction`, `Automatic retry`). |
 | Models | Pi defaults, common scope/cycling, graphical model/provider configuration, and nearby login/logout under [[model-settings]]. |
 | MCP | Scoped native-file configuration, protected-value edits and explicit selected-worker Reload under [[mcp]]; not a connection inventory. |
-| System | Component versions, Docs/Changelog release references, unified check for updates, and Host restart under [[host-lifecycle]]. |
+| System | Component versions, Docs/Changelog release references and unified update check; then `Host`, with `Herdr enhancement` followed by Host restart under [[host-lifecycle]]. |
 
-Pi controls follow [[pi-integration]]. An ordinary subgroup heading and short, subdued scope note
-before the four native Behavior controls distinguish current-session settings, Pi-managed global
-defaults and project overrides. This is not a control-less setting row or a tinted notice, and it
-does not apply to Inspire preferences. Keep detailed persistence limitations in [[pi-integration]];
-do not label a setter acknowledgment as Saved. Herdr takes effect on Host restart under
-[[herdr-enhancement]].
+Pi controls follow [[pi-integration]]. A dedicated `Pi session settings` section and concise scope note
+(`Changes apply to the current session; Pi manages defaults and project overrides.`) distinguish
+current-session runtime settings from Pi-managed defaults and project overrides without implying confirmed
+global persistence. Keep detailed persistence limitations in [[pi-integration]]; do not label a setter
+acknowledgment as Saved. In `System`, `Herdr enhancement` shares the Host/restart card with the actions
+that apply it under [[herdr-enhancement]].
 Footer utilities present INSΠRE version, optional install action, and Reset preferences on a single line.
 System lists Pi, Extensions and Inspire in that order. Pi's Docs and Changelog links share its label
 row; update commands reuse the file/path click-to-copy presentation without a persistent copy icon.
@@ -62,21 +62,29 @@ non-obvious behavior. The bounded category navigation has no separate search.
 Titlebar needles is an opt-in persisted switch for installed-window animation. The centered titlebar
 brand toggles the same preference; refresh restores the saved choice. See [[design-system]] for motion.
 
-Restore defaults patches the complete interface-default set, including Herdr and titlebar needles. It leaves Pi runtime
-settings, update observations, navigation curation, pane state, recent models, and other direct work
+Reset preferences opens a confirmation dialog stating its exact scope before patching the complete
+interface-default set (including Herdr and titlebar needles) while leaving Pi runtime settings, models,
+credentials, MCP servers, update observations, navigation curation, pane state, and other direct work
 state unchanged.
 
 Settings and Terminal settings share field, switch, stepper and segmented-control styling: 32px
-controls for a mouse, 40px for touch. Ordinary fields wrap their controls according to the available
-space and intrinsic control width, rather than per-field wide flags; descriptions retain a readable
-column. Narrow cards let wrapped controls fill the row. Switches, font-size steppers and model
+controls for a mouse, 40px for touch. Ordinary dropdowns, segmented choices and the named palette grid
+share a choice-column width. Segments use a recessed group with a neutral selected surface and edge.
+Named palette choices retain independent bordered tiles with an accent-tinted selected surface and
+accent border, not a shared recessed tray. Both use stronger selected weight and theme-accent text as
+specified in [[design-system]]; palette names and hue markers remain visible. Section icons use theme-accent ink, while heading
+text stays neutral. Category selection, switches and keyboard focus retain their functional emphasis.
+Ordinary fields wrap controls according to available space, rather than per-field wide flags;
+descriptions retain a readable column. Narrow cards let wrapped controls fill the row. Switches, font-size steppers and model
 identity summaries keep their compact layouts. Segment labels do not wrap. Herdr availability and
 pending-restart notes remain unboxed, with each message and its associated action wrapping as
 separate items rather than running together. Terminal settings uses the same category
 navigation for Appearance, Interaction and Saved output under [[terminal]]. Category and subsection
 navigation scroll only dialog content, keeping the header, navigation and utility footer in place.
 The narrow horizontal category strip uses one accent underline for selection, with visible keyboard focus and
-reachable offscreen categories; the desktop sidebar retains its existing treatment. Unknown runtime
+reachable offscreen categories; the desktop sidebar retains its existing treatment. Resizing keeps
+the selected category and its label visible, clear of the strip's fading edges, without resetting
+page scroll or forcing a deliberately browsed strip back on each scroll event. Unknown runtime
 values show Unavailable rather than a confirmed state.
 Open menus can extend beyond cards without clipping. Disabled controls remain legible and distinct
 from selected, available controls.
@@ -126,6 +134,10 @@ read, including command-free extensions. Package update results remain separate 
   right on desktop and left on narrow screens; long names wrap. Pi's package observation provides
   names and source types, not version differences or changelog text; the npm/repository links are
   source references, not embedded release notes.
+- Versions offers Copy beside its check action whenever updates are available, including while
+  the update notice is snoozed. It shares the notice's exact report: available version transitions,
+  sorted extension package names, update commands and release links. A check in progress disables
+  copying the previous observation; clipboard failures stay in this section and can be retried.
 - Explicit checks bypass the cache. Results offer commands or release links; Host/Restart all use
   the confirmation and execution rules in [[host-lifecycle]].
 - The first accepted prompt after 08:00 Host-local time each day invokes cache-aware checks. The

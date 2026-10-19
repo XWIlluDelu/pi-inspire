@@ -33,6 +33,57 @@ async function connectCalibration(page: Page) {
   await chooseSource(page);
 }
 
+test("History recovery uses shared action spacing and keeps Retry reachable in short panes", async ({
+  page,
+}) => {
+  let refuse = true;
+  await page.route("**/api/branches/tree**", async (route) => {
+    if (refuse)
+      await route.fulfill({
+        status: 503,
+        json: { error: "History is temporarily unavailable" },
+      });
+    else await route.fallback();
+  });
+  await connectCalibration(page);
+  const toggle = page.getByRole("button", {
+    name: "Toggle resources panel",
+    exact: true,
+  });
+  if ((await toggle.getAttribute("aria-expanded")) === "false")
+    await toggle.click();
+  const pane = page.locator(".ctx");
+  await pane.getByRole("button", { name: "History", exact: true }).click();
+  await expect(
+    pane.getByText("History is unavailable.", { exact: true }),
+  ).toBeVisible();
+  const retry = pane.getByRole("button", { name: "Retry", exact: true });
+  for (const [width, height] of [
+    [1280, 900],
+    [901, 390],
+    [320, 320],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await retry.focus();
+    await retry.scrollIntoViewIfNeeded();
+    const box = await retry.boundingBox();
+    const viewport = await pane.boundingBox();
+    expect(box!.y).toBeGreaterThanOrEqual(viewport!.y);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(
+      viewport!.y + viewport!.height,
+    );
+    expect(
+      await retry.evaluate((el) => parseFloat(getComputedStyle(el).marginTop)),
+    ).toBe(8);
+    await expect(retry).toBeFocused();
+  }
+  refuse = false;
+  await retry.click();
+  await expect(
+    pane.getByRole("region", { name: "Conversation history" }),
+  ).toBeVisible();
+});
+
 test("Fork restores saved images for preview, editing and explicit resend", async ({
   page,
 }) => {
@@ -346,6 +397,35 @@ test("clears a pending search and retries the selected failed detail without los
     .getByRole("button", { name: "Retry preview", exact: true })
     .click();
   try {
+    const loading = history.locator(".history-detail__body > p[role=status]");
+    await expect(loading).toContainText("Loading complete content");
+    for (const width of [1280, 390, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.evaluate(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      );
+      const layout = await loading.evaluate((el) => {
+        const line = el.getBoundingClientRect();
+        const icon = el.querySelector("svg")!.getBoundingClientRect();
+        const text = [...el.childNodes].find(
+          (node) =>
+            node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+        )!;
+        const offset = text.textContent!.search(/\S/);
+        const range = document.createRange();
+        range.setStart(text, offset);
+        range.setEnd(text, offset + 1);
+        return {
+          center: icon.y + icon.height / 2 - (line.y + line.height / 2),
+          gap: range.getBoundingClientRect().left - icon.right,
+        };
+      });
+      expect(Math.abs(layout.center)).toBeLessThanOrEqual(0.25);
+      expect(layout.gap).toBeCloseTo(8, 1);
+    }
     for (const label of ["Fork to new session", "Clone through here"]) {
       const action = history.getByRole("button", { name: label, exact: true });
       await expect(action).toBeDisabled();
@@ -774,4 +854,214 @@ test("History Edit with a delayed summary preserves a newer draft and image", as
   await page
     .getByRole("button", { name: "Back to latest", exact: true })
     .click();
+});
+
+test("earlier-branch progress identifies the action while keeping both failures recoverable", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await pairedPage(page);
+  await openMockSession(page, /Earlier branch recovery fixture/);
+  const banner = page.getByRole("region", { name: "Earlier branch context" });
+  await expect(banner).toBeVisible();
+  const draft = page.getByRole("textbox", { name: "Message", exact: true });
+  await draft.fill("Keep the calibration draft");
+  for (const [endpoint, label, otherLabel] of [
+    ["clone", "Clone from here", "Back to latest"],
+    ["navigate", "Back to latest", "Clone from here"],
+  ]) {
+    let release!: () => void;
+    let arrive!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const requested = new Promise<void>((resolve) => {
+      arrive = resolve;
+    });
+    const pattern = `**/api/branches/${endpoint}`;
+    await page.route(pattern, async (route) => {
+      arrive();
+      await gate;
+      await route.fulfill({
+        status: 503,
+        json: { error: "Operation temporarily unavailable. Try again." },
+      });
+    });
+    const chosen = banner.getByRole("button", { name: label, exact: true });
+    const other = banner.getByRole("button", { name: otherLabel, exact: true });
+    try {
+      await chosen.click();
+      await requested;
+      await expect(chosen).toHaveAttribute("aria-busy", "true");
+      await expect(chosen.locator(".pi-loading")).toHaveCount(1);
+      await expect(other.locator(".pi-loading")).toHaveCount(0);
+      await expect(chosen).toBeDisabled();
+      await expect(other).toBeDisabled();
+      for (const [width, height] of [
+        [1280, 900],
+        [390, 844],
+        [320, 640],
+      ]) {
+        await page.setViewportSize({ width, height });
+        await expect(chosen).toBeInViewport();
+        expect(
+          await chosen.evaluate((button) => {
+            const box = button.getBoundingClientRect();
+            const owner = button
+              .closest(".earlier-branch-banner")!
+              .getBoundingClientRect();
+            return (
+              box.left >= owner.left &&
+              box.right <= owner.right &&
+              box.top >= owner.top &&
+              box.bottom <= owner.bottom
+            );
+          }),
+        ).toBe(true);
+        await expect(chosen.locator(".pi-loading")).toHaveCount(1);
+      }
+    } finally {
+      release();
+    }
+    await expect(banner.getByRole("alert")).toContainText(
+      "Operation temporarily unavailable",
+    );
+    await expect(chosen).toBeEnabled();
+    await expect(other).toBeEnabled();
+    await expect(banner.locator(".pi-loading")).toHaveCount(0);
+    await expect(draft).toHaveValue("Keep the calibration draft");
+    await page.unroute(pattern);
+  }
+});
+
+test("earlier-branch notice follows reader width and reserves wrapped diagnostics", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await connectCalibration(page);
+  page.on("dialog", (dialog) => void dialog.accept());
+  const history = await openHistory(page);
+  await history
+    .getByRole("searchbox", { name: "Find in history" })
+    .fill("Review calibration run 598");
+  await history
+    .getByRole("button", { name: /Your input.*Review calibration run 598/ })
+    .click();
+  await history
+    .getByRole("button", { name: "Edit in this session", exact: true })
+    .click();
+  const banner = page.getByRole("region", { name: "Earlier branch context" });
+  await expect(banner).toBeVisible();
+  const reader = page.locator(".reading-stage");
+  const resize = page.getByRole("separator", {
+    name: "Resize files panel",
+    exact: true,
+  });
+  for (let step = 0; step < 8; step++) {
+    const before = (await reader.boundingBox())!.width;
+    if (before <= 400.5) break;
+    await resize.press("ArrowLeft");
+    await expect
+      .poll(async () => (await reader.boundingBox())!.width)
+      .toBeLessThan(before - 0.5);
+  }
+  await expect
+    .poll(async () => (await reader.boundingBox())!.width)
+    .toBeLessThanOrEqual(400.5);
+  const measure = () =>
+    banner.evaluate((root) => {
+      const r = (element: Element) => element.getBoundingClientRect();
+      const stage = r(root.closest(".reading-stage")!);
+      const header = r(root.querySelector(".earlier-branch-banner__header")!);
+      const copy = root.querySelector(".earlier-branch-banner__copy")!;
+      const title = root.querySelector("strong")!;
+      const mark = r(
+        root.querySelector(".earlier-branch-banner__header > svg")!,
+      );
+      const actions = r(root.querySelector(".earlier-branch-banner__actions")!);
+      const transcript = root.parentElement!.querySelector(".transcript")!;
+      const style = getComputedStyle(transcript);
+      const needed =
+        r(root).bottom -
+        r(transcript).top +
+        Number.parseFloat(style.getPropertyValue("--space-4"));
+      const range = document.createRange();
+      range.selectNodeContents(copy);
+      return {
+        firstLineOffset:
+          mark.y +
+          mark.height / 2 -
+          r(title).y -
+          Number.parseFloat(getComputedStyle(title).lineHeight) / 2,
+        textFits: [...range.getClientRects()].every(
+          (box) =>
+            box.left >= r(copy).left - 0.5 && box.right <= r(copy).right + 0.5,
+        ),
+        controlsFit:
+          actions.left >= r(root).left && actions.right <= r(root).right,
+        separated:
+          stage.width <= 640
+            ? actions.top >= header.bottom
+            : actions.left >= header.right,
+        paddingRoom:
+          Math.min(
+            Number.parseFloat(style.paddingTop),
+            Number.parseFloat(style.scrollPaddingTop),
+          ) - needed,
+      };
+    });
+  const checkGeometry = async () => {
+    await page.evaluate(() => document.fonts.ready);
+    await expect
+      .poll(async () => (await measure()).paddingRoom)
+      .toBeGreaterThanOrEqual(-0.5);
+    const geometry = await measure();
+    expect(Math.abs(geometry.firstLineOffset)).toBeLessThanOrEqual(0.5);
+    expect(geometry.textFits).toBe(true);
+    expect(geometry.controlsFit).toBe(true);
+    expect(geometry.separated).toBe(true);
+  };
+  await checkGeometry();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const diagnostic =
+    "Unable to read the earlier conversation in /workspace/calibration/long-path-analysis/measurements/reference-calibration-history/session.jsonl. Restore access to the project directory and retry. No conversation changes were saved.";
+  await page.route("**/api/branches/navigate", async (route) => {
+    await gate;
+    await route.fulfill({ status: 503, json: { error: diagnostic } });
+  });
+  await banner
+    .getByRole("button", { name: "Back to latest", exact: true })
+    .click();
+  await expect(banner.locator(".pi-loading")).toBeVisible();
+  await checkGeometry();
+  release();
+  await expect(banner.getByRole("alert")).toHaveText(diagnostic);
+  for (const width of [1280, 820, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    const close = page.getByRole("button", {
+      name: "Close context pane",
+      exact: true,
+    });
+    if (width <= 900 && (await close.isVisible())) await close.click();
+    await checkGeometry();
+  }
+  await page.unroute("**/api/branches/navigate");
+  await banner
+    .getByRole("button", { name: "Back to latest", exact: true })
+    .click();
+  await expect(banner).toHaveCount(0);
+  expect(
+    await page
+      .locator(".transcript-wrap")
+      .evaluate((wrap) =>
+        (wrap as HTMLElement).style.getPropertyValue(
+          "--earlier-branch-banner-bottom",
+        ),
+      ),
+  ).toBe("");
+  expect(errors).toEqual([]);
 });

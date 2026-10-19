@@ -10,7 +10,7 @@ import { openMockEventSession } from "./support/mock-host";
 
 test("regex anchors stay prose beside genuine math across message surfaces", async ({
   page,
-}, testInfo) => {
+}) => {
   const send = await openMockEventSession(
     page,
     "Markdown boundaries",
@@ -76,19 +76,12 @@ test("regex anchors stay prose beside genuine math across message surfaces", asy
         await prose.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
       ).toBe(true);
     }
-    const article = page.getByRole("article", {
-      name: "Regex review",
-      exact: true,
-    });
-    await article.screenshot({
-      path: testInfo.outputPath(width + "-regex-review.png"),
-    });
   }
 });
 
 test("literal syntax and wide formulas remain readable across message surfaces", async ({
   page,
-}, testInfo) => {
+}) => {
   const send = await openMockEventSession(
     page,
     "Literal and formula boundaries",
@@ -176,10 +169,6 @@ test("literal syntax and wide formulas remain readable across message surfaces",
         await vector.evaluate((el) => (el.scrollLeft = 0));
       }
     }
-    if (index === surfaces.length - 1)
-      await page
-        .getByRole("article", { name: "Boundary review", exact: true })
-        .screenshot({ path: testInfo.outputPath("320-boundary-review.png") });
   }
 });
 

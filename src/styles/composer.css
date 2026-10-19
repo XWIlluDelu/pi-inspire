@@ -30,6 +30,7 @@
 .command-activity__item {
   flex: 0 0 auto;
   --command-tone: var(--info);
+  --command-ink: var(--info-ink);
   position: relative;
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr) auto;
@@ -43,23 +44,28 @@
 
 .command-activity__item--running {
   --command-tone: var(--accent-deep);
+  --command-ink: var(--accent-deep);
   border-color: color-mix(in srgb, var(--accent-deep) 28%, var(--hairline));
 }
 
 .command-activity__item--success {
   --command-tone: var(--success);
+  --command-ink: var(--success-ink);
 }
 
 .command-activity__item--warning {
   --command-tone: var(--warning);
+  --command-ink: var(--warning-ink);
 }
 
 .command-activity__item--cancelled {
   --command-tone: var(--muted);
+  --command-ink: var(--muted);
 }
 
 .command-activity__item--error {
   --command-tone: var(--error);
+  --command-ink: var(--error-ink);
   border-color: color-mix(in srgb, var(--error) 24%, var(--hairline));
 }
 
@@ -93,7 +99,7 @@
 
 .command-activity__state {
   flex-shrink: 0;
-  color: var(--command-tone);
+  color: var(--command-ink);
   font-size: var(--text-xs);
   font-weight: 500;
 }
@@ -403,10 +409,10 @@
 
 .composer--compacting,
 .composer--compacting:focus-within {
-  border-color: var(--info);
+  border-color: var(--activity-event);
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--info) 42%, transparent),
-    0 0 10px color-mix(in srgb, var(--info) 18%, transparent);
+    0 0 0 1px color-mix(in srgb, var(--activity-event) 42%, transparent),
+    0 0 10px color-mix(in srgb, var(--activity-event) 18%, transparent);
 }
 
 .composer--failed,
@@ -516,7 +522,6 @@
 
 .composer__delivery .segmented button[aria-pressed="true"] {
   background: var(--bg-surface);
-  color: var(--ink);
   box-shadow: 0 1px 2px rgb(0 0 0 / 6%);
 }
 
@@ -538,13 +543,15 @@
   padding: var(--space-2);
   border: 1px solid color-mix(in srgb, var(--error) 32%, var(--hairline));
   border-radius: var(--radius-control);
-  color: var(--error);
+  color: var(--error-ink);
   font-size: var(--text-xs);
 }
 
-.composer__failed-delivery button {
+.composer__failed-delivery .button {
+  flex: 0 0 auto;
   min-height: 32px;
-  color: var(--ink);
+  padding: var(--space-1) var(--space-2);
+  font-size: inherit;
 }
 
 .composer__meta {
@@ -858,7 +865,7 @@
 }
 
 .meter--warning {
-  color: var(--warning);
+  color: var(--warning-ink);
 }
 
 .meter--warning .meter__ring-fill {
@@ -866,7 +873,7 @@
 }
 
 .meter--error {
-  color: var(--error);
+  color: var(--error-ink);
 }
 
 .meter--error .meter__ring-fill {
@@ -1232,7 +1239,9 @@
 
 .completion__title--file > svg {
   flex: 0 0 13px;
-  align-self: center;
+  align-self: flex-start;
+  /* Follow the first line when a long filename wraps; single lines stay centered. */
+  margin-top: calc((1lh - 13px) / 2);
   color: var(--faint);
 }
 
@@ -1266,7 +1275,7 @@
 }
 
 .completion__empty--error {
-  color: var(--error);
+  color: var(--error-ink);
 }
 
 @media (max-width: 600px) {
@@ -1362,6 +1371,9 @@
   border-bottom: 1px solid var(--hairline);
   background: transparent;
   line-height: 17px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .model-picker__option {

@@ -161,6 +161,7 @@ export function ImageLightbox({
               )}
               label="image"
               className="image-lightbox__control"
+              iconSize={18}
               disabled={!ready}
               onError={(message) => setCopyError({ src: image.src, message })}
             />
@@ -188,6 +189,7 @@ export function ImageLightbox({
         {error ? (
           <div className="image-lightbox__error" role="alert">
             {error}
+            {error.endsWith(".") ? " " : ". "}Use Download image instead.
           </div>
         ) : null}
         <div

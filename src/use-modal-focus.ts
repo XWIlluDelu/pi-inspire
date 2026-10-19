@@ -13,6 +13,7 @@ const FOCUSABLE = [
 ].join(",");
 
 interface ModalEntry {
+  layer: "drawer" | "dialog";
   dialog: HTMLElement;
   restore: HTMLElement | null;
   portals: Map<HTMLElement, HTMLElement>;
@@ -101,6 +102,7 @@ export function useModalFocus<T extends HTMLElement>(
   active = true,
   owner: unknown = active,
   onEscape?: (event: KeyboardEvent) => boolean | void,
+  layer: ModalEntry["layer"] = "dialog",
 ): RefObject<T | null> {
   const dialogRef = useRef<T>(null);
   const previousEntryRef = useRef<ModalEntry | null>(null);
@@ -116,6 +118,7 @@ export function useModalFocus<T extends HTMLElement>(
         : null;
     const previous = previousEntryRef.current;
     const entry: ModalEntry = {
+      layer,
       dialog,
       // StrictMode replays layout effects after focus has entered this same
       // dialog. Preserve its outside opener, not the now-focused close button.
@@ -127,9 +130,19 @@ export function useModalFocus<T extends HTMLElement>(
       portals: new Map(),
     };
     previousEntryRef.current = entry;
-    modalStack.push(entry);
+    // A responsive drawer can become modal underneath an already-open dialog.
+    // Match the visible layers instead of giving the latest effect all focus.
+    const above =
+      layer === "drawer"
+        ? modalStack.findIndex((candidate) => candidate.layer === "dialog")
+        : -1;
+    if (above < 0) modalStack.push(entry);
+    else modalStack.splice(above, 0, entry);
 
-    if (!containsFocus(entry, document.activeElement)) {
+    if (
+      modalStack.at(-1) === entry &&
+      !containsFocus(entry, document.activeElement)
+    ) {
       initialFocus(entry).focus();
     }
 
@@ -209,6 +222,7 @@ export function useModalFocus<T extends HTMLElement>(
       window.removeEventListener("keydown", trapKeys, true);
       document.removeEventListener("keydown", escape);
       window.removeEventListener("keydown", escape);
+      const wasTop = modalStack.at(-1) === entry;
       const index = modalStack.lastIndexOf(entry);
       if (index >= 0) modalStack.splice(index, 1);
       const remaining = modalStack.at(-1);
@@ -221,6 +235,7 @@ export function useModalFocus<T extends HTMLElement>(
         ) {
           remaining.restore = entry.restore?.isConnected ? entry.restore : null;
         }
+        if (!wasTop) return;
         const target =
           entry.restore?.isConnected && containsFocus(remaining, entry.restore)
             ? entry.restore
@@ -236,7 +251,7 @@ export function useModalFocus<T extends HTMLElement>(
         });
       }
     };
-  }, [active, owner]);
+  }, [active, owner, layer]);
 
   useLayoutEffect(() => {
     const entry = previousEntryRef.current;

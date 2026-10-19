@@ -50,6 +50,20 @@ describe("Settings restart controls", () => {
     );
     expect(fixture.start).toHaveBeenCalledWith("all", "fixture-host", false);
   });
+  it("suspends a portaled confirmation without restarting or losing the selected scope", () => {
+    const { rerender } = render(<HostRestartSettings />);
+    fireEvent.click(screen.getByRole("button", { name: "Restart all" }));
+    expect(screen.getByRole("alertdialog")).toBeVisible();
+    rerender(<HostRestartSettings suspended />);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(fixture.start).not.toHaveBeenCalled();
+    rerender(<HostRestartSettings />);
+    expect(screen.getByRole("alertdialog")).toHaveAccessibleName(
+      "Restart all?",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(fixture.start).not.toHaveBeenCalled();
+  });
   it.each([
     ["host", "active-work"],
     ["all", "in-flight-operation"],

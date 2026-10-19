@@ -66,6 +66,7 @@ export function ModelSelector({
     return {
       context: root,
       anchor: trigger.getBoundingClientRect(),
+      positioningRoot: trigger.closest<HTMLElement>(".overlay"),
       observe: [trigger],
     };
   }, []);

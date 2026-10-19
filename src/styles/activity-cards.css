@@ -41,7 +41,7 @@
   overflow: hidden;
 }
 .shell-execution.card--failed .shell-execution__status {
-  color: var(--error);
+  color: var(--error-ink);
 }
 .shell-execution__header {
   display: flex;
@@ -102,8 +102,16 @@
 .shell-execution__note {
   color: var(--muted);
 }
+.shell-execution__note .tool-notice__action {
+  min-height: 24px;
+}
+@media (pointer: coarse) {
+  .shell-execution__note .tool-notice__action {
+    min-height: 44px;
+  }
+}
 .shell-execution__error {
-  color: var(--activity-error);
+  color: var(--error-ink);
 }
 
 @keyframes card-in {
@@ -603,7 +611,7 @@
 }
 
 .card__mono--error {
-  color: var(--error);
+  color: var(--error-ink);
 }
 
 /* Unified diffs in tool results: line-level tints derived from the status
@@ -799,6 +807,10 @@
   text-overflow: ellipsis;
 }
 
+.resource-path__separator {
+  flex: 0 0 auto;
+}
+
 .resource-path__leaf {
   flex: 0 0 auto;
   max-width: 100%;
@@ -808,6 +820,10 @@
   direction: rtl;
   text-align: start;
   text-overflow: ellipsis;
+}
+
+.resource-path__separator + .resource-path__leaf {
+  max-width: calc(100% - 1ch);
 }
 
 .tool-summary__resource:hover,
@@ -984,6 +1000,10 @@ details[open] > .detail-summary .detail-summary__chevron {
   font-variant-numeric: tabular-nums;
 }
 
+.tool-call-list__error-count {
+  color: var(--error-ink);
+}
+
 .child-calls {
   max-height: min(20rem, 45vh);
   overflow: auto;
@@ -1008,13 +1028,15 @@ summary.child-call__row {
 }
 
 @media (hover: hover) {
-  summary.child-call__row:hover {
-    background: var(--bg-inset);
+  summary.child-call__row:hover .child-call__name,
+  summary.child-call__row:hover .child-call__chevron {
+    color: var(--ink);
   }
 }
 
-summary.child-call__row:active {
-  background: var(--bg-inset);
+summary.child-call__row:active .child-call__name,
+summary.child-call__row:active .child-call__chevron {
+  color: var(--ink);
 }
 
 .child-call__row::-webkit-details-marker {
@@ -1201,7 +1223,7 @@ span.card__file-arg {
 .tool-terminal--error,
 .tool-text--error {
   border-color: color-mix(in srgb, var(--error) 28%, var(--hairline));
-  color: var(--error);
+  color: var(--error-ink);
 }
 
 .tool-markdown {
@@ -1216,7 +1238,7 @@ span.card__file-arg {
 
 .tool-markdown--error {
   border-color: color-mix(in srgb, var(--error) 28%, var(--hairline));
-  color: var(--error);
+  color: var(--error-ink);
 }
 
 .tool-presentation .diff {
@@ -1396,12 +1418,12 @@ span.card__file-arg {
 
 .tool-notice--warning {
   border-left-color: var(--warning);
-  color: var(--warning);
+  color: var(--warning-ink);
 }
 
 .tool-notice--error {
   border-left-color: var(--error);
-  color: var(--error);
+  color: var(--error-ink);
 }
 
 /* --- Rich text (rendered Markdown) --- */
@@ -1510,8 +1532,28 @@ span.card__file-arg {
 }
 
 .rich-text .contains-task-list {
-  list-style: none;
+  --task-indent: calc(13px + var(--space-1) + var(--space-2));
   padding-left: var(--space-2);
+}
+
+.rich-text .task-list-item {
+  list-style: none;
+}
+
+.rich-text .contains-task-list > li:not(.task-list-item) {
+  margin-left: var(--task-indent);
+}
+
+/* Normal flow preserves paragraph margins and nested-list hierarchy. */
+.rich-text__task-content {
+  margin-left: var(--task-indent);
+}
+
+/* The zero-width anchor follows the actual first-line baseline, including
+   tall math; the checkbox margins hang its box in the reserved gutter. */
+.rich-text__task-marker {
+  display: inline-block;
+  width: 0;
 }
 
 /* Task markers share the choice skin, but remain normal-weight document
@@ -1519,7 +1561,7 @@ span.card__file-arg {
 .rich-text .contains-task-list input[type="checkbox"] {
   width: 13px;
   height: 13px;
-  margin: 0 var(--space-2) 0 var(--space-1);
+  margin: 0 var(--space-2) 0 calc(-13px - var(--space-2));
   vertical-align: -0.15em;
   opacity: 1;
   cursor: default;
@@ -1592,6 +1634,7 @@ span.card__file-arg {
   justify-content: center;
   width: 24px;
   height: 24px;
+  padding: 0;
   border: 0;
   background: transparent;
   color: var(--faint);
@@ -1599,6 +1642,10 @@ span.card__file-arg {
   transition:
     color var(--dur-micro) var(--ease-standard),
     background var(--dur-micro) var(--ease-standard);
+}
+
+.code-block__actions > button > svg {
+  flex: 0 0 auto;
 }
 
 @media (hover: hover) {

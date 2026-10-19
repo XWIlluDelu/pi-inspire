@@ -287,8 +287,13 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   process lists its own filesystem (`GET /api/host/dirs`, authenticated,
   session-independent), so over SSH forwards or remote deployments the browsed tree is always the
   machine sessions run on, and entry paths arrive joined with the host's own separators. Root
-  discovery is host-owned too: POSIX exposes `/`, while Windows exposes every currently readable
-  drive root so a user can cross from `C:\` to `D:\` without inventing a nonexistent common parent.
+  discovery is host-owned too: POSIX exposes `/`, while Windows enumerates assigned drive names
+  without filesystem availability probes, so a user can cross from `C:\` to `D:\` without inventing
+  a nonexistent common parent. Availability is checked when the user enters a drive. Drive discovery
+  loads independently of the current directory: a disconnected mapping, slow native query or failed
+  root request cannot withhold a valid local listing or confirmation. Failure offers typed-path
+  guidance without turning a successful directory load into an error; late discovery belongs to
+  the dialog lifetime, not a superseded directory request.
   A missing or relative starting point falls back to the host home. The picker path is editable,
   automatically wraps long text and grows/shrinks with content and available width. Typed project
   paths expand Host-native `~`/`~/` (also `~\` on Windows) before browsing, model/file observations,

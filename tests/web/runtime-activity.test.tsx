@@ -151,6 +151,7 @@ describe("runtime-owned activity", () => {
       name: "Jump to 1 pending item",
     });
     expect(button).toHaveTextContent("1 Pending");
+    expect(button).toHaveClass("chip--info");
     fireEvent.click(button);
     expect(navigate).toHaveBeenCalledOnce();
     act(() => socket().emit({ type: "snapshot", data: snapshot }));
@@ -166,6 +167,9 @@ describe("runtime-owned activity", () => {
       expect(progress()).not.toBeInTheDocument();
       start(reason);
       expect(progress()).toHaveTextContent("Compacting context");
+      expect(progress()?.querySelector(".chip")).toHaveClass(
+        "chip--activity-event",
+      );
       expect(progress()).not.toHaveTextContent("/compact");
       expect(progress()).not.toHaveTextContent("%");
       finish(reason, { result: { summary: "Pi-owned summary" } });
@@ -276,6 +280,9 @@ describe("runtime-owned activity", () => {
       renderActivity();
       expect(retryStatus()).toHaveTextContent(
         detail ? "Retry 2/3 — Provider overloaded" : "Retrying",
+      );
+      expect(retryStatus()?.querySelector(".chip")).toHaveClass(
+        "chip--warning",
       );
       if (detail)
         expect(

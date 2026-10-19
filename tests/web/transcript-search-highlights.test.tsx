@@ -4,6 +4,30 @@ import { describe, expect, it } from "vitest";
 import { renderedSearchRanges } from "../../src/components/transcript-search-highlights";
 
 describe("rendered transcript search", () => {
+  it("highlights filename labels, not their full-path tooltip or transport metadata", () => {
+    const { container } = render(
+      <div>
+        <div className="rich-text">
+          <p>Inspect this</p>
+        </div>
+        <ul className="user-bubble__files">
+          <li title="/cache/report.md">
+            <span>report.md</span>
+          </li>
+          <li title="/workspace/report.md">
+            <span>report.md</span>
+          </li>
+        </ul>
+      </div>,
+    );
+    expect(
+      renderedSearchRanges(container, "report.md").map((range) =>
+        range.toString(),
+      ),
+    ).toEqual(["report.md", "report.md"]);
+    expect(renderedSearchRanges(container, "/cache")).toHaveLength(0);
+  });
+
   it("maps literal text across emphasis without altering markup or copy text", () => {
     const { container } = render(
       <div className="rich-text">

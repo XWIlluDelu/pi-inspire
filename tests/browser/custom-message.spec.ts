@@ -1,9 +1,12 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+import { PALETTE_PREFERENCES } from "../../shared/contracts";
+import { conversationFeedbackMessages } from "../web/fixtures/conversation-feedback";
 import {
   customMessageConfiguration,
   incomingIntercom,
 } from "../web/fixtures/custom-message-presentation";
+import { renderedColors } from "./support/colors";
 import { openMockEventSession } from "./support/mock-host";
 
 test.use({ serviceWorkers: "block" });
@@ -148,6 +151,58 @@ test("sender-led custom messages preserve content, keyboard inspection and respo
   expect(errors).toEqual([]);
 });
 
+test("context and extension glyphs follow Tool through live palette changes", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  const send = await openReview(page);
+  send(conversationFeedbackMessages[1]!);
+  send(incomingIntercom("The full message remains independently readable."));
+  const checkpoint = page.getByRole("button", {
+    name: "Magic Context compacted",
+    exact: true,
+  });
+  const message = page.getByRole("article", {
+    name: "Inspire: composer editing",
+  });
+  await expect(checkpoint).toBeVisible();
+  await expect(message).toBeVisible();
+  for (const palette of PALETTE_PREFERENCES)
+    for (const theme of ["light", "dark"]) {
+      const tool = await page.evaluate(
+        ({ palette, theme }) => {
+          Object.assign(document.documentElement.dataset, { palette, theme });
+          const probe = document.createElement("span");
+          probe.style.color = "var(--activity-tool)";
+          document.body.append(probe);
+          const color = getComputedStyle(probe).color;
+          probe.remove();
+          return color;
+        },
+        { palette, theme },
+      );
+      for (const glyph of [
+        checkpoint.locator(".context-checkpoint__icon"),
+        message.locator(".custom-message__head > svg"),
+      ]) {
+        await expect(glyph).toHaveCSS("color", tool);
+        expect((await renderedColors(glyph)).contrast).toBeGreaterThanOrEqual(
+          3,
+        );
+      }
+    }
+  await checkpoint.click();
+  await expect(
+    page.getByRole("button", { name: "Copy compaction summary", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".context-checkpoint__body")).toContainText(
+    "Keep the current design decisions.",
+  );
+  await expect(message.locator(".custom-message__body")).toHaveText(
+    "The full message remains independently readable.",
+  );
+});
+
 test("Markdown tables preserve word minima and keep long tokens in their own scrollport", async ({
   page,
 }) => {
@@ -199,6 +254,11 @@ test.describe("touch custom messages", () => {
     const card = page.getByRole("article", {
       name: "Inspire: composer editing",
     });
+    // Wait for the deferred Markdown body, not its plain-text loading shell:
+    // geometry and a rapid second tap must target the stable reading surface.
+    await expect(
+      card.getByRole("heading", { name: "Composer review ready" }),
+    ).toBeVisible();
     const copy = card.getByRole("button", {
       name: "Copy inspire: composer editing block",
     });

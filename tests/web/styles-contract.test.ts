@@ -38,8 +38,13 @@ describe("static asset contracts", () => {
   it("does not reference undeclared project CSS variables", async () => {
     const css = (await readStylesheet()).replace(/\/\*[\s\S]*?\*\//g, "");
     const declared = declaredVariables(css);
-    // These controls supply their option/visible-key counts inline.
-    for (const owner of ["SettingsControls", "TerminalTouchKeys"]) {
+    // These controls supply their layout counts inline.
+    for (const owner of [
+      "PromptMap",
+      "ChangesPane",
+      "SettingsControls",
+      "TerminalTouchKeys",
+    ]) {
       const source = await readFile(
         new URL(`../../src/components/${owner}.tsx`, import.meta.url),
         "utf8",
