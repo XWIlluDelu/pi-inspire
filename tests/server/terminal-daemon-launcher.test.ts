@@ -65,7 +65,11 @@ it("does not replace a listening incompatible daemon or terminate its independen
           INSPIRE_TERMINAL_STATE_PATH: join(directory, "state.json"),
         },
       }),
-    ).rejects.toThrow("inspire restart --all");
+    ).rejects.toThrow(
+      process.platform === "linux"
+        ? "Settings → System → Restart all"
+        : "Host-only restart cannot replace it.",
+    );
     expect(server.listening).toBe(true);
     expect(modes).toEqual(["rpc"]);
     const { spawn } = await import("node:child_process");

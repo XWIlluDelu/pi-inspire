@@ -25,7 +25,7 @@ function fixture(overrides: Partial<HostRestartBackend> = {}) {
     releaseMaintenanceRestart: vi.fn(() => ({ kind: "released" })),
   };
   const backend: HostRestartBackend = {
-    inspect: vi.fn(async () => true),
+    inspect: vi.fn(async () => ({ host: true, all: true })),
     prepare: vi.fn(async () => {}),
     request: vi.fn(async (_all, commit) =>
       commit() ? { code: 0 } : { code: 1, issued: false },
@@ -178,13 +178,39 @@ describe("manual Host restart ownership", () => {
   });
 
   it("does not prepare or restart unsupported services", async () => {
-    const f = fixture({ inspect: vi.fn(async () => false) });
+    const f = fixture({
+      inspect: vi.fn(async () => ({ host: false, all: false })),
+    });
     expect((await f.controller.status()).available).toBe(false);
     f.controller.start(await intent(f.controller));
     await vi.waitFor(async () =>
       expect((await f.controller.status()).operation?.phase).toBe("rejected"),
     );
     expect(f.backend.prepare).not.toHaveBeenCalled();
+  });
+
+  it("reports scopes separately and rejects unsupported full restart before preparation", async () => {
+    const f = fixture({
+      inspect: vi.fn(async () => ({ host: true, all: false })),
+    });
+    expect(await f.controller.status()).toMatchObject({
+      available: true,
+      allAvailable: false,
+      allReason: expect.stringContaining("Linux systemd"),
+    });
+    f.controller.start(await intent(f.controller));
+    await vi.waitFor(async () =>
+      expect((await f.controller.status()).operation).toMatchObject({
+        phase: "rejected",
+        error: expect.stringContaining("Restart all requires"),
+      }),
+    );
+    expect(f.backend.prepare).not.toHaveBeenCalled();
+    expect(f.runtime.reserveMaintenanceRestart).not.toHaveBeenCalled();
+    f.controller.start({ ...(await intent(f.controller)), scope: "host" });
+    await vi.waitFor(async () =>
+      expect((await f.controller.status()).operation?.phase).toBe("submitted"),
+    );
   });
 
   it("releases only after proven non-issuance", async () => {

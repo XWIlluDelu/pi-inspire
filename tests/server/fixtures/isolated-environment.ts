@@ -26,6 +26,9 @@ export function isolatedTestEnvironment(
   const systemRoot = Object.entries(source).find(
     ([key]) => normalize(key) === "systemroot",
   )?.[1];
+  const programFiles = Object.entries(source).find(
+    ([key]) => normalize(key) === "programfiles",
+  )?.[1];
   const defaults: NodeJS.ProcessEnv = {
     HOME: root,
     USERPROFILE: root,
@@ -43,9 +46,23 @@ export function isolatedTestEnvironment(
     PI_OFFLINE: "1",
     PI_SKIP_VERSION_CHECK: "1",
     PI_TELEMETRY: "0",
+    // Retain system runtime locations, never user module paths or caches.
+    ...(windows && systemRoot
+      ? {
+          windir: systemRoot,
+          SystemDrive: win32.parse(systemRoot).root.replace(/[\\\\/]$/u, ""),
+          ComSpec: win32.join(systemRoot, "System32", "cmd.exe"),
+        }
+      : {}),
+    ...(windows && programFiles
+      ? { PSModulePath: win32.join(programFiles, "PowerShell", "7", "Modules") }
+      : {}),
     PATH: windows
       ? [
           dirname(process.execPath),
+          ...(programFiles
+            ? [win32.join(programFiles, "PowerShell", "7")]
+            : []),
           ...(systemRoot ? [path.join(systemRoot, "System32")] : []),
         ].join(";")
       : [dirname(process.execPath), "/usr/bin", "/bin"].join(":"),

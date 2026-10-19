@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { developmentLaunch } from "./scripts/vite-dev-launch.js";
 import { bundledLicenseNotices } from "./scripts/vite-license-notices.js";
 import { pdfAssets } from "./scripts/vite-pdf-assets.js";
 
@@ -11,11 +12,12 @@ const piTuiFuzzyModule = resolve(
   "fuzzy.js",
 );
 
-// Development proxy targets the local insπre host (server/index.ts, port 4587).
-// The host uses the deterministic development-only token INSPIRE_TOKEN=inspire-dev-token
-// (see the dev:host script); production reuses a private installation token.
+const backendHost = process.env.INSPIRE_HOST ?? "127.0.0.1";
+const backendPort = process.env.INSPIRE_PORT ?? "4587";
+const backend = `http://${backendHost === "::1" ? "[::1]" : backendHost}:${backendPort}`;
+
 export default defineConfig({
-  plugins: [react(), pdfAssets(), bundledLicenseNotices()],
+  plugins: [react(), pdfAssets(), bundledLicenseNotices(), developmentLaunch()],
   resolve: {
     // pi-tui publicly exports fuzzyFilter from its Node-only package root. The
     // browser consumes that exact module without pulling in the terminal UI.
@@ -30,23 +32,24 @@ export default defineConfig({
     ],
   },
   server: {
-    port: 5173,
-    strictPort: false,
+    host: "127.0.0.1",
+    port: Number(process.env.INSPIRE_DEV_PORT ?? "5173"),
+    strictPort: true,
     proxy: {
       "/html-preview": {
-        target: "http://127.0.0.1:4587",
+        target: backend,
         changeOrigin: false,
       },
       "/api": {
-        target: "http://127.0.0.1:4587",
+        target: backend,
         changeOrigin: false,
       },
       "/events": {
-        target: "ws://127.0.0.1:4587",
+        target: backend.replace(/^http:/u, "ws:"),
         ws: true,
       },
       "/terminal": {
-        target: "ws://127.0.0.1:4587",
+        target: backend.replace(/^http:/u, "ws:"),
         changeOrigin: false,
         ws: true,
       },

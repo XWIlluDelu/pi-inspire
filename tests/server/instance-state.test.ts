@@ -1,8 +1,19 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { InstanceHttpControl } from "../../server/instance-control.mjs";
 import {
   consumeStopRequest,
   INSTANCE_STATE_VERSION,
@@ -56,17 +67,52 @@ function state(port = 4587): InstanceState {
 }
 
 describe("Inspire instance state", () => {
+  it("cancels a dedicated foreign-PID birth query without changing default lookup", async () => {
+    const child = spawn(
+      process.execPath,
+      ["-e", "setTimeout(() => {}, 30000)"],
+      { stdio: "ignore", windowsHide: true },
+    );
+    try {
+      await once(child, "spawn");
+      const controller = new AbortController();
+      controller.abort();
+      await expect(
+        processStartIdentity(child.pid!, controller.signal),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(await processStartIdentity(child.pid!)).toEqual(
+        expect.any(String),
+      );
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, "exit");
+        child.kill("SIGKILL");
+        await exited;
+      }
+    }
+  });
+
+  it("does not cancel or poison the shared immutable self-birth cache", async () => {
+    const birth = await processStartIdentity(process.pid);
+    const controller = new AbortController();
+    controller.abort();
+    expect(await processStartIdentity(process.pid, controller.signal)).toBe(
+      birth,
+    );
+    expect(await processStartIdentity(process.pid)).toBe(birth);
+  });
+
   it("writes private atomic state and removes only the exact owner", async () => {
     const path = await temporaryStatePath();
     const value = state();
     await writeInstanceState(path, value);
 
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual(value);
-    expect(instanceUrl({ ...value, token: "custom/token?" })).toContain(
-      "token=custom%2Ftoken%3F",
+    expect(instanceUrl({ ...value, token: "custom/token?" })).toBe(
+      "http://127.0.0.1:4587/",
     );
-    expect(instanceUrl({ ...value, token: "local-token" })).toContain(
-      "token=local-token",
+    expect(instanceUrl({ ...value, token: "local-token", host: "::1" })).toBe(
+      "http://[::1]:4587/",
     );
     if (process.platform !== "win32")
       expect((await stat(path)).mode & 0o777).toBe(0o600);
@@ -112,16 +158,26 @@ describe("Inspire instance state", () => {
 
   it("recognizes only a verified process with a healthy authenticated host", async () => {
     const path = await temporaryStatePath();
-    const server = createServer((request, response) => {
-      if (
-        request.headers.authorization !==
-        "Bearer test-token-with-sufficient-entropy"
-      ) {
+    const control = new InstanceHttpControl();
+    let owner: InstanceState;
+    const server = createServer(async (request, response) => {
+      expect(request.headers.authorization).toBeUndefined();
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const grant = control.accept(
+        owner,
+        JSON.parse(Buffer.concat(chunks).toString("utf8")),
+      );
+      if (!grant) {
         response.writeHead(401).end();
         return;
       }
       response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify({ appName: "inspire", mock: false }));
+      response.end(
+        JSON.stringify(
+          control.reply(grant, { appName: "inspire", mock: false }),
+        ),
+      );
     });
     servers.push(server);
     await new Promise<void>((resolve) =>
@@ -132,6 +188,8 @@ describe("Inspire instance state", () => {
       throw new Error("Expected a TCP test server");
     const value = state(address.port);
     value.processStartTime = await processStartIdentity(process.pid);
+    value.httpControlVersion = 1;
+    owner = { ...value };
     await writeInstanceState(path, value);
     const processMarker = process.argv[0] as string;
 
@@ -169,7 +227,76 @@ describe("Inspire instance state", () => {
         { processMarker },
       ),
     ).resolves.toEqual({ kind: "stale" });
-  });
+  }, 45_000);
+
+  it("does not merge distinct case-sensitive roots even under Windows rules", async (context) => {
+    const path = await temporaryStatePath();
+    const lower = path + "-root";
+    const upper = path + "-ROOT";
+    await mkdir(lower);
+    if (
+      await access(upper).then(
+        () => true,
+        () => false,
+      )
+    )
+      return context.skip();
+    await mkdir(upper);
+    const owner = {
+      ...state(),
+      root: upper,
+      processStartTime: await processStartIdentity(process.pid),
+    };
+    await writeInstanceState(path, owner);
+    // Use the real case-sensitive filesystem while selecting Windows path
+    // rules. Reject before any process query/network call; no OS is emulated.
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { value: "win32" });
+    try {
+      await expect(
+        inspectInstance(path, {
+          root: lower,
+          host: owner.host,
+          port: owner.port,
+        }),
+      ).resolves.toEqual({ kind: "stale" });
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
+  }, 30_000);
+
+  it("accepts an existing root's case alias only on an actually aliasing volume", async (context) => {
+    const path = await temporaryStatePath();
+    const lower = path + "-root";
+    const upper = path + "-ROOT";
+    await mkdir(lower);
+    if (
+      !(await access(upper).then(
+        () => true,
+        () => false,
+      ))
+    )
+      return context.skip();
+    const owner = {
+      ...state(),
+      root: lower,
+      processStartTime: await processStartIdentity(process.pid),
+    };
+    await writeInstanceState(path, owner);
+    // A live non-Host test process is unavailable, not a mismatched-root stale
+    // publication, when the native filesystem confirms that both names alias.
+    await expect(
+      inspectInstance(
+        path,
+        {
+          root: upper,
+          host: owner.host,
+          port: owner.port,
+        },
+        { processMarker: process.argv[0] },
+      ),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+  }, 30_000);
 
   it("reports port ownership without disturbing the listener", async () => {
     const server = createServer();

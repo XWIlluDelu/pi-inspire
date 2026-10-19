@@ -155,7 +155,7 @@ function TokenGate() {
           <h1 className="token-gate__title">Pair this browser</h1>
           <p className="token-gate__hint">
             The host is running, but this browser has not been paired yet. Open
-            the URL printed by <code>./inspire</code>, or paste its access token
+            the URL printed by your Inspire launcher, or paste its access token
             once below. The pairing is remembered on this device. Pair only a
             device you trust: it can control Pi, project files, and terminals
             with your user account&apos;s permissions.
@@ -264,10 +264,10 @@ function HostUnavailable({
         (problem.kind === "address-unreachable" ||
           problem.kind === "service-error") ? (
           <div className="token-gate__instruction">
-            <span>
-              Start or restart the local Host from the project directory:
-            </span>
-            <code>./inspire</code>
+            <span>Start or restart the Host with the installed launcher:</span>
+            <code>inspire restart</code>
+            <span>Or, from a source checkout:</span>
+            <code>npm run inspire -- restart</code>
           </div>
         ) : null}
         <div className="token-gate__actions">

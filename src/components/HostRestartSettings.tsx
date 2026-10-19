@@ -102,12 +102,14 @@ export function HostRestartSettings() {
   const operation = state.status?.operation;
   const active = operation && operation.phase !== "rejected";
   const disabled =
-    !state.status?.available ||
+    !state.status ||
     state.blocked ||
     state.sending ||
     !!state.pending ||
     !!active ||
     !!state.error;
+  const hostDisabled = disabled || !state.status?.available;
+  const allDisabled = disabled || !state.status?.allAvailable;
   const canStopAndRestart =
     !disabled &&
     operation?.phase === "rejected" &&
@@ -133,7 +135,7 @@ export function HostRestartSettings() {
         label="Restart Host"
         description="Restart Inspire and its Pi sessions; keep terminals running."
       >
-        {canStopAndRestart && operation?.scope === "host" ? (
+        {canStopAndRestart && !hostDisabled && operation?.scope === "host" ? (
           <button
             type="button"
             className="button button--danger"
@@ -152,7 +154,7 @@ export function HostRestartSettings() {
             type="button"
             className="button button--danger-outline"
             aria-label="Restart Host"
-            disabled={disabled}
+            disabled={hostDisabled}
             onClick={() =>
               setConfirmation({
                 scope: "host",
@@ -168,9 +170,13 @@ export function HostRestartSettings() {
       </SettingField>
       <SettingField
         label="Restart all"
-        description="Restart Inspire and Pi, and close all project terminals."
+        description={
+          state.status && !state.status.allAvailable
+            ? state.status.allReason
+            : "Restart Inspire and Pi, and close all project terminals."
+        }
       >
-        {canStopAndRestart && operation?.scope === "all" ? (
+        {canStopAndRestart && !allDisabled && operation?.scope === "all" ? (
           <button
             type="button"
             className="button button--danger"
@@ -189,7 +195,7 @@ export function HostRestartSettings() {
             type="button"
             className="button button--danger-outline"
             aria-label="Restart all"
-            disabled={disabled}
+            disabled={allDisabled}
             onClick={() =>
               setConfirmation({
                 scope: "all",

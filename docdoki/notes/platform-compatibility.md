@@ -42,9 +42,23 @@ for `file://` and `vscode://file/` references, and resolve directory aliases bef
 export source and target identity. Windows rename and cleanup may require the relevant open handles
 to close first.
 
+Workspace containment cannot use `win32.relative` alone: it folds case even when an NTFS directory
+is case-sensitive. `server/filesystem-containment.ts` keeps canonical segment prefixes fast and uses
+live directory identity only for plausible spelling/Unicode aliases. Similarity merely selects a
+candidate; the same directory object must prove authority. Files, preview capabilities, project
+references/configuration and installed package entries share this boundary while retaining their
+file-handle and version rechecks. These live dev/inode comparisons are not cross-restart volume IDs.
+
 Windows terminal logs use a read/write descriptor positioned at EOF. Append-only handles can refuse
 truncate-to-tail even when ordinary appends succeed. Restored headless terminals use the same
 options as live ones; otherwise old logs can accumulate during restoration.
+
+Configuration edit locks distinguish a regular file's native target from a final symlink's separate
+lexical and target authorities. Locking differently cased aliases of the same regular file twice can
+self-conflict on a case-insensitive volume. `server/configuration-edit-locks.ts` takes only its target
+lock while preserving both for symlinks and creation; it neither merges hardlinks by inode nor
+lowercases paths. Both editors still recheck target/revision before publishing. Native case-alias
+saves run only when the actual test volume supports them. See [[mcp]] and [[model-settings]].
 
 Herdr scope cleanup opens the verified cgroup directory before killing or polling. A directory
 removed after it is opened may return `ENODEV` rather than `ENOENT`; both mean that opened cgroup
@@ -61,6 +75,12 @@ PowerShell emits its execution marker after `PSConsoleHostReadLine` returns the 
 Wrapping the reader preserves PSReadLine bindings and multiline input. Rebinding Enter would mark
 unfinished input as execution.
 
+Bash ignores rcfile/init-file injection for a genuine login shell, even with noprofile. Replaying
+profiles from a non-login shell cannot restore login_shell or native .bash_logout. Login integration
+therefore uses an inherited first-prompt bootstrap without changing HOME/ENV or feeding stdin.
+User startup can replace/lock PROMPT_COMMAND; marker loss then means ordinary PTY operation, not
+permission to override user initialization. Non-login shells keep native bashrc semantics.
+
 Bash 4.4+ provides `PS0`. Older Bash uses a top-level DEBUG event composed with existing traps;
 standalone subshell-only lists may provide no such event and therefore no copyable output range.
 Bash 5.1+ supports array-valued `PROMPT_COMMAND`; earlier versions need newline-separated shell
@@ -73,6 +93,16 @@ terminal checks need a real interactive shell as well as mocked transport covera
 Native test fixtures use `tests/server/fixtures/isolated-environment.ts` to replace Windows
 variables case-insensitively while preserving inherited key spelling. Adding `PATH` beside an erased
 `Path` can hide the intended override because Node deduplicates keys before dropping undefined values.
+
+Fake-worker fixtures substitute only their volume-identity adapter, not the actual Host platform,
+locks, process birth or durable registration. Their scans stay within owned roots. Wait for lifecycle
+signals rather than treating a one-second poll as the protocol deadline. Loading-state fixtures hold
+the explicit action, not an assumed ordinal initial request. Native clipboard comparisons retain all
+text/lines while accounting for Windows CRLF.
+
+Mixed native font stacks expose box-centering errors that may be invisible with another platform's
+fonts. Prompt navigation aligns text by its shared baseline and centers the neighboring SVG separately;
+it does not use OS-specific pixel offsets or change the virtual row height.
 
 Relevant suites: `tests/server/terminal-*.test.ts`, `tests/portable/`,
 `tests/deploy/systemd-control.test.mjs` and `tests/launcher.test.ts`.

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -40,33 +41,25 @@ function stateForRoot(value, root) {
   );
 }
 
-function displayHost(host) {
-  return host === "::1" ? "[::1]" : host;
-}
+const sourceControl = new URL("../../server/instance-control.mjs", import.meta.url);
+const controlModule = existsSync(sourceControl)
+  ? sourceControl
+  : new URL("../../build/server/instance-control.mjs", import.meta.url);
+let control;
 
 export async function requestMaintenance(state, action = "", leaseId) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(
-      `http://${displayHost(state.host)}:${state.port}/api/maintenance/restart${action ? `/${action}` : ""}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${state.token}`,
-          "Content-Type": "application/json",
-        },
-        body: leaseId === undefined ? undefined : JSON.stringify({ leaseId }),
-        signal: controller.signal,
-      },
-    );
-    if (!response.ok) return null;
-    return await response.json();
-  } catch {
+  if (
+    state.httpControlVersion !== 1 ||
+    !["", "commit", "release"].includes(action)
+  )
     return null;
-  } finally {
-    clearTimeout(timeout);
-  }
+  const { requestInstanceControl } = await (control ??= import(controlModule.href));
+  return requestInstanceControl(
+    state,
+    action ? `maintenance-${action}` : "maintenance-prepare",
+    leaseId === undefined ? {} : { leaseId },
+    REQUEST_TIMEOUT_MS,
+  );
 }
 
 /** No cached boolean authorization and no commit retries. A timed-out commit

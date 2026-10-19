@@ -66,7 +66,7 @@ A Host-only restart preserves the existing terminal daemon and its environment.
 
 Pair once on a trusted browser profile. Inspire stores a non-extractable WebCrypto signing key in that origin's IndexedDB, alongside a public Host-authenticated registration certificate. The Host token is not stored in the browser. Reloads and Host restarts authenticate a one-use challenge with this key, then use a five-minute API bearer held only in page memory. Browser ports and tabs have independent API credentials; only tabs on the same origin share the stored pairing key. WebSocket connections use short-lived, single-use origin/audience tickets, not cookies or query-token authentication.
 
-A direct local launch replaces its token query with a one-use bootstrap transfer; the browser removes that transfer from its URL before pairing. HTTPS proxy URLs never pair through query tokens: use the Pair form instead. See [remote pairing](ssh-reverse.md#browser-pairing). WebCrypto and IndexedDB must be available (HTTPS or a browser-trusted loopback origin); blocked storage produces an error rather than a cookie fallback.
+Local launch and status links contain a one-use, 30-second pairing transfer in the URL fragment, not the reusable Host token. The browser removes that transfer before pairing. If it expires, run `inspire status` for a fresh link. For manual remote pairing, run `inspire token` in a private terminal on the Host (or `npm run inspire -- token` from source); it verifies the matching Host before explicitly printing the shared credential. Do not copy that output into logs or a remote URL. HTTPS proxy URLs never pair through query tokens: use the Pair form instead. See [remote pairing](ssh-reverse.md#browser-pairing). WebCrypto and IndexedDB must be available (HTTPS or a browser-trusted loopback origin); blocked storage produces an error rather than a cookie fallback.
 
 Every paired browser can operate the Host's Pi sessions, files and project terminals as your user account. Protect the browser profile and the Host token. Changing the Host token invalidates all stored registrations and API bearers; pair each browser again. Clearing the site's IndexedDB also requires pairing again. Explicit bearer headers remain available for trusted non-browser clients. File downloads stream complete raw bytes through a separate 15-second, single-use resource/session/origin transfer ticket; their URLs never contain the Host or API bearer, and large files do not inherit preview limits.
 
@@ -87,6 +87,23 @@ The Host writes rotated JSONL diagnostics in the per-user state directory:
 | Windows | `%LOCALAPPDATA%\Inspire` |
 
 A projection-conflict banner includes an incident ID for finding the corresponding record. Logs contain operation, process, timing, and persistence metadata, excluding prompts, tool output, extension payloads, credentials, and raw child stderr. POSIX directories/files use `0700`/`0600`; Windows uses the user-profile ACL boundary. Rotation retains five 5 MiB files by default. `INSPIRE_LOG_PATH` can select another file inside an existing private directory.
+
+## Development checkout
+
+Run `npm run dev` or `npm run inspire -- dev` from source. The coordinated entry starts the watching
+Host and Vite, then prints/opens a one-use pairing link only after Vite owns its listener and the
+matching Host proves readiness. It does not print a reusable token or open a guessed port.
+
+Vite binds explicitly to `127.0.0.1:5173`; `INSPIRE_DEV_PORT` selects another frontend port. The
+backend uses `INSPIRE_HOST`/`INSPIRE_PORT` (default `127.0.0.1:4587`), and every proxy route follows
+that address. Both occupied ports fail explicitly. Choose a separate backend port when a normal
+Host is already running; development never stops an unrelated listener or silently attaches to it.
+
+Development uses a fresh per-run credential and private temporary control state, not an inherited
+Host token, instance file or stop request. Each new development run pairs again; backend watch
+reloads retain the run’s credential. `INSPIRE_OPEN=0` suppresses automatic opening. The printed
+transfer expires after 30 seconds; Vite’s existing `o` + Enter action issues and opens a fresh link.
+The `dev:host`/`dev:web` scripts are internal parts; use the coordinated entry for automatic pairing.
 
 ## Build and install a package
 

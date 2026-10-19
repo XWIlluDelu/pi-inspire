@@ -1,5 +1,6 @@
-import { spawn, type SpawnOptions } from "node:child_process";
+import { type SpawnOptions, spawn } from "node:child_process";
 import { win32 } from "node:path";
+import { environmentValue } from "./platform-environment.mjs";
 
 interface DetachedChild {
   once(event: "error", listener: (error: Error) => void): unknown;
@@ -25,8 +26,9 @@ export function openBrowser(
   spawnDetached: SpawnDetached = spawn as unknown as SpawnDetached,
   environment: NodeJS.ProcessEnv = process.env,
 ): void {
-  const windowsOpener = environment.SystemRoot
-    ? win32.join(environment.SystemRoot, "System32", "rundll32.exe")
+  const systemRoot = environmentValue(environment, "SystemRoot", platform);
+  const windowsOpener = systemRoot
+    ? win32.join(systemRoot, "System32", "rundll32.exe")
     : "rundll32.exe";
   const [command, args] =
     platform === "darwin"

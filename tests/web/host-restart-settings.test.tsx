@@ -17,7 +17,12 @@ vi.mock("../../src/controllers/host-restart-controller", () => ({
 }));
 beforeEach(() => {
   fixture.state = {
-    status: { hostId: "fixture-host", available: true, operation: null },
+    status: {
+      hostId: "fixture-host",
+      available: true,
+      allAvailable: true,
+      operation: null,
+    },
     pending: null,
     sending: false,
     blocked: false,
@@ -54,6 +59,7 @@ describe("Settings restart controls", () => {
       fixture.state.status = {
         hostId: "fixture-host",
         available: true,
+        allAvailable: true,
         operation: {
           id: "safe-attempt",
           scope,
@@ -92,6 +98,7 @@ describe("Settings restart controls", () => {
       fixture.state.status = {
         hostId: "fixture-host",
         available: true,
+        allAvailable: true,
         operation: {
           id: "rejected-preparation",
           scope: "host",
@@ -114,6 +121,7 @@ describe("Settings restart controls", () => {
     fixture.state.status = {
       hostId: "fixture-host",
       available: true,
+      allAvailable: true,
       operation: { id: "fixture-op", scope: "all", phase: "preparing" },
     };
     fixture.state.notice = "Host reconnected.";
@@ -122,10 +130,34 @@ describe("Settings restart controls", () => {
     expect(screen.getByRole("button", { name: "Restart Host" })).toBeDisabled();
     expect(screen.queryByText("Host reconnected.")).toBeNull();
   });
+  it("keeps ordinary restart enabled and explains unsupported full restart", () => {
+    fixture.state.status = {
+      hostId: "fixture-host",
+      available: true,
+      allAvailable: false,
+      allReason: "Restart all requires installed Linux systemd services.",
+      operation: null,
+    };
+    render(<HostRestartSettings />);
+    expect(screen.getByRole("button", { name: "Restart Host" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Restart all" })).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Restart all requires installed Linux systemd services.",
+      ),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Restart Host" }));
+    fireEvent.click(
+      screen.getByRole("alertdialog").querySelector(".button--danger")!,
+    );
+    expect(fixture.start).toHaveBeenCalledWith("host", "fixture-host", false);
+  });
+
   it("blocks controls when service ownership is unavailable", () => {
     fixture.state.status = {
       hostId: "fixture-host",
       available: false,
+      allAvailable: false,
       reason: "Installed service required.",
     };
     render(<HostRestartSettings />);

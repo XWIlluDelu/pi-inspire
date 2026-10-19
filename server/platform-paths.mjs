@@ -1,12 +1,25 @@
 import { homedir, tmpdir, userInfo } from "node:os";
-import { posix, win32 } from "node:path";
+import { posix, sep, win32 } from "node:path";
+import { environmentValue } from "./platform-environment.mjs";
 
 function pathApi(platform) {
   return platform === "win32" ? win32 : posix;
 }
 
+/** Host-native home syntax for typed paths; no shell/env/glob expansion. */
+export function resolveUserPath(value, cwd, options = {}) {
+  const api = options.platform
+    ? pathApi(options.platform)
+    : sep === "\\" ? win32 : posix;
+  const home = options.home ?? homedir();
+  if (value === "~") return api.resolve(home);
+  if (value.startsWith("~/") || (api === win32 && value.startsWith("~\\")))
+    return api.resolve(home, value.slice(2));
+  return api.resolve(cwd, value);
+}
+
 function absoluteEnvironmentPath(environment, key, platform) {
-  const value = environment[key];
+  const value = environmentValue(environment, key, platform);
   return typeof value === "string" &&
     value.length > 0 &&
     pathApi(platform).isAbsolute(value)

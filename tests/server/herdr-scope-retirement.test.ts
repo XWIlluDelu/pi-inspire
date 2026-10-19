@@ -63,6 +63,61 @@ describe.skipIf(process.platform !== "linux")("Herdr scope retirement", () => {
     }
   });
 
+  it.each([
+    { code: "ENOENT", disappeared: true },
+    { code: "ESRCH", disappeared: true },
+    { code: "EACCES", disappeared: false },
+    { code: "EPERM", disappeared: false },
+  ])(
+    "preserves scope authority when leader inspection returns $code",
+    async ({ code, disappeared }) => {
+      const failure = Object.assign(new Error("Leader inspection failed"), {
+        code,
+      });
+      let populated = true;
+      const killer = {
+        write: vi.fn(async () => {
+          populated = false;
+        }),
+        close: vi.fn(),
+      };
+      vi.mocked(open).mockImplementation(async (path) => {
+        if (path === scope.path)
+          return directory as unknown as Awaited<ReturnType<typeof open>>;
+        expect(path).toBe("/proc/self/fd/77/cgroup.kill");
+        return killer as unknown as Awaited<ReturnType<typeof open>>;
+      });
+      vi.mocked(readFile).mockImplementation(async (path) => {
+        if (path === "/proc/sys/kernel/random/boot_id") return "test-boot";
+        if (path === `/proc/${group.pid}/stat`) throw failure;
+        expect(path).toBe("/proc/self/fd/77/cgroup.events");
+        return `populated ${populated ? 1 : 0}\n`;
+      });
+      const signal = vi.spyOn(process, "kill").mockImplementation(() => {
+        throw new Error(
+          "A missing or unverified leader cannot authorize a PID signal",
+        );
+      });
+      try {
+        const stopped = stopHerdrProcessGroup(group, true, () => {});
+        if (disappeared) {
+          await expect(stopped).resolves.toBeUndefined();
+          expect(killer.write).toHaveBeenCalledExactlyOnceWith("1");
+          expect(killer.close).toHaveBeenCalledOnce();
+          expect(populated).toBe(false);
+        } else {
+          await expect(stopped).rejects.toBe(failure);
+          expect(killer.write).not.toHaveBeenCalled();
+          expect(populated).toBe(true);
+        }
+        expect(signal).not.toHaveBeenCalled();
+        expect(directory.close).toHaveBeenCalledOnce();
+      } finally {
+        signal.mockRestore();
+      }
+    },
+  );
+
   it("retains the stop failure when scope inspection cannot prove retirement", async () => {
     const failure = Object.assign(new Error("Permission denied"), {
       code: "EACCES",

@@ -132,25 +132,22 @@ function base64url(bytes: ArrayBuffer): string {
     .replace(/=+$/, "");
 }
 
-async function renew(): Promise<Access> {
-  if (bootstrap) await pairBrowser();
-  const identity = await identityStorage();
-  if (!identity && import.meta.env.DEV) {
-    await pairBrowser("inspire-dev-token");
-    return renew();
-  }
-  if (
-    !identity ||
-    !(identity.privateKey instanceof CryptoKey) ||
-    identity.privateKey.extractable ||
-    identity.privateKey.type !== "private"
-  )
-    throw new BrowserPairingError("Pair this browser to the Host");
+function signingIdentity(
+  identity: BrowserIdentity | undefined,
+): identity is BrowserIdentity {
+  return Boolean(
+    identity &&
+      typeof identity.certificate === "string" &&
+      identity.privateKey instanceof CryptoKey &&
+      !identity.privateKey.extractable &&
+      identity.privateKey.type === "private",
+  );
+}
+
+async function exchange(identity: BrowserIdentity): Promise<Access> {
   const { challenge } = await authPost<{ challenge: string }>(
     "/api/auth/challenge",
-    {
-      certificate: identity.certificate,
-    },
+    { certificate: identity.certificate },
   );
   const signature = await crypto.subtle.sign(
     { name: "ECDSA", hash: "SHA-256" },
@@ -161,6 +158,32 @@ async function renew(): Promise<Access> {
     challenge,
     signature: base64url(signature),
   });
+}
+
+async function renew(): Promise<Access> {
+  let identity = await identityStorage();
+  if (bootstrap) {
+    if (signingIdentity(identity)) {
+      try {
+        const result = await exchange(identity);
+        // A spent/expired launch link cannot invalidate a valid stored pairing.
+        bootstrap = null;
+        return result;
+      } catch (error) {
+        if (!(error instanceof BrowserPairingError)) throw error;
+      }
+    }
+    // A fresh launch can repair a missing pairing or a rotated Host authority.
+    await pairBrowser();
+    identity = await identityStorage();
+  }
+  if (!identity && import.meta.env.DEV) {
+    await pairBrowser("inspire-dev-token");
+    return renew();
+  }
+  if (!signingIdentity(identity))
+    throw new BrowserPairingError("Pair this browser to the Host");
+  return exchange(identity);
 }
 
 async function browserAuthorization(): Promise<Record<string, string>> {

@@ -5,6 +5,12 @@ interface PlatformPathOptions {
   temporary?: string;
 }
 
+export function resolveUserPath(
+  value: string,
+  cwd: string,
+  options?: Pick<PlatformPathOptions, "platform" | "home">,
+): string;
+
 export function inspireConfigDirectory(options?: PlatformPathOptions): string;
 export function inspireCacheDirectory(options?: PlatformPathOptions): string;
 export function inspireStateDirectory(options?: PlatformPathOptions): string;

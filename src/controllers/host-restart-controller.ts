@@ -137,7 +137,10 @@ export class HostRestartClient {
       this.restore();
       if (
         this.state.pending ||
-        !this.state.status?.available ||
+        !this.state.status ||
+        !(scope === "all"
+          ? this.state.status.allAvailable
+          : this.state.status.available) ||
         this.state.status.hostId !== hostId
       )
         return;

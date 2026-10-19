@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
-import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { environmentValue, executablePathDirectories, windowsPowerShellCommand } from "./platform-environment.mjs";
 
 function existingJavaScriptFile(path) {
   if (
@@ -38,25 +39,13 @@ function npmCliCandidates(environment, executable, cwd) {
     ),
   );
 
-  for (const entry of (environment.PATH ?? environment.Path ?? "").split(
-    delimiter,
+  for (const entry of executablePathDirectories(
+    environmentValue(environment, "PATH", "win32") ?? "", "win32",
   )) {
     if (!entry) continue;
     candidates.push(join(entry, "node_modules", "npm", "bin", "npm-cli.js"));
   }
   return [...new Set(candidates)];
-}
-
-function powershellCommand(environment) {
-  return environment.SystemRoot
-    ? join(
-        environment.SystemRoot,
-        "System32",
-        "WindowsPowerShell",
-        "v1.0",
-        "powershell.exe",
-      )
-    : "powershell.exe";
 }
 
 /**
@@ -93,7 +82,7 @@ export function npmInvocation(args, suppliedOptions = {}) {
     INSPIRE_NPM_ARGUMENTS_JSON: JSON.stringify(invocationArgs),
   };
   return {
-    command: powershellCommand(environment),
+    command: windowsPowerShellCommand(environment),
     args: [
       "-NoLogo",
       "-NoProfile",
@@ -101,7 +90,7 @@ export function npmInvocation(args, suppliedOptions = {}) {
       "-Command",
       [
         "$ErrorActionPreference = 'Stop'",
-        "$npmArgs = @($env:INSPIRE_NPM_ARGUMENTS_JSON | ConvertFrom-Json)",
+        "$npmArgs = @($env:INSPIRE_NPM_ARGUMENTS_JSON | Microsoft.PowerShell.Utility\\ConvertFrom-Json)",
         "& $env:INSPIRE_NPM_COMMAND @npmArgs",
         "if ($null -eq $LASTEXITCODE) { exit 1 }",
         "exit $LASTEXITCODE",

@@ -19,8 +19,11 @@ await mkdir(resolve(build, "server"), { recursive: true });
 for (const supportModule of [
   "file-lock.mjs",
   "instance-state.mjs",
+  "instance-control.mjs",
+  "launcher-restart.mjs",
   "npm-command.mjs",
   "platform-paths.mjs",
+  "platform-environment.mjs",
   "process-tree.mjs",
   "static-asset-cache.mjs",
   "user-environment.mjs",

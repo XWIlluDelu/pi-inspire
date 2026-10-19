@@ -44,6 +44,20 @@ describe("persistent host access token", () => {
     }
   });
 
+  it.runIf(process.platform !== "win32")(
+    "rejects a shared parent without changing its permissions or creating a token",
+    async () => {
+      const path = await temporaryPath();
+      await mkdir(dirname(path), { recursive: true });
+      await chmod(dirname(path), 0o1777);
+      await expect(resolveAccessToken(undefined, path)).rejects.toThrow(
+        "use a private directory",
+      );
+      expect((await lstat(dirname(path))).mode & 0o7777).toBe(0o1777);
+      await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
   it("rotates prior generated token lengths once and then reuses the replacement", async () => {
     for (const length of [43, 64, 128]) {
       const path = await temporaryPath();

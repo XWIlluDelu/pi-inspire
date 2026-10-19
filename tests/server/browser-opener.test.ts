@@ -65,22 +65,25 @@ describe("openBrowser", () => {
     });
   });
 
-  it("uses the system Windows opener without shell-interpreting the URL", () => {
-    const child = new FakeChild();
-    const spawn = vi.fn(() => child);
-    const url = "http://127.0.0.1:4587/?token=value&next=calc.exe";
-    openBrowser(url, vi.fn(), "win32", spawn, {
-      SystemRoot: "C:\\Windows",
-    });
+  it.each(["SystemRoot", "systemroot", "SYSTEMROOT"])(
+    "uses copied %s without shell-interpreting the URL",
+    (key) => {
+      const child = new FakeChild();
+      const spawn = vi.fn(() => child);
+      const url = "http://127.0.0.1:4587/?token=value&next=calc.exe";
+      openBrowser(url, vi.fn(), "win32", spawn, {
+        [key]: "C:\\Windows",
+      });
 
-    expect(spawn).toHaveBeenCalledWith(
-      "C:\\Windows\\System32\\rundll32.exe",
-      ["url.dll,FileProtocolHandler", url],
-      {
-        detached: true,
-        stdio: "ignore",
-        windowsHide: true,
-      },
-    );
-  });
+      expect(spawn).toHaveBeenCalledWith(
+        "C:\\Windows\\System32\\rundll32.exe",
+        ["url.dll,FileProtocolHandler", url],
+        {
+          detached: true,
+          stdio: "ignore",
+          windowsHide: true,
+        },
+      );
+    },
+  );
 });

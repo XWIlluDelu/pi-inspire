@@ -34,8 +34,11 @@ async function fixture(fail: boolean) {
   for (const file of [
     "file-lock",
     "instance-state",
+    "instance-control",
+    "launcher-restart",
     "npm-command",
     "platform-paths",
+    "platform-environment",
     "process-tree",
     "static-asset-cache",
     "user-environment",

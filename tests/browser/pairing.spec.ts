@@ -1,12 +1,12 @@
 import { createServer } from "node:http";
-import { restartableAuthHost } from "./support/restartable-auth-host";
 import type { AddressInfo } from "node:net";
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import {
   openMockSession,
   pairedPage,
   browserTestToken as token,
 } from "./support/navigation";
+import { restartableAuthHost } from "./support/restartable-auth-host";
 
 test("pairing opens the workbench without external requests, cookies, or persistent bearers", async ({
   page,
@@ -156,8 +156,7 @@ test("direct launch bootstrap is stripped before application requests, one-use, 
 }) => {
   const requests: string[] = [];
   page.on("request", (request) => requests.push(request.url()));
-  await page.goto(`/?token=${encodeURIComponent(token)}`);
-  await expect(page.getByRole("main")).toBeVisible();
+  await openLaunchLink(page, `/?token=${encodeURIComponent(token)}`);
   expect(new URL(page.url()).search).toBe("");
   expect(new URL(page.url()).hash).toBe("");
   expect(requests.slice(1).join("\n")).not.toContain(token);

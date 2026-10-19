@@ -73,6 +73,7 @@
       "tests/fixtures/pi-operation-lifecycle-extension.ts",
       "tests/fixtures/pi-child-calls-extension.ts",
       "tests/fixtures/attachment-retention-process.ts",
+      "tests/fixtures/host-control-faults.mjs",
       "tests/fixtures/pi-model-catalog-extension.ts",
       "tests/fixtures/pi-model-workflow-extension.ts",
       "tests/fixtures/pi-provider-auth-extension.ts",
@@ -84,17 +85,21 @@
     ],
     "ignore": [
       "server/instance-state.d.mts",
+      "server/instance-control.d.mts",
       "server/proper-lockfile.d.ts",
       "server/file-lock.d.mts",
       "server/platform-paths.d.mts",
+      "server/platform-environment.d.mts",
       "server/process-tree.d.mts",
+      "server/launcher-restart.d.mts",
       "server/static-asset-cache.d.mts",
       "server/user-environment.d.mts",
       "tests/fixtures/tool-result-resources.d.mts"
     ]
   },
   "scripts": {
-    "dev": "concurrently -k -n host,web -c cyan,magenta \"npm:dev:host\" \"npm:dev:web\"",
+    "dev": "node scripts/start-dev.mjs",
+    "dev:servers": "concurrently -k -n host,web -c cyan,magenta \"npm:dev:host\" \"npm:dev:web\"",
     "dev:host": "node scripts/start-dev-host.mjs",
     "dev:web": "vite",
     "build:web": "node scripts/build-web.mjs",

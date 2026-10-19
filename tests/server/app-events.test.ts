@@ -6,19 +6,18 @@ import {
   MAX_RUNTIME_EVENT_BYTES,
 } from "../../server/runtime-event-sockets.js";
 import { ToolArgumentStream } from "../../server/tool-argument-stream.js";
-
 import {
   applyAssistantMessageDelta,
   assistantStreamTextLength,
 } from "../../shared/assistant-stream.js";
-
 import {
+  closeHostApiFixture,
+  type DetailFrame,
   hostApiFixture,
   observeEventSocket,
-  type DetailFrame,
-  closeHostApiFixture,
   token,
 } from "./fixtures/host-api.js";
+import { closeWithoutPeerAck, rawWebSocket } from "./fixtures/raw-websocket.js";
 
 function eventSocket(url: string, options: import("ws").ClientOptions = {}) {
   return new WebSocket(url, {
@@ -104,6 +103,34 @@ describe("WebSocket observation and transport limits", () => {
       b.socket.close();
     }
   });
+
+  it.each(["open", "already closing"] as const)(
+    "drains an %s event peer without waiting for a close ACK",
+    async (state) => {
+      await runtime.openSession("mock-active");
+      const release = vi.fn();
+      Object.assign(runtime, { retainSessionView: vi.fn(() => release) });
+      const peer = await rawWebSocket(`${baseUrl}/events?detail=mock-active`, {
+        Authorization: `Bearer ${token}`,
+      });
+      try {
+        await vi.waitFor(() =>
+          expect(peer.messages.some((frame) => frame.type === "snapshot")).toBe(
+            true,
+          ),
+        );
+        if (state === "already closing") {
+          peer.send({ type: "detail_interest", invalid: true });
+          await vi.waitFor(() => expect(peer.closeCodes).toEqual([1008]));
+        }
+        await closeWithoutPeerAck(() => application.close(), peer);
+        expect(release).toHaveBeenCalledOnce();
+        expect(application.server.listening).toBe(false);
+      } finally {
+        peer.destroy();
+      }
+    },
+  );
 
   it("releases a retained view when the initial snapshot fails", async () => {
     const release = vi.fn();

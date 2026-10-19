@@ -17,16 +17,19 @@ import {
 } from "./herdr-enhancement.js";
 import { HerdrWorkerRegistry } from "./herdr-worker-registry.js";
 import { HostRestartController } from "./host-restart.js";
-import { systemdRestartBackend } from "./host-restart-systemd.js";
+import { hostRestartBackend } from "./host-restart-backend.js";
 import {
+  completeInstanceShutdown,
   consumeStopRequest,
   INSTANCE_STATE_VERSION,
   type InstanceState,
   instanceUrl,
   processStartIdentity,
   removeInstanceState,
+  watchInstanceShutdown,
   writeInstanceState,
 } from "./instance-state.mjs";
+import { HOST_RESTART_EXIT_CODE } from "./launcher-restart.mjs";
 import {
   inspectInspireSource,
   MaintenanceRestartController,
@@ -317,6 +320,7 @@ if (!mock) {
 
 const application = createInspireServer({
   token,
+  instanceState: () => (shuttingDown ? null : publishedState),
   runtime,
   catalog,
   attachments,
@@ -332,7 +336,12 @@ const application = createInspireServer({
   maintenanceRestart,
   hostRestart: new HostRestartController(
     runtime,
-    systemdRestartBackend(root, !mock && host === "127.0.0.1" && port === 4587),
+    hostRestartBackend(root, {
+      enabled: !mock,
+      systemdEnabled: host === "127.0.0.1" && port === 4587,
+      restart: () =>
+        shutdown("launcher-owned Host restart", HOST_RESTART_EXIT_CODE),
+    }),
   ),
   updateCoordinator,
   bootstrapModels: () =>
@@ -373,10 +382,12 @@ const stopRequestPath = process.env.INSPIRE_STOP_REQUEST_PATH;
 let statePublication: Promise<void> | null = null;
 let publishedState: InstanceState | null = null;
 let shuttingDown = false;
+let closeShutdownControl: (() => void) | undefined;
 
 async function shutdown(reason: string, requestedExitCode = 0): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+  closeShutdownControl?.();
   sessionActivity?.close();
   let exitCode = requestedExitCode;
   console.log(`Shutting down after ${reason}…`);
@@ -401,10 +412,16 @@ async function shutdown(reason: string, requestedExitCode = 0): Promise<void> {
       exitCode = 1;
     }
     try {
-      if (statePath && publishedState)
+      if (statePath && publishedState) {
+        await completeInstanceShutdown(
+          statePath,
+          publishedState,
+          exitCode === requestedExitCode,
+        );
         await removeInstanceState(statePath, publishedState);
+      }
     } catch (error) {
-      console.error("Failed to remove the Inspire instance state", error);
+      console.error("Failed to finalize the Inspire shutdown state", error);
       exitCode = 1;
     } finally {
       process.exit(exitCode);
@@ -441,6 +458,9 @@ async function announceStarted(): Promise<void> {
     startedAt: new Date().toISOString(),
     processStartTime: await processStartIdentity(process.pid),
     mock,
+    ...(statePath
+      ? { shutdownControlVersion: 1 as const, httpControlVersion: 1 as const }
+      : {}),
   };
   if (statePath) {
     publishedState = instanceState;
@@ -454,8 +474,12 @@ async function announceStarted(): Promise<void> {
     }
   }
   if (shuttingDown) return;
+  if (statePath)
+    closeShutdownControl = watchInstanceShutdown(statePath, instanceState, () =>
+      shutdown("authenticated local shutdown"),
+    );
   diagnostics.record("info", "host_ready", { processId: process.pid });
-  const url = instanceUrl(instanceState);
+  const url = application.launchUrl(new URL(instanceUrl(instanceState)).origin);
   if (process.env.INSPIRE_QUIET !== "1") {
     console.log(`\n  INSΠRE ${packageJson.version}${mock ? " (mock)" : ""}`);
     console.log(`  ${url}\n`);

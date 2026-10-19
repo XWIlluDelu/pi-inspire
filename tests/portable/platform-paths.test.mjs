@@ -5,8 +5,43 @@ import {
   inspireConfigDirectory,
   inspireRuntimeDirectory,
   inspireStateDirectory,
+  resolveUserPath,
   supportsPosixPermissions,
 } from "../../server/platform-paths.mjs";
+
+test("typed paths use Host home syntax and leave shell expressions literal", () => {
+  const posix = { platform: "darwin", home: "/Users/Host Name" };
+  assert.equal(resolveUserPath("~", "/checkout", posix), "/Users/Host Name");
+  assert.equal(
+    resolveUserPath("~/研究", "/checkout", posix),
+    "/Users/Host Name/研究",
+  );
+  assert.equal(
+    resolveUserPath("~\\notes", "/checkout", posix),
+    "/checkout/~\\notes",
+  );
+  assert.equal(
+    resolveUserPath("$HOME/notes", "/checkout", posix),
+    "/checkout/$HOME/notes",
+  );
+  assert.equal(
+    resolveUserPath("./~/literal", "/checkout", posix),
+    "/checkout/~/literal",
+  );
+  const windows = { platform: "win32", home: "D:\\Users\\Host Name" };
+  assert.equal(
+    resolveUserPath("~\\研究", "C:\\checkout", windows),
+    "D:\\Users\\Host Name\\研究",
+  );
+  assert.equal(
+    resolveUserPath("~/研究", "C:\\checkout", windows),
+    "D:\\Users\\Host Name\\研究",
+  );
+  assert.equal(
+    resolveUserPath("bundle", "C:\\caller", windows),
+    "C:\\caller\\bundle",
+  );
+});
 
 test("uses native Linux XDG directories", () => {
   const environment = {
@@ -90,6 +125,27 @@ test("uses native macOS application support", () => {
       home: "/Users/a",
     }),
     "/Users/a/Library/Application Support/Inspire",
+  );
+});
+
+test("preserves redirected Windows roots after copying case-insensitive exports", () => {
+  const options = {
+    platform: "win32",
+    environment: { AppData: "R:\\Roaming", LocalAppData: "S:\\Local" },
+    home: "C:\\Users\\fixture",
+    temporary: "C:\\Temp",
+  };
+  assert.equal(inspireConfigDirectory(options), "R:\\Roaming\\Inspire");
+  assert.equal(inspireCacheDirectory(options), "S:\\Local\\Inspire\\Cache");
+  assert.equal(inspireStateDirectory(options), "S:\\Local\\Inspire");
+  assert.equal(inspireRuntimeDirectory(options), "S:\\Local\\Inspire\\runtime");
+  assert.equal(
+    inspireConfigDirectory({
+      platform: "linux",
+      home: "/home/fixture",
+      environment: { xdg_config_home: "/wrong-case" },
+    }),
+    "/home/fixture/.config/inspire",
   );
 });
 

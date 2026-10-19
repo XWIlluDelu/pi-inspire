@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import {
   resolveLaunchEnvironment,
+  independentProcessEnvironment,
   systemdEnvironmentArguments,
 } from "../../server/user-environment.mjs";
 
@@ -42,6 +43,25 @@ async function fixture(rc = "") {
     },
   };
 }
+
+test("a detached terminal does not inherit its Host's service incarnation or socket activation", () => {
+  const environment = {
+    PATH: "/custom/bin",
+    USER_SETTING: "retained",
+    NOTIFY_SOCKET: "/host/notify",
+    INVOCATION_ID: "host-instance",
+    SYSTEMD_EXEC_PID: "123",
+    JOURNAL_STREAM: "device:inode",
+    LISTEN_PID: "123",
+    LISTEN_FDS: "2",
+    LISTEN_FDNAMES: "host",
+  };
+  assert.deepEqual(independentProcessEnvironment(environment), {
+    PATH: "/custom/bin",
+    USER_SETTING: "retained",
+  });
+  assert.equal(environment.NOTIFY_SOCKET, "/host/notify");
+});
 
 test("direct launches preserve caller environment without invoking a shell on any platform", async () => {
   const environment = {

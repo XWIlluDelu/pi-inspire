@@ -14,12 +14,18 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { InstanceHttpControl } from "../server/instance-control.mjs";
+import {
+  type InstanceState,
+  processStartIdentity,
+} from "../server/instance-state.mjs";
 import {
   isolatedProcessOptions,
   signalProcessTree,
 } from "../server/process-tree.mjs";
 import { defaultStaticAssetCacheDirectory } from "../server/static-asset-cache.mjs";
 import { TerminalDaemonClient } from "../server/terminal-daemon-client.js";
+import { terminalDaemonSecretPath } from "../server/terminal-daemon-tls.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const launcher = join(root, "inspire.mjs");
@@ -238,6 +244,8 @@ describe("production launcher", () => {
       const environment = await serviceLauncherEnv(directory);
       const statePath = join(directory, "synthetic-host-state.json");
       const leaseId = "a".repeat(43);
+      const control = new InstanceHttpControl();
+      let state: InstanceState;
       const calls: Array<{
         path: string;
         authorization: string | undefined;
@@ -251,36 +259,37 @@ describe("production launcher", () => {
           authorization: incoming.headers.authorization,
           body,
         });
+        const message = JSON.parse(body);
+        const grant = control.accept(state, message);
+        if (!grant) return response.writeHead(401).end();
+        const result =
+          message.action === "maintenance-commit"
+            ? outcome === "committed"
+              ? { kind: "committed", leaseId }
+              : { kind: "skipped", reason: "lease-invalid" }
+            : message.action === "maintenance-release"
+              ? { kind: "skipped", reason: "lease-invalid" }
+              : { kind: "ready", expiresAt: Date.now() + 30_000, leaseId };
         response.setHeader("Content-Type", "application/json");
-        response.end(
-          JSON.stringify(
-            incoming.url?.endsWith("/commit")
-              ? outcome === "committed"
-                ? { kind: "committed", leaseId }
-                : { kind: "skipped", reason: "lease-invalid" }
-              : incoming.url?.endsWith("/release")
-                ? { kind: "skipped", reason: "lease-invalid" }
-                : {
-                    kind: "ready",
-                    expiresAt: Date.now() + 30_000,
-                    ...(outcome === "legacy" ? {} : { leaseId }),
-                  },
-          ),
-        );
+        response.end(JSON.stringify(control.reply(grant, result)));
       });
       await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
       const address = server.address();
       if (!address || typeof address === "string")
         throw new Error("Expected fixture port");
-      await writeFile(
-        statePath,
-        JSON.stringify({
-          root,
-          host: "127.0.0.1",
-          port: address.port,
-          token: "synthetic-token",
-        }),
-      );
+      state = {
+        schemaVersion: 1,
+        root,
+        host: "127.0.0.1",
+        port: address.port,
+        token: "synthetic-token",
+        pid: process.pid,
+        processStartTime: await processStartIdentity(process.pid),
+        startedAt: new Date().toISOString(),
+        mock: false,
+        ...(outcome === "legacy" ? {} : { httpControlVersion: 1 as const }),
+      };
+      await writeFile(statePath, JSON.stringify(state));
       try {
         const child = spawn(
           process.execPath,
@@ -304,26 +313,29 @@ describe("production launcher", () => {
           child.once("exit", done);
         });
         expect(code, output).toBe(0);
-        expect(calls.map((call) => call.path)).toEqual(
+        expect(calls.map((call) => JSON.parse(call.body).action)).toEqual(
           outcome === "legacy"
-            ? ["/api/maintenance/restart"]
+            ? []
             : outcome === "committed"
-              ? ["/api/maintenance/restart", "/api/maintenance/restart/commit"]
+              ? ["maintenance-prepare", "maintenance-commit"]
               : [
-                  "/api/maintenance/restart",
-                  "/api/maintenance/restart/commit",
-                  "/api/maintenance/restart/release",
+                  "maintenance-prepare",
+                  "maintenance-commit",
+                  "maintenance-release",
                 ],
         );
         expect(
           calls.every(
-            (call) => call.authorization === "Bearer synthetic-token",
+            (call) =>
+              call.path === "/api/host/local-control" &&
+              call.authorization === undefined &&
+              !call.body.includes(state.token),
           ),
         ).toBe(true);
         expect(
           calls
             .slice(1)
-            .every((call) => JSON.parse(call.body).leaseId === leaseId),
+            .every((call) => JSON.parse(call.body).payload.leaseId === leaseId),
         ).toBe(true);
         const commands = await readFile(
           environment.FAKE_SYSTEMD_LOG!,
@@ -536,7 +548,10 @@ describe("production launcher", () => {
     await vi.waitFor(
       async () => {
         const token = (
-          await readFile(env.INSPIRE_TERMINAL_TOKEN_PATH!, "utf8")
+          await readFile(
+            terminalDaemonSecretPath(env.INSPIRE_TERMINAL_TOKEN_PATH!),
+            "utf8",
+          )
         ).trim();
         await new TerminalDaemonClient(
           env.INSPIRE_TERMINAL_DAEMON_ADDRESS!,
@@ -631,6 +646,78 @@ describe("production launcher", () => {
     const createdTerminal = (await createdTerminalResponse.json()) as {
       id: string;
     };
+
+    // Page restart is available through the same persistent launcher on every
+    // native platform, including this alternate port and private state path.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const previousState = JSON.parse(await readFile(statePath, "utf8")) as {
+        pid: number;
+        token: string;
+      };
+      const restartStatus = await fetch(`${origin}/api/host/restart`, {
+        headers: terminalHeaders,
+      }).then((response) => response.json());
+      expect(restartStatus).toMatchObject({
+        available: true,
+        allAvailable: false,
+      });
+      if (attempt === 0) {
+        const denied = await fetch(`${origin}/api/host/restart`, {
+          method: "POST",
+          headers: terminalHeaders,
+          body: JSON.stringify({
+            hostId: restartStatus.hostId,
+            operationId: randomUUID(),
+            scope: "all",
+          }),
+        });
+        expect(denied.status).toBe(202);
+        await vi.waitFor(async () => {
+          const status = await fetch(`${origin}/api/host/restart`, {
+            headers: terminalHeaders,
+          }).then((response) => response.json());
+          expect(status.operation).toMatchObject({
+            phase: "rejected",
+            error: expect.stringContaining("Restart all requires"),
+          });
+        });
+      }
+      const response = await fetch(`${origin}/api/host/restart`, {
+        method: "POST",
+        headers: terminalHeaders,
+        body: JSON.stringify({
+          hostId: restartStatus.hostId,
+          operationId: randomUUID(),
+          scope: "host",
+        }),
+      });
+      expect(response.status).toBe(202);
+      await vi.waitFor(
+        async () => {
+          const status = await fetch(`${origin}/api/host/restart`, {
+            headers: terminalHeaders,
+          }).then((response) => response.json());
+          expect(status.hostId).not.toBe(restartStatus.hostId);
+          expect(status.available).toBe(true);
+          const state = JSON.parse(await readFile(statePath, "utf8")) as {
+            pid: number;
+            token: string;
+          };
+          expect(state.pid).not.toBe(previousState.pid);
+          expect(state.token).toBe(previousState.token);
+        },
+        { timeout: 60_000, interval: 100 },
+      );
+      expect(child.exitCode).toBeNull();
+      expect(child.signalCode).toBeNull();
+      const preserved = await fetch(
+        `${origin}/api/terminals?cwd=${encodeURIComponent(directory)}`,
+        { headers: terminalHeaders },
+      ).then((response) => response.json());
+      expect(preserved.terminals).toContainEqual(
+        expect.objectContaining({ id: createdTerminal.id, status: "running" }),
+      );
+    }
 
     const stopOutput = runLauncher(["stop"], env);
     expect(stopOutput).toContain("Stopped INSΠRE process");

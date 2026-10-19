@@ -100,6 +100,12 @@ const fixtureModel = {
 export async function hostApiFixture(
   options: {
     token?: string;
+    maintenanceRestart?: Parameters<
+      typeof createInspireServer
+    >[0]["maintenanceRestart"];
+    instanceState?: () =>
+      | import("../../../server/instance-state.mjs").InstanceState
+      | null;
     websocketHeartbeatIntervalMs?: number;
     promptObservationWindowMs?: number;
     runtime?: MockRuntime;

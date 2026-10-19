@@ -79,6 +79,33 @@ export function canonicalOrigin(
   }
 }
 
+/** WebKit native downloads may omit Origin and Fetch Metadata. Only a strict
+ * same-origin Referer can fill that absence; it never overrides a conflicting
+ * Origin or Fetch Metadata value. No credential/cookie fallback is admitted. */
+export function downloadOriginAllowed(
+  expected: string,
+  headers: { origin?: string; fetchSite?: string; referer?: string },
+): boolean {
+  if (headers.origin !== undefined && headers.origin !== expected) return false;
+  if (headers.fetchSite !== undefined && headers.fetchSite !== "same-origin")
+    return false;
+  let referred = false;
+  if (headers.referer !== undefined) {
+    try {
+      const url = new URL(headers.referer);
+      if (url.origin !== expected || url.username || url.password) return false;
+      referred = true;
+    } catch {
+      return false;
+    }
+  }
+  return (
+    headers.origin === expected ||
+    headers.fetchSite === "same-origin" ||
+    referred
+  );
+}
+
 export function secretMatches(
   candidate: string | undefined,
   expected: string,
