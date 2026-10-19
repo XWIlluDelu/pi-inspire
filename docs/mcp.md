@@ -9,6 +9,10 @@ Host. These are saved configuration entries, not a display of the current sessio
 - **This project** edits `.pi/mcp.json` in the selected session's working directory, or the
   selected directory on the start surface.
 
+User configuration stays available without a selected project or when the selected project's
+directory is unavailable. Project-file errors do not block user-file edits; project edits require an
+existing project directory and do not recreate missing directories.
+
 Each group shows the configuration file's path. A full project definition replaces the same-name
 user definition. Pi 1.1 also supports policy-only project entries, which inherit the user connection
 and override enabled state, exposure or per-tool rules. Their editor offers **Inherit from user**

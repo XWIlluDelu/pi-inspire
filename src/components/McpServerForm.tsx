@@ -297,10 +297,13 @@ export function McpServerForm({
                   label="Configuration target"
                   value={scope}
                   disabled={busy}
-                  options={[
-                    { value: "user", label: "User · all projects" },
-                    { value: "project", label: "This project" },
-                  ]}
+                  options={snapshot.files.map((file) => ({
+                    value: file.scope,
+                    label:
+                      file.scope === "user"
+                        ? "User · all projects"
+                        : "This project",
+                  }))}
                   onChange={(value) => setScope(value as McpConfigScope)}
                 />
               </div>

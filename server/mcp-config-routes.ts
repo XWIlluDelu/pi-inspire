@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { z } from "zod";
 import { type McpConfigService, mcpConfigEditSchema } from "./mcp-config.js";
-import { resolveProjectDirectory } from "./paths.js";
+import { resolveUserPath } from "./paths.js";
 import { requestError } from "./request-error.js";
 import type { RuntimeLike } from "./runtime.js";
 
@@ -18,21 +18,22 @@ export function registerMcpConfigRoutes(
       cwd: z.string().min(1).max(4096).optional(),
     })
     .strict();
-  async function context(input: unknown) {
+  function context(input: unknown): string | null {
     const { sessionId, cwd } = query.parse(input);
     const root = sessionId ? deps.runtime.sessionCwd(sessionId) : cwd;
-    if (!root)
+    if (sessionId && !root)
       throw requestError(
-        "Select a project before editing MCP configuration",
+        "The session is no longer available; reopen Settings",
         409,
       );
-    return resolveProjectDirectory(root);
+    // Project availability belongs to the project file, not user configuration.
+    return root ? resolveUserPath(root, process.cwd()) : null;
   }
   app.get("/api/mcp-config", async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
     if (!deps.mcpConfig)
       throw requestError("MCP configuration is unavailable on this Host", 503);
-    response.json(await deps.mcpConfig.read(await context(request.query)));
+    response.json(await deps.mcpConfig.read(context(request.query)));
   });
   app.patch("/api/mcp-config", async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
@@ -41,7 +42,7 @@ export function registerMcpConfigRoutes(
     const edit = mcpConfigEditSchema.safeParse(request.body);
     if (!edit.success)
       throw requestError("Invalid MCP configuration edit", 400);
-    const cwd = await context(request.query);
+    const cwd = context(request.query);
     await deps.mcpConfig.save(cwd, edit.data);
     try {
       response.json({ saved: true, snapshot: await deps.mcpConfig.read(cwd) });

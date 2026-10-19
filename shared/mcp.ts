@@ -59,7 +59,8 @@ export interface McpConfigFile {
   entries: McpConfigEntry[];
 }
 export interface McpConfigSnapshot {
-  cwd: string;
+  /** Null when no project is selected; user configuration remains available. */
+  cwd: string | null;
   files: McpConfigFile[];
 }
 export interface McpConfigEdit {

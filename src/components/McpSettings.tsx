@@ -319,6 +319,11 @@ function McpConfiguration({
                 </div>
               </div>
             ) : null}
+            {snapshot && snapshot.cwd === null ? (
+              <p className="models-status">
+                Select a project to edit project configuration.
+              </p>
+            ) : null}
             {snapshot?.files.map((file) => (
               <section
                 className="mcp-file"
