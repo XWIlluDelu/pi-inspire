@@ -65,7 +65,12 @@ import {
 } from "./app-state";
 import { type PiCommand, resolveCommandInventory } from "./composer-completion";
 import type { ComposerHistoryScope } from "./composer-history";
-import { type CopySource, imageSourceBlob } from "./content-copy";
+import {
+  type CopySource,
+  copyLoader,
+  imageSourceBlob,
+  writeCopyContent,
+} from "./content-copy";
 import { BranchController } from "./controllers/branch-controller";
 import { ComposerController } from "./controllers/composer-controller";
 import {
@@ -1337,8 +1342,8 @@ export class AppStore {
     if (activity.action.kind === "open-terminal") {
       if (activity.action.value) {
         try {
-          await navigator.clipboard.writeText(activity.action.value);
-          this.notify("info", "Command copied — paste it after starting Pi");
+          if (await writeCopyContent(activity.action.value))
+            this.notify("info", "Command copied — paste it after starting Pi");
         } catch {
           this.notify("warning", "Clipboard access was unavailable");
         }
@@ -1347,8 +1352,8 @@ export class AppStore {
       return;
     }
     try {
-      await navigator.clipboard.writeText(activity.action.value);
-      this.notify("info", "Copied to clipboard");
+      if (await writeCopyContent(activity.action.value))
+        this.notify("info", "Copied to clipboard");
     } catch {
       this.notify("warning", "Clipboard access was unavailable");
     }
@@ -1871,30 +1876,44 @@ export class AppStore {
         "running",
         "Copying the last assistant response…",
       );
-      void api
-        .lastAssistantText(sessionId, viewId)
-        .then(async ({ text }) => {
-          if (
-            this.api !== api ||
-            this.transportGeneration !== transportGeneration ||
-            this.selectionGeneration !== selectionGeneration ||
-            this.state.sessionId !== sessionId ||
-            this.state.transcriptViewId !== viewId
-          )
-            throw new Error(
-              "Copy cancelled because the session or branch changed.",
-            );
-          if (text === null) {
+      const current = () =>
+        this.api === api &&
+        this.transportGeneration === transportGeneration &&
+        this.selectionGeneration === selectionGeneration &&
+        this.state.sessionId === sessionId &&
+        this.state.transcriptViewId === viewId;
+      let noResponse = false;
+      void writeCopyContent(
+        copyLoader(async (signal) => {
+          let text: string | null;
+          try {
+            ({ text } = await api.lastAssistantText(sessionId, viewId, signal));
+          } catch (error) {
+            if (
+              this.api === api &&
+              this.transportGeneration === transportGeneration &&
+              error instanceof ApiError &&
+              error.status === 401
+            )
+              this.handleAuthFailure();
+            throw error;
+          }
+          noResponse = text === null;
+          return text;
+        }),
+        current,
+      )
+        .then((written) => {
+          if (!written) {
             this.updateCommandActivity(sessionId, id, {
               status: "warning",
-              message: "There is no assistant response to copy in this branch.",
+              message: noResponse
+                ? "There is no assistant response to copy in this branch."
+                : current()
+                  ? "Copy cancelled by another clipboard action."
+                  : "Copy cancelled because the session or branch changed.",
             });
             return;
-          }
-          try {
-            await navigator.clipboard.writeText(text);
-          } catch {
-            throw new Error("Clipboard access was unavailable.");
           }
           this.finishSimpleCommand(
             sessionId,

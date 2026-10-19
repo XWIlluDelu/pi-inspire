@@ -22,11 +22,11 @@ import {
   ToolCard,
 } from "../../src/components/transcript-cards";
 import { UnpairedToolResultRow } from "../../src/components/transcript-rows";
-import * as clipboard from "../../src/content-copy";
 import type { ChatMessage, ToolCallContent } from "../../src/events";
 import { store } from "../../src/store";
 import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
 import { toolResultResourcesFixture } from "../fixtures/tool-result-resources.mjs";
+import { captureClipboardSource } from "./fixtures/clipboard-source";
 
 function call(name: string, args: Record<string, unknown>): ToolCallContent {
   return { type: "toolCall", id: `${name}-1`, name, arguments: args };
@@ -239,9 +239,7 @@ describe("saved tool resources", () => {
     async (visibility) => {
       const png = new Blob(["saved image"], { type: "image/png" });
       const load = vi.spyOn(store, "loadEmbeddedImage").mockResolvedValue(png);
-      const write = vi
-        .spyOn(clipboard, "writeCopyContent")
-        .mockResolvedValue(true);
+      const { written: write } = captureClipboardSource();
       vi.spyOn(store, "copyOwnership").mockReturnValue(() => true);
       render(
         <Transcript
@@ -273,10 +271,10 @@ describe("saved tool resources", () => {
         "pi-embedded://2/1",
         expect.any(AbortSignal),
       );
-      expect(write).toHaveBeenCalledWith(
-        { text: expect.stringContaining("preview.png"), images: [png] },
-        expect.any(Function),
-      );
+      expect(write).toHaveBeenCalledWith({
+        text: expect.stringContaining("preview.png"),
+        images: [png],
+      });
     },
   );
 

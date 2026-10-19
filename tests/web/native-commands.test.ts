@@ -587,7 +587,7 @@ describe("Pi native command dispatch", () => {
     response.resolve({ body: { text: "old branch" } });
     await vi.waitFor(() =>
       expect(store.getState().commandActivities.s1?.at(-1)?.status).toBe(
-        "error",
+        "warning",
       ),
     );
     expect(writeText).not.toHaveBeenCalled();

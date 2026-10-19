@@ -26,7 +26,10 @@ import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 
 export function PathCopyButton({ path }: { path: string }) {
-  const { copied, copy } = useCopied();
+  const { copied, copy } = useCopied({
+    scope: path,
+    onError: store.reportCopyError,
+  });
   return (
     <button
       type="button"

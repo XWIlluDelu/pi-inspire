@@ -32,7 +32,9 @@ export function exactPendingInput(value: unknown): PendingInput | null {
 
 export function mergePendingQueues(
   pi: PendingQueues,
-  host: readonly Pick<PromptRequest, "message" | "behavior">[],
+  host: readonly (Pick<PromptRequest, "message" | "behavior"> & {
+    imageCount?: number | null;
+  })[],
   previousRevision: number,
 ): PendingQueues {
   const summarize = (mode: NonNullable<PromptRequest["behavior"]>) =>
@@ -41,13 +43,28 @@ export function mergePendingQueues(
       .map((item, index) => ({
         id: `host-${mode}-${index}`,
         ...pendingTextSummary(item.message),
+        ...(item.imageCount ? { imageCount: item.imageCount } : {}),
       }));
   const steering = [...pi.steering, ...summarize("steer")];
   const followUp = [...pi.followUp, ...summarize("followUp")];
   const remaining = MAX_PENDING_MESSAGES;
+  const piImageCount =
+    pi.totalImageCount ??
+    (pi.totalCount === pi.steering.length + pi.followUp.length
+      ? [...pi.steering, ...pi.followUp].reduce(
+          (sum, row) => sum + (row.imageCount ?? 0),
+          0,
+        )
+      : undefined);
+  const totalImageCount =
+    piImageCount === undefined || host.some((row) => row.imageCount === null)
+      ? undefined
+      : piImageCount +
+        host.reduce((sum, row) => sum + (row.imageCount ?? 0), 0);
   return {
     revision: previousRevision + 1,
     totalCount: pi.totalCount + host.length,
+    ...(totalImageCount === undefined ? {} : { totalImageCount }),
     steering: steering.slice(0, remaining),
     followUp: followUp.slice(0, Math.max(0, remaining - steering.length)),
   };
@@ -91,6 +108,10 @@ export function pendingQueuesFromContent(
   return {
     revision: previousRevision + 1,
     totalCount: content.steering.length + content.followUp.length,
+    totalImageCount: [...content.steering, ...content.followUp].reduce(
+      (sum, row) => sum + (row.imageCount ?? 0),
+      0,
+    ),
     steering,
     followUp,
   };

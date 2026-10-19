@@ -18,6 +18,8 @@ covers:
   - scripts/render-app-icons.mjs
   - src/visual-preferences.ts
   - src/use-reading-dwell.ts
+  - src/use-copied.ts
+  - tests/web/content-copy.test.tsx
   - tests/web/{reading-dwell,notices,runtime-activity}.test.tsx
   - scripts/import-ibm-plex-sans-sc.mjs
   - scripts/verify-release-package.mjs
@@ -524,22 +526,29 @@ ownership, or alter the draft.
 
 Browsers accept PNG clipboard images, not a general list of image files. PNG is copied directly;
 JPEG, WebP and GIF are rasterized to PNG (one frame, without animation or source-file metadata).
-For several images, write separate clipboard items in reverse input order so the earliest image
-is the final/current item and appears first in clipboard managers that retain these writes.
-The final item also includes the original plain text, when present, as an alternate format.
-A plain-text target pastes that text; an image target pastes the first image. Ordinary Paste
-does not promise an entire image list, and whether intermediate writes persist in history is
-a browser/OS clipboard-manager capability, not Inspire state. Original files remain available
-through their existing download flow.
+The current item contains the first image and the original plain text, when present, as alternate
+formats. A plain-text target pastes that text; an image target pastes the first image. With explicit
+background-write permission, separate reverse-order writes also offer the other images to clipboard
+history. Gesture-bound browsers receive one promise-backed item instead. Ordinary Paste does not
+promise an entire image list; history remains a browser/OS capability, not Inspire state.
+Original files remain available through their existing download flow.
 
-Clipboard writes require browser clipboard support, a secure context and permission. Image
-reads/conversions finish before writes begin; unsupported formats, unavailable source images
-or clipboard denial report a warning instead of a success state or silent text-only fallback.
+Clipboard writes require browser clipboard support, a secure context and permission. Async Copy
+declares its formats from the visible source and initiates the request inside the user's gesture,
+before Host reads or image conversion can outlive that gesture. Every required source and image must
+validate before any promised format resolves or success is reported. Unsupported formats, unavailable
+source images, changed format metadata or clipboard denial report a warning instead of success or
+silent text-only fallback. Large tool/custom text stays lazy until Copy is activated.
 Source reads retain their existing authority: saved conversation images resolve exact content
 coordinates, History images resolve the selected entry, and Pending images use the queue's
 existing retained attachment handles. Unmount, source/view/transport retirement and Pending
 revision changes cancel delayed copying before it can write or report success for another source.
+A newer clipboard action retires pending reads across controls, including Copy last response.
 The operating system cannot retract a clipboard write already accepted before retirement.
+Transient confirmation belongs to the copied source: changing a file or project path, report, or
+code block retires its old busy/success feedback without replacing the focused control. Current
+copy failures use the shared warning or the surface's local recovery message; retired failures
+must not report against replacement content.
 
 ## Searchable-surface focus
 

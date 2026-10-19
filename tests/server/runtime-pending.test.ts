@@ -98,6 +98,7 @@ describe("RuntimeController Pending input and recovery", () => {
     });
     expect((await runtime.snapshot()).pendingQueues).toEqual({
       totalCount: 3,
+      totalImageCount: 0,
       revision: initialRevision + 1,
       steering: [
         pendingEntry("text-steer-0", "first"),

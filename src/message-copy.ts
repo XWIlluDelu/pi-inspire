@@ -1,4 +1,9 @@
-import { type CopyContent, imageSourceBlob } from "./content-copy";
+import {
+  type CopyContent,
+  type CopyLoader,
+  copyLoader,
+  imageSourceBlob,
+} from "./content-copy";
 import type { ChatMessage } from "./events";
 import { store } from "./store";
 
@@ -6,6 +11,29 @@ interface ImageOwner {
   sessionId: string;
   viewId: string;
   projectionKey: string;
+}
+
+/** Declare formats synchronously; image data still comes from Host authority. */
+export function messageCopyLoader(
+  message: ChatMessage | undefined,
+  text: string | (() => string | Promise<string>),
+  owner: ImageOwner | null,
+): CopyLoader {
+  const image =
+    Array.isArray(message?.content) &&
+    message.content.some(
+      (part) => part && typeof part === "object" && part.type === "image",
+    );
+  return copyLoader(
+    async (signal) =>
+      messageCopyContent(
+        message,
+        typeof text === "function" ? await text() : text,
+        owner,
+        signal,
+      ),
+    { text: typeof text === "function" || Boolean(text) || !image, image },
+  );
 }
 
 /** Resolve saved coordinates through the Host, never from projected image data.

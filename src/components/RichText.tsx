@@ -45,7 +45,10 @@ const CodeBlock = memo(function CodeBlock({
   language: string;
   code: string;
 }) {
-  const { copied, copy } = useCopied();
+  const { copied, copy } = useCopied({
+    scope: code,
+    onError: store.reportCopyError,
+  });
   const highlighted = useMemo(
     () => highlightSource(code, language),
     [code, language],

@@ -14,6 +14,124 @@ test.use({
   viewport: { width: 1280, height: 900 },
 });
 
+for (const touch of [false, true]) {
+  test.describe(`path-copy source ownership · ${touch ? "touch" : "mouse"}`, () => {
+    test.use({ hasTouch: touch, deviceScaleFactor: touch ? 2 : 1 });
+    test("keeps feedback with the selected file through success and a late clipboard result", async ({
+      page,
+    }) => {
+      await pairedPage(page);
+      await openMockSession(
+        page,
+        /Resource virtualization and sandbox fixture/,
+      );
+      await page
+        .getByRole("button", { name: "Toggle resources panel", exact: true })
+        .click();
+      const pane = page.locator(".ctx");
+      await pane.getByRole("button", { name: "Files", exact: true }).click();
+      const tree = pane.getByRole("region", {
+        name: "Workspace file tree",
+        exact: true,
+      });
+      const open = async (name: string) => {
+        await tree.getByRole("button", { name, exact: true }).click();
+        await expect(
+          pane.getByRole("button", { name: `Download ${name}`, exact: true }),
+        ).toBeEnabled();
+      };
+      await open("README.md");
+      await page.clock.install();
+      await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1_000));
+      await page.evaluate(() => {
+        const state = window as unknown as {
+          pathCopyWrites: string[];
+          releasePathCopy?: () => void;
+          holdPathCopy: boolean;
+        };
+        state.pathCopyWrites = [];
+        state.holdPathCopy = false;
+        Object.defineProperty(navigator.clipboard, "writeText", {
+          configurable: true,
+          value: (text: string) => {
+            state.pathCopyWrites.push(text);
+            return state.holdPathCopy
+              ? new Promise<void>((resolve) => {
+                  state.releasePathCopy = resolve;
+                })
+              : Promise.resolve();
+          },
+        });
+      });
+      const copy = pane.locator(".file-path-action");
+      await copy.click();
+      await expect(copy).toHaveAccessibleName("Path copied");
+      await open("native-shell.log");
+      await expect(copy).toHaveAccessibleName(/Copy path .*native-shell\.log/);
+      await expect(copy.locator("svg")).toHaveCount(0);
+      await copy.click();
+      await expect(copy).toHaveAccessibleName("Path copied");
+      await open("README.md");
+      await expect(copy).toHaveAccessibleName(/Copy path .*README\.md/);
+      await page.setViewportSize({ width: 320, height: 640 });
+      await page.clock.runFor(32);
+      await page.evaluate(() => {
+        (window as unknown as { holdPathCopy: boolean }).holdPathCopy = true;
+      });
+      await copy.click();
+      await expect
+        .poll(() =>
+          page.evaluate(() =>
+            Boolean(
+              (window as unknown as { releasePathCopy?: () => void })
+                .releasePathCopy,
+            ),
+          ),
+        )
+        .toBe(true);
+      await open("native-shell.log");
+      await page.evaluate(() => {
+        const state = window as unknown as {
+          releasePathCopy?: () => void;
+          holdPathCopy: boolean;
+        };
+        state.releasePathCopy?.();
+        state.holdPathCopy = false;
+      });
+      await expect(copy).toHaveAccessibleName(/Copy path .*native-shell\.log/);
+      await expect(copy.locator("svg")).toHaveCount(0);
+      await copy.click();
+      await expect(copy).toHaveAccessibleName("Path copied");
+      const writes = await page.evaluate(
+        () =>
+          (window as unknown as { pathCopyWrites: string[] }).pathCopyWrites,
+      );
+      expect(writes.map((value) => value.split(/[\\/]/).at(-1))).toEqual([
+        "README.md",
+        "native-shell.log",
+        "README.md",
+        "native-shell.log",
+      ]);
+      await page.evaluate(() => {
+        Object.defineProperty(navigator.clipboard, "writeText", {
+          configurable: true,
+          value: async () => {
+            throw new Error("Clipboard permission denied");
+          },
+        });
+      });
+      await copy.click();
+      await expect(copy).toHaveAccessibleName(/Copy path .*native-shell\.log/);
+      // The resource drawer keeps notices underneath it; dismiss the drawer to
+      // inspect the shared failure rather than changing modal feedback layers.
+      await page.keyboard.press("Escape");
+      await expect(page.locator(".notice--warning")).toContainText(
+        "Clipboard permission denied",
+      );
+    });
+  });
+}
+
 test("image-only Copy writes real PNGs in reverse order and pastes an image into Composer", async ({
   page,
   context,

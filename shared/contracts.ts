@@ -687,6 +687,9 @@ export interface PendingQueues {
   /** Host observation sequence, not a Pi revision or mutation precondition. */
   revision: number;
   totalCount: number;
+  /** Includes omitted rows; allows clipboard formats before asynchronous reads.
+   * Absent on older/unavailable source observations. */
+  totalImageCount?: number;
   steering: PendingMessageSummary[];
   followUp: PendingMessageSummary[];
 }
@@ -749,6 +752,12 @@ export function parsePendingQueues(value: unknown): PendingQueues | null {
   ) {
     return null;
   }
+  if (
+    record.totalImageCount !== undefined &&
+    (!Number.isSafeInteger(record.totalImageCount) ||
+      (record.totalImageCount as number) < 0)
+  )
+    return null;
   const steering = record.steering.map(parsePendingMessageSummary);
   const followUp = record.followUp.map(parsePendingMessageSummary);
   if (
@@ -759,8 +768,20 @@ export function parsePendingQueues(value: unknown): PendingQueues | null {
   ) {
     return null;
   }
+  if (
+    record.totalImageCount !== undefined &&
+    (record.totalImageCount as number) <
+      [...steering, ...followUp].reduce(
+        (sum, row) => sum + (row?.imageCount ?? 0),
+        0,
+      )
+  )
+    return null;
   return {
     totalCount: record.totalCount as number,
+    ...(record.totalImageCount === undefined
+      ? {}
+      : { totalImageCount: record.totalImageCount as number }),
     revision: record.revision as number,
     steering: steering as PendingMessageSummary[],
     followUp: followUp as PendingMessageSummary[],

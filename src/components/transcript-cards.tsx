@@ -46,7 +46,7 @@ import {
   type ToolCallContent,
   toolResultText,
 } from "../events";
-import { messageCopyContent } from "../message-copy";
+import { messageCopyLoader } from "../message-copy";
 import { store } from "../store";
 import type {
   ResolvedToolPresentation,
@@ -830,14 +830,11 @@ export function ToolResultCard({
       summaryVisibleWhenOpen={name === "codemode"}
       status={statusIcon(result.isError ? "failure" : "success")}
       copyText={() => JSON.stringify(result, null, 2)}
-      getCopyContent={(signal) =>
-        messageCopyContent(
-          result,
-          JSON.stringify(result, null, 2),
-          owner,
-          signal,
-        )
-      }
+      getCopyContent={messageCopyLoader(
+        result,
+        () => JSON.stringify(result, null, 2),
+        owner,
+      )}
       copyLabel={`${name} result`}
     >
       <ImageGallery>
@@ -1687,14 +1684,11 @@ export function ToolCard({
         summaryVisibleWhenOpen={presentation?.ruleId === "inspire.pi.codemode"}
         status={statusIcon(status)}
         copyText={() => toolClipboardText(call, result, activity)}
-        getCopyContent={(signal) =>
-          messageCopyContent(
-            result,
-            toolClipboardText(call, result, activity),
-            owner,
-            signal,
-          )
-        }
+        getCopyContent={messageCopyLoader(
+          result,
+          () => toolClipboardText(call, result, activity),
+          owner,
+        )}
         copyLabel={toolClipboardLabel(call, result, activity)}
       >
         <ToolDetails
@@ -1925,18 +1919,16 @@ export function CollapsedActivityStrip({
                       rendered.activity,
                     )
                   }
-                  getCopyContent={(signal) =>
-                    messageCopyContent(
-                      rendered.result,
+                  getCopyContent={messageCopyLoader(
+                    rendered.result,
+                    () =>
                       toolClipboardText(
                         rendered.call,
                         rendered.result,
                         rendered.activity,
                       ),
-                      owner,
-                      signal,
-                    )
-                  }
+                    owner,
+                  )}
                   copyLabel={toolClipboardLabel(
                     rendered.call,
                     rendered.result,

@@ -18,12 +18,59 @@ const summary = {
 };
 
 describe("Pending wire contracts", () => {
+  it("counts image formats across omitted rows and Host-held input without exposing image data", () => {
+    const pi = pendingQueuesFromContent(
+      {
+        steering: Array.from(
+          { length: MAX_PENDING_MESSAGES + 1 },
+          (_, index) => ({
+            text: index ? "" : "first",
+            ...(index === MAX_PENDING_MESSAGES ? { imageCount: 2 } : {}),
+          }),
+        ),
+        followUp: [],
+      },
+      0,
+    );
+    const merged = mergePendingQueues(
+      pi,
+      [{ message: "", behavior: "followUp", imageCount: 3 }],
+      pi.revision,
+    );
+    expect(merged).toMatchObject({
+      totalCount: MAX_PENDING_MESSAGES + 2,
+      totalImageCount: 5,
+    });
+    expect(merged.steering.every((row) => row.imageCount === undefined)).toBe(
+      true,
+    );
+    expect(parsePendingQueues(merged)).toEqual(merged);
+    expect(
+      mergePendingQueues(pi, [{ message: "", imageCount: null }], 0)
+        .totalImageCount,
+    ).toBeUndefined();
+  });
+
+  it("rejects invalid format counts without requiring new metadata from older Hosts", () => {
+    const base = {
+      revision: 1,
+      totalCount: 1,
+      steering: [{ ...summary, imageCount: 2 }],
+      followUp: [],
+    };
+    for (const totalImageCount of [-1, 1.5, "2", 1])
+      expect(parsePendingQueues({ ...base, totalImageCount })).toBeNull();
+    expect(parsePendingQueues({ ...base, totalImageCount: 2 })).not.toBeNull();
+    expect(parsePendingQueues(base)).not.toBeNull();
+  });
+
   it("uses bounded previews without Pi management claims", () => {
     expect(parsePendingMessageSummary(summary)).toEqual(summary);
     const queue = pendingQueuesFromTexts(["continue"], [], 3);
     expect(parsePendingQueues(queue)).toEqual({
       revision: 4,
       totalCount: 1,
+      totalImageCount: 0,
       steering: [summary],
       followUp: [],
     });

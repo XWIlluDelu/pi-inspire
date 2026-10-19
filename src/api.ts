@@ -618,10 +618,15 @@ export function createApi(token: string | null = null) {
         `/api/transcript/user-turn?sessionId=${encodeURIComponent(sessionId)}&id=${encodeURIComponent(id)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
         { signal },
       ),
-    lastAssistantText: (sessionId: string, viewId: string) =>
+    lastAssistantText: (
+      sessionId: string,
+      viewId: string,
+      signal?: AbortSignal,
+    ) =>
       request<{ text: string | null }>(
         token,
         `/api/transcript/assistant-text?sessionId=${encodeURIComponent(sessionId)}&viewId=${encodeURIComponent(viewId)}`,
+        { signal },
       ),
     composerHistory: (sessionId: string, start = 0) =>
       request<ComposerHistoryPage>(

@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useId, useState } from "react";
 import { createPortal } from "react-dom";
-import { imageSourceBlob } from "../content-copy";
+import { copyLoader, imageSourceBlob } from "../content-copy";
 import { MAX_IMAGE_SCALE } from "../image-viewport";
 import { useImageViewport } from "../use-image-viewport";
 import { useModalFocus } from "../use-modal-focus";
@@ -146,15 +146,19 @@ export function ImageLightbox({
           </div>
           <div
             className="image-lightbox__actions"
+            onClickCapture={() => setCopyError(null)}
             role="group"
             aria-label="Image actions"
           >
             <CopyAction
               key={image.src}
-              getContent={async (signal) => ({
-                text: "",
-                images: [await imageSourceBlob(image.src, signal)],
-              })}
+              getContent={copyLoader(
+                async (signal) => ({
+                  text: "",
+                  images: [await imageSourceBlob(image.src, signal)],
+                }),
+                { text: false, image: true },
+              )}
               label="image"
               className="image-lightbox__control"
               disabled={!ready}

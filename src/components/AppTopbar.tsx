@@ -211,7 +211,10 @@ const SessionIdent = memo(function SessionIdent({
     editIncarnationRef.current += 1;
     setEditing(false);
   }, []);
-  const { copied, copy } = useCopied();
+  const { copied, copy } = useCopied({
+    scope: cwd,
+    onError: store.reportCopyError,
+  });
 
   useLayoutEffect(() => {
     if (editing) inputRef.current?.select();
