@@ -401,6 +401,57 @@ afterEach(async () => {
 });
 
 describe("stock RPC branch bridge", () => {
+  it("keeps History inspection available while the source owns work, queued input and a dialog", async () => {
+    const { runtime, worker, path } = await setup();
+    try {
+      worker.emit("event", { type: "agent_start" });
+      worker.emit("event", {
+        type: "queue_update",
+        steering: ["later"],
+        followUp: [],
+      });
+      worker.emit("event", {
+        type: "extension_ui_request",
+        id: "history-dialog",
+        method: "confirm",
+        title: "Continue?",
+        message: "Waiting for input",
+      });
+      const before = await runtime.snapshot(SESSION_ID);
+      expect(before).toMatchObject({
+        runState: "running",
+        pendingQueues: { totalCount: 1 },
+        pendingExtensionUiRequests: [{ id: "history-dialog" }],
+      });
+      const source = await readFile(path, "utf8");
+      const tree = await runtime.branchTree(SESSION_ID);
+      const retained = await runtime.branchEntry({
+        sessionId: SESSION_ID,
+        viewId: before.active!.transcriptPage.viewId,
+        targetId: "a1",
+      });
+      expect(retained.text).toContain("first answer");
+      await expect(
+        runtime.navigateBranch({
+          sessionId: SESSION_ID,
+          revision: tree.revision,
+          targetId: "a1",
+          mode: "switch",
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(await runtime.snapshot(SESSION_ID)).toMatchObject({
+        runState: "running",
+        pendingQueues: { totalCount: 1 },
+        pendingExtensionUiRequests: [{ id: "history-dialog" }],
+      });
+      expect(worker.stops).toBe(0);
+      expect(worker.extensionResponses).toEqual([]);
+      expect(await readFile(path, "utf8")).toBe(source);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("keeps retained text and images readable through append, but rejects a replaced view", async () => {
     const { runtime, worker, path } = await setup();
     try {

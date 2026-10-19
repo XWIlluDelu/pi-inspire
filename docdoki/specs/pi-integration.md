@@ -62,7 +62,7 @@ project-trust and override decisions. A native setter acknowledgment is followed
 that confirmation does not establish successful persistence. Behavior discloses this boundary and
 the selected worker/global-save/project-override scope beside the controls.
 
-Pi 1.0.0/1.1.0 exposes SDK settings flush/error APIs, but not the RPC worker's manager or a reliable
+Pi 1.3.0 exposes SDK settings flush/error APIs, but not the RPC worker's manager or a reliable
 owning-write result. A load-blocked file may produce no new save error, and a flush can resolve with
 a drainable write error. Per-change saved/failed feedback therefore remains blocked on a public
 worker-owned persistence result; [[pi-capability-gaps]] tracks that requirement.
@@ -118,7 +118,7 @@ managed downloads belong to [[session-branches]], with controls/receipts in [[co
 `/changelog` reads the installed package's matching version section, not a dependency fallback or
 remote latest-release feed. Public extension command enumeration has no argument-completion hooks;
 Inspire does not infer callbacks or patch Pi internals to manufacture them. [[composer]] owns native
-argument assistance and explicit resource preparation. In Pi 1.0.0/1.1.0, `registerCommand()`
+argument assistance and explicit resource preparation. In Pi 1.3.0, `registerCommand()`
 accepts `getArgumentCompletions`, but both RPC `get_commands` and public `ExtensionAPI.getCommands()`
 return `SlashCommandInfo` metadata without callable completion hooks. `addAutocompleteProvider()`
 is a no-op in RPC. Generic completion needs a public current-worker command-completion invocation
@@ -140,7 +140,7 @@ the notice directs the user to terminal `/trust` and then session Reload, withou
 claiming an omitted-resource inventory. Context files and Pi's pre-trust session-directory lookup
 retain their native exceptions.
 
-Invalid-skill omissions lack attributable diagnostics in Pi 1.0.0/1.1.0 RPC and extension contexts.
+Invalid-skill omissions lack attributable diagnostics in Pi 1.3.0 RPC and extension contexts.
 The SDK's ResourceLoader diagnostics belong to its own loader. GUI omission reasons require the
 current worker to expose resource identity and native reason, rather than another filesystem scan.
 
@@ -242,7 +242,7 @@ requests with their worker. Startup restrictions follow [[session-persistence]] 
 Select dialogs support arrow-key choice and Enter, alongside direct pointer/touch selection.
 Confirmation has two visible choices, No and Yes; Escape cancels. Input and multiline dialogs retain
 Submit and Save. A request with a deadline shows its remaining time without restarting the expiry on
-reopen or reconnect. Pi 1.0.0/1.1.0 does not send request-attributed extension cancellation to RPC
+reopen or reconnect. Pi 1.3.0 does not send request-attributed extension cancellation to RPC
 clients. Aggregate `ui_prompt_start/end` callbacks carry kind/title but no RPC request ID; concurrent
 same-title dialogs cannot be distinguished. A request-ID-bearing dismissal event is still needed.
 

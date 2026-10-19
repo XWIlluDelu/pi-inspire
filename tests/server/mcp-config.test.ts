@@ -1,13 +1,16 @@
 import {
+  access,
   lstat,
   mkdir,
   readFile,
+  rename,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
 import express from "express";
+import lockfile from "proper-lockfile";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { McpConfigService } from "../../server/mcp-config.js";
@@ -366,6 +369,80 @@ describe("MCP file configuration", () => {
       "secret-invalid-json",
     );
   });
+  it("saves a regular filename case alias on a native case-insensitive volume", async (context) => {
+    const lower = join(agent, "mcp.json");
+    const upper = join(agent, "MCP.JSON");
+    await rename(lower, upper);
+    if (
+      !(await access(lower).then(
+        () => true,
+        () => false,
+      ))
+    )
+      return context.skip();
+    await edit({
+      scope: "user",
+      name: "docs",
+      operation: "update",
+      values: { timeout: 27 },
+    });
+    expect((await json(upper)).mcpServers.docs.timeout).toBe(27);
+  });
+
+  it.each(["regular", "symlink"])(
+    "rejects a %s file retargeted during its save even with identical contents",
+    async (kind) => {
+      const file = join(agent, "mcp.json");
+      const original = await readFile(file, "utf8");
+      const initialTarget = join(root, "original.json");
+      if (kind === "symlink") {
+        await rename(file, initialTarget);
+        await symlink(initialTarget, file);
+      }
+      const replacement = join(root, "replacement.json");
+      await writeFile(replacement, original);
+      const before = (await service.read(cwd)).files[0]!;
+      const nativeLock = lockfile.lock.bind(lockfile);
+      const locked: string[] = [];
+      let changed = false;
+      vi.spyOn(lockfile, "lock").mockImplementation(
+        async (authority, options) => {
+          const release = await nativeLock(authority, options);
+          locked.push(authority);
+          if (!changed) {
+            changed = true;
+            await rm(file);
+            await symlink(replacement, file);
+          }
+          return release;
+        },
+      );
+      await expect(
+        service.save(cwd, {
+          scope: "user",
+          name: "docs",
+          operation: "update",
+          revision: before.revision,
+          values: { timeout: 28 },
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(changed).toBe(true);
+      expect(locked).toEqual(
+        kind === "symlink" ? [file, initialTarget].sort() : [file],
+      );
+      expect((await lstat(file)).isSymbolicLink()).toBe(true);
+      expect(await readFile(replacement, "utf8")).toBe(original);
+      if (kind === "symlink")
+        expect(await readFile(initialTarget, "utf8")).toBe(original);
+      await expect(access(`${file}.lock`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(access(`${initialTarget}.lock`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+
   it("preserves user symlinks but refuses project paths outside their selected authority", async () => {
     const userPath = join(agent, "mcp.json"),
       target = join(root, "linked.json");
@@ -476,6 +553,93 @@ describe("MCP HTTP ownership", () => {
     );
     return app;
   }
+  it.each(["unselected", "missing", "not-directory"] as const)(
+    "keeps user reads and add/update/remove independent of the %s project",
+    async (project) => {
+      const path = join(root, "unavailable-project");
+      if (project === "not-directory") await writeFile(path, "keep");
+      const owner = project === "unselected" ? {} : { cwd: path };
+      const response = await request(app())
+        .get("/api/mcp-config")
+        .query(owner)
+        .expect(200);
+      expect(response.body.cwd).toBe(project === "unselected" ? null : path);
+      expect(response.body.files[0].entries).toHaveLength(2);
+      expect(response.headers["cache-control"]).toBe("no-store");
+      if (project === "unselected") expect(response.body.files).toHaveLength(1);
+      else
+        expect(response.body.files[1]).toMatchObject({
+          scope: "project",
+          revision: "",
+          entries: [],
+          error: expect.stringMatching(/Project path/),
+        });
+
+      let config = response.body;
+      for (const operation of ["add", "update", "remove"] as const) {
+        const result = await request(app())
+          .patch("/api/mcp-config")
+          .query(owner)
+          .send({
+            scope: "user",
+            revision: config.files[0].revision,
+            name: "independent",
+            operation,
+            ...(operation === "add"
+              ? { values: { command: "node" } }
+              : operation === "update"
+                ? { values: { timeout: 25 } }
+                : {}),
+          })
+          .expect(200);
+        expect(result.body.saved).toBe(true);
+        config = result.body.snapshot;
+        const stored = (await json()).mcpServers.independent;
+        if (operation === "add") expect(stored.command).toBe("node");
+        if (operation === "update") expect(stored.timeout).toBe(25);
+        if (operation === "remove") expect(stored).toBeUndefined();
+      }
+      await request(app())
+        .patch("/api/mcp-config")
+        .query(owner)
+        .send({
+          scope: "project",
+          revision: "a".repeat(64),
+          name: "not-created",
+          operation: "add",
+          values: { command: "node" },
+        })
+        .expect(project === "unselected" ? 409 : 400);
+      if (project === "not-directory")
+        expect(await readFile(path, "utf8")).toBe("keep");
+      else await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it("keeps user configuration accessible when an addressed session's project disappears", async () => {
+    await rm(cwd, { recursive: true });
+    const response = await request(app())
+      .get("/api/mcp-config")
+      .query({ sessionId: "open", cwd: root })
+      .expect(200);
+    expect(response.body.cwd).toBe(cwd);
+    expect(response.body.files[0].entries).toHaveLength(2);
+    expect(response.body.files[1].error).toMatch(/Project path does not exist/);
+    await request(app())
+      .patch("/api/mcp-config")
+      .query({ sessionId: "open", cwd: root })
+      .send({
+        scope: "user",
+        revision: response.body.files[0].revision,
+        name: "docs",
+        operation: "update",
+        values: { timeout: 25 },
+      })
+      .expect(200);
+    expect((await json()).mcpServers.docs.timeout).toBe(25);
+    await expect(access(cwd)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("uses session cwd over supplied cwd and accepts no caller-supplied file path", async () => {
     const response = await request(app())
       .get("/api/mcp-config")
@@ -501,6 +665,18 @@ describe("MCP HTTP ownership", () => {
       })
       .expect(400);
     expect(JSON.stringify(bad.body)).not.toContain("request-secret");
+    await request(app())
+      .patch("/api/mcp-config")
+      .query({ sessionId: "closed", cwd })
+      .send({
+        scope: "user",
+        revision: file.revision,
+        name: "docs",
+        operation: "update",
+        values: { timeout: 25 },
+      })
+      .expect(409);
+    expect((await json()).mcpServers.docs.timeout).toBeUndefined();
     await request(app())
       .patch("/api/mcp-config")
       .query({ sessionId: "open" })

@@ -16,7 +16,7 @@ Implemented behavior belongs to [[pi-integration]], [[model-settings]], [[mcp]] 
 
 ## Blocked requirements
 
-The gaps below apply to the inspected Pi 1.0.0/1.1.0 interfaces.
+The gaps below remain in the inspected Pi 1.3.0 public RPC and extension interfaces.
 
 | Requirement | Missing interface |
 | --- | --- |

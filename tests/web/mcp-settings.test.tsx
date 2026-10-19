@@ -208,6 +208,80 @@ it("adds HTTP configuration without copying write-only fields from other entries
     ),
   );
 });
+it.each(["unselected", "unavailable"] as const)(
+  "keeps user configuration editable with an %s project",
+  async (project) => {
+    const config = snapshot();
+    if (project === "unselected") {
+      config.cwd = null;
+      config.files = config.files.filter((file) => file.scope === "user");
+    } else {
+      Object.assign(config.files[1]!, {
+        revision: "",
+        error: "Project path does not exist",
+      });
+    }
+    fixture.host.readMcpConfig.mockResolvedValue(config);
+    fixture.host.editMcpConfig.mockResolvedValue({
+      saved: true,
+      snapshot: config,
+    });
+    render(<McpSettings active owner={{}} />);
+    await screen.findByRole("button", { name: "Edit user server docs" });
+    if (project === "unselected")
+      expect(
+        screen.getByText("Select a project to edit project configuration."),
+      ).toBeVisible();
+    else
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Project path does not exist",
+      );
+    fireEvent.click(screen.getByRole("button", { name: "Add server" }));
+    const target = screen.getByRole("combobox", {
+      name: "Configuration target",
+    });
+    fireEvent.click(target);
+    expect(
+      screen.getByRole("option", { name: "User · all projects" }),
+    ).toBeVisible();
+    if (project === "unselected")
+      expect(screen.queryByRole("option", { name: "This project" })).toBeNull();
+    fireEvent.click(
+      screen.getByRole("option", { name: "User · all projects" }),
+    );
+    fireEvent.change(screen.getByLabelText("Server name"), {
+      target: { value: "independent" },
+    });
+    fireEvent.change(screen.getByLabelText("Server URL"), {
+      target: { value: "https://example.invalid/mcp" },
+    });
+    expect(
+      screen.getByRole("button", { name: "Save configuration" }),
+    ).toBeEnabled();
+    fireEvent.submit(
+      screen
+        .getByRole("button", { name: "Save configuration" })
+        .closest("form")!,
+    );
+    await waitFor(() =>
+      expect(fixture.host.editMcpConfig).toHaveBeenCalledWith(
+        {},
+        {
+          scope: "user",
+          name: "independent",
+          revision: "a".repeat(64),
+          operation: "add",
+          values: { url: "https://example.invalid/mcp" },
+        },
+      ),
+    );
+    await screen.findByText(/Saved to file/);
+    expect(
+      screen.queryByRole("button", { name: "Reload selected session…" }),
+    ).toBeNull();
+  },
+);
+
 it("preserves secret drafts across transport changes and saves only the selected transport", () => {
   const save = vi.fn();
   render(

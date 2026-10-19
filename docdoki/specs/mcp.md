@@ -45,6 +45,11 @@ Project trust is explained briefly in the project editor, not repeated as a poli
 The Host derives the user file from public `getAgentDir()/mcp.json`. The project file is
 `<cwd>/.pi/mcp.json`; an addressed session's Host-resolved directory wins over a supplied directory.
 The start surface uses its selected directory. Clients cannot supply arbitrary configuration paths.
+User-file reads and edits do not require a session or an available project directory. With no project
+selected, Settings shows only user configuration and a short project-selection hint. An unavailable
+project reports its own file error without blocking the user file. An addressed session still has to
+exist; its directory cannot silently fall back to another client-supplied directory. Project writes
+require an existing verified project directory and never create a missing project.
 Full project definitions replace same-name user definitions. Pi 1.1 policy-only project entries
 inherit the user connection and override `enabled`, `exposure`, and `toolExposure`; their editor
 preserves that shape. Absent enabled/exposure fields display **Inherit from user**, and choosing it
@@ -78,7 +83,8 @@ the edited subset. Drafts survive category changes but are withdrawn on session/
 ownership changes; stale asynchronous results cannot populate the new owner.
 
 A successful write reports saved-to-file, not applied. The optional, confirmed **Reload selected
-session** uses Inspire's existing idle-worker Reload path. Other workers are unchanged; new workers
+session** uses Inspire's existing idle-worker Reload path. Busy, unready or read-only targets are
+unavailable with an explanation; a declined dispatch is not reported as sent. Other workers are unchanged; new workers
 read the saved configuration. Save failure retains the draft. A successful save followed by a read
 failure still reports the successful commit and asks for Refresh.
 
@@ -86,7 +92,7 @@ User guide: [MCP configuration](../../docs/mcp.md).
 
 ## Current-worker interface boundary
 
-Pi 1.0/1.1 public registration APIs describe declarations, not a complete loaded-runtime inventory.
+Pi 1.3 public registration APIs describe declarations, not a complete loaded-runtime inventory.
 `getMcpServers` omits the full file-server connection/tool state. Taking over
 `mcp_servers_change` would implement connections rather than observe them.
 
@@ -109,7 +115,8 @@ Configured MCP tools and Codemode composition continue through Pi.
 ## Checks
 
 - `tests/server/mcp-config.test.ts`: secret-safe projections, unexecuted hooks, source-preserving
-  edits, policy-only inheritance, namespace collisions, invalid files, conflicts and path authority.
+  edits, policy-only inheritance, namespace collisions, invalid files, conflicts, path authority and
+  user-file independence from missing or unselected projects.
 - `tests/server/mcp-native.integration.test.ts`: native file consumption, trusted precedence,
   Pi 1.1 policy inheritance without credential duplication, and file/loaded-worker separation.
 - `tests/web/mcp-settings.test.tsx`: stale-owner withdrawal, HTTP add, duplicate keys, displayed

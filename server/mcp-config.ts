@@ -8,7 +8,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
 import {
@@ -19,7 +19,9 @@ import {
   type McpConfigSnapshot,
   type McpConfigValues,
 } from "../shared/mcp.js";
-import { escapesBase } from "./paths.js";
+import { configurationEditLockPaths } from "./configuration-edit-locks.js";
+import { filesystemRelativePath } from "./filesystem-containment.js";
+import { resolveProjectDirectory } from "./paths.js";
 import { getAgentDir } from "./pi-runtime.js";
 import { requestError } from "./request-error.js";
 
@@ -350,17 +352,24 @@ function validate(
 
 export class McpConfigService {
   constructor(private readonly agentDir = getAgentDir()) {}
-  private path(cwd: string, scope: McpConfigScope) {
-    return scope === "user"
-      ? join(this.agentDir, "mcp.json")
-      : join(cwd, ".pi", "mcp.json");
+  private path(cwd: string | null, scope: McpConfigScope) {
+    if (scope === "user") return join(this.agentDir, "mcp.json");
+    if (!cwd)
+      throw requestError(
+        "Select a project before editing project MCP configuration",
+        409,
+      );
+    return join(cwd, ".pi", "mcp.json");
   }
-  private async target(cwd: string, scope: McpConfigScope) {
-    const target = await targetAt(this.path(cwd, scope));
+  private async target(cwd: string | null, scope: McpConfigScope) {
+    const path = this.path(cwd, scope);
+    const project =
+      scope === "project" ? await resolveProjectDirectory(cwd!) : null;
+    const target = await targetAt(path);
     // A repository-controlled symlink cannot redirect a project edit into user config or another project.
     if (
-      scope === "project" &&
-      escapesBase(relative(await realpath(cwd), target))
+      project !== null &&
+      (await filesystemRelativePath(project, target)) === null
     )
       throw requestError(
         "Project mcp.json points outside this project; edit that file directly",
@@ -368,9 +377,11 @@ export class McpConfigService {
       );
     return target;
   }
-  async read(cwd: string): Promise<McpConfigSnapshot> {
+  async read(cwd: string | null): Promise<McpConfigSnapshot> {
+    const scopes: McpConfigScope[] =
+      cwd === null ? ["user"] : ["user", "project"];
     const files = await Promise.all(
-      (["user", "project"] as const).map(async (scope) => {
+      scopes.map(async (scope) => {
         const path = this.path(cwd, scope);
         try {
           const target = await this.target(cwd, scope);
@@ -400,7 +411,7 @@ export class McpConfigService {
     );
     return { cwd, files };
   }
-  async save(cwd: string, input: McpConfigEdit): Promise<void> {
+  async save(cwd: string | null, input: McpConfigEdit): Promise<void> {
     const edit = mcpConfigEditSchema.parse(input);
     const path = this.path(cwd, edit.scope);
     const target = await this.target(cwd, edit.scope);
@@ -413,7 +424,10 @@ export class McpConfigService {
       `.inspire-mcp-${randomUUID()}.json`,
     );
     try {
-      for (const authority of [...new Set([lexical, target])].sort()) {
+      for (const authority of await configurationEditLockPaths(
+        lexical,
+        target,
+      )) {
         try {
           releases.push(
             await lockfile.lock(authority, {
