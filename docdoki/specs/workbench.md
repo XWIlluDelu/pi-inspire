@@ -65,6 +65,7 @@ covers:
   - src/components/HiddenClearDialog.tsx
   - src/components/SessionDeleteDialog.tsx
   - src/use-modal-focus.ts
+  - src/keyboard-input.ts
   - src/visual-preferences.ts
   - public/theme-init.js
   - server/host-dirs.ts
@@ -378,7 +379,10 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   Paired operations have separate complete keycaps in the same row. Navigation followed by
   confirmation uses explicit chord groups separated by a middle dot. Keycaps wrap at group/chord
   boundaries as space permits and use conventional `Esc` and `PgUp/PgDn` key names.
-  This notation does not change bindings, keycap styling, grouping or send-key preferences. `/changelog` opens that
+  Model/thinking cycling uses the browser-platform bindings in [[model-settings]]; Option text,
+  IME and AltGraph remain native. Primary K/B/period shortcuts require exactly Ctrl or Command,
+  without Alt/Shift, leaving shifted browser chords available. Keycap styling, grouping and
+  send-key preferences remain unchanged. `/changelog` opens that
   help surface in release-note mode, showing the installed Pi version's shipped changelog entry
   with loading, failure, and retry states. It is not an update/settings destination and performs no
   network lookup. Markdown follows the existing deferred safe renderer; documentation links are

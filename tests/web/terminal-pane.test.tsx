@@ -399,6 +399,34 @@ describe("terminal project ownership", () => {
     );
   });
 
+  it.each([
+    { name: "active composition", isComposing: true },
+    { name: "IME confirmation", isComposing: false, keyCode: 229 },
+  ])("leaves terminal names editable during $name", async (ime) => {
+    api.renameTerminal.mockResolvedValue({
+      ...terminal("A shell", "/A", 2),
+      title: "测量终端",
+      titleSource: "user",
+    });
+    render(<TerminalPane cwd="/A" />);
+    await screen.findByRole("button", { name: "A shell", pressed: true });
+    action("Rename");
+    const input = screen.getByRole("textbox", { name: "Terminal name" });
+    fireEvent.change(input, { target: { value: "测量终端" } });
+    for (const key of ["Enter", "Escape"]) {
+      fireEvent.keyDown(input, { key, ...ime });
+      expect(api.renameTerminal).not.toHaveBeenCalled();
+      expect(input).toBeInTheDocument();
+      expect(input).toHaveValue("测量终端");
+    }
+    fireEvent.keyDown(input, { key: "Enter" });
+    await screen.findByRole("button", { name: "测量终端", pressed: true });
+    expect(api.renameTerminal).toHaveBeenCalledTimes(1);
+    expect(api.renameTerminal).toHaveBeenCalledWith("A shell", {
+      title: "测量终端",
+    });
+  });
+
   it("references a terminal panel only after its lazy view exists", async () => {
     render(<TerminalPane cwd="/A" />);
     const unopened = await screen.findByRole("button", {

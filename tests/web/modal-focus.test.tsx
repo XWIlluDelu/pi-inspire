@@ -8,6 +8,33 @@ import { SettingsDialog } from "../../src/components/SettingsDialog";
 import { recoverModalFocus, useModalFocus } from "../../src/use-modal-focus";
 
 describe("modal focus ownership", () => {
+  it.each([
+    { isComposing: true, keyCode: 0 },
+    { isComposing: false, keyCode: 229 },
+  ])("leaves input-method Escape and Tab native: %j", (composition) => {
+    const onClose = vi.fn();
+    render(
+      <SettingsDialog onClose={onClose}>
+        <input aria-label="IME text" />
+      </SettingsDialog>,
+    );
+    const first = screen.getByRole("button", { name: "Close settings" });
+    const input = screen.getByRole("textbox", { name: "IME text" });
+    input.focus();
+    expect(fireEvent.keyDown(input, { key: "Tab", ...composition })).toBe(true);
+    expect(input).toHaveFocus();
+    expect(fireEvent.keyDown(input, { key: "Escape", ...composition })).toBe(
+      true,
+    );
+    expect(onClose).not.toHaveBeenCalled();
+    expect(input).toHaveFocus();
+
+    expect(fireEvent.keyDown(input, { key: "Tab", keyCode: 9 })).toBe(false);
+    expect(first).toHaveFocus();
+    fireEvent.keyDown(first, { key: "Escape", keyCode: 27 });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("cycles Tab within a modal and restores its opener", async () => {
     const opener = document.createElement("button");
     document.body.append(opener);

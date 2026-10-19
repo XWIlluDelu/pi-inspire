@@ -19,6 +19,7 @@ import {
   rememberComposerHistory,
 } from "../composer-history";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import { supportedThinkingLevels } from "../model-options";
 import {
   sessionDraft,
@@ -58,7 +59,7 @@ const ContextMeter = memo(function ContextMeter() {
       if (
         event.key !== "Escape" ||
         event.defaultPrevented ||
-        event.isComposing ||
+        isComposingKeyboardEvent(event) ||
         hasActiveModal()
       )
         return;

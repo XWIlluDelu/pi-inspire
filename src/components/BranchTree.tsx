@@ -22,6 +22,7 @@ import type {
   BranchTreeResponse,
 } from "../../shared/contracts";
 import { copyLoader } from "../content-copy";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import { resourceReferenceFromEventTarget } from "../resources";
 import { sessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
@@ -600,6 +601,7 @@ export function BranchTree({
               outlineScrollRef.current = 0;
             }}
             onKeyDown={(event) => {
+              if (isComposingKeyboardEvent(event.nativeEvent)) return;
               if (event.key === "Escape" && query) {
                 event.preventDefault();
                 event.stopPropagation();
@@ -839,6 +841,7 @@ export function BranchTree({
           onKeyDown={(event) => {
             // React portals bubble here even when another surface owns focus.
             if (
+              isComposingKeyboardEvent(event.nativeEvent) ||
               event.key !== "Escape" ||
               !event.currentTarget.contains(event.target as Node)
             )

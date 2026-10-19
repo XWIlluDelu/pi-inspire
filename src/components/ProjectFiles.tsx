@@ -13,6 +13,7 @@ import { createPortal } from "react-dom";
 import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
 import { rankProjectFiles } from "../composer-completion";
 import { fileIconForPath } from "../file-icons";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
   type FloatingMenuConstraints,
   useFloatingMenuPlacement,
@@ -202,7 +203,8 @@ export function ProjectFilePicker({
   }, [activeIndex, keyboardActive, listId, results]);
 
   const navigate = (event: KeyboardEvent) => {
-    if (event.defaultPrevented || event.nativeEvent.isComposing) return;
+    if (event.defaultPrevented || isComposingKeyboardEvent(event.nativeEvent))
+      return;
     if (event.key === "Enter" || (event.key === "Tab" && activeOption)) {
       event.preventDefault();
       if (activeOption) onAdd(activeOption);
@@ -234,7 +236,7 @@ export function ProjectFilePicker({
         maxHeight: placement.maxHeight,
       }}
       onKeyDown={(event) => {
-        if (event.nativeEvent.isComposing) return;
+        if (isComposingKeyboardEvent(event.nativeEvent)) return;
         if (event.key === "Escape") {
           event.preventDefault();
           event.stopPropagation();

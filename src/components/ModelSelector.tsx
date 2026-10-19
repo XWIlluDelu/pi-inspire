@@ -6,6 +6,7 @@ import {
   type ModelOption,
   modelIdentityKey,
 } from "../../shared/contracts";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
   type FloatingMenuConstraints,
   useFloatingMenuPlacement,
@@ -153,7 +154,8 @@ export function ModelSelector({
     }
   };
   const onMenuKey = (event: React.KeyboardEvent) => {
-    if (event.defaultPrevented || event.nativeEvent.isComposing) return;
+    if (event.defaultPrevented || isComposingKeyboardEvent(event.nativeEvent))
+      return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -233,7 +235,7 @@ export function ModelSelector({
                   onKeyDown={(event) => {
                     if (
                       event.key === "Escape" &&
-                      !event.nativeEvent.isComposing
+                      !isComposingKeyboardEvent(event.nativeEvent)
                     ) {
                       event.preventDefault();
                       event.stopPropagation();

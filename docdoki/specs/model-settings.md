@@ -74,7 +74,10 @@ retains pattern syntax, order, unmatched entries and unrelated settings. Common 
 in the picker; without a configured common scope, the picker has no Common group.
 
 Next/previous-model and thinking-cycle commands use cached native choices. Gestures execute in order
-within their session/transport owner and respect editors, menus, modals and IME. Startup-default
+within their session/transport owner and respect editors, menus, modals and IME. macOS uses
+Control+Command+M/P/R; other browser platforms retain Alt+Shift+M/P/R only when the layout actually
+produces that letter. Physical key codes never turn Option/AltGraph characters or dead keys into
+model actions. Palette and keyboard-help hints share the same binding source. Startup-default
 edits leave the current session model and thinking level unchanged.
 
 Pi's selected identity can differ from the physical responder. Selection controls and New inheritance

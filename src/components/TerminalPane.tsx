@@ -45,6 +45,7 @@ import {
 } from "../../shared/terminal-contracts";
 import { createApi } from "../api";
 import { terminalOperations } from "../controllers/terminal-operation-controller";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
   hasTerminalInsertion,
   subscribeTerminalActions,
@@ -430,6 +431,7 @@ export const TerminalPane = memo(function TerminalPane({
   }, [cwd]);
 
   const onMenuKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    if (isComposingKeyboardEvent(event.nativeEvent)) return;
     if (
       event.key === "Escape" &&
       dismissTerminalMenu(paneRef.current, event.target)
@@ -454,6 +456,7 @@ export const TerminalPane = memo(function TerminalPane({
     if (!focused) return;
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (
+        isComposingKeyboardEvent(event) ||
         event.key !== "Escape" ||
         (!event.ctrlKey && !event.metaKey) ||
         !event.shiftKey ||
@@ -996,6 +999,7 @@ export const TerminalPane = memo(function TerminalPane({
                   onChange={(event) => setRenameValue(event.target.value)}
                   onBlur={() => void commitRename()}
                   onKeyDown={(event) => {
+                    if (isComposingKeyboardEvent(event.nativeEvent)) return;
                     event.stopPropagation();
                     if (event.key === "Enter") void commitRename();
                     else if (event.key === "Escape") {

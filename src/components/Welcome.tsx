@@ -22,6 +22,7 @@ import { clipboardFiles } from "../clipboard-files";
 import type { PiCommand } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import type { PendingAttachment } from "../controllers/composer-controller";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import { clampThinkingLevel, supportedThinkingLevels } from "../model-options";
 import {
   sessionDraft,
@@ -829,8 +830,7 @@ export const Welcome = memo(function Welcome({
             onKeyDown={(event) => {
               if (
                 event.key === "Enter" &&
-                !event.nativeEvent.isComposing &&
-                event.nativeEvent.keyCode !== 229
+                !isComposingKeyboardEvent(event.nativeEvent)
               )
                 event.preventDefault();
             }}

@@ -44,6 +44,7 @@ import {
   type TerminalServerDataFrame,
 } from "../../shared/terminal-contracts";
 import type { Api } from "../api";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
   hasTerminalInsertion,
   subscribeTerminalActions,
@@ -915,6 +916,7 @@ export const TerminalView = memo(function TerminalView({
     clearModifiers();
   };
   const handleSearchKey = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (isComposingKeyboardEvent(event.nativeEvent)) return;
     if (event.key === "Enter") {
       event.preventDefault();
       find(event.shiftKey ? "previous" : "next");
@@ -1078,6 +1080,7 @@ export const TerminalView = memo(function TerminalView({
                   event.preventDefault();
               }}
               onKeyDown={(event) => {
+                if (isComposingKeyboardEvent(event.nativeEvent)) return;
                 if (event.key !== "Escape") return;
                 event.preventDefault();
                 event.stopPropagation();

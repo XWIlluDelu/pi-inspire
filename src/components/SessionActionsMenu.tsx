@@ -1,5 +1,6 @@
 import { type RefObject, useCallback, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
   type FloatingMenuConstraints,
   useFloatingMenuPlacement,
@@ -80,7 +81,7 @@ export function SessionActionsMenu({
         maxHeight: placement.maxHeight,
       }}
       onKeyDown={(event) => {
-        if (event.nativeEvent.isComposing) return;
+        if (isComposingKeyboardEvent(event.nativeEvent)) return;
         if (event.key === "Escape" || event.key === "Tab") {
           if (event.key === "Escape") {
             event.preventDefault();

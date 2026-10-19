@@ -465,6 +465,23 @@ describe("read-only History inspection", () => {
     ).toHaveLength(1);
   });
 
+  it.each([
+    { name: "active composition", isComposing: true },
+    { name: "IME confirmation", isComposing: false, keyCode: 229 },
+  ])("does not clear a history query during $name", async (ime) => {
+    render(<BranchTree />);
+    const input = screen.getByRole("searchbox", { name: "Find in history" });
+    fireEvent.change(input, { target: { value: "完整" } });
+    await screen.findByRole("button", { name: "Response Earlier answer" });
+    input.focus();
+    expect(fireEvent.keyDown(input, { key: "Escape", ...ime })).toBe(true);
+    expect(input).toHaveValue("完整");
+    expect(input).toHaveFocus();
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(input).toHaveValue("");
+    await screen.findByRole("button", { name: "Root question" });
+  });
+
   it("shows a shared no-match state without duplicating the query and restores the outline on Escape", async () => {
     render(<BranchTree />);
     const search = screen.getByRole("searchbox", { name: "Find in history" });

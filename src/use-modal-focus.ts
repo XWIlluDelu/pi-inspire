@@ -1,4 +1,5 @@
 import { type RefObject, useLayoutEffect, useRef } from "react";
+import { isComposingKeyboardEvent } from "./keyboard-input";
 
 const FOCUSABLE = [
   "a[href]",
@@ -145,6 +146,7 @@ export function useModalFocus<T extends HTMLElement>(
       if (
         event.key !== "Escape" ||
         event.defaultPrevented ||
+        isComposingKeyboardEvent(event) ||
         modalStack.at(-1) !== entry
       )
         return;
@@ -158,6 +160,7 @@ export function useModalFocus<T extends HTMLElement>(
     const trapKeys = (event: KeyboardEvent) => {
       if (
         event.defaultPrevented ||
+        isComposingKeyboardEvent(event) ||
         modalStack.at(-1) !== entry ||
         event.key !== "Tab"
       )

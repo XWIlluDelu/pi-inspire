@@ -2,6 +2,7 @@ import { AlertTriangle, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
+import { modelCycleShortcut } from "../workbench-keyboard";
 import { ContextPaneState } from "./ContextPaneState";
 import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText } from "./ProgressiveRichText";
@@ -126,8 +127,14 @@ export function CommandHelp({
     {
       title: "Models",
       rows: [
-        [["Alt+Shift+M", "Alt+Shift+P"], "Next / previous common model"],
-        ["Alt+Shift+R", "Cycle supported thinking levels"],
+        [
+          [
+            modelCycleShortcut("next-model"),
+            modelCycleShortcut("previous-model"),
+          ],
+          "Next / previous common model",
+        ],
+        [modelCycleShortcut("thinking"), "Cycle supported thinking levels"],
       ],
     },
     {

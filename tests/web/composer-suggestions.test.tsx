@@ -217,6 +217,18 @@ describe("caret completion", () => {
     expect(
       await screen.findByRole("option", { name: /index\.ts/ }),
     ).toBeInTheDocument();
+    fireEvent.keyDown(textarea, {
+      key: "Enter",
+      keyCode: 229,
+      isComposing: false,
+    });
+    expect(textarea).toHaveValue("@ind");
+    expect(
+      screen.getByRole("option", { name: /index\.ts/ }),
+    ).toBeInTheDocument();
+    expect(host.promptBodies).toEqual([]);
+    fireEvent.keyDown(textarea, { key: "Enter", keyCode: 13 });
+    expect(textarea).toHaveValue('@"src/index.ts" ');
   });
 
   it("suppresses an obsolete file-search response after the caret query changes", async () => {

@@ -13,6 +13,7 @@ import type {
   ExtensionWidgetDisplay,
 } from "../../shared/contracts";
 import { stripTerminalSequences } from "../ansi";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import { shallowEqual, useAppState } from "../store";
 import {
   type FloatingMenuConstraints,
@@ -161,7 +162,7 @@ export const ExtensionStatus = memo(function ExtensionStatus() {
                 maxHeight: placement.maxHeight,
               }}
               onKeyDown={(event) => {
-                if (event.nativeEvent.isComposing) return;
+                if (isComposingKeyboardEvent(event.nativeEvent)) return;
                 if (event.key === "Escape" || event.key === "Tab") {
                   if (event.key === "Escape") {
                     event.preventDefault();

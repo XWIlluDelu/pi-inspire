@@ -22,6 +22,7 @@ import {
 } from "../../shared/contracts";
 import { userTurnSummary } from "../../shared/user-turns";
 import { type ActivityTool, type ChatMessage, messageKey } from "../events";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import { resourceReferenceFromEventTarget } from "../resources";
 import {
   type ActivityMaterializationMode,
@@ -509,6 +510,7 @@ export const Transcript = memo(function Transcript({
       className={`transcript-wrap transcript-wrap--mobile-${mobileTranscriptTool ?? "idle"} ${viewingEarlierBranch ? "transcript-wrap--earlier-branch" : ""}`}
       tabIndex={-1}
       onKeyDownCapture={(event) => {
+        if (isComposingKeyboardEvent(event.nativeEvent)) return;
         if (event.key === "f" && (event.metaKey || event.ctrlKey)) {
           event.preventDefault();
           if (window.matchMedia("(max-width: 900px)").matches) {

@@ -36,12 +36,14 @@ import { SettingsDialog, SettingsLoading } from "./components/SettingsDialog";
 import { Transcript, type TranscriptNavigation } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
 import { BrandLogo, Wordmark } from "./components/Wordmark";
+import { isComposingKeyboardEvent } from "./keyboard-input";
 import { shallowEqual, store, useAppState } from "./store";
 import { hasActiveModal } from "./use-modal-focus";
 import {
   applyBrowserTheme,
   cacheVisualPreferences,
 } from "./visual-preferences";
+import { modelCycleAction } from "./workbench-keyboard";
 
 const loadContextPane = () => import("./components/ContextPane");
 const loadSettings = () => import("./components/Settings");
@@ -728,22 +730,13 @@ export function App() {
         return;
       if (
         event.defaultPrevented ||
-        event.isComposing ||
-        event.keyCode === 229 ||
+        isComposingKeyboardEvent(event) ||
         event.getModifierState("AltGraph")
       )
         return;
       const target = event.target instanceof Element ? event.target : null;
-      const cycleKey = event.code
-        ? event.code.replace(/^Key/, "").toLowerCase()
-        : event.key.toLowerCase();
-      const cyclingKey =
-        event.altKey &&
-        event.shiftKey &&
-        !event.ctrlKey &&
-        !event.metaKey &&
-        ["m", "p", "r"].includes(cycleKey);
-      if (cyclingKey) {
+      const cycleAction = modelCycleAction(event);
+      if (cycleAction) {
         const editable = target?.closest(
           "input,textarea,[contenteditable=true]",
         );
@@ -760,11 +753,12 @@ export function App() {
         )
           return;
         event.preventDefault();
-        if (cycleKey === "r") void store.cycleThinking();
-        else void store.cycleModel(cycleKey === "m" ? 1 : -1);
+        if (cycleAction === "thinking") void store.cycleThinking();
+        else void store.cycleModel(cycleAction === "next-model" ? 1 : -1);
         return;
       }
-      const mod = event.ctrlKey || event.metaKey;
+      const mod =
+        event.ctrlKey !== event.metaKey && !event.altKey && !event.shiftKey;
       if (mod && event.key.toLowerCase() === "k") {
         event.preventDefault();
         openCommandPalette();
