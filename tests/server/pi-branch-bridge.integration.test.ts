@@ -245,6 +245,10 @@ export default function (pi) {
     });
     const dialogs: Array<Record<string, unknown>> = [];
     const responses: Promise<void>[] = [];
+    let receiveNavigationDialog!: () => void;
+    const navigationDialog = new Promise<void>((resolve) => {
+      receiveNavigationDialog = resolve;
+    });
     let holdNavigation = true;
     runtime.on("event", (event) => {
       const record = event as Record<string, unknown>;
@@ -254,7 +258,10 @@ export default function (pi) {
       )
         return;
       dialogs.push(record);
-      if (holdNavigation) return;
+      if (holdNavigation) {
+        receiveNavigationDialog();
+        return;
+      }
       responses.push(
         runtime.extensionUiResponse({
           sessionId: record.sessionId,
@@ -279,9 +286,17 @@ export default function (pi) {
         targetId: "a1",
         mode: "switch",
       });
-      // Keep a rejection observed while the extension's dialog is held.
-      void navigating.catch(() => undefined);
-      await vi.waitFor(() => expect(dialogs).toHaveLength(1));
+      // Wait for the real extension event within this integration case's budget,
+      // and expose navigation errors instead of masking them as a polling timeout.
+      await Promise.race([
+        navigationDialog,
+        navigating.then(() => {
+          throw new Error(
+            "Navigation completed without its confirmation dialog",
+          );
+        }),
+      ]);
+      expect(dialogs).toHaveLength(1);
       const shellRequests = vi.spyOn(workers[0]!, "request");
       try {
         await expect(

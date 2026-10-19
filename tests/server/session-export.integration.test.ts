@@ -43,7 +43,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 
-async function fixture() {
+async function fixture({ openSource = true } = {}) {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), "inspire-export-test-")),
   );
@@ -262,15 +262,17 @@ async function fixture() {
     Authorization: "Bearer export-test-token",
     "Content-Type": "application/json",
   };
-  const selected = await fetch(`${url}/api/sessions/open`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ id }),
-  });
-  expect(selected.status).toBe(200);
-  await vi.waitFor(() => expect(workers[0]?.available).toBe(true), {
-    timeout: 10_000,
-  });
+  if (openSource) {
+    const selected = await fetch(`${url}/api/sessions/open`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ id }),
+    });
+    expect(selected.status).toBe(200);
+    await vi.waitFor(() => expect(workers[0]?.available).toBe(true), {
+      timeout: 10_000,
+    });
+  }
   return { directory, workspace, id, path, runtime, workers, url, headers };
 }
 
@@ -424,11 +426,13 @@ it.skipIf(
   30_000,
 );
 
+// Use the real-Pi integration budget, including cold native startup.
 it("exports native in-memory entries before a new session materializes", async () => {
-  const f = await fixture();
+  const f = await fixture({ openSource: false });
   const snapshot = await f.runtime.newSession(f.workspace, {
     name: "Deferred export",
   });
+  expect(f.workers).toHaveLength(1);
   expect(existsSync(snapshot.active!.sessionFile!)).toBe(false);
   const result = await f.runtime.nativeCommand({
     sessionId: snapshot.active!.sessionId,
@@ -439,7 +443,7 @@ it("exports native in-memory entries before a new session materializes", async (
   expect(exported).toContain('"name":"Deferred export"');
   expect(exported).toContain(snapshot.active!.sessionId);
   expect(existsSync(snapshot.active!.sessionFile!)).toBe(false);
-});
+}, 30_000);
 
 describe("native path and branch boundaries", () => {
   it("uses one native path token and rejects incomplete branch projections", () => {

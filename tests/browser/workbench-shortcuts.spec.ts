@@ -1,5 +1,26 @@
 import { expect, test } from "@playwright/test";
+import type { ModelOption } from "../../shared/contracts";
+import { routeMockSnapshots } from "./support/mock-host";
 import { openCommandPalette, pairAndOpen } from "./support/navigation";
+
+// A service worker can bypass page.route. This fixture owns network model
+// data, so keep those requests on the direct page routing lane in every engine.
+test.use({ serviceWorkers: "block" });
+
+const models: ModelOption[] = [
+  {
+    provider: "shortcut-fixture",
+    id: "alpha",
+    name: "Shortcut Alpha",
+    reasoning: true,
+  },
+  {
+    provider: "shortcut-fixture",
+    id: "beta",
+    name: "Shortcut Beta",
+    reasoning: true,
+  },
+];
 
 for (const platform of ["MacIntel", "Win32"]) {
   test(`model shortcuts preserve native text and match platform hints (${platform})`, {
@@ -13,6 +34,42 @@ for (const platform of ["MacIntel", "Win32"]) {
         }),
       platform,
     );
+    // This tests shortcut ownership, not the model selection a previous test
+    // left on the shared mock Host. Keep catalog, snapshots and control replies
+    // in the same owned two-model cycle, including an explicit initial member.
+    let selected = models[0]!;
+    let thinkingLevel = "off";
+    await routeMockSnapshots(page, {
+      snapshot: (snapshot) => {
+        if (snapshot.active?.sessionId === "mock-history")
+          Object.assign(snapshot.active, {
+            model: selected,
+            availableModels: models,
+            commonModels: models,
+            thinkingLevel,
+          });
+      },
+      bootstrap: (body) => {
+        body.availableModels = models;
+      },
+    });
+    await page.route("**/api/models**", (route) =>
+      route.fulfill({ json: { models, commonModels: models } }),
+    );
+    await page.route("**/api/control/model", async (route) => {
+      const body = route.request().postDataJSON();
+      const next = models.find(
+        (model) =>
+          model.provider === body.provider && model.id === body.modelId,
+      );
+      expect(next).toBeDefined();
+      selected = next!;
+      await route.fulfill({ json: { ok: true } });
+    });
+    await page.route("**/api/control/thinking", async (route) => {
+      thinkingLevel = route.request().postDataJSON().level;
+      await route.fulfill({ json: { ok: true } });
+    });
     const changes: string[] = [];
     page.on("request", (request) => {
       if (
@@ -27,6 +84,7 @@ for (const platform of ["MacIntel", "Win32"]) {
     await pairAndOpen(page);
     const draft = page.getByRole("textbox", { name: "Message", exact: true });
     const trigger = page.getByRole("button", { name: "Model", exact: true });
+    await expect(trigger).toHaveText("Shortcut Alpha");
     const before = await trigger.textContent();
     await draft.fill("preserve ");
     expect(
@@ -70,7 +128,7 @@ for (const platform of ["MacIntel", "Win32"]) {
         ),
       ).toBe(false);
       await expect.poll(() => changes.length).toBe(count);
-      if (key === "m") await expect(trigger).not.toHaveText(before!);
+      if (key === "m") await expect(trigger).toHaveText("Shortcut Beta");
       if (key === "p") await expect(trigger).toHaveText(before!);
     }
     await expect(draft).toHaveValue("preserve ∏");

@@ -27,6 +27,19 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
     },
+    // Explicitly opt portable daily flows into all three engines. Pixel-level
+    // layout, Chromium permissions/CDP and native-Pi suites stay out unless
+    // reviewed for portability; selected tests live with their original suites.
+    {
+      name: "firefox",
+      use: { ...devices["Desktop Firefox"] },
+      grep: /@cross-browser/,
+    },
+    {
+      name: "webkit",
+      use: { ...devices["Desktop Safari"] },
+      grep: /@cross-browser/,
+    },
   ],
   use: {
     baseURL: `http://127.0.0.1:${port}`,

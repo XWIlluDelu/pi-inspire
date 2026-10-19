@@ -33,7 +33,10 @@ and untracked.
 
 | State | Work |
 | --- | --- |
-| In progress | Complete cross-platform CI and replace the interim `v0.5.5` tag with the validated revision; [[follow-release-readiness-2026-10-16]]. |
+| Implemented | Native Herdr continuity and process-bound external-session presence fencing, with independent busy/input activity reporting. [[follow-session-execution-2026-10-19]] records verification and the separate Host/Pi activation boundary. |
+| Implemented | Ready-owned development pairing, native terminal clipboard/interrupt modifiers and focus entry/exit through existing controls. [[platform-compatibility#Development launch and terminal input]] records native startup and browser coverage. |
+| Implemented | Scoped read-only Git, distinct native/URL file identity, native terminal alternate-character input, current-runtime shell/filesystem support, per-instance lifecycle controls, local peer authentication and one-use launch links. Windows/macOS/Linux evidence and capability limits are in [[platform-compatibility]]. |
+| Implemented | Ordinary page restart for launcher-owned Hosts preserves independent terminals on Windows, macOS and Linux. Ownership, cleanup and restart-scope contracts are in [[host-lifecycle]]. |
 | Implemented | Native session, input, model/authentication, compaction and branch workflows; MCP file configuration; rich conversation readers; Files/Changes; project terminals; responsive layouts and theme families. See [README](../README.md) for the capability overview. |
 | Blocked on Pi | Worker-owned settings-save results, resource omission diagnostics, request-attributed dialog cancellation, complete loaded-extension inventory, generic argument completion and structured current-worker MCP management. [[pi-capability-gaps]] identifies the missing interfaces. |
 | Deferred | Holistic Files layout work in [[file-browsing]]. The current layout remains the implemented contract. |

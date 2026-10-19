@@ -81,7 +81,15 @@ for (const touch of [false, true]) {
               name: "Copy message",
               exact: true,
             });
+            // Programmatic focus does not establish :focus-visible on every OS.
+            // Use the real keyboard path before measuring keyboard-visible actions.
             await copy.focus();
+            await copy.press("Tab");
+            await expect(
+              turn.getByRole("button", {
+                name: "Fork session from this input",
+              }),
+            ).toBeFocused();
             await expect(turn.locator(".turn__actions")).toHaveCSS(
               "opacity",
               "1",
@@ -149,12 +157,6 @@ for (const touch of [false, true]) {
             }
             expect(geometry.contained).toBe(true);
             expect(geometry.overflow).toBeLessThanOrEqual(1);
-            await copy.press("Tab");
-            await expect(
-              turn.getByRole("button", {
-                name: "Fork session from this input",
-              }),
-            ).toBeFocused();
           }
         }
       });

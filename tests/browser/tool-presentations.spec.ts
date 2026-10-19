@@ -1,5 +1,5 @@
 import type { AddressInfo } from "node:net";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import { createInspireServer } from "../../server/app";
@@ -9,6 +9,7 @@ import { MockCatalog, MockRuntime } from "../../server/mock";
 import { PreferencesStore } from "../../server/preferences";
 import { ResourceStore } from "../../server/resources";
 import { ToolPresentationConfigStore } from "../../server/tool-presentation-config";
+import { fileResourceReference } from "../../shared/resource-references";
 import type { ToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import type { ToolCallContent } from "../../src/events";
 import { toolResultResourcesFixture } from "../fixtures/tool-result-resources.mjs";
@@ -1310,7 +1311,14 @@ test("saved tool images and full logs reopen through the authorized viewers on d
       await action.focus();
       await action.press("Enter");
       const descriptor = await (await resolved).json();
-      expect(descriptor.reference).toBe(fixture.fullOutputPath);
+      expect(descriptor.reference).toBe(
+        // Resolved descriptors use document-URL separators, unlike the raw
+        // native path kept in the control label and authored request above.
+        fileResourceReference(fixture.fullOutputPath).replaceAll(
+          "\\",
+          sep === "\\" ? "/" : "%5C",
+        ),
+      );
       expect(descriptor.sessionId).toBe(fixture.record.id);
       expect(descriptor.viewId).toBe(fixture.page.viewId);
       await expect(
