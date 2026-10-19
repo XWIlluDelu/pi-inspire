@@ -27,7 +27,9 @@ import type {
   VisibilityPreference,
 } from "../../shared/contracts";
 import {
+  fileResourceReference,
   isLocalResourceReference,
+  isResourceReferenceText,
   isToolResourceArgumentKey,
 } from "../../shared/resource-references";
 import {
@@ -428,19 +430,19 @@ function FileRefButton({
   children?: React.ReactNode;
 }) {
   const preview = useContext(ToolArgumentPreviewContext);
-  if (preview)
+  if (preview || !isResourceReferenceText(reference))
     return <span className={className}>{children ?? reference}</span>;
   return (
     <button
       type="button"
       className={className}
-      data-file-path={reference}
+      data-file-path={fileResourceReference(reference)}
       aria-label={accessibleLabel}
       title={`Preview ${reference}`}
       onClick={(event) => {
         event.stopPropagation();
         event.preventDefault();
-        void store.openResource(reference);
+        void store.openResource(fileResourceReference(reference));
       }}
     >
       {children ?? reference}

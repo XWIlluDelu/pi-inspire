@@ -8,17 +8,18 @@ import {
 } from "node:fs/promises";
 
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ResourceStore } from "../../server/resources.js";
-
 import { MAX_ATTACHMENT_FILE_BYTES } from "../../shared/contracts.js";
+import { MAX_RESOURCE_REFERENCE_LENGTH } from "../../shared/resource-references.js";
 
 import {
-  hostApiFixture,
   closeHostApiFixture,
-  token,
+  hostApiFixture,
   pairedBrowser,
+  token,
 } from "./fixtures/host-api.js";
 
 const mockWorkspace = resolve("/home/demo/research");
@@ -47,6 +48,143 @@ describe("HTTP resource and upload authority", () => {
     } = fixture);
   });
   afterEach(async () => closeHostApiFixture(fixture));
+
+  it("keeps literal file identity through listing, probes, preview bytes, and one-use downloads", async () => {
+    const project = join(temporary, "project");
+    await mkdir(project);
+    const literal = join(temporary, "report%20draft.md");
+    const space = join(temporary, "report draft.md");
+    await writeFile(literal, "ONLY_CITED_LITERAL");
+    await writeFile(space, "UNRELATED_SPACE_FILE");
+    const { bearer } = await pairedBrowser(application.server, baseUrl);
+    const opened = await request(application.server)
+      .post("/api/sessions/new")
+      .set("Authorization", `Bearer ${bearer}`)
+      .send({ cwd: project })
+      .expect(200);
+    const sessionId = opened.body.active.sessionId as string;
+    const original = await runtime.resourceContext(sessionId);
+    vi.spyOn(runtime, "resourceContext").mockResolvedValue({
+      sessionId,
+      viewId: original.viewId,
+      revision: original.revision,
+      cwd: project,
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "toolCall", name: "read", arguments: { path: literal } },
+          ],
+        },
+      ],
+    });
+    const listed = await request(application.server)
+      .post("/api/resources/list")
+      .set("Authorization", `Bearer ${bearer}`)
+      .send({ sessionId })
+      .expect(200);
+    expect(listed.body.resources).toHaveLength(1);
+    expect(listed.body.resources[0].label).toBe(literal);
+    const reference = listed.body.resources[0].reference as string;
+    expect(reference).toContain("report%2520draft.md");
+    const spaceUrl = pathToFileURL(space).href;
+    const probed = await request(application.server)
+      .post("/api/resources/probe")
+      .set("Authorization", `Bearer ${bearer}`)
+      .send({ sessionId, references: [reference, spaceUrl] })
+      .expect(200);
+    expect(probed.body.results).toMatchObject([
+      { reference, availability: "available" },
+      { reference: spaceUrl, availability: "unavailable" },
+    ]);
+    await request(application.server)
+      .post("/api/resources/resolve")
+      .set("Authorization", `Bearer ${bearer}`)
+      .send({ sessionId, reference: spaceUrl })
+      .expect(403);
+    const resolved = await request(application.server)
+      .post("/api/resources/resolve")
+      .set("Authorization", `Bearer ${bearer}`)
+      .send({ sessionId, reference })
+      .expect(200);
+    expect(resolved.body.name).toBe("report%20draft.md");
+    const content = await request(application.server)
+      .get(`/api/resources/${resolved.body.id}/content`)
+      .query({ sessionId })
+      .set("Authorization", `Bearer ${bearer}`)
+      .expect(200);
+    expect(content.text).toBe("ONLY_CITED_LITERAL");
+    const grant = await request(application.server)
+      .post(`/api/resources/${resolved.body.id}/download-ticket`)
+      .set("Authorization", `Bearer ${bearer}`)
+      .send({ sessionId })
+      .expect(200);
+    const path = `/api/resource-downloads/${grant.body.ticket}`;
+    const downloaded = await request(application.server)
+      .get(path)
+      .set("Sec-Fetch-Site", "same-origin")
+      .expect(200);
+    expect(downloaded.text).toBe("ONLY_CITED_LITERAL");
+    const disposition = downloaded.headers["content-disposition"]!;
+    expect(disposition).toBe(
+      "attachment; filename*=UTF-8''report%2520draft.md",
+    );
+    expect(decodeURIComponent(disposition.split("''")[1]!)).toBe(
+      "report%20draft.md",
+    );
+    await request(application.server)
+      .get(path)
+      .set("Sec-Fetch-Site", "same-origin")
+      .expect(401);
+  });
+
+  it("allows URI escaping overhead without enlarging the literal workspace-path budget", async () => {
+    await writeFile(join(temporary, "long-url.md"), "LONG_LINK_BYTES");
+    const opened = await request(application.server)
+      .post("/api/sessions/new")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ cwd: temporary })
+      .expect(200);
+    const sessionId = opened.body.active.sessionId as string;
+    // A valid escaped relative URL whose native target is a short owned path.
+    // No platform-dependent deep directory or overlong component is needed.
+    const reference = "%2E/".repeat(2_100) + "long-url.md";
+    expect(reference.length).toBeGreaterThan(8_192);
+    const resolved = await request(application.server)
+      .post("/api/resources/resolve")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId, reference })
+      .expect(200);
+    expect(resolved.body.name).toBe("long-url.md");
+    const content = await request(application.server)
+      .get(`/api/resources/${resolved.body.id}/content`)
+      .query({ sessionId })
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(content.text).toBe("LONG_LINK_BYTES");
+    await request(application.server)
+      .post("/api/resources/resolve")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        sessionId,
+        reference: "a".repeat(MAX_RESOURCE_REFERENCE_LENGTH + 1),
+      })
+      .expect(400);
+    await request(application.server)
+      .post("/api/resources/resolve")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId, reference: "a".repeat(8_193) })
+      .expect(400);
+    await request(application.server)
+      .post("/api/resources/resolve")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        sessionId,
+        reference: "long-url.md",
+        workspacePath: "a".repeat(8_193),
+      })
+      .expect(400);
+  });
 
   it("streams only the one-use download's current session/view/resource and revalidates before bytes", async () => {
     const { bearer } = await pairedBrowser(application.server, baseUrl);
@@ -85,6 +223,33 @@ describe("HTTP resource and upload authority", () => {
       .get(url)
       .set("Sec-Fetch-Site", "same-site")
       .expect(403);
+    for (const headers of [
+      { Referer: "https://foreign.invalid/" },
+      { Referer: "not-a-url" },
+      { Referer: baseUrl.replace("://", "://user:pass@") + "/" },
+      { Referer: baseUrl + "/", "Sec-Fetch-Site": "cross-site" },
+      { Referer: baseUrl + "/", "Sec-Fetch-Site": "none" },
+      { Referer: baseUrl + "/", Origin: "null" },
+      { Referer: baseUrl + "/", Origin: "https://foreign.invalid" },
+      { Referer: "https://foreign.invalid/", Origin: baseUrl },
+      {
+        Referer: baseUrl + "/",
+        Origin: baseUrl,
+        "Sec-Fetch-Site": "cross-site",
+      },
+    ]) {
+      await request(application.server).get(url).set(headers).expect(403);
+    }
+    const webkit = await mint();
+    const webkitBytes = await request(application.server)
+      .get(webkit)
+      .set("Referer", baseUrl + "/")
+      .expect(200);
+    expect(webkitBytes.text).toBe("complete raw download\n");
+    await request(application.server)
+      .get(webkit)
+      .set("Referer", baseUrl + "/")
+      .expect(401);
     const bytes = await request(application.server)
       .get(url)
       .set("Sec-Fetch-Site", "same-origin")
@@ -656,6 +821,8 @@ describe("HTTP resource and upload authority", () => {
   });
 
   it("rejects multipart batches at the aggregate streaming budget and removes partial files", async () => {
+    const uploadDirectory = await fixture.attachments.uploadDirectory();
+    const metadataBefore = await readdir(uploadDirectory);
     await request(application.server)
       .post("/api/attachments")
       .set("Authorization", `Bearer ${token}`)
@@ -667,7 +834,7 @@ describe("HTTP resource and upload authority", () => {
       })
       .attach("files", Buffer.alloc(1), { filename: "overflow.bin" })
       .expect(413);
-    expect(await readdir(join(temporary, "uploads"))).toEqual([]);
+    expect(await readdir(uploadDirectory)).toEqual(metadataBefore);
   }, 15_000);
 
   it("accepts a bounded private upload and delivers its handle through the prompt API", async () => {
@@ -677,6 +844,9 @@ describe("HTTP resource and upload authority", () => {
       .send({ id: "mock-active" })
       .expect(200);
 
+    const metadataBefore = await readdir(
+      await fixture.attachments.uploadDirectory(),
+    );
     const uploaded = await request(application.server)
       .post("/api/attachments")
       .set("Authorization", `Bearer ${token}`)
@@ -694,7 +864,7 @@ describe("HTTP resource and upload authority", () => {
     const storedFiles = await readdir(join(temporary, "uploads"));
     const id = uploaded.body.attachments[0].id;
     expect(storedFiles.sort()).toEqual(
-      [`${id}-notes.txt`, `${id}.json`].sort(),
+      [...metadataBefore, `${id}-notes.txt`, `${id}.json`].sort(),
     );
     const ownership = JSON.parse(
       await readFile(join(temporary, "uploads", `${id}.json`), "utf8"),

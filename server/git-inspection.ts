@@ -1,4 +1,3 @@
-import { requestError } from "./request-error.js";
 import { stat } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import type {
@@ -14,17 +13,19 @@ import type {
   GitSubmoduleState,
 } from "../shared/contracts.js";
 import {
+  createGitInspectionRunner,
   GIT_CONFIG_ARGS,
   GIT_STDERR_BYTES,
   GIT_TIMEOUT_MS,
   GitInspectionError,
-  spawnGit,
   type GitRunner,
   type GitRunResult,
+  spawnGit,
 } from "./git-runner.js";
+import { requestError } from "./request-error.js";
 
-export { GIT_STDERR_BYTES, GIT_TIMEOUT_MS, GitInspectionError, spawnGit };
 export type { GitRunner };
+export { GIT_STDERR_BYTES, GIT_TIMEOUT_MS, GitInspectionError, spawnGit };
 export const GIT_STATUS_OUTPUT_BYTES = 4 * 1024 * 1024;
 export const GIT_DIFF_OUTPUT_BYTES = 1024 * 1024;
 const MAX_GIT_STATUS_FILES = 1_000;
@@ -587,15 +588,29 @@ export interface GitInspectionLike {
 }
 
 export class GitInspectionService implements GitInspectionLike {
-  constructor(private readonly runner: GitRunner = spawnGit) {}
+  constructor(private readonly runner?: GitRunner) {}
+
+  private async withRunner<T>(
+    cwd: string,
+    operation: (runner: GitRunner) => Promise<T>,
+  ): Promise<T> {
+    if (this.runner) return operation(this.runner);
+    const runner = createGitInspectionRunner(cwd);
+    try {
+      return await operation(runner);
+    } finally {
+      await runner.close();
+    }
+  }
 
   private async inspect(
     cwd: string,
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined,
+    runner: GitRunner,
   ): Promise<InspectionRepository | null> {
     let inside: GitRunResult;
     try {
-      inside = await this.runner(
+      inside = await runner(
         [...GIT_CONFIG_ARGS, "-C", cwd, "rev-parse", "--is-inside-work-tree"],
         { stdoutLimit: GIT_STDERR_BYTES, signal },
       );
@@ -620,14 +635,14 @@ export class GitInspectionService implements GitInspectionLike {
       );
     }
     const [rootResult, prefixResult] = await Promise.all([
-      this.runner(
-        [...GIT_CONFIG_ARGS, "-C", cwd, "rev-parse", "--show-toplevel"],
-        { stdoutLimit: GIT_STDERR_BYTES, signal },
-      ),
-      this.runner(
-        [...GIT_CONFIG_ARGS, "-C", cwd, "rev-parse", "--show-prefix"],
-        { stdoutLimit: GIT_STDERR_BYTES, signal },
-      ),
+      runner([...GIT_CONFIG_ARGS, "-C", cwd, "rev-parse", "--show-toplevel"], {
+        stdoutLimit: GIT_STDERR_BYTES,
+        signal,
+      }),
+      runner([...GIT_CONFIG_ARGS, "-C", cwd, "rev-parse", "--show-prefix"], {
+        stdoutLimit: GIT_STDERR_BYTES,
+        signal,
+      }),
     ]);
     const repoRoot = strictUtf8(stripTerminatingLf(rootResult.stdout));
     if (!repoRoot || !isAbsolute(repoRoot))
@@ -638,7 +653,7 @@ export class GitInspectionService implements GitInspectionLike {
     if (workspacePrefix.length > 0 && workspacePrefix.at(-1) !== 0x2f) {
       throw new GitInspectionError("Git returned malformed workspace prefix");
     }
-    const status = await this.runner(
+    const status = await runner(
       [
         ...GIT_CONFIG_ARGS,
         "-C",
@@ -660,8 +675,10 @@ export class GitInspectionService implements GitInspectionLike {
   }
 
   async status(cwd: string, signal?: AbortSignal): Promise<GitStatusResponse> {
-    const inspected = await this.inspect(cwd, signal);
-    return inspected?.response ?? { kind: "not-repository" };
+    return this.withRunner(cwd, async (runner) => {
+      const inspected = await this.inspect(cwd, signal, runner);
+      return inspected?.response ?? { kind: "not-repository" };
+    });
   }
 
   async diff(
@@ -677,81 +694,84 @@ export class GitInspectionService implements GitInspectionLike {
     ) {
       throw requestError("Invalid Git path identity", 400);
     }
-    const inspected = await this.inspect(cwd, signal);
-    if (!inspected)
-      throw requestError("That session is not in a Git repository", 409);
-    const change = inspected.response.files.find(
-      (file) => file.path.id === pathId,
-    );
-    const authorized =
-      change?.conflict ??
-      (side === "staged"
-        ? change?.staged
-        : (change?.unstaged ??
-          (change?.untracked ? { kind: "added" } : undefined)));
-    if (!change || !authorized)
-      throw requestError(
-        "That path and diff side are not present in fresh status",
-        409,
+    return this.withRunner(cwd, async (runner) => {
+      const inspected = await this.inspect(cwd, signal, runner);
+      if (!inspected)
+        throw requestError("That session is not in a Git repository", 409);
+      const change = inspected.response.files.find(
+        (file) => file.path.id === pathId,
       );
-    const base = { path: change.path, side } as const;
-    if (change.conflict)
-      return { ...base, kind: "conflict", code: change.conflict.code };
-    if (change.submodule)
-      return { ...base, kind: "submodule", state: change.submodule };
-    if (change.untracked)
-      return { ...base, kind: "unsupported", reason: "untracked-content" };
-    const facet = side === "staged" ? change.staged : change.unstaged;
-    const originalPath = facet?.originalPath;
-    if (!change.path.utf8Path || (originalPath && !originalPath.utf8Path))
-      return { ...base, kind: "unsupported", reason: "path-encoding" };
-    // A destination-only pathspec hides the rename source from Git and turns
-    // the comparison into a whole-file addition. Only the selected side owns
-    // this source: working edits after a staged rename use the new path alone.
-    const paths = originalPath?.utf8Path
-      ? [originalPath.utf8Path, change.path.utf8Path]
-      : [change.path.utf8Path];
+      const authorized =
+        change?.conflict ??
+        (side === "staged"
+          ? change?.staged
+          : (change?.unstaged ??
+            (change?.untracked ? { kind: "added" } : undefined)));
+      if (!change || !authorized)
+        throw requestError(
+          "That path and diff side are not present in fresh status",
+          409,
+        );
+      const base = { path: change.path, side } as const;
+      if (change.conflict)
+        return { ...base, kind: "conflict", code: change.conflict.code };
+      if (change.submodule)
+        return { ...base, kind: "submodule", state: change.submodule };
+      if (change.untracked)
+        return { ...base, kind: "unsupported", reason: "untracked-content" };
+      const facet = side === "staged" ? change.staged : change.unstaged;
+      const originalPath = facet?.originalPath;
+      if (!change.path.utf8Path || (originalPath && !originalPath.utf8Path))
+        return { ...base, kind: "unsupported", reason: "path-encoding" };
+      // A destination-only pathspec hides the rename source from Git and turns
+      // the comparison into a whole-file addition. Only the selected side owns
+      // this source: working edits after a staged rename use the new path alone.
+      const paths = originalPath?.utf8Path
+        ? [originalPath.utf8Path, change.path.utf8Path]
+        : [change.path.utf8Path];
 
-    const common = [
-      ...GIT_CONFIG_ARGS,
-      "-C",
-      inspected.repoRoot,
-      "diff",
-      "--no-ext-diff",
-      "--no-textconv",
-      ...(facet?.kind === "renamed" ? ["--find-renames"] : []),
-    ];
-    const cached = side === "staged" ? ["--cached"] : [];
-    const numstat = await this.runner(
-      [...common, "--numstat", "-z", ...cached, "--", ...paths],
-      { stdoutLimit: GIT_DIFF_OUTPUT_BYTES, signal },
-    );
-    const stats = parseNumstat(numstat.stdout);
-    if (stats.kind === "empty")
-      return { ...base, kind: "empty", reason: "no-changes" };
-    if (stats.kind === "binary") return { ...base, kind: "binary" };
-    const patch = await this.runner(
-      [
-        ...common,
-        `--unified=${FULL_SOURCE_CONTEXT_LINES}`,
-        ...cached,
-        "--",
-        ...paths,
-      ],
-      {
-        stdoutLimit: GIT_DIFF_OUTPUT_BYTES,
-        allowStdoutTruncation: true,
-        signal,
-      },
-    );
-    if (patch.stdout.length === 0)
-      return { ...base, kind: "empty", reason: "no-changes" };
-    return {
-      ...base,
-      kind: "text",
-      additions: stats.additions,
-      deletions: stats.deletions,
-      ...parseUnifiedDiff(patch.stdout, patch.truncated),
-    };
+      const common = [
+        ...GIT_CONFIG_ARGS,
+        "-C",
+        inspected.repoRoot,
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        ...(facet?.kind === "renamed" ? ["--find-renames"] : []),
+      ];
+      const cached = side === "staged" ? ["--cached"] : [];
+      const numstat = await runner(
+        [...common, "--numstat", "-z", ...cached, "--", ...paths],
+        { stdoutLimit: GIT_DIFF_OUTPUT_BYTES, signal },
+      );
+      const stats = parseNumstat(numstat.stdout);
+      if (stats.kind === "empty")
+        return { ...base, kind: "empty", reason: "no-changes" };
+      if (stats.kind === "binary") return { ...base, kind: "binary" };
+      const patch = await runner(
+        [
+          ...common,
+          `--unified=${FULL_SOURCE_CONTEXT_LINES}`,
+          ...cached,
+          "--",
+          ...paths,
+        ],
+        {
+          stdoutLimit: GIT_DIFF_OUTPUT_BYTES,
+          allowStdoutTruncation: true,
+          signal,
+        },
+      );
+      if (patch.stdout.length === 0)
+        return { ...base, kind: "empty", reason: "no-changes" };
+      return {
+        ...base,
+        kind: "text",
+        additions: stats.additions,
+        deletions: stats.deletions,
+        ...parseUnifiedDiff(patch.stdout, patch.truncated),
+      };
+    });
   }
 }

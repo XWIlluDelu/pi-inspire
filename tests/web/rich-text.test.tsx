@@ -280,6 +280,23 @@ describe("raw HTML and unsafe URL defense", () => {
 });
 
 describe("local file references", () => {
+  it("keeps a native code path literal while preserving a Markdown URL's encoding", () => {
+    render(
+      <RichText
+        text={
+          "Open `C#/report%20draft.md` or [space file](C%23/report%20draft.md)."
+        }
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "C#/report%20draft.md" }),
+    ).toHaveAttribute("data-file-path", "C%23/report%2520draft.md");
+    expect(screen.getByRole("link", { name: "space file" })).toHaveAttribute(
+      "data-file-path",
+      "C%23/report%20draft.md",
+    );
+  });
+
   it("marks local Markdown links as file references without external-link behavior", () => {
     render(<RichText text="See [the report](./out/report.pdf) for details." />);
     const link = screen.getByRole("link", { name: "the report" });
@@ -400,6 +417,113 @@ describe("markdown constructs", () => {
     }
     expect(tasks[0]).toBeChecked();
     expect(tasks[1]).not.toBeChecked();
+  });
+
+  it("keeps task markers separate from tight-item content without losing inline formatting", () => {
+    const { container } = render(
+      <RichText
+        text={
+          "- [x] Review **reference** and `run-id` before [next run](https://example.invalid/run).\n- [ ] Retain the sample."
+        }
+      />,
+    );
+    const tasks = container.querySelectorAll(".task-list-item");
+    const content = tasks[0]!.querySelector(".rich-text__task-content")!;
+    expect(content.textContent).toBe(
+      "Review reference and run-id before next run.",
+    );
+    expect(content.querySelector("strong")).toHaveTextContent("reference");
+    expect(content.querySelector("code")).toHaveTextContent("run-id");
+    expect(content.querySelector("a")).toHaveAttribute(
+      "href",
+      "https://example.invalid/run",
+    );
+    const marker = content.querySelector(".rich-text__task-marker input");
+    expect(marker).toBeChecked();
+    expect(marker).toBeDisabled();
+    expect(tasks[1]!.querySelector("input")).not.toBeChecked();
+  });
+
+  it.each([false, true])(
+    "preserves paragraphs, nested tasks and literal whitespace with inline=%s",
+    (inline) => {
+      const { container } = render(
+        <RichText
+          inline={inline}
+          variant="user"
+          text={
+            "- [x] Review **reference**.\n\n  Retain  the sample.\n\n  - [ ] Check drift.\n\n- [ ] Report."
+          }
+        />,
+      );
+      const list = container.querySelector("ul")!;
+      const first = list.querySelector(
+        ":scope > li > .rich-text__task-content",
+      )!;
+      expect(first.textContent).toContain("Retain  the sample.");
+      expect(first.querySelectorAll(":scope > p")).toHaveLength(inline ? 0 : 2);
+      const marker = first.querySelector(
+        inline
+          ? ":scope > .rich-text__task-marker input"
+          : ":scope > p > .rich-text__task-marker input",
+      );
+      expect(marker).toBeChecked();
+      expect(marker).toBeDisabled();
+      const nested = first.querySelector("ul .task-list-item")!;
+      expect(
+        nested.querySelector(".rich-text__task-content")!.textContent,
+      ).toBe("Check drift.");
+      expect(nested.querySelector("input")).not.toBeChecked();
+      expect(
+        container.querySelectorAll(".rich-text__task-marker"),
+      ).toHaveLength(3);
+    },
+  );
+
+  it("keeps literal HTML safe within task content without changing its text", () => {
+    const { container } = render(
+      <RichText text="- [x] <!-- intentionally empty task -->" />,
+    );
+    expect(
+      container.querySelector(".rich-text__task-content")!.textContent,
+    ).toBe("<!-- intentionally empty task -->");
+    expect(
+      container.querySelector(".rich-text__task-marker input"),
+    ).toBeChecked();
+    expect(container.querySelector("input")).toBeDisabled();
+  });
+
+  it("leaves ordinary list markers and start values unchanged", () => {
+    const { container } = render(
+      <RichText
+        text={
+          "3. Review the reference.\n4. Retain the sample.\n\n- Plain bullet."
+        }
+      />,
+    );
+    expect(container.querySelector("ol")).toHaveAttribute("start", "3");
+    expect(container.querySelectorAll("li")).toHaveLength(3);
+    expect(container.querySelector(".rich-text__task-content")).toBeNull();
+  });
+
+  it("preserves ordinary entries and start values in mixed task lists", () => {
+    const { container } = render(
+      <RichText
+        text={
+          "- [x] Review the reference.\n- Keep the source notes.\n\n3. [ ] Check drift.\n4. Report the result."
+        }
+      />,
+    );
+    expect(container.querySelectorAll(".contains-task-list")).toHaveLength(2);
+    expect(container.querySelector("ol")).toHaveAttribute("start", "3");
+    const ordinary = container.querySelectorAll(
+      ".contains-task-list > li:not(.task-list-item)",
+    );
+    expect(ordinary).toHaveLength(2);
+    expect(ordinary[0]).toHaveTextContent("Keep the source notes.");
+    expect(ordinary[1]).toHaveTextContent("Report the result.");
+    for (const item of ordinary)
+      expect(item.querySelector(".rich-text__task-content")).toBeNull();
   });
 
   it("renders fenced code with a language label and copy control", () => {

@@ -7,7 +7,10 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ResourceDescriptor } from "../../shared/contracts";
-import { resourceReferenceLine } from "../../shared/resource-references";
+import {
+  resourceReferenceLabel,
+  resourceReferenceLine,
+} from "../../shared/resource-references";
 import { formatBytes } from "../format";
 import { store } from "../store";
 import { highlightSource, languageForFile } from "../syntax-highlighting";
@@ -371,11 +374,14 @@ export function ResourcePreviewContent({
 export function FilePreview({ state }: { state: ContextPaneView }) {
   const preview = state.resourcePreview;
   const descriptor = preview?.status === "ready" ? preview.descriptor : null;
+  const reference =
+    descriptor?.reference ?? state.selectedResourceReference ?? "File";
   const displayPath =
     descriptor?.workspacePath ??
-    descriptor?.reference ??
-    state.selectedResourceReference ??
-    "File";
+    state.selectedResourceWorkspacePath ??
+    (/^(?:file:\/\/|vscode:\/\/file\/)/iu.test(reference)
+      ? reference
+      : resourceReferenceLabel(reference));
   const [jump, setJump] = useState<LineJump | null>(null);
   const [fileView, setFileView] = useState<{
     resourceId: string;

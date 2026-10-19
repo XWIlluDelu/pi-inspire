@@ -3,10 +3,12 @@ purpose: Present supported Pi MCP file configuration in compact Settings, preser
 progress: in-progress
 covers:
   - server/mcp*.ts
+  - server/configuration-edit-locks.ts
   - shared/*mcp*.ts
   - src/components/*Mcp*.tsx
   - src/styles/mcp-settings.css
   - tests/server/*mcp*.ts
+  - tests/server/configuration-edit-locks.test.ts
   - tests/web/*mcp*.tsx
   - tests/browser/*mcp*.ts
 ---
@@ -64,7 +66,9 @@ order, including removed/re-added patterns; other edits leave it untouched. Conf
 does not delete Pi's separate OAuth credential store.
 
 Writes validate the edited native fields, use revision-checked locks and atomic restrictive-mode
-replacement, and preserve legitimate user-file symlinks. Project symlinks cannot escape their project.
+replacement, and preserve legitimate user-file symlinks. Regular files lock their native resolved
+target once, including case/normalization aliases. Final symlinks retain both lexical and target
+authorities; publishing rechecks the target and revision. Project symlinks cannot escape their project.
 Added names are checked across user/project files for Pi's hyphen/underscore namespace collisions;
 exact same-name overrides remain legal. Invalid files and conflicting edits are reported rather
 than overwritten. A conflict keeps the form

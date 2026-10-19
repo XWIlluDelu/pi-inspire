@@ -4,6 +4,7 @@ import {
   MAX_RESOURCE_PROBE_REFERENCES,
   type SessionResourceListResponse,
 } from "../../shared/resource-references";
+import { decodeTextPreview } from "../../shared/text-preview";
 import { type Api, ApiError } from "../api";
 import {
   classifiedResourceFailure,
@@ -727,11 +728,16 @@ export class ResourceController {
           ? descriptor
           : { ...descriptor, size: content.totalSize };
       if (textLike) {
-        const text = await blob.text();
+        const text = decodeTextPreview(
+          new Uint8Array(await blob.arrayBuffer()),
+          blob.size < content.totalSize,
+        );
         if (stale()) return;
         if (descriptor.kind === "html") {
           this.previewObjectUrl = URL.createObjectURL(
-            new Blob([injectHtmlPreviewCsp(text)], { type: "text/html" }),
+            new Blob([injectHtmlPreviewCsp(text)], {
+              type: "text/html;charset=utf-8",
+            }),
           );
         }
         this.host.patch({
@@ -751,7 +757,12 @@ export class ResourceController {
         return;
       }
       const svgText = svg
-        ? await blob.slice(0, TEXT_PREVIEW_BYTES).text()
+        ? decodeTextPreview(
+            new Uint8Array(
+              await blob.slice(0, TEXT_PREVIEW_BYTES).arrayBuffer(),
+            ),
+            Math.min(blob.size, TEXT_PREVIEW_BYTES) < content.totalSize,
+          )
         : undefined;
       if (stale()) return;
       if (

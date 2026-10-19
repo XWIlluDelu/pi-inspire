@@ -26,6 +26,7 @@ import {
   resolveModelScopeWithDiagnostics,
   SettingsManager,
 } from "./pi-runtime.js";
+import { configurationEditLockPaths } from "./configuration-edit-locks.js";
 import { modelSettings } from "./model-catalog.js";
 import { requestError } from "./request-error.js";
 
@@ -185,7 +186,7 @@ async function editFile(
     `.inspire-models-${randomUUID()}.json`,
   );
   try {
-    for (const authority of [...new Set([lexical, target])].sort()) {
+    for (const authority of await configurationEditLockPaths(lexical, target)) {
       try {
         releases.push(
           await lockfile.lock(authority, {

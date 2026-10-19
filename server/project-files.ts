@@ -1,10 +1,11 @@
 import { opendir, realpath, stat } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
+import { TextDecoder } from "node:util";
 import type { ProjectDirEntry } from "../shared/contracts.js";
+import { filesystemRelativePath } from "./filesystem-containment.js";
 import { listNativeHiddenNames } from "./host-hidden-dirs.js";
 import { escapesBase } from "./paths.js";
 import { requestError } from "./request-error.js";
-import { TextDecoder } from "node:util";
 
 const pathDecoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -42,10 +43,10 @@ export async function listProjectDirectory(
     throw requestError("Directory must stay inside the project", 400);
   const root = await realpath(cwd);
   const requested = resolve(root, dir);
-  if (escapesBase(relative(root, requested)))
+  if ((await filesystemRelativePath(root, requested)) === null)
     throw requestError("Directory must stay inside the project", 400);
   const path = await realpath(requested);
-  if (escapesBase(relative(root, path)))
+  if ((await filesystemRelativePath(root, path)) === null)
     throw requestError("Directory is outside the project", 403);
   const before = await stat(path, { bigint: true });
   if (!before.isDirectory()) throw requestError("Not a directory", 400);
@@ -75,7 +76,8 @@ export async function listProjectDirectory(
     else if (entry.isSymbolicLink()) {
       // Links are real filesystem entries, but never expose an outside target.
       const target = await realpath(join(path, name)).catch(() => null);
-      if (!target || escapesBase(relative(root, target))) continue;
+      if (!target || (await filesystemRelativePath(root, target)) === null)
+        continue;
       const details = await stat(target).catch(() => null);
       if (details?.isDirectory() || details?.isFile())
         entries.push({
@@ -127,7 +129,7 @@ async function scanFilesystem(
     const dir = pending[index]!;
     try {
       const canonical = await realpath(resolve(root, dir));
-      if (escapesBase(relative(root, canonical))) {
+      if ((await filesystemRelativePath(root, canonical)) === null) {
         truncated = true;
         continue;
       }

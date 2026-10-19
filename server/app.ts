@@ -32,6 +32,7 @@ import { HTML_PREVIEW_BYTES } from "../shared/html-preview.js";
 import {
   MAX_RESOURCE_LIST_PAGE_SIZE,
   MAX_RESOURCE_PROBE_REFERENCES,
+  MAX_RESOURCE_REFERENCE_LENGTH,
   RESOURCE_LIST_INITIAL_SIZE,
 } from "../shared/resource-references.js";
 import { emptyToolPresentationConfiguration } from "../shared/tool-presentation-config.js";
@@ -289,14 +290,14 @@ const resourceListSchema = z
 const resourceResolveSchema = z
   .object({
     sessionId: sessionIdField,
-    reference: z.string().min(1).max(8_192),
+    reference: z.string().min(1).max(MAX_RESOURCE_REFERENCE_LENGTH),
     workspacePath: z.string().min(1).max(8_192).optional(),
   })
   .strict();
 const resourceProbeSchema = z.object({
   sessionId: sessionIdField,
   references: z
-    .array(z.string().min(1).max(8_192))
+    .array(z.string().min(1).max(MAX_RESOURCE_REFERENCE_LENGTH))
     .max(MAX_RESOURCE_PROBE_REFERENCES),
 });
 const resourceContentSchema = z.object({

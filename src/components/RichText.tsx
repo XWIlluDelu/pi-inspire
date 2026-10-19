@@ -2,7 +2,10 @@ import "katex/dist/katex.min.css";
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
 import { Check, Copy, SquareTerminal } from "lucide-react";
 import {
+  Children,
+  cloneElement,
   Fragment,
+  isValidElement,
   memo,
   type ReactNode,
   startTransition,
@@ -14,20 +17,23 @@ import {
 } from "react";
 import { jsx, jsxs } from "react/jsx-runtime";
 import type { Components } from "react-markdown";
-import { isLocalResourceReference } from "../../shared/resource-references";
-import { store } from "../store";
-import { highlightSource } from "../syntax-highlighting";
+import {
+  diagnosticResourceReference,
+  isLocalResourceReference,
+} from "../../shared/resource-references";
 import { isDocumentFileReference } from "../document-resources";
 import { parseRichText } from "../rich-text-parser";
 import {
-  richTextParser,
   type RichTextSnapshot,
+  richTextParser,
 } from "../rich-text-parser-client";
-import { DocumentImage, DocumentResourceContext } from "./DocumentPreview";
+import { store } from "../store";
+import { highlightSource } from "../syntax-highlighting";
 import { queueTerminalInsertion } from "../terminal-actions";
 import { useCopied } from "../use-copied";
-import { RichTextMath } from "./RichTextMath";
+import { DocumentImage, DocumentResourceContext } from "./DocumentPreview";
 import { ImageLinkContext } from "./ImagePreview";
+import { RichTextMath } from "./RichTextMath";
 
 export type RichTextVariant = "assistant" | "user" | "thinking" | "extension";
 const ASYNC_MARKDOWN_MIN_CHARS = 32_000;
@@ -88,17 +94,60 @@ const CodeBlock = memo(function CodeBlock({
   );
 });
 
-// These renderers consume only sanitized HAST. Local references stay delegated
-// to the owning session/document; external images never load automatically.
-const components: Components = {
-  input: ({ checked }) => (
+function TaskCheckbox({ checked }: { checked?: boolean }) {
+  return (
     <input
       type="checkbox"
       className="choice-input"
       checked={checked}
       disabled
     />
-  ),
+  );
+}
+
+// These renderers consume only sanitized HAST. Local references stay delegated
+// to the owning session/document; external images never load automatically.
+const components: Components = {
+  input: TaskCheckbox,
+  li: ({ node, children, ...props }) => {
+    if (!node || !props.className?.split(/\s+/).includes("task-list-item"))
+      return <li {...props}>{children}</li>;
+    const content = Children.toArray(children);
+    const firstIndex = content.findIndex(isValidElement);
+    const first = content[firstIndex];
+    const firstNode = node.children.find((child) => child.type === "element");
+    // Loose tasks keep their paragraph; inline readers may render it as a fragment.
+    const paragraph =
+      firstNode?.type === "element" &&
+      firstNode.tagName === "p" &&
+      isValidElement<{ children?: ReactNode }>(first)
+        ? first
+        : null;
+    const line = paragraph
+      ? Children.toArray(paragraph.props.children)
+      : content;
+    const markerIndex = line.findIndex(
+      (child) => isValidElement(child) && child.type === TaskCheckbox,
+    );
+    if (markerIndex < 0) return <li {...props}>{children}</li>;
+    const marker = line[markerIndex];
+    line[markerIndex] = (
+      <span className="rich-text__task-marker" key="task-marker">
+        {marker}
+      </span>
+    );
+    // GFM inserts one separator after the checkbox. The column gap replaces it;
+    // preserve all other text whitespace and the existing child elements.
+    const separator = line[markerIndex + 1];
+    if (typeof separator === "string")
+      line[markerIndex + 1] = separator.replace(/^ /, "");
+    if (paragraph) content[firstIndex] = cloneElement(paragraph, {}, line);
+    return (
+      <li {...props}>
+        <div className="rich-text__task-content">{content}</div>
+      </li>
+    );
+  },
   pre: ({ node, children }) => {
     const code = node?.children[0];
     if (code?.type !== "element" || code.tagName !== "code")
@@ -134,7 +183,7 @@ const components: Components = {
         <button
           type="button"
           className="file-ref file-ref--code"
-          data-file-path={text}
+          data-file-path={diagnosticResourceReference(text)}
         >
           <code className="inline-code">{text}</code>
         </button>

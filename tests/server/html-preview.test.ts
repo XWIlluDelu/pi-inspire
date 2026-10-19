@@ -1,14 +1,17 @@
+import { execFile as execFileCallback } from "node:child_process";
 import {
   mkdir,
   mkdtemp,
   realpath,
   rename,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
+import { promisify } from "node:util";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createInspireServer } from "../../server/app.js";
@@ -155,6 +158,50 @@ describe("interactive HTML capabilities", () => {
       await request(application.app).get(`${prefix}/escape.txt`).expect(403);
     }
     await request(application.app).get(`${prefix}/missing.js`).expect(404);
+  });
+
+  it("denies a case-distinct sibling on an actually case-sensitive native directory", async (test) => {
+    const parent = join(temporary, "native-case-boundary");
+    await mkdir(parent);
+    if (process.platform === "win32") {
+      const fsutil = process.env.SystemRoot
+        ? join(process.env.SystemRoot, "System32", "fsutil.exe")
+        : "fsutil.exe";
+      try {
+        // This flag applies only to the empty owned fixture, never a user root.
+        await promisify(execFileCallback)(
+          fsutil,
+          ["file", "setCaseSensitiveInfo", parent, "enable"],
+          { windowsHide: true, timeout: 10_000 },
+        );
+      } catch {
+        return test.skip();
+      }
+    }
+    const project = join(parent, "Project");
+    const sibling = join(parent, "project");
+    await mkdir(project);
+    if (
+      await stat(sibling).then(
+        () => true,
+        () => false,
+      )
+    )
+      return test.skip();
+    await mkdir(sibling);
+    await writeFile(join(project, "index.html"), html);
+    await writeFile(join(sibling, "private.txt"), "outside fixture bytes");
+    context = { ...context, cwd: project };
+    const grant = await start("index.html");
+    const prefix = grant.url.slice(0, grant.url.lastIndexOf("/"));
+    await request(application.app)
+      .get(
+        prefix +
+          "/" +
+          encodeURIComponent(["..", "project", "private.txt"].join(sep)),
+      )
+      .set("Origin", "null")
+      .expect(403);
   });
 
   it("revokes on stop and refuses a retired branch view or replaced entry file", async () => {

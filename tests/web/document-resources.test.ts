@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  documentResourceReference,
   DocumentImageResources,
+  documentResourceReference,
 } from "../../src/document-resources";
 import { deferred } from "./helpers";
 
@@ -11,6 +11,19 @@ const document = {
 };
 
 describe("document-relative resources", () => {
+  it.each([
+    "/outside/C%23/report%2520draft.md",
+    "C:/outside/C%23/report%2520draft.md",
+    "//nas/share/C%23/report%2520draft.md",
+  ])(
+    "keeps a Host-normalized literal document directory encoded exactly once: %s",
+    (reference) => {
+      expect(
+        documentResourceReference({ reference }, "figure%2520draft.svg"),
+      ).toBe(reference.replace("report%2520draft.md", "figure%2520draft.svg"));
+    },
+  );
+
   it.each([
     ["plot.png", "./reports/run/plot.png"],
     ["./plot.png", "./reports/run/./plot.png"],

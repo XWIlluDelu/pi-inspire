@@ -67,7 +67,7 @@ const {
   portAvailable,
   stopManagedInstance,
 } = await import(pathToFileURL(join(supportRoot, "instance-state.mjs")).href);
-const { inspireRuntimeDirectory } = await import(
+const { inspireRuntimeDirectory, resolveUserPath } = await import(
   pathToFileURL(join(supportRoot, "platform-paths.mjs")).href
 );
 const { signalProcessTree } = await import(
@@ -875,6 +875,16 @@ async function main() {
         return 64;
       }
       return restartHost(args[0] === "--all");
+    case "recover-session": {
+      if (args.length !== 1) {
+        console.error("Use: inspire recover-session <bundle-folder>");
+        return 64;
+      }
+      await ensureDependencies();
+      const entry = join(supportRoot, distribution ? "session-recovery-entry.js" : "session-recovery-entry.ts");
+      const recoveryArgs = distribution ? [entry] : ["--import", "tsx", entry];
+      return runInherited(process.execPath, [...recoveryArgs, resolveUserPath(args[0], invocationCwd)]);
+    }
     case "prepare-restart":
       if (args.length) return 64;
       await prepareRestart();
@@ -913,6 +923,25 @@ async function main() {
       await ensureDependencies();
       await build();
       return 0;
+    case "uploads": {
+      await ensureDependencies();
+      const [action, path, ...flags] = args;
+      if (action !== "trust-session-directory" || !path ||
+        flags.some(flag => !["--confirm", "--accept-replacement"].includes(flag)) ||
+        new Set(flags).size !== flags.length ||
+        (flags.includes("--accept-replacement") && !flags.includes("--confirm"))) {
+        console.error("Use: inspire uploads trust-session-directory <path> [--confirm [--accept-replacement]]");
+        return 64;
+      }
+      const entry = join(supportRoot, distribution ? "attachment-retention-entry.js" : "attachment-retention-entry.ts");
+      return runInherited(process.execPath, [...(distribution ? [] : ["--import", "tsx"]), entry,
+        action, resolveUserPath(path, invocationCwd), ...flags]);
+    }
+    case "terminal": {
+      await ensureDependencies();
+      const entry = join(supportRoot, distribution ? "terminal-control-entry.js" : "terminal-control-entry.ts");
+      return runInherited(process.execPath, [...(distribution ? [] : ["--import", "tsx"]), entry, ...args]);
+    }
     case "terminal-daemon": {
       await ensureDependencies();
       const [command, terminalArgs] = terminalRuntimeCommand();

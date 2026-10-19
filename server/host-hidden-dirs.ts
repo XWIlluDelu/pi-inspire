@@ -1,7 +1,8 @@
-import { execFile as execFileCallback } from "node:child_process";
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process";
-import { basename, win32 } from "node:path";
+import { execFile as execFileCallback } from "node:child_process";
+import { basename } from "node:path";
 import { promisify } from "node:util";
+import { windowsPowerShellCommand } from "./platform-environment.mjs";
 
 const execFile = promisify(execFileCallback);
 type AttributeCommand = (
@@ -49,13 +50,7 @@ export async function listNativeHiddenNames(
       );
     }
     const { stdout } = await run(
-      win32.join(
-        process.env.SystemRoot ?? "C:\\Windows",
-        "System32",
-        "WindowsPowerShell",
-        "v1.0",
-        "powershell.exe",
-      ),
+      windowsPowerShellCommand(),
       [
         "-NoLogo",
         "-NoProfile",
@@ -64,7 +59,7 @@ export async function listNativeHiddenNames(
         [
           "$ErrorActionPreference = 'Stop'",
           "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
-          "ConvertTo-Json -Compress -InputObject @(Get-ChildItem -LiteralPath $env:INSPIRE_DIRECTORY_PATH -Force -Hidden | Select-Object -ExpandProperty Name)",
+          "Microsoft.PowerShell.Utility\\ConvertTo-Json -Compress -InputObject @(Microsoft.PowerShell.Management\\Get-ChildItem -LiteralPath $env:INSPIRE_DIRECTORY_PATH -Force -Hidden | Microsoft.PowerShell.Utility\\Select-Object -ExpandProperty Name)",
         ].join("; "),
       ],
       { ...options, env: { ...process.env, INSPIRE_DIRECTORY_PATH: path } },

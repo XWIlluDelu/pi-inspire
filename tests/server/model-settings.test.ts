@@ -1,7 +1,9 @@
 import {
+  access,
   lstat,
   mkdir,
   readFile,
+  rename,
   rm,
   symlink,
   utimes,
@@ -10,6 +12,7 @@ import {
 import { join } from "node:path";
 import express from "express";
 import request from "supertest";
+import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { modelOption } from "../../server/model-catalog.js";
 import {
@@ -500,6 +503,81 @@ describe("native configuration round trips", () => {
       providers: {},
     });
   });
+
+  it("saves a regular filename case alias on a native case-insensitive volume", async (context) => {
+    const lower = join(agent, "models.json");
+    const upper = join(agent, "MODELS.JSON");
+    await rename(lower, upper);
+    if (
+      !(await access(lower).then(
+        () => true,
+        () => false,
+      ))
+    )
+      return context.skip();
+    await editConfig({
+      kind: "model",
+      provider: "fixture",
+      originalId: "first",
+      values: { id: "first", name: "Case alias edit" },
+    });
+    expect((await readJson(upper)).providers.fixture.models[0].name).toBe(
+      "Case alias edit",
+    );
+  });
+
+  it.each(["regular", "symlink"])(
+    "rejects a %s file retargeted during its save even with identical contents",
+    async (kind) => {
+      const file = join(agent, "models.json");
+      const original = await readFile(file, "utf8");
+      const initialTarget = join(root, "original-models.json");
+      if (kind === "symlink") {
+        await rename(file, initialTarget);
+        await symlink(initialTarget, file);
+      }
+      const replacement = join(root, "replacement-models.json");
+      await writeFile(replacement, original);
+      const before = await snapshot();
+      const nativeLock = lockfile.lock.bind(lockfile);
+      const locked: string[] = [];
+      let changed = false;
+      vi.spyOn(lockfile, "lock").mockImplementation(
+        async (authority, options) => {
+          const release = await nativeLock(authority, options);
+          locked.push(authority);
+          if (!changed) {
+            changed = true;
+            await rm(file);
+            await symlink(replacement, file);
+          }
+          return release;
+        },
+      );
+      await expect(
+        service.saveConfig(before.configRevision, {
+          kind: "model",
+          provider: "fixture",
+          originalId: "first",
+          values: { id: "first", name: "Must not publish" },
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(changed).toBe(true);
+      expect(locked).toEqual(
+        kind === "symlink" ? [file, initialTarget].sort() : [file],
+      );
+      expect((await lstat(file)).isSymbolicLink()).toBe(true);
+      expect(await readFile(replacement, "utf8")).toBe(original);
+      if (kind === "symlink")
+        expect(await readFile(initialTarget, "utf8")).toBe(original);
+      await expect(access(`${file}.lock`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(access(`${initialTarget}.lock`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
 
   it("edits symlink targets and accepts native models comments/settings BOM without losing fields", async () => {
     const settingsTarget = join(root, "managed-settings.json");

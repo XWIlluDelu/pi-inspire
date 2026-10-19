@@ -8,7 +8,11 @@ import {
   within,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { GitPathIdentity } from "../../shared/contracts";
+import type {
+  GitPathIdentity,
+  ResourceProbeResult,
+} from "../../shared/contracts";
+import type { SessionResourceReference } from "../../shared/resource-references";
 import { stripResourceLocation } from "../../shared/resource-references";
 import { App } from "../../src/App";
 import { ContextPane } from "../../src/components/ContextPane";
@@ -606,6 +610,54 @@ describe("Files pane", () => {
     expect(
       await screen.findByRole("region", { name: "File source" }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps native Recent labels readable without changing their encoded open target", async () => {
+    const literal = "/outside/Review C#/report%20draft.md";
+    const reference = "/outside/Review%20C%23/report%2520draft.md";
+    resourceListHead = reference;
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const response = await originalFetch(input, init);
+      const url = String(input);
+      if (url.startsWith("/api/resources/list")) {
+        const body = (await response.json()) as {
+          resources: SessionResourceReference[];
+        };
+        for (const entry of body.resources) {
+          if (entry.reference !== reference) continue;
+          entry.label = literal;
+          entry.source = "tool";
+        }
+        return Response.json(body);
+      }
+      if (url.startsWith("/api/resources/probe")) {
+        const body = (await response.json()) as {
+          results: ResourceProbeResult[];
+        };
+        for (const entry of body.results)
+          if (entry.reference === reference) delete entry.workspacePath;
+        return Response.json(body);
+      }
+      return response;
+    });
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Toggle resources panel" }),
+    );
+    const row = await screen.findByRole("button", {
+      name: literal,
+    });
+    expect(row).toHaveAttribute("title", literal);
+    expect(row).toHaveTextContent("report%20draft.md");
+    expect(screen.queryByRole("button", { name: reference })).toBeNull();
+    fireEvent.click(row);
+    await waitFor(() =>
+      expect(resourceResolveBodies).toContainEqual({
+        sessionId: "s1",
+        reference,
+      }),
+    );
   });
 
   it("browses, searches, and keeps only the essential file actions", async () => {

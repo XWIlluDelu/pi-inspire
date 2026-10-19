@@ -1,39 +1,51 @@
-import type { Stats } from "node:fs";
+import { execFile as execFileCallback } from "node:child_process";
 import { opendir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import type { HostDirListing, HostRootsResponse } from "../shared/contracts.js";
 import { listNativeHiddenNames } from "./host-hidden-dirs.js";
+import { resolveUserPath } from "./paths.js";
+import { windowsPowerShellCommand } from "./platform-environment.mjs";
 
-const WINDOWS_DRIVE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-type RootInspector = (path: string) => Promise<Pick<Stats, "isDirectory">>;
+const execFile = promisify(execFileCallback);
 
-/** Discover the host's navigable filesystem roots. Windows has no parent
- * directory above a drive root, so drive enumeration is the only path from
- * `C:\\` to `D:\\` inside a hierarchical picker. */
+async function windowsDriveNames(): Promise<string> {
+  const command = windowsPowerShellCommand();
+  const { stdout } = await execFile(
+    command,
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "Microsoft.PowerShell.Utility\\ConvertTo-Json -InputObject @([Environment]::GetLogicalDrives()) -Compress",
+    ],
+    { encoding: "utf8", timeout: 10_000, maxBuffer: 4_096, windowsHide: true },
+  );
+  return stdout;
+}
+
+/** Enumerate assigned drive names without probing their availability. A mapped
+ * drive can block filesystem I/O; only explicit navigation should touch it. */
 export async function listHostRoots(
   hostPlatform: NodeJS.Platform = process.platform,
-  inspect: RootInspector = stat,
+  enumerate: () => Promise<string> = windowsDriveNames,
 ): Promise<HostRootsResponse> {
   if (hostPlatform !== "win32") return { roots: [{ name: "/", path: "/" }] };
-
-  const roots = await Promise.all(
-    [...WINDOWS_DRIVE_LETTERS].map(async (letter) => {
-      const path = `${letter}:\\`;
-      try {
-        return (await inspect(path)).isDirectory()
-          ? { name: `${letter}:`, path }
-          : null;
-      } catch {
-        // An absent, empty, or unreadable drive is not a navigable location.
-        return null;
-      }
-    }),
+  const paths: unknown = JSON.parse(
+    (await enumerate()).replace(/^\uFEFF/u, "").trim(),
   );
+  if (
+    !Array.isArray(paths) ||
+    paths.length > 26 ||
+    paths.some((path) => typeof path !== "string" || !/^[A-Z]:\\$/iu.test(path))
+  )
+    throw new Error("The Host could not enumerate Windows drive names");
   return {
-    roots: roots.filter(
-      (root): root is NonNullable<typeof root> => root !== null,
-    ),
+    roots: [...new Set((paths as string[]).map((path) => path.toUpperCase()))]
+      .sort()
+      .map((path) => ({ name: path.slice(0, 2), path })),
   };
 }
 
@@ -48,10 +60,20 @@ export async function listHostDirectories(
   requested?: string,
   showHidden = false,
 ): Promise<HostDirListing> {
-  const path = await realpath(requested ?? homedir());
+  const path = await realpath(
+    requested === undefined
+      ? homedir()
+      : resolveUserPath(requested, process.cwd()),
+  );
+  const hidden = showHidden
+    ? new Set<string>()
+    : await listNativeHiddenNames(path);
   const dirs: HostDirListing["dirs"] = [];
   for await (const entry of await opendir(path)) {
-    if (!showHidden && entry.name.startsWith(".")) continue;
+    // Native-hidden links/junctions must not resolve offline targets before
+    // being filtered. Attribute enumeration inspects the directory entries.
+    if (!showHidden && (entry.name.startsWith(".") || hidden.has(entry.name)))
+      continue;
     const absolute = join(path, entry.name);
     if (entry.isDirectory()) {
       dirs.push({ name: entry.name, path: absolute });
@@ -64,14 +86,11 @@ export async function listHostDirectories(
       }
     }
   }
-  const hidden = showHidden
-    ? new Set<string>()
-    : await listNativeHiddenNames(path);
   dirs.sort((a, b) => a.name.localeCompare(b.name));
   const parent = dirname(path);
   return {
     path,
     parent: parent === path ? null : parent,
-    dirs: dirs.filter((entry) => !hidden.has(entry.name)),
+    dirs,
   };
 }

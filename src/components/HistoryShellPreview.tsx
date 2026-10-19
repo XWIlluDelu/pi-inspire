@@ -1,6 +1,10 @@
 import { memo, useMemo } from "react";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
+import {
+  fileResourceReference,
+  isResourceReferenceText,
+} from "../../shared/resource-references";
 import { stripTerminalSequences } from "../ansi";
 import type { CopyLoader } from "../content-copy";
 import { CopyAction } from "./CopyAction";
@@ -105,11 +109,12 @@ export const HistoryShellPreview = memo(function HistoryShellPreview({
           {content.truncated ? (
             <span>Pi truncated the recorded output</span>
           ) : null}
-          {content.fullOutputPath ? (
+          {content.fullOutputPath &&
+          isResourceReferenceText(content.fullOutputPath) ? (
             <button
               type="button"
               className="tool-notice__action"
-              data-file-path={content.fullOutputPath}
+              data-file-path={fileResourceReference(content.fullOutputPath)}
               title={`Preview ${content.fullOutputPath}`}
               aria-label="View full shell output"
             >

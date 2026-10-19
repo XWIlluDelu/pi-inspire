@@ -1,4 +1,7 @@
-import type { SessionResourceReference } from "../shared/resource-references";
+import {
+  resourceReferenceLabel,
+  type SessionResourceReference,
+} from "../shared/resource-references";
 
 export interface ResourceRow extends SessionResourceReference {
   /** Basename used for display. */
@@ -19,17 +22,10 @@ export function resourceRows(
   references: readonly SessionResourceReference[],
 ): ResourceRow[] {
   return references.map((reference) => {
-    const displayReference = reference.label
-      .replace(/[?#].*$/u, "")
-      .replace(/:\d+(?::\d+)?$/, "");
-    const rawBasename =
-      displayReference.split(/[\\/]/).pop() || displayReference;
-    let basename = rawBasename;
-    try {
-      basename = decodeURIComponent(rawBasename);
-    } catch {
-      // Keep the literal reference when it contains malformed URL escapes.
-    }
+    const displayReference = reference.reference
+      ? resourceReferenceLabel(reference.reference)
+      : reference.label;
+    const basename = displayReference.split(/[\\/]/).pop() || displayReference;
     return {
       ...reference,
       name: reference.source === "embedded" ? reference.label : basename,

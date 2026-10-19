@@ -27,7 +27,8 @@ export function ResourcePathLabel({
       withoutTrailingSlash.lastIndexOf("/"),
       withoutTrailingSlash.lastIndexOf("\\"),
     ) + 1;
-  const parent = path.slice(0, leafStart);
+  const parent = path.slice(0, Math.max(0, leafStart - 1));
+  const separator = leafStart ? path[leafStart - 1]! : "";
   return (
     <span
       className={className ? `resource-path ${className}` : "resource-path"}
@@ -37,6 +38,15 @@ export function ResourcePathLabel({
         {parent ? (
           <span className="resource-path__parent">
             <SearchMatchText text={parent} ranges={matches} />
+          </span>
+        ) : null}
+        {separator ? (
+          <span className="resource-path__separator">
+            <SearchMatchText
+              text={separator}
+              ranges={matches}
+              offset={leafStart - 1}
+            />
           </span>
         ) : null}
         <span className="resource-path__leaf">
