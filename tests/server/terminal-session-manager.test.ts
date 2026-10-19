@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { terminalTreeInspector } from "../../server/terminal-process-tree.js";
 import type { TerminalAttachmentSink } from "../../server/terminal-service.js";
 import {
   type TerminalPtyFactory,
@@ -145,6 +146,46 @@ describe("TerminalSessionManager", () => {
     } finally {
       await manager.close();
       dispose.mockRestore();
+    }
+  });
+
+  it("requires explicit live-terminal consent and fences a create awaiting its cwd", async () => {
+    const first = setup();
+    await first.manager.create({ cwd: process.cwd() });
+    expect(() => first.manager.prepareShutdown(false)).toThrow("--force");
+    expect(first.manager.list().terminals[0]?.status).toBe("running");
+    await first.manager.close();
+
+    const second = setup();
+    const creating = second.manager.create({ cwd: process.cwd() });
+    second.manager.prepareShutdown(false);
+    await expect(creating).rejects.toMatchObject({
+      code: "service_closing",
+    });
+    expect(second.spawns).toHaveLength(0);
+    await second.manager.close();
+  });
+
+  it("keeps a failed PTY stop tracked and retryable instead of discarding it", async () => {
+    const { manager, spawns } = setup();
+    await manager.create({ cwd: process.cwd() });
+    const pty = spawns[0]!.pty;
+    const kill = vi.spyOn(pty, "kill").mockImplementation(() => {});
+    vi.useFakeTimers();
+    try {
+      const failure = expect(manager.close()).rejects.toMatchObject({
+        code: "terminal_stop_timeout",
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      await failure;
+      expect(manager.list().terminals).toMatchObject([{ status: "running" }]);
+      kill.mockRestore();
+      await manager.close();
+      expect(manager.list().terminals).toEqual([]);
+    } finally {
+      kill.mockRestore();
+      vi.useRealTimers();
+      await manager.close();
     }
   });
 
@@ -471,9 +512,21 @@ describe("TerminalSessionManager", () => {
       "@lydell/node-pty",
     ) as typeof import("@lydell/node-pty");
     const pty = new FakePty();
-    // No live POSIX process/group can have this PID. On Windows the empty
-    // SystemRoot guarantees taskkill cannot start, exercising its fallback.
-    Object.defineProperty(pty, "pid", { value: 2_147_483_647 });
+    // A live POSIX birth is required even for a failed-group fallback. No
+    // actual signal is sent: the native adapter is fake and kill is mocked.
+    // Windows uses a nonexistent taskkill path to exercise native ConPTY close.
+    Object.defineProperty(pty, "pid", {
+      value: process.platform === "win32" ? 2_147_483_647 : process.pid,
+    });
+    const signal = vi
+      .spyOn(process, "kill")
+      .mockImplementation((pid, value) => {
+        if (pid === pty.pid) {
+          pty.kill(value as string);
+          return true;
+        }
+        throw Object.assign(new Error("No such group"), { code: "ESRCH" });
+      });
     const kill = vi.spyOn(pty, "kill");
     const spawn = vi.spyOn(nativePty, "spawn").mockReturnValue(pty as never);
     const manager = new TerminalSessionManager({
@@ -500,6 +553,7 @@ describe("TerminalSessionManager", () => {
       pty.emitExit(0);
       await manager.close();
       spawn.mockRestore();
+      signal.mockRestore();
       await rm(directory, { recursive: true, force: true });
     }
   });
@@ -576,6 +630,102 @@ describe("TerminalSessionManager", () => {
     },
   );
 
+  it.each(["signal", "confirmation"] as const)(
+    "retains failed descendant %s cleanup after root exit for an explicit retry",
+    async (failure) => {
+      const { manager, spawns } = setup();
+      const terminal = await manager.create({ cwd: process.cwd() });
+      const pty = spawns[0]!.pty;
+      let fail = true;
+      const killTree = vi.fn(async (signal: string) => {
+        if (signal === "SIGHUP") pty.emitExit(0);
+        else if (failure === "signal" && fail)
+          throw new Error("permission denied");
+      });
+      const waitForTreeExit = vi.fn(async () => !fail);
+      Object.assign(pty, { killTree, waitForTreeExit });
+      try {
+        await expect(manager.remove(terminal.id, false)).rejects.toMatchObject({
+          code: "terminal_cleanup_failed",
+          status: 503,
+        });
+        expect(manager.list().terminals).toEqual([
+          expect.objectContaining({
+            id: terminal.id,
+            status: "exited",
+          }),
+        ]);
+        fail = false;
+        await manager.remove(terminal.id, false);
+        expect(killTree.mock.calls).toEqual([
+          ["SIGHUP"],
+          ["SIGKILL"],
+          ["SIGKILL"],
+        ]);
+        expect(waitForTreeExit).toHaveBeenCalled();
+        expect(manager.list().terminals).toHaveLength(0);
+      } finally {
+        fail = false;
+        pty.emitExit(0);
+        await manager.close();
+      }
+    },
+  );
+
+  it("shares the existing hard-stop budget between root drain and descendant confirmation", async () => {
+    vi.useFakeTimers();
+    const { manager, spawns } = setup();
+    const terminal = await manager.create({ cwd: process.cwd() });
+    const pty = spawns[0]!.pty;
+    const waitForTreeExit = vi.fn(async () => true);
+    Object.assign(pty, {
+      killTree: vi.fn(async () => {
+        setTimeout(() => pty.emitExit(0), 1_500);
+      }),
+      waitForTreeExit,
+    });
+    try {
+      const removing = manager.remove(terminal.id, true);
+      await vi.advanceTimersByTimeAsync(1_500);
+      await removing;
+      expect(waitForTreeExit).toHaveBeenCalledExactlyOnceWith(3_500);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      pty.emitExit(0);
+      await manager.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it("retains a failed service shutdown until exited descendants are confirmed retired", async () => {
+    const { manager, spawns } = setup();
+    const terminal = await manager.create({ cwd: process.cwd() });
+    const pty = spawns[0]!.pty;
+    let retired = false;
+    Object.assign(pty, {
+      killTree: vi.fn(async () => {
+        pty.emitExit(0);
+      }),
+      waitForTreeExit: vi.fn(async () => retired),
+    });
+    try {
+      await expect(manager.close()).rejects.toMatchObject({
+        code: "terminal_cleanup_failed",
+      });
+      expect(manager.list().terminals[0]).toMatchObject({
+        id: terminal.id,
+        status: "exited",
+      });
+      retired = true;
+      await manager.close();
+      expect(manager.list().terminals).toEqual([]);
+    } finally {
+      retired = true;
+      pty.emitExit(0);
+      await manager.close();
+    }
+  });
+
   it("does not spawn new PTYs after terminal-service shutdown begins", async () => {
     const first = setup();
     const creating = first.manager.create({ cwd: process.cwd() });
@@ -596,6 +746,63 @@ describe("TerminalSessionManager", () => {
     });
     expect(second.spawns).toHaveLength(1);
   });
+
+  it.runIf(process.platform !== "win32")(
+    "retires a detached HUP-resistant descendant after the native PTY root exits",
+    async () => {
+      const directory = await mkdtemp(
+        join(tmpdir(), "inspire-detached-pty-tree-"),
+      );
+      const childPath = join(directory, "child.pid");
+      const childCode = [
+        'process.on("SIGHUP", () => {});',
+        'require("node:fs").writeFileSync(process.argv[1], String(process.pid));',
+        "setInterval(() => {}, 1000); setTimeout(() => process.exit(0), 30_000);",
+      ].join("\n");
+      const rootCode = [
+        'process.on("SIGHUP", () => process.exit(0));',
+        'const child = require("node:child_process").spawn(process.execPath, ["-e", ' +
+          JSON.stringify(childCode) +
+          ', process.argv[1]], { detached: true, stdio: "ignore" });',
+        "child.unref(); setInterval(() => {}, 1000); setTimeout(() => process.exit(0), 30_000);",
+      ].join("\n");
+      const manager = new TerminalSessionManager({
+        profiles: [
+          {
+            id: "node-tree",
+            label: "Owned process tree",
+            shell: process.execPath,
+            args: ["-e", rootCode, childPath],
+            available: true,
+            isDefault: true,
+          },
+        ],
+      });
+      let pid = 0;
+      let birth: string | null = null;
+      try {
+        const terminal = await manager.create({ cwd: directory });
+        await vi.waitFor(
+          async () => {
+            pid = Number(await readFile(childPath, "utf8"));
+            expect(pid).toBeGreaterThan(1);
+            birth = await terminalTreeInspector.identity(pid);
+            expect(birth).not.toBeNull();
+          },
+          { timeout: 10_000 },
+        );
+        await manager.remove(terminal.id, false);
+        expect(manager.list().terminals).toEqual([]);
+        expect(await terminalTreeInspector.identity(pid)).toBeNull();
+      } finally {
+        await manager.close();
+        if (birth && (await terminalTreeInspector.identity(pid)) === birth)
+          process.kill(pid, "SIGKILL");
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+    20_000,
+  );
 
   it.runIf(process.platform !== "win32")(
     "kills HUP-resistant descendants when a terminal closes",
@@ -623,6 +830,7 @@ describe("TerminalSessionManager", () => {
         ],
       });
       let childPid = 0;
+      let childBirth: string | null = null;
       try {
         const terminal = await manager.create({ cwd: directory });
         await vi.waitFor(
@@ -630,6 +838,8 @@ describe("TerminalSessionManager", () => {
             childPid = Number(await readFile(childPidPath, "utf8"));
             expect(childPid).toBeGreaterThan(1);
             expect(() => process.kill(childPid, 0)).not.toThrow();
+            childBirth = await terminalTreeInspector.identity(childPid);
+            expect(childBirth).not.toBeNull();
           },
           { timeout: 10_000 },
         );
@@ -640,7 +850,10 @@ describe("TerminalSessionManager", () => {
         );
       } finally {
         await manager.close();
-        if (childPid > 1) {
+        if (
+          childBirth &&
+          (await terminalTreeInspector.identity(childPid)) === childBirth
+        ) {
           try {
             process.kill(childPid, "SIGKILL");
           } catch {

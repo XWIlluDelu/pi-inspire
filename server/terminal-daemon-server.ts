@@ -1,19 +1,23 @@
-import { timingSafeEqual } from "node:crypto";
 import { chmod, lstat, mkdir, rm } from "node:fs/promises";
-import { createServer, type Server, type Socket } from "node:net";
+import type { Socket } from "node:net";
 import { dirname } from "node:path";
+import { createServer, type Server } from "node:tls";
 import {
   decodeTerminalInputFrame,
   type TerminalClientControlMessage,
 } from "../shared/terminal-contracts.js";
+import type { TerminalDaemonInfo } from "./terminal-daemon-configuration.js";
 import {
   TERMINAL_DAEMON_PROTOCOL_VERSION,
   TERMINAL_DAEMON_READY_TYPE,
   type TerminalDaemonAttachRequest,
+  type TerminalDaemonLifecycleRequest,
   type TerminalDaemonRpcMethod,
   type TerminalDaemonRpcRequest,
   type TerminalDaemonRpcResponse,
 } from "./terminal-daemon-protocol.js";
+import { addressAcceptsConnections } from "./terminal-daemon-socket.js";
+import { terminalDaemonTlsOptions } from "./terminal-daemon-tls.js";
 import {
   decodeTerminalIpcJson,
   encodeTerminalIpcFrame,
@@ -24,7 +28,6 @@ import {
   TerminalIpcDecoder,
   type TerminalIpcFrame,
 } from "./terminal-ipc.js";
-import { addressAcceptsConnections } from "./terminal-daemon-socket.js";
 import { dispatchTerminalMutation } from "./terminal-operation-dispatch.js";
 import { TerminalOperationReceipts } from "./terminal-operation-receipts.js";
 import type {
@@ -53,16 +56,6 @@ function stringParam(record: Record<string, unknown>, key: string): string {
   return value;
 }
 
-function tokenMatches(expected: string, candidate: unknown): boolean {
-  if (typeof candidate !== "string") return false;
-  const expectedBytes = Buffer.from(expected);
-  const candidateBytes = Buffer.from(candidate);
-  return (
-    expectedBytes.byteLength === candidateBytes.byteLength &&
-    timingSafeEqual(expectedBytes, candidateBytes)
-  );
-}
-
 async function prepareUnixSocket(address: string): Promise<void> {
   const directory = dirname(address);
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -76,7 +69,10 @@ async function prepareUnixSocket(address: string): Promise<void> {
     throw new Error(
       `The terminal IPC directory is owned by another user: ${directory}`,
     );
-  if ((directoryInfo.mode & 0o077) !== 0) await chmod(directory, 0o700);
+  if ((directoryInfo.mode & 0o077) !== 0)
+    throw new Error(
+      `The terminal IPC directory must not be accessible by other users; use a private directory: ${directory}`,
+    );
   try {
     const info = await lstat(address);
     if (!info.isSocket() || info.isSymbolicLink())
@@ -111,6 +107,7 @@ export class TerminalDaemonServer {
   private readonly operations = new TerminalOperationReceipts();
   private server: Server | null = null;
   private readonly sockets = new Set<Socket>();
+  private readonly connections = new Set<Socket>();
   private stopping = false;
   private stopPromise: Promise<void> | null = null;
 
@@ -118,45 +115,81 @@ export class TerminalDaemonServer {
     private readonly address: string,
     private readonly token: string,
     private readonly terminals: TerminalService,
+    private readonly lifecycle?: {
+      info(): TerminalDaemonInfo;
+      shutdown(instanceId: string, force: boolean): void;
+    },
   ) {}
 
   async start(): Promise<void> {
     if (this.server) return;
+    if (
+      process.platform !== "win32" &&
+      Buffer.byteLength(this.address) >
+        (process.platform === "darwin" ? 103 : 107)
+    )
+      throw new Error(
+        "The terminal IPC socket path is too long; use a shorter INSPIRE_TERMINAL_DAEMON_ADDRESS",
+      );
     if (process.platform !== "win32") await prepareUnixSocket(this.address);
-    const server = createServer((socket) => this.accept(socket));
-    server.maxConnections = CONNECTION_LIMIT;
-    await new Promise<void>((resolvePromise, rejectPromise) => {
-      const fail = (error: Error): void => rejectPromise(error);
-      server.once("error", fail);
-      server.listen(this.address, () => {
-        server.off("error", fail);
-        resolvePromise();
-      });
+    const server = createServer(
+      terminalDaemonTlsOptions(this.token),
+      (socket) => this.accept(socket),
+    );
+    // Track unauthenticated TLS connections as well as established attachments,
+    // so shutdown never waits on a peer that withheld its handshake.
+    server.on("connection", (socket: Socket) => {
+      this.connections.add(socket);
+      socket.once("close", () => this.connections.delete(socket));
     });
-    if (process.platform !== "win32") await chmod(this.address, 0o600);
-    this.server = server;
+    server.on("tlsClientError", () => {});
+    server.maxConnections = CONNECTION_LIMIT;
+    try {
+      await new Promise<void>((resolvePromise, rejectPromise) => {
+        const fail = (error: Error): void => rejectPromise(error);
+        server.once("error", fail);
+        server.listen(this.address, () => {
+          server.off("error", fail);
+          resolvePromise();
+        });
+      });
+      if (process.platform !== "win32") await chmod(this.address, 0o600);
+      this.server = server;
+    } catch (error) {
+      for (const socket of this.connections) socket.destroy();
+      if (server.listening)
+        await new Promise<void>((done) => server.close(() => done()));
+      throw error;
+    }
   }
 
   stop(): Promise<void> {
     if (this.stopPromise) return this.stopPromise;
     this.stopping = true;
-    const server = this.server;
-    this.server = null;
-    for (const socket of this.sockets) socket.destroy();
-    this.sockets.clear();
     this.stopPromise = (async () => {
+      // Keep lifecycle controls available if PTY cleanup fails. Data requests
+      // are fenced below; a later explicit shutdown can retry the same owner.
+      await this.terminals.close();
+      const server = this.server;
+      this.server = null;
+      for (const socket of this.connections) socket.destroy();
+      this.connections.clear();
+      for (const socket of this.sockets) socket.destroy();
+      this.sockets.clear();
       if (server)
         await new Promise<void>((resolvePromise) =>
           server.close(() => resolvePromise()),
         );
-      await this.terminals.close();
-      if (process.platform !== "win32") await rm(this.address, { force: true });
-    })();
+      // Node owns unlinking its bound socket; never unlink again after drain.
+    })().catch((error) => {
+      this.stopPromise = null;
+      throw error;
+    });
     return this.stopPromise;
   }
 
   private accept(socket: Socket): void {
-    if (this.stopping || this.sockets.size >= CONNECTION_LIMIT) {
+    if (this.sockets.size >= CONNECTION_LIMIT) {
       socket.destroy();
       return;
     }
@@ -217,16 +250,22 @@ export class TerminalDaemonServer {
           if (frame.kind !== TERMINAL_IPC_JSON_FRAME)
             throw new Error("Terminal daemon handshake must be JSON");
           const message = asRecord(decodeTerminalIpcJson(frame.payload));
-          if (!tokenMatches(this.token, message.token))
-            throw new Error("Terminal daemon authentication failed");
-          if (message.protocolVersion !== TERMINAL_DAEMON_PROTOCOL_VERSION)
+          if (this.stopping && message.mode !== "lifecycle")
+            throw new Error("Terminal service is stopping");
+          if (
+            message.mode === "lifecycle"
+              ? message.lifecycleVersion !== 1
+              : message.protocolVersion !== TERMINAL_DAEMON_PROTOCOL_VERSION
+          )
             throw new Error("Terminal daemon protocol is not compatible");
           authenticated = true;
           clearTimeout(handshakeTimeout);
-          if (message.mode === "rpc") {
+          if (message.mode === "rpc" || message.mode === "lifecycle") {
             void this.handleRpc(
               socket,
-              message as unknown as TerminalDaemonRpcRequest,
+              message as unknown as
+                | TerminalDaemonRpcRequest
+                | TerminalDaemonLifecycleRequest,
             );
           } else if (message.mode === "attach") {
             attaching = true;
@@ -270,27 +309,53 @@ export class TerminalDaemonServer {
 
   private async handleRpc(
     socket: Socket,
-    request: TerminalDaemonRpcRequest,
+    request: TerminalDaemonRpcRequest | TerminalDaemonLifecycleRequest,
   ): Promise<void> {
     const response: TerminalDaemonRpcResponse = {
       requestId: request.requestId,
       ok: false,
     };
     try {
-      const execute = () => this.dispatchRpc(request.method, request.params);
-      response.result = await ([
-        "ping",
-        "getCatalog",
-        "getGlobalCatalog",
-        "getSettings",
-      ].includes(request.method)
-        ? execute()
-        : this.operations.run(
-            request.operation,
-            request.method,
-            request.params,
-            execute,
-          ));
+      if (request.mode === "lifecycle") {
+        if (!this.lifecycle)
+          throw new TerminalServiceError(
+            "terminal_lifecycle_unavailable",
+            503,
+            "This daemon has no lifecycle owner.",
+          );
+        const values = asRecord(request.params);
+        switch (request.method) {
+          case "getDaemonInfo":
+            response.result = this.lifecycle.info();
+            break;
+          case "shutdownDaemon":
+            if (typeof values.force !== "boolean")
+              throw new Error("force must be a boolean");
+            this.lifecycle.shutdown(
+              stringParam(values, "instanceId"),
+              values.force,
+            );
+            response.result = null;
+            break;
+          default:
+            throw new Error("Unknown terminal lifecycle method");
+        }
+      } else {
+        const execute = () => this.dispatchRpc(request.method, request.params);
+        response.result = await ([
+          "ping",
+          "getCatalog",
+          "getGlobalCatalog",
+          "getSettings",
+        ].includes(request.method)
+          ? execute()
+          : this.operations.run(
+              request.operation,
+              request.method,
+              request.params,
+              execute,
+            ));
+      }
       response.ok = true;
     } catch (error) {
       response.error = errorPayload(error);
@@ -317,6 +382,11 @@ export class TerminalDaemonServer {
         return Promise.resolve(this.terminals.list());
       case "getSettings":
         return Promise.resolve(this.terminals.getSettings());
+      case "getDaemonInfo":
+      case "shutdownDaemon":
+        throw new Error(
+          "Daemon lifecycle requires its independent control protocol",
+        );
       default:
         return dispatchTerminalMutation(this.terminals, method, values);
     }

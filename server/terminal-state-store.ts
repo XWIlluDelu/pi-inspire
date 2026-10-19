@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { chmod, lstat, mkdir, open, rename, rm } from "node:fs/promises";
+import { lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { TerminalPersistedState } from "./terminal-session-manager.js";
 
@@ -18,7 +18,11 @@ async function ensurePrivateDirectory(path: string): Promise<void> {
       `The terminal state directory is owned by another user: ${path}`,
     );
   if (process.platform !== "win32" && (info.mode & 0o077) !== 0)
-    await chmod(path, PRIVATE_DIRECTORY_MODE);
+    throw new Error(`The terminal state directory is not private: ${path}`);
+}
+
+export function prepareTerminalStateDirectory(path: string): Promise<void> {
+  return ensurePrivateDirectory(dirname(path));
 }
 
 export async function readTerminalState(path: string): Promise<unknown | null> {

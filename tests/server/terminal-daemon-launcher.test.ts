@@ -6,10 +6,6 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { resolveAccessToken } from "../../server/access-token.js";
 import { launchTerminalDaemon } from "../../server/terminal-daemon-launcher.js";
-import {
-  decodeTerminalIpcJson,
-  TerminalIpcDecoder,
-} from "../../server/terminal-ipc.js";
 
 // Even a regression must never launch systemd or a real daemon in this fixture.
 vi.mock("node:child_process", () => ({
@@ -27,24 +23,14 @@ it("does not replace a listening incompatible daemon or terminate its independen
   const tokenPath = join(directory, "token");
   const token = await resolveAccessToken(undefined, tokenPath);
   const sockets = new Set<Socket>();
-  const modes: unknown[] = [];
+  const received: Buffer[] = [];
   const server = createServer((socket) => {
     sockets.add(socket);
-    const decoder = new TerminalIpcDecoder();
     socket.on("data", (data) => {
-      for (const frame of decoder.push(
-        typeof data === "string" ? Buffer.from(data) : data,
-      )) {
-        const message = decodeTerminalIpcJson(frame.payload) as {
-          token: string;
-          mode: string;
-        };
-        expect(message.token).toBe(token);
-        modes.push(message.mode);
-        // An incompatible owner's rejected handshake is observation failure,
-        // not permission to issue its destructive replacement handshake.
-        socket.destroy();
-      }
+      received.push(Buffer.from(data));
+      // A pre-TLS owner cannot authenticate. Its refusal must not authorize
+      // replacement, and the new client must not disclose the old raw token.
+      socket.destroy();
     });
     socket.on("error", () => {});
     socket.on("close", () => sockets.delete(socket));
@@ -71,7 +57,8 @@ it("does not replace a listening incompatible daemon or terminate its independen
         : "Host-only restart cannot replace it.",
     );
     expect(server.listening).toBe(true);
-    expect(modes).toEqual(["rpc"]);
+    expect(received.length).toBeGreaterThan(0);
+    expect(Buffer.concat(received).includes(Buffer.from(token))).toBe(false);
     const { spawn } = await import("node:child_process");
     expect(spawn).not.toHaveBeenCalled();
   } finally {

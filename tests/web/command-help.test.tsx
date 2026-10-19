@@ -114,7 +114,8 @@ describe("shortcut help", () => {
         ["↑", "↓"],
         ["Enter", "Tab"],
       ]);
-      expect(screen.getByText("Ctrl/⌘+K", { selector: "kbd" })).toBeVisible();
+      for (const key of screen.getAllByText("Ctrl/⌘+K", { selector: "kbd" }))
+        expect(key).toBeVisible();
       const terminal = screen
         .getByRole("heading", { name: "Project terminal" })
         .closest("section")!;
@@ -133,9 +134,9 @@ describe("shortcut help", () => {
         "→",
         "Ctrl/⌘+Shift+←",
         "Ctrl/⌘+Shift+→",
-        "Ctrl+Shift+Esc",
-        "Ctrl/⌘+C",
-        "Ctrl/⌘+V",
+        "Ctrl/⌘+K",
+        "Ctrl+C",
+        "Ctrl+V",
         "Enter",
         "Shift+Enter",
       ]);
@@ -159,6 +160,14 @@ describe("shortcut help", () => {
           screen.getByText(`Ctrl+⌘+${key}`, { selector: "kbd" }),
         ).toBeVisible();
       expect(screen.queryByText("Alt+Shift+P", { selector: "kbd" })).toBeNull();
+      expect(screen.getByText("⌘+C", { selector: "kbd" })).toBeVisible();
+      expect(screen.getByText("⌘+V", { selector: "kbd" })).toBeVisible();
+      expect(
+        screen.getByText("Native copy / paste; Ctrl+C always interrupts"),
+      ).toBeVisible();
+      expect(
+        screen.queryByText("Ctrl+Shift+Esc", { selector: "kbd" }),
+      ).toBeNull();
     } finally {
       platform.mockRestore();
     }

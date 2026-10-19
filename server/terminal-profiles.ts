@@ -1,6 +1,10 @@
-import { accessSync, constants, realpathSync } from "node:fs";
-import { basename, delimiter, isAbsolute, join } from "node:path";
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
+import { basename, isAbsolute, join } from "node:path";
 import type { TerminalProfile } from "../shared/terminal-contracts.js";
+import {
+  environmentValue,
+  executablePathDirectories,
+} from "./platform-environment.mjs";
 
 export interface ResolvedTerminalProfile extends TerminalProfile {
   shell: string;
@@ -16,7 +20,7 @@ function canExecute(path: string): boolean {
       path,
       process.platform === "win32" ? constants.F_OK : constants.X_OK,
     );
-    return true;
+    return statSync(path).isFile();
   } catch {
     return false;
   }
@@ -35,12 +39,16 @@ function findOnPath(command: string, env: NodeJS.ProcessEnv): string | null {
   if (isAbsolute(command)) return canExecute(command) ? command : null;
   const extensions =
     process.platform === "win32"
-      ? (env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean)
+      ? (environmentValue(env, "PATHEXT") ?? ".EXE;.CMD;.BAT;.COM")
+          .split(";")
+          .filter(Boolean)
       : [""];
   const commandHasExtension = extensions.some((extension) =>
     command.toLowerCase().endsWith(extension.toLowerCase()),
   );
-  for (const directory of (env.PATH ?? "").split(delimiter)) {
+  for (const directory of executablePathDirectories(
+    environmentValue(env, "PATH") ?? "",
+  )) {
     if (!directory) continue;
     for (const extension of extensions) {
       const candidate = join(
@@ -79,9 +87,10 @@ export function discoverTerminalProfiles(
 ): ResolvedTerminalProfile[] {
   const preferred =
     process.platform === "win32"
-      ? (env.COMSPEC ?? "cmd.exe")
-      : (env.SHELL ?? "/bin/sh");
+      ? (environmentValue(env, "COMSPEC") ?? "cmd.exe")
+      : (environmentValue(env, "SHELL") ?? "/bin/sh");
   const candidates = [
+    ...(process.platform === "win32" ? ["pwsh.exe"] : []),
     preferred,
     ...(process.platform === "win32" ? WINDOWS_SHELLS : POSIX_SHELLS),
   ];

@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -32,14 +31,15 @@ import {
   type TerminalServiceSettings,
   type TerminalServiceSettingsPatch,
 } from "../shared/terminal-contracts.js";
-import { signalProcessTree } from "./process-tree.mjs";
 import { dispatchTerminalMutation } from "./terminal-operation-dispatch.js";
 import { TerminalOperationReceipts } from "./terminal-operation-receipts.js";
+import { terminalDirectoryFromUrl } from "./terminal-paths.js";
 import {
   discoverTerminalProfiles,
   publicTerminalProfiles,
   type ResolvedTerminalProfile,
 } from "./terminal-profiles.js";
+import { trackedTerminalPty } from "./terminal-pty.js";
 import { TerminalRingBuffer } from "./terminal-ring-buffer.js";
 import {
   type TerminalAttachment,
@@ -89,6 +89,7 @@ export interface TerminalPty {
   resume?(): void;
   kill(signal?: string): void;
   killTree?(signal?: string): void | Promise<void>;
+  waitForTreeExit?(timeoutMs: number): Promise<boolean>;
 }
 
 export interface TerminalPtySpawnOptions {
@@ -205,66 +206,6 @@ interface TerminalSessionManagerOptions {
   shellIntegrationDirectory?: string;
 }
 
-function posixDescendantPids(rootPid: number): number[] {
-  const output = execFileSync("ps", ["-A", "-o", "pid=,ppid="], {
-    encoding: "utf8",
-    timeout: 1_000,
-    maxBuffer: 4 * 1024 * 1024,
-  });
-  const children = new Map<number, number[]>();
-  for (const line of output.split("\n")) {
-    const match = /^\s*(\d+)\s+(\d+)\s*$/u.exec(line);
-    if (!match) continue;
-    const pid = Number(match[1]);
-    const parentPid = Number(match[2]);
-    children.set(parentPid, [...(children.get(parentPid) ?? []), pid]);
-  }
-  const descendants: number[] = [];
-  const visited = new Set([rootPid]);
-  const visit = (parentPid: number): void => {
-    for (const pid of children.get(parentPid) ?? []) {
-      if (visited.has(pid)) continue;
-      visited.add(pid);
-      visit(pid);
-      descendants.push(pid);
-    }
-  };
-  visit(rootPid);
-  return descendants;
-}
-
-function killPosixProcessTree(
-  rootPid: number,
-  signal: string,
-  knownDescendants: number[] = [],
-): { groupSignaled: boolean; descendants: number[] } {
-  let currentDescendants: number[] = [];
-  try {
-    currentDescendants = posixDescendantPids(rootPid);
-  } catch {
-    // A previous tree walk still lets shutdown reach children whose parent
-    // exited after the first signal.
-  }
-  const descendants = [
-    ...new Set([...knownDescendants, ...currentDescendants]),
-  ];
-  for (const pid of descendants) {
-    try {
-      process.kill(pid, signal as NodeJS.Signals);
-    } catch {
-      // A descendant may exit while the process table is being traversed.
-    }
-  }
-  let groupSignaled = false;
-  try {
-    process.kill(-rootPid, signal as NodeJS.Signals);
-    groupSignaled = true;
-  } catch {
-    // The PTY leader may already be gone while a captured child remains.
-  }
-  return { groupSignaled, descendants };
-}
-
 function defaultPtyFactory(
   shell: string,
   args: string[],
@@ -278,55 +219,7 @@ function defaultPtyFactory(
     // Windows-provided ConPTY version.
     useConptyDll: process.platform === "win32",
   });
-  let knownDescendants: number[] = [];
-  return {
-    get pid() {
-      return pty.pid;
-    },
-    get process() {
-      return pty.process;
-    },
-    onData: (listener) => pty.onData(listener),
-    onExit: (listener) => pty.onExit(listener),
-    resize: (cols, rows) => pty.resize(cols, rows),
-    // The runtime accepts raw bytes when `encoding` is null, although its
-    // declaration exposes only the common string overload.
-    write: (data) =>
-      (pty.write as unknown as (value: string | Buffer) => void)(data),
-    pause: () => pty.pause(),
-    resume: () => pty.resume(),
-    kill: (signal) =>
-      pty.kill(process.platform === "win32" ? undefined : signal),
-    killTree: (signal) => {
-      if (process.platform === "win32") {
-        // Windows spawn returns before the connection assigns a PID. Native
-        // kill queues until readiness; the process-tree helper cannot target 0.
-        if (pty.pid === 0) return pty.kill();
-        return signalProcessTree(
-          {
-            pid: pty.pid,
-            exitCode: null,
-            signalCode: null,
-            kill: () => {
-              // node-pty rejects POSIX signal arguments on Windows, including
-              // in the direct-PTY fallback when taskkill fails or times out.
-              pty.kill();
-              return true;
-            },
-          },
-          (signal ?? "SIGHUP") as NodeJS.Signals,
-          { environment: options.env, platform: "win32", timeoutMs: 1_000 },
-        );
-      }
-      const result = killPosixProcessTree(
-        pty.pid,
-        signal ?? "SIGHUP",
-        knownDescendants,
-      );
-      knownDescendants = signal === "SIGKILL" ? [] : result.descendants;
-      if (!result.groupSignaled) pty.kill(signal);
-    },
-  };
+  return trackedTerminalPty(pty as unknown as TerminalPty, options.env);
 }
 
 function terminalError(code: string, status: number, message: string): never {
@@ -1037,23 +930,47 @@ export class TerminalSessionManager implements TerminalService {
     this.broadcastDescriptor(session);
   }
 
+  prepareShutdown(force: boolean): void {
+    if (
+      !force &&
+      [...this.sessions.values()].some(
+        (session) => session.status === "running",
+      )
+    )
+      terminalError(
+        "terminal_service_busy",
+        409,
+        "Project terminals are running. Use --force to confirm ending all terminal work.",
+      );
+    // create() rechecks this fence after its asynchronous cwd inspection.
+    this.closing = true;
+  }
+
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
-    this.closing = true;
+    this.prepareShutdown(true);
     const sessions = [...this.sessions.values()];
     this.closePromise = (async () => {
-      await Promise.allSettled(
+      const results = await Promise.allSettled(
         sessions.map(async (session) => {
-          await this.stopPty(session, true);
+          // Service-level consent ends all work, but still lets shells flush
+          // their normal exit state before bounded hard escalation.
+          await this.stopPty(session, false);
           this.closeAttachments(session, 1012, "Terminal service stopped");
           this.disposeRuntime(session);
+          this.sessions.delete(session.id);
         }),
       );
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
       await this.history?.flush();
-      this.sessions.clear();
       this.lifecycleMutations.clear();
       this.orderByProject.clear();
-    })();
+    })().catch((error) => {
+      // Keep failed PTYs tracked and allow a later explicit stop retry.
+      this.closePromise = null;
+      throw error;
+    });
     return this.closePromise;
   }
 
@@ -1317,12 +1234,7 @@ export class TerminalSessionManager implements TerminalService {
     value: string,
   ): void {
     try {
-      const url = new URL(value);
-      if (url.protocol !== "file:") return;
-      const decoded = decodeURIComponent(url.pathname);
-      const cwd = cleanTerminalPath(
-        process.platform === "win32" ? decoded.replace(/^\//u, "") : decoded,
-      );
+      const cwd = cleanTerminalPath(terminalDirectoryFromUrl(value));
       if (!cwd || !isAbsolute(cwd) || cwd === session.currentCwd) return;
       session.currentCwd = cwd;
       this.touch(session);
@@ -1647,47 +1559,48 @@ export class TerminalSessionManager implements TerminalService {
     force: boolean,
   ): Promise<void> {
     const pty = session.pty;
-    if (session.status !== "running" || !pty) return;
-    try {
-      const signal = force ? "SIGKILL" : "SIGHUP";
-      if (pty.killTree) await pty.killTree(signal);
-      else pty.kill(signal);
-    } catch {
-      // The process may have exited between the state check and the signal.
-    }
-    if (force) {
-      await this.waitForPtyExit(session, PTY_EXIT_TIMEOUT_MS);
-      if (session.status === "running")
-        terminalError(
-          "terminal_stop_timeout",
-          503,
-          "The terminal process did not stop",
-        );
-      return;
-    }
-    const exited = await this.waitForPtyExit(session, TERMINATE_GRACE_MS);
-    if (exited) {
+    if (!pty) return;
+    if (session.status !== "running" && !pty.killTree) return;
+    if (!force && session.status === "running") {
       try {
-        // A shell can exit on SIGHUP while a child that ignored it remains.
-        // Reuse the captured tree and process group for the hard cleanup.
-        await pty.killTree?.("SIGKILL");
+        if (pty.killTree) await pty.killTree("SIGHUP");
+        else pty.kill("SIGHUP");
       } catch {
-        // The complete process group may already be gone.
+        // Escalation retries inspection; it must not discard failed cleanup.
       }
-      return;
+      await this.waitForPtyExit(session, TERMINATE_GRACE_MS);
     }
+    let cleanupFailed = false;
     try {
+      // After root exit a native adapter may only use retained descendant
+      // identities, never the root's old PID/PGID.
       if (pty.killTree) await pty.killTree("SIGKILL");
-      else pty.kill("SIGKILL");
+      else if (session.status === "running") pty.kill("SIGKILL");
     } catch {
-      // Best effort after the graceful timeout.
+      cleanupFailed = true;
     }
+    const deadline = Date.now() + PTY_EXIT_TIMEOUT_MS;
     await this.waitForPtyExit(session, PTY_EXIT_TIMEOUT_MS);
     if (session.status === "running")
       terminalError(
         "terminal_stop_timeout",
         503,
         "The terminal process did not stop",
+      );
+    if (!cleanupFailed && pty.waitForTreeExit) {
+      try {
+        cleanupFailed = !(await pty.waitForTreeExit(
+          Math.max(0, deadline - Date.now()),
+        ));
+      } catch {
+        cleanupFailed = true;
+      }
+    }
+    if (cleanupFailed)
+      terminalError(
+        "terminal_cleanup_failed",
+        503,
+        "The terminal process tree could not be retired; retry closing it",
       );
   }
 

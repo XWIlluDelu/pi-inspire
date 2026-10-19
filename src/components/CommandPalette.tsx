@@ -337,7 +337,7 @@ export const CommandPalette = memo(function CommandPalette({
         {
           id: "terminal-focus",
           group: "Terminal",
-          title: "Focus terminal",
+          title: "Toggle terminal focus",
           run: () => runTerminalAction("focus"),
         },
         {

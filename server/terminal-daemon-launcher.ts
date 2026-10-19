@@ -2,27 +2,23 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveAccessToken } from "./access-token.js";
 import { installationKey } from "./installation-key.js";
 import { TerminalDaemonClient } from "./terminal-daemon-client.js";
-import { TerminalServiceError } from "./terminal-service.js";
-import { addressAcceptsConnections } from "./terminal-daemon-socket.js";
-import { systemdEnvironmentArguments } from "./user-environment.mjs";
 import {
-  defaultTerminalDaemonAddress,
-  defaultTerminalDaemonStatePath,
-  defaultTerminalDaemonTokenPath,
-} from "./terminal-daemon-protocol.js";
+  resolveTerminalDaemonConfiguration,
+  type TerminalDaemonLaunchOptions,
+} from "./terminal-daemon-configuration.js";
+import { legacyTerminalDaemonAddress } from "./terminal-daemon-protocol.js";
+import { addressAcceptsConnections } from "./terminal-daemon-socket.js";
+import { resolveTerminalDaemonSecret } from "./terminal-daemon-tls.js";
+import { TerminalServiceError } from "./terminal-service.js";
+import {
+  independentProcessEnvironment,
+  systemdEnvironmentArguments,
+} from "./user-environment.mjs";
 
 const require = createRequire(import.meta.url);
 const START_TIMEOUT_MS = 8_000;
-
-interface TerminalDaemonLaunchOptions {
-  root: string;
-  host: string;
-  port: number;
-  environment?: NodeJS.ProcessEnv;
-}
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolvePromise) =>
@@ -54,8 +50,16 @@ async function runSystemdUnit(
       ],
       { stdio: "ignore", env: environment },
     );
-    child.once("error", () => resolvePromise(false));
-    child.once("exit", (code) => resolvePromise(code === 0));
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish(false);
+    }, 2_000);
+    const finish = (started: boolean): void => {
+      clearTimeout(timer);
+      resolvePromise(started);
+    };
+    child.once("error", () => finish(false));
+    child.once("exit", (code) => finish(code === 0));
   });
 }
 
@@ -79,16 +83,10 @@ export async function launchTerminalDaemon(
   options: TerminalDaemonLaunchOptions,
 ): Promise<TerminalDaemonClient> {
   const environment = options.environment ?? process.env;
-  const address =
-    environment.INSPIRE_TERMINAL_DAEMON_ADDRESS ??
-    defaultTerminalDaemonAddress(options.root, options.host, options.port);
-  const tokenPath =
-    environment.INSPIRE_TERMINAL_TOKEN_PATH ??
-    defaultTerminalDaemonTokenPath(options.root, options.host, options.port);
-  const statePath =
-    environment.INSPIRE_TERMINAL_STATE_PATH ??
-    defaultTerminalDaemonStatePath(options.root, options.host, options.port);
-  const token = await resolveAccessToken(undefined, tokenPath);
+  const paths = { environment };
+  const { root, address, tokenPath, statePath } =
+    resolveTerminalDaemonConfiguration(options);
+  const token = await resolveTerminalDaemonSecret(tokenPath);
   const client = new TerminalDaemonClient(address, token);
   try {
     await client.probe();
@@ -100,12 +98,28 @@ export async function launchTerminalDaemon(
   // A failed probe does not grant authority to stop an independently owned
   // daemon and its PTYs. In particular, an old protocol's replace handshake
   // can terminate active shells. Leave a listening owner untouched.
-  if (await addressAcceptsConnections(address)) {
+  const legacyAddress = environment.INSPIRE_TERMINAL_DAEMON_ADDRESS
+    ? address
+    : legacyTerminalDaemonAddress(root, options.host, options.port, paths);
+  if (
+    (await addressAcceptsConnections(address)) ||
+    (legacyAddress !== address &&
+      (await addressAcceptsConnections(legacyAddress)))
+  ) {
     await client.close();
+    const prefix = fileURLToPath(import.meta.url).endsWith(".ts")
+      ? "npm run inspire --"
+      : "inspire";
+    const maintenance = `Use ${prefix} terminal status, then ${prefix} terminal restart --force to end terminal work and replace a managed daemon. `;
     throw new TerminalServiceError(
       "terminal_service_restart_required",
       503,
-      "The terminal service is incompatible or unavailable. Stop terminal work, then use Settings → Updates → Restart all, or run inspire restart --all with installed Linux services.",
+      "The terminal service is incompatible or unavailable. " +
+        maintenance +
+        (process.platform === "linux"
+          ? "Older services without lifecycle controls require their service manager; installed Linux services also support Settings → System → Restart all. "
+          : "Older services without lifecycle controls require a one-time manual shutdown. ") +
+        "Host-only restart cannot replace it.",
     );
   }
 
@@ -114,7 +128,7 @@ export async function launchTerminalDaemon(
     ...executable.prefix,
     executable.entry,
     "--root",
-    options.root,
+    root,
     "--host",
     options.host,
     "--port",
@@ -127,7 +141,7 @@ export async function launchTerminalDaemon(
     statePath,
   ];
   const unit = `inspire-terminal-${installationKey(
-    options.root,
+    root,
     options.host,
     options.port,
   ).slice(0, 12)}`;
@@ -139,15 +153,20 @@ export async function launchTerminalDaemon(
   );
   if (!startedBySystemd) {
     const child = spawn(executable.command, daemonArgs, {
-      cwd: options.root,
+      cwd: root,
       detached: true,
       windowsHide: true,
       stdio: "ignore",
       env: {
-        ...environment,
+        ...independentProcessEnvironment(environment),
         INSPIRE_OPEN: "0",
         INSPIRE_QUIET: "1",
       },
+    });
+    // Detached spawn failures must reject, not escape as an unhandled event.
+    await new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("spawn", resolve);
     });
     child.unref();
   }

@@ -20,9 +20,8 @@ const { Terminal } = createRequire(import.meta.url)(
 ) as typeof import("@xterm/headless");
 const windows = process.platform === "win32";
 const profiles = discoverTerminalProfiles().filter((profile) =>
-  windows ? /^(pwsh|powershell)$/.test(profile.id) : profile.id === "bash",
+  windows ? profile.id === "pwsh" : profile.id === "bash",
 );
-
 it.each(profiles)(
   "$id: extracts native output through the production launcher and preserves shell input",
   async (profile) => {
@@ -49,15 +48,23 @@ it.each(profiles)(
         join(root, ".bash_profile"),
         [
           "__inspire_test_prompt() { __inspire_test_prompt_status=$?; }",
-          "PROMPT_COMMAND=__inspire_test_prompt",
+          // Cooperating profiles retain the inherited one-shot bootstrap. A
+          // profile that replaces it is separately tested as an ordinary PTY.
+          'PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__inspire_test_prompt"',
           "trap 'case \"$BASH_COMMAND\" in *CHECK_DEBUG*) __inspire_test_debug_seen=yes ;; esac' DEBUG",
         ].join("\n"),
       );
     }
 
+    // Model a fresh Windows client without changing any user/machine policy.
+    // Use the environment merger so copied Windows key casing stays exact.
+    const env = isolatedTestEnvironment(
+      root,
+      windows ? { PSExecutionPolicyPreference: "Restricted" } : {},
+    );
     const manager = new TerminalSessionManager({
       profiles: [profile],
-      env: isolatedTestEnvironment(root),
+      env,
       shellIntegrationDirectory: integration,
     });
     const terminal = new Terminal({
@@ -68,6 +75,7 @@ it.each(profiles)(
     });
     const ranges: TerminalCommandOutput[] = [];
     const commands: string[] = [];
+    const statuses: number[] = [];
     let start: Pick<TerminalCommandOutput, "start" | "startColumn"> | null =
       null;
     let prompts = 0;
@@ -86,6 +94,7 @@ it.each(profiles)(
           startColumn: terminal.buffer.active.cursorX,
         };
       } else if (phase === "D" && start) {
+        statuses.push(Number(value.split(";")[1]));
         ranges.push({
           ...start,
           end: terminal.registerMarker(0)!,
@@ -152,6 +161,23 @@ it.each(profiles)(
                 "[Console]::WriteLine(('CUSTOM'+'_' + $global:InspireTestEnterCount))",
               output: "CUSTOM_6",
             },
+            {
+              command:
+                "cmd.exe /d /c exit 0; [Console]::WriteLine(('NATIVE'+'_ZERO'))",
+              output: "NATIVE_ZERO",
+            },
+            {
+              command:
+                "[Console]::WriteLine(('FAILED'+'_CMDLET')); Microsoft.PowerShell.Management\\Get-Item -LiteralPath './inspire-absent-output-fixture' -ErrorAction SilentlyContinue",
+              output: "FAILED_CMDLET",
+              status: 1,
+            },
+            {
+              command:
+                "cmd.exe /d /c exit 0; [Console]::WriteLine(('MIXED'+'_CMDLET')); Get-Item -LiteralPath './inspire-absent-output-fixture' -ErrorAction SilentlyContinue",
+              output: "MIXED_CMDLET",
+              status: 1,
+            },
           ]
         : [
             {
@@ -169,10 +195,14 @@ it.each(profiles)(
               command: "printf '%s\\n' PIPE''_A | cat",
               output: "PIPE_A",
             },
-            { command: "false", output: "" },
+            { command: "false", output: "", status: 1 },
             {
               command: 'printf "PROMPT_%s\\n" "$__inspire_test_prompt_status"',
               output: "PROMPT_1",
+            },
+            {
+              command: `printf '%s\\n' "SUB_$(printf '%s' LABEL)"`,
+              output: "SUB_LABEL",
             },
             {
               command:
@@ -180,22 +210,41 @@ it.each(profiles)(
               output: "DEBUG_yes",
             },
           ];
-      for (const { command, output } of samples) {
+      for (const { command, output, status = 0 } of samples) {
         const previousPrompts = prompts;
         const previousRanges = ranges.length;
         write(command + "\r");
-        await vi.waitFor(
-          async () => {
-            await tail;
-            expect(prompts).toBeGreaterThan(previousPrompts);
-            expect(terminalBufferText(terminal.buffer.normal)).toContain(
-              output,
-            );
-          },
-          { timeout: 20_000 },
-        );
+        try {
+          await vi.waitFor(
+            async () => {
+              await tail;
+              expect(prompts).toBeGreaterThan(previousPrompts);
+              expect(terminalBufferText(terminal.buffer.normal)).toContain(
+                output,
+              );
+            },
+            { timeout: 20_000 },
+          );
+        } catch (cause) {
+          throw new Error(
+            JSON.stringify({
+              profile: profile.id,
+              command,
+              prompts,
+              commands,
+              statuses,
+              state: manager
+                .list()
+                .terminals.find((item) => item.id === descriptor.id),
+              terminal: terminalBufferText(terminal.buffer.normal).slice(-4000),
+            }),
+            { cause },
+          );
+        }
         expect(ranges).toHaveLength(previousRanges + 1);
-        if (previousRanges === 0) expect(commands.at(-1)).toBe(command);
+        expect(statuses.at(-1)).toBe(status);
+        if (previousRanges === 0 || command.includes("$(printf"))
+          expect(commands.at(-1)).toBe(command);
         expect(
           terminalCommandOutput(terminal.buffer.normal, ranges.at(-1)!),
         ).toBe(output);

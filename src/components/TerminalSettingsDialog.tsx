@@ -17,6 +17,7 @@ import {
 } from "react";
 import type { TerminalServiceSettings } from "../../shared/terminal-contracts";
 import type { createApi } from "../api";
+import { isMacTerminalBrowser } from "../terminal-keyboard";
 import {
   DEFAULT_TERMINAL_UI_SETTINGS,
   saveTerminalUiSettings,
@@ -363,6 +364,20 @@ export function TerminalSettingsDialog({
                       onChange={(shortcutMode) => updateUi({ shortcutMode })}
                     />
                   </SettingField>
+                  {isMacTerminalBrowser() ? (
+                    <SettingField
+                      label="Option as Meta"
+                      description="Send Escape-prefixed shell keys instead of macOS characters and accents."
+                    >
+                      <SettingsSwitch
+                        label="Use Option as Meta"
+                        checked={settings.macOptionIsMeta}
+                        onChange={(macOptionIsMeta) =>
+                          updateUi({ macOptionIsMeta })
+                        }
+                      />
+                    </SettingField>
+                  ) : null}
                   <SettingField label="Bell">
                     <Dropdown
                       label="Terminal bell behavior"
@@ -521,16 +536,22 @@ export function TerminalSettingsDialog({
               {serviceError && serviceSettings ? (
                 <span role="alert">{serviceError}</span>
               ) : null}
-              <p className="terminal-settings__scope">Saved in this browser.</p>
-              <button
-                type="button"
-                className="button"
-                aria-label="Restore browser defaults"
-                onClick={() => updateUi({ ...DEFAULT_TERMINAL_UI_SETTINGS })}
-              >
-                <RotateCcw size={13} aria-hidden />
-                Restore defaults
-              </button>
+              <p className="terminal-settings__scope">
+                {navigation.category === "output"
+                  ? "Saved on this Host."
+                  : "Saved in this browser."}
+              </p>
+              {navigation.category !== "output" ? (
+                <button
+                  type="button"
+                  className="button"
+                  aria-label="Restore browser defaults"
+                  onClick={() => updateUi({ ...DEFAULT_TERMINAL_UI_SETTINGS })}
+                >
+                  <RotateCcw size={13} aria-hidden />
+                  Restore browser defaults
+                </button>
+              ) : null}
             </footer>
           </div>
         </div>

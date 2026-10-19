@@ -74,11 +74,19 @@ describe("terminal shell integration", () => {
       "/private/integration",
       {},
     );
-    expect(bash.args).toEqual([
+    expect(bash.args).toEqual(["-l", "-i"]);
+    expect(bash.env.PROMPT_COMMAND).toContain("bash-login-init.sh");
+    const nonlogin = integratedTerminalLaunch(
+      profile("/bin/bash", []),
+      "/private/integration",
+      {},
+    );
+    expect(nonlogin.args).toEqual([
       "--init-file",
       join("/private/integration", "bash-init.sh"),
       "-i",
     ]);
+    expect(nonlogin.env.PROMPT_COMMAND).toBeUndefined();
     const zsh = integratedTerminalLaunch(
       profile("/bin/zsh"),
       "/private/integration",
@@ -86,6 +94,20 @@ describe("terminal shell integration", () => {
     );
     expect(zsh.env.ZDOTDIR).toBe(join("/private/integration", "zsh"));
     expect(zsh.enabled).toBe(true);
+    const powershell = integratedTerminalLaunch(
+      profile("powershell.exe"),
+      "/private/integration",
+      {},
+    );
+    expect(powershell.args).toEqual([
+      "-NoLogo",
+      "-NoExit",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      join("/private/integration", "powershell-integration.ps1"),
+    ]);
+    expect(powershell.env.PSExecutionPolicyPreference).toBeUndefined();
     const fish = integratedTerminalLaunch(
       profile("/usr/bin/fish"),
       "/private/it's",

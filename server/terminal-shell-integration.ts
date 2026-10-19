@@ -57,12 +57,11 @@ const bashIntegration =
 }
 __inspire_terminal_preexec() {
   local command
-  if [[ "__INSPIRE_OPEN____inspire_terminal_uses_debug-}" == 1 ]]; then
-    command="$(HISTTIMEFORMAT= builtin history 1)"
-    command="__INSPIRE_OPEN__command#*[0-9]  }"
-  else
-    command="$(builtin fc -ln -1 2>/dev/null)"
-  fi
+  # fc -1 can select the previous entry while expanding a PS0 containing
+  # command substitution. history reports the accepted line on both PS0 and
+  # the older DEBUG path, without evaluating any part of the user's input.
+  command="$(HISTTIMEFORMAT= builtin history 1)"
+  command="__INSPIRE_OPEN__command#*[0-9]  }"
   command="__INSPIRE_OPEN__command#"__INSPIRE_OPEN__command%%[![:space:]]*}"}"
   command="$(__inspire_encode_terminal_value "$command")"
   printf '\033]6973;C1;%s\007' "$command"
@@ -96,6 +95,14 @@ else
   __inspire_terminal_uses_debug=1
   __inspire_terminal_debug() {
     local command_status=$?
+    # The login bootstrap can precede the rest of the first PROMPT_COMMAND.
+    # Do not mistake those startup callbacks for an accepted history entry.
+    if [[ -n __INSPIRE_OPEN____inspire_bootstrap_history+x} ]]; then
+      if [[ "$(HISTTIMEFORMAT= builtin history 1)" == "$__inspire_bootstrap_history" ]]; then
+        return "$command_status"
+      fi
+      unset __inspire_bootstrap_history
+    fi
     if [[ "$__inspire_terminal_ready" == 1 && "$BASH_COMMAND" != __inspire_terminal_prompt && "$BASH_SUBSHELL" == 0 ]]; then
       __inspire_terminal_ready=
       __inspire_terminal_preexec
@@ -111,26 +118,101 @@ else
 fi
 `);
 
-const bashWrapper =
-  shellLiteral(String.raw`# Preserve login initialization, then install INSΠRE's non-printing shell markers.
-if [ -r /etc/profile ]; then . /etc/profile; fi
-if [ -r "$HOME/.bash_profile" ]; then
-  . "$HOME/.bash_profile"
-elif [ -r "$HOME/.bash_login" ]; then
-  . "$HOME/.bash_login"
-elif [ -r "$HOME/.profile" ]; then
-  . "$HOME/.profile"
-elif [ -r "$HOME/.bashrc" ]; then
-  . "$HOME/.bashrc"
-fi
-__inspire_original_debug_trap="$(trap -p DEBUG)"
+// eval, unlike sourcing another file/function, does not restore Bash 3's old
+// DEBUG trap on return. The script is app-owned, never user-provided argv text.
+const bashLoginBootstrap =
+  '__inspire_bash_initial_status=$?; eval -- "$(<"$INSPIRE_SHELL_INTEGRATION_DIR/bash-login-init.sh")"';
+
+const bashWritablePrompt = String.raw`__inspire_bash_writable_prompt() {
+  local declaration flags
+  for declaration in "$(declare -p PROMPT_COMMAND 2>/dev/null)" "$(declare -p PS0 2>/dev/null)"; do
+    flags="__INSPIRE_OPEN__declaration#declare -}"
+    flags="__INSPIRE_OPEN__flags%% *}"
+    if [[ "$flags" == *r* ]]; then return 1; fi
+  done
+}
+`;
+const bashInstall = String.raw`__inspire_original_debug_trap="$(trap -p DEBUG)"
 . "__INSPIRE_OPEN__INSPIRE_SHELL_INTEGRATION_DIR}/bash-integration.sh"
-# Bash 3 restores an existing DEBUG trap when a sourced file returns. Install
-# the composed hook here, in the outer initialization file, not the nested source.
 if [[ "__INSPIRE_OPEN____inspire_terminal_uses_debug-}" == 1 ]]; then
   trap '__inspire_terminal_debug; eval "$__inspire_original_debug_trap"' DEBUG
 fi
-`);
+`;
+
+const bashWrapper = shellLiteral(
+  // Bash itself runs its compiled system bashrc before --init-file. Nonlogin
+  // user startup reads only .bashrc, never a login profile or /etc/profile.
+  String.raw`if [[ -r "$HOME/.bashrc" ]]; then . "$HOME/.bashrc"; fi
+` +
+    bashWritablePrompt +
+    String.raw`if __inspire_bash_writable_prompt; then
+` +
+    bashInstall +
+    String.raw`fi
+unset -f __inspire_bash_writable_prompt
+`,
+);
+
+const bashLoginInit = shellLiteral(
+  String.raw`__inspire_bash_bootstrap_active=
+` +
+    bashWritablePrompt +
+    String.raw`if __inspire_bash_writable_prompt; then
+  __inspire_bash_bootstrap=__INSPIRE_BASH_BOOTSTRAP__
+  __inspire_bash_bootstrap_found=
+  for __inspire_bash_index in "__INSPIRE_OPEN__!PROMPT_COMMAND[@]}"; do
+    __inspire_bash_value="__INSPIRE_OPEN__PROMPT_COMMAND[$__inspire_bash_index]}"
+    if [[ "$__inspire_bash_value" == "$__inspire_bash_bootstrap"* ]]; then
+      __inspire_bash_bootstrap_found=1
+      __inspire_bash_value="__INSPIRE_OPEN____inspire_bash_value#"$__inspire_bash_bootstrap"}"
+      __inspire_bash_value="__INSPIRE_OPEN____inspire_bash_value#"__INSPIRE_OPEN____inspire_bash_value%%[![:space:]]*}"}"
+      __inspire_bash_value="__INSPIRE_OPEN____inspire_bash_value#;}"
+      if [[ -z "$__inspire_bash_value" ]]; then
+        unset "PROMPT_COMMAND[$__inspire_bash_index]"
+      else
+        PROMPT_COMMAND[$__inspire_bash_index]="$__inspire_bash_value"
+      fi
+    fi
+  done
+  # A profile may move the bootstrap inside arbitrary shell syntax. Do not
+  # rewrite that syntax or recursively install callbacks on every prompt.
+  if [[ "$__inspire_bash_bootstrap_found" == 1 ]]; then
+    # Do not export app-private prompt functions into nested, ordinary shells.
+    if [[ "$INSPIRE_BASH_PROMPT_COMMAND_EXPORTED" != 1 ]]; then export -n PROMPT_COMMAND; fi
+    unset INSPIRE_BASH_PROMPT_COMMAND_EXPORTED
+` +
+    bashInstall +
+    String.raw`  __inspire_bash_bootstrap_active=1
+  fi
+  unset __inspire_bash_bootstrap_found __inspire_bash_bootstrap __inspire_bash_index __inspire_bash_value
+fi
+unset -f __inspire_bash_writable_prompt
+__inspire_bash_restore_status() {
+  local command_status="$1"
+  unset -f __inspire_bash_restore_status
+  return "$command_status"
+}
+__inspire_bash_finish_bootstrap() {
+  local command_status="$__inspire_bash_initial_status"
+  unset __inspire_bash_initial_status
+  unset -f __inspire_bash_finish_bootstrap
+  if [[ "$__inspire_bash_bootstrap_active" == 1 ]]; then
+    unset __inspire_bash_bootstrap_active
+    __inspire_bash_restore_status "$command_status"
+    __inspire_terminal_prompt
+    if [[ "__INSPIRE_OPEN____inspire_terminal_uses_debug-}" == 1 ]]; then
+      __inspire_bootstrap_history="$(HISTTIMEFORMAT= builtin history 1)"
+      __inspire_terminal_ready=1
+    fi
+  else
+    unset __inspire_bash_bootstrap_active
+    unset -f __inspire_bash_restore_status
+  fi
+  return "$command_status"
+}
+__inspire_bash_finish_bootstrap
+`,
+).replace("__INSPIRE_BASH_BOOTSTRAP__", shellQuote(bashLoginBootstrap));
 
 const zshIntegration =
   shellLiteral(String.raw`__inspire_encode_terminal_value() {
@@ -181,7 +263,7 @@ const powerShellWrapper = [
   "  }",
   "}",
   "function global:prompt {",
-  "  $commandStatus = if ($?) { 0 } elseif ($global:LASTEXITCODE -is [int]) { $global:LASTEXITCODE } else { 1 }",
+  "  $commandStatus = if ($?) { 0 } elseif (($global:LASTEXITCODE -is [int]) -and ($global:LASTEXITCODE -ne 0)) { $global:LASTEXITCODE } else { 1 }",
   "  $cwd = [Uri]::EscapeDataString($executionContext.SessionState.Path.CurrentLocation.Path)",
   '  [Console]::Write("{0}]6973;P1;{1}`a{0}]6973;D;{2}`a{0}]6973;A`a", [char]27, $cwd, $commandStatus)',
   '  if ($script:InspireOriginalPrompt) { & $script:InspireOriginalPrompt } else { "PS $cwd> " }',
@@ -201,6 +283,10 @@ export async function ensureTerminalShellIntegration(
   );
   await replacePrivateFile(join(directory, "bash-init.sh"), bashWrapper);
   await replacePrivateFile(
+    join(directory, "bash-login-init.sh"),
+    bashLoginInit,
+  );
+  await replacePrivateFile(
     join(directory, "zsh-integration.zsh"),
     zshIntegration,
   );
@@ -215,25 +301,41 @@ export async function ensureTerminalShellIntegration(
 
   const zshDirectory = join(directory, "zsh");
   await ensurePrivateDirectory(zshDirectory);
-  const original = env.ZDOTDIR || env.HOME || "";
+  // User startup files can move ZDOTDIR at every stage. Restore its exact
+  // declaration (including unset/exported state) before sourcing the next file,
+  // then temporarily route only the remaining startup stages through us.
   const source = (name: string): string =>
-    original
-      ? `if [[ -r ${shellQuote(join(original, name))} ]]; then source ${shellQuote(join(original, name))}; fi\n`
-      : "";
+    `if [[ -r "\${ZDOTDIR-$HOME}/${name}" ]]; then source "\${ZDOTDIR-$HOME}/${name}"; fi\n`;
+  const remember =
+    '__inspire_user_zdotdir="$(typeset -p ZDOTDIR 2>/dev/null || :)"\n';
+  const restore =
+    'unset ZDOTDIR\nif [[ -n $__inspire_user_zdotdir ]]; then eval "$__inspire_user_zdotdir"; fi\n';
+  const route = `if [[ -o rcs && \${(t)ZDOTDIR} != *readonly* ]]; then export ZDOTDIR=${shellQuote(zshDirectory)}; else unset __inspire_user_zdotdir; fi\n`;
+  const finish = "unset __inspire_user_zdotdir\n";
+  const original =
+    env.ZDOTDIR === undefined
+      ? "unset ZDOTDIR\n"
+      : `export ZDOTDIR=${shellQuote(env.ZDOTDIR)}\n`;
   await replacePrivateFile(
     join(zshDirectory, ".zshenv"),
-    `${source(".zshenv")}export ZDOTDIR=${shellQuote(zshDirectory)}\n`,
+    `${original}${source(".zshenv")}${remember}if [[ -o login || -o interactive ]]; then\n${route}else\n${finish}fi\n`,
   );
   await replacePrivateFile(
     join(zshDirectory, ".zprofile"),
-    source(".zprofile"),
+    `${restore}${source(".zprofile")}${remember}${route}`,
   );
   await replacePrivateFile(
     join(zshDirectory, ".zshrc"),
-    `${source(".zshrc")}source ${shellQuote(join(directory, "zsh-integration.zsh"))}\n`,
+    `${restore}${source(".zshrc")}source ${shellQuote(join(directory, "zsh-integration.zsh"))}\nif [[ -o login ]]; then\n${remember}${route}else\n${finish}fi\n`,
   );
-  await replacePrivateFile(join(zshDirectory, ".zlogin"), source(".zlogin"));
-  await replacePrivateFile(join(zshDirectory, ".zlogout"), source(".zlogout"));
+  await replacePrivateFile(
+    join(zshDirectory, ".zlogin"),
+    `${restore}${source(".zlogin")}${finish}`,
+  );
+  await replacePrivateFile(
+    join(zshDirectory, ".zlogout"),
+    "# User ZDOTDIR is restored during startup; zsh owns the normal logout files.\n",
+  );
 }
 
 export function integratedTerminalLaunch(
@@ -251,12 +353,35 @@ export function integratedTerminalLaunch(
     .toLowerCase()
     .replace(/\.exe$/u, "");
   env.INSPIRE_SHELL_INTEGRATION_DIR = directory;
-  if (shell === "bash")
+  if (shell === "bash") {
+    const login = profile.args.some(
+      (argument) => argument === "--login" || /^-[^-]*l/u.test(argument),
+    );
+    if (login) {
+      return {
+        args: [...profile.args, "-i"],
+        env: {
+          ...env,
+          PROMPT_COMMAND:
+            bashLoginBootstrap +
+            (baseEnv.PROMPT_COMMAND ? "\n" + baseEnv.PROMPT_COMMAND : ""),
+          INSPIRE_BASH_PROMPT_COMMAND_EXPORTED:
+            baseEnv.PROMPT_COMMAND === undefined ? "0" : "1",
+        },
+        enabled: true,
+      };
+    }
     return {
-      args: ["--init-file", join(directory, "bash-init.sh"), "-i"],
+      args: [
+        "--init-file",
+        join(directory, "bash-init.sh"),
+        ...profile.args,
+        "-i",
+      ],
       env,
       enabled: true,
     };
+  }
   if (shell === "zsh")
     return {
       args: [...profile.args],
@@ -278,6 +403,10 @@ export function integratedTerminalLaunch(
       args: [
         "-NoLogo",
         "-NoExit",
+        // Only this shell process: never change CurrentUser/LocalMachine
+        // policy, and let enforced Group Policy retain precedence.
+        "-ExecutionPolicy",
+        "Bypass",
         "-File",
         join(directory, "powershell-integration.ps1"),
       ],

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createConnection, type Socket } from "node:net";
+import type { Socket } from "node:net";
 import {
   encodeTerminalInputFrame,
   type TerminalCatalogResponse,
@@ -14,12 +14,14 @@ import {
   type TerminalServiceSettings,
   type TerminalServiceSettingsPatch,
 } from "../shared/terminal-contracts.js";
+import type { TerminalDaemonInfo } from "./terminal-daemon-configuration.js";
 import {
   TERMINAL_DAEMON_PROTOCOL_VERSION,
   TERMINAL_DAEMON_READY_TYPE,
   type TerminalDaemonRpcMethod,
   type TerminalDaemonRpcResponse,
 } from "./terminal-daemon-protocol.js";
+import { connectTerminalDaemon } from "./terminal-daemon-tls.js";
 import {
   decodeTerminalIpcJson,
   encodeTerminalIpcFrame,
@@ -130,6 +132,14 @@ export class TerminalDaemonClient implements TerminalService {
     await this.rpc("ping", {});
   }
 
+  daemonInfo(): Promise<TerminalDaemonInfo> {
+    return this.rpc("getDaemonInfo", {});
+  }
+
+  shutdownDaemon(instanceId: string, force: boolean): Promise<void> {
+    return this.rpc("shutdownDaemon", { instanceId, force });
+  }
+
   async operationEpoch(): Promise<string> {
     const result = await this.rpc<{ operationEpoch: string }>("ping", {});
     return result.operationEpoch;
@@ -210,7 +220,7 @@ export class TerminalDaemonClient implements TerminalService {
       );
 
     return new Promise<TerminalAttachment>((resolvePromise, rejectPromise) => {
-      const socket = createConnection(this.address);
+      const socket = connectTerminalDaemon(this.address, this.token);
       socket.setNoDelay(true);
       const decoder = new TerminalIpcDecoder();
       let settled = false;
@@ -284,12 +294,11 @@ export class TerminalDaemonClient implements TerminalService {
       }, ATTACH_TIMEOUT_MS);
       attachTimeout.unref();
 
-      socket.once("connect", () => {
+      socket.once("secureConnect", () => {
         socket.write(
           encodeTerminalIpcJson({
             protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
             mode: "attach",
-            token: this.token,
             terminalId: options.terminalId,
             options,
           }),
@@ -386,7 +395,7 @@ export class TerminalDaemonClient implements TerminalService {
         ),
       );
     return new Promise<Result>((resolvePromise, rejectPromise) => {
-      const socket = createConnection(this.address);
+      const socket = connectTerminalDaemon(this.address, this.token);
       const decoder = new TerminalIpcDecoder();
       const requestId = operation?.id ?? randomUUID();
       let settled = false;
@@ -415,12 +424,15 @@ export class TerminalDaemonClient implements TerminalService {
         else resolvePromise(result as Result);
       };
 
-      socket.once("connect", () => {
+      socket.once("secureConnect", () => {
         socket.write(
           encodeTerminalIpcJson({
-            protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
-            mode: "rpc",
-            token: this.token,
+            ...(method === "getDaemonInfo" || method === "shutdownDaemon"
+              ? { lifecycleVersion: 1, mode: "lifecycle" }
+              : {
+                  protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
+                  mode: "rpc",
+                }),
             requestId,
             method,
             params,

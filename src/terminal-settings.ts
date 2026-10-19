@@ -10,6 +10,7 @@ export interface TerminalUiSettings {
   screenReaderMode: boolean;
   pasteProtection: boolean;
   shortcutMode: TerminalShortcutMode;
+  macOptionIsMeta: boolean;
   bell: TerminalBellMode;
   longTaskNotifications: boolean;
   longTaskThresholdSeconds: number;
@@ -24,6 +25,7 @@ export const DEFAULT_TERMINAL_UI_SETTINGS: TerminalUiSettings = {
   screenReaderMode: false,
   pasteProtection: true,
   shortcutMode: "workbench",
+  macOptionIsMeta: false,
   bell: "visual",
   longTaskNotifications: false,
   longTaskThresholdSeconds: 10,
@@ -77,6 +79,10 @@ export function loadTerminalUiSettings(): TerminalUiSettings {
           ? parsed.pasteProtection
           : DEFAULT_TERMINAL_UI_SETTINGS.pasteProtection,
       shortcutMode: parsed.shortcutMode === "shell" ? "shell" : "workbench",
+      macOptionIsMeta:
+        typeof parsed.macOptionIsMeta === "boolean"
+          ? parsed.macOptionIsMeta
+          : DEFAULT_TERMINAL_UI_SETTINGS.macOptionIsMeta,
       bell: ["off", "visual", "desktop"].includes(parsed.bell ?? "")
         ? (parsed.bell as TerminalBellMode)
         : DEFAULT_TERMINAL_UI_SETTINGS.bell,

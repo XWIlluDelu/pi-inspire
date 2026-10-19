@@ -1,12 +1,12 @@
-import { mkdtemp, open, readdir, rm } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, open, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import type { TerminalPersistedState } from "../../server/terminal-session-manager.js";
 import {
   readTerminalState,
   TerminalStateWriter,
 } from "../../server/terminal-state-store.js";
-import type { TerminalPersistedState } from "../../server/terminal-session-manager.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs/promises")>();
@@ -34,6 +34,30 @@ describe("terminal state persistence", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it.runIf(process.platform !== "win32")(
+    "refuses a shared state parent without changing its permissions",
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), "terminal-shared-state-"));
+      try {
+        await chmod(directory, 0o755);
+        const failed = vi.fn();
+        const writer = new TerminalStateWriter(
+          join(directory, "state.json"),
+          () => state,
+          failed,
+        );
+        writer.schedule();
+        await writer.flush();
+        expect(failed).toHaveBeenCalledOnce();
+        expect(failed.mock.calls[0]?.[0].message).toContain("not private");
+        expect((await lstat(directory)).mode & 0o777).toBe(0o755);
+        expect(await readdir(directory)).toEqual([]);
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each(["writeFile", "sync"] as const)(
     "cleans staging when %s fails before publication",
