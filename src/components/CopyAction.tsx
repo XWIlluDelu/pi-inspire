@@ -1,5 +1,5 @@
 import { Check, Copy } from "lucide-react";
-import type { CopyLoader } from "../content-copy";
+import { type CopyLoader, copyLoader } from "../content-copy";
 import { store } from "../store";
 import { useCopied } from "../use-copied";
 import { PiLoader } from "./PiLoader";
@@ -26,6 +26,7 @@ export function CopyAction({
 }: CopyActionProps) {
   const { copied, copying, copy } = useCopied({
     onError,
+    scope: text,
   });
   if (!text && !getText && !getContent) return null;
   return (
@@ -44,7 +45,10 @@ export function CopyAction({
       }
       disabled={disabled || copying}
       onClick={() =>
-        void copy(getContent ?? getText ?? text ?? "", store.copyOwnership())
+        void copy(
+          getContent ?? (getText ? copyLoader(getText) : (text ?? "")),
+          store.copyOwnership(),
+        )
       }
     >
       {copying ? (

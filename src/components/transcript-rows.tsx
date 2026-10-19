@@ -23,7 +23,7 @@ import type {
   ToolVisibilityPreference,
   VisibilityPreference,
 } from "../../shared/contracts";
-import type { CopyLoader, CopySource } from "../content-copy";
+import { type CopyLoader, type CopySource, copyLoader } from "../content-copy";
 import {
   type ActivityTool,
   type ChatMessage,
@@ -32,7 +32,7 @@ import {
   type ToolCallContent,
   userMessageDisplayText,
 } from "../events";
-import { messageCopyContent } from "../message-copy";
+import { messageCopyLoader } from "../message-copy";
 import { store } from "../store";
 import { hasActiveModal } from "../use-modal-focus";
 import { CopyAction } from "./CopyAction";
@@ -209,13 +209,11 @@ export const UserBubble = memo(function UserBubble({
         text={sourceText}
         getContent={
           images.length
-            ? (signal) =>
-                messageCopyContent(
-                  message,
-                  sourceText,
-                  { sessionId, viewId, projectionKey },
-                  signal,
-                )
+            ? messageCopyLoader(message, sourceText, {
+                sessionId,
+                viewId,
+                projectionKey,
+              })
             : undefined
         }
         forkEntryId={message.__inspireEntryId}
@@ -703,9 +701,12 @@ export function PendingQueueGroups({
           {queue.totalCount > 0 ? (
             <CopyAction
               key={queue.revision}
-              getContent={(signal) =>
-                getText(queue.revision, undefined, signal)
-              }
+              getContent={copyLoader(
+                (signal) => getText(queue.revision, undefined, signal),
+                queue.totalImageCount === undefined
+                  ? null
+                  : { text: true, image: queue.totalImageCount > 0 },
+              )}
               label="all pending input"
               className="pending-group__copy"
             />
@@ -825,9 +826,15 @@ export function PendingQueueGroups({
                     {canCopy ? (
                       <CopyAction
                         key={queue.revision}
-                        getContent={(signal) =>
-                          getText(queue.revision, entry.id, signal)
-                        }
+                        getContent={copyLoader(
+                          (signal) => getText(queue.revision, entry.id, signal),
+                          queue.totalImageCount === undefined
+                            ? null
+                            : {
+                                text: entry.textLength > 0 || !entry.imageCount,
+                                image: Boolean(entry.imageCount),
+                              },
+                        )}
                         label={`${group.label} item ${index + 1}`}
                         className="pending-group__copy"
                       />

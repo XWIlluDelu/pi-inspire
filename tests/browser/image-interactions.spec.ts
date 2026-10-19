@@ -258,6 +258,51 @@ test("narrow controls trap focus; a background drag does not dismiss; copy failu
   await expect(thumbnail).toBeFocused();
 });
 
+test("retrying an image copy clears the old warning and writes the original image", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await pairAndOpen(page);
+  await page.setViewportSize({ width: 320, height: 640 });
+  await page.evaluate(() => {
+    const write = navigator.clipboard.write.bind(navigator.clipboard);
+    let fail = true;
+    navigator.clipboard.write = async (items) => {
+      if (fail) {
+        fail = false;
+        throw new DOMException(
+          "Clipboard permission denied.",
+          "NotAllowedError",
+        );
+      }
+      await write(items);
+    };
+  });
+  const { dialog } = await attachImage(page);
+  const copy = dialog.getByRole("button", { name: "Copy image", exact: true });
+  await copy.click();
+  await expect(dialog.getByRole("alert")).toContainText(
+    "Clipboard permission denied.",
+  );
+  await expect(
+    dialog.getByRole("link", { name: "Download image" }),
+  ).toBeVisible();
+  await copy.click();
+  await expect(
+    dialog.getByRole("button", { name: "image copied", exact: true }),
+  ).toBeVisible();
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  const dimensions = await page.evaluate(async () => {
+    const item = (await navigator.clipboard.read())[0]!;
+    const image = await createImageBitmap(await item.getType("image/png"));
+    const size = { width: image.width, height: image.height };
+    image.close();
+    return size;
+  });
+  expect(dimensions).toEqual({ width: 1200, height: 800 });
+});
+
 test("decode errors explain the failure and disable image operations without hiding original download", async ({
   page,
 }) => {

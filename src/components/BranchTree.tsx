@@ -21,6 +21,7 @@ import type {
   BranchTreeQuery,
   BranchTreeResponse,
 } from "../../shared/contracts";
+import { copyLoader } from "../content-copy";
 import { resourceReferenceFromEventTarget } from "../resources";
 import { sessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
@@ -198,13 +199,19 @@ export function BranchTree({
   const loadedSearchRef = useRef<string | null>(null);
   const tree = page ?? state.tree;
   const searching = Boolean(query.trim());
-  const selectedContent = async (signal: AbortSignal) => {
-    if (!selected) return null;
-    const content = await store.branchCopyContent(selected.id, signal);
-    if (content && detail?.node.role === "shell")
-      content.text = historyShellContent(content.text, true).copy;
-    return content;
-  };
+  const selectedContent = copyLoader(
+    async (signal: AbortSignal) => {
+      if (!selected) return null;
+      const content = await store.branchCopyContent(selected.id, signal);
+      if (content && detail?.node.role === "shell")
+        content.text = historyShellContent(content.text, true).copy;
+      return content;
+    },
+    {
+      text: Boolean(detail?.totalChars) || !detail?.images?.length,
+      image: Boolean(detail?.images?.length),
+    },
+  );
   const { turns, startBranches } = useMemo(
     () =>
       conversationOutline(

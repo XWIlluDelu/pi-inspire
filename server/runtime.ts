@@ -70,6 +70,7 @@ import {
   resolveProjectFiles,
 } from "./attachments.js";
 import { type DiagnosticLogger, nullDiagnosticLogger } from "./diagnostics.js";
+import type { ConnectExternalSession } from "./external-session.js";
 import { createProjectDirectory, resolveProjectDirectory } from "./paths.js";
 import {
   isPiRpcOutcomeUnknown,
@@ -89,9 +90,8 @@ import {
   revalidateProjectFiles,
 } from "./runtime-composer-artifacts.js";
 import { RuntimeEventController } from "./runtime-events.js";
-import type { ConnectExternalSession } from "./external-session.js";
-import { RuntimeExternalSessions } from "./runtime-external-sessions.js";
 import { RuntimeExtensionUiController } from "./runtime-extension-ui.js";
+import { RuntimeExternalSessions } from "./runtime-external-sessions.js";
 import {
   compactionMatcher,
   deferredExpectation,
@@ -1137,7 +1137,19 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       );
     slot.pendingQueues = mergePendingQueues(
       slot.piPendingQueues,
-      slot.deferredPrompts.map(({ request }) => request),
+      slot.deferredPrompts.map(({ request }) => {
+        let imageCount: number | null;
+        try {
+          imageCount =
+            this.attachments.pendingCopyImageIds(request.attachmentIds ?? [])
+              .length + (request.historyArtifacts?.imageReferences.length ?? 0);
+        } catch {
+          // A missing upload must not throw out a deferred prompt while
+          // projecting metadata. The exact copy/read reports its own failure.
+          imageCount = null;
+        }
+        return { ...request, imageCount };
+      }),
       slot.pendingQueues.revision,
     );
     if (publish)

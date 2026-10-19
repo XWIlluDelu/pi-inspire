@@ -1,30 +1,38 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   type CopyLoader,
   type CopySource,
   writeCopyContent,
 } from "./content-copy";
 
-/** One owned copy operation and a transient confirmation, retired on unmount. */
+/** Copy feedback belongs to one source lifetime, not a reused button. */
 export function useCopied({
   timeoutMs = 1_500,
   onError,
+  scope,
 }: {
   timeoutMs?: number;
   onError?: (message: string) => void;
+  scope?: string | null;
 } = {}) {
-  const [copied, setCopied] = useState(false);
-  const [copying, setCopying] = useState(false);
+  // A -> B -> A must not revive A's retired confirmation or request.
+  const lifetime = useMemo(() => ({ scope }), [scope]);
+  const currentLifetime = useRef(lifetime);
+  const [status, setStatus] = useState({
+    lifetime,
+    copied: false,
+    copying: false,
+  });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const request = useRef<AbortController | null>(null);
 
-  useEffect(
-    () => () => {
+  useLayoutEffect(() => {
+    currentLifetime.current = lifetime;
+    return () => {
       request.current?.abort();
       if (timer.current) clearTimeout(timer.current);
-    },
-    [],
-  );
+    };
+  }, [lifetime]);
 
   const copy = async (
     source: CopySource | CopyLoader,
@@ -33,17 +41,27 @@ export function useCopied({
     request.current?.abort();
     const owner = new AbortController();
     request.current = owner;
-    const current = () => !owner.signal.aborted && isCurrent();
+    const current = () =>
+      !owner.signal.aborted &&
+      currentLifetime.current === lifetime &&
+      isCurrent();
     if (timer.current) clearTimeout(timer.current);
-    setCopied(false);
-    setCopying(true);
+    setStatus({ lifetime, copied: false, copying: true });
     try {
-      const content =
-        typeof source === "function" ? await source(owner.signal) : source;
-      if (content === null || !current()) return;
-      if (await writeCopyContent(content, current)) {
-        setCopied(true);
-        timer.current = setTimeout(() => setCopied(false), timeoutMs);
+      if (
+        (await writeCopyContent(source, current, owner.signal)) &&
+        current()
+      ) {
+        setStatus({ lifetime, copied: true, copying: false });
+        timer.current = setTimeout(
+          () =>
+            setStatus((status) =>
+              status.lifetime === lifetime
+                ? { ...status, copied: false }
+                : status,
+            ),
+          timeoutMs,
+        );
       }
     } catch (error) {
       if (current())
@@ -51,9 +69,16 @@ export function useCopied({
           error instanceof Error ? error.message : "Clipboard write failed",
         );
     } finally {
-      if (request.current === owner && !owner.signal.aborted) setCopying(false);
+      if (request.current === owner && !owner.signal.aborted)
+        setStatus((status) =>
+          status.lifetime === lifetime ? { ...status, copying: false } : status,
+        );
     }
   };
 
-  return { copied, copying, copy };
+  return {
+    copied: status.lifetime === lifetime && status.copied,
+    copying: status.lifetime === lifetime && status.copying,
+    copy,
+  };
 }
