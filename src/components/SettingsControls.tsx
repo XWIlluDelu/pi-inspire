@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 
 export interface SettingsChoice<T extends string> {
   value: T;
@@ -48,12 +48,7 @@ export function SegmentedControl<T extends string>({
   disabled?: boolean;
 }) {
   return (
-    <div
-      className="segmented"
-      role="group"
-      aria-label={label}
-      style={{ "--choice-count": options.length } as CSSProperties}
-    >
+    <div className="segmented" role="group" aria-label={label}>
       {options.map((option) => (
         <button
           type="button"

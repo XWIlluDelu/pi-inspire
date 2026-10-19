@@ -108,7 +108,9 @@ produces an error. Fresh trust decisions remain part of Pi startup.
 
 Discovery completes extension registration before resolving defaults. The short-lived SDK process
 creates no persistent session, emits no session-start event and makes no agent/model request.
-Refresh replaces an older preview without replacing explicit or inherited choices. Process lifetime,
+Refresh replaces an older preview without replacing explicit or inherited choices. Retrying a failed
+directory check shows pending feedback and keeps Start unavailable until that check succeeds; an
+inherited or explicit model cannot turn a failed directory retry into readiness. Process lifetime,
 shared queries and cache invalidation are described in [[state-ownership]].
 
 ## Provider and model configuration
@@ -163,6 +165,10 @@ Search keeps its existing case-insensitive substring filter over provider ID and
 ID matches, the row also shows that ID as secondary monospace text with the matching fragment emphasized.
 Names matching the query need no extra ID. Connected-provider and method-page titles retain their
 stronger hierarchy, with no directory match emphasis; returning from methods preserves query and focus.
+
+Login-attempt headers align provider and status text on the first baseline; long captions wrap onto
+separate rows within the card instead of squeezing the status into a narrow column. Method prompts
+use the form's explicit gaps without additional browser paragraph margins.
 
 Login operates on the connected Host's Pi credentials. Switching Settings categories leaves the
 attempt running and preserves entered responses. The browser displays native links, codes,

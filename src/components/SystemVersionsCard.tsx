@@ -1,7 +1,9 @@
-import { Check, RefreshCw } from "lucide-react";
+import { Check, Layers, RefreshCw } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { shallowEqual, store, useAppState } from "../store";
+import { availableUpdates, updateDetailsText } from "../update-availability";
 import { useCopied } from "../use-copied";
+import { CopyAction } from "./CopyAction";
 import { PiLoader } from "./PiLoader";
 import { SettingsSection } from "./SettingsSection";
 
@@ -91,6 +93,7 @@ function VersionValue({
 }
 
 export function SystemVersionsCard() {
+  const [copyError, setCopyError] = useState<string | null>(null);
   const state = useAppState(
     (source) => ({
       piUpdateCheck: source.piUpdateCheck,
@@ -104,6 +107,8 @@ export function SystemVersionsCard() {
     }),
     shallowEqual,
   );
+  const updates = availableUpdates(state);
+  const details = updates ? updateDetailsText(updates) : null;
   const pi = state.piUpdateCheck?.pi;
   const extensions = state.piUpdateCheck?.extensions;
   const inspire = state.inspireUpdateCheck;
@@ -125,35 +130,55 @@ export function SystemVersionsCard() {
   return (
     <SettingsSection
       id="updates"
-      icon={<RefreshCw size={14} />}
+      icon={<Layers size={14} />}
       title="Versions"
       headerAction={
-        <button
-          type="button"
-          className="button system-versions__check"
-          aria-label="Check for updates"
-          disabled={pending || checking}
-          aria-busy={pending || checking}
-          onClick={() => {
-            void store.checkPiUpdate();
-            void store.checkInspireUpdate();
-          }}
+        <div
+          className="system-versions__actions"
+          onClickCapture={() => setCopyError(null)}
         >
-          {pending || checking ? (
-            <PiLoader size={13} aria-hidden />
-          ) : (
-            <RefreshCw size={13} aria-hidden />
-          )}
-          {pending
-            ? "Submitting…"
-            : checking
-              ? "Checking…"
-              : bothChecked
-                ? "Check again"
-                : "Check for updates"}
-        </button>
+          {details ? (
+            <CopyAction
+              key={details}
+              text={details}
+              label="Update details"
+              className="system-versions__copy"
+              disabled={pending || checking}
+              onError={setCopyError}
+            />
+          ) : null}
+          <button
+            type="button"
+            className="button system-versions__check"
+            aria-label="Check for updates"
+            disabled={pending || checking}
+            aria-busy={pending || checking}
+            onClick={() => {
+              void store.checkPiUpdate();
+              void store.checkInspireUpdate();
+            }}
+          >
+            {pending || checking ? (
+              <PiLoader size={13} aria-hidden />
+            ) : (
+              <RefreshCw size={13} aria-hidden />
+            )}
+            {pending
+              ? "Submitting…"
+              : checking
+                ? "Checking…"
+                : bothChecked
+                  ? "Check again"
+                  : "Check for updates"}
+          </button>
+        </div>
       }
     >
+      {copyError ? (
+        <p className="settings__error system-versions__copy-error" role="alert">
+          {copyError}
+        </p>
+      ) : null}
       <dl className="system-versions__list">
         <VersionRow
           label="Pi"

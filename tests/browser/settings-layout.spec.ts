@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { modelSettingsScenario } from "./fixtures/model-settings";
+import { clipboardLines } from "./support/clipboard";
 import { hostRequest } from "./support/host-request";
 import {
   openCommandPalette,
@@ -7,6 +8,84 @@ import {
   pairedPage,
 } from "./support/navigation";
 import { textMarkOffsets } from "./support/text-baseline";
+
+// These suites own mocked Host responses, not Service Worker fetch handling.
+test.use({ serviceWorkers: "block" });
+
+test("selected Settings categories remain visible across responsive layouts without trapping manual navigation scrolling", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await pairAndOpen(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  const navigation = settings.getByRole("navigation", {
+    name: "Settings categories",
+  });
+  await navigation.getByRole("button", { name: "System", exact: true }).click();
+  for (const [width, height] of [
+    [390, 844],
+    [320, 640],
+    [844, 390],
+    [1366, 768],
+  ]) {
+    await page.setViewportSize({ width, height });
+    const active = navigation.locator('[aria-current="location"]');
+    await expect(active).toHaveText("System");
+    await expect
+      .poll(() =>
+        active.evaluate((element) => {
+          const item = element.getBoundingClientRect();
+          const strip = element.closest("nav")!;
+          const viewport = strip.getBoundingClientRect();
+          const label = element
+            .querySelector(".settings__nav-label")!
+            .getBoundingClientRect();
+          const fade = getComputedStyle(strip).maskImage === "none" ? 0 : 16;
+          return Math.max(
+            viewport.left - item.left,
+            item.right - viewport.right,
+            viewport.top - item.top,
+            item.bottom - viewport.bottom,
+            viewport.left + fade - label.left,
+            label.right + fade - viewport.right,
+            0,
+          );
+        }),
+      )
+      .toBeLessThanOrEqual(0.5);
+  }
+  // Browsing the category strip deliberately must not fight an active-item loop.
+  await page.setViewportSize({ width: 320, height: 640 });
+  await expect
+    .poll(() => navigation.evaluate((el) => el.scrollLeft))
+    .toBeGreaterThan(0);
+  const content = settings.locator(".settings__content");
+  await content.evaluate((el) => {
+    el.scrollTop = 8;
+  });
+  await expect.poll(() => content.evaluate((el) => el.scrollTop)).toBe(8);
+  await page.setViewportSize({ width: 390, height: 640 });
+  await expect.poll(() => content.evaluate((el) => el.scrollTop)).toBe(8);
+  await navigation.evaluate((el) => {
+    el.scrollLeft = 0;
+  });
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect
+    .poll(() => navigation.evaluate((el) => el.scrollLeft))
+    .toBeLessThanOrEqual(0.5);
+  await navigation
+    .getByRole("button", { name: "Display", exact: true })
+    .click();
+  await expect(
+    navigation.getByRole("button", { name: "Display", exact: true }),
+  ).toHaveAttribute("aria-current", "location");
+});
 
 test("Settings headings sit outside their cards and nested fills follow the border", async ({
   page,
@@ -63,6 +142,19 @@ test("Settings headings sit outside their cards and nested fills follow the bord
       expect(Math.abs(geometry.start)).toBeLessThanOrEqual(1);
       expect(Math.abs(geometry.end)).toBeLessThanOrEqual(1);
     }
+    const needlesField = settings
+      .locator(".settings__field")
+      .filter({ hasText: "Titlebar needles" });
+    const switchDelta = await needlesField.evaluate((el) => {
+      const label = el
+        .querySelector(".settings__field-label")!
+        .getBoundingClientRect();
+      const track = el
+        .querySelector(".settings-switch__track")!
+        .getBoundingClientRect();
+      return track.top + track.height / 2 - (label.top + label.height / 2);
+    });
+    expect(Math.abs(switchDelta)).toBeLessThanOrEqual(1.5);
 
     await settings.getByRole("button", { name: "Models", exact: true }).click();
     const providers = settings.getByRole("region", {
@@ -111,6 +203,130 @@ test("Settings headings sit outside their cards and nested fills follow the bord
     });
     expect(statusCorner[2]).toBeCloseTo(statusCorner[0]! - statusCorner[1]!);
     expect(statusCorner[3]).toBe(0);
+  }
+});
+
+test("Settings keeps independent palette tiles and a responsive choice column", async ({
+  page,
+}) => {
+  await pairAndOpen(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  const navigation = settings.getByRole("navigation", {
+    name: "Settings categories",
+  });
+  await page.evaluate(() => document.fonts.ready);
+
+  for (const theme of ["Light", "Dark"]) {
+    await navigation
+      .getByRole("button", { name: "Display", exact: true })
+      .click();
+    const themeChoices = settings.getByRole("group", {
+      name: "Theme",
+      exact: true,
+    });
+    await themeChoices
+      .getByRole("button", { name: theme, exact: true })
+      .click();
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-theme",
+      theme.toLowerCase(),
+    );
+    for (const width of [1280, 390, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      const controls = settings.locator(
+        '[data-category="display"] .settings__field-control > :is(.segmented, .palette-picker)',
+      );
+      const boxes = await controls.evaluateAll((elements) =>
+        elements.map((element) => {
+          const box = element.getBoundingClientRect();
+          return { left: box.left, width: box.width };
+        }),
+      );
+      expect(boxes).toHaveLength(5);
+      for (const box of boxes) {
+        expect(Math.abs(box.left - boxes[0]!.left)).toBeLessThanOrEqual(1);
+        expect(Math.abs(box.width - boxes[0]!.width)).toBeLessThanOrEqual(1);
+      }
+      const palette = settings.getByRole("group", {
+        name: "Color palette",
+        exact: true,
+      });
+      for (const choice of await palette.getByRole("button").all()) {
+        const fits = await choice.evaluate((element) => {
+          const label = element.lastElementChild!;
+          const range = document.createRange();
+          range.selectNodeContents(label);
+          return (
+            range.getBoundingClientRect().right <=
+            element.getBoundingClientRect().right - 3
+          );
+        });
+        expect(fits).toBe(true);
+      }
+      // Theme selection animates; compare the settled feedback, not an
+      // intermediate frame where only the newly selected segment is fading in.
+      await expect(async () => {
+        const selection = await settings.evaluate((element) => {
+          const style = (selector: string) => {
+            const css = getComputedStyle(element.querySelector(selector)!);
+            return {
+              background: css.backgroundColor,
+              border: css.borderColor,
+              color: css.color,
+              weight: css.fontWeight,
+            };
+          };
+          const role = (name: string) => {
+            const marker = document.createElement("span");
+            marker.style.color = `var(--${name})`;
+            element.append(marker);
+            const color = getComputedStyle(marker).color;
+            marker.remove();
+            return color;
+          };
+          return {
+            segment: style('[aria-label="Theme"] [aria-pressed="true"]'),
+            palette: style('.palette-picker [aria-pressed="true"]'),
+            unselected: style('.palette-picker [aria-pressed="false"]'),
+            tray: style(".palette-picker"),
+            accent: role("accent-deep"),
+            tint: role("accent-tint"),
+            surface: role("bg-surface"),
+          };
+        });
+        expect(selection.tray.background).toBe("rgba(0, 0, 0, 0)");
+        expect(selection.palette.color).toBe(selection.segment.color);
+        expect(selection.palette.border).toBe(selection.accent);
+        expect(selection.palette.background).toBe(selection.tint);
+        expect(selection.unselected.background).toBe(selection.surface);
+        expect(selection.palette.background).not.toBe(
+          selection.unselected.background,
+        );
+        expect(selection.palette.weight).not.toBe(selection.unselected.weight);
+      }).toPass({ timeout: 2000 });
+    }
+    await page.setViewportSize({ width: 1280, height: 900 });
+    // Returning from the mobile sheet enables the desktop dialog entrance.
+    await settings.evaluate((element) =>
+      Promise.allSettled(
+        element.getAnimations().map((animation) => animation.finished),
+      ),
+    );
+    const choiceBox = (await themeChoices.boundingBox())!;
+    await navigation
+      .getByRole("button", { name: "Conversation", exact: true })
+      .click();
+    const dropdownBox = (await settings
+      .getByRole("combobox", { name: "Reasoning detail" })
+      .boundingBox())!;
+    const sendBox = (await settings
+      .getByRole("group", { name: "Send key", exact: true })
+      .boundingBox())!;
+    for (const box of [dropdownBox, sendBox]) {
+      expect(Math.abs(box.x - choiceBox.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(box.width - choiceBox.width)).toBeLessThanOrEqual(1);
+    }
   }
 });
 
@@ -463,6 +679,15 @@ test("Settings activity menus remain clickable beyond their card and persist the
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
     await dialog.getByRole("button", { name: "Reset preferences" }).click();
+    const confirmReset = page.getByRole("alertdialog", {
+      name: "Reset preferences?",
+    });
+    await expect(confirmReset).toContainText(
+      "Restore Display, Conversation, Behavior, and Herdr preferences to their defaults.",
+    );
+    await confirmReset
+      .getByRole("button", { name: "Reset preferences", exact: true })
+      .click();
     await dialog
       .getByRole("button", { name: "Conversation", exact: true })
       .click();
@@ -494,6 +719,9 @@ test("Settings activity menus remain clickable beyond their card and persist the
         response.request().method() === "PATCH",
     );
     await dialog.getByRole("button", { name: "Reset preferences" }).click();
+    await confirmReset
+      .getByRole("button", { name: "Reset preferences", exact: true })
+      .click();
     await restored;
     const activity = dialog.getByRole("combobox", { name: "Activity groups" });
     await activity.click();
@@ -506,10 +734,374 @@ test("Settings activity menus remain clickable beyond their card and persist the
   }
 });
 
-test("System copies the Pi update command to the clipboard", async ({
+test("canceling preference reset preserves settings and returns focus to its opener", async ({
   page,
-  context,
 }) => {
+  await modelSettingsScenario(page);
+  await pairAndOpen(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  const dark = settings
+    .getByRole("group", { name: "Theme", exact: true })
+    .getByRole("button", { name: "Dark", exact: true });
+  await dark.click();
+
+  const reset = settings.getByRole("button", {
+    name: "Reset preferences",
+    exact: true,
+  });
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Reset preferences?",
+  });
+  for (const exit of ["Escape", "Cancel"]) {
+    await reset.click();
+    await expect(confirmation).toBeVisible();
+    for (let step = 0; step < 3; step += 1) {
+      await page.keyboard.press("Tab");
+      expect(
+        await confirmation.evaluate((el) =>
+          el.contains(document.activeElement),
+        ),
+      ).toBe(true);
+    }
+    if (exit === "Escape") await page.keyboard.press("Escape");
+    else
+      await confirmation
+        .getByRole("button", { name: "Cancel", exact: true })
+        .click();
+    await expect(confirmation).toHaveCount(0);
+    await expect(settings).toBeVisible();
+    await expect(reset).toBeFocused();
+    await expect(dark).toHaveAttribute("aria-pressed", "true");
+  }
+});
+
+for (const touch of [false, true]) {
+  test.describe(
+    touch ? "touch setting actions" : "pointer setting actions",
+    () => {
+      test.use({
+        hasTouch: touch,
+        reducedMotion: "reduce",
+        serviceWorkers: "block",
+      });
+      test("Host status paths wrap inside their text columns without resizing controls", async ({
+        page,
+      }) => {
+        const socket =
+          "/run/user/1000/herdr/instrument_calibration_reference_acquisition_control.sock";
+        const ordinary = "Herdr is unavailable on this Host.";
+        let issue = ordinary;
+        let requests = 0;
+        await page.route("**/api/host/herdr", (route) => {
+          requests++;
+          return route.fulfill({
+            json: {
+              enabled: false,
+              ready: false,
+              supported: true,
+              installed: true,
+              running: false,
+              compatible: true,
+              version: "1.0.0",
+              issue,
+            },
+          });
+        });
+        const reason = "Restart controller cannot read " + socket;
+        await page.route("**/api/host/restart", async (route) => {
+          expect(route.request().method()).toBe("GET");
+          const response = await route.fetch();
+          await route.fulfill({
+            response,
+            json: { ...(await response.json()), available: false, reason },
+          });
+        });
+        await pairedPage(page);
+        await page
+          .getByRole("button", { name: "Settings", exact: true })
+          .click();
+        const settings = page.getByRole("dialog", {
+          name: "Settings",
+          exact: true,
+        });
+        await settings
+          .getByRole("navigation", { name: "Settings categories" })
+          .getByRole("button", { name: "System", exact: true })
+          .click();
+        const field = settings.locator(".settings__field").filter({
+          has: page.locator(".settings__field-label", {
+            hasText: /^Herdr enhancement$/,
+          }),
+        });
+        const status = field.locator(".settings__field-status-block");
+        const recheck = field.getByRole("button", {
+          name: "Recheck availability",
+          exact: true,
+        });
+        const restart = settings.locator(".host-restart__status-row");
+        await expect(status).toContainText(ordinary);
+        await expect(restart).toHaveText(reason);
+        await page.evaluate(() => document.fonts.ready);
+        for (const width of [1280, 820, 390, 320]) {
+          await page.setViewportSize({ width, height: 900 });
+          issue = ordinary;
+          await recheck.click();
+          await expect(status).toContainText(ordinary);
+          const control = await recheck.boundingBox();
+          const shortHeight = (await field.boundingBox())!.height;
+          for (const message of [
+            "Cannot connect to " + socket + ". Recheck the installation.",
+            "无法连接校准工作区 " + socket + "，请重新检查安装。",
+          ]) {
+            issue = message;
+            const before = requests;
+            await recheck.click();
+            await expect.poll(() => requests).toBeGreaterThan(before);
+            await expect(status.locator("span").first()).toHaveText(message);
+            for (const note of [status, restart]) {
+              const fits = await note.evaluate((el) => {
+                const text = el.querySelector("span") ?? el.querySelector("p")!;
+                const range = document.createRange();
+                range.selectNodeContents(text);
+                const bounds = el.getBoundingClientRect();
+                const textBounds = text.getBoundingClientRect();
+                const rangeBounds = range.getBoundingClientRect();
+                return (
+                  el.scrollWidth <= el.clientWidth + 1 &&
+                  textBounds.left >= bounds.left &&
+                  textBounds.right <= bounds.right + 1 &&
+                  rangeBounds.left >= textBounds.left - 1 &&
+                  rangeBounds.right <= textBounds.right + 1
+                );
+              });
+              expect(fits).toBe(true);
+            }
+            const button = await recheck.boundingBox();
+            expect(button!.width).toBeCloseTo(control!.width, 1);
+            expect(button!.height).toBeCloseTo(control!.height, 1);
+            expect(
+              await field.locator(".settings-switch").evaluate((el) => {
+                const field = el
+                  .closest(".settings__field")!
+                  .getBoundingClientRect();
+                return el.getBoundingClientRect().right <= field.right;
+              }),
+            ).toBe(true);
+            await recheck.scrollIntoViewIfNeeded();
+            await recheck.focus();
+            await expect(recheck).toBeFocused();
+          }
+          issue = ordinary;
+          await recheck.click();
+          await expect(status.locator("span").first()).toHaveText(ordinary);
+          expect((await field.boundingBox())!.height).toBeCloseTo(
+            shortHeight,
+            1,
+          );
+        }
+      });
+
+      test("fixed-height and inline text actions keep their icons centered, including loading", {
+        tag: "@platform-ui",
+      }, async ({ page }) => {
+        let release: (() => void) | undefined;
+        let checksPaused = false;
+        await page.route("**/api/host/herdr", async (route) => {
+          if (checksPaused)
+            await new Promise<void>((resolve) => {
+              release = resolve;
+            });
+          await route.fulfill({
+            json: {
+              enabled: false,
+              ready: false,
+              supported: false,
+              installed: false,
+              running: false,
+              compatible: false,
+              issue: "Herdr is unavailable on this platform.",
+            },
+          });
+        });
+        await pairedPage(page);
+        await page
+          .getByRole("button", { name: "Settings", exact: true })
+          .click();
+        const settings = page.getByRole("dialog", {
+          name: "Settings",
+          exact: true,
+        });
+        await settings
+          .getByRole("navigation", { name: "Settings categories" })
+          .getByRole("button", { name: "System", exact: true })
+          .click();
+        const recheck = settings.getByRole("button", {
+          name: "Recheck availability",
+          exact: true,
+        });
+        await expect(recheck).toBeVisible();
+        await settings.evaluate(async (el) =>
+          Promise.all(
+            el.getAnimations().map((animation) => animation.finished),
+          ),
+        );
+        const geometry = (el: Element) => {
+          const row = el.getBoundingClientRect(),
+            mark = el.querySelector("svg")!.getBoundingClientRect();
+          return {
+            width: row.width,
+            height: row.height,
+            offset: (mark.top + mark.bottom - row.top - row.bottom) / 2,
+          };
+        };
+        try {
+          for (const width of [1280, 820, 390, 320]) {
+            await page.setViewportSize({ width, height: 900 });
+            for (const name of [
+              "Check for updates",
+              "Restart Host",
+              "Restart all",
+              "Recheck availability",
+            ]) {
+              const control = settings.getByRole("button", {
+                name,
+                exact: true,
+              });
+              const box = await control.evaluate(geometry);
+              expect(Math.abs(box.offset), name).toBeLessThan(0.1);
+            }
+            const before = await recheck.evaluate(geometry);
+            // Delay this explicit recheck, not a guessed ordinal startup read.
+            checksPaused = true;
+            await recheck.click();
+            await expect(recheck.locator(".pi-loading")).toBeVisible();
+            const loading = await recheck.evaluate(geometry);
+            expect(loading.width).toBeCloseTo(before.width, 1);
+            expect(loading.height).toBeCloseTo(before.height, 1);
+            expect(Math.abs(loading.offset)).toBeLessThan(0.1);
+            await expect.poll(() => !!release).toBe(true);
+            checksPaused = false;
+            release!();
+            release = undefined;
+            await expect(recheck).not.toHaveAttribute("aria-busy", "true");
+          }
+        } finally {
+          checksPaused = false;
+          release?.();
+        }
+      });
+    },
+  );
+}
+
+for (const hasTouch of [false, true]) {
+  test.describe(`Versions row alignment · ${hasTouch ? "touch" : "mouse"}`, () => {
+    test.use({
+      hasTouch,
+      deviceScaleFactor: hasTouch ? 2 : 1,
+      serviceWorkers: "block",
+    });
+    test("centers each complete row while preserving first-line baselines and action targets", async ({
+      page,
+    }) => {
+      await modelSettingsScenario(page);
+      await page.route("**/api/bootstrap**", async (route) => {
+        const response = await route.fetch();
+        const data = await response.json();
+        data.updateStatus = {
+          revision: 999,
+          piUpdateCheck: {
+            currentVersion: "1.3.0",
+            pi: { kind: "current" },
+            extensions: { kind: "none" },
+          },
+          inspireUpdateCheck: { kind: "unavailable" },
+          piUpdateChecking: false,
+          inspireUpdateChecking: false,
+          availableUpdateIdentity: null,
+          updateSnoozedUntil: Date.now() + 3600000,
+        };
+        await route.fulfill({ response, json: data });
+      });
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await pairAndOpen(page);
+      await page.getByRole("button", { name: "Settings", exact: true }).click();
+      const settings = page.getByRole("dialog", {
+        name: "Settings",
+        exact: true,
+      });
+      await settings
+        .getByRole("navigation", { name: "Settings categories" })
+        .getByRole("button", { name: "System", exact: true })
+        .click();
+      const versions = settings.locator("#settings-section-updates");
+      for (const theme of ["light", "dark"]) {
+        await page.evaluate(
+          (t) => (document.documentElement.dataset.theme = t),
+          theme,
+        );
+        for (const width of [1280, 820, 390, 320]) {
+          await page.setViewportSize({ width, height: 900 });
+          await versions.scrollIntoViewIfNeeded();
+          const geometry = await versions.evaluate((root) => {
+            const baseline = (el: Element) => {
+              const probe = document.createElement("span");
+              probe.style.cssText =
+                "display:inline-block;vertical-align:baseline;width:0;height:0;margin:0;border:0;padding:0";
+              el.append(probe);
+              const y = probe.getBoundingClientRect().top;
+              probe.remove();
+              return y;
+            };
+            return [...root.querySelectorAll(".system-versions__row")].map(
+              (row) => {
+                const r = row.getBoundingClientRect(),
+                  label = row.querySelector("dt")!,
+                  details = row.querySelector("dd")!;
+                const a = label.getBoundingClientRect(),
+                  b = details.getBoundingClientRect();
+                return {
+                  height: r.height,
+                  columns:
+                    getComputedStyle(row).gridTemplateColumns.split(" ").length,
+                  contentCenter:
+                    (Math.min(a.top, b.top) +
+                      Math.max(a.bottom, b.bottom) -
+                      r.top -
+                      r.bottom) /
+                    2,
+                  baseline:
+                    baseline(label.querySelector("span")!) -
+                    baseline(
+                      details.querySelector(".system-versions__value>span")!,
+                    ),
+                  overflow: row.scrollWidth - row.clientWidth,
+                  links: [
+                    ...row.querySelectorAll(".system-versions__references a"),
+                  ].map((el) => el.getBoundingClientRect().height),
+                };
+              },
+            );
+          });
+          for (const row of geometry) {
+            expect(row.overflow).toBeLessThanOrEqual(1);
+            expect(Math.abs(row.contentCenter)).toBeLessThanOrEqual(0.5);
+            if (row.columns === 2)
+              expect(Math.abs(row.baseline)).toBeLessThanOrEqual(0.5);
+            expect(row.height).toBeGreaterThanOrEqual(50);
+            for (const height of row.links)
+              expect(height).toBeGreaterThanOrEqual(24);
+          }
+        }
+      }
+    });
+  });
+}
+
+test("System copies update details and native commands while the notice is snoozed", {
+  tag: "@platform-ui",
+}, async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await modelSettingsScenario(page);
   await page.route("**/api/bootstrap**", async (route) => {
@@ -524,7 +1116,13 @@ test("System copies the Pi update command to the clipboard", async ({
           latestVersion: "1.0.2",
           releaseUrl: "https://example.invalid/pi",
         },
-        extensions: { kind: "none" },
+        extensions: {
+          kind: "available",
+          updates: [
+            { displayName: "github.com/example/pi-tools", type: "git" },
+            { displayName: "@example/pi-tools", type: "npm" },
+          ],
+        },
       },
       inspireUpdateCheck: { kind: "unreleased" },
       piUpdateChecking: false,
@@ -541,7 +1139,63 @@ test("System copies the Pi update command to the clipboard", async ({
     .getByRole("navigation", { name: "Settings categories" })
     .getByRole("button", { name: "System", exact: true })
     .click();
-  await settings
+  const versions = settings.locator("#settings-section-updates");
+  const copy = versions.getByRole("button", {
+    name: "Copy update details",
+    exact: true,
+  });
+  await expect(copy).toBeVisible();
+  await expect(
+    page.getByText("Updates available", { exact: true }),
+  ).toHaveCount(0);
+  for (const width of [1280, 820, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await copy.scrollIntoViewIfNeeded();
+    const geometry = await versions.evaluate((el) => {
+      const header = el.querySelector(".settings__section-title-wrap")!;
+      const copy = el
+        .querySelector(".system-versions__copy")!
+        .getBoundingClientRect();
+      const check = el
+        .querySelector(".system-versions__check")!
+        .getBoundingClientRect();
+      const icon = el
+        .querySelector(".system-versions__copy svg")!
+        .getBoundingClientRect();
+      return {
+        fits: header.scrollWidth <= header.clientWidth + 1,
+        separated: copy.right <= check.left,
+        center: (copy.top + copy.bottom - check.top - check.bottom) / 2,
+        x: (icon.left + icon.right - copy.left - copy.right) / 2,
+        y: (icon.top + icon.bottom - copy.top - copy.bottom) / 2,
+      };
+    });
+    expect(geometry.fits).toBe(true);
+    expect(geometry.separated).toBe(true);
+    for (const offset of [geometry.center, geometry.x, geometry.y])
+      expect(Math.abs(offset)).toBeLessThanOrEqual(0.5);
+  }
+  await copy.focus();
+  await copy.press("Enter");
+  await expect(
+    versions.getByRole("button", {
+      name: "Update details copied",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect
+    .poll(() => clipboardLines(page))
+    .toEqual([
+      "Pi 1.0.0 → 1.0.2",
+      "Run pi update",
+      "https://example.invalid/pi",
+      "",
+      "Extensions",
+      "- @example/pi-tools",
+      "- github.com/example/pi-tools",
+      "Run pi update --extensions",
+    ]);
+  await versions
     .getByRole("button", { name: "Copy pi update", exact: true })
     .click();
   await expect

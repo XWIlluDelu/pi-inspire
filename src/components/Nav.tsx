@@ -169,6 +169,7 @@ export const Nav = memo(function Nav({
     isModal,
     undefined,
     onClose,
+    "drawer",
   );
   const navRef = isModal ? modalNavRef : internalNavRef;
   const [hiddenOpen, setHiddenOpen] = useState(false);

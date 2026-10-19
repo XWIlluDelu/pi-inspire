@@ -1,4 +1,4 @@
-import { readFile, readdir, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import request from "supertest";
 import { afterEach, expect, it, vi } from "vitest";
@@ -203,7 +203,9 @@ it("discovers native global/trusted-project registrations and resolves defaults 
     await app.close();
     await attachments.close();
   }
-}, 30_000);
+  // This scenario performs several independently bounded (15s) native queries,
+  // including invalidation and cold startup in multiple project directories.
+}, 120_000);
 
 it.each([false, true])(
   "retires factory descendants when a metadata query fails=%s",

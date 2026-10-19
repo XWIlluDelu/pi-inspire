@@ -1,5 +1,179 @@
 import { expect, test } from "@playwright/test";
+import { PALETTE_PREFERENCES } from "../../shared/contracts";
+import { renderedColors } from "./support/colors";
+import { routeMockSnapshots } from "./support/mock-host";
 import { openMockSession, pairedPage } from "./support/navigation";
+import { firstTextBaseline } from "./support/text-baseline";
+
+// These suites own mocked Host responses, not Service Worker fetch handling.
+test.use({ serviceWorkers: "block" });
+
+test("prompt outline metadata stays readable and shares the text baseline without changing row height", {
+  tag: "@platform-ui",
+}, async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const pixel =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
+  const count = (ordinal: number) =>
+    ordinal % 3 === 2 ? 12 : (ordinal % 3) + 1;
+  await routeMockSnapshots(page, {
+    snapshot(snapshot) {
+      let ordinal = 0;
+      for (const record of snapshot.active?.transcriptPage.messages ?? []) {
+        const message = record as { role?: string; content: unknown };
+        if (message.role !== "user" || typeof message.content !== "string")
+          continue;
+        message.content = [
+          { type: "text", text: message.content },
+          ...Array.from({ length: count(ordinal++) }, () => ({
+            type: "image",
+            mimeType: "image/png",
+            data: pixel,
+          })),
+        ];
+      }
+    },
+  });
+  await page.route("**/api/transcript/user-turns?**", async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    for (const turn of data.turns) turn.attachmentCount = count(turn.ordinal);
+    await route.fulfill({ response, json: data });
+  });
+  await pairedPage(page);
+  await openMockSession(page, /Prompt map long-session fixture/);
+  await page.addStyleTag({
+    content: "*{transition:none!important;animation:none!important}",
+  });
+  await page.evaluate(() => document.fonts.ready);
+  const map = page.locator(".prompt-map");
+  const list = map.locator(".prompt-map__list");
+  async function openOutline() {
+    if (!(await map.isVisible()))
+      await page
+        .getByRole("button", { name: "Open prompt navigation", exact: true })
+        .click();
+    const toggle = page.getByRole("button", {
+      name: "Open prompt map",
+      exact: true,
+    });
+    if (await toggle.isVisible()) await toggle.click();
+    await expect(list).toBeVisible();
+    const box = (await map.boundingBox())!;
+    await page.mouse.move(box.x + 2, box.y + 2);
+  }
+  await openOutline();
+  for (const palette of PALETTE_PREFERENCES)
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate(
+        ({ palette, theme }) => {
+          document.documentElement.dataset.palette = palette;
+          document.documentElement.dataset.theme = theme;
+        },
+        { palette, theme },
+      );
+      for (const row of [
+        map.locator(".prompt-map__turn:not([aria-current])").first(),
+        map.locator(".prompt-map__turn[aria-current]"),
+      ]) {
+        const ordinal = row.locator(".prompt-map__ordinal");
+        const attachments = row.locator(".prompt-map__attachments");
+        expect(
+          await attachments.evaluate((el) => getComputedStyle(el).fontSize),
+        ).toBe(await ordinal.evaluate((el) => getComputedStyle(el).fontSize));
+        for (const metadata of [ordinal, attachments]) {
+          expect(
+            await metadata.evaluate((el) => getComputedStyle(el).opacity),
+          ).toBe("1");
+          expect(
+            (await renderedColors(metadata)).contrast,
+            `${palette} ${theme}`,
+          ).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    }
+  for (const width of [1280, 820, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await openOutline();
+    const rows = map.locator(".prompt-map__turn");
+    await expect(
+      rows.filter({ hasText: /12 attachments/ }).first(),
+    ).toBeAttached();
+    const columns = await rows.evaluateAll((rows) =>
+      rows.map((row) => {
+        const frame = row.getBoundingClientRect();
+        const ordinal = row
+          .querySelector(".prompt-map__ordinal")!
+          .getBoundingClientRect();
+        const snippet = row
+          .querySelector(".prompt-map__snippet")!
+          .getBoundingClientRect();
+        return { right: ordinal.right - frame.x, left: snippet.left - frame.x };
+      }),
+    );
+    for (const edge of ["right", "left"] as const)
+      expect(
+        Math.max(...columns.map((column) => column[edge])) -
+          Math.min(...columns.map((column) => column[edge])),
+      ).toBeLessThanOrEqual(0.5);
+    for (const row of await rows.all()) {
+      const snippet = await row
+        .locator(".prompt-map__snippet")
+        .evaluate(firstTextBaseline, ".prompt-map__turn");
+      for (const metadata of [
+        ".prompt-map__ordinal",
+        ".prompt-map__attachments",
+      ]) {
+        const value = await row
+          .locator(metadata)
+          .evaluate(firstTextBaseline, ".prompt-map__turn");
+        expect(Math.abs(value! - snippet!)).toBeLessThanOrEqual(0.5);
+      }
+      expect((await row.boundingBox())!.height).toBe(38);
+      expect(
+        await row.evaluate((el) => el.scrollWidth - el.clientWidth),
+      ).toBeLessThanOrEqual(1);
+    }
+    await list.focus();
+    await page.keyboard.press("Tab");
+    await expect(rows.first()).toBeFocused();
+    await expect(rows.first()).toBeInViewport();
+    const ring = await rows.first().evaluate((el) => {
+      const style = getComputedStyle(el),
+        frame = el.getBoundingClientRect(),
+        clip = el.closest(".prompt-map__list")!.getBoundingClientRect();
+      const outset = Math.max(
+        0,
+        Number.parseFloat(style.outlineOffset) +
+          Number.parseFloat(style.outlineWidth),
+      );
+      return {
+        visible: el.matches(":focus-visible"),
+        left: frame.left - outset - clip.left,
+        right: clip.right - frame.right - outset,
+        top: frame.top - outset - clip.top,
+      };
+    });
+    expect(ring.visible).toBe(true);
+    for (const edge of [ring.left, ring.right, ring.top])
+      expect(edge).toBeGreaterThanOrEqual(-0.5);
+    await list.press("Escape");
+    const toggle = page.getByRole("button", {
+      name: "Open prompt map",
+      exact: true,
+    });
+    await expect(toggle).toBeFocused();
+    if (width <= 700) {
+      await toggle.press("Escape");
+      await expect(
+        page.getByRole("button", {
+          name: "Open prompt navigation",
+          exact: true,
+        }),
+      ).toBeFocused();
+    }
+  }
+});
 
 for (const narrow of [false, true]) {
   test(`floating reading controls preserve geometry and focus order on ${narrow ? "narrow" : "desktop"}`, async ({

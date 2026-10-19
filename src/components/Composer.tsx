@@ -490,6 +490,7 @@ export const Composer = memo(function Composer() {
           <span>Message not delivered</span>
           <button
             type="button"
+            className="button button--quiet"
             disabled={
               sessionOpening ||
               Boolean(

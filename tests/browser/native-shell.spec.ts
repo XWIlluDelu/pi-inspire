@@ -1,6 +1,74 @@
 import { expect, test, type WebSocketRoute } from "@playwright/test";
 import type { ActiveSnapshot } from "../../shared/contracts";
+import { openMockEventSession } from "./support/mock-host";
 import { pairedPage } from "./support/navigation";
+
+for (const touch of [false, true]) {
+  test.describe(`shell metadata action · ${touch ? "touch" : "mouse"}`, () => {
+    test.use({
+      hasTouch: touch,
+      deviceScaleFactor: touch ? 2 : 1,
+      reducedMotion: "reduce",
+    });
+    test("fits the output notice without shrinking touch targets or losing the log action", async ({
+      page,
+    }) => {
+      const send = await openMockEventSession(
+        page,
+        "Shell output notice",
+        { version: 1, rules: {}, mappings: {} },
+        {},
+      );
+      send({
+        type: "message_end",
+        message: {
+          role: "bashExecution",
+          command: "printf observation-log",
+          output: "Observation log preview",
+          exitCode: 0,
+          truncated: true,
+          fullOutputPath: "native-shell.log",
+          __inspireMessageId: "shell-notice",
+        },
+      });
+      const card = page.getByRole("region", { name: "Shell command" });
+      const action = card.getByRole("button", {
+        name: "View full output",
+        exact: true,
+      });
+      for (const width of [1280, 820, 390, 320]) {
+        await page.setViewportSize({ width, height: 900 });
+        await action.scrollIntoViewIfNeeded();
+        await page.evaluate(() => document.fonts.ready);
+        expect((await action.boundingBox())!.height).toBeCloseTo(
+          touch ? 44 : 24,
+          1,
+        );
+        expect(
+          await card.evaluate((el) => el.scrollWidth - el.clientWidth),
+        ).toBeLessThanOrEqual(1);
+      }
+      await page.setViewportSize({ width: 1280, height: 900 });
+      const note = card.locator(".shell-execution__note");
+      expect((await note.boundingBox())!.height).toBeCloseTo(
+        touch ? 60 : 40,
+        1,
+      );
+      await expect(action).toHaveAttribute(
+        "data-file-path",
+        "native-shell.log",
+      );
+      if (touch) await action.tap();
+      else {
+        await action.focus();
+        await action.press("Enter");
+      }
+      await expect(
+        page.getByRole("region", { name: "File source", exact: true }),
+      ).toContainText("COMPLETE_NATIVE_SHELL_LOG_END");
+    });
+  });
+}
 
 // UI wire fixture only; real native execution is checked by the isolated Pi
 // lifecycle integration tests, never the mock Host or independent terminal.

@@ -537,6 +537,7 @@ export function ModelList({
                     <div
                       key={row.key}
                       className="model-picker__heading"
+                      title={group.provider}
                       aria-hidden
                       style={style}
                     >

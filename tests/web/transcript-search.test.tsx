@@ -11,6 +11,50 @@ afterEach(() => {
 });
 
 describe("settled transcript search", () => {
+  it("indexes displayed shell output and checkpoint text rather than their hidden control data", () => {
+    render(
+      <Transcript
+        sessionId="normalized-content"
+        messages={[
+          {
+            role: "bashExecution",
+            command: "printf status",
+            output: "\u001b[31mVisible status\u001b[0m",
+            timestamp: 1,
+          },
+          {
+            role: "compactionSummary",
+            summary: "Magic Context compacted: retained decisions",
+            timestamp: 2,
+          },
+        ]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+    const search = screen.getByRole("searchbox", {
+      name: "Search conversation",
+    });
+    for (const query of ["31m", "Magic Context compacted"]) {
+      fireEvent.change(search, { target: { value: query } });
+      expect(
+        screen.getByRole("search", { name: "Search settled transcript" }),
+      ).toHaveTextContent("No matches");
+    }
+    fireEvent.change(search, { target: { value: "Visible status" } });
+    expect(
+      screen.getByRole("search", { name: "Search settled transcript" }),
+    ).toHaveTextContent("1");
+    fireEvent.change(search, { target: { value: "retained decisions" } });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Next transcript match" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Magic Context compacted" }),
+    ).toHaveAttribute("aria-expanded", "true");
+  });
+
   it.each([
     ["compactionSummary", "Context compacted"],
     ["branchSummary", "Branch context"],

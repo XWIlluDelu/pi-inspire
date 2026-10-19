@@ -32,6 +32,8 @@ interface FloatingMenuTarget {
   context: HTMLElement;
   anchor: FloatingMenuBounds;
   preferredWidth?: number;
+  /** Fixed-position containing block when a portal lives in a filtered overlay. */
+  positioningRoot?: HTMLElement | null;
   observe?: readonly Element[];
 }
 
@@ -160,13 +162,45 @@ export function useFloatingMenuPlacement(
       frame = null;
       const target = resolveTarget();
       if (!target?.context.isConnected) return;
+      const layoutHeight =
+        document.documentElement.clientHeight || window.innerHeight;
+      let bounds = liveCenterBounds(target.context, constraints.overlapAnchor);
+      const root = target.positioningRoot;
+      const rootBox =
+        root && root.clientWidth > 0 && root.clientHeight > 0
+          ? root.getBoundingClientRect()
+          : null;
+      const rootBounds =
+        root && rootBox
+          ? {
+              left: rootBox.left + root.clientLeft,
+              top: rootBox.top + root.clientTop,
+              right: rootBox.left + root.clientLeft + root.clientWidth,
+              bottom: rootBox.top + root.clientTop + root.clientHeight,
+            }
+          : null;
+      if (rootBounds)
+        bounds = {
+          left: Math.max(bounds.left, rootBounds.left),
+          top: Math.max(bounds.top, rootBounds.top),
+          right: Math.min(bounds.right, rootBounds.right),
+          bottom: Math.min(bounds.bottom, rootBounds.bottom),
+        };
       const next = placeFloatingMenu(
         target.anchor,
-        liveCenterBounds(target.context, constraints.overlapAnchor),
-        document.documentElement.clientHeight || window.innerHeight,
+        bounds,
+        layoutHeight,
         constraints,
         target.preferredWidth,
       );
+      // Anchor/bounds are viewport coordinates. A filtered overlay owns fixed
+      // children, so convert only the final offsets into its padding box.
+      if (root && rootBounds) {
+        next.left += root.scrollLeft - rootBounds.left;
+        if (next.top !== undefined) next.top += root.scrollTop - rootBounds.top;
+        if (next.bottom !== undefined)
+          next.bottom += rootBounds.bottom - layoutHeight - root.scrollTop;
+      }
       setPlacement((current) =>
         samePlacement(current, next) ? current : next,
       );
@@ -179,7 +213,11 @@ export function useFloatingMenuPlacement(
     const target = resolveTarget();
     const center = target?.context.closest<HTMLElement>(".center");
     const resizeObserver = new ResizeObserver(schedule);
-    for (const element of new Set([...(target?.observe ?? []), center])) {
+    for (const element of new Set([
+      ...(target?.observe ?? []),
+      center,
+      target?.positioningRoot,
+    ])) {
       if (element) resizeObserver.observe(element);
     }
     window.addEventListener("resize", schedule);

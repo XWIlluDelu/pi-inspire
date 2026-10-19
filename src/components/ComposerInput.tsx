@@ -458,9 +458,10 @@ export function ComposerInput({
         bottom: vertical.bottom,
       },
       preferredWidth: horizontal.width,
+      positioningRoot: completionPortal?.current,
       observe: [inputWrap, textarea],
     };
-  }, [completion?.end]);
+  }, [completion?.end, completionPortal]);
   const completionPlacement = useFloatingMenuPlacement(
     completion !== null,
     resolveCompletionMenuTarget,

@@ -7,17 +7,25 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
+import type { RunState } from "../../shared/contracts";
 import type { McpConfigSnapshot } from "../../shared/mcp";
 import { McpServerForm } from "../../src/components/McpServerForm";
 import { McpSettings } from "../../src/components/McpSettings";
 import { deferred } from "./helpers";
 
 const fixture = vi.hoisted(() => ({
-  state: { sessionId: "one", cwd: "/one", transportGeneration: 1 },
+  state: {
+    sessionId: "one",
+    cwd: "/one",
+    transportGeneration: 1,
+    runState: "idle" as RunState,
+    readOnlyReason: null as string | null,
+  },
   host: {
     readMcpConfig: vi.fn(),
     editMcpConfig: vi.fn(),
     runPaletteNativeCommand: vi.fn(),
+    getState: vi.fn(),
   },
 }));
 vi.mock("../../src/store", () => ({
@@ -62,20 +70,83 @@ function snapshot(name = "docs"): McpConfigSnapshot {
 }
 beforeEach(() => {
   for (const mock of Object.values(fixture.host)) mock.mockReset();
-  fixture.state = { sessionId: "one", cwd: "/one", transportGeneration: 1 };
+  fixture.state = {
+    sessionId: "one",
+    cwd: "/one",
+    transportGeneration: 1,
+    runState: "idle",
+    readOnlyReason: null,
+  };
+  fixture.host.getState.mockImplementation(() => fixture.state);
   fixture.host.readMcpConfig.mockResolvedValue(snapshot());
   fixture.host.editMcpConfig.mockResolvedValue({
     saved: true,
     snapshot: snapshot("new-server"),
   });
 });
+async function savedPanel() {
+  const view = render(
+    <McpSettings active owner={{ sessionId: fixture.state.sessionId }} />,
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Edit user server docs" }),
+  );
+  fireEvent.submit(
+    screen.getByRole("button", { name: "Save configuration" }).closest("form")!,
+  );
+  await screen.findByText(/Saved to file/);
+  return view;
+}
+
+it("keeps reload unavailable while the selected session owns a running operation", async () => {
+  const view = await savedPanel();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Reload selected session…" }),
+  );
+  fixture.state.runState = "running";
+  view.rerender(
+    <McpSettings active owner={{ sessionId: fixture.state.sessionId }} />,
+  );
+  expect(
+    screen.getByRole("button", { name: "Reload selected session…" }),
+  ).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Reload Pi resources" }),
+  ).toBeDisabled();
+  expect(screen.getByText(/Wait for the current Pi operation/)).toBeVisible();
+  expect(fixture.host.runPaletteNativeCommand).not.toHaveBeenCalled();
+  expect(screen.queryByText(/Reload requested/)).toBeNull();
+});
+
+it("reports reload rejection locally instead of claiming it was requested", async () => {
+  await savedPanel();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Reload selected session…" }),
+  );
+  fixture.host.runPaletteNativeCommand.mockReturnValue(false);
+  fireEvent.click(screen.getByRole("button", { name: "Reload Pi resources" }));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Reload could not be started",
+  );
+  expect(screen.queryByText(/Reload requested/)).toBeNull();
+  fixture.host.runPaletteNativeCommand.mockReturnValue({ accepted: true });
+  fireEvent.click(screen.getByRole("button", { name: "Reload Pi resources" }));
+  expect(screen.getByText(/Reload requested/)).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
 it("withdraws reads from the previous session and saves from the previous Host connection", async () => {
   const read = deferred<McpConfigSnapshot>();
   fixture.host.readMcpConfig.mockReturnValueOnce(read.promise);
   const view = render(
     <McpSettings active owner={{ sessionId: fixture.state.sessionId }} />,
   );
-  fixture.state = { sessionId: "two", cwd: "/two", transportGeneration: 1 };
+  fixture.state = {
+    ...fixture.state,
+    sessionId: "two",
+    cwd: "/two",
+    transportGeneration: 1,
+  };
   view.rerender(
     <McpSettings active owner={{ sessionId: fixture.state.sessionId }} />,
   );
@@ -254,7 +325,7 @@ it("saves tool rules in displayed order and removes deleted rules", () => {
   expect(save).toHaveBeenLastCalledWith("user", "docs", { toolExposure: {} });
 });
 
-it("edits project policy overrides without introducing connection settings", async () => {
+it("focuses and edits project policy overrides without introducing connection settings", async () => {
   const config = snapshot();
   config.files[1]!.entries = [
     {
@@ -277,6 +348,7 @@ it("edits project policy overrides without introducing connection settings", asy
   fireEvent.click(
     await screen.findByRole("button", { name: "Edit project server docs" }),
   );
+  expect(screen.getByRole("combobox", { name: "Tool exposure" })).toHaveFocus();
   expect(screen.queryByLabelText("Server URL")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Program")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Timeout (seconds)")).not.toBeInTheDocument();

@@ -133,7 +133,7 @@ export function HerdrSettings({
   return (
     <SettingField
       label="Herdr enhancement"
-      description="Let Pi use Herdr workspaces and tools. Applies after a Host restart."
+      description="Use Herdr workspaces and tools in Pi sessions. Takes effect after restarting the Host."
       status={statusNode}
     >
       <SettingsSwitch

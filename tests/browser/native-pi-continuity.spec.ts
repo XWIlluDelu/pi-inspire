@@ -2,6 +2,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { createInspireServer } from "../../server/app.js";
+import { AttachmentStore } from "../../server/attachments.js";
 import { GitInspectionService } from "../../server/git-inspection.js";
 import { piInstallation } from "../../server/pi-runtime.js";
 import { PreferencesStore } from "../../server/preferences.js";
@@ -21,12 +22,18 @@ test("continue the same native Pi in the browser without closing its terminal", 
   );
   test.setTimeout(60_000);
   const f = await nativeHerdrFixture({ streamDelayMs: 3000 });
-  const createApplication = () =>
-    createInspireServer({
+  const createApplication = () => {
+    // A new Host owns new stores; application.close() retired the old lease.
+    const attachments = new AttachmentStore(
+      join(f.root, "browser-attachments"),
+      null,
+      { sweepIntervalMs: 0 },
+    );
+    return createInspireServer({
       token: browserTestToken,
-      runtime: f.makeRuntime(),
+      runtime: f.makeRuntime(attachments),
       catalog: f.catalog,
-      attachments: f.store,
+      attachments,
       preferences: new PreferencesStore(join(f.root, "preferences.json")),
       resources: new ResourceStore(),
       git: new GitInspectionService(),
@@ -34,6 +41,7 @@ test("continue the same native Pi in the browser without closing its terminal", 
       version: "0.0.0-native-test",
       piVersion: piInstallation.version,
     });
+  };
   let application = createApplication();
   let afterRestart = false;
   let recoveredOutline = false;

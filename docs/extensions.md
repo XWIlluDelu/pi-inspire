@@ -229,9 +229,9 @@ For interactions that need a dedicated control, modify the relevant source owner
 | Dialog focus | `src/use-modal-focus.ts` |
 | Styling | Tokens in `src/styles/foundation.css` and the relevant `src/styles/*.css` component sheet |
 
-A pinned command button should reuse command dispatch, for example `store.sendPrompt("/goal")`, and be disabled when that command is absent. Put occasional or argument-taking actions in the palette/Composer instead of adding permanent controls.
+A pinned command button should use `store.sendPreparedCommand("/goal")`, which dispatches independently of the Composer's draft, attachments, and project-file references. Disable the button when the command is absent. Put occasional or argument-taking actions in the palette/Composer instead of adding permanent controls.
 
-Reuse existing icons, tokens, modal focus, and responsive drawers. Keep runtime widgets near the Composer, tool results in their cards, and project details in Resources. Settings is for persisted preferences. Match neighboring controls' accessible labels and keyboard behavior, retain 44px coarse-pointer targets, and respect reduced motion.
+Reuse existing icons, tokens, modal focus, and responsive drawers. Keep runtime widgets near the Composer, tool results in their cards, and project details in Resources. Settings is for persisted preferences. Follow neighboring controls' accessible labels, keyboard behavior, and pointer/touch target sizes, and respect reduced motion.
 
 Inspire has no runtime React plugin API. Source customization needs a checkout and a rebuilt frontend; the npm package contains the built application.
 
@@ -239,7 +239,7 @@ Inspire has no runtime React plugin API. Source customization needs a checkout a
 
 | Changed content | Apply it |
 | --- | --- |
-| Pi extension, skill, prompt, or context file | Run `/reload` in the idle session. It replaces that worker and resets its in-memory extension state. |
+| Pi extension, skill, prompt, or context file | Run `/reload` in an idle Inspire-owned session to replace its worker and reset its in-memory extension state. For a connected external Pi, reload in its terminal. |
 | Selected tool-presentation JSON | Save and refresh the browser; authenticated bootstrap revalidates it. |
 | Host environment or configuration-file path | Restart the Host. |
 | React, CSS, or contract source | Rebuild. In a checkout, `./inspire restart` detects changed browser inputs and rebuilds before restarting. |

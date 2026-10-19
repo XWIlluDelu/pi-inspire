@@ -1,6 +1,6 @@
-import { hostRequest } from "./support/host-request";
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
+import { hostRequest } from "./support/host-request";
 import { openMockSession, pairedPage } from "./support/navigation";
 
 test("HTML interaction isolates real resources and revokes execution across desktop/drawer transitions", async ({
@@ -38,10 +38,31 @@ test("HTML interaction isolates real resources and revokes execution across desk
   await expect(frame.locator("#status")).toHaveText("Static preview");
   await expect(iframe).toHaveAttribute("sandbox", "");
   expect(externalRequests).toEqual([]);
-
+  let releaseGrant!: () => void;
+  const grantGate = new Promise<void>((resolve) => {
+    releaseGrant = resolve;
+  });
+  await page.route("**/api/resources/*/interactive", async (route) => {
+    const response = await route.fetch();
+    await grantGate;
+    await route.fulfill({ response });
+  });
   await pane
     .getByRole("button", { name: "Enable interaction", exact: true })
     .click();
+  const stop = pane.getByRole("button", {
+    name: "Stop interaction",
+    exact: true,
+  });
+  try {
+    await expect(stop).toHaveAttribute("aria-busy", "true");
+    await expect(stop).toHaveAttribute("aria-pressed", "false");
+    await expect(stop.locator(".pi-loading")).toBeVisible();
+  } finally {
+    releaseGrant();
+  }
+  await expect(stop).toHaveAttribute("aria-busy", "false");
+  await page.unroute("**/api/resources/*/interactive");
   await expect(iframe).toHaveAttribute("sandbox", "allow-scripts");
   await expect(frame.locator("#status")).toHaveText("Scripts running");
   await expect(frame.locator("body")).toHaveAttribute(

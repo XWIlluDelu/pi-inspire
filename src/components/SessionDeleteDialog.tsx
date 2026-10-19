@@ -16,7 +16,9 @@ export function SessionDeleteDialog({
       deletingSessionId: state.deletingSessionId,
       error: state.sessionDeleteError,
       reviewRequired: state.sessionDeleteReviewRequired,
-      openInPi: state.externalSessionActivities[session.id] !== undefined,
+      openInPi:
+        state.sessionStatuses[session.id]?.external === true ||
+        state.externalSessionActivities[session.id] !== undefined,
     }),
     shallowEqual,
   );

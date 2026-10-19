@@ -6,8 +6,17 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { App } from "../../src/App";
 import { ExtensionStatus } from "../../src/components/ExtensionDisplays";
 import { ExtensionUiDialog } from "../../src/components/ExtensionUiDialog";
@@ -91,11 +100,16 @@ async function openPalette() {
 }
 
 describe("botanical palette controls", () => {
+  beforeAll(async () => {
+    // These cases test palette persistence, not a cold source-module import.
+    await import("../../src/components/Settings");
+  });
+
   it("offers botanical and classic swatches and persists each selection without changing theme", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
-    // Swatch behavior starts after the lazy Settings module has loaded.
-    await screen.findByRole("button", { name: "Wisteria" }, { timeout: 5000 });
+    const settings = await screen.findByRole("dialog", { name: "Settings" });
+    await within(settings).findByRole("button", { name: "Wisteria" });
     const theme = store.getState().prefs.theme;
     for (const [palette, label] of [
       ["wisteria", "Wisteria"],
@@ -105,9 +119,7 @@ describe("botanical palette controls", () => {
       ["classic-jade", "Jade"],
       ["classic-amber", "Amber"],
     ]) {
-      const choice = await screen.findByRole("button", {
-        name: label,
-      });
+      const choice = within(settings).getByRole("button", { name: label });
       fireEvent.click(choice);
       await waitFor(() =>
         expect(choice).toHaveAttribute("aria-pressed", "true"),
@@ -189,25 +201,31 @@ describe("overlay ownership", () => {
     }
   });
 
-  it("emphasizes visible hint matches without changing title or query-clear behavior", async () => {
+  it("emphasizes visible hint matches and preserves alias search when redundant hints are omitted", async () => {
     render(<App />);
     await openPalette();
     const search = screen.getByRole("combobox", { name: "Filter commands" });
     fireEvent.change(search, { target: { value: "shell" } });
-    const row = screen.getByRole("option", {
+    const terminalRow = screen.getByRole("option", {
       name: /^Open Terminal/,
+    });
+    expect(terminalRow.querySelector(".palette__hint-inline")).toBeNull();
+
+    fireEvent.change(search, { target: { value: "project" } });
+    const row = screen.getByRole("option", {
+      name: /^\/trust/,
     });
     expect(
       row.querySelector(".palette__hint-inline .search-match"),
-    ).toHaveTextContent("shell");
+    ).toHaveTextContent("project");
     expect(row.querySelector(".palette__title .search-match")).toBeNull();
-    fireEvent.change(search, { target: { value: "terminal shell" } });
+    fireEvent.change(search, { target: { value: "trust project" } });
     expect(
       row.querySelector(".palette__title .search-match"),
-    ).toHaveTextContent("Terminal");
+    ).toHaveTextContent("trust");
     expect(
       row.querySelector(".palette__hint-inline .search-match"),
-    ).toHaveTextContent("shell");
+    ).toHaveTextContent("project");
     fireEvent.change(search, { target: { value: "" } });
     expect(
       document.querySelector(".palette__hint-inline .search-match"),

@@ -2,17 +2,17 @@
 purpose: One composer owns editing, drafts, prompt artifacts, input handoff, Pending recovery, and command feedback.
 covers:
   - server/{attachments,attachment-references,composer-history,runtime-composer-artifacts,runtime-pending*,project-files,image-content,assistant-text}.ts
-  - shared/{contracts,pending-preview,composer-artifact-references,resource-references,image-dimension-notes}.ts
-  - src/{App,api,store,app-state,clipboard-files,composer-*,session-drafts,model-options}.ts*
+  - shared/{contracts,pending-preview,composer-artifact-references,resource-references,image-dimension-notes,attachment-context}.ts
+  - src/{App,api,store,app-state,clipboard-files,keyboard-input,composer-*,session-drafts,model-options}.ts*
   - src/controllers/composer-controller.ts
   - src/components/{ActivityBar,AttachmentList,Composer,ComposerInput,ImagePreview,ImageLightbox,ImageGallery,ModelSelector,ProjectFiles,Transcript,transcript-rows,Welcome,ExportDialog}.tsx
   - src/{image-viewport,use-image-viewport,use-image-history}.ts
   - src/styles/*.css
-  - tests/server/{attachments,attachment-retention,composer-history*,runtime-composer-artifacts,runtime-pending*,runtime-compaction,app}.test.ts
+  - tests/server/{attachments,attachment-file-names,attachment-retention,composer-history*,runtime-composer-artifacts,runtime-pending*,runtime-compaction,app}.test.ts
   - tests/shared/{composer-artifact-references,pending-contracts}.test.ts
   - tests/web/{composer*,session-drafts,native-commands,transcript-actions,welcome*,model-selector,model-store}.test.ts*
   - tests/web/{image-viewport,image-gallery,attachments}.test.ts*
-  - tests/browser/{composer,usage-facts,model-selection,project-file-picker,pending-input,image-preview,image-interactions}.spec.ts
+  - tests/browser/{composer,file-attachments,usage-facts,model-selection,project-file-picker,pending-input,image-preview,image-interactions}.spec.ts
 ---
 
 # Conversation composer
@@ -71,7 +71,9 @@ ownership from completion, modals or Stop.
 The active editor traverses Pi-style newest-first history from the selected branch's retained user
 messages, including pre-compaction messages and reopened sessions. Image-prompt recall omits Pi's
 appended dimension/coordinate-mapping notes from editable text, while retaining all image artifact
-coordinates and the original stored source. The shared reading projection is specified in [[conversation]].
+coordinates and the original stored source. Mixed image/file prompts unwrap that suffix before
+recovering file references, so the editable text never gains the model-facing file-context list.
+The shared reading projection is specified in [[conversation]].
 Trim entries, suppress only consecutive duplicates and retain at most 100 prompts; accepted prompts join immediately. Unmodified
 Up first performs ordinary wrapped-line navigation, then moves to logical-line start before recalling
 older entries. Down navigates to the last visual line, recalls newer entries and finally restores the
@@ -117,9 +119,10 @@ and list markers cannot manufacture instructions.
 Inline `@` completion shares the picker/Files file-type icons, parent-only directory captions and
 literal-term emphasis. Full relative paths remain in titles and accessible option labels; root files
 omit directory captions. Its existing desktop two-column/narrow stacked layout and virtualized
-candidate handling are retained. Slash command titles keep the command name in the primary color
-and render native argument hints at weight 400 in the muted color; descriptions and model/thinking
-argument candidates are unchanged.
+candidate handling are retained. A wrapping filename keeps its file-type icon centered on the first
+line; same-row directory captions share that line's text baseline. Slash command titles keep the
+command name in the primary color and render native argument hints at weight 400 in the muted color;
+descriptions and model/thinking argument candidates are unchanged.
 
 `@` insertion replaces only the active token, preserving sentence position and repeated references.
 Paths with spaces are quoted; unfinished and quoted queries accept spaces. Committed references stay
@@ -210,7 +213,14 @@ thumbnails without embedding duplicate bytes in browser state.
 | Serialized Pi command / stdout envelope | 32 MiB / command bound plus 1 MiB |
 
 The browser refuses excess staging before upload. Multipart storage counts streamed raw bytes in
-private `0600` files and aborts excess batches. Resolution rechecks totals and encodes images
+private `0600` files and aborts excess batches. Multipart filename parameters use UTF-8 so ordinary
+browser uploads retain international names. Readable sanitized names remain independent of physical
+cache components, which fit 255 UTF-8 bytes and the decomposed UTF-16 filename budget and do not end
+in Windows-trimmed dots/spaces. Truncation preserves complete code points and ordinary short extensions.
+New versioned ownership records validate both names; legacy records keep their original naming/path
+rules without renaming payloads or rewriting session references.
+
+Resolution rechecks totals and encodes images
 sequentially within the Base64 budget; RPC rejects excess commands before stdin. Upload observation
 covers headers/body for 120 seconds plus allowance at 128 KiB/s. Transport replacement cancels
 observation; withdrawing the batch's last attachment cancels it. Timeout marks remaining chips failed
@@ -251,7 +261,9 @@ keyboard focus, deadlines, cancellation, and touch targets are unchanged.
 Submission synchronously hands the exact draft/artifacts to an independent operation, including the
 first Welcome message, leaving the editor ready for the next input. Delayed receipts cannot clear
 newer drafts. Definitive failure or unknown acceptance restores input into an empty editor; otherwise
-Restore retains it without replacing newer work. Artifacts release only on confirmed acceptance,
+Restore retains it without replacing newer work. Its compact quiet action uses the shared neutral
+unavailable state while text or artifacts occupy the editor, without shrinking its 32px target.
+Artifacts release only on confirmed acceptance,
 explicit Clear or withdrawal after restoration. Known acceptance remains non-retryable even if later
 projection reconciliation conflicts; [[session-persistence]] owns the resulting writer fence.
 

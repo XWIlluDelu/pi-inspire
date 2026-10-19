@@ -16,6 +16,175 @@ const current = () => {
   };
 };
 
+test("compact code actions keep square centered icons before and after copying", async ({
+  page,
+  context,
+}) => {
+  const emit = await openMockEventSession(
+    page,
+    "Compact code action geometry",
+    configuration,
+    {},
+  );
+  const code = "console.log('Ready');";
+  emit({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: ["```js", code, "```"].join("\n"),
+      timestamp: 1,
+    },
+  });
+  const actions = page.locator(".code-block__actions button");
+  await expect(actions).toHaveCount(2);
+  const checkIcons = async () => {
+    const geometry = await actions.evaluateAll((buttons) =>
+      buttons.map((button) => {
+        const box = button.getBoundingClientRect();
+        const icon = button.querySelector("svg")!.getBoundingClientRect();
+        return {
+          width: box.width,
+          height: box.height,
+          iconWidth: icon.width,
+          iconHeight: icon.height,
+          x: icon.x + icon.width / 2 - box.x - box.width / 2,
+          y: icon.y + icon.height / 2 - box.y - box.height / 2,
+        };
+      }),
+    );
+    for (const item of geometry) {
+      expect(item.width).toBe(24);
+      expect(item.height).toBe(24);
+      expect(item.iconWidth).toBe(13);
+      expect(item.iconHeight).toBe(13);
+      expect(Math.abs(item.x)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(item.y)).toBeLessThanOrEqual(0.5);
+    }
+  };
+  for (const width of [1280, 820, 390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate(
+        (theme) => (document.documentElement.dataset.theme = theme),
+        theme,
+      );
+      await checkIcons();
+    }
+  }
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.locator(".code-block__copy").click();
+  await expect(
+    page.getByRole("button", { name: "Copied", exact: true }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(code);
+  await checkIcons();
+});
+
+test("composition keys do not navigate transcript matches or dismiss search", async ({
+  page,
+}) => {
+  const emit = await openMockEventSession(
+    page,
+    "Composition-owned search",
+    configuration,
+    {},
+  );
+  emit({
+    type: "message_end",
+    message: { role: "user", content: "测量一，测量二。", timestamp: 1 },
+  });
+  const input = page.getByRole("searchbox", {
+    name: "Search conversation",
+    exact: true,
+  });
+  const result = page.getByLabel("Transcript search matches");
+  await input.fill("测量");
+  await expect(result).toHaveText("2 matches");
+  await page.getByRole("button", { name: "Next transcript match" }).click();
+  await expect(result).toHaveText("1 of 2");
+  await input.focus();
+  for (const ime of [
+    { isComposing: true },
+    { isComposing: false, keyCode: 229 },
+  ]) {
+    for (const key of ["Enter", "Escape"]) {
+      expect(
+        await input.evaluate(
+          (el, init) =>
+            el.dispatchEvent(
+              new KeyboardEvent("keydown", {
+                ...init,
+                bubbles: true,
+                cancelable: true,
+              }),
+            ),
+          { key, ...ime },
+        ),
+      ).toBe(true);
+      await expect(input).toBeFocused();
+      await expect(result).toHaveText("1 of 2");
+      await expect(input).toHaveValue("测量");
+    }
+  }
+  await input.press("Enter");
+  await expect(result).toHaveText("2 of 2");
+  await input.press("Escape");
+  await expect(input).not.toBeFocused();
+  await expect(input).toHaveValue("测量");
+});
+
+test("search counts only visible shell and checkpoint text", async ({
+  page,
+}) => {
+  const emit = await openMockEventSession(
+    page,
+    "Visible search text",
+    configuration,
+    {},
+  );
+  emit(
+    {
+      type: "message_end",
+      message: {
+        role: "bashExecution",
+        command: "printf status",
+        output: "\u001b[31mVisible status\u001b[0m",
+        timestamp: 1,
+      },
+    },
+    {
+      type: "message_end",
+      message: {
+        role: "compactionSummary",
+        summary: "Magic Context compacted: retained decisions",
+        timestamp: 2,
+      },
+    },
+  );
+  const search = page.getByRole("search", {
+    name: "Search settled transcript",
+  });
+  const input = search.getByRole("searchbox", { name: "Search conversation" });
+  for (const query of ["31m", "Magic Context compacted"]) {
+    await input.fill(query);
+    await expect(search).toContainText("No matches");
+  }
+  for (const query of ["Visible status", "retained decisions"]) {
+    await input.fill(query);
+    await expect(search.getByLabel("Transcript search matches")).toHaveText(
+      "1 match",
+    );
+    await search.getByRole("button", { name: "Next transcript match" }).click();
+    await expect(search).toContainText("1 of 1");
+    await expect
+      .poll(() => page.evaluate(current))
+      .toMatchObject({ text: query });
+  }
+  await expect(
+    page.getByText("retained decisions", { exact: true }),
+  ).toBeVisible();
+});
+
 test("literal highlights follow scope, occurrences and disclosure without changing copy", async ({
   page,
   context,
@@ -253,6 +422,20 @@ test.describe("touch reading controls", () => {
         Math.min(left.width, left.height, right.width, right.height),
       ).toBeGreaterThanOrEqual(36);
       expect(right.x - left.x - left.width).toBeGreaterThanOrEqual(8);
+      for (const action of await page
+        .locator(".code-block__actions button")
+        .all()) {
+        const icon = (await action.locator("svg").boundingBox())!;
+        const button = (await action.boundingBox())!;
+        expect(icon.width).toBe(13);
+        expect(icon.height).toBe(13);
+        expect(
+          Math.abs(icon.x + icon.width / 2 - button.x - button.width / 2),
+        ).toBeLessThanOrEqual(0.5);
+        expect(
+          Math.abs(icon.y + icon.height / 2 - button.y - button.height / 2),
+        ).toBeLessThanOrEqual(0.5);
+      }
     }
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await copy.tap();

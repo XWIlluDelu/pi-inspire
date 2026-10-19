@@ -350,6 +350,7 @@ export function PromptMap({
       style={
         {
           "--prompt-map-list-height": `${Math.max(1, Math.min(total, 12)) * ROW_HEIGHT}px`,
+          "--prompt-map-ordinal-chars": String(Math.max(1, total)).length + 1,
         } as CSSProperties
       }
       tabIndex={-1}

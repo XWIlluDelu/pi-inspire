@@ -90,7 +90,9 @@ export function ExportDialog({
               data-modal-autofocus={format === "html" || undefined}
               onChange={() => setFormat("html")}
             />
-            <span>HTML</span> <small>Whole session</small>
+            <span className="export-dialog__format-copy">
+              <span>HTML</span> <small>Whole session</small>
+            </span>
           </label>
           <label>
             <input
@@ -102,7 +104,9 @@ export function ExportDialog({
               data-modal-autofocus={format === "jsonl" || undefined}
               onChange={() => setFormat("jsonl")}
             />
-            <span>JSONL</span> <small>Current branch</small>
+            <span className="export-dialog__format-copy">
+              <span>JSONL</span> <small>Current branch</small>
+            </span>
           </label>
         </fieldset>
         {error !== null ? (

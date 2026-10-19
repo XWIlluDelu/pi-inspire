@@ -555,6 +555,9 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
               }
               onClick={() => void toggleInteraction()}
             >
+              {currentInteraction?.status === "loading" ? (
+                <PiLoader size={13} aria-hidden />
+              ) : null}
               {currentInteraction && currentInteraction.status !== "error"
                 ? "Stop interaction"
                 : "Enable interaction"}

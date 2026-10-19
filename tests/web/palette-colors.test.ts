@@ -60,6 +60,7 @@ describe("activity identities", () => {
         // Identity belongs to the theme family, not necessarily its text-ink shade.
         expect(value["--activity-tool"]).not.toBe(value["--activity-error"]);
         expect(value["--activity-think"]).not.toBe(value["--activity-tool"]);
+        expect(value["--activity-event"]).toBe(value["--activity-tool"]);
         expect(value["--think"]).toBe(value["--activity-think"]);
         for (const role of ["--activity-tool", "--activity-think"])
           expect(

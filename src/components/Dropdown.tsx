@@ -40,6 +40,7 @@ export function Dropdown({
   options,
   onChange,
   disabled = false,
+  autoFocus = false,
   direction = "down",
   display,
   className = "",
@@ -52,6 +53,8 @@ export function Dropdown({
   options: DropdownOption[];
   onChange: (value: string) => void;
   disabled?: boolean;
+  /** Focus the trigger on mount without opening the list. */
+  autoFocus?: boolean;
   /** Preferred direction; the menu flips when the viewport offers more room. */
   direction?: "up" | "down";
   /** Trigger text when it should differ from the selected option's label. */
@@ -81,6 +84,7 @@ export function Dropdown({
     return {
       context: trigger,
       anchor,
+      positioningRoot: trigger.closest<HTMLElement>(".overlay"),
       preferredWidth: described ? 320 : Math.max(148, anchor.width),
       observe: [trigger],
     };
@@ -207,6 +211,7 @@ export function Dropdown({
           open && keyboardActive ? `${id}-option-${active}` : undefined
         }
         disabled={disabled}
+        autoFocus={autoFocus}
         title={title ?? label}
         onClick={() => (open ? setOpen(false) : openMenu())}
         onKeyDown={onKeyDown}

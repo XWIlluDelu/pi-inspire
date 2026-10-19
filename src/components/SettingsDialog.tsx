@@ -69,17 +69,23 @@ export function SettingsLoading({ onRetry }: { onRetry?: () => void }) {
 
 /** Keep the animated shell and focus owner mounted across deferred body states. */
 export function SettingsDialog({
+  suspended = false,
   onClose,
   children,
 }: {
+  suspended?: boolean;
   onClose: () => void;
   children: ReactNode;
 }) {
+  // Retain the lower modal owner and its outside opener while a native
+  // question hides this shell and temporarily owns the top of the focus stack.
   const ref = useModalFocus<HTMLDivElement>(true, "settings", onClose);
   return (
     <div
       className="overlay settings-overlay"
       role="presentation"
+      style={suspended ? { display: "none" } : undefined}
+      aria-hidden={suspended || undefined}
       onClick={onClose}
     >
       <div

@@ -9,6 +9,9 @@ covers:
   - shared/contracts.ts
   - shared/user-turns.ts
   - shared/image-dimension-notes.ts
+  - shared/attachment-context.ts
+  - tests/shared/attachment-context.test.ts
+  - tests/browser/file-attachments.spec.ts
   - src/components/RichText*.tsx
   - src/rich-text-*.ts
   - src/remark-math-boundaries.ts
@@ -117,6 +120,16 @@ custom messages remain independent readable boundaries in this contract.
   non-suffix text and image omission diagnostics are not filtered. Stored messages, model context
   and complete-source Copy remain unchanged; [[composer]] applies the same omission to recall.
 
+  The exact trailing file-reference context added for Pi is presented as compact filename tags,
+  not a prose path list. Image thumbnails and filename tags are grouped before the user’s text,
+  with consistent spacing between attachment groups and prose and no extra gap on attachment-only turns.
+  Each tag retains its full path in a hover title but grants no file access.
+  Default private-upload identifiers are omitted from the label; ordinary project filenames remain
+  intact. File-only turns stay visible, file names participate in view-local search, and Prompt Map
+  includes file references in attachment counts. Mixed image/file prompts remove the image hint
+  before splitting file context. Malformed blocks and quoted examples remain ordinary message text;
+  stored/model text and complete-source Copy remain unchanged.
+
 - Project references and artifact handoff follow [[composer]]; preview authorization follows
   [[resource-preview]]. Transcript paths are presentation, not filesystem authority.
 
@@ -134,6 +147,8 @@ custom messages remain independent readable boundaries in this contract.
   message or local horizontal reader. Virtual rows and deferred rich text acquire highlights when
   mounted; clearing search or leaving the transcript removes them. Source-only Markdown matches
   still navigate to their row, without assigning an ambiguous source hit to unrelated visible text.
+  Shell output and context summaries use the same display normalization for search and rendering:
+  terminal control sequences and removed summary prefixes do not add invisible matches.
 
   Desktop search floats at the top-right of the reading measure. Its opaque surface fill is subtly
   distinct from the reading stage, with a quiet boundary and no elevation at rest. Hover strengthens
@@ -164,7 +179,12 @@ custom messages remain independent readable boundaries in this contract.
   Up to 12 prompts map one-to-one; beyond that, the marks are a stable consecutive window that moves
   only when sequential reading exits it and recenters after a distant seek. Hover or keyboard focus
   expands the bounded, independently scrollable virtual prompt list and its fixed non-wrapping
-  Previous and Next controls; leaving the surface collapses it automatically, while touch uses tap
+  Previous and Next controls. Ordinals and attachment counts use the shared small monospace scale
+  and readable secondary ink, without a second opacity reduction; the current prompt retains its
+  accent emphasis. The ordinal column fits the actual total's digit count and aligns right, so
+  one- and multi-digit labels share a text start. Metadata shares the prompt's first-line baseline
+  without enlarging its row. Keyboard focus contours stay inside the clipped scrolling rows.
+  Leaving the surface collapses it automatically, while touch uses tap
   and outside dismissal. Native disabled semantics and subdued token colors distinguish unavailable
   directions.
 

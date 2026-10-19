@@ -4,10 +4,11 @@ covers:
   - src/App.tsx
   - src/store.ts
   - src/controllers/{git,workspace}-controller.ts
-  - src/components/{AppTopbar,SessionActionsMenu,ExtensionDisplays,ContextPane,ContextPaneShell,ContextSplitBody,FilesPane,ChangesPane,WorkspaceBrowser,BranchTree,PaneResizeHandle}.tsx
+  - src/components/{AppTopbar,SessionActionsMenu,Composer,ExtensionDisplays,ContextPane,ContextPaneShell,ContextSplitBody,FilesPane,ChangesPane,WorkspaceBrowser,BranchTree,PaneResizeHandle}.tsx
   - src/{git-presentation,use-modal-focus}.ts
   - src/styles/*.css
   - tests/web/{app,workspace-controller,pane-resize,branch-tree,modal-focus}.test.ts*
+  - tests/browser/composer.spec.ts
 ---
 
 # Workspace layout and contextual panes
@@ -58,7 +59,9 @@ independent project shells in [[terminal]].
 
   Returning to desktop closes transient drawer state without overwriting the desktop collapsed
   preference. Switching the contextual pane between desktop and drawer layouts keeps its reader or
-  terminal mounted, preserving local interaction state.
+  terminal mounted, preserving local interaction state. A dialog opened above either pane keeps
+  focus and Escape ownership when a viewport change turns the underlying pane into a drawer;
+  the lower drawer cannot trap or make that dialog inert.
 
 - Both side regions' widths are adjustable by dragging their boundary with the conversation
   using focusable handles with pointer and keyboard control, persist across reloads, and reset to
@@ -74,6 +77,12 @@ independent project shells in [[terminal]].
   with 8px resize hit bands. Hover, keyboard focus and active dragging reveal a straight 2px
   divider with round caps and inset ends, not an outline wrapping the adjacent pane's corners.
   The session header shares the reading surface without a separate bottom seam.
+
+  Composer's model and thinking selectors follow the reading pane's actual width, not only the
+  browser viewport. When side panes narrow the desktop conversation, selectors use the existing
+  compact upper row; file/attachment actions, usage, and separate Stop/Send controls stay below in
+  their existing order. Normal-width desktop panes retain the single-row toolbar and narrow-screen
+  startup composition keeps its existing responsive arrangement.
 
 ## Session identity and Git observation
 
@@ -99,7 +108,9 @@ independent project shells in [[terminal]].
   command-owned progress copy.
 
   Session title, project, Git and extension status form one left-aligned cluster with consistent
-  spacing; the project and Git identifiers form a tighter workspace subgroup beside the title,
+  spacing and a shared text baseline across the sans title and mono metadata/status; icons
+  and global action buttons remain centered independently. The project and Git identifiers form
+  a tighter workspace subgroup beside the title,
   and global controls remain on the right. Workspace identifiers have no resting background or frame;
   hover strengthens their text and keyboard focus retains its outline. The text-only title opens
   the session menu on both desktop and phones, with no chevron or separate More control.

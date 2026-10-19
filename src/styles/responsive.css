@@ -207,7 +207,7 @@ body.srail-dragging {
   .settings-overlay::before {
     content: "";
     position: fixed;
-    inset: var(--window-titlebar-height) 0 0;
+    inset: 0;
     z-index: -1;
     pointer-events: none;
     background: var(--bg-overlay);
@@ -278,10 +278,6 @@ body.srail-dragging {
     padding: calc(var(--space-2) + 44px + var(--space-3))
       max(var(--space-4), var(--safe-right)) var(--space-6)
       max(var(--space-4), var(--safe-left));
-  }
-
-  .transcript-wrap--earlier-branch .transcript {
-    padding-top: calc(var(--space-16) + 84px);
   }
 
   .transcript-search {
@@ -586,10 +582,6 @@ body.srail-dragging {
       max(var(--space-3), var(--safe-right));
   }
 
-  .transcript-wrap--earlier-branch .transcript {
-    padding-top: calc(var(--space-16) + 130px);
-  }
-
   .transcript-search > button {
     flex: 0 0 36px;
     width: 36px;
@@ -717,10 +709,6 @@ body.srail-dragging {
     transform: scale(0.99);
   }
 
-  .nav__controls {
-    padding-bottom: var(--space-2);
-  }
-
   .nav__search input {
     height: 34px;
     font-size: var(--text-base);
@@ -779,6 +767,7 @@ body.srail-dragging {
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     scroll-snap-type: x proximity;
+    scroll-padding-inline: 16px;
     mask-image: linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent);
     -webkit-mask-image: linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent);
   }
@@ -788,6 +777,7 @@ body.srail-dragging {
   }
 
   .settings__nav-list {
+    min-width: max-content;
     flex-direction: row;
     gap: 2px;
     flex: 1 1 auto;
@@ -925,6 +915,29 @@ body.srail-dragging {
   .composer__meta .model-picker {
     flex: 0 1 auto;
     max-width: none;
+  }
+}
+
+/* Desktop side panes can make the editor narrower than the phone layout.
+   Reuse its selector row without splitting the task actions across lines. */
+@media (min-width: 901px) {
+  @container reading-stage (max-width: 440px) {
+    .composer__meta {
+      flex-wrap: wrap;
+    }
+
+    .composer__selectors {
+      display: flex;
+      flex: 1 0 100%;
+      align-items: center;
+      gap: var(--space-2);
+      min-width: 0;
+    }
+
+    .composer__meta .model-picker {
+      flex: 0 1 auto;
+      max-width: none;
+    }
   }
 }
 

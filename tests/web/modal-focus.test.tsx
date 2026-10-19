@@ -114,6 +114,59 @@ describe("modal focus ownership", () => {
     opener.remove();
   });
 
+  it("keeps a dialog above a responsive drawer that becomes modal later", async () => {
+    function ResponsiveLayers() {
+      const [drawerOpen, setDrawerOpen] = useState(false);
+      const [dialogOpen, setDialogOpen] = useState(true);
+      const drawer = useModalFocus<HTMLDivElement>(
+        drawerOpen,
+        undefined,
+        () => setDrawerOpen(false),
+        "drawer",
+      );
+      const dialog = useModalFocus<HTMLDivElement>(dialogOpen, undefined, () =>
+        setDialogOpen(false),
+      );
+      return (
+        <>
+          {drawerOpen ? (
+            <div
+              ref={drawer}
+              role="dialog"
+              aria-label="Resources"
+              tabIndex={-1}
+            >
+              <button type="button">Resource action</button>
+            </div>
+          ) : null}
+          {dialogOpen ? (
+            <div ref={dialog} role="dialog" aria-label="Settings" tabIndex={-1}>
+              <button type="button" onClick={() => setDrawerOpen(!drawerOpen)}>
+                Resize
+              </button>
+              <button type="button">Preference</button>
+            </div>
+          ) : null}
+        </>
+      );
+    }
+    render(<ResponsiveLayers />);
+    const resize = screen.getByRole("button", { name: "Resize" });
+    resize.focus();
+    fireEvent.click(resize);
+    expect(document.activeElement).toBe(resize);
+    fireEvent.click(resize);
+    await Promise.resolve();
+    expect(document.activeElement).toBe(resize);
+    fireEvent.click(resize);
+    fireEvent.keyDown(resize, { key: "Escape" });
+    await Promise.resolve();
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Resources" })).toContainElement(
+      document.activeElement as HTMLElement,
+    );
+  });
+
   it("restores the control that opened a top modal", async () => {
     function NestedDialogs() {
       const [outerOpen, setOuterOpen] = useState(false);

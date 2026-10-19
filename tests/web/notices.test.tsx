@@ -281,6 +281,20 @@ describe("right-corner notices", () => {
       ),
     );
 
+    fireEvent.click(screen.getByRole("link", { name: "View updates" }));
+    const settings = await screen.findByRole("dialog", { name: "Settings" });
+    fireEvent.click(
+      await within(settings).findByRole("button", {
+        name: "Copy update details",
+      }),
+    );
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    expect(writeText).toHaveBeenLastCalledWith(
+      "INSΠRE 0.2.0 → 0.3.0\nhttps://github.com/XWIlluDelu/pi-inspire/releases/tag/v0.3.0",
+    );
+    fireEvent.click(
+      within(settings).getByRole("button", { name: "Close settings" }),
+    );
     fireEvent.click(
       screen.getByRole("button", { name: "Close updates for 24 hours" }),
     );

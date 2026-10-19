@@ -14,6 +14,7 @@ import {
   type VisibilityPreference,
 } from "../../shared/contracts";
 import { messageFallbackCorrelation } from "../../shared/message-identity";
+import { stripTerminalSequences } from "../ansi";
 import {
   type ActivityTool,
   asMessage,
@@ -22,7 +23,7 @@ import {
   messageKey,
   messageText,
   type ToolCallContent,
-  userMessageDisplayText,
+  userMessageSearchText,
 } from "../events";
 import type {
   ActivityMaterializationMode,
@@ -44,6 +45,7 @@ import {
 import {
   AssistantTurn,
   ContextCheckpointRow,
+  contextCheckpointContent,
   UnknownRoleRow,
   UnpairedToolResultRow,
   UserBubble,
@@ -495,7 +497,7 @@ export function useTranscriptRows({
           key,
           node: <BashExecution message={message} />,
           searchText: settled
-            ? `${message.command ?? ""}\n${message.output ?? ""}`
+            ? `${message.command ?? ""}\n${stripTerminalSequences(message.output ?? "")}`
             : "",
           searchScope: null,
           turnOrdinal: currentTurnOrdinal,
@@ -517,7 +519,7 @@ export function useTranscriptRows({
               projectionKey={projectionViewKey}
             />
           ),
-          searchText: settled ? userMessageDisplayText(message) : "",
+          searchText: settled ? userMessageSearchText(message) : "",
           searchScope: "user",
           turnOrdinal: currentTurnOrdinal,
           turnId: currentTurnId,
@@ -532,12 +534,11 @@ export function useTranscriptRows({
         message.role === "branchSummary"
       ) {
         flushActivity(true);
-        const summary =
-          typeof message.summary === "string" ? message.summary : "";
+        const { displaySummary } = contextCheckpointContent(message);
         built.push({
           key,
           node: <ContextCheckpointRow message={message} />,
-          searchText: settled ? summary : "",
+          searchText: settled ? displaySummary : "",
           searchScope: "model",
           turnOrdinal: currentTurnOrdinal,
           turnId: currentTurnId,

@@ -268,7 +268,75 @@ test("MCP edits retain stored secrets and scope, keep drafts across categories, 
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
-test("narrow MCP form adds a scoped stdio server with structured arguments and supports explicit removal", async ({
+for (const hasTouch of [false, true]) {
+  test.describe(hasTouch ? "touch MCP fields" : "mouse MCP fields", () => {
+    test.use({ hasTouch });
+    test("aligns form selects with text inputs without losing field focus feedback", async ({
+      page,
+    }) => {
+      const fixture = await scenario(page);
+      try {
+        await fixture.settings
+          .getByRole("button", { name: "Add server", exact: true })
+          .click();
+        const name = fixture.settings.getByLabel("Server name", {
+          exact: true,
+        });
+        const target = fixture.settings.getByRole("combobox", {
+          name: "Configuration target",
+          exact: true,
+        });
+        for (const width of [1280, 820, 390, 320]) {
+          await page.setViewportSize({ width, height: 900 });
+          await name.scrollIntoViewIfNeeded();
+          const [input, select] = await Promise.all([
+            name.boundingBox(),
+            target.boundingBox(),
+          ]);
+          expect(Math.abs(input!.width - select!.width)).toBeLessThanOrEqual(
+            0.5,
+          );
+          expect(Math.abs(input!.height - select!.height)).toBeLessThanOrEqual(
+            0.5,
+          );
+          expect(select!.height).toBeGreaterThanOrEqual(
+            hasTouch || width < 600 ? 44 : 36,
+          );
+          if (width >= 820)
+            expect(Math.abs(input!.y - select!.y)).toBeLessThanOrEqual(0.5);
+          await expect(
+            fixture.settings.getByRole("combobox", {
+              name: "Transport",
+              exact: true,
+            }),
+          ).toHaveClass(/dropdown__trigger/);
+          expect(
+            await target.evaluate(
+              (el) => el.closest(".dropdown--field") !== null,
+            ),
+          ).toBe(true);
+        }
+        await target.focus();
+        await target.press("ArrowDown");
+        await expect(
+          page.getByRole("listbox", {
+            name: "Configuration target",
+            exact: true,
+          }),
+        ).toBeVisible();
+        await expect(target).not.toHaveCSS("box-shadow", "none");
+        await target.press("Escape");
+        await expect(target).toHaveAttribute("aria-expanded", "false");
+        await expect(target).toBeFocused();
+        expect(fixture.errors).toEqual([]);
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    });
+  });
+}
+
+test("narrow MCP form adds and removes scoped stdio definitions and focuses inherited policy editing", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -370,9 +438,28 @@ test("narrow MCP form adds a scoped stdio server with structured arguments and s
     await settings
       .getByRole("button", { name: "Refresh MCP files", exact: true })
       .click();
+    const policyEdit = settings.getByRole("button", {
+      name: "Edit project server docs",
+    });
+    await expect(policyEdit).toBeEnabled();
+    await policyEdit.focus();
+    await policyEdit.press("Enter");
+    await expect(
+      settings.getByRole("combobox", { name: "Tool exposure", exact: true }),
+    ).toBeFocused();
+    await expect(page.getByRole("listbox")).toHaveCount(0);
     await settings
-      .getByRole("button", { name: "Edit project server docs" })
-      .click();
+      .getByRole("combobox", { name: "Tool exposure", exact: true })
+      .press("ArrowDown");
+    await expect(
+      page.getByRole("option", { name: "Hidden", exact: true }),
+    ).toBeVisible();
+    await settings
+      .getByRole("combobox", { name: "Tool exposure", exact: true })
+      .press("Escape");
+    await expect(
+      settings.getByRole("combobox", { name: "Tool exposure", exact: true }),
+    ).toBeFocused();
     await expect(
       settings.getByLabel("Server URL", { exact: true }),
     ).toHaveCount(0);

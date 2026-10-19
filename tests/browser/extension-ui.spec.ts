@@ -5,6 +5,7 @@ import type {
   ExtensionDisplay,
   SupportedExtensionUiRequest,
 } from "../../shared/contracts";
+import { modelSettingsScenario } from "./fixtures/model-settings";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { clipboardLines } from "./support/clipboard";
 import { hostRequest } from "./support/host-request";
@@ -175,6 +176,106 @@ async function openExample(page: Page, theme: "light" | "dark") {
   };
 }
 
+for (const touch of [false, true]) {
+  test.describe(`settings interrupted by extension UI · ${touch ? "touch" : "mouse"}`, () => {
+    test.use({ hasTouch: touch, deviceScaleFactor: touch ? 2 : 1 });
+    test("returns to its unsaved provider form after the native question owns focus", async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: touch ? 390 : 1280, height: 844 });
+      await modelSettingsScenario(page, touch ? "dark" : "light");
+      const fixture = await openExample(page, touch ? "dark" : "light");
+      const writes: string[] = [];
+      page.on("request", (request) => {
+        if (
+          request.url().includes("/api/model-settings") &&
+          request.method() === "PATCH"
+        )
+          writes.push(request.postData() ?? "");
+      });
+      await page.getByRole("button", { name: "Settings", exact: true }).click();
+      const settings = page.getByRole("dialog", {
+        name: "Settings",
+        exact: true,
+      });
+      await settings
+        .getByRole("button", { name: "Models", exact: true })
+        .click();
+      await settings
+        .getByRole("button", { name: "Add provider", exact: true })
+        .click();
+      const id = settings.getByLabel("Provider ID", { exact: true });
+      await id.fill("pending-provider");
+      await settings
+        .getByLabel("Base URL", { exact: true })
+        .fill("https://example.invalid/v1");
+      fixture.question({
+        id: "interrupt-settings",
+        method: "select",
+        title: "Review before continuing",
+        options: ["Continue", "Stop"],
+      });
+      const native = page.getByRole("dialog", {
+        name: "Review before continuing",
+        exact: true,
+      });
+      await expect(native).toBeVisible();
+      await expect(settings).toBeHidden();
+      await page.keyboard.press("Tab");
+      expect(
+        await native.evaluate((el) => el.contains(document.activeElement)),
+      ).toBe(true);
+      await native
+        .getByRole("option", { name: "Continue", exact: true })
+        .click();
+      await expect(native).toHaveCount(0);
+      await expect(settings).toBeVisible();
+      await expect(
+        settings.getByRole("button", { name: "Models", exact: true }),
+      ).toHaveAttribute("aria-current", "location");
+      await expect(id).toHaveValue("pending-provider");
+      await expect(
+        settings.getByLabel("Base URL", { exact: true }),
+      ).toHaveValue("https://example.invalid/v1");
+      await id.focus();
+      await expect(id).toBeFocused();
+      await settings
+        .getByRole("button", { name: "Reset preferences", exact: true })
+        .click();
+      const reset = page.getByRole("alertdialog", {
+        name: "Reset preferences?",
+        exact: true,
+      });
+      await expect(reset).toBeVisible();
+      fixture.question({
+        id: "interrupt-confirmation",
+        method: "select",
+        title: "Review before continuing",
+        options: ["Continue", "Stop"],
+      });
+      await expect(native).toBeVisible();
+      await expect(reset).toHaveCount(0);
+      await native
+        .getByRole("option", { name: "Continue", exact: true })
+        .click();
+      await expect(native).toHaveCount(0);
+      await expect(reset).toBeVisible();
+      await reset.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(id).toHaveValue("pending-provider");
+      expect(writes).toEqual([]);
+      await page.keyboard.press("Escape");
+      await expect(settings).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "Settings", exact: true }),
+      ).toBeFocused();
+      expect(fixture.responses).toMatchObject([
+        { id: "interrupt-settings", value: "Continue" },
+        { id: "interrupt-confirmation", value: "Continue" },
+      ]);
+    });
+  });
+}
+
 const choice = {
   method: "select" as const,
   title: "Choose a review",
@@ -218,9 +319,6 @@ for (const theme of ["light", "dark"] as const) {
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
-    await page.screenshot({
-      path: `output/playwright/feedback/dialog-${theme}.png`,
-    });
     refuse = false;
     await option.press("Enter");
     await expect(dialog).toHaveCount(0);
@@ -230,6 +328,95 @@ for (const theme of ["light", "dark"] as const) {
     });
   });
 }
+
+test("long extension question text stays inside dialog content edges", async ({
+  page,
+}) => {
+  const fixture = await openExample(page, "light");
+  const path =
+    "/workspace/calibration/reference_measurement_comparison_for_multichannel_calibration_and_residual_validation_2026_10_17_results.json";
+  const title = `Review ${path}`;
+  for (const method of ["input", "editor", "confirm", "select"] as const) {
+    const id = `wrapped-${method}`;
+    fixture.question({
+      id,
+      method,
+      title,
+      message: `Use ${path} as the reference for the next calibration step?`,
+      prefill: "Keep the original notes.\nCompare the residuals.",
+      options: ["Review the reference measurements", "检查原始测量与标定结果"],
+      expiresAt: Date.now() + 120_000,
+    });
+    const dialog = page.getByRole("dialog", { name: title, exact: true });
+    await expect(dialog).toBeVisible();
+    for (const width of [1280, 820, 390, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.evaluate(() => document.fonts.ready);
+      const geometry = await dialog.evaluate((root) => {
+        const bounds = root.getBoundingClientRect(),
+          style = getComputedStyle(root);
+        const left =
+          bounds.left +
+          Number.parseFloat(style.borderLeftWidth) +
+          Number.parseFloat(style.paddingLeft);
+        const right =
+          bounds.right -
+          Number.parseFloat(style.borderRightWidth) -
+          Number.parseFloat(style.paddingRight);
+        return {
+          client: root.clientWidth,
+          scroll: root.scrollWidth,
+          textFits: [
+            ...root.querySelectorAll(".dialog__title,.dialog__message"),
+          ].every((node) => {
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            return [...range.getClientRects()].every(
+              (rect) => rect.left >= left - 0.5 && rect.right <= right + 0.5,
+            );
+          }),
+          fieldsMatch: [...root.querySelectorAll("input,textarea")].every(
+            (node) => {
+              const rect = node.getBoundingClientRect();
+              return (
+                Math.abs(rect.left - left) <= 0.5 &&
+                Math.abs(rect.right - right) <= 0.5
+              );
+            },
+          ),
+          actionsFit: [
+            ...root.querySelectorAll(".dialog__actions button"),
+          ].every((node) => {
+            const rect = node.getBoundingClientRect();
+            return rect.left >= left - 0.5 && rect.right <= right + 0.5;
+          }),
+        };
+      });
+      expect(geometry.scroll).toBeLessThanOrEqual(geometry.client);
+      expect(geometry.textFits).toBe(true);
+      expect(geometry.fieldsMatch).toBe(true);
+      expect(geometry.actionsFit).toBe(true);
+      await expect(
+        dialog.getByRole("heading", { name: title, exact: true }),
+      ).toHaveText(title);
+    }
+    if (method === "editor") {
+      await expect(
+        dialog.getByRole("textbox", { name: title, exact: true }),
+      ).toHaveValue("Keep the original notes.\nCompare the residuals.");
+      await page.setViewportSize({ width: 820, height: 420 });
+      const save = dialog.getByRole("button", { name: "Save", exact: true });
+      await save.scrollIntoViewIfNeeded();
+      await expect(save).toBeInViewport();
+      const heading = dialog.getByRole("heading", { name: title, exact: true });
+      await heading.scrollIntoViewIfNeeded();
+      await expect(heading).toBeInViewport();
+    }
+    await dialog.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    expect(fixture.responses.at(-1)).toMatchObject({ id, cancelled: true });
+  }
+});
 
 const summaryLines = [
   "Code: Shared interaction",

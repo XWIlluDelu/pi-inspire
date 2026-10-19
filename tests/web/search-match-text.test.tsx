@@ -65,6 +65,34 @@ describe("file search match presentation", () => {
     ).toEqual([]);
   });
 
+  it("keeps the separator separate from the ellipsized directory without losing match offsets", () => {
+    const path = "src/main.ts";
+    const { container } = render(
+      <ResourcePathLabel
+        path={path}
+        matches={searchMatchRanges(path, ["src/ma"])}
+      />,
+    );
+    expect(container.querySelector(".resource-path__parent")).toHaveTextContent(
+      "src",
+    );
+    expect(
+      container.querySelector(".resource-path__separator"),
+    ).toHaveTextContent("/");
+    expect(container.querySelector(".resource-path__leaf")).toHaveTextContent(
+      "main.ts",
+    );
+    expect(
+      Array.from(
+        container.querySelectorAll(".search-match"),
+        (node) => node.textContent,
+      ),
+    ).toEqual(["src", "/", "ma"]);
+    expect(
+      container.querySelector(".resource-path__visible"),
+    ).toHaveTextContent(path);
+  });
+
   it("projects a path-spanning match into directory and filename without changing labels", () => {
     const path = "src/main.ts";
     const matches = searchMatchRanges(path, ["src/ma"]);

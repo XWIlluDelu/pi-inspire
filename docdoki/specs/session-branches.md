@@ -16,7 +16,7 @@ covers:
   - tests/server/{runtime-branching,session-fork,session-tree,branch-bridge-extension,session-export.integration,generated-exports}.test.ts
   - tests/web/{branch-tree,branch-store}.test.ts*
   - tests/browser/history.spec.ts
-  - src/styles/history.css
+  - src/styles/{history,transcript}.css
 ---
 
 # History, branches and independent copies
@@ -44,6 +44,8 @@ Independent copies do not replace the active source worker. Durable trust comes 
   preserves snippet text and accessible labels; ordinary outline entries remain unaccented.
   Turn disclosures use a quiet `Activity` caption, retain their complete accessible names and
   expanded state, and add no counts or ordinals inferred from a bounded route page.
+  Route marks anchor to the first description line; current-route metadata shares that line's
+  baseline. Short descriptions remain centered in their unchanged touch rows.
   No search matches use the shared pane state with a search icon and `No matching history`;
   the query remains in its input rather than being repeated in the state title.
   Complete retained text is read in bounded chunks. Native shell records expose the command, output,
@@ -74,7 +76,9 @@ Independent copies do not replace the active source worker. Durable trust comes 
   contextual Refresh retries failed selected resources. History text uses the same authorized file
   preview actions as Transcript. Structured images render separately from descriptive placeholders;
   user-written placeholder-like text remains unchanged. A failed selected detail has a local
-  retry that preserves search, loaded pages and the Back anchor. Read-only inspection never creates
+  retry that preserves search, loaded pages and the Back anchor. Read failures wrap literal paths
+  within the warning's content edges instead of clipping them or covering the preview header.
+  Read-only inspection never creates
   a navigation lease.
   Deliberate switching creates a non-evictable in-memory navigation lease until the next append
   durably commits that branch. Native edit targets return their text without submitting and move
@@ -205,6 +209,10 @@ content, active/empty branches, source protection and managed downloads.
   and endpoint-inclusive `Clone from here` actions, independent of whether the History pane is open. Each action
   refreshes the runtime-owned branch projection before acting; the notice is derived from the
   runtime-owned durable/effective leaf pair and does not introduce browser branch authority.
+  Its layout follows the reading stage's width, including a narrow desktop center between side panes.
+  The branch mark follows the title's first line, independently of wrapped diagnostics. Initial reading
+  space and native scroll-target insets retain their existing minimum spacing and grow with the
+  measured notice to keep its diagnostics clear of the initial content and aligned targets.
 
   The mock-host Chromium gate witnesses both actions against ordinary branch API responses and
   requires the notice to clear only after the resulting snapshot owns the durable leaf.

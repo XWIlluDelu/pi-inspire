@@ -1,12 +1,12 @@
-import { hostRequest } from "./support/host-request";
 import { readFile } from "node:fs/promises";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import type { UploadedAttachment } from "../../shared/contracts";
 import { pendingTextSummary } from "../../shared/pending-preview";
 import { clipboardLines } from "./support/clipboard";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { hostRequest } from "./support/host-request";
 import { routeMockSnapshots } from "./support/mock-host";
+import { openMockSession, pairedPage } from "./support/navigation";
 
 const token = "inspire-browser-test-token";
 const pixel = Buffer.from(
@@ -215,9 +215,25 @@ test("Pending Clear all keeps its explicit two-step confirmation and leaves the 
     .click();
   await expect(pending).toContainText("second pending instruction");
   await input.fill("draft that must survive Clear all");
-  await pending
-    .getByRole("button", { name: "Clear all Pending input" })
-    .click();
+  const clear = pending.getByRole("button", {
+    name: "Clear all Pending input",
+  });
+  await page.keyboard.press("Tab");
+  await clear.focus();
+  await expect(clear).toBeFocused();
+  expect(
+    await clear.evaluate((button) => button.matches(":focus-visible")),
+  ).toBe(true);
+  const dangerColor = await clear.evaluate((button) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--error)";
+    button.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
+  await expect(clear).toHaveCSS("color", dangerColor);
+  await clear.press("Enter");
   await expect(pending).toContainText("Clear all?");
   await expect(pending.getByRole("listitem")).toHaveCount(2);
   await pending

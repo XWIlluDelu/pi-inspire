@@ -1,5 +1,266 @@
 import { expect, test } from "@playwright/test";
+import {
+  type ActiveSnapshot,
+  PALETTE_PREFERENCES,
+} from "../../shared/contracts";
+import { renderedColors } from "./support/colors";
+import { routeMockSnapshots } from "./support/mock-host";
 import { openMockSession, pairedPage } from "./support/navigation";
+
+for (const touch of [false, true]) {
+  test.describe(`failed-delivery recovery · ${touch ? "touch" : "mouse"}`, () => {
+    test.use({
+      hasTouch: touch,
+      deviceScaleFactor: touch ? 2 : 1,
+      reducedMotion: "reduce",
+    });
+    test("distinguishes unavailable Restore without overwriting the current draft", async ({
+      page,
+    }) => {
+      const transport = await routeMockSnapshots(page, {});
+      await pairedPage(page);
+      await openMockSession(page, /Review extension event lifecycle/);
+      let release!: () => void;
+      const responseGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let requested!: () => void;
+      const requestGate = new Promise<void>((resolve) => {
+        requested = resolve;
+      });
+      await page.route("**/api/prompt", async (route) => {
+        requested();
+        await responseGate;
+        await route.fulfill({
+          status: 400,
+          headers: { "X-Inspire-Authority": transport.authority() },
+          json: { error: "The prompt was not delivered." },
+        });
+      });
+      const input = page.getByRole("textbox", { name: "Message", exact: true });
+      await input.fill("Retain the failed prompt exactly");
+      await page
+        .getByRole("button", { name: "Send message", exact: true })
+        .click();
+      await requestGate;
+      await input.fill("Keep this newer draft");
+      release();
+      const restore = page.getByRole("button", {
+        name: "Restore",
+        exact: true,
+      });
+      await expect(restore).toBeDisabled();
+      const row = page.locator(".composer__failed-delivery");
+      for (const width of [1280, 820, 390, 320]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect(row).toBeVisible();
+        expect(
+          await row.evaluate((el) => el.scrollWidth - el.clientWidth),
+        ).toBeLessThanOrEqual(1);
+        expect((await restore.boundingBox())!.height).toBeCloseTo(32, 1);
+      }
+      for (const palette of PALETTE_PREFERENCES)
+        for (const theme of ["light", "dark"]) {
+          await page.evaluate(
+            ({ palette, theme }) =>
+              Object.assign(document.documentElement.dataset, {
+                palette,
+                theme,
+              }),
+            { palette, theme },
+          );
+          const inks = await page.evaluate(() => {
+            const probe = document.createElement("span");
+            document.body.append(probe);
+            probe.style.color = "var(--faint)";
+            const disabled = getComputedStyle(probe).color;
+            probe.style.color = "var(--body)";
+            const enabled = getComputedStyle(probe).color;
+            probe.remove();
+            return { disabled, enabled };
+          });
+          await expect(restore).toBeDisabled();
+          await expect(restore).toHaveCSS("color", inks.disabled);
+          const disabled = await renderedColors(restore);
+          expect(disabled.contrast).toBeGreaterThanOrEqual(4.5);
+          if (!touch) {
+            await restore.hover({ force: true });
+            expect(
+              await restore.evaluate(
+                (el) => getComputedStyle(el).backgroundColor,
+              ),
+            ).toBe("rgba(0, 0, 0, 0)");
+          }
+          await input.fill("");
+          await expect(restore).toBeEnabled();
+          await expect(restore).toHaveCSS("color", inks.enabled);
+          const enabled = await renderedColors(restore);
+          expect(enabled.foreground).not.toEqual(disabled.foreground);
+          expect(enabled.contrast).toBeGreaterThanOrEqual(4.5);
+          await input.fill("Keep this newer draft");
+        }
+      await expect(input).toHaveValue("Keep this newer draft");
+      await input.fill("");
+      if (touch) await restore.tap();
+      else await restore.click();
+      await expect(input).toHaveValue("Retain the failed prompt exactly");
+      await expect(restore).toHaveCount(0);
+    });
+  });
+}
+
+test("composer selectors stay readable in narrow desktop panes without moving or hiding task actions", async ({
+  page,
+}) => {
+  let source: ActiveSnapshot | undefined;
+  let envelope: { type: string; detailSessionId?: string } | undefined;
+  const transport = await routeMockSnapshots(page, {
+    snapshot: (snapshot) => {
+      if (snapshot.active) source = structuredClone(snapshot);
+    },
+    event: (event) => {
+      if (event.type === "snapshot" && event.data?.active)
+        envelope = { ...event };
+    },
+  });
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await pairedPage(page);
+  await openMockSession(page, /Formula rendering and spectral analysis/);
+  const toggle = page.getByRole("button", {
+    name: "Toggle resources panel",
+    exact: true,
+  });
+  if ((await toggle.getAttribute("aria-expanded")) === "false")
+    await toggle.click();
+  await expect
+    .poll(() => envelope?.detailSessionId)
+    .toBe(source!.active!.sessionId);
+  const composer = page.getByRole("form", { name: "Message composer" });
+  const model = composer.getByRole("button", { name: "Model", exact: true });
+  const thinking = composer.getByRole("combobox", { name: "Thinking level" });
+  const files = composer.getByRole("button", {
+    name: "Add project files",
+    exact: true,
+  });
+  await page.evaluate(() => document.fonts.ready);
+  for (const running of [false, true]) {
+    if (running) {
+      const snapshot = structuredClone(source!);
+      snapshot.runState = "running";
+      snapshot.active!.isStreaming = true;
+      snapshot.sessionStatuses[snapshot.active!.sessionId] = {
+        runState: "running",
+      };
+      transport.send({ ...envelope, unchanged: false, data: snapshot });
+      await expect(
+        composer.getByRole("button", {
+          name: "Abort running task",
+          exact: true,
+        }),
+      ).toBeVisible();
+    }
+    for (const width of [1366, 1100, 1024, 940, 901]) {
+      await page.setViewportSize({ width, height: 768 });
+      await expect
+        .poll(() =>
+          composer
+            .locator(".composer__selectors .dropdown__trigger")
+            .evaluateAll((fields) =>
+              Math.max(
+                0,
+                ...fields.map((field) => {
+                  const value =
+                    field.querySelector<HTMLElement>(".dropdown__value")!;
+                  const text = value.getBoundingClientRect(),
+                    control = field.getBoundingClientRect();
+                  return Math.max(
+                    value.scrollWidth - value.clientWidth,
+                    control.left - text.left,
+                    text.right - control.right,
+                  );
+                }),
+              ),
+            ),
+        )
+        .toBeLessThanOrEqual(0.5);
+      // The running halo intentionally extends past the form; measure its content row.
+      await expect
+        .poll(() =>
+          composer
+            .locator(".composer__meta")
+            .evaluate((el) => el.scrollWidth - el.clientWidth),
+        )
+        .toBe(0);
+      for (const action of await composer
+        .locator(".composer__meta > button")
+        .all()) {
+        const bounds = await action.boundingBox(),
+          frame = await composer.boundingBox();
+        expect(bounds!.x).toBeGreaterThanOrEqual(frame!.x);
+        expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(
+          frame!.x + frame!.width + 0.5,
+        );
+      }
+      if (width === 901) {
+        const selector = await model.boundingBox(),
+          action = await files.boundingBox();
+        expect(selector!.y + selector!.height).toBeLessThan(action!.y);
+      }
+      if (width === 1366) {
+        const selector = await model.boundingBox(),
+          action = await files.boundingBox();
+        expect(
+          Math.abs(
+            selector!.y + selector!.height / 2 - action!.y - action!.height / 2,
+          ),
+        ).toBeLessThanOrEqual(0.5);
+      }
+    }
+    const sends = composer.locator(".composer__send");
+    await expect(sends).toHaveCount(running ? 2 : 1);
+    if (running) {
+      const controls = await sends.evaluateAll((buttons) =>
+        buttons.map((button) => {
+          const box = button.getBoundingClientRect();
+          return box.y + box.height / 2;
+        }),
+      );
+      expect(Math.abs(controls[0]! - controls[1]!)).toBeLessThanOrEqual(0.5);
+    }
+    await model.focus();
+    await model.press("Enter");
+    await expect(page.getByRole("option", { selected: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(model).toBeFocused();
+    await thinking.press("Enter");
+    await expect(
+      page.getByRole("listbox", { name: "Thinking level" }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(thinking).toBeFocused();
+  }
+  await composer
+    .getByRole("textbox", { name: "Message", exact: true })
+    .fill("Keep the same pane-sized editor");
+  await expect(
+    composer.getByRole("textbox", { name: "Message", exact: true }),
+  ).toHaveValue("Keep the same pane-sized editor");
+  // The desktop fix must not move the phone layout's existing wrap threshold.
+  await page.setViewportSize({ width: 430, height: 844 });
+  await page
+    .getByRole("dialog", { name: "Context panel", exact: true })
+    .press("Escape");
+  for (const [width, display] of [
+    [430, "contents"],
+    [390, "flex"],
+  ] as const) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(composer.locator(".composer__selectors")).toHaveCSS(
+      "display",
+      display,
+    );
+  }
+});
 
 test("running halo animates independently and retains focus and reduced-motion feedback", async ({
   page,
@@ -58,9 +319,9 @@ test("running halo animates independently and retains focus and reduced-motion f
   await input.fill("");
 });
 
-test("composer text drafts survive reload and stay partitioned through switching, history, sending and clearing", async ({
-  page,
-}) => {
+test("composer text drafts survive reload and stay partitioned through switching, history, sending and clearing", {
+  tag: "@cross-browser",
+}, async ({ page }) => {
   await pairedPage(page);
   await openMockSession(page, /Review extension event lifecycle/);
   const input = page.getByRole("textbox", { name: "Message", exact: true });

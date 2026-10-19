@@ -38,8 +38,9 @@ remains decided but deferred until public runtime interfaces can support it.
 Settings → MCP groups file entries under **User** and **Project**, with quiet source-path captions.
 Rows show name, transport, file-disabled state and an understated same-name project override, not
 connection health. Add, focused Edit and confirmed Remove use the established Settings controls,
-with Save/Cancel reachable while the form body scrolls. Project trust is explained briefly in the
-project editor, not repeated as a policy/status block in each group.
+with Save/Cancel reachable while the form body scrolls. Policy-only Edit enters the first policy
+control (Tool exposure) without opening its menu; ordinary edits still enter the URL or program.
+Project trust is explained briefly in the project editor, not repeated as a policy/status block in each group.
 
 The Host derives the user file from public `getAgentDir()/mcp.json`. The project file is
 `<cwd>/.pi/mcp.json`; an addressed session's Host-resolved directory wins over a supplied directory.

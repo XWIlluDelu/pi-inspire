@@ -10,6 +10,7 @@ interface CopyActionProps {
   getContent?: CopyLoader;
   label: string;
   className: string;
+  iconSize?: number;
   disabled?: boolean;
   onError?: (message: string) => void;
 }
@@ -21,6 +22,7 @@ export function CopyAction({
   getContent,
   label,
   className,
+  iconSize = 13,
   disabled = false,
   onError = store.reportCopyError,
 }: CopyActionProps) {
@@ -52,11 +54,11 @@ export function CopyAction({
       }
     >
       {copying ? (
-        <PiLoader size={13} aria-hidden />
+        <PiLoader size={iconSize} aria-hidden />
       ) : copied ? (
-        <Check size={13} aria-hidden />
+        <Check size={iconSize} aria-hidden />
       ) : (
-        <Copy size={13} aria-hidden />
+        <Copy size={iconSize} aria-hidden />
       )}
     </button>
   );

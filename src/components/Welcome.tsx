@@ -186,14 +186,22 @@ export const Welcome = memo(function Welcome({
   useEffect(() => {
     onDirectoryChange?.(effectiveDirectory);
   }, [effectiveDirectory, onDirectoryChange]);
-  const [missingDirectory, setMissingDirectory] = useState<string | null>(null);
-  const directoryMissing = missingDirectory === effectiveDirectory;
-  const [directoryError, setDirectoryError] = useState<{
+  const [directoryIssue, setDirectoryIssue] = useState<{
     path: string;
+    missing: boolean;
     message: string;
   } | null>(null);
+  const currentDirectoryIssue =
+    directoryIssue?.path === effectiveDirectory ? directoryIssue : null;
+  const directoryMissing = currentDirectoryIssue?.missing === true;
   const directoryProblem =
-    directoryError?.path === effectiveDirectory ? directoryError.message : null;
+    currentDirectoryIssue && !directoryMissing
+      ? currentDirectoryIssue.message
+      : null;
+  const [checkingDirectory, setCheckingDirectory] = useState<string | null>(
+    null,
+  );
+  const directoryChecking = checkingDirectory === effectiveDirectory;
   const [catalog, setCatalog] = useState<ModelOption[] | null>(null);
   const [pickedModel, setPickedModel] = useState<ModelOption | null>(null);
   const [commonModels, setCommonModels] = useState<ModelIdentity[]>([]);
@@ -214,6 +222,7 @@ export const Welcome = memo(function Welcome({
       : undefined;
   const refreshModels = useCallback(async () => {
     const generation = ++catalogGeneration.current;
+    setCheckingDirectory(effectiveDirectory);
     const inputGeneration = thinkingInputGeneration.current;
     let result;
     try {
@@ -223,19 +232,26 @@ export const Welcome = memo(function Welcome({
       );
     } catch (error) {
       if (catalogGeneration.current === generation) {
-        setMissingDirectory(
-          error instanceof ApiError &&
-            error.code === "PROJECT_DIRECTORY_MISSING"
-            ? effectiveDirectory
-            : null,
-        );
-        setDirectoryError(
-          error instanceof ApiError &&
-            (error.status === 400 || error.status === 403) &&
-            error.code !== "PROJECT_DIRECTORY_MISSING"
-            ? { path: effectiveDirectory, message: error.message }
-            : null,
-        );
+        setDirectoryIssue((previous) => {
+          const missing =
+            error instanceof ApiError &&
+            error.code === "PROJECT_DIRECTORY_MISSING";
+          // A failed retry cannot turn a known invalid/missing directory into
+          // a ready project simply because a model was inherited or selected.
+          const invalid =
+            error instanceof ApiError &&
+            (error.status === 400 || error.status === 403);
+          return missing || invalid || previous?.path === effectiveDirectory
+            ? {
+                path: effectiveDirectory,
+                missing,
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "Project directory could not be checked",
+              }
+            : null;
+        });
         if (!modelOwnedRef.current) {
           setModelWarning(
             error instanceof Error ? error.message : "Model discovery failed",
@@ -249,10 +265,11 @@ export const Welcome = memo(function Welcome({
       )
         return undefined;
       throw error;
+    } finally {
+      if (catalogGeneration.current === generation) setCheckingDirectory(null);
     }
     if (catalogGeneration.current === generation) {
-      setMissingDirectory(null);
-      setDirectoryError(null);
+      setDirectoryIssue(null);
       setCatalog(result.models);
       setCommonModels(result.commonModels ?? []);
       if (!modelOwnedRef.current && result.defaults) {
@@ -490,8 +507,7 @@ export const Welcome = memo(function Welcome({
 
   const changeDirectory = (value: string) => {
     ++catalogGeneration.current;
-    setMissingDirectory(null);
-    setDirectoryError(null);
+    setDirectoryIssue(null);
     setDirectory(value);
     setShowHiddenFiles(false);
     setProjectFiles([]);
@@ -518,18 +534,21 @@ export const Welcome = memo(function Welcome({
         ? "Starting session…"
         : !effectiveDirectory || !hasInput
           ? null
-          : modelStatus === "loading"
-            ? "Resolving model…"
-            : modelStatus === "error"
-              ? (modelWarning ?? "Model resolution failed")
-              : !selectedModel
-                ? "Select a model"
-                : null);
+          : directoryChecking
+            ? "Checking project directory…"
+            : modelStatus === "loading"
+              ? "Resolving model…"
+              : modelStatus === "error"
+                ? (modelWarning ?? "Model resolution failed")
+                : !selectedModel
+                  ? "Select a model"
+                  : null);
   const canStart = Boolean(
     hasInput &&
       effectiveDirectory &&
       !directoryMissing &&
       !directoryProblem &&
+      !directoryChecking &&
       selectedModel &&
       modelStatus === "ready" &&
       !starting,
@@ -871,6 +890,8 @@ export const Welcome = memo(function Welcome({
               <button
                 type="button"
                 className="changes__inline-action"
+                disabled={directoryChecking || modelStatus === "loading"}
+                aria-busy={directoryChecking || modelStatus === "loading"}
                 onClick={() => {
                   if (directoryProblem) {
                     void refreshModels().catch(() => {});
@@ -882,7 +903,12 @@ export const Welcome = memo(function Welcome({
                   else void refreshModels().catch(() => {});
                 }}
               >
-                Retry
+                {directoryChecking || modelStatus === "loading" ? (
+                  <PiLoader size={13} aria-hidden />
+                ) : null}
+                {directoryChecking || modelStatus === "loading"
+                  ? "Checking…"
+                  : "Retry"}
               </button>
             ) : null}
           </div>

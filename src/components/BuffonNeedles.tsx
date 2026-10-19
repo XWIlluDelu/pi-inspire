@@ -4,6 +4,7 @@ import { useAppState } from "../store";
 
 const REFERENCE_WIDTH = 2400; // Drawable CSS pixels, independent of screen DPI.
 const MAX_LIFETIME_MS = 4500;
+const EDGE_INSET = 2;
 
 interface TitlebarNeedle {
   id: number;
@@ -44,9 +45,6 @@ export function BuffonNeedles() {
     let limit = 0;
     let width = 0;
     let height = 0;
-    let start = 0;
-    let leftSpan = 0;
-    let rightStart = 0;
     let drawableWidth = 0;
     let timer: number | null = null;
 
@@ -54,26 +52,8 @@ export function BuffonNeedles() {
       const bounds = layer.getBoundingClientRect();
       width = bounds.width;
       height = bounds.height;
-      const cornerLogo = layer.parentElement
-        ?.querySelector(".window-titlebar__corner-logo")
-        ?.getBoundingClientRect();
-      start = Math.min(
-        Math.max(12, cornerLogo ? cornerLogo.right - bounds.left + 28 : 12),
-        width / 2,
-      );
-      const end = Math.max(start, width - 12);
-      const brand = layer.parentElement
-        ?.querySelector(".window-titlebar__identity")
-        ?.getBoundingClientRect();
-      // A fixed CSS-pixel clearance, not a screen-sized percentage or center bias.
-      const leftEnd = brand
-        ? Math.min(end, Math.max(start, brand.left - bounds.left - 28))
-        : end;
-      rightStart = brand
-        ? Math.min(end, Math.max(leftEnd, brand.right - bounds.left + 28))
-        : end;
-      leftSpan = leftEnd - start;
-      drawableWidth = leftSpan + end - rightStart;
+      // Decoration samples the full strip without excluding foreground controls.
+      drawableWidth = Math.max(0, width - EDGE_INSET * 2);
       rate = 3.6 * (1 + busyCount) * (drawableWidth / REFERENCE_WIDTH);
       // Allow maximum-lifetime occupancy plus random-arrival headroom.
       limit = Math.min(256, Math.ceil((rate * MAX_LIFETIME_MS) / 1000) + 12);
@@ -98,23 +78,16 @@ export function BuffonNeedles() {
         timer = null;
         if (!canAnimate()) return;
 
-        const position = Math.random() * drawableWidth;
-        const x =
-          ((position < leftSpan
-            ? start + position
-            : rightStart + position - leftSpan) /
-            width) *
-          100;
         const needle: TitlebarNeedle = {
           id: nextId.current++,
-          x,
+          x: ((EDGE_INSET + Math.random() * drawableWidth) / width) * 100,
           y: 20 + Math.random() * 60,
           length: triangular(10, 22, 42),
           angle: Math.random() * 180,
           role: Math.random() < 0.5 ? "tool" : "think",
           lifetimeMs: triangular(1400, 2600, MAX_LIFETIME_MS),
         };
-        // Saturation skips an arrival rather than cutting an existing fade short.
+        // Saturation skips arrivals rather than cutting an existing fade short.
         setNeedles((previous) =>
           previous.length < limit ? [...previous, needle] : previous,
         );

@@ -8,10 +8,22 @@ import {
 } from "./support/navigation";
 import { restartableAuthHost } from "./support/restartable-auth-host";
 
-test("pairing opens the workbench without external requests, cookies, or persistent bearers", async ({
-  page,
-  context,
-}) => {
+async function openLaunchLink(page: Page, link: string) {
+  // Main can render a loading shell before automatic registration commits
+  // its key. An authenticated bootstrap response is the readiness witness.
+  const ready = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/bootstrap" &&
+      response.status() === 200,
+  );
+  await page.goto(link);
+  await ready;
+  await expect(page.getByRole("main")).toBeVisible();
+}
+
+test("pairing opens the workbench without external requests, cookies, or persistent bearers", {
+  tag: "@cross-browser",
+}, async ({ page, context }) => {
   const externalRequests: string[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
@@ -78,10 +90,9 @@ test("pairing opens the workbench without external requests, cookies, or persist
   await tab.close();
 });
 
-test("a second localhost port receives no usable credential and cannot read the paired origin key", async ({
-  page,
-  context,
-}) => {
+test("a second localhost port receives no usable credential and cannot read the paired origin key", {
+  tag: "@cross-browser",
+}, async ({ page, context }) => {
   await pairedPage(page);
   const origin = new URL(page.url()).origin;
   const receivedCookies: string[] = [];
@@ -113,10 +124,9 @@ test("a second localhost port receives no usable credential and cannot read the 
   }
 });
 
-test("expires only current Host legacy names, and ignores cookie authentication", async ({
-  page,
-  context,
-}) => {
+test("expires only current Host legacy names, and ignores cookie authentication", {
+  tag: "@cross-browser",
+}, async ({ page, context }) => {
   await page.goto("/");
   const origin = new URL(page.url()).origin;
   // Seed the exact legacy qualified name to exercise migration in Chromium.
@@ -151,9 +161,61 @@ test("expires only current Host legacy names, and ignores cookie authentication"
   await expect(page.getByRole("main")).toBeVisible();
 });
 
-test("direct launch bootstrap is stripped before application requests, one-use, and reloadable", async ({
-  page,
-}) => {
+test("local one-use launch links preserve existing pairing and repair rotated authority", {
+  tag: "@cross-browser",
+}, async ({ page, browser }) => {
+  const host = await restartableAuthHost(token);
+  const pairs: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/auth/pair")
+      pairs.push(request.postData()!);
+  });
+  try {
+    const link = host.launchUrl();
+    expect(link).not.toContain(token);
+    expect(new URL(link).search).toBe("");
+    await openLaunchLink(page, link);
+    expect(new URL(page.url()).hash).toBe("");
+    expect(host.registrations()).toBe(1);
+    expect(pairs[0]).not.toContain(token);
+
+    // A successful original registration consumed this exact transfer.
+    await page.goto("about:blank");
+    await openLaunchLink(page, link);
+    expect(host.registrations()).toBe(1);
+    await page.goto("about:blank");
+    await openLaunchLink(
+      page,
+      host.origin + "/#inspire-bootstrap=already-expired",
+    );
+    expect(host.registrations()).toBe(1);
+
+    const unpaired = await browser.newContext();
+    try {
+      const other = await unpaired.newPage();
+      await other.goto(link);
+      await expect(other.getByLabel("Access token")).toBeVisible();
+      await expect(other.getByRole("main")).toHaveCount(0);
+    } finally {
+      await unpaired.close();
+    }
+
+    await host.restart("rotated-fixture-authority");
+    await page.goto("about:blank");
+    await openLaunchLink(page, host.launchUrl());
+    // The deliberately unpaired context attempted one spent transfer too.
+    expect(host.registrations()).toBe(3);
+    await page.goto("about:blank");
+    await openLaunchLink(page, host.origin);
+    expect(host.registrations()).toBe(3);
+  } finally {
+    await host.close();
+  }
+});
+
+test("direct launch bootstrap is stripped before application requests, one-use, and reloadable", {
+  tag: "@cross-browser",
+}, async ({ page }) => {
   const requests: string[] = [];
   page.on("request", (request) => requests.push(request.url()));
   await openLaunchLink(page, `/?token=${encodeURIComponent(token)}`);
@@ -210,10 +272,9 @@ test("socket tickets are exact-origin, audience-bound and single-use in Chromium
   expect(results).toEqual({ first: true, replay: false, wrongAudience: false });
 });
 
-test("independent Host ports require their own pairing; restart reconnects and rotation returns to Pair", async ({
-  page,
-  context,
-}) => {
+test("independent Host ports require their own pairing; restart reconnects and rotation returns to Pair", {
+  tag: "@cross-browser",
+}, async ({ page, context }) => {
   const host = await restartableAuthHost(token);
   const other = await restartableAuthHost(token);
   let snapshots = 0;
@@ -255,16 +316,16 @@ test("independent Host ports require their own pairing; restart reconnects and r
     await page.getByLabel("Access token").fill("rotated-test-master");
     await page.getByRole("button", { name: "Pair" }).click();
     await expect(page.getByRole("main")).toBeVisible();
-    await tab.close();
   } finally {
+    // Stop the owned listeners first; the test context then closes both pages.
     await host.close();
     await other.close();
   }
 });
 
-test("unsupported origin storage reports a useful Pair error without falling back to cookies", async ({
-  page,
-}) => {
+test("unsupported origin storage reports a useful Pair error without falling back to cookies", {
+  tag: "@cross-browser",
+}, async ({ page }) => {
   await page.addInitScript(() =>
     Object.defineProperty(window, "indexedDB", { value: undefined }),
   );

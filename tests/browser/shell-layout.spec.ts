@@ -1,6 +1,60 @@
 import { expect, test } from "@playwright/test";
+import { focusRingClipping } from "./support/focus-bounds";
 import { openMockSession, pairedPage } from "./support/navigation";
 import { textBaseline } from "./support/text-baseline";
+
+for (const touch of [false, true]) {
+  test.describe(`header keyboard focus · ${touch ? "coarse" : "fine"} pointer`, () => {
+    test.use({
+      viewport: { width: 1366, height: 768 },
+      hasTouch: touch,
+      deviceScaleFactor: touch ? 2 : 1,
+      reducedMotion: "reduce",
+    });
+    test("keeps focus rings and workspace buttons inside clipped header regions", async ({
+      page,
+    }) => {
+      await pairedPage(page);
+      await openMockSession(page, /Review extension event lifecycle/);
+      await page.evaluate(() => document.fonts.ready);
+      for (const [width, height] of [
+        [1366, 768],
+        [901, 390],
+        [390, 844],
+        [320, 640],
+        [568, 320],
+      ]) {
+        await page.setViewportSize({ width, height });
+        for (const button of await page.locator(".topbar button").all()) {
+          if (!(await button.isVisible()) || !(await button.isEnabled()))
+            continue;
+          await button.focus();
+          // A real keyboard round trip also clears restored-focus suppression.
+          await page.keyboard.press("Tab");
+          await page.keyboard.press("Shift+Tab");
+          await expect(button).toBeFocused();
+          await page.evaluate(
+            () =>
+              new Promise<void>((resolve) =>
+                requestAnimationFrame(() =>
+                  requestAnimationFrame(() => resolve()),
+                ),
+              ),
+          );
+          await expect(button).toHaveCSS("outline-style", "solid");
+          const clipping = await button.evaluate(focusRingClipping);
+          expect(
+            clipping,
+            `${width}×${height}: ${await button.getAttribute("aria-label")}`,
+          ).toBeLessThanOrEqual(0.5);
+        }
+        expect(
+          await page.locator(".topbar__ident").evaluate((el) => el.scrollLeft),
+        ).toBe(0);
+      }
+    });
+  });
+}
 
 test("desktop pane gutters remain pointer and keyboard resize targets", async ({
   page,
@@ -318,14 +372,91 @@ test("sidebar owns desktop toggles and creation while phones keep a full drawer"
   expect(await search.evaluate((el) => getComputedStyle(el).fontSize)).toBe(
     "14px",
   );
-  expect((await drawer.locator(".nav__controls").boundingBox())!.height).toBe(
-    88,
-  );
+  const controlsBox = (await drawer.locator(".nav__controls").boundingBox())!;
+  const createBox = (await create.boundingBox())!;
+  const searchBox = (await drawer.locator(".nav__search").boundingBox())!;
+  expect(searchBox.y - createBox.y - createBox.height).toBe(8);
+  expect(
+    controlsBox.y + controlsBox.height - searchBox.y - searchBox.height,
+  ).toBe(16);
   await drawer.getByRole("button", { name: "Close navigation" }).click();
   await expect(phoneToggle).toBeFocused();
   await page.setViewportSize({ width: 1440, height: 1000 });
   await expect(expand).toBeVisible();
   await expect(phoneToggle).toHaveCount(0);
+});
+
+test("session title and workspace/status text share a baseline at every header tier", async ({
+  page,
+}) => {
+  const withStatus = (snapshot: Record<string, unknown>) => {
+    snapshot.extensionStatuses = { context: "mc: 93.7K (46%) · idle" };
+    if (snapshot.active && typeof snapshot.active === "object")
+      (snapshot.active as Record<string, unknown>).sessionName =
+        "frontend cross val";
+  };
+  await page.routeWebSocket(/\/events(?:\?|$)/, (client) => {
+    const upstream = client.connectToServer();
+    upstream.onMessage((data) => {
+      const event = JSON.parse(String(data));
+      if (event.type === "snapshot" && event.data) withStatus(event.data);
+      client.send(JSON.stringify(event));
+    });
+  });
+  for (const pattern of [
+    "**/api/bootstrap**",
+    "**/api/snapshot**",
+    "**/api/sessions/open",
+  ])
+    await page.route(pattern, async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      if (body.snapshot) withStatus(body.snapshot);
+      else if ("active" in body) withStatus(body);
+      await route.fulfill({ response, json: body });
+    });
+  await pairedPage(page);
+  await page
+    .locator(".nav__row-main")
+    .filter({ hasText: /Formula rendering and spectral analysis/ })
+    .click();
+  await expect(page.locator(".topbar__title-button")).toHaveText(
+    "frontend cross val",
+  );
+  await expect(page.locator(".topbar__extension-text")).toHaveText(
+    "mc: 93.7K (46%) · idle",
+  );
+  await page.evaluate(() => document.fonts.ready);
+  for (const width of [1440, 1024, 768, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    const title = page.locator(".topbar__title-button > span");
+    await expect(title).toBeVisible();
+    const titleBaseline = await title.evaluate(textBaseline);
+    for (const selector of [
+      ".topbar__project-label",
+      ".topbar__git-branch",
+      ".topbar__git-count",
+      ".topbar__extension-text",
+    ]) {
+      const label = page.locator(selector);
+      if (await label.isVisible()) {
+        expect(
+          Math.abs((await label.evaluate(textBaseline)) - titleBaseline),
+          `${width}: ${selector}`,
+        ).toBeLessThanOrEqual(0.5);
+      }
+    }
+    const header = (await page.locator(".topbar").boundingBox())!;
+    for (const button of await page
+      .locator(".topbar__actions > button, .topbar > .icon-button")
+      .all()) {
+      if (!(await button.isVisible())) continue;
+      const box = (await button.boundingBox())!;
+      expect(
+        Math.abs(box.y + box.height / 2 - header.y - header.height / 2),
+      ).toBeLessThanOrEqual(0.5);
+    }
+  }
 });
 
 test("workbench headers preserve controls, text baselines and drawer dismissal", async ({

@@ -578,6 +578,70 @@ describe("new-session start surface", () => {
     },
   );
 
+  it("keeps a rejected project blocked during retry and after a transient read failure", async () => {
+    directoryFailure = "file";
+    act(() =>
+      FakeWebSocket.instances.at(-1)!.emit({
+        type: "snapshot",
+        data: { active: null, runState: "idle", sessionStatuses: {} },
+      }),
+    );
+    const view = render(
+      <Welcome
+        inherited={{
+          cwd: "/file/project",
+          model: {
+            provider: "anthropic",
+            id: "claude-sonnet-4",
+            reasoning: true,
+          },
+          thinkingLevel: "high",
+          commands: [],
+        }}
+      />,
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
+      target: { value: "Preserve my prompt" },
+    });
+    await screen.findByText("Project path is not a directory");
+    const gate = deferred<ModelCatalogResponse>();
+    const original = store.readNewSessionModels;
+    const read = vi
+      .spyOn(store, "readNewSessionModels")
+      .mockImplementation(() => gate.promise);
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      expect(
+        screen.getByRole("button", { name: "Start session" }),
+      ).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Checking…" })).toBeDisabled();
+      await act(async () =>
+        gate.reject(new Error("Directory service unavailable")),
+      );
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Directory service unavailable",
+      );
+      expect(
+        screen.getByRole("button", { name: "Start session" }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole("textbox", { name: "First message" }),
+      ).toHaveValue("Preserve my prompt");
+      directoryFailure = null;
+      read.mockImplementation(original);
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Start session" }),
+        ).toBeEnabled(),
+      );
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      view.unmount();
+      read.mockRestore();
+    }
+  });
+
   it("retires a late missing-directory observation after the user chooses another path", async () => {
     act(() =>
       FakeWebSocket.instances.at(-1)!.emit({

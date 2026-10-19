@@ -216,7 +216,7 @@ export const CommandPalette = memo(function CommandPalette({
       },
       {
         id: "hotkeys",
-        group: "Help",
+        group: "Actions",
         title: "Keyboard shortcuts",
         aliases: ["/hotkeys", "shortcuts", "help"],
         default: true,
@@ -224,7 +224,7 @@ export const CommandPalette = memo(function CommandPalette({
       },
       {
         id: "changelog",
-        group: "Help",
+        group: "Actions",
         title: "Pi changelog",
         aliases: ["/changelog", "release notes"],
         run: () => onOpenHelp("changelog"),
@@ -276,9 +276,8 @@ export const CommandPalette = memo(function CommandPalette({
           id: "history",
           group: "Workspace",
           title: "Open History",
-          aliases: ["/tree", "history", "branches"],
+          aliases: ["/tree", "history", "branches", "branch navigation"],
           default: true,
-          hint: "Branch navigation",
           run: () => {
             store.setResourcesOpen(true);
             store.setContextMode("branches");
@@ -288,8 +287,8 @@ export const CommandPalette = memo(function CommandPalette({
           id: "terminal",
           group: "Workspace",
           title: "Open Terminal",
+          aliases: ["shell", "project shell"],
           default: true,
-          hint: "Project shell",
           run: () => {
             store.setResourcesOpen(true);
             store.setContextMode("terminal");
@@ -381,7 +380,7 @@ export const CommandPalette = memo(function CommandPalette({
       if (hasEarlierBranch) {
         actions.push({
           id: "latest-branch",
-          group: "Conversation",
+          group: "Workspace",
           title: "Back to latest branch",
           default: true,
           run: () => void store.returnToLatestBranch(),
@@ -391,7 +390,7 @@ export const CommandPalette = memo(function CommandPalette({
     if (state.sessionId && !state.readOnlyReason) {
       actions.push({
         id: "clone",
-        group: "Conversation",
+        group: "Workspace",
         title: "Clone current branch",
         aliases: ["/clone"],
         run: () => void store.cloneCurrentBranch(),
@@ -531,21 +530,29 @@ export const CommandPalette = memo(function CommandPalette({
             };
             const sessionAliases =
               command.name === "session" ? ["cost", "tokens"] : [];
+            const humanTitle =
+              command.source === "builtin" ? titles[command.name] : undefined;
             return {
               id: `cmd-${command.name}`,
-              group: command.source === "builtin" ? "Pi" : "Pi resources",
-              title:
-                command.source === "builtin"
-                  ? (titles[command.name] ?? `/${command.name}`)
-                  : `/${command.name}`,
-              aliases: [command.name, `/${command.name}`, ...sessionAliases],
+              group: command.source === "builtin" ? "Actions" : "Pi resources",
+              title: humanTitle ?? `/${command.name}`,
+              aliases: [
+                command.name,
+                `/${command.name}`,
+                ...sessionAliases,
+                ...(humanTitle && command.description
+                  ? [command.description]
+                  : []),
+              ],
               default: ["model", "export"].includes(command.name),
               hint:
                 command.execution === "terminal"
                   ? `Terminal only — ${command.description}`
-                  : prepare
-                    ? (command.description ?? command.source ?? "Command")
-                    : command.description,
+                  : humanTitle
+                    ? undefined
+                    : prepare
+                      ? (command.description ?? command.source ?? "Command")
+                      : command.description,
               keepOpen: prepare,
               run: () => {
                 if (command.source === "builtin" && command.name === "export") {
@@ -584,9 +591,20 @@ export const CommandPalette = memo(function CommandPalette({
     onExportSession,
   ]);
 
+  const defaultItems = useMemo(() => {
+    const byGroup = new Map<string, PaletteItem[]>();
+    for (const item of items) {
+      if (!item.default) continue;
+      const list = byGroup.get(item.group);
+      if (list) list.push(item);
+      else byGroup.set(item.group, [item]);
+    }
+    return [...byGroup.values()].flat();
+  }, [items]);
+
   const filtered = searchQuery.trim()
     ? rankPaletteItems(items, searchQuery)
-    : items.filter((item) => item.default);
+    : defaultItems;
   const clamped = Math.min(index, Math.max(0, filtered.length - 1));
 
   // Rows render under one header per group — the same grammar the model
@@ -865,7 +883,14 @@ export const CommandPalette = memo(function CommandPalette({
                     aria-label={group}
                   >
                     <div className="palette__group" aria-hidden="true">
-                      {group}
+                      {group.startsWith("Pi") ? (
+                        <>
+                          <span data-authored-case>Pi</span>
+                          {group.slice(2)}
+                        </>
+                      ) : (
+                        group
+                      )}
                     </div>
                     {rows.map(({ item, index: itemIndex }) => (
                       <button
@@ -874,6 +899,7 @@ export const CommandPalette = memo(function CommandPalette({
                         id={`${listId}-${itemIndex}`}
                         aria-selected={keyboardActive && itemIndex === clamped}
                         key={item.id}
+                        title={item.title}
                         className={`palette__row ${keyboardActive && itemIndex === clamped ? "palette__row--active" : ""}`}
                         onPointerMove={(event) => {
                           if (event.pointerType === "touch") return;

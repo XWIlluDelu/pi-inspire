@@ -17,6 +17,7 @@ import {
   useLayoutEffect,
   useState,
 } from "react";
+import { fileReferenceName } from "../../shared/attachment-context";
 import type {
   GenericExtensionDisplay,
   PendingQueues,
@@ -30,8 +31,9 @@ import {
   contentItems,
   messageText,
   type ToolCallContent,
-  userMessageDisplayText,
+  userMessageDisplayContent,
 } from "../events";
+import { fileIconForPath } from "../file-icons";
 import { messageCopyLoader } from "../message-copy";
 import { store } from "../store";
 import { hasActiveModal } from "../use-modal-focus";
@@ -134,7 +136,7 @@ export const UserBubble = memo(function UserBubble({
 }) {
   const timestamp = message.timestamp;
   const sourceText = messageText(message);
-  const text = userMessageDisplayText(message);
+  const { text, references } = userMessageDisplayContent(message);
   const images: Array<
     { key: string; reference: string } | { key: string; src: string }
   > = [];
@@ -202,6 +204,24 @@ export const UserBubble = memo(function UserBubble({
               )}
             </div>
           </ImageGallery>
+        ) : null}
+        {references.length > 0 ? (
+          <ul className="user-bubble__files" aria-label="Referenced files">
+            {references.map((path, index) => {
+              const name = fileReferenceName(path);
+              const FileIcon = fileIconForPath(name);
+              return (
+                <li
+                  className="user-bubble__file"
+                  key={`${index}:${path}`}
+                  title={path}
+                >
+                  <FileIcon size={13} aria-hidden />
+                  <span>{name}</span>
+                </li>
+              );
+            })}
+          </ul>
         ) : null}
         {text ? <RichText text={text} variant="user" /> : null}
       </div>
@@ -446,11 +466,8 @@ export const UnpairedToolResultRow = memo(function UnpairedToolResultRow({
   );
 });
 
-export const ContextCheckpointRow = memo(function ContextCheckpointRow({
-  message,
-}: {
-  message: ChatMessage;
-}) {
+/** Shared display content, so search does not index the elided event prefix. */
+export function contextCheckpointContent(message: ChatMessage) {
   const compacted = message.role === "compactionSummary";
   const summary = typeof message.summary === "string" ? message.summary : "";
   const magicContext =
@@ -461,6 +478,16 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
   const displaySummary = magicContext
     ? summary.replace(/^Magic Context compacted:\s*/, "")
     : summary;
+  return { compacted, summary, magicContext, displaySummary };
+}
+
+export const ContextCheckpointRow = memo(function ContextCheckpointRow({
+  message,
+}: {
+  message: ChatMessage;
+}) {
+  const { compacted, summary, magicContext, displaySummary } =
+    contextCheckpointContent(message);
   const tokens =
     compacted &&
     typeof message.tokensBefore === "number" &&

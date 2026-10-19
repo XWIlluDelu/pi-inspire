@@ -6,7 +6,7 @@ import { expect, test } from "@playwright/test";
 import { pairedPage } from "./support/navigation";
 
 for (const width of [980, 390]) {
-  test.describe(`New project at ${width}px`, () => {
+  test.describe(`New project at ${width}px`, { tag: "@cross-browser" }, () => {
     test.use({ viewport: { width, height: 844 }, hasTouch: width === 390 });
     test("creates only after explicit activation and starts with the original first message", async ({
       page,

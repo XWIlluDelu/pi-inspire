@@ -66,6 +66,8 @@ let fixture: {
   activity?: "model" | "shell";
   searchGate?: Promise<void>;
   navigateGate?: Promise<void>;
+  cloneGate?: Promise<void>;
+  treeGate?: Promise<void>;
   entryFailures?: number;
   imageFailures?: number;
   images?: boolean;
@@ -141,6 +143,7 @@ beforeEach(async () => {
       if (url.startsWith("/api/sessions"))
         return Response.json(sessionPage([], 0));
       if (url.startsWith("/api/branches/tree")) {
+        await fixture.treeGate;
         if (new URL(url, "http://fixture").searchParams.has("query"))
           await fixture.searchGate;
         return Response.json(tree(url));
@@ -211,6 +214,7 @@ beforeEach(async () => {
         });
       }
       if (url === "/api/branches/fork" || url === "/api/branches/clone") {
+        if (url.endsWith("clone")) await fixture.cloneGate;
         const fork = url.endsWith("fork");
         const id = fork ? "forked" : "cloned";
         return Response.json({
@@ -798,6 +802,72 @@ describe("explicit History actions", () => {
       expect(window.confirm).not.toHaveBeenCalled();
     },
   );
+
+  it.each(["Back to latest", "Clone from here"])(
+    "puts earlier-history progress on %s, not the other action",
+    async (label) => {
+      fixture.effective = "a1";
+      await store.init("token");
+      await store.loadBranchTree();
+      const pending = deferred<void>();
+      if (label === "Back to latest") fixture.navigateGate = pending.promise;
+      else fixture.cloneGate = pending.promise;
+      render(<EarlierBranchBanner />);
+      const selected = screen.getByRole("button", { name: label });
+      const other = screen.getByRole("button", {
+        name: label === "Back to latest" ? "Clone from here" : "Back to latest",
+      });
+      try {
+        fireEvent.click(selected);
+        await waitFor(() =>
+          expect(selected).toHaveAttribute("aria-busy", "true"),
+        );
+        expect(selected.querySelector(".pi-loading")).not.toBeNull();
+        expect(other.querySelector(".pi-loading")).toBeNull();
+        expect(selected).toBeDisabled();
+        expect(other).toBeDisabled();
+      } finally {
+        await act(async () => pending.resolve());
+      }
+      await waitFor(() =>
+        expect(
+          screen.queryByLabelText("Earlier branch context"),
+        ).not.toBeInTheDocument(),
+      );
+    },
+  );
+
+  it("does not mislabel a background history refresh as a return or clone action", async () => {
+    fixture.effective = "a1";
+    await store.init("token");
+    await store.loadBranchTree();
+    const refresh = deferred<void>();
+    fixture.treeGate = refresh.promise;
+    render(<EarlierBranchBanner />);
+    let pending!: Promise<void>;
+    act(() => {
+      pending = store.loadBranchTree();
+    });
+    try {
+      expect(
+        screen.getByRole("button", { name: "Back to latest" }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "Clone from here" }),
+      ).toBeDisabled();
+      expect(
+        document.querySelector(".earlier-branch-banner .pi-loading"),
+      ).toBeNull();
+    } finally {
+      await act(async () => {
+        refresh.resolve();
+        await pending;
+      });
+    }
+    expect(
+      screen.getByRole("button", { name: "Back to latest" }),
+    ).toBeEnabled();
+  });
 
   it("offers endpoint-inclusive Clone in the active earlier-history notice, not user-only Fork", async () => {
     fixture.effective = "a1";

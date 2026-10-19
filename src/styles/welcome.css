@@ -52,7 +52,7 @@
 .welcome__error {
   width: min(var(--composer-max), 100%);
   margin: var(--space-2) 0 0;
-  color: var(--error);
+  color: var(--error-ink);
   font-size: var(--text-sm);
   text-align: left;
 }
@@ -68,7 +68,7 @@
 }
 
 .welcome__readiness--error {
-  color: var(--error);
+  color: var(--error-ink);
 }
 
 /* A missing project is a normal creation flow, not an error panel. */

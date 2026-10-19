@@ -176,6 +176,10 @@ export async function modelSettingsScenario(page: Page, theme = "light") {
     providers: () => providers,
     modelChanges,
     authOperations,
+    failLogin(message: string) {
+      if (!attempt) throw new Error("No active login");
+      attempt = { ...attempt, status: "failed", prompt: null, message };
+    },
     errors,
   };
 }

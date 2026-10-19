@@ -228,6 +228,17 @@ for (const mobile of [false, true]) {
         ),
       ).toBeVisible();
       await expect(card.getByText("Script", { exact: true })).toBeVisible();
+      const childRow = card.locator("summary.child-call__row").first();
+      await childRow.hover();
+      await expect(childRow).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await page.keyboard.press("Tab");
+      await childRow.focus();
+      await expect(childRow).toBeFocused();
+      await expect(childRow).toHaveCSS("outline-style", "solid");
+      await childRow.press("Enter");
+      await expect(childRow.locator("..")).toHaveAttribute("open", "");
+      await childRow.press("Enter");
+      await expect(childRow.locator("..")).not.toHaveAttribute("open", "");
       await expect(card.getByText("Calls", { exact: true })).toHaveCount(0);
       await expect(card.getByText("Output", { exact: true })).toBeVisible();
       await expect(card.locator(".child-call__summary").first()).toHaveText(
@@ -1051,6 +1062,9 @@ for (const [palette, theme] of [
     await expect(source).toBeVisible();
     const pathLabel = read.getByRole("button", { name: path, exact: true });
     const leaf = pathLabel.locator(".resource-path__leaf");
+    const separator = pathLabel.locator(".resource-path__separator");
+    await expect(separator).toHaveText("/");
+    await expect(separator).toBeVisible();
     await expect(leaf).toHaveText("SessionProjectionController.tsx");
     const leafBox = await leaf.boundingBox();
     const pathBox = await pathLabel.boundingBox();

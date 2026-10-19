@@ -174,7 +174,9 @@ function downloadFileUrl(url: string, fileName: string): void {
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = fileName;
-  anchor.rel = "noreferrer";
+  // Native WebKit downloads can omit Origin/Fetch Metadata. Preserve only
+  // the origin as their same-origin proof, never the page path/query.
+  anchor.referrerPolicy = "origin";
   anchor.click();
 }
 

@@ -78,7 +78,7 @@
 .history-entry > span { -webkit-line-clamp: 2; }
 .history-prompt small,
 .history-position {
-  color: var(--accent-active);
+  color: var(--accent-deep);
   font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
 }
 .history-turn[data-current] .history-prompt { background: var(--accent-tint); }
@@ -112,9 +112,21 @@
 .history-route small { color: var(--muted); font-size: var(--text-xs); }
 .history-result { border-bottom: 1px solid var(--hairline); }
 .history-result .search-match { font-weight: 600; }
-.history-route { flex-direction: row; align-items: center; }
+/* Center the flex line inside touch rows, but align route metadata with its
+   first text baseline rather than the middle of a wrapped description. */
+.history-route {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-content: center;
+  align-items: baseline;
+}
 .history-route > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.history-route svg { flex: none; color: var(--muted); }
+.history-route svg {
+  flex: none;
+  align-self: flex-start;
+  margin-top: calc((1lh - 13px) / 2);
+  color: var(--muted);
+}
 .history-route small { flex: none; }
 .history-load { margin-block: var(--space-2); }
 .history-empty { margin: var(--space-6) var(--space-2); color: var(--muted); font-size: var(--text-sm); }
@@ -137,6 +149,11 @@
   padding: var(--space-3) var(--space-4);
   overflow-wrap: anywhere;
   scrollbar-gutter: stable;
+}
+.history-detail__body > p[role="status"] {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 .history-detail__kind {
   margin-bottom: var(--space-3);
@@ -271,6 +288,7 @@
   resize: vertical;
 }
 .branches__stale {
+  overflow-wrap: anywhere;
   padding: var(--space-2) var(--space-3);
   color: var(--warning-ink);
   background: var(--warning-tint);

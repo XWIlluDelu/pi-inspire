@@ -46,7 +46,8 @@ export function hiddenDeletionBlockReason(
       const status = state.sessionStatuses[session.id];
       return (
         status &&
-        (isBusyRunState(status.runState) || status.runState === "conflict")
+        ((!status.external && isBusyRunState(status.runState)) ||
+          status.runState === "conflict")
       );
     })
   )

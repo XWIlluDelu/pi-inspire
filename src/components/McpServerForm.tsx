@@ -207,6 +207,14 @@ export function McpServerForm({
       value,
     })),
   );
+  const hasStoredPrivateValues = Boolean(
+    entry &&
+      (entry.urlConfigured ||
+        entry.argumentCount ||
+        entry.envKeys.length ||
+        entry.headerKeys.length ||
+        entry.oauthFields.length),
+  );
   const ruleFields = useRef<HTMLFieldSetElement>(null);
   useLayoutEffect(() => validateUniqueKeys(ruleFields.current), [toolRules]);
   const change = <K extends keyof McpConfigValues>(
@@ -285,6 +293,7 @@ export function McpServerForm({
               <div className="models-form__field">
                 <span>Configuration target</span>
                 <Dropdown
+                  className="dropdown--field"
                   label="Configuration target"
                   value={scope}
                   disabled={busy}
@@ -300,10 +309,17 @@ export function McpServerForm({
           <p className="models-status models-form__wide mcp-path">
             {file.path}
           </p>
+          {hasStoredPrivateValues ? (
+            <p className="models-status models-form__wide mcp-fields-hint">
+              Stored values stay on the Host. Leave protected fields blank to
+              keep them; use their remove actions to clear them.
+            </p>
+          ) : null}
           {!entry && (
             <div className="models-form__field models-form__wide">
               <span>Transport</span>
               <Dropdown
+                className="dropdown--field"
                 label="Transport"
                 value={transport}
                 disabled={busy}
@@ -492,7 +508,9 @@ export function McpServerForm({
             <div className="models-form__field">
               <span>Tool exposure</span>
               <Dropdown
+                className="dropdown--field"
                 label="Tool exposure"
+                autoFocus={Boolean(entry?.policyOnly)}
                 value={exposure ?? (entry?.policyOnly ? "inherit" : "codemode")}
                 options={
                   entry?.policyOnly
@@ -519,6 +537,7 @@ export function McpServerForm({
               </span>
               {entry?.policyOnly ? (
                 <Dropdown
+                  className="dropdown--field"
                   label="Enabled in this project"
                   value={
                     enabled === null
@@ -674,6 +693,7 @@ export function McpServerForm({
                 <div className="models-form__field">
                   <span>Exposure</span>
                   <Dropdown
+                    className="dropdown--field"
                     label={`Exposure for ${rule.key || "new rule"}`}
                     value={rule.value}
                     options={exposureOptions}

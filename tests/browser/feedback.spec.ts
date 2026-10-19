@@ -72,10 +72,6 @@ for (const theme of ["light", "dark"] as const) {
           () => document.documentElement.scrollWidth <= window.innerWidth,
         ),
       ).toBe(true);
-      await page.screenshot({
-        path: `output/playwright/feedback/scopes-${width}-${theme}.png`,
-      });
-
       if (width === 390) {
         for (const mobileWidth of [390, 320]) {
           await page.setViewportSize({ width: mobileWidth, height: 844 });
@@ -92,9 +88,6 @@ for (const theme of ["light", "dark"] as const) {
             ),
           ).toBe(true);
         }
-        await page.screenshot({
-          path: `output/playwright/feedback/scopes-320-${theme}.png`,
-        });
       }
       unavailable = false;
       await banner.getByRole("button", { name: "Retry", exact: true }).click();

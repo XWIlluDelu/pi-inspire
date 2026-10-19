@@ -3,6 +3,8 @@ import { expect, type Page, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { hostRequest } from "./support/host-request";
 import { openMockSession, pairedPage } from "./support/navigation";
+import { firstTextBaseline } from "./support/text-baseline";
+import { textOverflowsInlineBounds } from "./support/text-bounds";
 
 test.use({ serviceWorkers: "block" });
 
@@ -119,6 +121,7 @@ for (const touch of [false, true]) {
     }) => {
       const { title, composer } = await namedSession(page);
       const rect = (await title.boundingBox())!;
+      const heading = (await page.locator(".topbar__heading").boundingBox())!;
       expect(rect.width).toBeGreaterThanOrEqual(44);
       await expect(page.locator(".topbar__heading > button")).toHaveCount(0);
       await expect(title).toHaveAttribute("aria-haspopup", "menu");
@@ -152,7 +155,11 @@ for (const touch of [false, true]) {
       await expect
         .poll(async () => Math.abs((await input.boundingBox())!.x - rect.x))
         .toBeLessThanOrEqual(1);
-      expect((await input.boundingBox())!.width).toBeGreaterThan(160);
+      const editor = (await input.boundingBox())!;
+      expect(editor.width).toBeGreaterThan(160);
+      expect(
+        Math.abs(editor.y + editor.height / 2 - heading.y - heading.height / 2),
+      ).toBeLessThanOrEqual(1);
       await input.fill("Reviewed calibration notes");
       await input.press("Enter");
       await expect(title).toContainText("Reviewed calibration notes");
@@ -231,6 +238,90 @@ test("a delayed blur save cannot replace a newer name still being edited", async
   await expect(title).toContainText("Newer name still being edited");
   await expect(composer).toHaveValue("Keep the unfinished comparison");
 });
+test("export failure keeps long diagnostics readable and the selected format retryable", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  const draft = page.getByRole("textbox", { name: "Message", exact: true });
+  await draft.fill("Keep the unfinished comparison");
+  const authority = (await hostRequest(page).get("/api/preferences")).headers()[
+    "x-inspire-authority"
+  ]!;
+  const message =
+    "Cannot read /workspace/archive/TemperatureDependentReferenceSpectrometerCalibrationRepeatabilityAndMeasurementUncertaintyDecompositionAnalysis.jsonl: EACCES (permission denied).";
+  let fail = true;
+  await page.route("**/api/sessions/export", (route) =>
+    fail
+      ? route.fulfill({
+          status: 409,
+          headers: { "X-Inspire-Authority": authority },
+          json: { error: message },
+        })
+      : route.fallback(),
+  );
+  await page.getByRole("button", { name: /^Session actions:/ }).click();
+  await page
+    .getByRole("menuitem", { name: "Export session…", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Export session",
+    exact: true,
+  });
+  const format = dialog.getByRole("radio", { name: "JSONL Current branch" });
+  await format.check();
+  await dialog.getByRole("button", { name: "Download", exact: true }).click();
+  const error = dialog.getByRole("alert");
+  await expect(error).toHaveText(message);
+  for (const [width, height] of [
+    [1280, 900],
+    [844, 390],
+    [390, 844],
+    [320, 640],
+    [568, 320],
+    [320, 320],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await page.evaluate(() => document.fonts.ready);
+    await expect
+      .poll(() => error.evaluate(textOverflowsInlineBounds))
+      .toBe(false);
+    await expect
+      .poll(() => dialog.evaluate((el) => el.scrollWidth - el.clientWidth))
+      .toBe(0);
+    await expect(format).toBeChecked();
+    // The existing overlay scroll, not horizontal panning, reaches every action.
+    for (const name of ["Cancel", "Download"]) {
+      const button = dialog.getByRole("button", { name, exact: true });
+      await button.scrollIntoViewIfNeeded();
+      await expect(button).toBeInViewport({ ratio: 1 });
+    }
+    await error.scrollIntoViewIfNeeded();
+    await expect(error).toBeInViewport({ ratio: 1 });
+  }
+  const html = dialog.getByRole("radio", { name: "HTML Whole session" });
+  await html.check();
+  await expect(html).toBeChecked();
+  await format.check();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(draft).toHaveValue("Keep the unfinished comparison");
+  await page.getByRole("button", { name: /^Session actions:/ }).click();
+  await page
+    .getByRole("menuitem", { name: "Export session…", exact: true })
+    .click();
+  await format.check();
+  fail = false;
+  const downloaded = page.waitForEvent("download");
+  await dialog.getByRole("button", { name: "Download", exact: true }).click();
+  const file = await downloaded;
+  expect(file.suggestedFilename()).toMatch(/\.jsonl$/);
+  expect(await file.failure()).toBeNull();
+  await expect(dialog).toHaveCount(0);
+  await expect(draft).toHaveValue("Keep the unfinished comparison");
+});
+
 test("title/palette exports download the selected format and branch without consuming draft attachments", async ({
   page,
 }, info) => {
@@ -255,6 +346,37 @@ test("title/palette exports download the selected format and branch without cons
   await expect(
     dialog.getByRole("radio", { name: "HTML Whole session" }),
   ).toBeFocused();
+  await page.evaluate(() => document.fonts.ready);
+  for (const width of [1280, 820, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const row of await dialog
+      .locator(".export-dialog__formats label")
+      .all()) {
+      const copy = row.locator(".export-dialog__format-copy");
+      const [format, description] = await Promise.all([
+        copy.locator("span").evaluate(firstTextBaseline),
+        copy.locator("small").evaluate(firstTextBaseline),
+      ]);
+      expect(format).not.toBeNull();
+      expect(description).not.toBeNull();
+      expect(Math.abs(format! - description!)).toBeLessThanOrEqual(0.5);
+      const [control, box] = await Promise.all([
+        row.locator("input").boundingBox(),
+        row.boundingBox(),
+      ]);
+      expect(control!.width).toBe(14);
+      expect(control!.height).toBe(14);
+      expect(
+        Math.abs(control!.y + control!.height / 2 - box!.y - box!.height / 2),
+      ).toBeLessThanOrEqual(0.5);
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+    }
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await dialog.getByText("Current branch", { exact: true }).click();
+  await expect(
+    dialog.getByRole("radio", { name: "JSONL Current branch" }),
+  ).toBeChecked();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(actions).toBeFocused();

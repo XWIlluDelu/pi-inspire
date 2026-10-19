@@ -1,5 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { listNativeHiddenNames } from "../../server/host-hidden-dirs.js";
+
+beforeEach(() => vi.stubEnv("ProgramFiles", "C:\\Program Files"));
+afterEach(() => vi.unstubAllEnvs());
 
 describe("native hidden-folder attributes", () => {
   it("does not spawn an attribute command on Linux", async () => {
@@ -21,9 +24,7 @@ describe("native hidden-folder attributes", () => {
       new Set(["AppData", "隐藏目录", "line\nbreak"]),
     );
     const [command, args, options] = run.mock.calls[0]!;
-    expect(command).toMatch(
-      /\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/,
-    );
+    expect(command).toMatch(/\\PowerShell\\7\\pwsh\.exe$/);
     expect(args).toEqual(
       expect.arrayContaining(["-NoProfile", "-NonInteractive", "-Command"]),
     );

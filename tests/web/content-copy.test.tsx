@@ -254,3 +254,46 @@ describe("owned content copying", () => {
     ).rejects.toThrow("Saved image is unavailable");
   });
 });
+
+it.each([
+  { name: "compact default", iconSize: undefined, expected: 13 },
+  { name: "image viewer", iconSize: 18, expected: 18 },
+])(
+  "keeps $name glyph geometry across reading and success feedback",
+  async ({ iconSize, expected }) => {
+    const read = deferred<string>();
+    vi.spyOn(store, "copyOwnership").mockImplementation(() => () => true);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+    const view = render(
+      <CopyAction
+        label="image"
+        className="copy"
+        iconSize={iconSize}
+        getText={() => read.promise}
+      />,
+    );
+    try {
+      const checkSize = (button: HTMLElement) => {
+        expect(button.querySelector("svg")).toHaveAttribute(
+          "width",
+          String(expected),
+        );
+        expect(button.querySelector("svg")).toHaveAttribute(
+          "height",
+          String(expected),
+        );
+      };
+      const copy = screen.getByRole("button", { name: "Copy image" });
+      checkSize(copy);
+      fireEvent.click(copy);
+      checkSize(await screen.findByRole("button", { name: "Loading image" }));
+      read.resolve("copied content");
+      checkSize(await screen.findByRole("button", { name: "image copied" }));
+    } finally {
+      view.unmount();
+    }
+  },
+);

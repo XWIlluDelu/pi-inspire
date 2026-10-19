@@ -8,6 +8,7 @@ import {
   openMockSession,
   pairedPage,
 } from "./support/navigation";
+import { firstTextBaseline } from "./support/text-baseline";
 
 const draft = "UNFINISHED DRAFT — retain these notes";
 interface CommandSession {
@@ -156,27 +157,149 @@ test("file completions keep full filenames readable beside or above their paths"
   }
 });
 
-test("narrow palette descriptions follow their titles while plain rows stay centered", async ({
+test("file completion marks follow the first line of wrapped filenames", async ({
   page,
   commandSession,
 }) => {
+  const names = [
+    "calibration.json",
+    "temperature-dependent-calibration-repeatability-analysis.json",
+    "温度相关的实验仪器校准与长时间重复性误差分析结果.json",
+  ];
+  await page.route("**/api/files?**", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({
+      response,
+      json: {
+        files: names.map((name) => ({ name, path: `src/analysis/${name}` })),
+      },
+    });
+  });
+  for (const width of [1280, 820, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await commandSession.input.fill("@");
+    await expect
+      .poll(() =>
+        page.locator(".completion").evaluate((menu) => {
+          const r = menu.getBoundingClientRect();
+          return (
+            getComputedStyle(menu).visibility === "visible" &&
+            r.width > 0 &&
+            r.left >= 0 &&
+            r.right <= innerWidth + 0.5
+          );
+        }),
+      )
+      .toBe(true);
+    for (const name of names) {
+      const option = page.getByRole("option", {
+        name: `${name}, src/analysis/${name}`,
+        exact: true,
+      });
+      await expect(option).toBeVisible();
+      await page.evaluate(() => document.fonts.ready);
+      const geometry = await option.evaluate((root) => {
+        const label = root.querySelector(".completion__title > span")!;
+        const icon = root.querySelector(".completion__title > svg")!;
+        const text = label.getBoundingClientRect();
+        const mark = icon.getBoundingClientRect();
+        const lineHeight = Number.parseFloat(
+          getComputedStyle(label).lineHeight,
+        );
+        return {
+          firstLineOffset: mark.y + mark.height / 2 - text.y - lineHeight / 2,
+          textHeight: text.height,
+          lineHeight,
+        };
+      });
+      expect(Math.abs(geometry.firstLineOffset)).toBeLessThanOrEqual(0.5);
+      if (name !== names[0])
+        expect(geometry.textHeight).toBeGreaterThan(geometry.lineHeight * 1.5);
+      if (width > 600) {
+        const title = await option
+          .locator(".completion__title")
+          .evaluate(firstTextBaseline, ".completion__option");
+        const hint = await option
+          .locator(".completion__hint")
+          .evaluate(firstTextBaseline, ".completion__option");
+        expect(Math.abs(title! - hint!)).toBeLessThanOrEqual(0.5);
+      }
+    }
+  }
+});
+
+test("separates purpose-based palette group headings from indented rows and bounds long CJK/path session titles to two lines", async ({
+  page,
+  commandSession,
+}) => {
+  await page.route("**/api/sessions**", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    if (Array.isArray(body.sessions) && body.sessions.length > 0) {
+      body.sessions.unshift({
+        ...body.sessions[0],
+        id: "mixed-cjk-long-session",
+        title:
+          "检查数据处理流程：整理实验记录，比较 analysis/session_04/calibration_notes.md 与基线以及后续长路径回归验证说明文字",
+        modified: new Date(Date.now() + 60_000).toISOString(),
+      });
+    }
+    await route.fulfill({ response, json: body });
+  });
+  await page.reload();
+  await expect(commandSession.input).toBeVisible();
+
   const palette = await openPalette(page);
-  const history = palette
+  await expect(palette.locator(".palette__group")).toHaveText([
+    "Actions",
+    "Workspace",
+    "Sessions",
+  ]);
+  const longSession = palette
     .getByRole("option")
-    .filter({ hasText: "Open History" });
-  const plain = palette.getByRole("option").filter({ hasText: "New session" });
+    .filter({ hasText: "检查数据处理流程" });
+  const plain = palette.getByRole("option").filter({ hasText: "Open History" });
+  await expect(plain.locator(".palette__hint-inline")).toHaveCount(0);
+
   for (const width of [1280, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
-    const layout = await history.evaluate((row) => {
-      const title = row
-        .querySelector(".palette__title")!
-        .getBoundingClientRect();
-      const hint = row
-        .querySelector(".palette__hint-inline")!
-        .getBoundingClientRect();
-      const box = row.getBoundingClientRect();
-      return { title: title.toJSON(), hint: hint.toJSON(), row: box.toJSON() };
+    const hierarchy = await palette.evaluate((el) => {
+      const groupEl = el.querySelector<HTMLElement>(".palette__group")!;
+      const rowTitle = el.querySelector<HTMLElement>(
+        ".palette__row .palette__title",
+      )!;
+      const groupStyle = getComputedStyle(groupEl);
+      const range = document.createRange();
+      range.selectNodeContents(groupEl);
+      const groupTextRect = range.getBoundingClientRect();
+      const titleRect = rowTitle.getBoundingClientRect();
+      return {
+        groupBorderBottom: Number.parseFloat(groupStyle.borderBottomWidth),
+        groupTransform: groupStyle.textTransform,
+        rowIndentDelta: titleRect.left - groupTextRect.left,
+      };
     });
+    expect(hierarchy.groupBorderBottom).toBeGreaterThan(0);
+    expect(hierarchy.groupTransform).toBe("uppercase");
+    expect(hierarchy.rowIndentDelta).toBeGreaterThanOrEqual(4);
+
+    const layout = await longSession.evaluate((row) => {
+      const title = row.querySelector<HTMLElement>(".palette__title")!;
+      const hint = row.querySelector<HTMLElement>(".palette__hint-inline")!;
+      const titleRect = title.getBoundingClientRect();
+      const hintRect = hint.getBoundingClientRect();
+      const box = row.getBoundingClientRect();
+      return {
+        title: titleRect.toJSON(),
+        hint: hintRect.toJSON(),
+        row: box.toJSON(),
+        lineClamp: getComputedStyle(title).webkitLineClamp,
+        lineHeight: Number.parseFloat(getComputedStyle(title).lineHeight),
+      };
+    });
+    expect(layout.lineClamp).toBe("2");
+    expect(layout.title.height).toBeGreaterThan(layout.lineHeight * 1.5);
+    expect(layout.title.height).toBeLessThanOrEqual(layout.lineHeight * 2.25);
     if (width <= 600) {
       expect(layout.hint.x).toBeCloseTo(layout.title.x, 1);
       expect(layout.hint.top).toBeGreaterThanOrEqual(layout.title.bottom);
@@ -194,11 +317,14 @@ test("narrow palette descriptions follow their titles while plain rows stay cent
     });
     expect(Math.abs(offset)).toBeLessThanOrEqual(0.5);
   }
-  // Layout changes do not consume drafts or alter pointer/keyboard destinations.
-  await palette.getByLabel("Filter commands").fill("Open History");
+  // Layout changes and omitted redundant hints do not consume drafts or drop search aliases.
+  await palette.getByLabel("Filter commands").fill("Branch navigation");
+  await expect(plain).toBeVisible();
   await palette.getByLabel("Filter commands").press("Enter");
   await expect(palette).toHaveCount(0);
-  await commandSession.assertDraft();
+  // This layout fixture reloads the catalog before opening the palette. Only
+  // message text survives that reload; the next test covers retained attachments.
+  await expect(commandSession.input).toHaveValue(draft);
 });
 
 test("ranks command destinations and opens the model picker without consuming a draft", async ({
@@ -245,10 +371,9 @@ test("native terminal-only commands remain discoverable in the composer", async 
   ).toBeVisible();
 });
 
-test("types and runs prepared arguments without consuming the draft", async ({
-  page,
-  commandSession,
-}) => {
+test("types and runs prepared arguments without consuming the draft", {
+  tag: "@cross-browser",
+}, async ({ page, commandSession }) => {
   const { prompts, assertDraft } = commandSession;
   let palette = await openPalette(page, "review");
   await palette.getByRole("option", { name: /\/review/ }).click();
@@ -390,6 +515,54 @@ test("selects completions in command preparation by pointer and keyboard", async
   await commandSession.assertDraft();
 });
 
+test("prepared file completions track their non-viewport overlay without changing drafts", async ({
+  page,
+  commandSession,
+}) => {
+  const palette = await openPalette(page, "review");
+  await palette.getByRole("option", { name: /\/review/ }).click();
+  const input = palette.getByLabel("Prepared command");
+  await input.fill("/review @FilePreview");
+  const menu = page.locator(".completion").filter({
+    has: page.getByRole("listbox", { name: "Project file completions" }),
+  });
+  await expect(
+    menu.getByRole("option", { name: /FilePreview\.tsx/ }),
+  ).toBeVisible();
+  await page.evaluate(() => document.fonts.ready);
+  const initialInput = (await input.boundingBox())!;
+  const initialMenu = (await menu.boundingBox())!;
+  const offset = initialMenu.y - initialInput.y;
+  const direction = () =>
+    menu.evaluate((el) => (el.style.bottom ? "up" : "down"));
+  const initialDirection = await direction();
+  for (const height of [32, 40, 0]) {
+    // Exercise the same filtered containing block without requiring installed-PWA emulation.
+    await page.evaluate(
+      (height) =>
+        document.documentElement.style.setProperty(
+          "--window-titlebar-height",
+          height + "px",
+        ),
+      height,
+    );
+    await expect.poll(direction).toBe(initialDirection);
+    await expect
+      .poll(async () => {
+        const anchor = (await input.boundingBox())!;
+        const box = (await menu.boundingBox())!;
+        return Math.abs(box.y - anchor.y - offset);
+      })
+      .toBeLessThanOrEqual(0.5);
+  }
+  await menu.getByRole("option", { name: /FilePreview\.tsx/ }).click();
+  await expect(input).toHaveValue('/review @"src/components/FilePreview.tsx" ');
+  await expect(input).toBeFocused();
+  await expect(menu).toHaveCount(0);
+  await commandSession.assertDraft();
+  expect(commandSession.prompts).toHaveLength(0);
+});
+
 test("resumes unsubmitted command preparation after a native question", async ({
   page,
   commandSession,
@@ -508,6 +681,20 @@ test("reads shortcuts and installed release notes, including from the start scre
   const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await expect(help).toContainText("Browse prompt history");
   await expect(help).toContainText("IME composition");
+  await page.evaluate(() => document.fonts.ready);
+  for (const width of [1280, 820, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const row of await help.locator("dl > div").all()) {
+      const [key, description] = await Promise.all([
+        row.locator("kbd").first().evaluate(firstTextBaseline),
+        row.locator("dd").evaluate(firstTextBaseline),
+      ]);
+      expect(key).not.toBeNull();
+      expect(description).not.toBeNull();
+      expect(Math.abs(key! - description!)).toBeLessThanOrEqual(0.5);
+    }
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
   expect(
     (await new AxeBuilder({ page }).include(".command-help").analyze())
       .violations,

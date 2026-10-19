@@ -8,6 +8,7 @@ import {
   RotateCw,
 } from "lucide-react";
 import {
+  type CSSProperties,
   memo,
   type ReactNode,
   type RefObject,
@@ -67,6 +68,19 @@ function SourceDiffView({
   containerRef: RefObject<HTMLDivElement | null>;
   onScroll: (node: HTMLDivElement) => void;
 }) {
+  const lineDigits = useMemo(
+    () =>
+      projection.rows.reduce(
+        (digits, { line }) =>
+          Math.max(
+            digits,
+            String(line.oldLine ?? "").length,
+            String(line.newLine ?? "").length,
+          ),
+        1,
+      ),
+    [projection],
+  );
   return (
     <div
       className="source-diff source-reader"
@@ -77,7 +91,10 @@ function SourceDiffView({
       onScroll={(event) => onScroll(event.currentTarget)}
       data-pane-scroll-active="true"
     >
-      <div className="source-diff__lines">
+      <div
+        className="source-diff__lines"
+        style={{ "--diff-line-digits": lineDigits } as CSSProperties}
+      >
         {projection.rows.map(
           ({ line, html, changeIndex, startsChange }, index) => (
             <div
@@ -535,7 +552,7 @@ function ChangesDetail({
       >
         <button
           type="button"
-          className="res__more button--quiet"
+          className="res__more button--quiet res__state-action"
           onClick={() => void store.openGitDiff(diffView.pathId, diffView.side)}
         >
           <RotateCw size={12} aria-hidden /> Retry

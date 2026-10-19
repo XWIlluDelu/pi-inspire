@@ -19,7 +19,9 @@ export function HiddenClearDialog({
       error: state.sessionDeleteError,
       reviewRequired: state.sessionDeleteReviewRequired,
       openInPi: sessionIds.some(
-        (id) => state.externalSessionActivities[id] !== undefined,
+        (id) =>
+          state.sessionStatuses[id]?.external === true ||
+          state.externalSessionActivities[id] !== undefined,
       ),
     }),
     shallowEqual,

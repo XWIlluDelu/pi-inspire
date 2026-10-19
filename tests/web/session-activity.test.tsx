@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { countBusySessions } from "../../shared/session-activity";
 import { type AppState, createInitialAppState } from "../../src/app-state";
 import { HiddenClearDialog } from "../../src/components/HiddenClearDialog";
+import { hiddenDeletionBlockReason } from "../../src/components/nav-model";
 import { SessionRow } from "../../src/components/NavSessions";
 import { SessionDeleteDialog } from "../../src/components/SessionDeleteDialog";
 import { RuntimeEventController } from "../../src/controllers/runtime-event-controller";
@@ -147,6 +148,54 @@ describe("session activity presentation", () => {
         "aria-describedby",
         "session-delete-description",
       );
+    },
+  );
+
+  it.each(["idle", "working", "blocked"] as const)(
+    "keeps connected native %s ownership when the optional reporter is absent",
+    (activity) => {
+      state.prefs.hiddenSessionIds = [external.id];
+      events.apply({
+        type: "session_status",
+        sessionId: external.id,
+        sessionStatus: {
+          runState: activity === "idle" ? "idle" : "running",
+          needsInput: activity === "blocked",
+          external: true,
+        },
+      });
+      const view = render(
+        <>
+          <SessionRow
+            session={external}
+            selectedSessionId="s1"
+            onSelect={vi.fn()}
+            onDelete={vi.fn()}
+          />
+          <SessionDeleteDialog session={external} onClose={vi.fn()} />
+        </>,
+      );
+      expect(
+        screen.getByRole("button", { name: 'Delete "External Pi"' }),
+      ).toBeEnabled();
+      expect(screen.getByText(/Pi may write this session again/)).toBeVisible();
+      expect(hiddenDeletionBlockReason([external], state)).toBeNull();
+      view.rerender(
+        <HiddenClearDialog sessionIds={[external.id]} onClose={vi.fn()} />,
+      );
+      expect(
+        screen.getByText(/Open Pi terminals may write these sessions again/),
+      ).toBeVisible();
+      // Ownership alone is a status change, even if the run state is unchanged.
+      events.apply({
+        type: "session_status",
+        sessionId: external.id,
+        sessionStatus: {
+          ...state.sessionStatuses[external.id],
+          external: false,
+        },
+      });
+      expect(state.sessionStatuses[external.id]?.external).toBe(false);
     },
   );
 

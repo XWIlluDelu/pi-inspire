@@ -74,6 +74,8 @@ describe("composer delivery and artifacts", () => {
     const first = deferred<RouteResponse>();
     host.promptGates.push(first.promise);
     render(<Composer />);
+    await attachFile();
+    await screen.findByText("notes.txt");
     typeDraft("first delivery");
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     typeDraft("newer draft");
@@ -85,9 +87,15 @@ describe("composer delivery and artifacts", () => {
     expect(screen.getByText("Message not delivered")).toBeInTheDocument();
     expect(screen.getByLabelText("Message")).toHaveValue("newer draft");
     expect(screen.getByRole("button", { name: "Restore" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Restore" })).toHaveClass(
+      "button",
+      "button--quiet",
+    );
+    expect(screen.queryByText("notes.txt")).not.toBeInTheDocument();
     typeDraft("");
     fireEvent.click(screen.getByRole("button", { name: "Restore" }));
     expect(screen.getByLabelText("Message")).toHaveValue("first delivery");
+    expect(screen.getByText("notes.txt")).toBeInTheDocument();
     expect(screen.queryByText("Message not delivered")).not.toBeInTheDocument();
   });
 

@@ -99,9 +99,9 @@ test.beforeEach(async ({ page }) => {
   await pairAndOpen(page);
 });
 
-test("Overlay adds a quiet corner icon, retains the centered wordmark and restores sidebar branding on exit", async ({
-  page,
-}) => {
+test("Overlay adds a quiet corner icon, retains the centered wordmark and restores sidebar branding on exit", {
+  tag: "@platform-ui",
+}, async ({ page }) => {
   const brand = page.locator(".window-titlebar__brand-button");
   await expect(brand).toBeHidden();
   for (const [left, right, height, top] of [
@@ -113,6 +113,33 @@ test("Overlay adds a quiet corner icon, retains the centered wordmark and restor
   ]) {
     await overlay(page, true, left, right, height, top);
     await expect(brand).toBeVisible();
+    if ((await brand.getAttribute("aria-pressed")) !== "true")
+      await brand.click();
+    const decoration = page.locator(".window-titlebar__needles");
+    await expect(decoration).toHaveCSS("pointer-events", "none");
+    expect(await decoration.boundingBox()).toEqual({
+      x: 0,
+      y: top,
+      width: 1280,
+      height,
+    });
+    const safe = await page.locator(".window-titlebar__safe").boundingBox();
+    expect(safe).toEqual({
+      x: left,
+      y: top,
+      width: 1280 - left - right,
+      height,
+    });
+    for (const x of [left > 0 ? 4 : null, right > 0 ? 1276 : null]) {
+      if (x === null) continue;
+      expect(
+        await page.evaluate(
+          ({ x, y }) =>
+            !!document.elementFromPoint(x, y)?.closest(".window-titlebar"),
+          { x, y: top + height / 2 },
+        ),
+      ).toBe(false);
+    }
     await expect(page.locator(".nav__brand-lockup")).toBeHidden();
     const corner = page.locator(".window-titlebar__corner-logo");
     const icon = (await corner.boundingBox())!;
@@ -226,9 +253,87 @@ test("Overlay adds a quiet corner icon, retains the centered wordmark and restor
   expect(create.y).toBeGreaterThanOrEqual(header.y + header.height);
 });
 
-test("Overlay chrome and needle colors follow every palette and luminosity, and revert on exit", async ({
-  page,
-}) => {
+test("needles reach both titlebar edges and foreground marks without taking their hit targets", {
+  tag: "@platform-ui",
+}, async ({ page }) => {
+  await overlay(page, true);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const brand = page.locator(".window-titlebar__brand-button");
+  if ((await brand.getAttribute("aria-pressed")) === "true")
+    await brand.click();
+  const geometry = await page.locator(".window-titlebar").evaluate((safe) => {
+    const bounds = safe.getBoundingClientRect();
+    const icon = safe
+      .querySelector(".window-titlebar__corner-logo")!
+      .getBoundingClientRect();
+    const mark = safe
+      .querySelector(".window-titlebar__brand-button")!
+      .getBoundingClientRect();
+    return {
+      width: bounds.width,
+      targets: [
+        4,
+        bounds.width - 4,
+        icon.left - bounds.left - 6,
+        icon.right - bounds.left + 6,
+        mark.left - bounds.left - 6,
+        mark.right - bounds.left + 6,
+      ],
+    };
+  });
+  await page.evaluate(() => {
+    (window as typeof window & { needleRandom?: () => number }).needleRandom =
+      Math.random;
+  });
+  try {
+    for (const x of geometry.targets) {
+      // Fix only the random sample, not production layout or arrival geometry.
+      await page.evaluate(
+        (sample) => {
+          Math.random = () => sample;
+        },
+        (x - 2) / (geometry.width - 4),
+      );
+      await brand.click();
+      const needles = page.locator(".window-titlebar__needle");
+      await expect(needles.first()).toBeAttached();
+      const center = await needles
+        .first()
+        .evaluate((el) => parseFloat(el.style.left));
+      expect((center * geometry.width) / 100).toBeCloseTo(x, 1);
+      await expect(needles.first()).toHaveCSS("pointer-events", "none");
+      await brand.click();
+      await expect(needles).toHaveCount(0);
+    }
+    for (const foreground of [
+      page.locator(".window-titlebar__corner-logo > svg"),
+      brand,
+    ]) {
+      await expect(foreground).toHaveCSS(
+        "background-color",
+        "rgba(0, 0, 0, 0)",
+      );
+    }
+    await brand.click();
+    await expect(
+      page.locator(".window-titlebar__needle").first(),
+    ).toBeAttached();
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(page.locator(".window-titlebar__needle")).toHaveCount(0);
+    await expect(brand).toHaveAttribute("aria-pressed", "true");
+    await brand.click();
+  } finally {
+    await page.evaluate(() => {
+      const state = window as typeof window & { needleRandom?: () => number };
+      if (state.needleRandom) Math.random = state.needleRandom;
+      delete state.needleRandom;
+    });
+  }
+});
+
+test("Overlay chrome and needle colors follow every palette and luminosity, and revert on exit", {
+  tag: "@platform-ui",
+}, async ({ page }) => {
   await overlay(page, true);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
@@ -291,4 +396,78 @@ test("Overlay chrome and needle colors follow every palette and luminosity, and 
     "content",
     "#14171A",
   );
+});
+
+test("settings menus keep their anchor and clear window chrome when the Overlay height changes", {
+  tag: "@platform-ui",
+}, async ({ page }) => {
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await settings.getByRole("button", { name: "Behavior", exact: true }).click();
+  const trigger = settings.getByRole("combobox", {
+    name: "On launch",
+    exact: true,
+  });
+  await trigger.click();
+  const menu = page.getByRole("listbox", { name: "On launch", exact: true });
+  for (const [width, windowHeight, height] of [
+    [1280, 840, 32],
+    [820, 700, 32],
+    [390, 844, 32],
+    [1280, 700, 40],
+    [1280, 840, 28],
+    [1280, 840, 0],
+  ]) {
+    await page.setViewportSize({ width, height: windowHeight });
+    await overlay(page, height > 0, 0, 138, height || 32);
+    await expect(menu).toHaveAttribute("data-placement", "down");
+    await expect
+      .poll(() =>
+        settings.evaluate((el) => {
+          const root = el.closest(".overlay")!;
+          const box = root.getBoundingClientRect();
+          const style = getComputedStyle(root);
+          return (
+            el.getBoundingClientRect().bottom -
+            (box.bottom - parseFloat(style.paddingBottom))
+          );
+        }),
+      )
+      .toBeLessThanOrEqual(0.5);
+    await expect
+      .poll(async () => {
+        const anchor = (await trigger.boundingBox())!;
+        const box = (await menu.boundingBox())!;
+        return Math.abs(box.y - anchor.y - anchor.height - 4);
+      })
+      .toBeLessThanOrEqual(0.5);
+  }
+  await menu.getByRole("option", { selected: true }).click();
+  await expect(menu).toHaveCount(0);
+  await expect(settings).toBeVisible();
+
+  await overlay(page, true);
+  const lower = settings.getByRole("combobox", {
+    name: "Follow-up delivery",
+    exact: true,
+  });
+  await lower.scrollIntoViewIfNeeded();
+  await lower.click();
+  const upward = page.getByRole("listbox", {
+    name: "Follow-up delivery",
+    exact: true,
+  });
+  await expect(upward).toHaveAttribute("data-placement", "up");
+  await expect
+    .poll(async () => {
+      const anchor = (await lower.boundingBox())!;
+      const box = (await upward.boundingBox())!;
+      return Math.abs(anchor.y - box.y - box.height - 4);
+    })
+    .toBeLessThanOrEqual(0.5);
+  expect((await upward.boundingBox())!.y).toBeGreaterThanOrEqual(40);
+  await page.keyboard.press("Escape");
+  await expect(upward).toHaveCount(0);
+  await expect(lower).toBeFocused();
+  await expect(settings).toBeVisible();
 });

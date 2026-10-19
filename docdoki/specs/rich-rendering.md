@@ -16,7 +16,7 @@ covers:
   - tests/web/rich-text-streaming.test.tsx
   - tests/web/rich-text-worker.test.tsx
   - tests/web/rich-text-parser-client.test.ts
-  - tests/browser/{tool-presentations,filesystem-files,custom-message}.spec.ts
+  - tests/browser/{tool-presentations,filesystem-files,custom-message,rich-text-layout}.spec.ts
   - tests/fixtures/rich-text-benchmark.tsx
   - scripts/benchmark-rich-text.mjs
 ---
@@ -32,6 +32,10 @@ thinking, documents, and extension Markdown share one rendering authority with d
 
 - Support CommonMark-style Markdown, GFM tables and task lists, links, images, inline mathematics,
   and display mathematics. Streaming keeps incomplete fences, links, tables, and math readable.
+  Read-only task markers hang beside a dedicated text column: wrapped lines, additional paragraphs,
+  and nested lists retain their text alignment and hierarchy. Original Markdown and read-only
+  checkbox semantics remain intact. Ordinary entries in mixed lists retain their bullets or
+  ordered numbers and share the content column with task entries.
   Table columns preserve whole-word minimum widths and wrap ordinary prose at word boundaries;
   wide tables and unbroken cell tokens scroll within the table, not the reading column.
 - Code blocks preserve whitespace, identify their language when available, highlight syntax, and
@@ -47,7 +51,10 @@ thinking, documents, and extension Markdown share one rendering authority with d
 - Disable raw HTML by default. Any interpreted HTML requires an explicit allowlist; reject unsafe
   URLs and active inline content. TeX rendering uses `trust:false`.
 - External links open safely in a new tab. Explicit local conversation links and images open the
-  session-bound resource preview. Document readers resolve file targets from the document directory,
+  session-bound resource preview. Conversation image-reference marks share the caption's first-line
+  baseline when alternative text wraps. Caption lines keep a common leading edge inside the button;
+  the complete text and preview target stay intact.
+  Document readers resolve file targets from the document directory,
   render independently authorized local images, and keep heading fragments within the reader under
   [[resource-preview]]. External image URLs appear as links; unrecognized conversation image paths
   remain unavailable. Arbitrary data URLs stay disabled.
@@ -78,9 +85,11 @@ Sanitized `code`/`pre` renderers pass primitive source and mode/language props t
 ## Checks
 
 Web tests compare streamed and fresh DOM, exercise delimiter boundaries and late references, and count
-math/highlighting work for unchanged leaves. Parser-client tests cover coalescing, reader retirement,
-and worker failure. Chromium flows exercise composer typing during large-response updates and scoped
-document navigation. Reproducible component measurements: [[performance]].
+math/highlighting work for unchanged leaves. Task-list checks preserve tight/loose paragraphs, inline
+formatting and mixed-list numbering; browser flows check first-line markers, shared text columns,
+nesting and source copying across reader variants and reading sizes. Parser-client tests cover
+coalescing, reader retirement, and worker failure. Chromium flows exercise composer typing during
+large-response updates and scoped document navigation. Reproducible component measurements: [[performance]].
 
 ## Boundaries
 

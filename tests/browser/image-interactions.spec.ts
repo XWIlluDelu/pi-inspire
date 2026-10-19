@@ -237,6 +237,18 @@ test("narrow controls trap focus; a background drag does not dismiss; copy failu
     name: "Image background",
   });
   const copy = dialog.getByRole("button", { name: "Copy image" });
+  for (const icon of await dialog
+    .locator(".image-lightbox__actions svg")
+    .all()) {
+    await expect(icon).toHaveAttribute("width", "18");
+    await expect(icon).toHaveAttribute("height", "18");
+    const centered = await icon.evaluate((el) => {
+      const svg = el.getBoundingClientRect();
+      const control = el.closest("button,a")!.getBoundingClientRect();
+      return Math.abs(svg.y + svg.height / 2 - control.y - control.height / 2);
+    });
+    expect(centered).toBeLessThanOrEqual(0.5);
+  }
   await backgrounds.focus();
   await page.keyboard.press("Tab");
   await expect(copy).toBeFocused();

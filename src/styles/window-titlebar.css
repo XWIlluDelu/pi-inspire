@@ -24,10 +24,11 @@
     pointer-events: none;
   }
 
-  /* The browser reports the usable rectangle on either side of native controls. */
+  /* Only interactive/drag content needs the native-control exclusion rectangle. */
   .window-titlebar__safe {
     container: window-titlebar / inline-size;
     position: absolute;
+    z-index: 1;
     top: env(titlebar-area-y, 0px);
     left: env(titlebar-area-x, 0px);
     width: env(titlebar-area-width, 100%);
@@ -38,11 +39,14 @@
     app-region: drag;
   }
 
-  /* Needles share the active theme's Tool/Thinking identity colors.
-     The Easter-egg layer lives within the safe rectangle behind the brand. */
+  /* Decoration can span the titlebar without enlarging its drag/hit surface.
+     Browser-owned controls may still mask the content beneath their own area. */
   .window-titlebar__needles {
     position: absolute;
-    inset: 0;
+    top: env(titlebar-area-y, 0px);
+    left: 0;
+    right: 0;
+    height: env(titlebar-area-height, 0px);
     overflow: hidden;
     pointer-events: none;
     z-index: 0;
@@ -122,7 +126,7 @@
   }
 
   .window-titlebar__brand-button {
-    background: var(--chrome-bg);
+    background: transparent;
     border: none;
     padding: 0 4px;
     margin: 0;

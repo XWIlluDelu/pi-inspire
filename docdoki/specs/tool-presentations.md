@@ -61,7 +61,8 @@ expanded body. [[conversation]] owns independently readable custom messages.
   gutter; numbered rows share a scroll plane so the gutter remains aligned during horizontal scroll.
 - Resource actions retain the complete reference for preview and accessibility. A fitting path stays
   complete. Overflow uses middle truncation, prioritizing the filename tail and filling remaining
-  width with leading context. Expanded block labels stay on one line beside the available path width.
+  width with leading context. The final path separator stays visible beside the filename when its
+  parent is elided. Expanded block labels stay on one line beside the available path width.
 
 ## Native presentations
 
@@ -101,7 +102,9 @@ card/activity preferences still choose initial disclosure; no separate density s
   scroller rather than a height-limited inner viewport; individual argument/output viewports remain bounded.
   Ordinary nested calls retain their bounded list viewport. CodeMode has no repeated visible Calls heading; its call/failure counts remain in the compact card header.
   Ordinary nested tools retain their heading.
-  Individual rows still disclose parameters, errors and duration.
+  Individual rows still disclose parameters, errors and duration. Their full-row disclosure target
+  remains unboxed during hover and press, with local text feedback and a keyboard focus outline;
+  code and output keep their own local reading surfaces.
 - Open CodeMode cards retain Calls → Output → Script throughout execution and saved-history reading.
   Calls use an unboxed list without a visible section heading; Output uses the same section heading and inset surface as native
   tool output. Script stays collapsed below, without a repeated language heading. Focus and reading
