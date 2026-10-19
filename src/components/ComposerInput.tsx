@@ -32,6 +32,7 @@ import {
   textareaCaretLineBounds,
 } from "../composer-history";
 import { fileIconForPath } from "../file-icons";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
   type FloatingMenuConstraints,
   type FloatingMenuPlacement,
@@ -820,7 +821,8 @@ export function ComposerInput({
   };
 
   const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (event) => {
-    if (event.nativeEvent.isComposing || composingRef.current) return;
+    if (isComposingKeyboardEvent(event.nativeEvent) || composingRef.current)
+      return;
     if (completion) {
       if (event.key === "Escape") {
         event.preventDefault();

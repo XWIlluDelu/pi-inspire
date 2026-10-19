@@ -25,6 +25,7 @@ import {
 import { branchActionsBlocked } from "../controllers/branch-controller";
 import { type ChatMessage, userMessageDisplayText } from "../events";
 import { gitChangeCount, gitHeadLabel } from "../git-presentation";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
 import { ExtensionStatus } from "./ExtensionDisplays";
@@ -282,6 +283,7 @@ const SessionIdent = memo(function SessionIdent({
           aria-label="Session name"
           autoFocus
           onKeyDown={(event) => {
+            if (isComposingKeyboardEvent(event.nativeEvent)) return;
             if (event.key === "Escape") {
               event.preventDefault(); // leaving rename must not trigger the global Escape abort
               closeEditor();
@@ -318,7 +320,10 @@ const SessionIdent = memo(function SessionIdent({
             onClick={() => setMenuOpen((open) => !open)}
             onKeyDown={(event) => {
               setRestoredTitleFocus(false);
-              if (event.key === "ArrowDown" && !event.nativeEvent.isComposing) {
+              if (
+                event.key === "ArrowDown" &&
+                !isComposingKeyboardEvent(event.nativeEvent)
+              ) {
                 event.preventDefault();
                 setMenuOpen(true);
               }

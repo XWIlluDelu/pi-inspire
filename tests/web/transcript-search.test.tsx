@@ -144,6 +144,47 @@ describe("settled transcript search", () => {
     ).toBeInTheDocument();
   });
 
+  it.each([
+    { name: "active composition", isComposing: true },
+    { name: "IME confirmation", isComposing: false, keyCode: 229 },
+  ])(
+    "leaves search keys to $name before navigating or releasing focus",
+    (ime) => {
+      render(
+        <Transcript
+          sessionId="composition-search"
+          messages={[
+            { role: "user", content: "find one, find two", timestamp: 1 },
+          ]}
+          streaming={false}
+          thinkingVisibility="collapsed"
+          toolVisibility="collapsed"
+        />,
+      );
+      const input = screen.getByRole("searchbox", {
+        name: "Search conversation",
+      });
+      const result = screen.getByLabelText("Transcript search matches");
+      fireEvent.change(input, { target: { value: "find" } });
+      fireEvent.click(
+        screen.getByRole("button", { name: "Next transcript match" }),
+      );
+      expect(result).toHaveTextContent("1 of 2");
+      input.focus();
+      for (const key of ["Enter", "Escape"]) {
+        expect(fireEvent.keyDown(input, { key, ...ime })).toBe(true);
+        expect(result).toHaveTextContent("1 of 2");
+        expect(input).toHaveFocus();
+        expect(input).toHaveValue("find");
+      }
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(result).toHaveTextContent("2 of 2");
+      fireEvent.keyDown(input, { key: "Escape" });
+      expect(input).not.toHaveFocus();
+      expect(input).toHaveValue("find");
+    },
+  );
+
   it("opens and closes mobile search explicitly without hiding an active query", async () => {
     const { container } = render(
       <Transcript

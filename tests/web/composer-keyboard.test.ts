@@ -64,6 +64,9 @@ describe("composer keyboard submission policy", () => {
       keyEvent({ shiftKey: true }),
       keyEvent({ altKey: true }),
       keyEvent({ isComposing: true }),
+      keyEvent({ keyCode: 229, isComposing: false }),
+      keyEvent({ keyCode: 229, isComposing: false, ctrlKey: true }),
+      keyEvent({ keyCode: 229, isComposing: false, metaKey: true }),
       keyEvent({ key: "Tab" }),
     ]) {
       expect(shouldSubmitComposerEnter(event, "enter")).toBe(false);

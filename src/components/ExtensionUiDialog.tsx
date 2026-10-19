@@ -4,6 +4,7 @@ import type {
   ExtensionUiRequest,
   SupportedExtensionUiRequest,
 } from "../../shared/contracts";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 
@@ -47,7 +48,7 @@ function Selection({
         if (
           responding ||
           options.length === 0 ||
-          event.nativeEvent.isComposing ||
+          isComposingKeyboardEvent(event.nativeEvent) ||
           event.altKey ||
           event.ctrlKey ||
           event.metaKey

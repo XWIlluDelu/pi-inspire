@@ -6,6 +6,7 @@ import {
   X,
 } from "lucide-react";
 import type { RefObject } from "react";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import { Dropdown } from "./Dropdown";
 import {
   TRANSCRIPT_SEARCH_SCOPES,
@@ -93,6 +94,7 @@ export function TranscriptUtilities({
           value={search.query}
           onChange={(event) => search.setQuery(event.target.value)}
           onKeyDown={(event) => {
+            if (isComposingKeyboardEvent(event.nativeEvent)) return;
             if (event.key === "Enter") {
               event.preventDefault();
               search.navigate(event.shiftKey ? -1 : 1);

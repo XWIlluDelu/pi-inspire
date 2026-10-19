@@ -21,6 +21,7 @@ import {
   gitDecorationForDirectory,
   presentGitFacet,
 } from "../git-presentation";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
   gitChangeForWorkspacePath,
   shallowEqual,
@@ -88,7 +89,11 @@ export function WorkspaceFileSearch() {
         value={state.workspaceQuery}
         onChange={(event) => store.setWorkspaceQuery(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key !== "Escape") return;
+          if (
+            isComposingKeyboardEvent(event.nativeEvent) ||
+            event.key !== "Escape"
+          )
+            return;
           event.preventDefault();
           event.stopPropagation();
           if (state.workspaceQuery) store.setWorkspaceQuery("");

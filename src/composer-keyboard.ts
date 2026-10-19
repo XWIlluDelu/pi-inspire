@@ -1,11 +1,13 @@
 import type { DesktopSendKeyPreference } from "../shared/contracts";
 
 import { isTouchFirstDevice } from "./input-device";
+import { isComposingKeyboardEvent } from "./keyboard-input";
 
 type ComposerKeyEvent = Pick<
   KeyboardEvent,
   "key" | "shiftKey" | "ctrlKey" | "metaKey" | "altKey" | "isComposing"
->;
+> &
+  Partial<Pick<KeyboardEvent, "keyCode">>;
 
 /**
  * Touch-first Return is always a native line break, including from an attached
@@ -20,7 +22,7 @@ export function shouldSubmitComposerEnter(
     event.key !== "Enter" ||
     event.shiftKey ||
     event.altKey ||
-    event.isComposing
+    isComposingKeyboardEvent(event)
   )
     return false;
   if (isTouchFirstDevice()) return false;

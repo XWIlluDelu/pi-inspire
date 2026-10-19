@@ -24,6 +24,7 @@ import {
   projectNameFromCwd,
   type SessionSummary,
 } from "../../shared/contracts";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { HiddenClearDialog } from "./HiddenClearDialog";
@@ -417,9 +418,8 @@ export const Nav = memo(function Nav({
               onChange={(event) => store.searchSessions(event.target.value)}
               onKeyDown={(event) => {
                 if (
-                  event.nativeEvent.isComposing ||
-                  composing.current ||
-                  event.nativeEvent.keyCode === 229
+                  isComposingKeyboardEvent(event.nativeEvent) ||
+                  composing.current
                 ) {
                   event.stopPropagation();
                   return;

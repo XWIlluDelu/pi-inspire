@@ -57,6 +57,63 @@ for (const touch of [false, true]) {
         : { width: 1280, height: 900 },
       hasTouch: touch,
     });
+    test("composition Escape preserves title and workspace edits without consuming IME keys", async ({
+      page,
+    }) => {
+      const { title, composer } = await namedSession(page);
+      await openRename(page);
+      const name = page.getByRole("textbox", {
+        name: "Session name",
+        exact: true,
+      });
+      await name.fill("Calibration 仪器");
+      const composingKeys = [
+        { key: "Escape", isComposing: true },
+        { key: "Escape", isComposing: false, keyCode: 229 },
+      ];
+      const dispatch = (element: Element, init: KeyboardEventInit) =>
+        element.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            ...init,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      for (const key of composingKeys) {
+        expect(await name.evaluate(dispatch, key)).toBe(true);
+        await expect(name).toHaveValue("Calibration 仪器");
+        await expect(name).toBeFocused();
+      }
+      await name.press("Escape");
+      await expect(name).toHaveCount(0);
+      await expect(title).not.toContainText("Calibration 仪器");
+      await expect(composer).toHaveValue("Keep the unfinished comparison");
+
+      const pane = page.locator(".ctx");
+      if (!(await pane.isVisible()))
+        await page
+          .getByRole("button", { name: "Toggle resources panel" })
+          .click();
+      await pane.getByRole("button", { name: "Files", exact: true }).click();
+      const search = pane.getByRole("searchbox", {
+        name: "Search workspace files",
+        exact: true,
+      });
+      await search.fill("calibration 仪器");
+      for (const key of composingKeys) {
+        expect(await search.evaluate(dispatch, key)).toBe(true);
+        await expect(search).toHaveValue("calibration 仪器");
+        await expect(search).toBeFocused();
+      }
+      await search.press("Escape");
+      await expect(search).toHaveValue("");
+      await expect(search).toBeFocused();
+      await search.press("Escape");
+      await expect(search).not.toBeFocused();
+      await expect(pane).toBeVisible();
+      await expect(composer).toHaveValue("Keep the unfinished comparison");
+    });
+
     test("opens the title menu and anchors in-place rename with keyboard focus restoration", async ({
       page,
     }) => {

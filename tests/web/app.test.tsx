@@ -374,6 +374,47 @@ describe("welcome flow", () => {
     expect(renamedTo).toBe("Spectral analysis");
   });
 
+  it.each([
+    ["active composition", { isComposing: true }],
+    ["final input-method key", { isComposing: false, keyCode: 229 }],
+  ] as const)(
+    "preserves title and workspace edits for %s Escape",
+    async (_label, ime) => {
+      await act(async () => {
+        await store.openSession("s1");
+      });
+      render(<App />);
+      await openTitleRename();
+      const title = screen.getByRole("textbox", { name: "Session name" });
+      fireEvent.change(title, { target: { value: "Calibration 仪器" } });
+      expect(fireEvent.keyDown(title, { key: "Escape", ...ime })).toBe(true);
+      expect(title).toBeInTheDocument();
+      expect(title).toHaveValue("Calibration 仪器");
+      fireEvent.keyDown(title, { key: "Escape" });
+      expect(title).not.toBeInTheDocument();
+
+      const resources = screen.getByRole("button", {
+        name: "Toggle resources panel",
+      });
+      if (resources.getAttribute("aria-expanded") === "false")
+        fireEvent.click(resources);
+      fireEvent.click(await screen.findByRole("button", { name: "Files" }));
+      const search = await screen.findByRole("searchbox", {
+        name: "Search workspace files",
+      });
+      fireEvent.change(search, { target: { value: "calibration 仪器" } });
+      act(() => search.focus());
+      expect(fireEvent.keyDown(search, { key: "Escape", ...ime })).toBe(true);
+      expect(search).toHaveValue("calibration 仪器");
+      expect(search).toHaveFocus();
+      fireEvent.keyDown(search, { key: "Escape" });
+      expect(search).toHaveValue("");
+      expect(search).toHaveFocus();
+      fireEvent.keyDown(search, { key: "Escape" });
+      expect(search).not.toHaveFocus();
+    },
+  );
+
   it("saves a rename when focus leaves the editor, without taking focus back", async () => {
     const rename = vi.spyOn(store, "renameSession");
     try {

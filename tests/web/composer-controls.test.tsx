@@ -27,6 +27,30 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("composer-adjacent status and queued controls", () => {
+  it("keeps IME confirmation in the editor when compositionend precedes its Enter", async () => {
+    render(<Composer />);
+    const textarea = screen.getByLabelText("Message");
+    fireEvent.compositionStart(textarea);
+    typeDraft("中文输入确认");
+    fireEvent.compositionEnd(textarea);
+    expect(
+      fireEvent.keyDown(textarea, {
+        key: "Enter",
+        keyCode: 229,
+        isComposing: false,
+      }),
+    ).toBe(true);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(textarea).toHaveValue("中文输入确认");
+    expect(host.promptBodies).toEqual([]);
+
+    fireEvent.keyDown(textarea, { key: "Enter", keyCode: 13 });
+    await waitFor(() => expect(host.promptBodies).toHaveLength(1));
+    expect(host.promptBodies[0]).toMatchObject({ message: "中文输入确认" });
+  });
+
   it("keeps ordinary Send alongside shell-only Stop without model queue controls", async () => {
     const socket = FakeWebSocket.instances.at(-1)!;
     act(() =>

@@ -1,6 +1,7 @@
 import { CornerLeftUp, Eye, EyeOff, Folder, HardDrive } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { HostDirEntry, HostDirListing } from "../../shared/contracts";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import { store } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { PiLoader } from "./PiLoader";
@@ -176,8 +177,7 @@ export function DirectoryPicker({
             onKeyDown={(event) => {
               if (
                 event.key === "Enter" &&
-                !event.nativeEvent.isComposing &&
-                event.nativeEvent.keyCode !== 229
+                !isComposingKeyboardEvent(event.nativeEvent)
               ) {
                 event.preventDefault();
                 if (path.trim() && !loading) void load(path.trim());

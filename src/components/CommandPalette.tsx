@@ -24,6 +24,7 @@ import {
 } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import { isTouchFirstDevice } from "../input-device";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import { paletteTextMatchRanges, rankPaletteItems } from "../palette-search";
 import { PALETTE_LABELS, preferenceChoiceLabel } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
@@ -33,6 +34,7 @@ import {
 } from "../terminal-actions";
 import { useModalFocus } from "../use-modal-focus";
 import { useSearchFocus } from "../use-search-focus";
+import { modelCycleShortcut } from "../workbench-keyboard";
 import { sessionHeading } from "./AppTopbar";
 import { ComposerInput } from "./ComposerInput";
 import { SearchMatchText } from "./SearchMatchText";
@@ -159,7 +161,7 @@ export const CommandPalette = memo(function CommandPalette({
     active,
     "command-palette",
     (event) => {
-      if (event.isComposing) return false;
+      if (isComposingKeyboardEvent(event)) return false;
       if (preparation && !preparationSending) setPreparation(null);
       else if (renaming) exitRename();
       else onClose();
@@ -351,21 +353,21 @@ export const CommandPalette = memo(function CommandPalette({
             id: "model-next",
             group: "Models",
             title: "Next model",
-            hint: "Alt+Shift+M",
+            hint: modelCycleShortcut("next-model"),
             run: () => void store.cycleModel(1),
           },
           {
             id: "model-previous",
             group: "Models",
             title: "Previous model",
-            hint: "Alt+Shift+P",
+            hint: modelCycleShortcut("previous-model"),
             run: () => void store.cycleModel(-1),
           },
           {
             id: "thinking-cycle",
             group: "Models",
             title: "Cycle thinking level",
-            hint: "Alt+Shift+R",
+            hint: modelCycleShortcut("thinking"),
             run: () => void store.cycleThinking(),
           },
         );
@@ -675,7 +677,7 @@ export const CommandPalette = memo(function CommandPalette({
             preparation ||
             renaming ||
             event.defaultPrevented ||
-            event.nativeEvent.isComposing ||
+            isComposingKeyboardEvent(event.nativeEvent) ||
             (event.target !== event.currentTarget &&
               event.target !== inputRef.current)
           )
@@ -798,7 +800,7 @@ export const CommandPalette = memo(function CommandPalette({
                 aria-label="New session name"
                 onChange={(event) => setRenameValue(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.nativeEvent.isComposing) return;
+                  if (isComposingKeyboardEvent(event.nativeEvent)) return;
                   if (event.key === "Enter") {
                     event.preventDefault();
                     void submitRename();

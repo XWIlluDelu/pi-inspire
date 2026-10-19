@@ -18,6 +18,7 @@ import {
   type ModelOption,
   modelIdentityKey,
 } from "../../shared/contracts";
+import { isComposingKeyboardEvent } from "../keyboard-input";
 import { useSearchFocus } from "../use-search-focus";
 
 import {
@@ -377,7 +378,8 @@ export function ModelList({
     if (request.select) target.click();
   });
   const navigate = (event: KeyboardEvent) => {
-    if (event.defaultPrevented || event.nativeEvent.isComposing) return;
+    if (event.defaultPrevented || isComposingKeyboardEvent(event.nativeEvent))
+      return;
     if (
       options.length &&
       ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)
@@ -407,7 +409,7 @@ export function ModelList({
     const target = event.target;
     if (
       event.defaultPrevented ||
-      event.nativeEvent.isComposing ||
+      isComposingKeyboardEvent(event.nativeEvent) ||
       !(target instanceof HTMLElement) ||
       !target.dataset.modelAction ||
       target.matches(":disabled")

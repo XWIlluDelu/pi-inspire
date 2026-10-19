@@ -148,6 +148,22 @@ describe("shortcut help", () => {
     },
   );
 
+  it("shows the Mac native-text-safe model chords", () => {
+    const platform = vi
+      .spyOn(navigator, "platform", "get")
+      .mockReturnValue("MacIntel");
+    try {
+      render(<CommandHelp mode="hotkeys" onClose={vi.fn()} />);
+      for (const key of ["M", "P", "R"])
+        expect(
+          screen.getByText(`Ctrl+⌘+${key}`, { selector: "kbd" }),
+        ).toBeVisible();
+      expect(screen.queryByText("Alt+Shift+P", { selector: "kbd" })).toBeNull();
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
   it("keeps shortcut help synchronous and independent of release-note states", () => {
     render(<CommandHelp mode="hotkeys" onClose={vi.fn()} />);
     expect(

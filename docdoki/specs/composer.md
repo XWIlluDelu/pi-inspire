@@ -36,6 +36,9 @@ Desktop submit uses a global Enter or Ctrl/Command+Enter preference. Shift+Enter
 composition and the unselected chord remain multiline input. In touch-first mode, defined by
 `(hover: none) and (pointer: coarse)`, Return always inserts a newline, including with an attached
 keyboard; only the explicit send action submits. Submission uses the visible Steer/Queue selection.
+Input-method-owned keydowns remain native even if `compositionend` preceded the final keydown:
+`isComposing` or key code 229 prevents submission, completion/history selection and dialog actions.
+The next ordinary key retains its existing behavior.
 
 Each session retains unsent text, attachments and project references across switching. Text restores
 from tab-session storage for the same Host origin; New has a separate text partition. Attachments and
