@@ -21,11 +21,17 @@ interface ObserverOptions {
   directory?: string;
 }
 
-function isRecord(value: unknown): value is PiActivityRecord {
+export function isPiActivityRecord(value: unknown): value is PiActivityRecord {
   if (!value || typeof value !== "object") return false;
   const record = value as Partial<PiActivityRecord>;
   return (
     record.version === 1 &&
+    (record.processIdentity === undefined ||
+      (typeof record.processIdentity === "string" &&
+        record.processIdentity.length > 0 &&
+        record.processIdentity.length <= 256)) &&
+    (record.inactive === undefined || typeof record.inactive === "boolean") &&
+    (record.released === undefined || typeof record.released === "boolean") &&
     Number.isSafeInteger(record.pid) &&
     record.pid! > 0 &&
     typeof record.sessionId === "string" &&
@@ -107,12 +113,14 @@ export class PiSessionActivity {
       const stat = await lstat(path);
       if (!stat.isFile() || stat.size > MAX_RECORD_BYTES) return null;
       const record: unknown = JSON.parse(await readFile(path, "utf8"));
-      if (!isRecord(record) || !name.startsWith(`${record.pid}-`)) return null;
+      if (!isPiActivityRecord(record) || !name.startsWith(`${record.pid}-`))
+        return null;
       if (!isAlive(record.pid)) {
         // A crashed process cannot clean up its own ephemeral report.
         await rm(path, { force: true });
         return null;
       }
+      if (record.inactive || record.released) return null;
       const age = Date.now() - record.updatedAt;
       return age >= 0 && age < ACTIVITY_STALE_MS ? record : null;
     } catch {

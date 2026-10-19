@@ -432,6 +432,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   >();
 
   private externalSessions: RuntimeExternalSessions | null = null;
+  private externalSessionGuard?: (
+    sessionId: string,
+    sessionFile: string,
+  ) => Promise<void>;
+
+  setExternalSessionGuard(
+    guard: (sessionId: string, sessionFile: string) => Promise<void>,
+  ): this {
+    this.externalSessionGuard = guard;
+    return this;
+  }
 
   setExternalSessionConnector(connector: ConnectExternalSession): this {
     this.externalSessions?.close();
@@ -440,7 +451,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       {
         current: (slot) => !this.closing && this.slots.get(slot.id) === slot,
         emit: (slot, event) => this.emitSlotEvent(slot, event),
-        reconcile: (slot) => this.reconcileSlot(slot, true),
+        reconcile: (slot, force) => this.reconcileSlot(slot, force),
         assertUsable: (slot) => {
           if (this.deletions.isDeleting(slot.id))
             throw requestError("That session is being deleted", 409);
@@ -553,6 +564,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.forkReservationsById.has(sessionId) ||
         this.forkReservationsByPath.has(path),
       slot: (sessionId) => this.slots.get(sessionId),
+      isExternal: (slot) => this.externalSessions?.has(slot) === true,
       removeSlot: (sessionId, expected) => {
         this.externalSessions?.detach(expected);
         if (this.slots.get(sessionId) === expected)
@@ -705,6 +717,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       {
         selectedSessionId: () => this.selectedSessionId,
         createProcess: (options) => this.createProcess(options),
+        assertWriterAvailable: (slot) =>
+          this.assertExternalWriterAvailable(slot),
         workerOptions: (cwd, args, bridge) =>
           this.workerOptions(cwd, args, bridge),
         newBridgeIdentity,
@@ -1375,19 +1389,35 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private requireWorkspace(slot: RuntimeSlot): void {
     if (slot.readOnlyReason)
       throw requestError(
-        "This session is read-only because its project folder is unavailable",
+        slot.readOnlyReason === "workspace-unavailable"
+          ? "This session is read-only because its project folder is unavailable"
+          : slot.readOnlyReason === "external-active"
+            ? "This session is open in another Pi. Reopen it after the other Pi releases the session."
+            : "The external Pi owner could not be reached. Reopen the session to check its connection.",
         409,
-        { code: "SESSION_WORKSPACE_UNAVAILABLE" },
+        {
+          code:
+            slot.readOnlyReason === "workspace-unavailable"
+              ? "SESSION_WORKSPACE_UNAVAILABLE"
+              : slot.readOnlyReason === "external-active"
+                ? "EXTERNAL_PI_WRITER_ACTIVE"
+                : "SESSION_OWNER_UNAVAILABLE",
+        },
       );
   }
 
-  private ensureFreshWriterInsideGate(
+  private async ensureFreshWriterInsideGate(
     slot: RuntimeSlot,
+    externalChecked = false,
   ): Promise<RuntimeSlot & { process: PiRpcProcess }> {
     this.requireWorkspace(slot);
+    // Every cold writer admission, including settings and branch commands,
+    // must discover an external owner. Selection warmup is not an authority.
+    if (!slot.process && !externalChecked)
+      await this.connectExternalSession(slot);
     if (this.externalSessions?.has(slot))
       throw requestError(
-        "Use the Pi terminal for this action while this session is running there.",
+        "Use the original Pi host for this action while this session is running there.",
         409,
       );
     return this.workerLifecycle.ensureFreshWriter(slot);
@@ -1604,6 +1634,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       runState: slot.runState,
       ...(indicator ? { indicator } : {}),
       ...(needsInput ? { needsInput: true } : {}),
+      ...(this.externalSessions?.has(slot) ? { external: true } : {}),
     };
   }
 
@@ -2036,7 +2067,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       existing &&
       (existing.projection || existing.process || this.opening.has(session.id))
     ) {
-      if (existing.readOnlyReason) {
+      if (existing.readOnlyReason === "workspace-unavailable") {
         const slot = existing;
         await this.mutateSlot(slot, async () => {
           const root = await this.resolveWorkspaceRoot(session.cwd);
@@ -2160,7 +2191,49 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
+  private async assertExternalWriterAvailable(
+    slot: RuntimeSlot,
+  ): Promise<void> {
+    try {
+      if (slot.sessionPath)
+        await this.externalSessionGuard?.(slot.id, slot.sessionPath);
+    } catch (error) {
+      slot.readOnlyReason =
+        (error as { code?: string }).code === "EXTERNAL_PI_WRITER_ACTIVE"
+          ? "external-active"
+          : "external-unavailable";
+      this.emitSlotEvent(slot, { type: "runtime_ready" });
+      throw error;
+    }
+  }
+
+  private async connectExternalSession(slot: RuntimeSlot): Promise<boolean> {
+    try {
+      const connected = (await this.externalSessions?.connect(slot)) === true;
+      if (!connected) await this.assertExternalWriterAvailable(slot);
+      if (
+        slot.readOnlyReason === "external-unavailable" ||
+        slot.readOnlyReason === "external-active"
+      ) {
+        slot.readOnlyReason = null;
+        this.emitSlotEvent(slot, { type: "runtime_ready" });
+      }
+      return connected;
+    } catch (error) {
+      // An unavailable observer is not evidence that nobody owns this file.
+      // Keep history usable and make the execution boundary visible.
+      slot.readOnlyReason =
+        (error as { code?: string }).code === "EXTERNAL_PI_WRITER_ACTIVE"
+          ? "external-active"
+          : "external-unavailable";
+      this.emitSlotEvent(slot, { type: "runtime_ready" });
+      throw error;
+    }
+  }
+
   private async ensureProcess(slot: RuntimeSlot): Promise<RuntimeSlot> {
+    if (slot.readOnlyReason === "workspace-unavailable")
+      this.requireWorkspace(slot);
     if (
       slot.process &&
       slot.ready &&
@@ -2171,9 +2244,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (pending) return pending;
 
     const opening = this.mutateSlot(slot, async () => {
-      if (!slot.process && (await this.externalSessions?.connect(slot)))
+      if (!slot.process && (await this.connectExternalSession(slot)))
         return slot;
-      return this.ensureFreshWriterInsideGate(slot);
+      return this.ensureFreshWriterInsideGate(slot, true);
     });
     this.opening.set(slot.id, opening);
     try {
@@ -2217,7 +2290,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         });
         this.scheduleIdleWorkerEviction();
       }
-      if (!ready && !slot.readOnlyReason)
+      if (!ready && slot.readOnlyReason !== "workspace-unavailable")
         void this.ensureProcess(slot).catch(() => undefined);
       return snapshot;
     } finally {
@@ -3915,7 +3988,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private async abortInside(sessionId: string): Promise<PendingRecovery> {
     const externalSlot = this.requireSlot(sessionId);
     if (this.externalSessions?.has(externalSlot)) {
-      await this.externalSessions.abort(externalSlot);
+      await this.useSlot(externalSlot, () =>
+        this.externalSessions!.abort(externalSlot),
+      );
       return { steering: [], followUp: [] };
     }
     const initialSlot = this.requireSlot(sessionId);
@@ -4425,9 +4500,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (this.externalSessions && !slot.process) {
       await this.ensureProcess(slot);
       if (this.externalSessions.has(slot)) {
-        await this.externalSessions.command(
-          slot,
-          `/name ${name.trim().slice(0, 160)}`,
+        await this.useSlot(slot, () =>
+          this.externalSessions!.command(
+            slot,
+            `/name ${name.trim().slice(0, 160)}`,
+          ),
         );
         this.catalog.invalidate();
         return;
@@ -4970,6 +5047,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       ...provisional.map((entry) => entry.completion),
       ...[...ownedSlots].flatMap((slot) => [
         slot.mutationQueue.tail,
+        slot.deliveryQueue.tail,
         slot.extensionResponseQueue.tail,
         slot.eventTail,
         slot.projectionTail,
@@ -4994,6 +5072,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       finalStopping,
       ...[...finalSlots].flatMap((slot) => [
         slot.mutationQueue.tail,
+        slot.deliveryQueue.tail,
         slot.extensionResponseQueue.tail,
         slot.eventTail,
         slot.projectionTail,

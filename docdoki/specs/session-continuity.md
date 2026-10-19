@@ -4,8 +4,9 @@ covers:
   - shared/contracts.ts
   - shared/session-activity.ts
   - server/pi-session-activity.ts
+  - server/pi-session-occupancy.ts
   - docs/examples/session-activity.ts
-  - tests/server/pi-session-activity.test.ts
+  - tests/server/pi-session-activity*.test.ts
   - tests/web/session-activity.test.tsx
   - shared/assistant-stream.ts
   - server/session-catalog.ts
@@ -129,6 +130,10 @@ Let the user move between existing terminal Pi and inspire without losing histor
   unavailable; preference and navigation controls remain usable. Reselecting this read-only session
   requests a fresh open so a restored directory can become available again.
 
+- An unavailable external execution route also preserves readable history, with a distinct neutral
+  explanation in place of the composer. It must not be reported as a missing project folder.
+  Reselect requests fresh external discovery; [[session-persistence]] owns the execution fence.
+
 - Session listing retains only bounded name, first-user-text, working-directory, count, and
   timestamp metadata. The host keys each rebuildable JSONL summary by filesystem identity and stat
   version: unchanged files reuse their bounded summary, same-inode growth under the one-writer rule
@@ -193,18 +198,26 @@ Let the user move between existing terminal Pi and inspire without losing histor
   indicator for as long as the conflicted session is in the background; selecting it moves recovery
   to the topbar chip and persistent banner, and only explicit recovery clears the conflict.
 
-- Native Pi TUI activity appears on existing catalog rows through one optional, user-enabled Pi
-  extension, independently of the terminal, launcher or Herdr enhancement. It uses supported Pi
+- External native Pi activity appears on existing catalog rows through one optional, user-enabled Pi
+  extension, including independent RPC hosts and TUI/JSON/print modes. Observation is independent
+  of execution connectors, the launcher and Herdr enhancement. It uses supported Pi
   lifecycle and aggregate UI-prompt events; it adds no tools, prompts or session entries.
   The Host does not install or inject it automatically. The enable/reload procedure is in
-  [the extension guide](../../docs/extensions.md#show-terminal-session-activity).
+  [the extension guide](../../docs/extensions.md#show-external-session-activity).
+  Inspire-owned RPC workers retain their managed status instead of reporting twice; exclusion
+  requires their loaded internal GUI command, not RPC mode or inherited environment alone.
 
-  Reports contain only session identity/file, process id, activity and heartbeat time in the local
-  user's private cache. Publication is atomic and serialized. Factory-only discovery has no runtime
-  side effects; shutdown/reload/replacement releases timers and removes reports. Final settlement,
-  not `agent_end`, clears work, so retries and queued continuations remain busy. Blocking input is
-  distinct from active work. Heartbeats maintain liveness without model traffic; eight-second-old
-  reports and exited processes no longer count.
+  Reports contain session identity/file, process id and birth identity, activity, heartbeat time,
+  and an activity-stop hint in the local user's private cache. Publication is atomic and
+  serialized. Factory-only discovery has no runtime side effects. Shutdown cancels resources
+  without releasing writer presence, and a shutdown overtaking asynchronous startup cannot rearm
+  a heartbeat. Reload reuses the manager's report; completed native replacement transfers that
+  producer only when the shutdown/start metadata match uniquely. Independent SDK managers do not
+  share a transferred producer. Dead process reports can be collected.
+  Final settlement, not `agent_end`, clears work, so retries and queued continuations remain busy.
+  Blocking input is distinct from active work. Eight-second-old, inactive, legacy released and
+  exited-process reports no longer count as current activity; writer admission does not use that
+  activity expiry or either stop hint as proof of release.
 
   The Host polls about every two seconds and matches both native session id and absolute file
   against the unambiguous discovery catalog. Reports do not expand storage roots or confer
@@ -219,6 +232,10 @@ Let the user move between existing terminal Pi and inspire without losing histor
   Regression checks cover lifecycle and input waits, heartbeats, session replacement and shutdown,
   catalog identity/path matching, duplicate identities, expiry, process exit, delayed results and
   UI state isolation.
+
+  Separately, process-bound session presence vetoes cold local writer admission under
+  [[session-persistence]]. Its lifetime is not the busy indicator's freshness window. Presence
+  can require a read-only view but never grants control of the reporting Pi.
 
 - Persistent pin, folder pin/Hidden, session Hidden, and folder-collapse metadata belongs to inspire
   preferences, not Pi JSONL. Curated sessions are hydrated by id and curated folders by exact

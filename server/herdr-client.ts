@@ -2,7 +2,11 @@ import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { promisify } from "node:util";
-import { HerdrApiError, HerdrControl } from "./herdr-control.js";
+import {
+  HerdrApiError,
+  HerdrControl,
+  HerdrServerChangedError,
+} from "./herdr-control.js";
 import { systemdEnvironmentArguments } from "./user-environment.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -567,8 +571,7 @@ export class HerdrClient {
     paneId: string,
   ): Promise<HerdrPaneProcessInfo> {
     const control = await this.connection();
-    if (control.identity !== serverId)
-      throw new Error("Herdr server changed during live-writer inspection");
+    if (control.identity !== serverId) throw new HerdrServerChangedError();
     const result = await control.request("pane.process_info", {
       pane_id: paneId,
     });
@@ -627,8 +630,7 @@ export class HerdrClient {
     params: Record<string, unknown> = {},
   ): Promise<Record<string, unknown>> {
     const control = await this.connection();
-    if (control.identity !== serverId)
-      throw new Error("The Herdr server for this Pi session has changed");
+    if (control.identity !== serverId) throw new HerdrServerChangedError();
     return control.request(method, {
       ...params,
       ...(method === "pane.send_text"

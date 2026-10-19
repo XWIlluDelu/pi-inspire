@@ -17,6 +17,7 @@ import type { ProjectionReconcileResult } from "./session-projection.js";
 interface RuntimeWorkerLifecycleHost {
   selectedSessionId(): string | null;
   createProcess(options: PiRpcOptions): PiRpcProcess;
+  assertWriterAvailable(slot: RuntimeSlot): Promise<void>;
   workerOptions(
     cwd: string,
     args: string[],
@@ -240,6 +241,9 @@ export class RuntimeWorkerLifecycle {
         slot,
         baseline,
       );
+      // Recheck presence after asynchronous projection preparation, before Pi
+      // can open the session. The external process is never adopted or stopped.
+      await this.host.assertWriterAvailable(slot);
       slot.startupPhase = "starting";
       await rpc.start();
       if (slot.startupError) throw slot.startupError;

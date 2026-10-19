@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HerdrClient } from "../../server/herdr-client.js";
 import { HerdrNativeSession } from "../../server/herdr-native-session.js";
-import { HerdrApiError } from "../../server/herdr-control.js";
+import { captureHerdrHostIdentity } from "../../server/herdr-process-group.js";
+import {
+  HerdrApiError,
+  HerdrServerChangedError,
+} from "../../server/herdr-control.js";
 
 function fixture() {
   const agent = {
@@ -44,6 +48,36 @@ function fixture() {
 afterEach(() => vi.restoreAllMocks());
 
 describe("existing native Pi terminal control", () => {
+  it.skipIf(process.platform !== "linux")(
+    "requires original-process retirement when terminal metadata disappears",
+    async () => {
+      const f = fixture();
+      const identity = await captureHerdrHostIdentity();
+      const native = new HerdrNativeSession(
+        {
+          nativeAgentRequest: f.nativeAgentRequest,
+          inspectPaneProcess: f.inspectPaneProcess,
+        },
+        {
+          serverId: "server-one",
+          paneId: "w1:p1",
+          pid: identity.pid,
+          processIdentity: identity,
+        },
+        "session-one",
+        "/sessions/session-one.jsonl",
+      );
+      f.agent.agent_session.value = "unverified-other-session";
+      await expect(native.read()).rejects.toMatchObject({
+        code: "SESSION_OWNER_UNAVAILABLE",
+      });
+      identity.birth = "different-process-birth";
+      f.nativeAgentRequest.mockClear();
+      await expect(native.read()).resolves.toBeNull();
+      expect(f.nativeAgentRequest).not.toHaveBeenCalled();
+    },
+  );
+
   it("sends a prompt to the same identified terminal without creating or owning a process", async () => {
     const f = fixture();
     await expect(f.native.read()).resolves.toEqual({ status: "idle" });
@@ -136,6 +170,26 @@ describe("existing native Pi terminal control", () => {
     ).toBe(true);
   });
 
+  it.each(["agent", "process"] as const)(
+    "does not confuse a retired control server with writer exit during %s inspection",
+    async (boundary) => {
+      const f = fixture();
+      const read =
+        boundary === "agent" ? f.nativeAgentRequest : f.inspectPaneProcess;
+      read.mockRejectedValueOnce(new Error("Temporary socket failure"));
+      await expect(f.native.read()).rejects.toThrow("Temporary socket failure");
+      read.mockRejectedValueOnce(new HerdrServerChangedError());
+      await expect(f.native.read()).rejects.toMatchObject({
+        code: "SESSION_OWNER_UNAVAILABLE",
+      });
+      expect(
+        f.nativeAgentRequest.mock.calls.every(
+          ([, , method]) => method === "agent.get",
+        ),
+      ).toBe(true);
+    },
+  );
+
   it("keeps uncertain submission distinct from a rejected preflight and never retries input", async () => {
     const f = fixture();
     f.nativeAgentRequest.mockImplementation(async (_server, _pane, method) => {
@@ -158,6 +212,8 @@ describe("existing native Pi terminal control", () => {
     f.nativeAgentRequest.mockRejectedValue(
       new HerdrApiError("agent_not_found", "gone"),
     );
-    await expect(f.native.read()).resolves.toBeNull();
+    await expect(f.native.read()).rejects.toMatchObject({
+      code: "SESSION_OWNER_UNAVAILABLE",
+    });
   });
 });

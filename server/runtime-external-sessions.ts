@@ -33,12 +33,12 @@ interface Connection {
 interface ExternalSessionHost {
   current(slot: RuntimeSlot): boolean;
   emit(slot: RuntimeSlot, event: unknown): void;
-  reconcile(slot: RuntimeSlot): Promise<unknown>;
+  reconcile(slot: RuntimeSlot, force: boolean): Promise<unknown>;
   assertUsable(slot: RuntimeSlot): void;
   log(slot: RuntimeSlot, error: unknown): void;
 }
 
-/** Conversation access to existing terminal sessions, deliberately outside the
+/** Conversation access to externally owned sessions, deliberately outside the
  * owned-worker pool, RPC persistence attestations and process retirement. */
 export class RuntimeExternalSessions {
   private readonly connections = new Map<RuntimeSlot, Connection>();
@@ -61,20 +61,39 @@ export class RuntimeExternalSessions {
 
   async connect(slot: RuntimeSlot): Promise<boolean> {
     if (this.closed || slot.process || !slot.sessionPath) return false;
-    if (this.connections.has(slot)) return true;
+    const previous = this.connections.get(slot);
+    if (previous && !previous.interrupted) return true;
     const native = await this.connector(slot.id, slot.sessionPath);
-    if (!native) return false;
+    if (native === null) return Boolean(previous);
     if (this.closed || !this.host.current(slot) || slot.process) {
       native.close();
       return false;
     }
-    const state = await native.read().catch((error) => {
-      native.close();
+    let state: ExternalSessionState | null;
+    try {
+      state = await native.read();
+    } catch (error) {
+      if (this.closed || !this.host.current(slot) || slot.process) {
+        native.close();
+        throw error;
+      }
+      // Retain the identified owner even if its endpoint cannot be observed.
+      // Losing a connection is not permission to start another writer.
+      this.detach(slot, native);
+      const connection: Connection = {
+        native,
+        state: { status: "unknown" },
+        interrupted: true,
+        sending: 0,
+      };
+      this.connections.set(slot, connection);
+      this.setUnavailable(slot, true);
+      this.schedule(slot, connection);
       throw error;
-    });
+    }
     if (!state || this.closed || !this.host.current(slot) || slot.process) {
       native.close();
-      return false;
+      return Boolean(previous);
     }
     const connection: Connection = {
       native,
@@ -82,11 +101,21 @@ export class RuntimeExternalSessions {
       interrupted: false,
       sending: 0,
     };
+    this.detach(slot, native);
     this.connections.set(slot, connection);
+    this.setUnavailable(slot, false);
     this.applyState(slot, connection, state, true);
     this.schedule(slot, connection);
     this.host.emit(slot, { type: "runtime_ready" });
     return true;
+  }
+
+  private setUnavailable(slot: RuntimeSlot, unavailable: boolean): void {
+    if (slot.readOnlyReason === "workspace-unavailable") return;
+    const reason = unavailable ? "external-unavailable" : null;
+    if (slot.readOnlyReason === reason) return;
+    slot.readOnlyReason = reason;
+    this.host.emit(slot, { type: "runtime_ready" });
   }
 
   private applyState(
@@ -125,23 +154,28 @@ export class RuntimeExternalSessions {
 
   private async poll(slot: RuntimeSlot, connection: Connection): Promise<void> {
     try {
-      const state = await connection.native.read();
+      const state = await connection.native.read().catch((error) => {
+        if (this.connections.get(slot) === connection)
+          this.setUnavailable(slot, true);
+        throw error;
+      });
       if (this.closed || this.connections.get(slot) !== connection) return;
       if (!this.host.current(slot)) {
         this.detach(slot);
         return;
       }
+      this.setUnavailable(slot, false);
       if (!state) {
         this.detach(slot);
         slot.runState = slot.conflict ? "conflict" : "idle";
         this.host.emit(slot, { type: "runtime_ready" });
         return;
       }
-      connection.interrupted = false;
       this.applyState(slot, connection, state);
-      // SessionProjection watches native writes; polling also catches changes
-      // on filesystems whose watch events are coalesced or unavailable.
-      await this.host.reconcile(slot);
+      // Background history may be intentionally reclaimed. Keep observing Pi
+      // without rebuilding it; retained projections use their version fast path.
+      if (slot.projection) await this.host.reconcile(slot, false);
+      connection.interrupted = false;
     } catch (error) {
       if (!connection.interrupted && this.connections.get(slot) === connection)
         this.host.log(slot, error);
@@ -158,7 +192,12 @@ export class RuntimeExternalSessions {
   ): Promise<ComposerHistoryEntry | null> {
     const connection = this.connections.get(slot);
     if (!connection)
-      throw requestError("The Pi terminal connection has ended.", 409);
+      throw requestError("The external Pi connection has ended.", 409);
+    if (slot.readOnlyReason)
+      throw requestError(
+        "The external Pi connection is unavailable. Reopen this session to check its connection.",
+        409,
+      );
     const message = request.message.trim();
     if (message.length > MAX_PROMPT_CHARS)
       throw requestError("Message is too long", 413);
@@ -202,8 +241,7 @@ export class RuntimeExternalSessions {
           .reduce((size, file) => size + file.size, 0) + history.fileBytes,
         [...prepared.images, ...history.images],
       );
-      // Native Pi's interactive input represents dropped/pasted images by file
-      // path. Keep the same file-backed input, including recovered images.
+      // Native terminal input represents dropped/pasted images by file path.
       const stagedImages = await this.attachments.stageImages(history.images);
       copied.push(...stagedImages.map((image) => image.id));
       const recovered = await this.attachments.resolveForPrompt(copied);
@@ -235,7 +273,7 @@ export class RuntimeExternalSessions {
           );
         this.host.assertUsable(slot);
       };
-      await this.host.reconcile(slot);
+      await this.host.reconcile(slot, true);
       beforeSend();
       const previous = slot.runState;
       connection.sending += 1;
@@ -250,7 +288,7 @@ export class RuntimeExternalSessions {
         delivered = true;
         if (this.connections.get(slot) === connection) {
           await this.host
-            .reconcile(slot)
+            .reconcile(slot, false)
             .catch((error) => this.host.log(slot, error));
         }
       } catch (error) {
@@ -287,10 +325,10 @@ export class RuntimeExternalSessions {
   async command(slot: RuntimeSlot, text: string): Promise<void> {
     const connection = this.connections.get(slot);
     if (!connection)
-      throw requestError("The Pi terminal connection has ended.", 409);
+      throw requestError("The external Pi connection has ended.", 409);
     await connection.native.prompt(text, undefined, () => {
       if (this.connections.get(slot) !== connection || !this.host.current(slot))
-        throw requestError("The Pi terminal connection has ended.", 409);
+        throw requestError("The external Pi connection has ended.", 409);
       this.host.assertUsable(slot);
     });
   }
@@ -298,7 +336,7 @@ export class RuntimeExternalSessions {
   async abort(slot: RuntimeSlot): Promise<void> {
     const connection = this.connections.get(slot);
     if (!connection)
-      throw requestError("The Pi terminal connection has ended.", 409);
+      throw requestError("The external Pi connection has ended.", 409);
     if (slot.stoppingInput)
       throw requestError("Stop is already in progress", 409);
     slot.inputStopEpoch += 1;
@@ -310,12 +348,12 @@ export class RuntimeExternalSessions {
     }
   }
 
-  detach(slot: RuntimeSlot): void {
+  detach(slot: RuntimeSlot, replacement?: ExternalSessionConnection): void {
     const connection = this.connections.get(slot);
     if (!connection) return;
     this.connections.delete(slot);
     clearTimeout(connection.timer);
-    connection.native.close();
+    if (connection.native !== replacement) connection.native.close();
   }
 
   close(): void {
