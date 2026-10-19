@@ -18,8 +18,8 @@ import {
   type TerminalClientControlMessage,
   type TerminalMutationMethod,
 } from "../shared/terminal-contracts.js";
-import { requestError } from "./request-error.js";
 import { canonicalOrigin } from "./browser-auth.js";
+import { requestError } from "./request-error.js";
 import type {
   TerminalAttachment,
   TerminalService,
@@ -465,6 +465,17 @@ export function createTerminalGateway(
       terminalTickets.clear();
       for (const socket of terminalSockets)
         socket.close(1001, "Server shutting down");
+    },
+    async terminateRemaining(): Promise<void> {
+      await Promise.all(
+        [...terminalWebsocket.clients].map(
+          (socket) =>
+            new Promise<void>((resolveClosed) => {
+              socket.once("close", () => resolveClosed());
+              socket.terminate();
+            }),
+        ),
+      );
     },
   };
 }

@@ -8,7 +8,7 @@ import { requestError } from "./request-error.js";
 import type { RuntimeLike } from "./runtime.js";
 
 export interface HostRestartBackend {
-  inspect(): Promise<boolean>;
+  inspect(): Promise<{ host: boolean; all: boolean }>;
   prepare(): Promise<void>;
   request(
     all: boolean,
@@ -17,7 +17,9 @@ export interface HostRestartBackend {
 }
 
 const UNAVAILABLE =
-  "Page restart requires this Host's installed Linux systemd services.";
+  "Page restart requires the Inspire launcher or this Host's installed Linux systemd services.";
+const ALL_UNAVAILABLE =
+  "Restart all requires this Host's installed Linux systemd services.";
 
 /** One process-scoped operation, shared by all observers. Only preparation and
  * proven non-issuance can reopen admission; HTTP observation is never authority. */
@@ -25,7 +27,7 @@ export class HostRestartController {
   private readonly hostId = randomUUID();
   private readonly receipts = new Map<string, HostRestartOperation>();
   private operation: HostRestartOperation | null = null;
-  private availability: Promise<boolean> | null = null;
+  private availability: ReturnType<HostRestartBackend["inspect"]> | null = null;
 
   constructor(
     private readonly runtime: RuntimeLike,
@@ -36,15 +38,17 @@ export class HostRestartController {
     // Timed-out HTTP observers cannot accumulate unbounded systemctl reads.
     this.availability ??= this.backend
       .inspect()
-      .catch(() => false)
+      .catch(() => ({ host: false, all: false }))
       .finally(() => {
         this.availability = null;
       });
     const available = await this.availability;
     return {
       hostId: this.hostId,
-      available,
-      ...(!available ? { reason: UNAVAILABLE } : {}),
+      available: available.host,
+      allAvailable: available.all,
+      ...(!available.host ? { reason: UNAVAILABLE } : {}),
+      ...(!available.all ? { allReason: ALL_UNAVAILABLE } : {}),
       operation: this.operation ? { ...this.operation } : null,
     };
   }
@@ -88,7 +92,11 @@ export class HostRestartController {
     let leaseId: string | undefined;
     let mayHaveIssued = false;
     try {
-      if (!(await this.backend.inspect())) throw new Error(UNAVAILABLE);
+      const available = await this.backend.inspect();
+      if (!available[operation.scope])
+        throw new Error(
+          operation.scope === "all" ? ALL_UNAVAILABLE : UNAVAILABLE,
+        );
       await this.backend.prepare();
       // Preparation can be slow. Acquire the authoritative admission fence
       // afterwards, not from an earlier observation of active work.
@@ -121,8 +129,8 @@ export class HostRestartController {
       if (result.code !== 0 || result.issued === false)
         throw new Error(
           mayHaveIssued
-            ? "Restart outcome is unknown. Check Host service status."
-            : "Restart was not issued. Check the Host service configuration.",
+            ? "Restart outcome is unknown. Check the Host launcher or service."
+            : "Restart was not issued. Check the Host launcher or service configuration.",
         );
     } catch (error) {
       if (!mayHaveIssued && leaseId) {
@@ -135,7 +143,7 @@ export class HostRestartController {
       }
       operation.phase = mayHaveIssued ? "unknown" : "rejected";
       operation.error = mayHaveIssued
-        ? "Restart outcome is unknown. Check Host service status."
+        ? "Restart outcome is unknown. Check the Host launcher or service."
         : error instanceof Error
           ? error.message
           : "Restart preparation failed.";

@@ -5,11 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import {
-  INSTANCE_STATE_VERSION,
   inspectInstance,
-  processStartIdentity,
   stopManagedInstance,
-  writeInstanceState,
 } from "../../server/instance-state.mjs";
 
 const directories = [];
@@ -19,34 +16,60 @@ after(async () => {
   );
 });
 
-function childServer(token) {
+function childServer(path, token) {
   const source = String.raw`
-    const http = require("node:http");
-    const token = process.argv[1];
-    const server = http.createServer((request, response) => {
-      if (request.headers.authorization !== "Bearer " + token) {
+    import { createServer } from "node:http";
+    const { InstanceHttpControl } = await import(process.argv[1]);
+    const { processStartIdentity, writeInstanceState, completeInstanceShutdown,
+      removeInstanceState, watchInstanceShutdown } = await import(process.argv[2]);
+    const path = process.argv[3];
+    const token = process.argv[4];
+    const control = new InstanceHttpControl();
+    let state;
+    const server = createServer(async (request, response) => {
+      if (request.headers.authorization || request.url !== "/api/host/local-control") {
         response.writeHead(401).end();
         return;
       }
-      if (request.method === "GET" && request.url === "/api/health") {
-        response.setHeader("content-type", "application/json");
-        response.end(JSON.stringify({ appName: "inspire", mock: false }));
-        return;
-      }
-      if (request.method === "POST" && request.url === "/api/host/shutdown") {
-        response.writeHead(202).end();
-        setImmediate(() => server.close(() => process.exit(0)));
-        return;
-      }
-      response.writeHead(404).end();
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const grant = control.accept(state, JSON.parse(Buffer.concat(chunks)));
+      if (!grant) return response.writeHead(401).end();
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify(control.reply(grant, { appName: "inspire", mock: false })));
     });
-    server.listen(0, "127.0.0.1", () => {
-      process.stdout.write(String(server.address().port) + "\n");
+    server.listen(0, "127.0.0.1", async () => {
+      state = {
+        schemaVersion: 1, pid: process.pid, root: process.cwd(), host: "127.0.0.1",
+        port: server.address().port, token, startedAt: new Date().toISOString(),
+        processStartTime: await processStartIdentity(process.pid), mock: false,
+        shutdownControlVersion: 1, httpControlVersion: 1,
+      };
+      await writeInstanceState(path, state);
+      const close = watchInstanceShutdown(path, state, async () => {
+        close();
+        server.close(async () => {
+          await completeInstanceShutdown(path, state, true);
+          await removeInstanceState(path, state);
+          process.exit(0);
+        });
+      });
+      process.stdout.write(JSON.stringify(state) + "\n");
     });
   `;
-  return spawn(process.execPath, ["-e", source, token], {
-    stdio: ["ignore", "pipe", "inherit"],
-  });
+  return spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      source,
+      new URL("../../server/instance-control.mjs", import.meta.url).href,
+      new URL("../../server/instance-state.mjs", import.meta.url).href,
+      path,
+      token,
+    ],
+    { stdio: ["ignore", "pipe", "inherit"] },
+  );
 }
 
 async function firstLine(stream) {
@@ -72,35 +95,25 @@ async function firstLine(stream) {
   });
 }
 
-test("inspects and stops a healthy Host through authenticated HTTP", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "inspire-instance-http-"));
+test("inspects a proven Host and stops it without sending a bearer", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "inspire-instance-proof-"));
   directories.push(directory);
   const path = join(directory, "instance.json");
-  const token = "portable-lifecycle-token";
-  const child = childServer(token);
-  const port = Number(await firstLine(child.stdout));
-  const state = {
-    schemaVersion: INSTANCE_STATE_VERSION,
-    pid: child.pid,
-    root: process.cwd(),
-    host: "127.0.0.1",
-    port,
-    token,
-    startedAt: new Date().toISOString(),
-    processStartTime: await processStartIdentity(child.pid),
-    mock: false,
-  };
-  await writeInstanceState(path, state);
+  const child = childServer(path, "portable-lifecycle-token");
+  context.after(async () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    child.kill("SIGKILL");
+    await exited;
+  });
+  const state = JSON.parse(await firstLine(child.stdout));
   const expected = {
     root: state.root,
     host: state.host,
     port: state.port,
     mock: false,
   };
-  await assert.doesNotReject(async () => {
-    const inspected = await inspectInstance(path, expected);
-    assert.equal(inspected.kind, "healthy");
-  });
+  assert.equal((await inspectInstance(path, expected)).kind, "healthy");
   const stopped = await stopManagedInstance(path, expected, {
     timeoutMs: 5_000,
   });

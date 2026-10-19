@@ -30,7 +30,7 @@ describe("authenticated page restart API", () => {
     );
     const dispatch = vi.fn(async () => ({ code: 0 }));
     const controller = new HostRestartController(runtime, {
-      inspect: async () => true,
+      inspect: async () => ({ host: true, all: true }),
       prepare,
       request: dispatch,
     });

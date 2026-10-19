@@ -165,6 +165,13 @@ export async function resolveLaunchEnvironment(
 
 /** Copy named variables through systemd-run without putting their values in argv.
  * systemd supplies its own invocation/notification identity to the new service. */
+/** A detached child is not the parent's service incarnation or socket owner. */
+export function independentProcessEnvironment(environment) {
+  const result = {...environment};
+  for (const key of SERVICE_KEYS) delete result[key];
+  return result;
+}
+
 export function systemdEnvironmentArguments(environment) {
   return Object.keys(environment)
     .filter((key) =>

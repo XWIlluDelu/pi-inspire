@@ -1,16 +1,12 @@
 import { constants } from "node:fs";
-import { access, readFile, realpath } from "node:fs/promises";
-import {
-  delimiter,
-  dirname,
-  extname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-} from "node:path";
+import { access, readFile, realpath, stat } from "node:fs/promises";
+import { dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { escapesBase } from "./paths.js";
+import { filesystemRelativePath } from "./filesystem-containment.js";
+import {
+  environmentValue,
+  executablePathDirectories,
+} from "./platform-environment.mjs";
 
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 
@@ -39,13 +35,15 @@ interface PiInstallationOptions {
   installationRoot?: string;
 }
 
-function isInside(path: string, parent: string): boolean {
-  return !escapesBase(relative(parent, path));
+async function isInside(path: string, parent: string): Promise<boolean> {
+  return (await filesystemRelativePath(parent, path)) !== null;
 }
 
 function commandNames(command: string): string[] {
   if (process.platform !== "win32" || extname(command)) return [command];
-  const extensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+  const extensions = (
+    environmentValue(process.env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD"
+  )
     .split(";")
     .filter(Boolean)
     .map((extension) => `${command}${extension.toLowerCase()}`);
@@ -56,16 +54,15 @@ function executableCandidates(command: string, path: string): string[] {
   const names = commandNames(command);
   if (/[\\/]/u.test(command) || isAbsolute(command))
     return names.map((name) => resolve(name));
-  return path
-    .split(delimiter)
-    .filter(Boolean)
-    .flatMap((directory) => names.map((name) => resolve(directory, name)));
+  return executablePathDirectories(path).flatMap((directory) =>
+    names.map((name) => resolve(directory, name)),
+  );
 }
 
 async function isExecutable(path: string): Promise<boolean> {
   try {
     await access(path, constants.X_OK);
-    return true;
+    return (await stat(path)).isFile();
   } catch {
     return false;
   }
@@ -96,24 +93,28 @@ async function findPackageRoot(entryPath: string): Promise<{
   }
 }
 
-function packagePath(root: string, field: unknown, label: string): string {
+async function packagePath(
+  root: string,
+  field: unknown,
+  label: string,
+): Promise<string> {
   if (typeof field !== "string" || isAbsolute(field)) {
     throw new Error(`The installed Pi package does not expose its ${label}.`);
   }
   const path = resolve(root, field);
-  if (!isInside(path, root)) {
+  if (!(await isInside(path, root))) {
     throw new Error(`The installed Pi package has an invalid ${label}.`);
   }
   return path;
 }
 
-function manifestPaths(
+async function manifestPaths(
   root: string,
   manifest: PiPackageManifest,
-): {
+): Promise<{
   cliPath: string;
   sdkEntryPath: string;
-} {
+}> {
   const bin = manifest.bin as Record<string, unknown> | undefined;
   const exportsField = manifest.exports as Record<string, unknown> | undefined;
   const rootExport = exportsField?.["."];
@@ -122,8 +123,8 @@ function manifestPaths(
       ? rootExport
       : (rootExport as Record<string, unknown> | undefined)?.import;
   return {
-    cliPath: packagePath(root, bin?.pi, "pi CLI entry"),
-    sdkEntryPath: packagePath(root, importEntry, "Pi SDK entry"),
+    cliPath: await packagePath(root, bin?.pi, "pi CLI entry"),
+    sdkEntryPath: await packagePath(root, importEntry, "Pi SDK entry"),
   };
 }
 
@@ -158,7 +159,7 @@ async function inspectCandidate(commandPath: string): Promise<{
     (await findPackageRoot(resolvedCommand)) ??
     (await adjacentPackageRoot(commandPath));
   if (!found) return null;
-  const paths = manifestPaths(found.root, found.manifest);
+  const paths = await manifestPaths(found.root, found.manifest);
   return {
     commandPath,
     packageRoot: found.root,
@@ -175,7 +176,8 @@ export async function resolvePiInstallationIdentity(
 ): Promise<PiInstallationIdentity> {
   const explicitCommand = options.command ?? process.env.INSPIRE_PI_COMMAND;
   const command = explicitCommand || "pi";
-  const searchPath = options.path ?? process.env.PATH ?? "";
+  const searchPath =
+    options.path ?? environmentValue(process.env, "PATH") ?? "";
   const requestedInstallationRoot = resolve(
     options.installationRoot ??
       process.env.INSPIRE_INSTALLATION_ROOT ??
@@ -189,7 +191,10 @@ export async function resolvePiInstallationIdentity(
   for (const candidate of executableCandidates(command, searchPath)) {
     const inspected = await inspectCandidate(candidate);
     if (!inspected) continue;
-    if (!explicitCommand && isInside(inspected.packageRoot, installationRoot)) {
+    if (
+      !explicitCommand &&
+      (await isInside(inspected.packageRoot, installationRoot))
+    ) {
       discoveredLocal ??= inspected;
       continue;
     }

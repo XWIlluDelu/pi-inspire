@@ -73,7 +73,7 @@ describe("maintenance restart admission", () => {
         code: commit() ? 0 : 1,
       }));
       const controller = new HostRestartController(runtime, {
-        inspect: async () => true,
+        inspect: async () => ({ host: true, all: true }),
         prepare: async () => {},
         request: submit,
       });

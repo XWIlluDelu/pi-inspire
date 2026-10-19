@@ -8,6 +8,7 @@ function fixture() {
   const status: HostRestartStatus = {
     hostId: crypto.randomUUID(),
     available: true,
+    allAvailable: true,
     operation: null,
   };
   const api = {
@@ -84,6 +85,17 @@ describe("browser restart delivery", () => {
     expect(f.client.snapshot().pending).toBeNull();
     expect(f.client.snapshot().notice).toBe("Host reconnected.");
     await f.client.retry();
+    expect(f.api.restartHost).toHaveBeenCalledOnce();
+  });
+
+  it("does not dispatch an unavailable scope while ordinary restart is supported", async () => {
+    const f = fixture();
+    f.status.allAvailable = false;
+    await f.client.refresh();
+    await f.client.start("all", f.status.hostId);
+    expect(f.api.restartHost).not.toHaveBeenCalled();
+    expect(f.client.snapshot().pending).toBeNull();
+    await f.client.start("host", f.status.hostId);
     expect(f.api.restartHost).toHaveBeenCalledOnce();
   });
 

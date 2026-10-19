@@ -1,4 +1,5 @@
 import {
+  mkdir,
   mkdtemp,
   readFile,
   realpath,
@@ -6,14 +7,34 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve, sep } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createProjectDirectory,
   escapesBase,
   resolveProjectDirectory,
+  resolveUserPath,
 } from "../../server/paths.js";
+
+vi.mock("node:os", async (importOriginal) => {
+  const os = await importOriginal<typeof import("node:os")>();
+  return { ...os, homedir: vi.fn(os.homedir) };
+});
+
+describe("native home paths", () => {
+  it("expands user home for filesystem references and exports", () => {
+    expect(resolveUserPath("~", process.cwd())).toBe(resolve(homedir()));
+    expect(resolveUserPath("~/notes/file.ts", process.cwd())).toBe(
+      resolve(homedir(), "notes/file.ts"),
+    );
+    expect(resolveUserPath("~\\notes", process.cwd())).toBe(
+      sep === "\\"
+        ? resolve(homedir(), "notes")
+        : resolve(process.cwd(), "~\\notes"),
+    );
+  });
+});
 
 describe("path containment", () => {
   it("distinguishes traversal from valid names beginning with two dots", () => {
@@ -34,7 +55,42 @@ describe("prospective project directories", () => {
     root = await mkdtemp(join(tmpdir(), "inspire-project-path-"));
   });
   afterEach(async () => {
+    vi.restoreAllMocks();
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("resolves home before project observation and explicit creation without a literal tilde directory", async () => {
+    vi.mocked(homedir).mockReturnValue(root);
+    vi.spyOn(process, "cwd").mockReturnValue(root);
+    await expect(resolveProjectDirectory("~")).resolves.toBe(
+      await realpath(root),
+    );
+    const spelling = sep === "\\" ? "~\\projects\\new" : "~/projects/new";
+    const target = join(root, "projects", "new");
+    await expect(resolveProjectDirectory(spelling)).rejects.toMatchObject({
+      code: "PROJECT_DIRECTORY_MISSING",
+    });
+    await expect(stat(join(root, "projects"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const created = await createProjectDirectory(spelling);
+    expect(created).toBe(await realpath(target));
+    expect((await stat(target)).isDirectory()).toBe(true);
+    await expect(resolveProjectDirectory(spelling)).resolves.toBe(
+      await realpath(target),
+    );
+    await expect(stat(join(root, "~"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("keeps a literal tilde component when the user supplies an explicit absolute path", async () => {
+    vi.mocked(homedir).mockReturnValue(root);
+    const target = join(root, "~", "literal");
+    await mkdir(target, { recursive: true });
+    await expect(resolveProjectDirectory(target)).resolves.toBe(
+      await realpath(target),
+    );
   });
 
   it("observes missing paths without creating them, then explicitly creates nested directories", async () => {

@@ -1,6 +1,9 @@
 import { mkdir, realpath, stat } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute } from "node:path";
+import { resolveUserPath } from "./platform-paths.mjs";
 import { requestError } from "./request-error.js";
+
+export { resolveUserPath } from "./platform-paths.mjs";
 
 /** True when a `relative(base, target)` result leaves its base (or was never
  * inside it). Accept both separator spellings because persisted or mocked
@@ -11,7 +14,7 @@ export function escapesBase(relativePath: string): boolean {
 
 /** Resolve one user-selected project to its physical directory identity. */
 export async function resolveProjectDirectory(cwd: string): Promise<string> {
-  const requested = resolve(cwd);
+  const requested = resolveUserPath(cwd, process.cwd());
   let candidate = requested;
   for (;;) {
     let root: string;
@@ -43,8 +46,9 @@ export async function resolveProjectDirectory(cwd: string): Promise<string> {
 
 /** User-authorized creation; never called by directory/model observations. */
 export async function createProjectDirectory(cwd: string): Promise<string> {
+  const requested = resolveUserPath(cwd, process.cwd());
   try {
-    await mkdir(resolve(cwd), { recursive: true });
+    await mkdir(requested, { recursive: true });
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "EEXIST" || code === "ENOTDIR")
@@ -53,5 +57,5 @@ export async function createProjectDirectory(cwd: string): Promise<string> {
       throw requestError("The host cannot create that directory", 403);
     throw error;
   }
-  return resolveProjectDirectory(cwd);
+  return resolveProjectDirectory(requested);
 }

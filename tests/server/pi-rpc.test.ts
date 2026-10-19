@@ -663,9 +663,22 @@ process.stdin.on("data", chunk => {
       for (let attempt = 0; attempt < 50; attempt += 1) {
         try {
           process.kill(childPid, 0);
+          // Container init may retain an orphan zombie after the whole group
+          // exits. A zombie cannot execute; PID existence is not liveness.
+          if (
+            process.platform === "linux" &&
+            /\) Z /u.test(await readFile(`/proc/${childPid}/stat`, "utf8"))
+          ) {
+            alive = false;
+            break;
+          }
           await new Promise((resolve) => setTimeout(resolve, 10));
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+          if (
+            ["ESRCH", "ENOENT"].includes(
+              (error as NodeJS.ErrnoException).code ?? "",
+            )
+          ) {
             alive = false;
             break;
           }

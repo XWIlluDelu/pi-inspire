@@ -8,4 +8,5 @@ export function resolveLaunchEnvironment(
   },
 ): Promise<NodeJS.ProcessEnv>;
 
+export function independentProcessEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
 export function systemdEnvironmentArguments(environment: NodeJS.ProcessEnv): string[];

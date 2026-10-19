@@ -1,5 +1,5 @@
 import { execFile as execFileCallback, spawn } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   mkdir,
   mkdtemp,
@@ -9,6 +9,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -202,7 +203,7 @@ async function waitForInstanceState(path, timeoutMs = 20_000) {
         typeof state.processStartTime === "string" &&
         state.processStartTime.length > 0
       )
-        return;
+        return state;
     } catch {}
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
@@ -296,11 +297,15 @@ try {
     "build/server/file-lock.mjs",
     "build/server/index.js",
     "build/server/instance-state.mjs",
+    "build/server/instance-control.mjs",
     "build/server/npm-command.mjs",
     "build/server/pi-installation.js",
     "build/server/pi-runtime.js",
     "build/server/restart-preflight.js",
     "build/server/host-restart-systemd.js",
+    "build/server/host-restart-backend.js",
+    "build/server/host-restart-preparation.js",
+    "build/server/launcher-restart.mjs",
     "build/server/platform-paths.mjs",
     "build/server/process-tree.mjs",
     "build/server/static-asset-cache.mjs",
@@ -626,7 +631,23 @@ try {
   });
   const mockOrigin = `http://127.0.0.1:${port}`;
   await waitForHealth(`${mockOrigin}/api/health`, token, true);
-  await waitForInstanceState(environment.INSPIRE_STATE_PATH);
+  const mockState = await waitForInstanceState(environment.INSPIRE_STATE_PATH);
+  if (
+    mockState.httpControlVersion !== 1 ||
+    (
+      await instanceModule.inspectInstance(environment.INSPIRE_STATE_PATH, {
+        root: installedRoot,
+        host: "127.0.0.1",
+        port,
+        mock: true,
+      })
+    ).kind !== "healthy"
+  )
+    throw new Error("Installed Host did not authenticate readiness");
+  if (!(await maintenanceModule.requestMaintenance(mockState))?.kind)
+    throw new Error(
+      "Installed maintenance could not authenticate the Host result",
+    );
   const terminalEpochResponse = await fetch(
     `${mockOrigin}/api/terminal-operations`,
     {
@@ -665,11 +686,27 @@ try {
     throw new Error(
       `Packaged PTY cleanup failed with ${closeTerminalResponse.status}`,
     );
-  await execFile(process.execPath, [bin, "status"], {
+  const status = await execFile(process.execPath, [bin, "status"], {
     cwd: temporary,
     env: environment,
     maxBuffer: 1024 * 1024,
   });
+  if (
+    status.stdout.includes(token) ||
+    status.stdout.includes("?token=") ||
+    !status.stdout.includes("#inspire-bootstrap=")
+  )
+    throw new Error(
+      "Installed launcher did not use a credential-free pairing transfer",
+    );
+  const shownToken = await execFile(process.execPath, [bin, "token"], {
+    cwd: temporary,
+    env: environment,
+  });
+  if (shownToken.stdout.trim() !== token)
+    throw new Error(
+      "Explicit installed token output did not match the verified Host",
+    );
   await execFile(process.execPath, [bin, "stop"], {
     cwd: temporary,
     env: environment,
@@ -778,7 +815,8 @@ try {
       realPiStartup: "ok",
       sessionForkWorker: "ok",
       publishDryRun: "accepted without metadata correction",
-      lifecycle: "mock and real start/status/stop",
+      lifecycle:
+        "mock and real start/status/stop; real page restart with owned Pi",
     }),
   );
 } catch (error) {

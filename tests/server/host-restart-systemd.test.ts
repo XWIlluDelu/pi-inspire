@@ -20,7 +20,7 @@ describe("restart preparation subprocess", () => {
     const backend = await fixture(
       "console.error('x'.repeat(10000)); console.error('\\x1b[31mSynthetic missing runtime module\\x1b[0m'); process.exitCode=1;",
     );
-    expect(await backend.inspect()).toBe(false);
+    expect(await backend.inspect()).toEqual({ host: false, all: false });
     await expect(backend.prepare()).rejects.toThrow(
       "Synthetic missing runtime module",
     );

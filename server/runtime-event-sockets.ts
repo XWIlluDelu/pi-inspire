@@ -9,8 +9,8 @@ import {
   MAX_SESSION_ID_CHARS,
 } from "../shared/contracts.js";
 import type { RuntimeLike } from "./runtime.js";
-import type { UpdateCoordinatorLike } from "./update-coordinator.js";
 import { compactToolArgumentEvents } from "./tool-argument-batches.js";
+import type { UpdateCoordinatorLike } from "./update-coordinator.js";
 
 export const MAX_JOINING_EVENT_BYTES = 4 * 1024 * 1024;
 export const MAX_RUNTIME_EVENT_BYTES = 2 * 1024 * 1024;
@@ -600,6 +600,18 @@ export function createRuntimeEventSockets({
         forgetSocket(socket);
         socket.close(1001, "Server shutting down");
       }
+    },
+    async terminateRemaining(): Promise<void> {
+      // Closing sockets can already be absent from the projection's set.
+      await Promise.all(
+        [...websocket.clients].map(
+          (socket) =>
+            new Promise<void>((resolveClosed) => {
+              socket.once("close", () => resolveClosed());
+              socket.terminate();
+            }),
+        ),
+      );
     },
   };
 }

@@ -49,6 +49,8 @@ import { GeneratedExportStore } from "./generated-exports.js";
 import type { GitInspectionLike } from "./git-inspection.js";
 import { listHostDirectories, listHostRoots } from "./host-dirs.js";
 import { HtmlPreviewStore } from "./html-preview.js";
+import { InstanceHttpControl } from "./instance-control.mjs";
+import { type InstanceState, instanceUrl } from "./instance-state.mjs";
 import type {
   MaintenanceRestartOutcome,
   MaintenanceRestartTransition,
@@ -422,6 +424,8 @@ interface AppDependencies {
   /** An HTTP observation window, never a Pi operation deadline. */
   promptObservationWindowMs?: number;
   token: string;
+  /** Ready, currently owned publication; never a caller-supplied process identity. */
+  instanceState?: () => InstanceState | null;
   runtime: RuntimeLike;
   catalog: SessionCatalogLike;
   attachments: AttachmentStore;
@@ -596,6 +600,7 @@ export function createInspireServer(deps: AppDependencies): {
   server: Server;
   /** Process-lifetime prompt-delivery authority, also advertised by bootstrap. */
   authorityId: string;
+  launchUrl: (origin: string) => string;
   close: () => Promise<void>;
 } {
   const app = express();
@@ -736,6 +741,8 @@ export function createInspireServer(deps: AppDependencies): {
   });
   app.use(express.json({ limit: "2mb" }));
   const browserAuth = new BrowserAuth(deps.token);
+  const launchUrl = (origin: string): string =>
+    `${origin}/#inspire-bootstrap=${browserAuth.bootstrap(origin)}`;
   const htmlPreviews = new HtmlPreviewStore(deps.resources, (sessionId) =>
     deps.runtime.resourceContext(sessionId),
   );
@@ -776,6 +783,73 @@ export function createInspireServer(deps: AppDependencies): {
     response.json(
       browserAuth.exchange(requestOrigin(request), challenge, signature),
     );
+  });
+
+  const localControl = new InstanceHttpControl();
+  const maintenanceLeaseSchema = z.object({
+    leaseId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+  });
+  // CLI peers prove only one fresh action and authenticate the signed result.
+  // Neither readiness nor maintenance sends the reusable Host bearer to a
+  // possibly replaced listener. Ordinary explicit-bearer APIs remain separate.
+  app.post("/api/host/local-control", async (request, response) => {
+    response.set("Cache-Control", "no-store");
+    const state = deps.instanceState?.();
+    if (!state || state.token !== deps.token || state.mock !== deps.mock)
+      return response
+        .status(503)
+        .json({ error: "Local control is unavailable" });
+    const grant = localControl.accept(state, request.body);
+    if (!grant)
+      return response
+        .status(401)
+        .json({ error: "Local control proof is invalid" });
+    let result: unknown;
+    switch (grant.request.action) {
+      case "readiness":
+        result = { appName: "inspire", mock: deps.mock };
+        break;
+      case "launch-url": {
+        let origin = new URL(instanceUrl(state)).origin;
+        if (grant.request.payload.origin !== undefined) {
+          const candidate = z
+            .string()
+            .max(512)
+            .url()
+            .parse(grant.request.payload.origin);
+          const target = new URL(candidate);
+          if (
+            target.origin !== candidate ||
+            target.protocol !== "http:" ||
+            !["127.0.0.1", "[::1]", "localhost"].includes(target.hostname)
+          )
+            throw requestError(
+              "A canonical loopback browser origin is required",
+              400,
+            );
+          origin = target.origin;
+        }
+        result = { url: launchUrl(origin) };
+        break;
+      }
+      case "maintenance-prepare":
+        result = deps.maintenanceRestart
+          ? await deps.maintenanceRestart.reserve()
+          : { kind: "skipped", reason: "runtime-unsupported" };
+        break;
+      case "maintenance-commit":
+      case "maintenance-release": {
+        const { leaseId } = maintenanceLeaseSchema.parse(grant.request.payload);
+        result = (grant.request.action === "maintenance-commit"
+          ? deps.maintenanceRestart?.commit(leaseId)
+          : deps.maintenanceRestart?.release(leaseId)) ?? {
+          kind: "skipped",
+          reason: "runtime-unsupported",
+        };
+        break;
+      }
+    }
+    response.json(localControl.reply(grant, result));
   });
 
   // Native downloads cannot carry Authorization. A narrowly scoped one-use
@@ -836,6 +910,9 @@ export function createInspireServer(deps: AppDependencies): {
         : {
             hostId: authorityId,
             available: false,
+            allAvailable: false,
+            allReason:
+              "Restart all requires this Host's installed Linux systemd services.",
             reason: "Page restart is unavailable for this Host.",
             operation: null,
           },
@@ -914,9 +991,6 @@ export function createInspireServer(deps: AppDependencies): {
     );
   });
 
-  const maintenanceLeaseSchema = z.object({
-    leaseId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
-  });
   app.post("/api/maintenance/restart/commit", (request, response) => {
     const { leaseId } = maintenanceLeaseSchema.parse(request.body);
     response.json(
@@ -1880,6 +1954,7 @@ export function createInspireServer(deps: AppDependencies): {
     app,
     server,
     authorityId,
+    launchUrl,
     close: async () => {
       deps.providerAuth?.close();
       htmlPreviews.close();
@@ -1898,7 +1973,15 @@ export function createInspireServer(deps: AppDependencies): {
       );
       server.closeIdleConnections();
       await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+      // HTTP's closeAllConnections excludes upgraded sockets. They have had
+      // their normal close notification and runtime teardown opportunity; a
+      // missing peer acknowledgement must not extend the Host's network drain.
+      const upgradedDrained = Promise.all([
+        runtimeEvents.terminateRemaining(),
+        terminalGateway.terminateRemaining(),
+      ]);
       server.closeAllConnections();
+      await upgradedDrained;
       const drainedResult = await drained.then(
         () => ({ status: "fulfilled" as const }),
         (reason: unknown) => ({ status: "rejected" as const, reason }),

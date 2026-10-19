@@ -88,7 +88,8 @@ async function inspectProcess(pid: number): Promise<LinuxProcess | null> {
       throw new Error("Unable to inspect the Herdr worker process");
     return { group: Number(fields[2]), birth: fields[19], state: fields[0]! };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ESRCH") return null;
     throw error;
   }
 }

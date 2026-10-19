@@ -42,7 +42,8 @@ export async function stopPiRpcChild(
         }),
       ]);
       if (escalation) clearTimeout(escalation);
-      // Reap descendants even if their leader exited during the grace period.
+      // Escalate only while the tracked child still owns its PID/group identity.
+      // A reaped leader is not authority to signal a possibly recycled PGID.
       // Await both operations: Windows taskkill may take longer than escalation.
       await Promise.all([soft, signal("SIGKILL")]);
     } else {

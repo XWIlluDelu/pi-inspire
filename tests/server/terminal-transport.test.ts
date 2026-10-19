@@ -7,7 +7,6 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { createInspireServer } from "../../server/app.js";
-import { pairedBrowser, socketAdmission } from "./fixtures/host-api.js";
 import { AttachmentStore } from "../../server/attachments.js";
 import { MockCatalog, MockRuntime } from "../../server/mock.js";
 import { PreferencesStore } from "../../server/preferences.js";
@@ -28,6 +27,8 @@ import type {
   TerminalServiceSettings,
 } from "../../shared/terminal-contracts.js";
 import { encodeTerminalInputFrame } from "../../shared/terminal-contracts.js";
+import { pairedBrowser, socketAdmission } from "./fixtures/host-api.js";
+import { closeWithoutPeerAck, rawWebSocket } from "./fixtures/raw-websocket.js";
 
 const token = "terminal-transport-token";
 const terminal: TerminalDescriptor = {
@@ -209,6 +210,68 @@ describe("terminal HTTP and WebSocket transport", () => {
       )
       .expect(200, { catalogEpoch: "catalog-1", revision: 2 });
   });
+
+  it.each(["awaiting attach", "attached"] as const)(
+    "drains a terminal peer %s without waiting for a close ACK",
+    async (state) => {
+      const { bearer } = await pairedBrowser(
+        application.server,
+        baseUrl,
+        token,
+      );
+      const admission = await socketAdmission(
+        application.server,
+        baseUrl,
+        bearer,
+        "terminal",
+      );
+      const peer = await rawWebSocket(
+        `${baseUrl}/terminal?ticket=${admission}`,
+        {
+          Origin: baseUrl,
+        },
+      );
+      try {
+        if (state === "attached") {
+          const ticket = await request(application.server)
+            .post(`/api/terminals/${terminal.id}/attach-ticket`)
+            .set("Authorization", `Bearer ${bearer}`)
+            .set("Origin", baseUrl)
+            .expect(200);
+          peer.send({
+            type: "attach",
+            ticket: ticket.body.ticket,
+            clientId: "raw-shutdown-peer",
+            cols: 100,
+            rows: 30,
+          });
+          await vi.waitFor(() =>
+            expect(
+              peer.messages.some((frame) => frame.type === "replay_complete"),
+            ).toBe(true),
+          );
+          expect(terminalService.attachedOptions).toMatchObject({
+            terminalId: terminal.id,
+            clientId: "raw-shutdown-peer",
+          });
+        }
+        const expectedDetachCount = state === "attached" ? 1 : 0;
+        terminalService.close.mockImplementation(async () => {
+          expect(terminalService.detach).toHaveBeenCalledTimes(
+            expectedDetachCount,
+          );
+        });
+        await closeWithoutPeerAck(() => application.close(), peer);
+        expect(terminalService.detach).toHaveBeenCalledTimes(
+          expectedDetachCount,
+        );
+        expect(terminalService.close).toHaveBeenCalledOnce();
+        expect(application.server.listening).toBe(false);
+      } finally {
+        peer.destroy();
+      }
+    },
+  );
 
   it("requires origin-bound socket and attach tickets before forwarding bytes", async () => {
     const queryOnly = new WebSocket(

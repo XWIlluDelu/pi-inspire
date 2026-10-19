@@ -12,10 +12,11 @@ import { ResourceStore } from "../../../server/resources";
  * user token files, services, Pi sessions or production listeners are touched. */
 export async function restartableAuthHost(master: string) {
   const directory = await mkdtemp(join(tmpdir(), "inspire-browser-auth-"));
+  let registrations = 0;
   const create = (token: string) => {
     const attachments = new AttachmentStore(join(directory, "uploads"));
     const runtime = new MockRuntime({ attachments });
-    return createInspireServer({
+    const application = createInspireServer({
       token,
       runtime,
       catalog: new MockCatalog(),
@@ -33,6 +34,13 @@ export async function restartableAuthHost(master: string) {
       piVersion: "fixture",
       distDir: resolve(process.env.INSPIRE_BROWSER_TEST_ROOT ?? ".", "dist"),
     });
+    // Observe actual ingress rather than engine-dependent Service Worker
+    // request forwarding; no debug route or response interception is needed.
+    application.server.prependListener("request", (request) => {
+      if (request.method === "POST" && request.url === "/api/auth/pair")
+        registrations++;
+    });
+    return application;
   };
   let application = create(master);
   await new Promise<void>((resolve) =>
@@ -41,6 +49,8 @@ export async function restartableAuthHost(master: string) {
   const port = (application.server.address() as AddressInfo).port;
   return {
     origin: `http://127.0.0.1:${port}`,
+    launchUrl: () => application.launchUrl(`http://127.0.0.1:${port}`),
+    registrations: () => registrations,
     async restart(token = master) {
       await application.close();
       application = create(token);

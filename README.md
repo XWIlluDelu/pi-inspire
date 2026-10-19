@@ -67,6 +67,8 @@ Inspire targets the latest Pi release; `package.json` records the version used b
 | Capability | Linux | macOS | Windows |
 | --- | --- | --- | --- |
 | Host, Pi sessions, launcher, project terminals | Supported | Supported | Supported |
+| Page Restart Host (launcher-owned or installed service) | Supported | Supported | Supported |
+| Restart all (installed Host + terminal services) | Supported | — | — |
 | Chromium workbench tests in CI | Yes | Yes | Yes |
 | Native session Trash | Freedesktop Trash | `~/.Trash` | Recycle Bin |
 | Persistent systemd services | Yes | — | — |
@@ -112,7 +114,7 @@ npm run check     # Formatting, lint, types, build, unit and launcher tests
 npm run ci        # Also runs browser tests
 ```
 
-`npm run inspire -- mock` opens the demonstration workspace; choose a separate `INSPIRE_PORT` if the normal Host is running. For the Vite development page, pair once using the fixed loopback-only token `inspire-dev-token`; normal launches pair an origin-scoped browser signing key using a private installation-scoped token. See [browser pairing and migration](docs/host.md#browser-pairing).
+`npm run inspire -- mock` opens the demonstration workspace; choose a separate `INSPIRE_PORT` if the normal Host is running. `npm run dev` (or `npm run inspire -- dev`) opens the owned Vite page only after authenticated Host readiness, using a one-use pairing link and fresh private development credentials. Occupied ports fail rather than falling through to another listener. See [development checkout](docs/host.md#development-checkout) and [browser pairing](docs/host.md#browser-pairing).
 
 The [design overview](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/spec_abstract.md) links to current contracts and open work. [Host operations](docs/host.md#build-and-install-a-package) covers release packaging.
 

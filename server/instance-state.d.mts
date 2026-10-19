@@ -10,6 +10,8 @@ export interface InstanceState {
   startedAt: string;
   processStartTime: string;
   mock: boolean;
+  shutdownControlVersion?: 1;
+  httpControlVersion?: 1;
 }
 
 export interface ExpectedInstance {
@@ -26,10 +28,14 @@ export type InspectionResult =
 
 export type StopResult =
   | { kind: "absent" | "stale" }
-  | { kind: "unavailable" | "timeout" | "stopped"; state: InstanceState };
+  | { kind: "unavailable" | "timeout" | "stopped" | "cleanup-failed"; state: InstanceState };
 
 export function instanceUrl(state: InstanceState): string;
-export function processStartIdentity(pid: number): Promise<string>;
+export function instanceLaunchUrl(state: InstanceState, origin?: string): Promise<string | null>;
+export function processStartIdentity(
+  pid: number,
+  signal?: AbortSignal,
+): Promise<string>;
 export function writeInstanceState(
   path: string,
   state: InstanceState,
@@ -39,6 +45,10 @@ export function removeInstanceState(
   owner: InstanceState,
 ): Promise<void>;
 export function consumeStopRequest(path: string): Promise<boolean>;
+export function requestInstanceShutdown(path:string,state:InstanceState,timeoutMs?:number):Promise<void>;
+export function completeInstanceShutdown(path:string,state:InstanceState,clean:boolean):Promise<void>;
+export function instanceShutdownRequested(path:string,state:InstanceState):Promise<boolean>;
+export function watchInstanceShutdown(path:string,state:InstanceState,onShutdown:()=>Promise<void>):()=>void;
 export function inspectInstance(
   path: string,
   expected: ExpectedInstance,

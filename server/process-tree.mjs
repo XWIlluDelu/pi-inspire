@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
+import { environmentValue } from "./platform-environment.mjs";
 
 function exited(child) {
   return child.exitCode !== null || child.signalCode !== null;
@@ -15,9 +16,11 @@ function signalChild(child, signal) {
 }
 
 async function signalWindowsTree(child, signal, environment, timeoutMs) {
-  if (!child.pid) return true;
-  const taskkill = environment.SystemRoot
-    ? join(environment.SystemRoot, "System32", "taskkill.exe")
+  // Never address a reusable PID after the tracked child has exited.
+  if (!child.pid || exited(child)) return true;
+  const systemRoot = environmentValue(environment, "SystemRoot", "win32");
+  const taskkill = systemRoot
+    ? join(systemRoot, "System32", "taskkill.exe")
     : "taskkill.exe";
   const args = ["/pid", String(child.pid), "/T"];
   if (signal === "SIGKILL") args.push("/F");
@@ -63,7 +66,9 @@ export async function signalProcessTree(
   signal,
   suppliedOptions = {},
 ) {
-  if (!child.pid) return;
+  // A reaped PID/PGID can name an unrelated process group on POSIX too.
+  // Keep this observation adjacent to the synchronous group signal below.
+  if (!child.pid || exited(child)) return;
   const platform = suppliedOptions.platform ?? process.platform;
   if (platform === "win32") {
     const signalled = await signalWindowsTree(

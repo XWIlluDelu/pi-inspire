@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, link, lstat, mkdir, open, rename, rm } from "node:fs/promises";
+import { link, lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { installationKey } from "./installation-key.js";
 import {
@@ -28,8 +28,12 @@ export function defaultAccessTokenPath(
   );
 }
 
-async function ensurePrivateDirectory(path: string): Promise<void> {
-  await mkdir(path, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
+async function ensurePrivateDirectory(
+  path: string,
+  create = true,
+): Promise<void> {
+  if (create)
+    await mkdir(path, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
   const info = await lstat(path);
   if (!info.isDirectory() || info.isSymbolicLink()) {
     throw new Error(
@@ -42,7 +46,9 @@ async function ensurePrivateDirectory(path: string): Promise<void> {
     );
   }
   if (supportsPosixPermissions() && (info.mode & 0o077) !== 0)
-    await chmod(path, PRIVATE_DIRECTORY_MODE);
+    throw new Error(
+      `The Inspire access-token directory must not be accessible by other users; use a private directory: ${path}`,
+    );
 }
 
 interface StoredToken {
@@ -147,6 +153,15 @@ async function rotateLegacyToken(path: string): Promise<string> {
   } finally {
     await rm(temporary, { force: true });
   }
+}
+
+/** Read an existing authority without creating or rotating it. */
+export async function readAccessToken(path: string): Promise<string> {
+  await ensurePrivateDirectory(dirname(path), false);
+  const stored = await readPrivateToken(path);
+  if (stored.legacy)
+    throw new Error("This authority needs an explicit upgrade");
+  return stored.token;
 }
 
 export async function resolveAccessToken(

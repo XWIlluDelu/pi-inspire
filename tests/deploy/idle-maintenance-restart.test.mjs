@@ -133,26 +133,53 @@ describe.runIf(process.platform !== "win32")(
 
     it("treats a timeout reading the commit response body as unknown, not approval", async () => {
       vi.useFakeTimers();
-      const fetch = vi.fn(async (_url, { signal }) => ({
-        ok: true,
-        json: () =>
-          new Promise((_resolve, reject) => {
-            signal.addEventListener("abort", () =>
-              reject(new Error("timed out")),
-            );
+      let fetched;
+      const started = new Promise((resolve) => {
+        fetched = resolve;
+      });
+      const fetch = vi.fn(async (_url, { signal }) => {
+        fetched();
+        return {
+          ok: true,
+          body: new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"version":1,'));
+              signal.addEventListener("abort", () =>
+                controller.error(new Error("timed out")),
+              );
+            },
           }),
-      }));
+        };
+      });
       vi.stubGlobal("fetch", fetch);
       try {
         const response = requestMaintenance(
-          { host: "127.0.0.1", port: 1234, token: "synthetic" },
+          {
+            schemaVersion: 1,
+            host: "127.0.0.1",
+            port: 1234,
+            token: "synthetic",
+            pid: process.pid,
+            root,
+            processStartTime: "fixture-birth",
+            startedAt: "fixture-start",
+            mock: false,
+            httpControlVersion: 1,
+          },
           "commit",
           leaseId,
         );
+        await started;
         await vi.advanceTimersByTimeAsync(6_000);
         await expect(response).resolves.toBeNull();
         expect(fetch).toHaveBeenCalledOnce();
-        expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ leaseId });
+        const options = fetch.mock.calls[0][1];
+        expect(options.headers.Authorization).toBeUndefined();
+        expect(JSON.parse(options.body)).toMatchObject({
+          action: "maintenance-commit",
+          payload: { leaseId },
+        });
+        expect(options.body).not.toContain("synthetic");
         expect(vi.getTimerCount()).toBe(0);
       } finally {
         vi.unstubAllGlobals();

@@ -13,7 +13,9 @@ export interface HostRestartOperation {
 export interface HostRestartStatus {
   hostId: string;
   available: boolean;
+  allAvailable: boolean;
   reason?: string;
+  allReason?: string;
   operation: HostRestartOperation | null;
 }
 

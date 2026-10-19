@@ -164,8 +164,8 @@ export async function nativeHerdrFixture(
       catalog,
       originalPid: writer.pid,
       readHistory: () => readFile(sessionFile, "utf8"),
-      makeRuntime() {
-        const runtime = new RuntimeController(catalog, store, () => {
+      makeRuntime(attachments = store) {
+        const runtime = new RuntimeController(catalog, attachments, () => {
           throw new Error("An existing Pi must not launch a second worker");
         }).setExternalSessionConnector((id, file) =>
           enhancement.connectExternalSession(id, file),

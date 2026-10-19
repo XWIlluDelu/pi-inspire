@@ -21,3 +21,7 @@
   provides graphical presentation and user controls, not a separate agent platform.
 - Adapt Pi features through its supported public interfaces. When a required interface is missing,
   defer that graphical capability rather than modifying Pi or requiring a patched runtime.
+- Target supported systems and reasonably recent dependencies. Do not turn cross-platform work into
+  indefinite compatibility with ancient operating systems, shells or dependency versions.
+- Prioritize material problems in current default workflows. Small edge-case fixes are allowed,
+  but cross-platform work must not grow into exhaustive low-impact adaptations or test matrices.

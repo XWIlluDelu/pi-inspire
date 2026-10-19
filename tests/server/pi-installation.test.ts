@@ -1,14 +1,18 @@
+import { execFile as execFileCallback } from "node:child_process";
 import {
   chmod,
   mkdir,
   mkdtemp,
+  readFile,
   realpath,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolvePiInstallation } from "../../server/pi-installation.js";
 
@@ -65,6 +69,49 @@ async function fakePi(
     commandPath,
   };
 }
+
+for (const entry of ["CLI", "SDK"])
+  it(`rejects a ${entry} entry in an actual case-distinct package sibling`, async (test) => {
+    const temporary = await realpath(
+      await mkdtemp(join(tmpdir(), "inspire-pi-boundary-")),
+    );
+    directories.push(temporary);
+    const fixture = await fakePi(temporary, "1.0.0");
+    const parent = dirname(fixture.packageRoot);
+    if (process.platform === "win32") {
+      const fsutil = process.env.SystemRoot
+        ? join(process.env.SystemRoot, "System32", "fsutil.exe")
+        : "fsutil.exe";
+      try {
+        await promisify(execFileCallback)(
+          fsutil,
+          ["file", "setCaseSensitiveInfo", parent, "enable"],
+          { windowsHide: true, timeout: 10_000 },
+        );
+      } catch {
+        return test.skip();
+      }
+    }
+    const sibling = join(parent, "PI-CODING-AGENT");
+    if (
+      await stat(sibling).then(
+        () => true,
+        () => false,
+      )
+    )
+      return test.skip();
+    await mkdir(sibling);
+    const manifestPath = join(fixture.packageRoot, "package.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    if (entry === "CLI") manifest.bin.pi = "../PI-CODING-AGENT/cli.js";
+    else manifest.exports["."].import = "../PI-CODING-AGENT/index.js";
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    await expect(
+      resolvePiInstallation({ command: fixture.commandPath }),
+    ).rejects.toThrow(
+      entry === "CLI" ? "invalid pi CLI entry" : "invalid Pi SDK entry",
+    );
+  });
 
 afterEach(async () => {
   await Promise.all(
@@ -140,6 +187,27 @@ describe("Pi installation authority", () => {
       else process.env.INSPIRE_PI_COMMAND = configuredCommand;
     }
   });
+
+  it.runIf(process.platform === "win32")(
+    "resolves an npm-style shim from a quoted PATH directory containing spaces and semicolons",
+    async () => {
+      const directory = await mkdtemp(
+        join(tmpdir(), "inspire-pi-quoted-path-"),
+      );
+      directories.push(directory);
+      const pi = await fakePi(
+        join(directory, "Program Files;Research"),
+        "3.0.0",
+      );
+      const installation = await resolvePiInstallation({
+        command: "pi",
+        path: '"' + pi.binDirectory + '"',
+        installationRoot: join(directory, "inspire"),
+      });
+      expect(installation.commandPath).toBe(pi.commandPath);
+      expect(installation.packageRoot).toBe(pi.packageRoot);
+    },
+  );
 
   it.runIf(process.platform === "win32")(
     "resolves an npm-style pi.cmd shim beside the external package",

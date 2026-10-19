@@ -4,9 +4,13 @@ covers:
   - inspire
   - inspire.mjs
   - deploy/systemd/**
-  - scripts/{build-release,build-web,source-build-hash,write-build-stamp,verify-release-package,web-build-output}.mjs
+  - scripts/{build-release,build-web,source-build-hash,write-build-stamp,verify-release-package,web-build-output,start-dev,start-dev-host}.mjs
+  - scripts/vite-dev-launch.ts
+  - vite.config.ts
+  - tests/server/dev-launcher.integration.test.ts
   - server/{app,index,pi-rpc,pi-installation,preferences,access-token,terminal-daemon-launcher}.ts
   - server/user-environment.{mjs,d.mts}
+  - server/platform-environment.{mjs,d.mts}
   - server/runtime-event-sockets.ts
   - server/browser-auth.ts
   - src/{api,browser-auth,terminal-connection}.ts
@@ -14,14 +18,21 @@ covers:
   - tests/server/{app-auth,browser-auth,terminal-transport}.test.ts
   - tests/browser/pairing.spec.ts
   - server/{runtime,runtime-worker-lifecycle,runtime-events}.ts
-  - server/{host-restart,host-restart-systemd,restart-preflight}.ts
+  - server/{host-restart,host-restart-backend,host-restart-preparation,host-restart-systemd,restart-preflight}.ts
+  - server/launcher-restart.{mjs,d.mts}
   - shared/host-restart.ts
   - src/controllers/host-restart-controller.ts
   - src/components/HostRestartSettings.tsx
+  - src/App.tsx
+  - tests/web/host-recovery.test.tsx
   - tests/restart-launcher.test.ts
   - tests/server/{runtime-worker-lifecycle,runtime-worker-pool,runtime-maintenance-restart,pi-startup-retirement.integration}.test.ts
   - tests/{server,web}/host-restart*.{ts,tsx}
-  - server/{file-lock,static-asset-cache}.mjs
+  - server/{file-lock,static-asset-cache,instance-state}.mjs
+  - server/instance-state.d.mts
+  - server/instance-control.{mjs,d.mts}
+  - tests/server/{instance-state,instance-control,instance-shutdown-control,host-shutdown.integration}.test.ts
+  - tests/fixtures/host-control-faults.mjs
   - server/*diagnostic*.ts
   - tests/launcher.test.ts
   - tests/user-environment-launcher.test.ts
@@ -37,6 +48,12 @@ covers:
 Launch, pair, package, diagnose, and stop one trusted local Host without exposing credentials or
 making deployment machinery a second Pi runtime. Typed runtime integration is specified in
 [[pi-integration]]; optional ingress is specified in [[connection-modules]].
+
+The support baseline is current supported systems and reasonably recent dependencies, not a
+historical-version matrix. Windows native operations use PowerShell 7, resolved from named PATH
+locations or its standard Program Files installation. They do not silently select the legacy
+inbox engine. Missing PowerShell is a dependency failure, not permission to weaken identity or
+storage checks.
 
 ## Runtime installation and release packaging
 
@@ -102,9 +119,15 @@ capture mechanism and service handoff.
 
 - Browser pairing registers a non-extractable P-256 ECDSA key, persisted in the browser origin's
   IndexedDB with a public HMAC-SHA256 Host certificate binding the public key and canonical origin.
-  The Pair form proves the Host master token once. A direct loopback launch instead replaces its
-  token query with a one-use, 30-second origin-bound bootstrap fragment; the bundle removes it from
-  history before registration. HTTPS proxies strip token queries without pairing.
+  The Pair form proves the Host master token once. Local startup/reopen/status links instead
+  contain a one-use, 30-second origin-bound bootstrap fragment, minted in-process or obtained through
+  an authenticated local-control action. The reusable token is not placed in the printed URL, browser
+  opener arguments or navigation request. The bundle removes the fragment from history before
+  registration. Readiness does not allocate pairing transfers. An explicit `inspire token` command
+  verifies the matching Host before printing its token for manual remote pairing; ordinary lifecycle
+  commands do not print it. Legacy direct loopback token queries still redirect into a one-use
+  transfer; HTTPS proxies strip token queries without pairing. Valid stored pairing takes precedence
+  over an expired/spent transfer; after authority rotation a fresh transfer can register a new key.
 
 - A valid certificate admits a random, origin-bound 30-second challenge, consumed once before
   signature verification. A successful SHA-256 signature yields a five-minute API bearer held only
@@ -119,12 +142,18 @@ capture mechanism and service handoff.
   API bearers. Browser events and terminal upgrades require a 15-second single-use ticket bound to
   canonical origin and audience, minted through an authenticated exact-origin POST. Terminal
   attachment separately retains its terminal-bound, origin-bound one-use attach ticket and daemon
-  ownership rules. Trusted non-browser API clients and launcher health retain explicit master
-  bearer headers; non-browser event clients may also use a master bearer header without Origin.
+  ownership rules. Trusted explicit non-browser API clients retain master bearer headers;
+  non-browser event clients may also use a master bearer header without Origin. Automatic CLI
+  readiness and maintenance use the peer-authenticated local control protocol below, never a
+  master bearer sent to an unverified listener.
   Master/API bearer query tokens and cookies never authenticate APIs or sockets. Native file
   downloads use a separately bounded 15-second one-use transfer ticket minted by authenticated
-  fetch, bound to canonical origin, session and resource. Consumption requires an exact Origin or
-  same-origin Fetch Metadata and rechecks resource/view authority before streaming raw bytes.
+  fetch, bound to canonical origin, session and resource. Consumption requires exact same-origin
+  evidence and rechecks resource/view authority before streaming raw bytes. Native WebKit downloads
+  can omit both Origin and Fetch Metadata; only in that absence may a strictly same-origin Referer
+  supply the proof. Any conflicting explicit Origin, Fetch Metadata or Referer still rejects without
+  consuming the ticket. The download anchor sends origin-only referrer information, not page paths
+  or queries; no credential/cookie fallback is introduced.
   Selecting another resource/session/view/transport retires pending issuance; no preview size cap
   or JavaScript file buffering is introduced. Interactive preview grants remain
   revocable session/view-scoped document capabilities, not Host credentials.
@@ -136,7 +165,9 @@ capture mechanism and service handoff.
 
 - Without explicit `INSPIRE_TOKEN`, generated tokens contain 64 cryptographic random bytes
   (86 base64url characters), in a current-user-private `0700` directory and `0600` plain-text
-  `.token` file keyed by installation/host/port. All cookie-era generated lengths, including 64
+  `.token` file keyed by installation/host/port. Existing non-private POSIX parent directories are
+  refused without changing their permissions; new parents are created private. All cookie-era
+  generated lengths, including 64
   characters, rotate once on the next Host start; later starts reuse the new generation. Explicit
   configured tokens are never silently rewritten: operators must rotate a formerly cookie-paired
   configured token to revoke leaked explicit-bearer authority. See
@@ -147,6 +178,20 @@ capture mechanism and service handoff.
   Old bundles fail safely and must reload/pair, without insecure compatibility. Noninteractive Host
   services suppress token-bearing startup output so it cannot enter their journal.
 
+## Development launch
+
+- The coordinated source-development entry uses a fresh private credential and control directory,
+  not inherited production token/state/stop-request paths. No reusable credential is printed or put
+  in an opener URL. Backend source watching retains that run’s authority across reloads.
+- Vite owns a strict loopback listener before issuing an opener. It binds explicitly rather than
+  assuming localhost and numeric loopback addresses are interchangeable. Backend/proxy addresses
+  follow the same selected Host configuration. An occupied frontend/backend port fails without
+  opening or stopping its unrelated occupant.
+- Pairing requires authenticated readiness of the current private Host and a one-use grant bound to
+  the actual Vite browser origin. Only an authenticated local-control request may select a canonical
+  HTTP loopback proxy origin; normal production link validation still defaults to the Host origin.
+  The existing Vite open action obtains a fresh transfer rather than reusing an expired URL.
+
 ## Process, lock, and service ownership
 
 - The direct POSIX backend launches each Pi worker in an isolated process group; eviction,
@@ -156,7 +201,13 @@ capture mechanism and service handoff.
   including hard termination and recovery. This does not add a systemd dependency to direct mode.
   Windows terminates the worker's descendant tree through `taskkill /T`, escalating
   with `/F` only for the existing hard-kill boundary and falling back to Node's direct child signal
-  only when the operating-system tree command cannot complete.
+  only when the operating-system tree command cannot complete. A tracked child already known to have
+  exited never authorizes another numeric PID/PGID signal on any platform. POSIX group signalling
+  stays adjacent to the live tracked-child observation; no post-exit group identity is inferred from
+  its old PID. A stop still awaits real child exit and already-started tree operations, not a signal
+  or pipe-close deadline. Native commands receiving copied Windows environments resolve SystemRoot
+  case-insensitively. Repeated lookups of the current process share its immutable birth identity;
+  foreign PIDs are always re-queried and failed self lookups remain retryable.
 
 - Preference read/merge/rename writes are serialized both within one Host and across independent
   Host processes through the same bounded lock abstraction used by single-instance launch. Linux
@@ -170,14 +221,47 @@ capture mechanism and service handoff.
   diagnosed but never terminates the already-listening Host. Optional [[connection-modules]] own
   only their local companion-process lifecycle and ingress path; they never become Pi/data authority
   or own host shutdown. Forwarded protocol is trusted only from a loopback hop. Production launch is
-  single-instance and idempotent per checkout/host/port: reuse and ordinary shutdown require the
-  matching private state plus an authenticated Host response; Linux alone may fall back for an
-  unhealthy Host after `/proc` verifies the exact process start, working directory, and command
-  line.
+  single-instance and idempotent per checkout/host/port. Reuse requires matching private state and
+  a fresh authenticated HTTP readiness result. Case aliases are verified against the actual native
+  directory identity, not an OS-wide lowercase assumption; distinct case-sensitive roots remain
+  distinct even on Windows.
 
-  A stop racing dependency installation or build cancels that pending start, macOS and Windows fail
-  closed when authenticated shutdown is unavailable, and an unknown port occupant is never killed
-  automatically. A source build and the launcher share one hash of browser-build inputs: an ordinary
+  The local HTTP control protocol binds each request and response to the published installation,
+  address, mode, process birth and startup incarnation. Domain-separated HMACs authenticate a fresh
+  nonce, action, deadline and payload without sending the reusable Host token. Readiness,
+  pairing-transfer issuance and maintenance prepare/commit/release use this protocol. One-use requests
+  expire within 15 seconds,
+  live replay records are bounded at 1,024, and request/response bodies are bounded at 2 KiB. The client
+  rejects unsigned/mismatched replies, redirects, oversized bodies and expired results even when an
+  overdue abort timer has not yet run. Only the Host's own ready publication can sign replies.
+  Older unprovable Hosts are not silently treated as healthy.
+
+  Managed shutdown has an HTTP-independent local control capability:
+  bounded atomic request/result files beside instance state, authenticated with domain-separated
+  HMACs using the existing private Host authority without serializing its token. Requests expire and
+  bind root, address, mode, process birth and startup incarnation. Old, forged or foreign requests
+  cannot stop a replacement or another instance.
+
+  The Host retains its cooperative control loop if HTTP stops listening. It runs the same application,
+  owned-worker and backend cleanup as ordinary shutdown and signs the outcome before exiting. CLI
+  replacement requires both a clean authenticated result and confirmed OS process exit; state-file
+  disappearance or a result alone is insufficient. Failed/unknown cleanup and a blocked event loop
+  do not authorize PID killing or replacement. The launcher lease still fences handoff.
+
+  Network shutdown sends normal WebSocket close notifications before runtime teardown. After the
+  existing event-loop drain opportunity, it terminates remaining upgraded connections, including
+  pre-attach and already-closing sockets; a missing browser acknowledgement cannot hold Host exit
+  until the WebSocket library's close-handshake timeout. Wait for endpoint close callbacks, including
+  terminal detach, before closing their service clients. This network fence does not replace
+  owned-worker or PTY exit confirmation.
+
+  A stop racing dependency installation or build cancels that pending start. Hosts predating the
+  HTTP protocol can still use their advertised authenticated shutdown mailbox. No automatic CLI
+  path falls back to sending the Host bearer over HTTP, even after a separate readiness proof:
+  another connection can reach a replacement listener. Legacy Linux may stop only after `/proc`
+  verifies exact birth, cwd and command line. Other legacy Hosts without cooperative controls need
+  their existing service/inspected process controls for the one-time upgrade and otherwise fail
+  closed. An unknown port occupant is never killed automatically. A source build and the launcher share one hash of browser-build inputs: an ordinary
   successful `build:web` writes a source-checkout stamp, a changed input forces exactly one
   replacement build, and a current stamp avoids redundant rebuilding before startup. The stamp is
   excluded from the npm distribution, whose launcher uses its packaged build directly.
@@ -192,7 +276,7 @@ capture mechanism and service handoff.
 - A matching installed `inspire-host.service` is the lifecycle authority for that checkout: ordinary
   `./inspire`, `status`, `stop`, and `restart` delegate only after its fragment path, working
   directory, `ExecStart`, and authenticated readiness hook identify the same root. Service
-  activation completes only after that hook reaches the Host health endpoint, and ordinary status
+  activation completes only after that hook authenticates the Host readiness result, and ordinary status
   additionally requires the live authenticated Host rather than treating an active process as
   availability. The unit's own `ExecStart` bypasses delegation so it cannot recurse; explicit
   alternate-instance inputs and checkouts without the unit retain direct-launcher behavior.
@@ -200,9 +284,10 @@ capture mechanism and service handoff.
   enables/disables that timer in the same command.
 
   The timer never fetches updates: it restarts only if the installed external Pi version or a clean
-  source revision differs from the running identity and every runtime slot has no active
-  run/dialog/queue or in-flight operation. A busy, dirty, indeterminate, or old host is skipped
-  without force or same-day retry.
+  source revision differs from the running identity, Inspire-owned workers have no active
+  run/dialog/queue, and no Host operation is in flight. Independently running external Pi does not
+  block maintenance; a Host submission to it still does. A busy, dirty, indeterminate, or old Host
+  is skipped without force or same-day retry.
 
   Scheduled restart uses an authenticated, single-owner prepare/commit handoff, not a boolean idle
   check. `POST /api/maintenance/restart` grants a unique, opaque `leaseId` and a 30-second `expiresAt`;
@@ -243,9 +328,22 @@ capture mechanism and service handoff.
   units. It ends terminal processes and restarts both in one transaction, with Host ordered after
   terminal readiness. Unsupported or foreign services are refused before stopping anything;
   connection services are outside the scope, and a failed full restart cannot fall back to Host-only.
-- Page controls live in Settings → System, with concise confirmation for each scope. Full restart
-  names the terminal-process impact. Page control requires the exact running systemd invocation.
-  Restart stays out of the command palette and always-visible controls.
+- Page controls live in Settings → System, with concise confirmation for each scope. Ordinary
+  Restart Host supports launcher-owned native Windows, macOS, and Linux instances, including custom
+  loopback addresses, ports, and state paths. Installed Linux services retain their exact running
+  systemd invocation as authority. A raw Host entrypoint without either owner cannot restart itself.
+  Full restart remains restricted to the installed Linux services and names the terminal-process
+  impact. Ordinary and full availability are exposed and enforced separately; unsupported scope is
+  refused before preparation or work interruption. Restart stays out of the command palette and
+  always-visible controls. Pairing and local-offline recovery guidance must work for both installed
+  packages and source checkouts without assuming a POSIX-only wrapper.
+- Direct page restart uses the existing launcher's private child IPC, not a browser-supplied command,
+  PID, or detached replacement launcher. Keep the original launcher and instance lock across
+  replacement, reuse its environment and instance configuration, and do not reopen the browser.
+  Restart only after an accepted handoff and a distinct successful restart exit; failed worker
+  retirement, a crash, an ordinary stop, or a signal cannot authorize a replacement. Standalone stop
+  waits for the launcher's lock before clearing cancellation, including when Host state disappeared
+  before actual process exit.
 
 ### Identity and admission
 
@@ -259,16 +357,19 @@ capture mechanism and service handoff.
   worker has retired; preserve the original error for diagnosis. Pending or rejected actual-stop
   acknowledgements still block ordinary admission, even if the worker no longer appears live.
 - A workload refusal offers a separate confirmed **Stop work and restart** under the same scope.
-  The new operation authorizes interrupting all Pi work and discarding Pending input. It bypasses
+  The new operation authorizes interrupting Inspire-owned Pi work and discarding Pending input.
+  Connected external Pi keeps running. It bypasses
   workload checks, including active compaction and session operations, while retaining preparation,
   service ownership, lease exclusivity, and final commit. Automatic maintenance stays update/idle-gated
   and Host-only.
 
 ### Submission and recovery
 
-- Recheck the current service invocation before committing the non-expiring drain and submitting
-  the restart. The existing Host shutdown retires its workers. Proven non-issuance releases
-  admission; uncertain submission retains the drain and reports recovery required.
+- Recheck the live launcher channel or current service invocation before committing the non-expiring
+  drain and submitting the restart. The existing Host shutdown retires its workers. Proven
+  non-issuance releases admission; uncertain submission retains the drain and reports recovery
+  required. A lost launcher acceptance cannot trigger shutdown from a late reply or turn a later
+  normal exit into a restart.
 - The browser persists identity in tab-session storage before POST; invalid or unavailable storage
   blocks dispatch. Recheck is read-only and explicit retry keeps the same identity. A rejected
   receipt is labelled **last attempt**, because it is historical rather than a current busy check.
