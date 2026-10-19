@@ -1,9 +1,9 @@
-import { requestError } from "./request-error.js";
 import { type BigIntStats, constants } from "node:fs";
 import {
   chmod,
   type FileHandle,
   lstat,
+  mkdir,
   mkdtemp,
   open,
   rename,
@@ -13,7 +13,9 @@ import {
 import { basename, dirname, extname, join, resolve } from "node:path";
 import type { SessionDeleteDisposition } from "../shared/contracts.js";
 import { moveToDesktopTrash } from "./desktop-trash.js";
+import { requestError } from "./request-error.js";
 import type { SessionRecord } from "./session-catalog.js";
+import { removeSessionRecoveryMetadata } from "./session-recovery.js";
 
 const MAX_SESSION_HEADER_BYTES = 64 * 1024;
 const PRIVATE_DIRECTORY_MODE = 0o700;
@@ -28,6 +30,7 @@ interface SessionFileIdentity {
 
 interface QuarantinedSession {
   directory: string;
+  bundleDirectory: string;
   path: string;
   identity: SessionFileIdentity;
 }
@@ -263,20 +266,39 @@ async function cleanCommittedDirectory(
   await removeDirectory(path).catch(() => undefined);
 }
 
+async function cleanCommittedQuarantine(
+  quarantine: QuarantinedSession,
+  removeDirectory: RemoveEmptyDirectory,
+): Promise<void> {
+  // Fixed metadata only: never recursively remove a directory containing a
+  // replacement or unknown payload after the destructive outcome committed.
+  await removeSessionRecoveryMetadata(quarantine.bundleDirectory).catch(
+    () => undefined,
+  );
+  await cleanCommittedDirectory(quarantine.bundleDirectory, removeDirectory);
+  await cleanCommittedDirectory(quarantine.directory, removeDirectory);
+}
+
 async function quarantineSession(
   path: string,
   inspected: SessionFileIdentity,
 ): Promise<QuarantinedSession> {
   const directory = await mkdtemp(join(dirname(path), ".inspire-delete-"));
   await chmod(directory, PRIVATE_DIRECTORY_MODE);
+  // The visible inner folder can be restored or dragged out of native Trash;
+  // the existing private prefix still fences indeterminate payloads from use.
+  const bundleDirectory = join(directory, "Inspire session recovery");
+  await mkdir(bundleDirectory, { mode: PRIVATE_DIRECTORY_MODE });
   const quarantine = {
     directory,
-    path: join(directory, basename(path) || "session.jsonl"),
+    bundleDirectory,
+    path: join(bundleDirectory, basename(path) || "session.jsonl"),
     identity: inspected,
   };
   try {
     await rename(path, quarantine.path);
   } catch (error) {
+    await removeEmptyDirectory(bundleDirectory);
     await removeEmptyDirectory(directory);
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       throw requestError(
@@ -291,7 +313,10 @@ async function quarantineSession(
   if (!moved || !sameRenamedFileVersion(moved, inspected)) {
     // No automatic restore is safe here. A replacement at the private
     // pathname must never be promoted back into the public Pi catalog.
-    if (!moved) await removeEmptyDirectory(directory);
+    if (!moved) {
+      await removeEmptyDirectory(bundleDirectory);
+      await removeEmptyDirectory(directory);
+    }
     throw requestError(
       "The session file changed while deletion was being prepared",
       409,
@@ -311,7 +336,7 @@ async function permanentlyDeleteQuarantine(
   // The Trash consumer may have moved the authorized inode before reporting
   // failure. An absent private entry therefore has a committed trash outcome.
   if (current === null) {
-    await cleanCommittedDirectory(quarantine.directory, removeDirectory);
+    await cleanCommittedQuarantine(quarantine, removeDirectory);
     return "trashed";
   }
   // Anything other than the exact post-quarantine version is indeterminate.
@@ -360,7 +385,7 @@ async function permanentlyDeleteQuarantine(
     throw failure;
   }
   await cleanCommittedDirectory(purgeDirectory, removeDirectory);
-  await cleanCommittedDirectory(quarantine.directory, removeDirectory);
+  await cleanCommittedQuarantine(quarantine, removeDirectory);
   return "deleted";
 }
 
@@ -387,7 +412,7 @@ export async function deleteSessionFile(
   const current = await fileIdentityAt(quarantine.path);
   if (trashError === undefined) {
     if (current === null) {
-      await cleanCommittedDirectory(quarantine.directory, removeDirectory);
+      await cleanCommittedQuarantine(quarantine, removeDirectory);
       return "trashed";
     }
     if (!sameFileVersion(current, quarantine.identity)) {

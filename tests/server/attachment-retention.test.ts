@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
 import {
   access,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rename,
   rm,
   writeFile,
@@ -17,6 +19,7 @@ import {
   addAttachmentContext,
 } from "../../server/attachments.js";
 import { moveToDesktopTrash } from "../../server/desktop-trash.js";
+import { macosSessionTrashDirectories } from "../../server/macos-trash.js";
 import { piInstallation } from "../../server/pi-installation.js";
 import { resolveComposerHistoryArtifacts } from "../../server/runtime-composer-artifacts.js";
 import { createRuntimeSlot } from "../../server/runtime-slot.js";
@@ -98,7 +101,9 @@ async function sent(name = "original") {
 }
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "inspire-attachment-retention-"));
+  root = await realpath(
+    await mkdtemp(join(tmpdir(), "inspire-attachment-retention-")),
+  );
   sessions = join(root, "sessions");
   trash = join(root, "data", "Trash", "files");
   await mkdir(sessions);
@@ -110,7 +115,9 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-describe("durable owned upload references", () => {
+// Multiple native before/after volume proofs per scenario are integration I/O,
+// not a five-second unit operation (especially cold PowerShell on Windows).
+describe("durable owned upload references", { timeout: 30_000 }, () => {
   // Three independent Node/tsx + SDK boots, not a five-second unit operation.
   it("retains default-store copies across fresh processes and reclaims their last reference", async ({
     signal,
@@ -130,8 +137,17 @@ describe("durable owned upload references", () => {
             name,
             root,
           ],
-          { env: environment, signal, timeout: 10_000, killSignal: "SIGKILL" },
-          (error, stdout) => (error ? reject(error) : resolveOutput(stdout)),
+          { env: environment, signal, timeout: 30_000, killSignal: "SIGKILL" },
+          (error, stdout, stderr) => {
+            if (error)
+              reject(
+                new Error(
+                  `Retention phase ${name} failed (code=${error.code}, signal=${error.signal}, killed=${error.killed}): ${stderr || error.message}`,
+                  { cause: error },
+                ),
+              );
+            else resolveOutput(stdout);
+          },
         );
       });
       const closed = new Promise<void>((resolveClose) =>
@@ -155,7 +171,7 @@ describe("durable owned upload references", () => {
     expect(resumed.deferred).toBeUndefined();
     expect((await phase("delete")).reclaimed).toEqual([first.path]);
     await expect(access(first.path)).rejects.toMatchObject({ code: "ENOENT" });
-  }, 30_000);
+  }, 90_000);
 
   it("survives normal Host close/reopen and recalls the original name and readable bytes", async () => {
     const { doc, path, file } = await sent();
@@ -264,12 +280,25 @@ describe("durable owned upload references", () => {
   it("keeps recoverable Trash references across restart, restores, then releases after emptying Trash", async () => {
     const { path, file } = await sent();
     const records = await new SessionMetadataIndex().list([sessions]);
+    const linux = {
+      uid: (await lstat(root)).uid,
+      mounts: async () => [
+        {
+          id: 1,
+          root,
+          mountPoint: root,
+          filesystem: "fixture",
+          source: "fixture",
+        },
+      ],
+    };
     expect(
       await deleteSessionFile(records[0]!, (payload, original) =>
         moveToDesktopTrash(payload, original, {
           platform: "linux",
           environment: { XDG_DATA_HOME: join(root, "data") },
           home: root,
+          linux,
         }),
       ),
     ).toBe("trashed");
@@ -285,9 +314,81 @@ describe("durable owned upload references", () => {
       platform: "linux",
       environment: { XDG_DATA_HOME: join(root, "data") },
       home: root,
+      linux,
     });
     await rm(trash, { recursive: true });
     expect((await store.collectUnreferenced()).reclaimed).toEqual([path]);
+  });
+
+  it.each(["darwin", "win32"] as const)(
+    "retains uploads referenced inside a complete %s recovery bundle until Trash is emptied",
+    async (platform) => {
+      const { path, file } = await sent();
+      const bundle = join(trash, "Inspire session recovery");
+      const recycle = async (directory: string) => {
+        await mkdir(trash, { recursive: true });
+        await rename(directory, bundle);
+      };
+      const record = (await new SessionMetadataIndex().list([sessions]))[0]!;
+      await expect(
+        deleteSessionFile(record, (payload, original) =>
+          moveToDesktopTrash(payload, original, {
+            platform,
+            environment: {},
+            home: root,
+            windowsRecycle: recycle,
+            macosRecycle: recycle,
+          }),
+        ),
+      ).resolves.toBe("trashed");
+      expect((await store.sessionDeleted(file)).reclaimed).toEqual([]);
+      await store.close();
+      store = openStore();
+      expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
+      await expect(access(path)).resolves.toBeUndefined();
+      await rm(bundle, { recursive: true });
+      expect((await store.collectUnreferenced()).reclaimed).toEqual([path]);
+    },
+  );
+
+  it("finds recovery-bundle references in macOS per-volume current-user Trash", async () => {
+    const { path, file } = await sent();
+    const home = join(root, "home");
+    const externalVolume = join(root, "Volumes", "Project disk");
+    const roots = await macosSessionTrashDirectories([sessions], {
+      home,
+      uid: 501,
+      volumeRoots: async () => [root, externalVolume],
+    });
+    const volumeTrash = join(externalVolume, ".Trashes", "501");
+    const bundle = join(volumeTrash, "Inspire session recovery");
+    await mkdir(volumeTrash, { recursive: true });
+    const record = (await new SessionMetadataIndex().list([sessions]))[0]!;
+    await deleteSessionFile(record, (payload, original) =>
+      moveToDesktopTrash(payload, original, {
+        platform: "darwin",
+        environment: {},
+        home,
+        macosRecycle: async (directory) => rename(directory, bundle),
+      }),
+    );
+    const before = await sessionAttachmentReferences(
+      new Set([path]),
+      [sessions],
+      roots,
+      new Map(),
+    );
+    expect(before.paths.has(path)).toBe(true);
+    await rm(bundle, { recursive: true });
+    const after = await sessionAttachmentReferences(
+      new Set([path]),
+      [sessions],
+      roots,
+      new Map(),
+    );
+    expect(after.paths.has(path)).toBe(false);
+    await expect(access(path)).resolves.toBeUndefined();
+    expect(file).not.toBe(bundle);
   });
 
   it("reclaims after permanent deletion without touching source/project/unregistered files", async () => {
@@ -355,7 +456,9 @@ describe("durable owned upload references", () => {
       store.registerSession(file),
       store.registerSession(file),
     ]);
-    expect(JSON.parse(await readFile(registry, "utf8"))).toContain(custom);
+    expect(JSON.parse(await readFile(registry, "utf8")).directories).toContain(
+      custom,
+    );
   });
 
   it("remembers custom storage independently of catalog/curation after restart", async () => {
@@ -395,7 +498,7 @@ describe("durable owned upload references", () => {
     await rename(file, join(configured, "external-fork.jsonl"));
     store.discoverSessionDirectories(async () => [configured]);
     expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-    await rm(configured, { recursive: true });
+    await rm(join(configured, "external-fork.jsonl"));
     expect((await store.collectUnreferenced()).reclaimed).toEqual([path]);
   });
 

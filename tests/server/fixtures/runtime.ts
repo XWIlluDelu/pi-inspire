@@ -9,15 +9,15 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, join, parse, resolve } from "node:path";
 import { expect, vi } from "vitest";
 import { AttachmentStore } from "../../../server/attachments.js";
 import type {
   PiRpcOptions,
+  PiRpcProcess,
   PiRpcResponseFence,
 } from "../../../server/pi-rpc.js";
 import { RuntimeController } from "../../../server/runtime.js";
-import type { PiRpcProcess } from "../../../server/pi-rpc.js";
 import type {
   SessionCatalogLike,
   SessionRecord,
@@ -26,8 +26,8 @@ import type { ActiveSessionSnapshot } from "../../../server/session-preview.js";
 import {
   decodeBranchBridgeJson,
   encodeBranchBridgeJson,
-  RETRY_STATE_SUFFIX,
   PENDING_IMAGE_SUFFIX,
+  RETRY_STATE_SUFFIX,
 } from "../../../shared/branch-bridge-protocol.js";
 import { PreviewProjection } from "./preview-projection.js";
 
@@ -321,15 +321,32 @@ const attachments: AttachmentStore[] = [];
 
 export const workspaceDirectories: string[] = [];
 
-export function trackedAttachmentStore(): AttachmentStore {
-  const store = new AttachmentStore(
-    join(fixtureWorkspace, `attachments-${attachments.length}`),
-    null,
-    {
-      sessionDirectories: [fixtureWorkspace],
-      trashDirectories: [],
-      sweepIntervalMs: 0,
+/** Fake-worker tests exercise real JSONL/registration, not OS volume discovery.
+ * Native metadata adapters have their own retention and installed-package proofs.
+ * Keep Host locks, process identity, markers and durable registry writes real. */
+export function workerAttachmentStore(
+  root: string,
+  sessionDirectory: string,
+): AttachmentStore {
+  return new AttachmentStore(root, null, {
+    sessionDirectories: [sessionDirectory],
+    trashDirectories: [],
+    sweepIntervalMs: 0,
+    volume: {
+      nativeIdentity: async (directory) => ({
+        kind: process.platform === "win32" ? "windows-guid" : "macos-uuid",
+        directory: parse(directory).root,
+        id: "12345678-1234-4234-8234-123456789abc",
+        ...(process.platform === "win32" ? { format: "12345678" } : {}),
+      }),
     },
+  });
+}
+
+export function trackedAttachmentStore(): AttachmentStore {
+  const store = workerAttachmentStore(
+    join(fixtureWorkspace, `attachments-${attachments.length}`),
+    fixtureWorkspace,
   );
   attachments.push(store);
   return store;
