@@ -8,6 +8,7 @@ covers:
   - deploy/systemd/**
   - scripts/{build-release,start-browser-test-host,verify-release-package}.mjs
   - server/{app,index,terminal-*}.ts
+  - server/{platform-environment,user-environment}.{mjs,d.mts}
   - shared/terminal-*.ts
   - src/{api,App,app-state,store,terminal-*,use-copied}.ts*
   - src/controllers/terminal-operation-controller.ts
@@ -35,6 +36,38 @@ A private daemon owns PTYs, bounded output rings, headless terminal state, tab m
 history. Its installation-scoped IPC endpoint authenticates current-user clients. Each absolute project
 cwd owns an ordered set of up to 32 tabs, within a global limit of 128.
 
+IPC authenticates both peers before sending controls, paths or input and encrypts terminal traffic.
+No handshake sends a reusable token or downgrades to the earlier plaintext protocol. The TLS authority
+is a newly generated private secret, separate from any potentially disclosed plaintext-era token.
+Windows machine-wide pipe names include the OS account and state-directory identity as well as the
+installation. Unix socket addresses stay within the native byte limit, including long and Unicode
+temporary roots; shortening does not relax current-user ownership or private-directory checks.
+A still-listening legacy address blocks automatic replacement rather than stranding its PTYs.
+Only the owner that bound a socket removes it; late cleanup must not unlink a successor.
+An existing non-private POSIX parent is rejected rather than chmodded, so a custom socket, token or
+state address cannot change permissions on a shared or system directory.
+
+`inspire terminal status|stop|restart` supplies portable, instance-scoped maintenance without
+restarting the Host/Pi or expanding Restart all. Stop/restart run from an external OS terminal;
+a managed-terminal environment is refused before stopping work so the command cannot kill its own
+coordinator midway through replacement. Status remains available there. An independent lifecycle-v1 envelope over the same
+authenticated TLS transport survives terminal-data protocol changes. The caller verifies root, Host,
+port, configured IPC/state/token paths, process birth and daemon incarnation before requesting stop.
+Shutdown targets that incarnation; an old target cannot stop a replacement. Status never creates or
+rotates authority and reports missing listeners without claiming OS-process exit.
+
+Running project terminals require explicit `--force`; it confirms ending work, not a bypass for
+authentication or unknown-PID killing. Admission fences pending creates before shutdown. Failed PTY
+cleanup retains failed sessions, rejects shutdown completion and leaves lifecycle controls reachable
+for inspection/retry while data requests are fenced. A lifetime lease covers startup, state writing
+and complete PTY drain; CLI controls serialize handoff and confirm actual process exit before replacement.
+Saved tabs restore as exited without executing commands. The dedicated installed terminal unit retains
+systemd ownership; arbitrary enclosing services are never treated as terminal restart authority.
+
+Detached daemon fallback removes inherited service notification/socket-activation identity, and
+systemd handoff has a bounded wait. A detached spawn error rejects launch instead of escaping as an
+unhandled process event.
+
 Opening or hiding the pane attaches or detaches views. Explicit close terminates the process tree;
 exited tabs retain output until closed or restarted. Reopening a recently closed tab creates a fresh
 process from its profile. Host restart reconnects to the daemon. Machine restart restores known tabs
@@ -45,9 +78,27 @@ The daemon receives the user's exported environment through direct and installed
 under [[host-lifecycle]]. User-supplied `NODE_ENV` remains authoritative. Host restart leaves existing
 terminal environments unchanged.
 
-Shell profiles are discovered from that environment. POSIX shells, PowerShell, Command Prompt, and WSL
-use `node-pty` with true-color xterm metadata. Supported wrappers preserve normal shell initialization
+Shell profiles are discovered from that environment. Windows variable names remain case-insensitive
+in copied environments, and quoted PATH entries can contain spaces and semicolons. Discovery accepts
+executable files, not directories, without adding implicit cwd lookup. POSIX shells, PowerShell,
+Command Prompt, and WSL use `node-pty` with true-color xterm metadata. Supported wrappers preserve normal shell initialization
 and emit cwd/command markers. Unsupported or failed integration still provides an ordinary PTY.
+
+PowerShell loads the app-owned integration with a process-only execution policy, including on a
+Windows client inheriting Restricted. It never writes CurrentUser/LocalMachine policy; enforced
+Group Policy retains precedence. A failed cmdlet cannot inherit a stale zero native exit code and
+report success. Zsh follows user changes to ZDOTDIR at each startup stage, restores its native
+unset/exported state before user files and after startup, and respects RCS/readonly controls.
+User login/logout files run through their normal locations, without a second replay.
+
+Bash login profiles retain a real login shell and native profile/logout selection. Integration must
+not simulate login by replaying profile files from a non-login rcfile, change HOME/ENV, inject a
+command into stdin/history, or re-exec away non-exported shell state. A first-prompt bootstrap
+installs markers after native login startup when the user's PROMPT_COMMAND permits it. A user
+override/readonly hook may prevent integration; preserve that configuration and provide an ordinary
+PTY rather than reporting invented command boundaries. Non-login Bash uses its normal bashrc path,
+not login profiles. Both modern PS0 and legacy DEBUG hooks read the accepted history entry for the
+command label; fc-based relative lookup can select a previous line while expanding command substitutions.
 
 The native dependency is pinned to `@lydell/node-pty@1.2.0-beta.15`, with per-platform prebuilt binaries.
 Windows explicitly uses its bundled ConPTY (`useConptyDll: true`) so shell markers and rendered output
@@ -60,17 +111,25 @@ reader returns the accepted command. It does not rebind Enter or emit execution 
 multiline input. Existing PSReadLine handlers, profiles, launch flags and the original prompt remain
 in charge. Backend ordering and this post-input boundary are both required for exact last-output copy.
 
-Bash 4.4+ uses `PS0` for accepted-command markers. Earlier Bash, including macOS system Bash 3.2,
-uses one top-level DEBUG event per command cycle, composed with the existing DEBUG trap. Prompt
-commands use array semantics only on Bash 5.1+; older versions execute the preserved commands as
-newline-separated shell text. Existing prompt callbacks receive the original command status.
-The legacy DEBUG interface does not observe standalone subshell-only lists with no parent simple
-command event; those executions have no copyable output range. It does not invent a boundary or
-change shell tracing/inheritance to simulate the newer `PS0` interface.
+Shell verification follows current installed dependencies, not a historical-version matrix.
+Windows prefers the available PowerShell 7 profile; explicit profile selections remain available.
+Bash uses `PS0` for accepted-command markers and preserves each prompt callback's original status.
+The existing DEBUG-based path is best-effort for shells without that interface: it must not invent
+command boundaries or change user tracing/inheritance. Dedicated old-Bash builds are not part of
+the support baseline.
 
 Close and restart require confirmed PTY exit. A bounded output-drain allowance follows hard
 termination, and the Host RPC deadline covers the daemon's stop budget. Unconfirmed exit retains the
-tab and reports failure. Windows native PTY kill calls receive no POSIX signal argument.
+tab and reports failure. Native adapters capture the root birth identity at startup and recheck it
+before numeric tree/group operations, including the output-drain period before `onExit`. Once the
+root exits or its identity changes, its old PID/PGID cannot authorize another tree walk or group
+signal. Only previously captured descendants with matching live birth identities remain cleanup
+authority; a different observed birth never inherits prior cleanup authority. Unverifiable or unconfirmed descendant cleanup
+keeps the exited tab and its cleanup handle for an explicit retry, including service shutdown.
+Root drain and descendant confirmation share the existing hard-stop allowance. These are live OS
+identity observations, not atomic kernel handles or a sandbox against deliberate process races.
+Windows native ConPTY instance closure is the fallback when PID identity cannot be proven, and
+receives no POSIX signal argument.
 
 ## Identified controls and recovery
 
@@ -95,8 +154,12 @@ identity is refused before dispatch. Valid identified requests rejected during r
 the matching operation ID and definite rejected outcome, including nested terminal routes.
 
 The in-process development owner follows the same mutation contract. An incompatible listening daemon
-requires an explicit terminal-service upgrade; ordinary Host launch leaves its PTYs running and reports
-Settings → System → Restart all or `inspire restart --all`. Receipt discovery preserves that diagnosis.
+requires an explicit terminal-service upgrade; ordinary Host launch leaves its PTYs running.
+Recovery guidance names the portable `inspire terminal` controls and explains that Host-only restart
+cannot replace the daemon. Daemons predating lifecycle controls need a one-time upgrade through their
+existing service manager or an inspected manual shutdown; commands never infer authority from an
+unverified listener's claimed PID. Settings → System → Restart all remains limited to installed Linux
+services. Receipt discovery preserves the incompatibility diagnosis.
 
 Catalog loads, polling, and mutations belong to one pane project/reload generation. Switching projects,
 reloading, or unmounting retires old response/error/loading/selection/rollback writebacks, while completed
@@ -157,6 +220,8 @@ mutual exclusion; inner groups remain independent. More contains clipboard/outpu
 and management groups, the navigator, and settings. Escape closes the innermost group first and restores
 its summary, without also closing a narrow drawer. A newer modal has priority. Menus fit and scroll
 within the pane; header controls align across desktop/touch layouts, and hidden views publish no controls.
+Profile names wrap within their text column when needed; the Default marker remains visible on the
+first-line baseline. Short entries retain centered content, standard menu height, and target size.
 
 The all-project navigator preserves project-name casing and uses lighter group text with the existing
 neutral separators and accent Current marker. Visible case-insensitive literal search hits in project
@@ -177,8 +242,9 @@ with the main Settings desktop sidebar, narrow horizontal strip and safe-area-aw
 Only the active category exposes its controls. Switching or reselecting a category starts its content at the top; scrolling does not
 change the selection. Browser preferences and Host loading, saving, clearing and error state survive
 category switches. Settings and Select text restore focus to the visible More summary;
-modal Escape leaves terminal focus mode and the underlying drawer unchanged. **Restore defaults**
-resets browser presentation/interaction preferences, not Host history. Appearance, Interaction and
+modal Escape leaves terminal focus mode and the underlying drawer unchanged. **Restore browser defaults**
+resets browser presentation/interaction preferences, not Host history. This action and the browser
+scope caption appear only in Appearance and Interaction; Saved output identifies its Host scope instead. Appearance, Interaction and
 Saved output use the main Settings controls and dialog header, with 40px touch controls. Font size
 uses an inline decrement/value/increment stepper at every width. Wide choices can move below their
 labels on narrow cards. Browser preferences remain distinct from Host output and retention settings.
@@ -195,14 +261,35 @@ repainting preserves manual linear or rectangular selections, including an expli
 selection, independently of the active search match. Unrelated root layout changes do not rescan
 unchanged search colors. Only explicit search navigation may select or scroll to a result.
 File-link hit regions map UTF-16 offsets through xterm cells, preserving wide, combining, and
-supplementary characters.
+supplementary characters. Quoted filenames and absolute paths preserve spaces and line/column
+suffixes rather than opening a truncated relative tail. Relative filenames containing spaces require
+quotes. File/VS Code URIs and home syntax are interpreted by the Host; a browser never substitutes
+its own filesystem or platform. Windows native home syntax includes both `~/` and `~\\`.
+OSC 7 working-directory updates retain Windows drive/UNC identity and accept the local-hostname
+form emitted by POSIX shells; these advisory markers grant no resource authority.
 
-Search opens without changing PTY dimensions. Case/whole-word/regex option changes refresh match
-counts and decorations; partial words must not hide valid whole-word hits on the same line in
-either direction. Literal punctuation stays literal even with whole-word matching enabled.
-Workbench shortcut mode retains selected-copy, native paste, and terminal search; shell mode yields
-those keys to the PTY. `Ctrl+Shift+Escape` exits terminal focus when the event belongs to that pane.
-Shell history remains native; the view adds neither command reruns nor a separate history interface.
+Search opens without changing PTY dimensions. On narrow or touch layouts, Close stays beside the
+query while options and navigation flow below. The established keyboard order remains unchanged.
+Case/whole-word/regex option changes refresh match counts and decorations; partial words must not hide
+valid whole-word hits on the same line in either direction. Literal punctuation stays literal even with whole-word matching enabled.
+Workbench shortcut mode retains native clipboard and terminal search. On macOS, Control+C sends
+ETX with or without selected output; Command+C/V remain native copy/paste, and Control+V remains
+shell input. On Windows/Linux, selected Control+C stays native copy, unselected Control+C sends
+ETX, and Control+V stays native paste. Shell shortcut mode retains its existing Control-key ownership;
+macOS Command clipboard chords remain native. Native AltGraph, third-level characters, dead keys and composition take priority
+over workbench chords. Alt+digit selects a tab only when the layout produces that digit without other
+modifiers; pane shortcuts do not capture search, rename, menu or ordinary text-editor input. A chord
+consumed by the pane must not also send terminal bytes. macOS Option produces native characters and
+accents by default. The Mac-only **Option as Meta** browser setting explicitly enables Escape-prefixed
+shell keys; changing it updates the live terminal without replacing its input surface.
+
+The existing Focus/Exit focus buttons and the command palette's **Toggle terminal focus** action
+enter or leave focused view. Where Workbench global shortcuts are available, open the palette with
+Control+K (Command+K on macOS), then choose that action. Narrow modal drawers retain their existing
+Focus/Exit controls in the header or More menu. Shell mode retains its existing palette-key ownership. No
+Control+Shift+Escape handler or hint claims the Windows Task Manager shortcut.
+Workbench New terminal uses the physical modified Backquote key, including layouts where Shift
+produces a tilde; shell shortcut mode yields it to the PTY. Shell history remains native; the view adds neither command reruns nor a separate history interface.
 
 The non-wrapping touch bar keeps four 44px arrows fixed in a compact trailing group. Esc, Ctrl+C,
 one-shot Ctrl/Alt, Tab, Home/End, and Page Up/Down scroll independently in equal-width slots sized
@@ -242,6 +329,7 @@ describe the outcome without exposing output content.
 Tab metadata and Host-wide history settings live in current-user-private state. Raw output persistence
 defaults off. Opt-in history has size/age bounds, disabling it clears retained logs, and Settings offers
 explicit clearing. Logs above 32 MiB trim to a 24 MiB tail with a reset prefix, leaving append headroom.
+Writes run one batch at a time; output arriving during a slow write stays in the bounded pending buffer.
 Browser-local preferences never become process authority.
 
 Source, npm-release, direct-launch, and installed Linux service paths include the daemon and its runtime

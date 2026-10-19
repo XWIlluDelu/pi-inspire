@@ -63,7 +63,11 @@ import {
   terminalTextInput,
   terminalTouchInput,
 } from "../terminal-input";
-import { terminalFileLinks } from "../terminal-links";
+import {
+  isMacTerminalBrowser,
+  terminalTabShortcutIndex,
+} from "../terminal-keyboard";
+import { terminalFileLinks, terminalFileReference } from "../terminal-links";
 import {
   type TerminalCommandOutput,
   terminalBufferText,
@@ -120,12 +124,6 @@ const initialSearch: SearchState = {
   resultIndex: -1,
   resultCount: 0,
 };
-
-function terminalFileReference(reference: string, currentCwd: string): string {
-  if (/^(?:[\\/]|[A-Za-z]:[\\/])/u.test(reference)) return reference;
-  const separator = currentCwd.includes("\\") ? "\\" : "/";
-  return `${currentCwd.replace(/[\\/]+$/u, "")}${separator}${reference}`;
-}
 
 function cssColor(name: string, fallback: string): string {
   return (
@@ -406,7 +404,10 @@ export const TerminalView = memo(function TerminalView({
       if (!xterm) return;
       if (frame.kind === "snapshot" && !snapshotStartedRef.current) {
         clearCommandOutput();
-        xterm.reset();
+        // A retired connection can still have output in xterm's parser queue.
+        // Reset at the same ordered boundary as the replacement snapshot;
+        // synchronous reset() would let those queued bytes repaint it.
+        xterm.write("\u001bc");
         snapshotStartedRef.current = true;
       }
       xterm.write(frame.data, () => {
@@ -436,7 +437,7 @@ export const TerminalView = memo(function TerminalView({
       letterSpacing: 0,
       lineHeight: settingsRef.current.lineHeight,
       logLevel: "off",
-      macOptionIsMeta: true,
+      macOptionIsMeta: settingsRef.current.macOptionIsMeta,
       minimumContrastRatio: 4.5,
       rescaleOverlappingGlyphs: true,
       rightClickSelectsWord: true,
@@ -624,12 +625,15 @@ export const TerminalView = memo(function TerminalView({
       const workbenchShortcut =
         settingsRef.current.shortcutMode === "workbench" || event.metaKey;
       if (event.type !== "keydown") return true;
+      if (event.defaultPrevented) return false;
+      if (isComposingKeyboardEvent(event) || event.getModifierState("AltGraph"))
+        return true;
       const applicationShortcut =
         workbenchShortcut &&
         ((command && ["k", "b", "."].includes(event.key.toLowerCase())) ||
           (settingsRef.current.shortcutMode === "workbench" &&
             ((command && ["PageUp", "PageDown"].includes(event.key)) ||
-              (event.altKey && /^Digit[1-9]$/u.test(event.code)) ||
+              terminalTabShortcutIndex(event) !== null ||
               (command && event.shiftKey && event.key === "`"))));
       // Returning early leaves the DOM event available to the workbench-level
       // shortcut handlers instead of letting xterm stop its propagation.
@@ -638,9 +642,12 @@ export const TerminalView = memo(function TerminalView({
         setSearch((current) => ({ ...current, open: true }));
         return false;
       }
+      const clipboardModifier = isMacTerminalBrowser()
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey;
       if (
         workbenchShortcut &&
-        (event.metaKey || event.ctrlKey) &&
+        clipboardModifier &&
         event.key.toLowerCase() === "c"
       ) {
         if (!xterm.hasSelection()) return event.ctrlKey && !event.metaKey;
@@ -649,16 +656,12 @@ export const TerminalView = memo(function TerminalView({
       }
       if (
         workbenchShortcut &&
-        (event.metaKey || event.ctrlKey) &&
+        clipboardModifier &&
         event.key.toLowerCase() === "v"
       ) {
         // Leave the native paste event intact so clipboard text remains
         // ordered before any immediately following keystroke. The capture
         // handler above protects risky content before xterm receives it.
-        return false;
-      }
-      if (event.ctrlKey && event.shiftKey && event.key === "Escape") {
-        xterm.blur();
         return false;
       }
       return true;
@@ -812,6 +815,7 @@ export const TerminalView = memo(function TerminalView({
     xterm.options.cursorStyle = settings.cursorStyle;
     xterm.options.cursorBlink = settings.cursorBlink;
     xterm.options.screenReaderMode = settings.screenReaderMode;
+    xterm.options.macOptionIsMeta = settings.macOptionIsMeta;
     xterm.options.scrollback = settings.scrollbackRows;
     requestAnimationFrame(fitAndResize);
   }, [fitAndResize, settings]);

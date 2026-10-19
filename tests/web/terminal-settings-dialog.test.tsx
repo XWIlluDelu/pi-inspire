@@ -39,6 +39,55 @@ beforeEach(() => {
 });
 
 describe("Terminal settings categories", () => {
+  it.each(["Win32", "Linux x86_64"])(
+    "does not expose Option-as-Meta on %s",
+    async (platform) => {
+      vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+      try {
+        render(<Dialog />);
+        await act(async () => {});
+        navigate("Interaction");
+        expect(
+          screen.queryByRole("switch", { name: "Use Option as Meta" }),
+        ).toBeNull();
+      } finally {
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
+  it("offers an explicit Mac opt-in, persists it, and restores native Option defaults", async () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    try {
+      render(<Dialog />);
+      await act(async () => {});
+      navigate("Interaction");
+      const option = screen.getByRole("switch", { name: "Use Option as Meta" });
+      expect(option).not.toBeChecked();
+      fireEvent.click(option);
+      expect(option).toBeChecked();
+      expect(
+        JSON.parse(
+          window.localStorage.getItem("inspire:terminal-ui-settings:v1")!,
+        ),
+      ).toMatchObject({ macOptionIsMeta: true });
+      navigate("Appearance");
+      navigate("Interaction");
+      expect(
+        screen.getByRole("switch", { name: "Use Option as Meta" }),
+      ).toBeChecked();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Restore browser defaults" }),
+      );
+      expect(
+        screen.getByRole("switch", { name: "Use Option as Meta" }),
+      ).not.toBeChecked();
+      expect(api.updateTerminalSettings).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("exposes one category and lands at the top on switches and reselection", async () => {
     render(<Dialog />);
     await act(async () => {});

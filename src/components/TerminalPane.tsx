@@ -53,6 +53,10 @@ import {
   type TerminalUiAction,
 } from "../terminal-actions";
 import { TerminalCatalogController } from "../terminal-catalog";
+import {
+  isTerminalShortcutTarget,
+  terminalTabShortcutIndex,
+} from "../terminal-keyboard";
 import { dismissTerminalMenu, TERMINAL_MENU_SELECTOR } from "../terminal-menus";
 import {
   loadTerminalUiSettings,
@@ -452,26 +456,6 @@ export const TerminalPane = memo(function TerminalPane({
     return () => window.clearTimeout(timer);
   }, [recentlyClosed]);
 
-  useEffect(() => {
-    if (!focused) return;
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (
-        isComposingKeyboardEvent(event) ||
-        event.key !== "Escape" ||
-        (!event.ctrlKey && !event.metaKey) ||
-        !event.shiftKey ||
-        event.defaultPrevented ||
-        !paneRef.current?.contains(event.target as Node)
-      )
-        return;
-      event.preventDefault();
-      event.stopPropagation();
-      setFocused(false);
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [focused]);
-
   const commitDescriptor = useCallback(
     async (terminal: TerminalDescriptor, select = false) => {
       const result = catalogController.upsert(terminal);
@@ -854,7 +838,7 @@ export const TerminalPane = memo(function TerminalPane({
       return true;
     }
     if (action === "focus") {
-      setFocused(true);
+      setFocused((value) => !value);
       return true;
     }
     if (action === "settings") {
@@ -886,18 +870,22 @@ export const TerminalPane = memo(function TerminalPane({
     const handleShortcut = (event: globalThis.KeyboardEvent) => {
       if (
         uiSettings.shortcutMode !== "workbench" ||
-        !paneRef.current?.contains(event.target as Node)
+        event.defaultPrevented ||
+        isComposingKeyboardEvent(event) ||
+        event.getModifierState("AltGraph") ||
+        !paneRef.current?.contains(event.target as Node) ||
+        !isTerminalShortcutTarget(event.target)
       )
         return;
-      const modifier = event.ctrlKey || event.metaKey;
+      const modifier = !event.altKey && (event.ctrlKey || event.metaKey);
+      const tabIndex = terminalTabShortcutIndex(event);
       let nextIndex: number | null = null;
       if (modifier && event.key === "PageDown")
         nextIndex = Math.max(0, terminals.indexOf(activeTerminal!) + 1);
       else if (modifier && event.key === "PageUp")
         nextIndex = terminals.indexOf(activeTerminal!) - 1;
-      else if (event.altKey && /^Digit[1-9]$/u.test(event.code))
-        nextIndex = Number(event.code.at(-1)) - 1;
-      else if (modifier && event.shiftKey && event.key === "`") {
+      else if (tabIndex !== null) nextIndex = tabIndex;
+      else if (modifier && event.shiftKey && event.code === "Backquote") {
         event.preventDefault();
         void createTerminal();
         return;
@@ -1123,7 +1111,7 @@ export const TerminalPane = memo(function TerminalPane({
           className="icon-button terminal-tabs__focus"
           onClick={() => setFocused((value) => !value)}
           aria-label={focused ? "Exit focused terminal" : "Focus terminal"}
-          title={focused ? "Exit focus (Ctrl+Shift+Esc)" : "Focus terminal"}
+          title={focused ? "Exit focus" : "Focus terminal"}
         >
           {focused ? (
             <Minimize2 size={14} aria-hidden />

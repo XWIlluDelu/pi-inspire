@@ -1,8 +1,22 @@
-import { chmod, lstat, mkdtemp, rm, symlink, utimes } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  rm,
+  symlink,
+  utimes,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { TerminalHistoryStore } from "../../server/terminal-history-store.js";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...fs, mkdir: vi.fn(fs.mkdir), open: vi.fn(fs.open) };
+});
 
 const directories: string[] = [];
 
@@ -62,6 +76,67 @@ describe("TerminalHistoryStore", () => {
     expect(history.subarray(2, -25).every((byte) => byte === 0x41)).toBe(true);
     expect(history.subarray(-25).toString()).toBe("first" + "tail".repeat(5));
   });
+
+  it.each([
+    { storage: "fast", chunkCount: 1, intervalMs: 50 },
+    { storage: "slow", chunkCount: 12, intervalMs: 100 },
+  ])(
+    "coalesces output within the flush interval with $storage storage",
+    async ({ storage, chunkCount, intervalMs }) => {
+      const { directory, store } = await setup();
+      const actual =
+        await vi.importActual<typeof import("node:fs/promises")>(
+          "node:fs/promises",
+        );
+      let release!: () => void;
+      let started!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const writing = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      vi.mocked(mkdir).mockClear();
+      vi.mocked(open).mockClear();
+      vi.mocked(open).mockImplementationOnce(async (...args) => {
+        started();
+        await blocked;
+        return actual.open(...args);
+      });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      store.append("terminal-1", Buffer.from("first"));
+      const firstFlush = store.flush();
+      try {
+        await writing;
+        const chunks = Array.from({ length: chunkCount }, (_, index) =>
+          Buffer.alloc(64 * 1024, 0x41 + index),
+        );
+        for (const chunk of chunks) {
+          store.append("terminal-1", chunk);
+          await vi.advanceTimersByTimeAsync(intervalMs);
+        }
+        release();
+        await firstFlush;
+        if (storage === "fast") {
+          expect(open).toHaveBeenCalledTimes(1);
+          // A batch starts with mkdir before its async open; neither may start
+          // while the next batch's 100ms timer is still pending.
+          expect(mkdir).toHaveBeenCalledTimes(1);
+          await vi.advanceTimersByTimeAsync(50);
+        }
+        await store.flush();
+        expect(
+          await actual.readFile(join(directory, "terminal-1.log")),
+        ).toEqual(Buffer.concat([Buffer.from("first"), ...chunks]));
+        expect(open).toHaveBeenCalledTimes(2);
+      } finally {
+        release();
+        await store.flush();
+        vi.useRealTimers();
+        vi.mocked(open).mockReset().mockImplementation(actual.open);
+      }
+    },
+  );
 
   it("prunes output older than the configured retention", async () => {
     const { directory, store } = await setup();

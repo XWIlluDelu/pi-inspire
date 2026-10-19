@@ -127,6 +127,26 @@ for (const width of [1280, 390, 320]) {
         el.scrollTop = el.scrollHeight;
       });
       expect(await body.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+      await expect(
+        settings.getByText("Saved in this browser.", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        settings.getByRole("button", {
+          name: "Restore browser defaults",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await output.click();
+      await expect(
+        settings.getByText("Saved on this Host.", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        settings.getByRole("button", {
+          name: "Restore browser defaults",
+          exact: true,
+        }),
+      ).toHaveCount(0);
+      await interaction.click();
       await expect(interaction).toHaveAttribute("aria-current", "location");
       await interaction.click();
       expect(await body.evaluate((el) => el.scrollTop)).toBe(0);
@@ -366,6 +386,13 @@ for (const width of [1280, 390, 320]) {
         { historyRetentionDays: 90 },
         { persistOutput: false },
       ]);
+      await expect(
+        settings.getByText("Saved on this Host.", { exact: true }),
+      ).toBeVisible();
+      await settings
+        .getByRole("navigation")
+        .getByRole("button", { name: "Appearance", exact: true })
+        .click();
       await settings
         .getByRole("button", { name: "Restore browser defaults" })
         .click();

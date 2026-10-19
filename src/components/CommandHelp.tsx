@@ -1,5 +1,6 @@
 import { AlertTriangle, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { isMacKeyboardPlatform } from "../keyboard-input";
 import { store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { modelCycleShortcut } from "../workbench-keyboard";
@@ -149,10 +150,15 @@ export function CommandHelp({
           ["Ctrl/⌘+Shift+←", "Ctrl/⌘+Shift+→"],
           "Reorder the focused terminal tab",
         ],
-        ["Ctrl+Shift+Esc", "Release terminal keyboard focus"],
         [
-          ["Ctrl/⌘+C", "Ctrl/⌘+V"],
-          "Copy selection / paste; Ctrl+C without a selection interrupts",
+          "Ctrl/⌘+K",
+          "Command palette → Toggle terminal focus (Workbench mode)",
+        ],
+        [
+          isMacKeyboardPlatform() ? ["⌘+C", "⌘+V"] : ["Ctrl+C", "Ctrl+V"],
+          isMacKeyboardPlatform()
+            ? "Native copy / paste; Ctrl+C always interrupts"
+            : "Copy selection / paste; Ctrl+C without a selection interrupts",
         ],
         [["Enter", "Shift+Enter"], "Next / previous match in terminal search"],
       ],

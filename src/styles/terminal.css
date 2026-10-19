@@ -777,6 +777,11 @@
   height: 100%;
 }
 
+/* The viewport may extend below the final complete terminal row. */
+.terminal-view__xterm .xterm-viewport {
+  background-color: var(--terminal-bg);
+}
+
 /* xterm owns its scrolling; match its slider without changing the drag target. */
 .terminal-pane .terminal-view__xterm .xterm .xterm-scrollable-element > .scrollbar > .slider {
   border-inline: 4px solid transparent;
@@ -927,7 +932,6 @@
   align-self: stretch;
   max-width: none;
   margin: 0 8px 8px;
-  color: color-mix(in srgb, var(--error) 70%, var(--body));
 }
 
 .terminal-undo {
@@ -1050,7 +1054,7 @@
 .terminal-text-dialog__error {
   margin: 0;
   padding: 8px 16px;
-  color: var(--error);
+  color: var(--error-ink);
   font: var(--text-sm) / var(--leading-ui) var(--font-sans);
 }
 
@@ -1095,7 +1099,7 @@
 }
 
 .terminal-settings__loading [role=alert] {
-  color: var(--error);
+  color: var(--error-ink);
 }
 
 .terminal-settings__footer {
@@ -1108,7 +1112,7 @@
   gap: var(--space-2) var(--space-3);
   padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--hairline);
-  color: var(--error);
+  color: var(--error-ink);
   font: 400 var(--text-xs) / 1.35 var(--font-sans);
 }
 

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { build } from "vite";
 import { expect, test } from "@playwright/test";
+import { build } from "vite";
 import { PALETTE_PREFERENCES } from "../../shared/contracts";
 
 declare global {
@@ -78,7 +78,7 @@ test.beforeEach(async ({ page }) => {
     route.fulfill({
       contentType: "text/html",
       body: `<!doctype html><html data-theme="light" data-palette="wisteria">
-      <style>${css}</style><div id="terminal"></div><script>${script}</script></html>`,
+      <style>${css}</style><div class="terminal-view__xterm" id="terminal"></div><script>${script}</script></html>`,
     }),
   );
   await page.goto("/__terminal-theme__");
@@ -99,6 +99,17 @@ test("theme changes recolor existing terminal matches without moving selection o
           window.terminalThemeFixture.theme(palette, theme),
         { palette, theme },
       );
+      const viewportColor = await page
+        .locator(".xterm-viewport")
+        .evaluate((el) => {
+          const sample = document.createElement("span");
+          sample.style.color = "var(--terminal-bg)";
+          document.body.append(sample);
+          const expected = getComputedStyle(sample).color;
+          sample.remove();
+          return { actual: getComputedStyle(el).backgroundColor, expected };
+        });
+      expect(viewportColor.actual).toBe(viewportColor.expected);
       expect(value.selection).toEqual(initial.selection);
       expect(value.viewport).toBe(initial.viewport);
       expect(value.result).toEqual(initial.result);

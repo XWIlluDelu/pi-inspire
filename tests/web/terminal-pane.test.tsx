@@ -14,6 +14,7 @@ import type {
 } from "../../shared/terminal-contracts";
 import { TerminalPane } from "../../src/components/TerminalPane";
 import { terminalOperations } from "../../src/controllers/terminal-operation-controller";
+import { queueTerminalAction } from "../../src/terminal-actions";
 import { TerminalCatalogController } from "../../src/terminal-catalog";
 import { deferred } from "./helpers";
 
@@ -30,7 +31,14 @@ const api = vi.hoisted(() => ({
 vi.mock("../../src/api", () => ({ createApi: () => api }));
 vi.mock("../../src/components/TerminalView", () => ({
   TerminalView: ({ terminal }: { terminal: TerminalDescriptor }) => (
-    <div data-testid="shell-cwd">{terminal.projectCwd}</div>
+    <div data-testid="shell-cwd">
+      {terminal.projectCwd}
+      <textarea
+        className="xterm-helper-textarea"
+        aria-label="Fixture terminal input"
+      />
+      <input aria-label="Fixture terminal search" />
+    </div>
   ),
 }));
 
@@ -122,7 +130,163 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("terminal shortcut input ownership", () => {
+  it.each([
+    {
+      name: "AltGraph digits",
+      key: "2",
+      code: "Digit2",
+      altKey: true,
+      modifierAltGraph: true,
+    },
+    {
+      name: "Windows AltGr character",
+      key: "[",
+      code: "Digit8",
+      ctrlKey: true,
+      altKey: true,
+      modifierAltGraph: true,
+    },
+    {
+      name: "Ctrl+Alt third level",
+      key: "{",
+      code: "Digit7",
+      ctrlKey: true,
+      altKey: true,
+    },
+    { name: "Mac Option character", key: "™", code: "Digit2", altKey: true },
+    {
+      name: "active composition",
+      key: "2",
+      code: "Digit2",
+      altKey: true,
+      isComposing: true,
+    },
+    {
+      name: "IME confirmation",
+      key: "2",
+      code: "Digit2",
+      altKey: true,
+      keyCode: 229,
+    },
+  ] as const)("does not cancel or switch tabs for $name", async (init) => {
+    render(<TerminalPane cwd="/A" />);
+    await screen.findByRole("button", { name: "A shell", pressed: true });
+    const input = screen.getByRole("textbox", {
+      name: "Fixture terminal input",
+    });
+    const event = new window.KeyboardEvent("keydown", {
+      ...init,
+      bubbles: true,
+      cancelable: true,
+    });
+    expect(fireEvent(input, event)).toBe(true);
+    expect(event.defaultPrevented).toBe(false);
+    expect(
+      screen.getByRole("button", { name: "A shell", pressed: true }),
+    ).toBeInTheDocument();
+    expect(api.createTerminal).not.toHaveBeenCalled();
+  });
+
+  it("leaves editors alone but still switches tabs from PTY input", async () => {
+    render(<TerminalPane cwd="/A" />);
+    await screen.findByRole("button", { name: "A shell", pressed: true });
+    const search = screen.getByRole("textbox", {
+      name: "Fixture terminal search",
+    });
+    const init = {
+      key: "2",
+      code: "Digit2",
+      altKey: true,
+      bubbles: true,
+      cancelable: true,
+    };
+    const searchEvent = new window.KeyboardEvent("keydown", init);
+    expect(fireEvent(search, searchEvent)).toBe(true);
+    expect(
+      screen.getByRole("button", { name: "A shell", pressed: true }),
+    ).toBeInTheDocument();
+    const input = screen.getByRole("textbox", {
+      name: "Fixture terminal input",
+    });
+    const tabEvent = new window.KeyboardEvent("keydown", init);
+    expect(fireEvent(input, tabEvent)).toBe(false);
+    await screen.findByRole("button", { name: "A second", pressed: true });
+  });
+
+  it("does not create a terminal behind the rename input", async () => {
+    render(<TerminalPane cwd="/A" />);
+    await screen.findByRole("button", { name: "A shell", pressed: true });
+    action("Rename");
+    const input = screen.getByRole("textbox", { name: "Terminal name" });
+    expect(
+      fireEvent(
+        input,
+        new window.KeyboardEvent("keydown", {
+          key: "~",
+          code: "Backquote",
+          ctrlKey: true,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    ).toBe(true);
+    expect(api.createTerminal).not.toHaveBeenCalled();
+  });
+});
+
 describe("terminal creation controls", () => {
+  it.each(["ctrlKey", "metaKey"] as const)(
+    "creates with shifted Backquote using %s even when key is a tilde",
+    async (modifier) => {
+      api.createTerminal.mockResolvedValue(terminal("new shell"));
+      render(<TerminalPane cwd="/A" />);
+      const target = await screen.findByRole("button", {
+        name: "A shell",
+        pressed: true,
+      });
+      fireEvent.keyDown(target, {
+        key: "~",
+        code: "Backquote",
+        shiftKey: true,
+        [modifier]: true,
+      });
+      await vi.waitFor(() =>
+        expect(api.createTerminal).toHaveBeenCalledWith({ cwd: "/A" }),
+      );
+      expect(api.createTerminal).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("leaves shifted Backquote to the shell in shell shortcut mode", async () => {
+    const storage = Object.getOwnPropertyDescriptor(window, "localStorage");
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: () => JSON.stringify({ shortcutMode: "shell" }),
+        setItem: vi.fn(),
+      },
+    });
+    try {
+      render(<TerminalPane cwd="/A" />);
+      const target = await screen.findByRole("button", {
+        name: "A shell",
+        pressed: true,
+      });
+      fireEvent.keyDown(target, {
+        key: "~",
+        code: "Backquote",
+        shiftKey: true,
+        ctrlKey: true,
+      });
+      expect(api.createTerminal).not.toHaveBeenCalled();
+    } finally {
+      if (storage) Object.defineProperty(window, "localStorage", storage);
+      else Reflect.deleteProperty(window, "localStorage");
+    }
+  });
+
   const profiles = [
     { id: "bash", label: "Bash", available: true, isDefault: true },
     { id: "zsh", label: "Zsh", available: true, isDefault: false },
@@ -251,13 +415,40 @@ describe("terminal project ownership", () => {
     expect(
       screen.getByRole("button", { name: "A shell", pressed: true }),
     ).toBeTruthy();
-    fireEvent.keyDown(close, { key: "Escape", ctrlKey: true, shiftKey: true });
+    fireEvent.keyDown(close, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(
       view.container.querySelector(".terminal-pane--focused"),
     ).toBeTruthy();
     await act(async () => {});
     expect(screen.getByLabelText("Terminal actions")).toHaveFocus();
+  });
+
+  it("toggles focus through the existing action without claiming the OS Escape chord", async () => {
+    const view = render(<TerminalPane cwd="/A" />);
+    await screen.findByRole("button", { name: "A shell", pressed: true });
+    act(() => queueTerminalAction("focus"));
+    expect(
+      view.container.querySelector(".terminal-pane--focused"),
+    ).toBeTruthy();
+    expect(
+      screen.getByLabelText("Exit focused terminal", { exact: true }),
+    ).toHaveAttribute("title", "Exit focus");
+    const input = screen.getAllByLabelText("Fixture terminal input")[0]!;
+    const reserved = new KeyboardEvent("keydown", {
+      key: "Escape",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(input, reserved);
+    expect(reserved.defaultPrevented).toBe(false);
+    expect(
+      view.container.querySelector(".terminal-pane--focused"),
+    ).toBeTruthy();
+    act(() => queueTerminalAction("focus"));
+    expect(view.container.querySelector(".terminal-pane--focused")).toBeNull();
   });
 
   it("keeps the all-project navigator inside More and filters project paths", async () => {

@@ -26,6 +26,18 @@ describe("terminal UI settings", () => {
     expect(loadTerminalUiSettings()).toEqual(DEFAULT_TERMINAL_UI_SETTINGS);
   });
 
+  it("keeps native Option input for existing settings without an opt-in", () => {
+    window.localStorage.setItem(
+      "inspire:terminal-ui-settings:v1",
+      JSON.stringify({ shortcutMode: "shell", fontSize: 16 }),
+    );
+    expect(loadTerminalUiSettings()).toMatchObject({
+      shortcutMode: "shell",
+      fontSize: 16,
+      macOptionIsMeta: false,
+    });
+  });
+
   it("round-trips valid settings", () => {
     const settings = {
       ...DEFAULT_TERMINAL_UI_SETTINGS,
@@ -35,6 +47,7 @@ describe("terminal UI settings", () => {
       cursorBlink: false,
       scrollbackRows: 50_000,
       shortcutMode: "shell" as const,
+      macOptionIsMeta: true,
     };
     saveTerminalUiSettings(settings);
     expect(loadTerminalUiSettings()).toEqual(settings);
@@ -49,6 +62,7 @@ describe("terminal UI settings", () => {
         cursorStyle: "invalid",
         scrollbackRows: -1,
         bell: "desktop",
+        macOptionIsMeta: "true",
       }),
     );
     expect(loadTerminalUiSettings()).toEqual({
