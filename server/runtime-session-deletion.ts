@@ -23,6 +23,7 @@ interface RuntimeSessionDeletionHost {
   hasProvisionalReservation(sessionId: string, path?: string): boolean;
   hasForkReservation(sessionId: string, path: string): boolean;
   slot(sessionId: string): RuntimeSlot | undefined;
+  isExternal(slot: RuntimeSlot): boolean;
   removeSlot(sessionId: string, expected: RuntimeSlot): void;
   mutateSlot<T>(slot: RuntimeSlot, operation: () => Promise<T>): Promise<T>;
   stopWriter(slot: RuntimeSlot): Promise<void>;
@@ -89,7 +90,7 @@ export class RuntimeSessionDeletionController {
 
   private hasDeletionBlockingState(slot: RuntimeSlot): boolean {
     return (
-      isBusyRunState(slot.runState) ||
+      (!this.host.isExternal(slot) && isBusyRunState(slot.runState)) ||
       slot.pendingExtensionUiRequests.size > 0 ||
       slot.pendingQueues.totalCount > 0 ||
       slot.persistenceExpectations.length > 0 ||

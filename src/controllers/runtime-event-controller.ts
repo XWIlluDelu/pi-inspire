@@ -526,7 +526,8 @@ export class RuntimeEventController {
       existing &&
       existing.runState === next.runState &&
       existing.indicator === next.indicator &&
-      existing.needsInput === next.needsInput
+      existing.needsInput === next.needsInput &&
+      existing.external === next.external
     )
       return null;
     return { ...this.host.state().sessionStatuses, [sessionId]: next };

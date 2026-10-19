@@ -74,6 +74,8 @@
       "tests/browser/fixtures/file-previews/interactive.js",
       "tests/browser/fixtures/terminal-theme.ts",
       "tests/fixtures/pi-operation-lifecycle-extension.ts",
+      "tests/fixtures/pi-resource-reload-extension.ts",
+      "tests/fixtures/pi-session-shutdown-extension.ts",
       "tests/fixtures/pi-child-calls-extension.ts",
       "tests/fixtures/attachment-retention-process.ts",
       "tests/fixtures/attachment-retention-lock.ts",

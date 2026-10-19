@@ -100,13 +100,19 @@ async function bootIdentity(): Promise<string> {
   return (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
 }
 
+export async function captureHerdrProcessIdentity(
+  pid: number,
+): Promise<HerdrProcessIdentity | null> {
+  const [boot, info] = await Promise.all([bootIdentity(), inspectProcess(pid)]);
+  return info && !["Z", "X"].includes(info.state)
+    ? { pid, birth: info.birth, boot }
+    : null;
+}
+
 export async function captureHerdrHostIdentity(): Promise<HerdrProcessIdentity> {
-  const [boot, info] = await Promise.all([
-    bootIdentity(),
-    inspectProcess(process.pid),
-  ]);
-  if (!info) throw new Error("Unable to identify the Host process");
-  return { pid: process.pid, birth: info.birth, boot };
+  const identity = await captureHerdrProcessIdentity(process.pid);
+  if (!identity) throw new Error("Unable to identify the Host process");
+  return identity;
 }
 
 export async function herdrProcessIsLive(

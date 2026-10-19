@@ -9,6 +9,7 @@ import type {
   HerdrWorkerState,
 } from "./herdr-client.js";
 import { requestError } from "./request-error.js";
+import type { HerdrProcessIdentity } from "./herdr-process-group.js";
 import type { RuntimeWorkerStatus } from "./runtime.js";
 
 interface ObserverClient
@@ -41,6 +42,8 @@ function nativePiReference(
 }
 
 export interface HerdrNativeWriter {
+  /** Captured before connection publication, never inferred from a later reused PID. */
+  processIdentity?: HerdrProcessIdentity;
   serverId: string;
   paneId: string;
   pid: number;

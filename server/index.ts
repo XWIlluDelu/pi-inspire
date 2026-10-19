@@ -52,6 +52,7 @@ import {
   SettingsManager,
 } from "./pi-runtime.js";
 import { PiSessionActivity } from "./pi-session-activity.js";
+import { PiSessionOccupancy } from "./pi-session-occupancy.js";
 import { PiUpdateChecker } from "./pi-update-checker.js";
 import { PreferencesStore } from "./preferences.js";
 import {
@@ -212,6 +213,7 @@ if (mock) {
   });
 } else {
   catalog = createHostSessionCatalog(process.cwd(), preferences);
+  const sessionOccupancy = new PiSessionOccupancy();
   const managedRuntime = new RuntimeController(
     catalog,
     attachments,
@@ -225,6 +227,9 @@ if (mock) {
     .setModelMetadataCatalog(modelMetadata)
     .setExternalSessionConnector((sessionId, sessionFile) =>
       herdr.connectExternalSession(sessionId, sessionFile),
+    )
+    .setExternalSessionGuard((sessionId, sessionFile) =>
+      sessionOccupancy.assertWritable(sessionId, sessionFile),
     )
     .on("worker_status", (rpc: PiRpcProcess, status: RuntimeWorkerStatus) => {
       herdr.updateWorkerStatus(rpc, status);

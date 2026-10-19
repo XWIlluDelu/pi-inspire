@@ -387,7 +387,11 @@ const ConversationStage = memo(function ConversationStage() {
       />
       {state.readOnlyReason ? (
         <p className="composer-readonly" role="status">
-          Project folder unavailable. This session is read-only.
+          {state.readOnlyReason === "workspace-unavailable"
+            ? "Project folder unavailable. This session is read-only."
+            : state.readOnlyReason === "external-active"
+              ? "Open in another Pi. History is read-only; reopen this session after the other Pi releases it."
+              : "Pi connection unavailable. History remains readable; reopen this session to check its connection."}
         </p>
       ) : (
         <Composer />

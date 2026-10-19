@@ -405,7 +405,13 @@ describe.skipIf(process.platform !== "linux")("HerdrClient", () => {
     const before = requests.length;
     await expect(
       client.createWorkerPane("/repo", "stale workspace", ["pi"]),
-    ).rejects.toThrow("changed");
+    ).rejects.toMatchObject({ code: "HERDR_SERVER_CHANGED" });
+    await expect(
+      client.nativeAgentRequest(old.serverId, old.paneId, "agent.get"),
+    ).rejects.toMatchObject({ code: "HERDR_SERVER_CHANGED" });
+    await expect(
+      client.nativeAgentRequest(old.serverId, old.paneId, "agent.get"),
+    ).rejects.toMatchObject({ code: "HERDR_SERVER_CHANGED" });
     const recovered = new HerdrClient({ binary, environment });
     clients.push(recovered);
     recovered.restoreOwnedPane({ ...old, cwd: "/repo" });

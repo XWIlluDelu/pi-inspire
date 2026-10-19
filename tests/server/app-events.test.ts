@@ -255,7 +255,11 @@ describe("WebSocket observation and transport limits", () => {
           type: "extension_ui_request",
           sessionId,
           title: "private dialog body",
-          sessionStatus: { runState: "running", needsInput: true },
+          sessionStatus: {
+            runState: "running",
+            needsInput: true,
+            external: true,
+          },
         });
         runtime.emit("event", {
           type: "agent_settled",
@@ -299,6 +303,7 @@ describe("WebSocket observation and transport limits", () => {
           "runtime_error",
         ]);
         expect(global[1]?.sessionStatus?.needsInput).toBe(true);
+        expect(global[1]?.sessionStatus?.external).toBe(true);
         expect(JSON.stringify(global)).not.toContain("private");
         expect(JSON.stringify(global)).not.toContain("assistantMessageEvents");
       }

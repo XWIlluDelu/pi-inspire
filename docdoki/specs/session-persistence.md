@@ -2,6 +2,10 @@
 purpose: "Pi JSONL remains authoritative while previews, independent workers, startup reconciliation, and mutation admission retain one explicit writer boundary."
 covers:
   - server/runtime*.ts
+  - server/external-session.ts
+  - server/pi-session-occupancy.ts
+  - docs/examples/session-activity.ts
+  - tests/server/pi-session-occupancy*.test.ts
   - server/pi-rpc.ts
   - server/session-{projection,preview,jsonl}.ts
   - server/persisted-json.ts
@@ -160,6 +164,49 @@ selected/running work retains its worker.
   process-to-slot identity, startup attestation, worker lifecycle, LRU reclamation, and projection
   reconciliation through its narrow callbacks. None stores a parallel session catalog, projection
   authority, or persistence lane.
+
+## Native external-session admission
+
+- Every saved-file cold writer admission checks the existing native-session discovery boundary
+  inside the mutation gate, including writer-backed actions without selection warmup. Herdr
+  supplies this connection through its public native agent API; [[herdr-enhancement]] owns it.
+- If native discovery supplies no controllable connection, check the optional local Pi presence
+  reports before creating a worker and recheck immediately before Pi startup. A report matching
+  native session identity and physical file, from a still-live process incarnation, keeps history
+  read-only as `external-active` and vetoes all cold writer-backed actions, including settings.
+  Activity (`idle`, `working`, `blocked`) and heartbeat age do not release this fence. Explicit
+  reselect retries admission after release. Existing supported Herdr control stays on its original
+  process rather than starting a local writer.
+- Retain known presence through missing, malformed or unreadable reports. Release only on a
+  completed producer rebind or confirmed process retirement, including birth mismatch after PID reuse.
+  Neither an activity-stop hint nor the legacy `released` flag proves writer retirement: Pi emits
+  `session_shutdown` before remaining shutdown handlers and disposal have finished. Quit stays fenced
+  until process retirement. Native new/resume/fork transfers the same report only when a fresh
+  `session_start` uniquely matches the outgoing reason, source file and target file; same-file
+  replacement stays held, while ambiguous/failed transfers retain prior evidence.
+  Linux birth evidence includes the boot identity. A failed metadata query is not retirement.
+  Legacy activity-only records without birth evidence are treated conservatively while their PID
+  exists. Reload preserves presence; it is not a teardown of the writer.
+- Discovery/observation failure retains readable history and fences execution as
+  `external-unavailable`. A retained connection can recover by observation; explicit reselect
+  retries discovery. Connection loss alone never proves writer retirement. `read() === null`
+  requires confirmation that the owner no longer writes this session.
+- Native connections remain outside the owned-worker pool. Host shutdown detaches them and
+  drains admitted delivery operations without terminating the external process. Input retains
+  artifact validation, file-backed image references and final Stop/session fences. Unsupported
+  operations go to the original terminal rather than another writer. Uncertain admission is
+  never automatically resent.
+- Neither activity nor presence is a controller or a writer lease. The enabled Pi extension and
+  Herdr provide cooperating-process evidence; runtimes that never loaded either cannot be inferred
+  from a process name. These pre-start checks are not an atomic cross-application reservation
+  against a simultaneous, uncoordinated external launch. New owned sessions retain their existing
+  lifecycle. Positive admission evidence is retained privately across Host replacement, even if
+  its source report temporarily disappears. Completed rebinds and confirmed retirement update it;
+  deleting the whole presence cache manually removes this evidence. An SDK host that disposes one
+  session but keeps its process alive has no reporter-visible post-disposal persistence-drain signal;
+  that session remains conservatively fenced until process retirement or a confirmed native rebind.
+  Within one Host, admission observations and retained-evidence updates share a FIFO so an older
+  cache commit cannot overwrite a newer completed binding during concurrent opens.
 
 ## Extension requests and dependency boundaries
 

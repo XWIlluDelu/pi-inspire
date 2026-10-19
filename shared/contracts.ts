@@ -191,8 +191,10 @@ export function projectionConflictSeverity(
 export interface SessionRuntimeStatus {
   runState: RunState;
   indicator?: SessionIndicator;
-  /** A worker-owned extension dialog is waiting for a response. */
+  /** Pi is waiting for input in an owned worker or connected native terminal. */
   needsInput?: boolean;
+  /** Connected to an independently owned native Pi, not an Inspire worker. */
+  external?: boolean;
 }
 
 /** Socket-local transcript interest. Changing it establishes a fresh snapshot
@@ -211,7 +213,9 @@ export function isSessionRuntimeStatus(
   return (
     isRunState(status.runState) &&
     (status.indicator === undefined || isSessionIndicator(status.indicator)) &&
-    (status.needsInput === undefined || typeof status.needsInput === "boolean")
+    (status.needsInput === undefined ||
+      typeof status.needsInput === "boolean") &&
+    (status.external === undefined || typeof status.external === "boolean")
   );
 }
 
@@ -1175,7 +1179,10 @@ export function parseRetryInfo(value: unknown): RetryInfo | null {
   };
 }
 
-export type SessionReadOnlyReason = "workspace-unavailable";
+export type SessionReadOnlyReason =
+  | "workspace-unavailable"
+  | "external-unavailable"
+  | "external-active";
 
 export interface ActiveSnapshot {
   active: null | {

@@ -5,6 +5,11 @@ import type {
   ExternalSessionState,
 } from "../../server/external-session.js";
 import type { PiRpcProcess } from "../../server/pi-rpc.js";
+import { nullDiagnosticLogger } from "../../server/diagnostics.js";
+import type { RuntimeSlot } from "../../server/runtime-slot.js";
+import { SessionProjection } from "../../server/session-projection.js";
+import { RuntimeExternalSessions } from "../../server/runtime-external-sessions.js";
+import { createRuntimeSlot } from "../../server/runtime-slot.js";
 import { RuntimeController } from "../../server/runtime.js";
 import {
   catalog,
@@ -41,7 +46,71 @@ function nativeFixture() {
   };
 }
 
-describe("continue a Pi already running in a terminal", () => {
+describe("continue an externally owned Pi", () => {
+  it("checks external ownership for a cold settings mutation without selection warmup", async () => {
+    const f = nativeFixture();
+    const create = vi.fn(() => {
+      throw new Error("must not launch Pi");
+    });
+    const connect = vi.fn(async () => f.native);
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      trackedAttachmentStore(),
+      create,
+      preview,
+    ).setExternalSessionConnector(connect);
+    try {
+      await runtime.snapshot("a");
+      expect(connect).not.toHaveBeenCalled();
+      await expect(runtime.setModel("a", "test", "model")).rejects.toThrow(
+        "original Pi host",
+      );
+      expect(connect).toHaveBeenCalledOnce();
+      expect(create).not.toHaveBeenCalled();
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("keeps an unavailable discovered owner read-only and recovers on explicit reopen", async () => {
+    const f = nativeFixture();
+    const create = vi.fn(() => {
+      throw new Error("must not launch Pi");
+    });
+    vi.mocked(f.native.read).mockRejectedValue(
+      new Error("Control endpoint unavailable"),
+    );
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      trackedAttachmentStore(),
+      create,
+      preview,
+    ).setExternalSessionConnector(async () => f.native);
+    try {
+      await runtime.openSession("a");
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot("a")).active?.readOnlyReason).toBe(
+          "external-unavailable",
+        ),
+      );
+      await expect(runtime.setThinkingLevel("a", "high")).rejects.toMatchObject(
+        { status: 409 },
+      );
+      expect(create).not.toHaveBeenCalled();
+      vi.mocked(f.native.read).mockResolvedValue({ status: "idle" });
+      await runtime.openSession("a");
+      await runtime.prompt({ sessionId: "a", message: "Recovered input" });
+      expect(
+        (await runtime.snapshot("a")).active?.readOnlyReason,
+      ).toBeUndefined();
+      expect(f.native.close).not.toHaveBeenCalled();
+      expect(f.native.prompt).toHaveBeenCalledOnce();
+      expect(create).not.toHaveBeenCalled();
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("opens, prompts, stops and renames the existing Pi without starting a worker", async () => {
     const f = nativeFixture();
     const create = vi.fn(
@@ -264,6 +333,279 @@ describe("continue a Pi already running in a terminal", () => {
       expect(delivered).toEqual(["Fresh input"]);
     } finally {
       gate.resolve();
+      await runtime.close();
+    }
+  });
+
+  it("observes native status without rebuilding reclaimed background history or logging missing projections", async () => {
+    const f = nativeFixture();
+    f.setState({ status: "working" });
+    const diagnostics = nullDiagnosticLogger();
+    const log = vi.spyOn(diagnostics, "record");
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp"), record("b", "/tmp")]),
+      trackedAttachmentStore(),
+      () => {
+        throw new Error("must not launch Pi");
+      },
+      preview,
+      15_000,
+      undefined,
+      undefined,
+      diagnostics,
+    ).setExternalSessionConnector(async (id) =>
+      id === "a" ? f.native : nativeFixture().native,
+    );
+    try {
+      await runtime.openSession("a");
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot("a")).runState).toBe("running"),
+      );
+      const slots = (runtime as unknown as { slots: Map<string, RuntimeSlot> })
+        .slots;
+      await runtime.openSession("b");
+      await vi.waitFor(() => expect(slots.get("a")?.projection).toBeNull());
+      const reads = vi.mocked(f.native.read).mock.calls.length;
+      await vi.waitFor(
+        () =>
+          expect(
+            vi.mocked(f.native.read).mock.calls.length,
+          ).toBeGreaterThanOrEqual(reads + 2),
+        { timeout: 2_500 },
+      );
+      expect(slots.get("a")?.projection).toBeNull();
+      expect(
+        log.mock.calls.filter(
+          ([, event]) => event === "external_session_connection",
+        ),
+      ).toEqual([]);
+      f.setState({ status: "idle" });
+      await vi.waitFor(() => expect(slots.get("a")?.runState).toBe("idle"), {
+        timeout: 1_500,
+      });
+      expect(f.native.close).not.toHaveBeenCalled();
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("uses version-checked native polling and forced prompt admission", async () => {
+    const session = await persistedRecord("a");
+    const f = nativeFixture();
+    const runtime = new RuntimeController(
+      catalog([session]),
+      trackedAttachmentStore(),
+      () => {
+        throw new Error("must not launch Pi");
+      },
+    ).setExternalSessionConnector(async () => f.native);
+    try {
+      await runtime.openSession("a");
+      await vi.waitFor(() => expect(f.native.read).toHaveBeenCalled());
+      const reconcile = vi.spyOn(SessionProjection.prototype, "reconcile");
+      const reads = vi.mocked(f.native.read).mock.calls.length;
+      await vi.waitFor(
+        () =>
+          expect(vi.mocked(f.native.read).mock.calls.length).toBeGreaterThan(
+            reads,
+          ),
+        { timeout: 1_500 },
+      );
+      expect(reconcile).toHaveBeenCalled();
+      expect(reconcile.mock.calls.every(([force]) => force !== true)).toBe(
+        true,
+      );
+      reconcile.mockClear();
+      await runtime.prompt({ sessionId: "a", message: "Explicit send" });
+      expect(reconcile).toHaveBeenCalledWith(true);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it.each(["working", "blocked"] as const)(
+    "deletes connected native %s sessions singly and through Hidden without interrupting Pi",
+    async (status) => {
+      const sessions = [await persistedRecord("a"), await persistedRecord("b")];
+      const connections = [nativeFixture(), nativeFixture()];
+      for (const connection of connections) connection.setState({ status });
+      const remove = vi.fn(async () => "trashed" as const);
+      const runtime = new RuntimeController(
+        catalog(sessions),
+        trackedAttachmentStore(),
+        () => {
+          throw new Error("must not launch Pi");
+        },
+        undefined,
+        15_000,
+        undefined,
+        remove,
+      ).setExternalSessionConnector(
+        async (id) => connections[id === "a" ? 0 : 1]!.native,
+      );
+      try {
+        await runtime.openSession("a");
+        await vi.waitFor(async () =>
+          expect((await runtime.snapshot("a")).sessionStatuses.a).toMatchObject(
+            { external: true, runState: "running" },
+          ),
+        );
+        await expect(runtime.deleteSession("a")).resolves.toMatchObject({
+          disposition: "trashed",
+        });
+        await runtime.openSession("b");
+        await vi.waitFor(async () =>
+          expect(
+            (await runtime.snapshot("b")).sessionStatuses.b?.external,
+          ).toBe(true),
+        );
+        await expect(
+          runtime.clearHiddenSessions(["b"], ["b"], []),
+        ).resolves.toMatchObject({ deleted: [{ sessionId: "b" }] });
+        expect(remove).toHaveBeenCalledTimes(2);
+        for (const connection of connections) {
+          expect(connection.native.abort).not.toHaveBeenCalled();
+          expect(connection.native.close).toHaveBeenCalledOnce();
+        }
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
+
+  it.each(["prompt", "rename", "abort"] as const)(
+    "retains the deletion and maintenance barriers during a Host native %s",
+    async (operation) => {
+      const f = nativeFixture();
+      const entered = deferredSignal();
+      const gate = deferredSignal();
+      const hold = async () => {
+        entered.resolve();
+        await gate.promise;
+      };
+      if (operation === "abort")
+        vi.mocked(f.native.abort).mockImplementation(hold);
+      else vi.mocked(f.native.prompt).mockImplementation(hold);
+      const remove = vi.fn(async () => "trashed" as const);
+      const runtime = new RuntimeController(
+        catalog([await persistedRecord("a")]),
+        trackedAttachmentStore(),
+        () => {
+          throw new Error("must not launch Pi");
+        },
+        undefined,
+        15_000,
+        undefined,
+        remove,
+      ).setExternalSessionConnector(async () => f.native);
+      try {
+        await runtime.openSession("a");
+        await vi.waitFor(() => expect(f.native.read).toHaveBeenCalled());
+        const sending =
+          operation === "prompt"
+            ? runtime.prompt({ sessionId: "a", message: "Hold" })
+            : operation === "rename"
+              ? runtime.rename("a", "Hold")
+              : runtime.abort("a");
+        await entered.promise;
+        await expect(runtime.deleteSession("a")).rejects.toMatchObject({
+          status: 409,
+        });
+        expect(runtime.reserveMaintenanceRestart()).toMatchObject({
+          kind: "busy",
+        });
+        expect(remove).not.toHaveBeenCalled();
+        gate.resolve();
+        await sending;
+      } finally {
+        gate.resolve();
+        await runtime.close();
+      }
+    },
+  );
+
+  it("coalesces failed native polls until one complete observation succeeds", async () => {
+    const f = nativeFixture();
+    const slot = createRuntimeSlot({
+      id: "a",
+      cwd: "/tmp",
+      sessionPath: "/sessions/a.jsonl",
+      process: null,
+      preview: null,
+      projection: await preview(record("a", "/tmp")),
+      bridge: null,
+      branchRevision: 1,
+      incarnationId: "slot-a",
+      viewId: "view-a",
+    });
+    const log = vi.fn();
+    const reconcile = vi.fn(async (): Promise<unknown> => {
+      throw new Error("Projection read failed");
+    });
+    const external = new RuntimeExternalSessions(
+      async () => f.native,
+      {
+        current: () => true,
+        emit: vi.fn(),
+        assertUsable: vi.fn(),
+        log,
+        reconcile,
+      },
+      trackedAttachmentStore(),
+      10,
+    );
+    vi.useFakeTimers();
+    try {
+      await external.connect(slot);
+      await vi.advanceTimersByTimeAsync(20);
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(reconcile).toHaveBeenCalledWith(slot, false);
+      reconcile.mockResolvedValueOnce(undefined);
+      await vi.advanceTimersByTimeAsync(20);
+      expect(log).toHaveBeenCalledTimes(2);
+      slot.projection = null;
+      const reconciliations = reconcile.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(20);
+      expect(reconcile).toHaveBeenCalledTimes(reconciliations);
+    } finally {
+      external.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it("rediscovers an ended native owner on a subsequent open without repeating input", async () => {
+    const first = nativeFixture();
+    const next = nativeFixture();
+    const connect = vi
+      .fn()
+      .mockResolvedValueOnce(first.native)
+      .mockResolvedValue(next.native);
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      trackedAttachmentStore(),
+      () => {
+        throw new Error("must not launch Pi");
+      },
+      preview,
+    ).setExternalSessionConnector(connect);
+    try {
+      await runtime.openSession("a");
+      await runtime.prompt({ sessionId: "a", message: "First" });
+      first.setState(null);
+      await vi.waitFor(
+        () => expect(first.native.close).toHaveBeenCalledOnce(),
+        { timeout: 1_500 },
+      );
+      await runtime.openSession("a");
+      await runtime.prompt({ sessionId: "a", message: "Fresh" });
+      expect(connect).toHaveBeenCalledTimes(2);
+      expect(first.native.prompt).toHaveBeenCalledTimes(1);
+      expect(next.native.prompt).toHaveBeenCalledExactlyOnceWith(
+        "Fresh",
+        undefined,
+        expect.any(Function),
+      );
+    } finally {
       await runtime.close();
     }
   });

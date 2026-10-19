@@ -6,6 +6,7 @@ import { HerdrNativeSession } from "./herdr-native-session.js";
 import type { ExternalSessionConnection } from "./external-session.js";
 import {
   assertHerdrWorkerScopesAvailable,
+  captureHerdrProcessIdentity,
   herdrProcessIsLive,
   stopHerdrProcessGroup,
 } from "./herdr-process-group.js";
@@ -157,9 +158,15 @@ export class HerdrEnhancement {
       return null;
     if (this.closed) throw requestError("The Host is shutting down", 503);
     const writer = await this.observer.findNativeWriter(sessionId, sessionFile);
-    return writer
-      ? new HerdrNativeSession(this.client, writer, sessionId, sessionFile)
-      : null;
+    if (!writer) return null;
+    const processIdentity = await captureHerdrProcessIdentity(writer.pid);
+    if (!processIdentity) return null;
+    return new HerdrNativeSession(
+      this.client,
+      { ...writer, processIdentity },
+      sessionId,
+      sessionFile,
+    );
   }
 
   createProcess(options: PiRpcOptions): PiRpcProcess {

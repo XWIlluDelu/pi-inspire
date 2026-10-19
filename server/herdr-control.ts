@@ -4,6 +4,16 @@ import { lstat, readFile } from "node:fs/promises";
 import { connect, type Socket } from "node:net";
 import { readLocalJsonLine, writeLocalJsonLine } from "./local-json-line.js";
 
+/** The pinned endpoint is definitively obsolete, not a transient I/O failure. */
+export class HerdrServerChangedError extends Error {
+  readonly code = "HERDR_SERVER_CHANGED";
+
+  constructor() {
+    super("The Herdr server for this session has changed");
+    this.name = "HerdrServerChangedError";
+  }
+}
+
 export class HerdrApiError extends Error {
   constructor(
     readonly code: string,
@@ -82,7 +92,7 @@ export class HerdrControl {
   private async assertCurrent(): Promise<void> {
     if (this.closed) throw new Error("Herdr control connection is closed");
     if (this.identity !== (await socketIdentity(this.address, this.boot)))
-      throw new Error("Herdr control endpoint changed while connecting");
+      throw new HerdrServerChangedError();
     if (this.closed) throw new Error("Herdr control connection is closed");
   }
 

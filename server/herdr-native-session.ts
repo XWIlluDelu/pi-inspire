@@ -5,9 +5,10 @@ import type {
   ExternalSessionState,
 } from "./external-session.js";
 import type { HerdrClient } from "./herdr-client.js";
-import { HerdrApiError } from "./herdr-control.js";
+import { HerdrApiError, HerdrServerChangedError } from "./herdr-control.js";
 import type { HerdrNativeWriter } from "./herdr-worker-observer.js";
 import { requestError } from "./request-error.js";
+import { herdrProcessIsLive } from "./herdr-process-group.js";
 
 type NativeClient = Pick<
   HerdrClient,
@@ -35,21 +36,45 @@ export class HerdrNativeSession implements ExternalSessionConnection {
 
   async read(): Promise<ExternalSessionState | null> {
     if (this.closed) return null;
-    let response: Record<string, unknown>;
+    if (
+      this.writer.processIdentity &&
+      !(await herdrProcessIsLive(this.writer.processIdentity))
+    )
+      return null;
     try {
-      response = await this.client.nativeAgentRequest(
-        this.writer.serverId,
-        this.writer.paneId,
-        "agent.get",
-      );
+      const state = await this.readCurrent();
+      if (
+        !state &&
+        this.writer.processIdentity &&
+        (await herdrProcessIsLive(this.writer.processIdentity))
+      )
+        throw requestError(
+          "The original Pi is still alive but its session ownership could not be verified.",
+          409,
+          { code: "SESSION_OWNER_UNAVAILABLE" },
+        );
+      return state;
     } catch (error) {
       if (
-        error instanceof HerdrApiError &&
-        ["agent_not_found", "pane_not_found"].includes(error.code)
+        error instanceof HerdrServerChangedError ||
+        (error instanceof HerdrApiError &&
+          ["agent_not_found", "pane_not_found"].includes(error.code))
       )
-        return null;
+        throw requestError(
+          "The original Pi connection is unavailable. Its process has not been confirmed stopped.",
+          409,
+          { code: "SESSION_OWNER_UNAVAILABLE" },
+        );
       throw error;
     }
+  }
+
+  private async readCurrent(): Promise<ExternalSessionState | null> {
+    const response = await this.client.nativeAgentRequest(
+      this.writer.serverId,
+      this.writer.paneId,
+      "agent.get",
+    );
     const agent = record(response.agent);
     if (agent.agent !== "pi" || agent.pane_id !== this.writer.paneId)
       return null;

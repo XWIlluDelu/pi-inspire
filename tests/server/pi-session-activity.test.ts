@@ -21,7 +21,9 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { AgentSessionRuntime } from "@earendil-works/pi-coding-agent";
 import { PiSessionActivity } from "../../server/pi-session-activity.js";
+import { PiSessionOccupancy } from "../../server/pi-session-occupancy.js";
 import type { SessionRecord } from "../../server/session-catalog.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -41,6 +43,7 @@ beforeEach(async () => {
   paths.home = await mkdtemp(join(tmpdir(), "inspire-pi-activity-"));
   vi.stubEnv("XDG_CACHE_HOME", join(paths.home, "cache"));
   vi.stubEnv("LOCALAPPDATA", join(paths.home, "local"));
+  vi.stubEnv("INSPIRE_BRANCH_COMMAND", undefined);
 });
 afterEach(async () => {
   await Promise.all(reporters.splice(0).map((stop) => stop()));
@@ -122,6 +125,8 @@ describe("local Pi session observations", () => {
     await save({ updatedAt: Date.now() - ACTIVITY_STALE_MS });
     await save({ updatedAt: Date.now() + ACTIVITY_STALE_MS });
     await save({ version: 2 as 1 });
+    await save({ inactive: true });
+    await save({ released: true });
     const dead = await save({ pid: 2_147_483_647 });
     await observer.refresh();
     expect(publish).toHaveBeenLastCalledWith({});
@@ -163,47 +168,66 @@ describe("local Pi session observations", () => {
   });
 });
 
-function reporter() {
+function reporter(
+  mode: ExtensionContext["mode"] = "tui",
+  sharedContext?: ExtensionContext,
+) {
   type Handler = (
     event: Record<string, unknown>,
     ctx: ExtensionContext,
   ) => unknown;
   const handlers = new Map<string, Handler>();
   const idle = vi.fn(() => true);
+  const commands = vi.fn(() => [] as { name: string }[]);
   let identity = session();
-  const context = {
-    mode: "tui",
-    cwd: paths.home,
-    isIdle: idle,
-    sessionManager: {
-      getSessionId: () => identity.id,
-      getSessionFile: () => identity.path,
-    },
-  } as unknown as ExtensionContext;
+  const context =
+    sharedContext ??
+    ({
+      mode,
+      cwd: paths.home,
+      isIdle: idle,
+      sessionManager: {
+        getSessionId: () => identity.id,
+        getSessionFile: () => identity.path,
+      },
+    } as unknown as ExtensionContext);
   reportActivity({
+    getCommands: commands,
     on: (name: string, handler: Handler) => {
       handlers.set(name, handler);
     },
   } as unknown as ExtensionAPI);
-  const emit = async (type: string) => {
-    await handlers.get(type)?.({ type }, context);
+  const emit = async (type: string, extra: Record<string, unknown> = {}) => {
+    await handlers.get(type)?.(
+      {
+        type,
+        ...(type === "session_shutdown" ? { reason: "quit" } : {}),
+        ...extra,
+      },
+      context,
+    );
   };
   reporters.push(() => emit("session_shutdown"));
   const records = async (): Promise<PiActivityRecord[]> => {
     const names = await readdir(piActivityDirectory()).catch(() => []);
-    return Promise.all(
+    const reports: PiActivityRecord[] = await Promise.all(
       names
         .filter((name) => name.endsWith(".json"))
         .map(async (name) =>
           JSON.parse(await readFile(join(piActivityDirectory(), name), "utf8")),
         ),
     );
+    return reports;
   };
+  const activeRecords = async () =>
+    (await records()).filter((record) => !record.inactive && !record.released);
   return {
     emit,
     idle,
+    commands,
     context,
-    records,
+    records: activeRecords,
+    storedRecords: records,
     setSession: (next: SessionRecord) => {
       identity = next;
     },
@@ -211,31 +235,289 @@ function reporter() {
 }
 
 describe("optional native Pi activity reporter", () => {
-  it("reports startup, work, input waiting and final settlement without ending at agent_end", async () => {
-    const { emit, idle, records } = reporter();
-    expect(await records()).toEqual([]); // discovery/factory has no runtime side effects
-    await emit("session_start");
-    expect(await records()).toMatchObject([
-      { sessionId: "one", activity: "idle" },
-    ]);
-    await emit("before_agent_start");
-    await emit("agent_start");
-    await emit("agent_end");
-    expect(await records()).toMatchObject([{ activity: "working" }]);
-    idle.mockReturnValue(false);
-    await emit("ui_prompt_start");
-    expect(await records()).toMatchObject([{ activity: "blocked" }]);
-    await emit("ui_prompt_end");
-    expect(await records()).toMatchObject([{ activity: "working" }]);
-    idle.mockReturnValue(true);
-    await emit("agent_settled");
-    expect(await records()).toMatchObject([{ activity: "idle" }]);
-    await emit("session_shutdown");
-    await emit("session_shutdown");
-    expect(await records()).toEqual([]);
+  it("keeps presence while a later SDK shutdown handler is pending and after in-process disposal", async () => {
+    const first = reporter("rpc");
+    first.idle.mockReturnValue(false);
+    await first.emit("session_start");
+    await writeFile(session().path, "");
+    const guard = new PiSessionOccupancy();
+    const active = { code: "EXTERNAL_PI_WRITER_ACTIVE" };
+    await expect(
+      guard.assertWritable("one", session().path),
+    ).rejects.toMatchObject(active);
+
+    let continueShutdown!: () => void, enteredCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => {
+      continueShutdown = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      enteredCleanup = resolve;
+    });
+    const dispose = vi.fn();
+    type RuntimeArgs = ConstructorParameters<typeof AgentSessionRuntime>;
+    const runtime = new AgentSessionRuntime(
+      {
+        extensionRunner: {
+          hasHandlers: (event: string) => event === "session_shutdown",
+          emit: async (event: { type: string; reason: string }) => {
+            await first.emit(event.type, event);
+            enteredCleanup();
+            await cleanup;
+          },
+        },
+        dispose,
+      } as unknown as RuntimeArgs[0],
+      {} as RuntimeArgs[1],
+      async () => {
+        throw new Error("This test must not create another SDK session");
+      },
+    );
+    const closing = runtime.dispose();
+    try {
+      await entered;
+      expect(dispose).not.toHaveBeenCalled();
+      expect(await first.storedRecords()).toMatchObject([{ inactive: true }]);
+      expect((await first.storedRecords())[0]!.released).toBeUndefined();
+      await expect(
+        guard.assertWritable("one", session().path),
+      ).rejects.toMatchObject(active);
+    } finally {
+      continueShutdown();
+      await closing;
+    }
+    expect(dispose).toHaveBeenCalledOnce();
+    // SDK disposal is not process exit or a post-disposal writer-drain signal.
+    await expect(
+      guard.assertWritable("one", session().path),
+    ).rejects.toMatchObject(active);
   });
 
-  it("heartbeats and replaces session identity, and leaves RPC workers to Inspire", async () => {
+  it("does not arm a heartbeat after shutdown overtakes an asynchronous startup publication", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const originalRename = vi.mocked(rename).getMockImplementation()!;
+    let continueRename!: () => void, enteredRename!: () => void;
+    const proceed = new Promise<void>((resolve) => {
+      continueRename = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      enteredRename = resolve;
+    });
+    vi.mocked(rename).mockImplementationOnce(async (...args) => {
+      enteredRename();
+      await proceed;
+      return originalRename(...args);
+    });
+    const f = reporter("rpc");
+    const starting = f.emit("session_start");
+    await entered;
+    const closing = f.emit("session_shutdown");
+    continueRename();
+    await Promise.all([starting, closing]);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(await f.records()).toEqual([]);
+    expect(await f.storedRecords()).toMatchObject([{ inactive: true }]);
+  });
+
+  it.each(["tui", "rpc", "json", "print"] as const)(
+    "reports %s startup, work, input waiting and final settlement without ending at agent_end",
+    async (mode) => {
+      const { emit, idle, records } = reporter(mode);
+      expect(await records()).toEqual([]); // discovery/factory has no runtime side effects
+      await emit("session_start");
+      expect(await records()).toMatchObject([
+        { sessionId: "one", activity: "idle" },
+      ]);
+      await emit("before_agent_start");
+      await emit("agent_start");
+      await emit("agent_end");
+      expect(await records()).toMatchObject([{ activity: "working" }]);
+      idle.mockReturnValue(false);
+      await emit("ui_prompt_start");
+      expect(await records()).toMatchObject([{ activity: "blocked" }]);
+      await emit("ui_prompt_end");
+      expect(await records()).toMatchObject([{ activity: "working" }]);
+      idle.mockReturnValue(true);
+      await emit("agent_settled");
+      expect(await records()).toMatchObject([{ activity: "idle" }]);
+      await emit("session_shutdown");
+      await emit("session_shutdown");
+      expect(await records()).toEqual([]);
+    },
+  );
+
+  it("preserves one presence record across extension-factory reload and stops activity on shutdown", async () => {
+    const first = reporter("rpc");
+    await first.emit("session_start");
+    await first.emit("session_shutdown", { reason: "reload" });
+    expect(await first.records()).toMatchObject([
+      { sessionId: "one", processIdentity: expect.any(String) },
+    ]);
+    const replacement = reporter("rpc", first.context);
+    await replacement.emit("session_start", { reason: "reload" });
+    expect(await replacement.records()).toHaveLength(1);
+    // Old runtime cleanup must not release its replacement's presence.
+    await first.emit("session_shutdown");
+    expect(await replacement.records()).toHaveLength(1);
+    await replacement.emit("session_shutdown", { reason: "resume" });
+    expect(await replacement.records()).toEqual([]);
+  });
+
+  it("does not stop activity for another SDK session sharing the same process", async () => {
+    const first = reporter("rpc"),
+      second = reporter("rpc");
+    await first.emit("session_start");
+    await second.emit("session_start");
+    expect(await first.records()).toHaveLength(2);
+    await first.emit("session_shutdown");
+    expect(await second.records()).toHaveLength(1);
+    await second.emit("session_shutdown");
+    expect(await second.records()).toEqual([]);
+  });
+
+  it.each(["new", "resume", "fork"] as const)(
+    "rebinds only after %s replacement and lets an old SDK manager be reused independently",
+    async (reason) => {
+      const original = session(),
+        next = session("two", join(paths.home, "two.jsonl"));
+      await writeFile(original.path, "");
+      await writeFile(next.path, "");
+      const first = reporter("rpc");
+      const previousManager = first.context.sessionManager;
+      await first.emit("session_start");
+      const firstNames = (await readdir(piActivityDirectory())).filter((name) =>
+        name.endsWith(".json"),
+      );
+      await first.emit("session_shutdown", {
+        reason,
+        targetSessionFile: next.path,
+      });
+      const guard = new PiSessionOccupancy();
+      await expect(
+        guard.assertWritable(original.id, original.path),
+      ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
+
+      const replacement = reporter("rpc");
+      replacement.setSession(next);
+      await replacement.emit("session_start", {
+        reason,
+        previousSessionFile: original.path,
+      });
+      expect(await replacement.storedRecords()).toMatchObject([
+        { sessionId: next.id },
+      ]);
+      expect(
+        (await readdir(piActivityDirectory())).filter((name) =>
+          name.endsWith(".json"),
+        ),
+      ).toEqual(firstNames);
+      await expect(
+        guard.assertWritable(original.id, original.path),
+      ).resolves.toBeUndefined();
+      await expect(
+        guard.assertWritable(next.id, next.path),
+      ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
+
+      const independent = reporter("rpc", {
+        ...first.context,
+        sessionManager: previousManager,
+      });
+      await independent.emit("session_start");
+      expect(await independent.records()).toHaveLength(2);
+      expect(
+        (await independent.records()).map((r) => r.sessionId).sort(),
+      ).toEqual([original.id, next.id].sort());
+      await first.emit("session_shutdown"); // late old cleanup cannot overwrite the replacement
+      await expect(
+        guard.assertWritable(next.id, next.path),
+      ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
+    },
+  );
+
+  it("keeps the old fence when a new start does not match the shutdown target", async () => {
+    const original = session(),
+      target = session("two", join(paths.home, "two.jsonl"));
+    await writeFile(original.path, "");
+    const first = reporter("rpc");
+    await first.emit("session_start");
+    await first.emit("session_shutdown", {
+      reason: "resume",
+      targetSessionFile: target.path,
+    });
+    const unrelated = reporter("rpc");
+    unrelated.setSession(session("three", join(paths.home, "three.jsonl")));
+    await unrelated.emit("session_start", {
+      reason: "resume",
+      previousSessionFile: original.path,
+    });
+    expect(await unrelated.storedRecords()).toHaveLength(2);
+    await expect(
+      new PiSessionOccupancy().assertWritable(original.id, original.path),
+    ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
+  });
+
+  it("does not guess between ambiguous SDK replacement producers", async () => {
+    const original = session(),
+      target = session("two", join(paths.home, "two.jsonl"));
+    await writeFile(original.path, "");
+    const first = reporter("rpc"),
+      second = reporter("rpc");
+    for (const r of [first, second]) {
+      await r.emit("session_start");
+      await r.emit("session_shutdown", {
+        reason: "resume",
+        targetSessionFile: target.path,
+      });
+    }
+    const replacement = reporter("rpc");
+    replacement.setSession(target);
+    await replacement.emit("session_start", {
+      reason: "resume",
+      previousSessionFile: original.path,
+    });
+    expect(await replacement.storedRecords()).toHaveLength(3);
+    await expect(
+      new PiSessionOccupancy().assertWritable(original.id, original.path),
+    ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
+  });
+
+  it("keeps same-file replacement held and releases it only after moving elsewhere", async () => {
+    const original = session(),
+      next = session("two", join(paths.home, "two.jsonl"));
+    await writeFile(original.path, "");
+    await writeFile(next.path, "");
+    const first = reporter("rpc");
+    await first.emit("session_start");
+    await first.emit("session_shutdown", {
+      reason: "resume",
+      targetSessionFile: original.path,
+    });
+    const resumed = reporter("rpc");
+    await resumed.emit("session_start", {
+      reason: "resume",
+      previousSessionFile: original.path,
+    });
+    expect(await resumed.storedRecords()).toHaveLength(1);
+    const guard = new PiSessionOccupancy();
+    await expect(
+      guard.assertWritable(original.id, original.path),
+    ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
+    await resumed.emit("session_shutdown", {
+      reason: "resume",
+      targetSessionFile: next.path,
+    });
+    const replacement = reporter("rpc");
+    replacement.setSession(next);
+    await replacement.emit("session_start", {
+      reason: "resume",
+      previousSessionFile: original.path,
+    });
+    expect(await replacement.storedRecords()).toHaveLength(1);
+    await expect(
+      guard.assertWritable(original.id, original.path),
+    ).resolves.toBeUndefined();
+  });
+
+  it("heartbeats and replaces session identity across TUI and RPC modes", async () => {
     vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
     const { emit, records, setSession, context } = reporter();
     await emit("session_start");
@@ -260,6 +542,27 @@ describe("optional native Pi activity reporter", () => {
     context.mode = "rpc";
     await emit("session_start");
     await emit("agent_start");
+    expect(await records()).toMatchObject([
+      { sessionId: "two", activity: "working" },
+    ]);
+    expect(await records()).toHaveLength(1);
+  });
+
+  it("excludes only the loaded Inspire RPC bridge, not inherited worker environment", async () => {
+    vi.stubEnv("INSPIRE_BRANCH_COMMAND", "activity_test_bridge");
+    const { emit, records, commands, context } = reporter("rpc");
+    commands.mockReturnValue([{ name: "another_command" }]);
+    await emit("session_start");
+    await emit("agent_start");
+    expect(await records()).toMatchObject([{ activity: "working" }]);
+
+    commands.mockReturnValue([{ name: "activity_test_bridge" }]);
+    await emit("session_start");
+    await emit("agent_start");
     expect(await records()).toEqual([]);
+
+    context.mode = "tui";
+    await emit("session_start");
+    expect(await records()).toMatchObject([{ activity: "idle" }]);
   });
 });

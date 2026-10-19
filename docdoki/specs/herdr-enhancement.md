@@ -113,7 +113,16 @@ other applications' unreported or later launches remain outside its authority.
   admission rules.
 - Native connections are outside the owned-worker pool. Switching sessions, closing the browser,
   and Host shutdown/restart leave the native Pi and pane running. Independently running native work
-  does not block Host maintenance restart; an in-flight Host input submission still does.
+  does not block Host maintenance restart; in-flight Host input, commands and interruption still do.
+  Background history may be reclaimed independently of native status polling. Polling does not
+  rebuild it; retained history uses version-checked reads, while prompt admission retains forced
+  verification. Repeated observation errors coalesce until a complete poll succeeds.
+- Capture the native Pi's boot/process-birth identity before publishing its connection. A replaced
+  Herdr server, missing agent/pane, or vanished session metadata does not establish that Pi exited.
+  Keep its history read-only while ownership is unverified; an explicit reselect may connect through
+  fresh discovery, never reused pane IDs from an obsolete connection. Original-process retirement
+  releases that connection. Transient transport failures do not establish retirement, and uncertain
+  input is never automatically resent.
 - Use public Herdr agent APIs for native text input, follow-up submission, interruption and status.
   Read persisted conversation content through the normal session projection. Do not treat terminal
   output as a transcript or native connections as RPC workers.

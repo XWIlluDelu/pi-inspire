@@ -70,11 +70,14 @@ GUI navigation uses independent workers rather than switching one TUI process be
 
 Keep state scoped to its Pi session and reconstruct it from persisted entries during `session_start` where appropriate. An extension relying on source-runtime switch/fork hooks needs to account for these GUI actions separately.
 
-## Show terminal session activity
+## Show external session activity
 
 The optional [session activity extension](examples/session-activity.ts) lets Inspire show busy,
-waiting-for-input and idle state for local Pi terminal sessions, regardless of how they were started.
-Herdr is not required and has no separate activity detector.
+waiting-for-input and idle state for local external Pi sessions, including independent RPC hosts
+and terminal, JSON or print modes. Herdr and external execution connectors are not required:
+observing activity does not attach a controller or grant execution authority. The same extension
+reports process-bound session presence so Inspire can open an already-held session read-only
+instead of starting a second writer, even when the other Pi is idle.
 
 Enable the extension once through Pi's normal user configuration. From an Inspire checkout:
 
@@ -84,14 +87,36 @@ pi install /absolute/path/to/inspire/docs/examples/session-activity.ts
 
 The same file ships in the installed Inspire package. Use its absolute path there, or copy it into
 your Pi user extensions directory. New Pi sessions load it automatically. In an existing terminal
-session, run `/reload` when idle to activate it. Remove the configured file with `pi remove` (or
-remove your copied extension) and reload to disable reporting.
+session, run `/reload` when idle to activate it. An existing RPC session needs its original host's
+supported reload or a later normal restart; restarting Inspire does not reload an external Pi.
+Remove the configured file with `pi remove` (or remove your copied extension) and reload to disable
+reporting.
 
 The reporter adds no tools, model prompts or session entries and makes no network requests. It writes
-only small, private, expiring activity records into the local user's Inspire cache. Only persisted
-sessions discoverable in Inspire's configured Pi storage can appear; activity does not change those
-storage roots. Sessions that explicitly disable extensions do not report. Inspire-managed RPC workers
-continue to use their existing runtime status, and each session counts once in the titlebar animation.
+only small, private records into the local user's Inspire cache. Busy indicators expire after
+about eight seconds without a heartbeat. Session presence does not: idle, a stalled heartbeat
+or a missing previously observed report is not proof of release, including across Host restart.
+Inspire retains that positive admission evidence privately. Shutdown stops activity observation,
+not writer protection: other shutdown callbacks can still write. Native new/resume/fork releases
+the outgoing file only after the replacement starts and uniquely matches the old and new files.
+Reload preserves presence; same-file replacement stays protected. Quit, failed/ambiguous replacement,
+and SDK disposal without a completed native rebind remain protected until process exit is verified.
+
+A long-lived SDK host disposing just one session has no reporter-visible post-disposal write-drain
+signal, so that file can remain read-only while the process lives. Older reporters' `released`
+markers are also activity hints, not proof of release; legacy teardown records may therefore
+remain protected until their Pi process normally exits. Do not delete the cache to bypass this.
+
+Only persisted sessions discoverable in Inspire's configured Pi storage can appear; reporting
+does not change those storage roots. Sessions that explicitly disable extensions do not report. Inspire-managed RPC workers
+continue to use their existing runtime status: the reporter recognizes the loaded internal GUI bridge,
+not RPC mode or inherited environment alone. Each session counts once in the titlebar animation.
+
+To activate an updated implementation, update/restart the Inspire Host **and** reload or normally
+restart each external Pi through its own host. They load code independently. An external Pi that
+never loaded the reporter has no presence record to inspect; the extension does not discover
+arbitrary uninstrumented processes or take control of them. Do not clear the cache to bypass a
+live-holder warning. Once the other Pi releases the session, reselect it in Inspire to retry.
 
 ## Try the native UI example
 

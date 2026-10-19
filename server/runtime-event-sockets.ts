@@ -268,6 +268,9 @@ export function createRuntimeEventSockets({
           ...(sourceStatus.needsInput !== undefined
             ? { needsInput: sourceStatus.needsInput }
             : {}),
+          ...(sourceStatus.external !== undefined
+            ? { external: sourceStatus.external }
+            : {}),
         }
       : undefined;
     const lifecycle = globalLifecycle.has(String(record.type));
