@@ -44,6 +44,58 @@ const toggle = () =>
 const confirm = () =>
   screen.getByRole("button", { name: "Use this directory" });
 
+describe("independent drive discovery", () => {
+  it("lets Home load and navigate before a delayed drive list arrives", async () => {
+    const pending = deferred<{ roots: { name: string; path: string }[] }>();
+    vi.mocked(store.browseHostRoots).mockReturnValue(pending.promise);
+    vi.mocked(store.browseHostDirs).mockImplementation(async (path) =>
+      path === project.path ? project : home,
+    );
+    render(<DirectoryPicker onCancel={vi.fn()} onPick={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "project" }));
+    await waitFor(() => expect(confirm()).toBeEnabled());
+    await act(async () =>
+      pending.resolve({
+        roots: [
+          { name: "C:", path: "C:\\" },
+          { name: "Z:", path: "Z:\\" },
+        ],
+      }),
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Project directory" }),
+    ).toHaveValue(project.path);
+    expect(screen.getByRole("button", { name: "Z:" })).toBeEnabled();
+  });
+
+  it("keeps listing and typed selection usable when drive discovery fails", async () => {
+    vi.mocked(store.browseHostRoots).mockRejectedValue(
+      new Error("Native probe unavailable"),
+    );
+    const onPick = vi.fn();
+    render(<DirectoryPicker onCancel={vi.fn()} onPick={onPick} />);
+    await waitFor(() => expect(confirm()).toBeEnabled());
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Drive list unavailable",
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(confirm());
+    expect(onPick).toHaveBeenCalledWith(home.path);
+  });
+
+  it("ignores a drive-discovery failure after the dialog unmounts", async () => {
+    const pending = deferred<{ roots: { name: string; path: string }[] }>();
+    vi.mocked(store.browseHostRoots).mockReturnValue(pending.promise);
+    const { unmount } = render(
+      <DirectoryPicker onCancel={vi.fn()} onPick={vi.fn()} />,
+    );
+    await waitFor(() => expect(confirm()).toBeEnabled());
+    unmount();
+    await act(async () => pending.reject(new Error("late failure")));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+});
+
 describe("typed project directories", () => {
   it("browses a typed path with Enter, then selects the host-normalized directory", async () => {
     const onPick = vi.fn();

@@ -1,5 +1,9 @@
 import { SquareTerminal } from "lucide-react";
 import { memo } from "react";
+import {
+  fileResourceReference,
+  isResourceReferenceText,
+} from "../../shared/resource-references";
 import { stripTerminalSequences } from "../ansi";
 import type { ChatMessage } from "../events";
 import { CopyAction } from "./CopyAction";
@@ -86,13 +90,14 @@ export const BashExecution = memo(function BashExecution({
           {previewTruncated
             ? "Showing the latest streamed output."
             : "Pi truncated the recorded output."}
-          {message.fullOutputPath ? (
+          {message.fullOutputPath &&
+          isResourceReferenceText(message.fullOutputPath) ? (
             <>
               {" "}
               <button
                 type="button"
                 className="tool-notice__action"
-                data-file-path={message.fullOutputPath}
+                data-file-path={fileResourceReference(message.fullOutputPath)}
                 title={`Preview ${message.fullOutputPath}`}
               >
                 View full output

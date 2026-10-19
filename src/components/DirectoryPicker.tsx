@@ -24,6 +24,7 @@ export function DirectoryPicker({
   const [listing, setListing] = useState<HostDirListing | null>(null);
   const [path, setPath] = useState(initial?.trim() ?? "");
   const [roots, setRoots] = useState<HostDirEntry[]>([]);
+  const [rootsUnavailable, setRootsUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showHidden, setShowHidden] = useState(false);
@@ -55,23 +56,20 @@ export function DirectoryPicker({
   const requested = useRef<{
     path?: string;
     fallbackHome?: boolean;
-    discoverRoots?: boolean;
   }>({});
 
   const load = (
     path?: string,
     {
       fallbackHome = false,
-      discoverRoots = false,
       hidden = showHidden,
     }: {
       fallbackHome?: boolean;
-      discoverRoots?: boolean;
       hidden?: boolean;
     } = {},
   ) => {
     const mine = ++ticket.current;
-    requested.current = { path, fallbackHome, discoverRoots };
+    requested.current = { path, fallbackHome };
     restoreListFocus.current = Boolean(
       listRef.current?.contains(document.activeElement),
     );
@@ -87,16 +85,12 @@ export function DirectoryPicker({
           return store.browseHostDirs(undefined, hidden);
         throw cause;
       });
-    const availableRoots = discoverRoots
-      ? store.browseHostRoots()
-      : Promise.resolve(null);
-    return Promise.all([listing, availableRoots])
-      .then(([result, rootResult]) => {
+    return listing
+      .then((result) => {
         if (ticket.current !== mine) return;
         requested.current = { path: result.path };
         setListing(result);
         setPath(result.path);
-        if (rootResult) setRoots(rootResult.roots);
         return result;
       })
       .catch((cause: unknown) => {
@@ -114,11 +108,20 @@ export function DirectoryPicker({
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only initialization deliberately hands later navigation to the picker.
   useEffect(() => {
-    void load(initial?.trim() || undefined, {
-      fallbackHome: true,
-      discoverRoots: true,
-    });
+    let current = true;
+    void load(initial?.trim() || undefined, { fallbackHome: true });
+    // Drive discovery is advisory and belongs to the dialog lifetime, not a
+    // particular directory request. Neither delay nor failure may block Home.
+    void store.browseHostRoots().then(
+      (result) => {
+        if (current) setRoots(result.roots);
+      },
+      () => {
+        if (current) setRootsUnavailable(true);
+      },
+    );
     return () => {
+      current = false;
       ticket.current += 1;
     };
   }, []);
@@ -182,6 +185,12 @@ export function DirectoryPicker({
             }}
           />
         </div>
+        {rootsUnavailable ? (
+          <div className="dirpicker__note" role="status">
+            Drive list unavailable. Enter a full path to browse another
+            location.
+          </div>
+        ) : null}
         {roots.length > 1 ? (
           <div
             className="dirpicker__roots"

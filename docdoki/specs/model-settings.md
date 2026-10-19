@@ -3,11 +3,13 @@ purpose: Lightweight model configuration and provider authentication using Pi's 
 covers:
   - server/{model-settings*,model-catalog*,model-metadata*,session-model-selection,session-projection,provider-auth*,app,index,runtime,runtime-worker-lifecycle}.ts
   - server/extensions/{inspire-branch-bridge,provider-auth-bridge}.ts
+  - server/configuration-edit-locks.ts
   - shared/{contracts,commands,model-settings,provider-auth-bridge}.ts
   - src/{App,api,app-state,store,model-options,use-modal-focus}.ts*
   - src/components/{Settings,SettingsControls,SettingsSection,ModelsSettings,ModelDeclarationForms,ProviderAuthentication,ModelSelector,ModelList,Composer,Welcome,CommandPalette,CommandHelp}.tsx
   - src/styles/model-settings.css
   - tests/server/{model-settings,model-catalog,model-metadata.integration,model-workflow.integration,session-model-selection,provider-auth,provider-auth-bridge.integration}.test.ts
+  - tests/server/configuration-edit-locks.test.ts
   - tests/web/{model-settings,model-store,model-selector,modal-focus}.test.ts*
   - tests/browser/{model-settings*,model-workflow}.spec.ts
   - tests/browser/fixtures/model-scale.ts
@@ -133,7 +135,10 @@ provider continues at Add model; a newly available model appears in the ordinary
 returns to the entry point, and Common/Default saves retain row focus unless the user has moved it.
 
 Writes detect conflicting external edits, accept native file syntax and follow existing configuration
-symlinks under the same lock authority as native edits. A committed write remains successful when
+symlinks under the same lock authority as native edits. Regular files take one native target lock
+rather than double-locking a case/normalization alias; final symlinks retain lexical and target
+authorities. Target/revision checks remain mandatory before publication, including a file replaced by
+a symlink during the edit. A committed write remains successful when
 refresh or readback fails; the response supplies a warning so Settings can offer refresh or reload.
 
 A configuration save invalidates cached workspace metadata. For an addressed session, it refreshes

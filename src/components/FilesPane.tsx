@@ -180,7 +180,7 @@ function FileBrowser({
                       key={reference}
                       row={row}
                       reference={reference}
-                      displayPath={workspacePath ?? reference}
+                      displayPath={workspacePath ?? row.label}
                       workspacePath={workspacePath}
                       selectedPath={selectedPath}
                       selectedReference={state.selectedResourceReference}

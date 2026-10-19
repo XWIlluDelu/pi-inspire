@@ -289,7 +289,11 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   discovery is host-owned too: POSIX exposes `/`, while Windows exposes every currently readable
   drive root so a user can cross from `C:\` to `D:\` without inventing a nonexistent common parent.
   A missing or relative starting point falls back to the host home. The picker path is editable,
-  automatically wraps long text and grows/shrinks with content and available width. Enter browses the typed path without selecting it. Use this directory validates an edited path
+  automatically wraps long text and grows/shrinks with content and available width. Typed project
+  paths expand Host-native `~`/`~/` (also `~\` on Windows) before browsing, model/file observations,
+  explicit creation and session start. This never expands the browser machine's home, environment
+  variables, globs or other users' homes. Enter browses the typed path without selecting it.
+  Use this directory validates an edited path
   against the Host before selection instead of choosing the old listing. Errors retain the draft;
   editing clears the error for retry. While browsing, the path is temporarily read-only but retains
   keyboard focus, and stale or dismissed requests cannot select a directory. Navigation withdraws

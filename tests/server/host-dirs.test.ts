@@ -1,18 +1,24 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { promisify } from "node:util";
 import {
   mkdir,
   mkdtemp,
+  realpath,
   rm,
+  stat,
   symlink,
   writeFile,
-  realpath,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { listHostDirectories, listHostRoots } from "../../server/host-dirs.js";
 import * as hiddenAttributes from "../../server/host-hidden-dirs.js";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...fs, stat: vi.fn(fs.stat) };
+});
 
 const execFile = promisify(execFileCallback);
 
@@ -25,21 +31,38 @@ describe("listHostRoots", () => {
     expect(inspect).not.toHaveBeenCalled();
   });
 
-  it("discovers readable Windows drive roots in drive-letter order", async () => {
-    const inspect = vi.fn(async (path: string) => {
-      if (path === "C:\\" || path === "D:\\")
-        return { isDirectory: () => true };
-      throw Object.assign(new Error("unavailable drive"), { code: "ENOENT" });
-    });
-
-    await expect(listHostRoots("win32", inspect)).resolves.toEqual({
+  it("sorts assigned Windows drive names without probing disconnected drives", async () => {
+    const enumerate = vi.fn(async () =>
+      JSON.stringify(["Z:\\", "c:\\", "D:\\", "C:\\"]),
+    );
+    await expect(listHostRoots("win32", enumerate)).resolves.toEqual({
       roots: [
         { name: "C:", path: "C:\\" },
         { name: "D:", path: "D:\\" },
+        { name: "Z:", path: "Z:\\" },
       ],
     });
-    expect(inspect).toHaveBeenCalledTimes(26);
+    expect(enumerate).toHaveBeenCalledExactlyOnceWith();
   });
+
+  it.each([null, "C:\\", ["C:\\", "C:\\unsafe"], Array(27).fill("C:\\")])(
+    "rejects malformed or oversized native drive lists: %j",
+    async (paths) => {
+      await expect(
+        listHostRoots("win32", async () => JSON.stringify(paths)),
+      ).rejects.toThrow();
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "enumerates native drive names",
+    async () => {
+      const { roots } = await listHostRoots();
+      expect(roots.length).toBeGreaterThan(0);
+      for (const root of roots) expect(root.path).toMatch(/^[A-Z]:\\$/u);
+    },
+    20_000,
+  );
 });
 
 describe("listHostDirectories", () => {
@@ -54,6 +77,7 @@ describe("listHostDirectories", () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await rm(root, { recursive: true, force: true });
   });
 
@@ -66,6 +90,20 @@ describe("listHostDirectories", () => {
       { name: "alpha", path: join(resolved, "alpha") },
       { name: "beta", path: join(resolved, "beta") },
     ]);
+  });
+
+  it("expands typed Host home paths before browsing their native directories", async () => {
+    vi.stubEnv("HOME", root);
+    vi.stubEnv("USERPROFILE", root);
+    const physical = await realpath(root);
+    expect((await listHostDirectories("~")).path).toBe(physical);
+    expect((await listHostDirectories("~/alpha")).path).toBe(
+      join(physical, "alpha"),
+    );
+    if (sep === "\\")
+      expect((await listHostDirectories("~\\beta")).path).toBe(
+        join(physical, "beta"),
+      );
   });
 
   it("reveals dot directories only when requested, without including files", async () => {
@@ -106,6 +144,30 @@ describe("listHostDirectories", () => {
       (await listHostDirectories(root, true)).dirs.map((entry) => entry.name),
     ).toEqual([".hidden", "alpha", "beta"]);
     expect(inspect).not.toHaveBeenCalled();
+  });
+
+  it("filters native-hidden links before resolving their potentially offline targets", async () => {
+    const link = join(root, "hidden-junction");
+    await symlink(
+      join(root, "alpha"),
+      link,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    vi.spyOn(hiddenAttributes, "listNativeHiddenNames").mockResolvedValue(
+      new Set(["hidden-junction"]),
+    );
+    const physicalLink = join(await realpath(root), "hidden-junction");
+    vi.mocked(stat).mockClear();
+    expect(
+      (await listHostDirectories(root)).dirs.map((entry) => entry.name),
+    ).toEqual(["alpha", "beta"]);
+    expect(
+      vi.mocked(stat).mock.calls.some(([path]) => path === physicalLink),
+    ).toBe(false);
+    expect((await listHostDirectories(root, true)).dirs).toContainEqual({
+      name: "hidden-junction",
+      path: physicalLink,
+    });
   });
 
   it("lets explicit show-hidden browsing recover from unavailable native inspection", async () => {

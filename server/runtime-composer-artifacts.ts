@@ -1,5 +1,5 @@
 import { realpath, stat } from "node:fs/promises";
-import { relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import { parseComposerArtifactReference } from "../shared/composer-artifact-references.js";
 import {
   MAX_ATTACHMENT_FILE_BYTES,
@@ -15,11 +15,11 @@ import {
   parseAttachmentContext,
   resolveProjectFiles,
 } from "./attachments.js";
+import { filesystemRelativePath } from "./filesystem-containment.js";
 import {
   canonicalBase64DecodedSize,
   isSupportedPromptImageMimeType,
 } from "./image-content.js";
-import { escapesBase } from "./paths.js";
 import { requestError } from "./request-error.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 
@@ -206,7 +206,8 @@ async function recalledFiles(
   const projectFiles: string[] = [];
   for (const path of paths) {
     const candidate = resolve(path);
-    const outsideWorkspace = escapesBase(relative(workspaceRoot, candidate));
+    const outsideWorkspace =
+      (await filesystemRelativePath(workspaceRoot, candidate)) === null;
     const ownedAttachment = attachments.ownsPromptFile(candidate);
     // Persisted path text is descriptive, not a capability. Reject an external
     // path before touching it unless durable Inspire ownership authorizes it.

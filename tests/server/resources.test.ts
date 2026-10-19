@@ -12,17 +12,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as gitRunner from "../../server/git-runner.js";
+import * as projectFiles from "../../server/project-files.js";
 import {
   invalidateProjectFiles,
   listProjectDirectory,
 } from "../../server/project-files.js";
-import * as gitRunner from "../../server/git-runner.js";
-import * as projectFiles from "../../server/project-files.js";
 import {
   openCanonicalResourceFile,
   ResourceStore,
   referencePath,
 } from "../../server/resources.js";
+import { diagnosticResourceReference } from "../../shared/resource-references.js";
 
 const temporaryDirectories: string[] = [];
 let resources = new ResourceStore();
@@ -506,6 +507,100 @@ describe("ResourceStore", () => {
       mimeType: "application/pdf",
       kind: "pdf",
     });
+  });
+
+  it.each([
+    "setup.ps1",
+    "module.psm1",
+    "module.psd1",
+    "build.cmd",
+    "build.bat",
+    "profile.bash",
+    ".bashrc",
+    ".bash_profile",
+    "profile.zsh",
+    ".zshrc",
+    ".zprofile",
+    ".gitconfig",
+    ".gitattributes",
+    "config.fish",
+    "main.m",
+    "main.mm",
+    "App.csproj",
+    "App.fsproj",
+    "App.vbproj",
+    "Directory.Build.props",
+    "Directory.Build.targets",
+    "App.sln",
+    "App.slnx",
+    "Info.plist",
+  ])("serves native source/configuration as text: %s", async (name) => {
+    const { project } = await workspace();
+    const content = name.endsWith(".plist")
+      ? '<?xml version="1.0"?><plist><dict/></plist>'
+      : "native source λ\n";
+    await writeFile(join(project, name), content);
+    const descriptor = await resources.resolve(
+      { ...resourceIdentity(), cwd: project, messages: [] },
+      name,
+    );
+    expect(descriptor.kind).toBe("text");
+    const opened = await resources.openForServing(
+      resources.get(descriptor.id, "s1", descriptor.viewId),
+    );
+    try {
+      expect(await opened.handle.readFile("utf8")).toBe(content);
+    } finally {
+      await opened.handle.close();
+    }
+  });
+
+  it("keeps binary property lists and unknown binary files out of the source reader", async () => {
+    const { project } = await workspace();
+    for (const [name, content] of [
+      ["Info.plist", Buffer.from([98, 112, 108, 105, 115, 116, 48, 48, 0, 1])],
+      ["native.bin", Buffer.from([0, 255, 1, 2])],
+    ] as const) {
+      await writeFile(join(project, name), content);
+      const descriptor = await resources.resolve(
+        { ...resourceIdentity(), cwd: project, messages: [] },
+        name,
+      );
+      expect(descriptor).toMatchObject({
+        kind: "binary",
+        mimeType: "application/octet-stream",
+      });
+    }
+  });
+
+  it("authorizes a complete spaced diagnostic path, never its existing sibling prefix", async () => {
+    const { root, project } = await workspace();
+    const outside = join(root, "Jane Doe", "report.m");
+    const wrongPrefix = join(root, "Jane");
+    await mkdir(join(root, "Jane Doe"));
+    await writeFile(outside, "correct report\n");
+    await writeFile(wrongPrefix, "not cited\n");
+    const context = {
+      ...resourceIdentity(),
+      cwd: project,
+      messages: [
+        {
+          role: "toolResult",
+          content: [{ type: "text", text: outside + ":12:3: error: fixture" }],
+        },
+      ],
+    };
+    const listed = await resources.list(context);
+    expect(listed.resources.map((item) => item.reference)).toEqual([
+      diagnosticResourceReference(outside + ":12:3"),
+    ]);
+    await expect(resources.resolve(context, outside)).resolves.toMatchObject({
+      name: "report.m",
+      kind: "text",
+    });
+    await expect(resources.resolve(context, wrongPrefix)).rejects.toMatchObject(
+      { status: 403 },
+    );
   });
 
   it("recognizes Pi-style file URLs and Markdown local links", async () => {

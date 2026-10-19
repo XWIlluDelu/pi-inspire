@@ -490,6 +490,8 @@ export interface ResourceDescriptor {
   sessionId: string;
   /** Opaque branch-view generation that authorized this handle. */
   viewId: string;
+  /** Link-form reference. Native path text is escaped at its input boundary;
+   * unlike workspacePath, this value may contain URI/diagnostic syntax. */
   reference: string;
   /** Canonical project-index path when the file belongs to the session
    * workspace. It joins workspace and conversation views without exposing an

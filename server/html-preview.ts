@@ -6,7 +6,7 @@ import {
   HTML_PREVIEW_BYTES,
   type HtmlPreviewResponse,
 } from "../shared/html-preview.js";
-import { escapesBase } from "./paths.js";
+import { filesystemRelativePath } from "./filesystem-containment.js";
 import { requestError } from "./request-error.js";
 import { sendResourceFile } from "./resource-http.js";
 import {
@@ -121,16 +121,17 @@ export class HtmlPreviewStore {
     if (assetPath.includes("\0"))
       throw requestError("The preview asset path is not valid", 400);
     const selected = resolve(grant.root, assetPath);
-    if (escapesBase(relative(grant.root, selected)))
+    const within = await filesystemRelativePath(grant.root, selected);
+    if (within === null)
       throw requestError("The asset is outside this preview's files", 403);
-    if (relative(grant.root, selected) === grant.entryPath) {
+    if (within === grant.entryPath) {
       response.type("html").send(grant.html);
       return;
     }
     const canonical = await realpath(selected).catch(() => {
       throw requestError("The preview asset was not found", 404);
     });
-    if (escapesBase(relative(grant.root, canonical)))
+    if ((await filesystemRelativePath(grant.root, canonical)) === null)
       throw requestError("The asset is outside this preview's files", 403);
     const asset = await openCanonicalResourceFile(canonical);
     if (this.grants.get(id) !== grant || response.destroyed) {

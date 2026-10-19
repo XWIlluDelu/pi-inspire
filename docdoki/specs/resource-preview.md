@@ -2,7 +2,7 @@
 purpose: Session-authorized files, documents, media, and Git changes are inspectable beside the conversation.
 covers:
   - shared/{contracts,resource-references}.ts
-  - server/{resources,resource-http,html-preview,image-content,project-files,git-inspection,app,runtime,runtime-reads,mock}.ts
+  - server/{resources,resource-http,html-preview,image-content,project-files,git-inspection,git-runner,app,runtime,runtime-reads,mock}.ts
   - shared/html-preview.ts
   - src/{api,resources,resource-preview,document-resources,diff,source-diff,file-icons,syntax-highlighting,store,pdf-renderer}.ts
   - scripts/vite-pdf-assets.ts
@@ -13,12 +13,12 @@ covers:
   - src/App.tsx
   - src/styles.css
   - src/styles/*.css
-  - tests/server/{app-resources,app-auth,resources,resources-windows-paths,runtime-reads,git-inspection,runtime-selection}.test.ts
+  - tests/server/{app-resources,app-auth,resources,resources-windows-paths,resource-reference-identity,runtime-reads,git-inspection,git-configuration,runtime-selection}.test.ts
   - tests/web/{resources,document-resources,document-image-controller,git-controller,workspace-controller,store-resources}.test.ts
   - tests/web/{document-preview,pdf-preview,resources-pane,search-match-text,changes-pane,pane-resize,rich-text}.test.tsx
   - tests/web/{source-diff,file-icons,syntax-highlighting}.test.ts
   - tests/server/html-preview.test.ts
-  - tests/browser/{filesystem-files,document-images,pdf-preview,html-preview}.spec.ts
+  - tests/browser/{filesystem-files,document-images,pdf-preview,html-preview,resource-reading}.spec.ts
 ---
 
 # Resource preview
@@ -49,7 +49,9 @@ Selecting a recent, search, or tree entry opens a fixed index/detail stack: the 
 above the preview, while Search and Recent yield space. **← project-folder** returns to Browse with
 its query, expansions, and scroll retained. The default upper boundary matches Browse after Search
 and Recent, keeping the file-content boundary stable. Files and Changes share that height, divider,
-headers, and narrow drawer layout, with no internal splitter.
+headers, and narrow drawer layout, with no internal splitter. The index header stays on the browser's
+`--bg-context` surface; the current file's path/actions bar uses `--bg-surface` to distinguish the
+reading area below. Both Files and Changes use these roles without an extra shadow or raised frame.
 
 The lower-left explorer shares the same lazy tree, expansion, selection, hidden visibility, and Git
 decoration state, but omits search. Both trees use the project basename as their heading. Opening a
@@ -77,9 +79,25 @@ traversed. Missing files invalidate cached search results. Git discovery cannot 
 
 Recognized references include structured tool paths, embedded images, CLI `<file name="…">` context,
 local Markdown links/images, `file://` and `vscode://file/` URLs, credible inline paths, common source
-extensions, and extensionless project filenames. Windows drives, URL-encoded spaces, and line/column
-suffixes are supported. HTTP, HTTPS, and mail links use ordinary external-link handling.
+extensions, and extensionless project filenames. Native Windows drives, UNC paths and either
+home/relative separator spelling are recognized without relying on a known filename extension.
+Locations accept `:line[:column]`, `#Lline` and MSVC `(line[,column])` suffixes. Quoting, a whole path
+line or a diagnostic location can delimit spaces in paths; ambiguous prose cannot authorize a
+shorter prefix. Explicit reference surfaces own their contents, rather than yielding overlapping
+partial citations. Remote URLs remain external, including paths inside their query strings.
 
+- Structured tool/file-context fields are literal native filesystem text, even if they look like a
+  URL or end with a line-number suffix. The input adapter escapes URI/diagnostic metacharacters before
+  indexing and transport. Native paths in prose/code may carry explicit diagnostic locations; actual
+  Markdown, OSC 8 and file/VS Code URLs retain their link syntax. Protocol references are link-form,
+  decoded once only after parsing that syntax. Original native labels and exact `workspacePath` values
+  never pass through the URL decoder. URI escaping has its own transport allowance without enlarging
+  the native path limit.
+- Index identity retains representation, escaping and URL authority. A literal `%20` filename and a
+  URL naming a space file remain separate, including outside-workspace citation authority; resolution
+  never chooses whichever interpretation happens to exist. Literal `#`, `?`, `%` and diagnostic-looking
+  filename bytes retain their file target. Host-returned references normalize only native separators
+  for document-relative URL joining, not the browser platform's filesystem conventions.
 - Conversation-relative references resolve against the session project directory. Document links,
   inline paths, and images resolve against the opened document's actual directory, including after
   basename recovery. URL decoding is separate from literal workspace path handling.
@@ -87,6 +105,12 @@ suffixes are supported. HTTP, HTTPS, and mail links use ordinary external-link h
   containment within the session workspace's current realpath boundary. Outside-workspace symlink
   targets need their own exact transcript reference. Git state, hidden visibility, discovery results,
   and the five visible Recent rows do not grant or revoke access.
+- Filesystem containment follows actual directory semantics, not an OS-wide case-folding assumption.
+  On POSIX and Windows, case/Unicode-normalization similarity only identifies possible aliases;
+  nonidentical prefixes need a current directory-identity proof. Distinct roots and unknown identities
+  grant no workspace authority. This boundary also confines interactive HTML asset capabilities and
+  project-file attachments. Ordinary canonical prefixes do not require per-file ancestor filesystem
+  walks.
 - If a bare filename is absent at its literal location, a complete bounded workspace scan may
   recover exactly one match. Several matches become user-selectable candidates; incomplete scans
   report unknown. Qualified paths and document-relative links do not use this recovery, and a
@@ -151,20 +175,35 @@ Browse or another context mode, and interactive HTML never inherits its retired 
 | Image, PDF, audio, video | Preview only. |
 | Unsupported binary | File information. |
 
+Native text formats include PowerShell/CMD scripts, installed POSIX shell profiles, Objective-C,
+MSBuild/project files and text property lists. Binary `bplist00` property lists stay binary; their
+bounded signature is read only through the already-authorized descriptor. Text/Markdown, HTML,
+notebook and SVG Source decode UTF-8 by default and honor UTF-8/UTF-16LE/UTF-16BE BOMs. A capped
+transfer withholds an incomplete trailing code point; its existing truncation marker remains.
+Encoding is not guessed from locale, extension or file existence. HTML reconstructed for static
+preview declares UTF-8 explicitly. Downloads retain complete original bytes, including BOM and
+line endings.
+
 The selected-file header stays above scrolling content. Its path copies the path; Download mints a
 15-second single-use origin/session/resource transfer ticket through authenticated fetch, then uses
 the browser's native download to stream complete raw bytes. Consumption rechecks current session/view
-authority and file membership; the URL carries no master/API bearer. Pending issuance is retired
+authority and file membership; the URL carries no master/API bearer. The anchor sends only origin
+referrer information so native WebKit can prove same-origin when it omits Origin/Fetch Metadata.
+Explicit conflicting origin evidence still rejects, and lack of all proof never authorizes the ticket.
+Pending issuance is retired
 when selection, session, view or transport changes. Downloads do not inherit preview byte limits or
 buffer arbitrary files in JavaScript. Dual-view files retain one reciprocal view action
 in a fixed trailing slot. Files with no alternative view omit that action. Source uses highlighting and line numbers; `:line` and `#Lline`
 open Source at that position, including for files that normally open in Preview. Files does not
 duplicate Changes with a Diff mode or add file-editing controls. Files Source and Changes share an unframed, full-width source canvas below the fixed header, without
 outer card padding; inner text spacing remains. Their line-number gutters stay visible during
-horizontal scrolling. Rendered document/media previews and loading/error states retain their padding.
+horizontal scrolling. Changes line numbers and change marks share the source line baseline despite
+smaller gutter numerals; blank/context rows retain the same gutter alignment. Rendered
+document/media previews and loading/error states retain their padding.
 Source, Markdown code blocks and
 Notebook cells highlight recognized languages up to 64 Ki characters per leaf; larger leaves retain
-text and copying without highlighting.
+text and copying without highlighting. Markdown Preview and Notebook prose follow Content text size;
+resource headers and controls keep their independent UI sizing.
 
 Host-owned Preview, Source, and Changes use a luminosity-aware neutral canvas across all botanical palettes.
 Authored backgrounds and semantic source/diff colors remain intact. Images use a neutral checkerboard
@@ -178,8 +217,9 @@ resolve-time size estimate.
 ### Documents and local images
 
 Notebook Preview statically renders Markdown cells, highlighted code, execution counts, text/error
-output, and images. Highlighting prefers `language_info.name`, then `kernelspec.language`, then recognized
-`kernelspec.name` identifiers (including versioned Python/Julia, IR, Deno/TypeScript,
+output, and images. Execution prompts share the first code/text-output baseline, including at different
+reading sizes; image and rich-document output keep their top-aligned layout. Highlighting prefers
+`language_info.name`, then `kernelspec.language`, then recognized `kernelspec.name` identifiers (including versioned Python/Julia, IR, Deno/TypeScript,
 JavaScript/Node.js, Bash, Ruby and common compiled-language kernels). Unknown names stay plain text;
 Julia is registered alongside the common syntax grammars. Kernel display names are not language authority;
 error traces retain line breaks and omit ANSI escapes. Markdown cells leave the prompt gutter empty
@@ -220,7 +260,8 @@ apply. It is not restricted to self-contained HTML.
 **Stop interaction** destroys the running frame and returns to static Preview. Source, Browse,
 file replacement/refresh, pane close, session/view or browser-transport replacement also retire
 execution and its capability. Returning to Preview does not auto-run the page. A compatible transcript
-append does not reset it. Loading can be stopped; a late start response releases its own capability
+append does not reset it. The action shows a busy indicator while authorization is pending and
+remains unpressed until authorization succeeds. Loading can be stopped; a late start response releases its own capability
 rather than activating the current selection. A failed start retains the static preview and offers
 the same explicit action again. Truncated HTML has no execution action.
 
@@ -261,6 +302,18 @@ Audio and video use native playback controls. The page media policy allows same-
 sources for the authorized preview.
 
 ## Git Changes
+
+Read-only inspection retains a closed set of data configuration: line-ending and filesystem
+settings, ignore/attribute rules, and protected directory trust. Native scope precedence includes
+repository, worktree and submodule-local overrides. Data is snapshotted once per operation; if a
+submodule needs a different conditional global-data context, inspection reports that context as
+unsupported rather than misreporting its working state.
+
+Inspection does not execute hooks, external diff/textconv or clean/process filters, nor fetch
+missing objects automatically. A comparison that needs an external conversion fails visibly rather
+than comparing unconverted bytes as a normal diff. Machine patch output is independent of color
+and display settings that alter patch grammar. This read-only interface is not a sandbox for a
+repository whose configuration is being maliciously replaced during inspection.
 
 A failed refresh retains the previous result with one visible stale-result notice, including clean
 and non-repository results. Initial failure does not claim a Git result.

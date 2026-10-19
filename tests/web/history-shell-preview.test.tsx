@@ -78,7 +78,7 @@ describe("plain shell History", () => {
     ).toContain(output);
     expect(
       screen.getByRole("button", { name: "View full shell output" }),
-    ).toHaveAttribute("data-file-path", "/tmp/logs/native shell.log");
+    ).toHaveAttribute("data-file-path", "/tmp/logs/native%20shell.log");
     expect(
       screen.getByRole("button", { name: "View full shell output" }),
     ).toHaveAttribute("title", "Preview /tmp/logs/native shell.log");

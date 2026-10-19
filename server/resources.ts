@@ -1,15 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type BigIntStats, constants } from "node:fs";
 import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
-import { homedir } from "node:os";
-import {
-  basename,
-  extname,
-  isAbsolute,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
+import { basename, extname, isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   COMPOSER_HISTORY_IMAGE_REFERENCE,
@@ -23,19 +15,22 @@ import {
 } from "../shared/contracts.js";
 import {
   collectSessionResourceReferences,
+  fileResourceReference,
   isTextFileName,
   MAX_RESOURCE_LIST_PAGE_SIZE,
+  MAX_RESOURCE_PATH_LENGTH,
   RESOURCE_LIST_INITIAL_SIZE,
   type SessionResourceListResponse,
   type SessionResourceReference,
   stripResourceLocation,
 } from "../shared/resource-references.js";
+import { filesystemRelativePath } from "./filesystem-containment.js";
 import {
   canonicalBase64DecodedSize,
   decodeCanonicalBase64,
   isSupportedPromptImageMimeType,
 } from "./image-content.js";
-import { escapesBase } from "./paths.js";
+import { resolveUserPath } from "./paths.js";
 import {
   invalidateProjectFiles,
   workspaceBasenameMatches,
@@ -209,19 +204,24 @@ function decoded(value: string): string {
   }
 }
 
-/** Resolve only filesystem syntax; authorization and realpath checks follow. */
-function exactWorkspacePath(workspacePath: string, cwd: string): string {
+/** Confine an exact selection before touching its file; realpath checks follow. */
+async function exactWorkspacePath(
+  workspacePath: string,
+  cwd: string,
+): Promise<string> {
   if (isAbsolute(workspacePath) || workspacePath.includes("\0")) {
     throw requestError("The workspace path is not valid", 400);
   }
   const root = resolve(cwd);
   const candidate = resolve(root, workspacePath);
-  if (escapesBase(relative(root, candidate))) {
+  if ((await filesystemRelativePath(root, candidate)) === null) {
     throw requestError("The workspace path is not valid", 400);
   }
   return candidate;
 }
 
+/** Resolve link-form resource syntax. Callers with literal filesystem text
+ * must first use fileResourceReference, or the exact workspacePath channel. */
 export function referencePath(referenceInput: string, cwd: string): string {
   let reference = referenceInput.trim().replace(/^@/, "");
   if (reference.startsWith("<") && reference.endsWith(">"))
@@ -244,10 +244,18 @@ export function referencePath(referenceInput: string, cwd: string): string {
     reference = decoded(reference);
   }
 
-  if (reference === "~") reference = homedir();
-  else if (reference.startsWith("~/"))
-    reference = resolve(homedir(), reference.slice(2));
-  return isAbsolute(reference) ? resolve(reference) : resolve(cwd, reference);
+  if (reference.length > MAX_RESOURCE_PATH_LENGTH)
+    throw requestError("The resource path is too long", 400);
+  return resolveUserPath(reference, cwd);
+}
+
+/** Once the Host has resolved a reference, normalize only its native path
+ * separators for document URL joining. POSIX backslashes are filename bytes;
+ * Windows backslashes are directory separators. Do not reinterpret URL syntax. */
+function descriptorReference(reference: string): string {
+  return /^(?:file:\/\/|vscode:\/\/file\/)/iu.test(reference)
+    ? reference
+    : reference.replaceAll("\\", sep === "\\" ? "/" : "%5C");
 }
 
 export function mimeTypeFor(path: string): string {
@@ -272,6 +280,22 @@ function bareName(reference: string): string | null {
   )
     return null;
   return value;
+}
+
+async function openedResourceMimeType(
+  path: string,
+  handle: FileHandle,
+): Promise<string> {
+  // Property lists may be XML/OpenStep text or a binary plist on the same
+  // current macOS system. Sniff only its bounded signature through the already
+  // authorized descriptor; never read a pathname again for classification.
+  if (extname(path).toLowerCase() === ".plist") {
+    const signature = Buffer.alloc(8);
+    const { bytesRead } = await handle.read(signature, 0, signature.length, 0);
+    if (bytesRead === 8 && signature.toString("ascii") === "bplist00")
+      return "application/octet-stream";
+  }
+  return mimeTypeFor(path);
 }
 
 function kindFor(mimeType: string): ResourceKind {
@@ -659,7 +683,7 @@ export class ResourceStore {
     let lexicalPath: string;
     try {
       lexicalPath = exactWorkspaceSelection
-        ? exactWorkspacePath(workspacePath, context.cwd)
+        ? await exactWorkspacePath(workspacePath, context.cwd)
         : referencePath(reference, context.cwd);
     } catch (error) {
       if (
@@ -680,8 +704,11 @@ export class ResourceStore {
       (cited ??= getIndex().then((index) =>
         referencedByIndex(index, context, reference),
       ));
-    const lexicalWithin = relative(resolve(context.cwd), lexicalPath);
-    const lexicalInside = Boolean(lexicalWithin) && !escapesBase(lexicalWithin);
+    const lexicalWithin = await filesystemRelativePath(
+      context.cwd,
+      lexicalPath,
+    );
+    const lexicalInside = lexicalWithin !== null && lexicalWithin !== "";
     if (!lexicalInside && (exactWorkspaceSelection || !(await isCited()))) {
       throw requestError(
         "The file is not part of this session's workspace or transcript",
@@ -722,8 +749,10 @@ export class ResourceStore {
     // authority to leave the workspace.
     const workspaceRoot = await realpath(context.cwd).catch(() => null);
     const within =
-      workspaceRoot === null ? ".." : relative(workspaceRoot, path);
-    const insideWorkspace = !escapesBase(within);
+      workspaceRoot === null
+        ? null
+        : await filesystemRelativePath(workspaceRoot, path);
+    const insideWorkspace = within !== null;
     if (
       !insideWorkspace &&
       (recovered !== null || exactWorkspaceSelection || !(await isCited()))
@@ -747,20 +776,21 @@ export class ResourceStore {
       if (details.size > BigInt(Number.MAX_SAFE_INTEGER)) {
         throw requestError("The referenced file is too large to preview", 413);
       }
-      const mimeType = mimeTypeFor(path);
-      const workspacePath =
-        within && !escapesBase(within)
-          ? sep === "\\"
-            ? within.split(sep).join("/")
-            : within
-          : undefined;
+      const mimeType = await openedResourceMimeType(path, anchor);
+      const workspacePath = within
+        ? sep === "\\"
+          ? within.split(sep).join("/")
+          : within
+        : undefined;
       const descriptor: ResourceDescriptor = {
         id: randomUUID(),
         sessionId: context.sessionId,
         viewId: context.viewId,
         // A recovery answers with the location it actually opened, so the
         // preview never claims the bare shorthand was a real path.
-        reference: recovered ?? reference,
+        reference: descriptorReference(
+          recovered ? fileResourceReference(recovered) : reference,
+        ),
         ...(workspacePath ? { workspacePath } : {}),
         name: basename(path),
         mimeType,
@@ -937,14 +967,14 @@ export class ResourceStore {
       const workspaceRoot = await realpath(context.cwd).catch(() => null);
       const within =
         workspaceRoot && resource.path
-          ? relative(workspaceRoot, resource.path)
-          : "..";
+          ? await filesystemRelativePath(workspaceRoot, resource.path)
+          : null;
       if (
         workspaceRoot &&
         workspaceRoot === resource.workspaceRoot &&
         resource.path &&
-        within &&
-        !escapesBase(within)
+        within !== null &&
+        within !== ""
       )
         return;
       // Exact selections are literal paths, never reinterpreted as citations.
