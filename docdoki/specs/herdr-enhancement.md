@@ -121,8 +121,12 @@ other applications' unreported or later launches remain outside its authority.
   Herdr server, missing agent/pane, or vanished session metadata does not establish that Pi exited.
   Keep its history read-only while ownership is unverified; an explicit reselect may connect through
   fresh discovery, never reused pane IDs from an obsolete connection. Original-process retirement
-  releases that connection. Transient transport failures do not establish retirement, and uncertain
-  input is never automatically resent.
+  releases that connection. A completed reporter rebind may also retire it: the same captured
+  producer and process birth must transfer the exact old file/session to the newly observed native
+  target. Commit that verified binding before release so report loss cannot restore an old fence.
+  Then perform ordinary occupancy admission, including any other holder. Metadata mismatch alone
+  keeps the connection unavailable. Transient transport failures do not establish retirement, and
+  uncertain input is never automatically resent.
 - Use public Herdr agent APIs for native text input, follow-up submission, interruption and status.
   Read persisted conversation content through the normal session projection. Do not treat terminal
   output as a transcript or native connections as RPC workers.
@@ -146,6 +150,11 @@ other applications' unreported or later launches remain outside its authority.
 - Use an isolated native Pi terminal to check browser submission, replies, reconnect, interruption,
   attachment delivery and draft preservation. Verify the same Pi survives Host close and rejects
   delivery after its session identity changes. Check native work does not block Host restart.
+- Keep an established native control connection across a real isolated Pi/report lifecycle
+  replacement. Gate outgoing shutdown, verify mismatch stays read-only, then retire the old
+  connection only after native startup publishes the matching rebind. Cover report loss and Host
+  reconstruction after committing the new binding. The occupancy/native integration suites own
+  this combined check.
 - Measure bridge overhead separately from model work, with the environment and sample scope recorded.
 
 Herdr's [socket API](https://herdr.dev/docs/socket-api/) defines the argv layout and metadata interfaces.

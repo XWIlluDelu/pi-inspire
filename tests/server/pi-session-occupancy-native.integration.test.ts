@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { expect, it, vi } from "vitest";
 import {
-  piActivityDirectory,
   type PiActivityRecord,
+  piActivityDirectory,
 } from "../../docs/examples/session-activity.js";
 import { AttachmentStore } from "../../server/attachments.js";
+import { HerdrNativeSession } from "../../server/herdr-native-session.js";
+import { captureHerdrProcessIdentity } from "../../server/herdr-process-group.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
 import { PiSessionOccupancy } from "../../server/pi-session-occupancy.js";
 import { RuntimeController } from "../../server/runtime.js";
@@ -18,6 +20,7 @@ import {
   nativePiWorkspace,
   stubNativePiEnvironment,
 } from "./fixtures/native-pi.js";
+import { FakeRpc } from "./fixtures/runtime.js";
 
 it("fences a real independent RPC owner through idle, work and reload, then releases on native session replacement", async () => {
   const workspace = await nativePiWorkspace("inspire-native-occupancy-", {
@@ -114,9 +117,9 @@ it("fences a real independent RPC owner through idle, work and reload, then rele
       resolve("tests/fixtures/pi-session-shutdown-extension.ts"),
     ],
   });
-  const create = vi.fn(() => {
-    throw new Error("Must not start a second Pi");
-  });
+  const create = vi.fn(
+    (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+  );
   const guard = new PiSessionOccupancy();
   const attachments = new AttachmentStore(
     join(workspace.root, "uploads"),
@@ -178,6 +181,51 @@ it("fences a real independent RPC owner through idle, work and reload, then rele
       guard.assertWritable(sessionId, sessionFile),
     ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
 
+    const identity = await captureHerdrProcessIdentity(pid!);
+    expect(identity).not.toBeNull();
+    let nativeSessionId = sessionId;
+    const native = new HerdrNativeSession(
+      {
+        nativeAgentRequest: async () => ({
+          agent: {
+            agent: "pi",
+            pane_id: "fixture-pane",
+            agent_status: "idle",
+            agent_session: {
+              source: "herdr:pi",
+              agent: "pi",
+              kind: "id",
+              value: nativeSessionId,
+            },
+          },
+        }),
+        inspectPaneProcess: async () => ({
+          paneId: "fixture-pane",
+          foregroundProcessGroupId: pid!,
+          foregroundProcesses: [{ pid: pid!, name: "pi", argv: ["pi"] }],
+        }),
+      },
+      {
+        serverId: "fixture-server",
+        paneId: "fixture-pane",
+        pid: pid!,
+        processIdentity: identity!,
+      },
+      sessionId,
+      sessionFile,
+      await guard.observeBinding(pid!, sessionId, sessionFile),
+    );
+    const closed = vi.spyOn(native, "close");
+    runtime.setExternalSessionConnector(async () =>
+      nativeSessionId === sessionId ? native : null,
+    );
+    await runtime.openSession(sessionId);
+    await vi.waitFor(async () =>
+      expect((await runtime.snapshot()).active?.readOnlyReason).toBeUndefined(),
+    );
+    expect(create).not.toHaveBeenCalled();
+    // Herdr can expose the destination before outgoing shutdown has drained.
+    nativeSessionId = otherId;
     const switching = external.request({
       type: "switch_session",
       sessionPath: otherFile,
@@ -192,9 +240,12 @@ it("fences a real independent RPC owner through idle, work and reload, then rele
         guard.assertWritable(sessionId, sessionFile),
       ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
       await runtime.openSession(sessionId);
-      expect((await runtime.snapshot()).active?.readOnlyReason).toBe(
-        "external-active",
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot()).active?.readOnlyReason).toBe(
+          "external-unavailable",
+        ),
       );
+      expect(closed).not.toHaveBeenCalled();
       expect(create).not.toHaveBeenCalled();
     } finally {
       await writeFile(shutdownProceed, "continue");
@@ -219,7 +270,14 @@ it("fences a real independent RPC owner through idle, work and reload, then rele
     await expect(
       guard.assertWritable(otherId, otherFile),
     ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
-    expect(create).not.toHaveBeenCalled();
+    const occupancy = vi.spyOn(guard, "assertWritable");
+    await vi.waitFor(async () => {
+      await runtime.openSession(sessionId);
+      expect(create).toHaveBeenCalledOnce();
+    });
+    expect(closed).toHaveBeenCalledOnce();
+    expect(occupancy).toHaveBeenCalledWith(sessionId, sessionFile);
+    expect(external.pid).toBe(pid);
     await external.stop();
     await expect(
       guard.assertWritable(otherId, otherFile),

@@ -1,12 +1,12 @@
 import {
+  type ComposerHistoryEntry,
   isBusyRunState,
   MAX_PROMPT_CHARS,
-  type ComposerHistoryEntry,
   type PromptRequest,
 } from "../shared/contracts.js";
 import {
-  addAttachmentContext,
   type AttachmentStore,
+  addAttachmentContext,
   resolveProjectFiles,
 } from "./attachments.js";
 import type {
@@ -62,9 +62,34 @@ export class RuntimeExternalSessions {
   async connect(slot: RuntimeSlot): Promise<boolean> {
     if (this.closed || slot.process || !slot.sessionPath) return false;
     const previous = this.connections.get(slot);
-    if (previous && !previous.interrupted) return true;
+    if (previous) {
+      try {
+        const state = await previous.native.read();
+        if (this.closed || !this.host.current(slot) || slot.process)
+          return false;
+        if (state) {
+          previous.interrupted = false;
+          this.setUnavailable(slot, false);
+          this.applyState(slot, previous, state);
+          return true;
+        }
+        this.detach(slot);
+      } catch {
+        previous.interrupted = true;
+        this.setUnavailable(slot, true);
+      }
+    }
+    const ownerUnavailable = () =>
+      requestError(
+        "The original Pi connection is unavailable. Its ownership has not been released.",
+        409,
+        { code: "SESSION_OWNER_UNAVAILABLE" },
+      );
     const native = await this.connector(slot.id, slot.sessionPath);
-    if (native === null) return Boolean(previous);
+    if (native === null) {
+      if (this.connections.has(slot)) throw ownerUnavailable();
+      return false;
+    }
     if (this.closed || !this.host.current(slot) || slot.process) {
       native.close();
       return false;
@@ -93,7 +118,8 @@ export class RuntimeExternalSessions {
     }
     if (!state || this.closed || !this.host.current(slot) || slot.process) {
       native.close();
-      return Boolean(previous);
+      if (this.connections.has(slot)) throw ownerUnavailable();
+      return false;
     }
     const connection: Connection = {
       native,
@@ -164,13 +190,14 @@ export class RuntimeExternalSessions {
         this.detach(slot);
         return;
       }
-      this.setUnavailable(slot, false);
       if (!state) {
         this.detach(slot);
+        this.setUnavailable(slot, true);
         slot.runState = slot.conflict ? "conflict" : "idle";
         this.host.emit(slot, { type: "runtime_ready" });
         return;
       }
+      this.setUnavailable(slot, false);
       this.applyState(slot, connection, state);
       // Background history may be intentionally reclaimed. Keep observing Pi
       // without rebuilding it; retained projections use their version fast path.

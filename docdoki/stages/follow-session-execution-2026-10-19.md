@@ -50,6 +50,10 @@ interfaces and process evidence, not a particular external host's control API.
   read-only and never constructs a replacement worker. Native resource reload keeps one report
   and the same PID. A later real shutdown hook is gated before appending its final custom entry:
   admission stays fenced during that hook, and only subsequent native startup releases the old file.
+  The replacement check also holds an established Herdr-native connection: early destination
+  metadata leaves it unavailable, completed reporter rebinding retires it, and ordinary occupancy
+  admission then allows the old session. `pi-session-occupancy-native.integration.test.ts` uses a
+  real independent Pi and reporter with a control-client double, not production sessions.
 - The SDK disposal regression was observed failing before the fix. The real SDK disposal method,
   with a controlled later hook and busy session double, now keeps admission blocked both before
   disposal and afterward while the process is alive. Activity stop hints never authorize a writer.
@@ -60,6 +64,9 @@ interfaces and process evidence, not a particular external host's control API.
   Serialized observation/commit now preserves the newer holder across that sequence.
 - Presence regressions cover stale/legacy reports, deletion/corruption, Host reconstruction,
   completed rebind, current/legacy stop hints, PID retirement/reuse, path identity, and metadata/directory failure.
+  A verified control-connection rebind commits its new retained binding before retirement; losing
+  the report and reconstructing the Host cannot restore the old binding. A separate holder still
+  blocks admission after that connection retires.
 - Runtime regressions cover cold settings admission, a second pre-start check, release/reselection,
   and preserving existing Herdr control. UI checks retain history and inspection while withholding
   execution controls, with recovery on explicit reselect.

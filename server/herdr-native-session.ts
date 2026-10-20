@@ -6,9 +6,9 @@ import type {
 } from "./external-session.js";
 import type { HerdrClient } from "./herdr-client.js";
 import { HerdrApiError, HerdrServerChangedError } from "./herdr-control.js";
+import { herdrProcessIsLive } from "./herdr-process-group.js";
 import type { HerdrNativeWriter } from "./herdr-worker-observer.js";
 import { requestError } from "./request-error.js";
-import { herdrProcessIsLive } from "./herdr-process-group.js";
 
 type NativeClient = Pick<
   HerdrClient,
@@ -32,6 +32,10 @@ export class HerdrNativeSession implements ExternalSessionConnection {
     private readonly writer: HerdrNativeWriter,
     private readonly sessionId: string,
     private readonly sessionFile: string,
+    private readonly hasCompletedRebind?: (target: {
+      kind: "id" | "path";
+      value: string;
+    }) => Promise<boolean>,
   ) {}
 
   async read(): Promise<ExternalSessionState | null> {
@@ -45,6 +49,7 @@ export class HerdrNativeSession implements ExternalSessionConnection {
       const state = await this.readCurrent();
       if (
         !state &&
+        !this.closed &&
         this.writer.processIdentity &&
         (await herdrProcessIsLive(this.writer.processIdentity))
       )
@@ -81,8 +86,12 @@ export class HerdrNativeSession implements ExternalSessionConnection {
     if (!agent.agent_session) return null;
     const ref = record(agent.agent_session);
     if (ref.source !== "herdr:pi" || ref.agent !== "pi") return null;
-    if (ref.kind === "id") {
-      if (ref.value !== this.sessionId) return null;
+    if (ref.kind === "id" && typeof ref.value === "string") {
+      if (ref.value !== this.sessionId) {
+        if (await this.hasCompletedRebind?.({ kind: "id", value: ref.value }))
+          this.closed = true;
+        return null;
+      }
     } else if (
       ref.kind === "path" &&
       typeof ref.value === "string" &&
@@ -93,8 +102,13 @@ export class HerdrNativeSession implements ExternalSessionConnection {
           if (error.code === "ENOENT") return resolve(path);
           throw error;
         });
-      if ((await canonical(ref.value)) !== (await canonical(this.sessionFile)))
+      if (
+        (await canonical(ref.value)) !== (await canonical(this.sessionFile))
+      ) {
+        if (await this.hasCompletedRebind?.({ kind: "path", value: ref.value }))
+          this.closed = true;
         return null;
+      }
     } else return null;
     const process = await this.client.inspectPaneProcess(
       this.writer.serverId,
