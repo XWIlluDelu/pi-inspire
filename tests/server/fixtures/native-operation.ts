@@ -27,6 +27,8 @@ import type {
   BranchTreeResponse,
   HostNativeCommandRequest,
   HostNativeCommandResponse,
+  PendingOperationIdentity,
+  PendingOperationRequest,
   PendingReadRequest,
   PendingRecovery,
   PromptAcceptedResponse,
@@ -64,8 +66,15 @@ interface BrowserClient {
     request: HostNativeCommandRequest,
   ): Promise<HostNativeCommandResponse>;
   pendingText(request: PendingReadRequest): Promise<{ text: string }>;
-  recoverPending(sessionId: string): Promise<PendingRecovery>;
-  abort(sessionId: string): Promise<PendingRecovery>;
+  recoverPending(
+    sessionId: string,
+    identity: PendingOperationIdentity,
+  ): Promise<PendingRecovery>;
+  abort(
+    sessionId: string,
+    identity: PendingOperationIdentity,
+  ): Promise<PendingRecovery>;
+  pendingOperation(request: PendingOperationRequest): Promise<PendingRecovery>;
   clearPending(sessionId: string): Promise<{ ok: boolean }>;
   attachmentPreview(
     id: string,
@@ -462,7 +471,17 @@ export async function fixture(
   const { createApi } = (await import(browserModulePath)) as {
     createApi(token: string): BrowserClient;
   };
-  const api = createApi(TOKEN);
+  const client = createApi(TOKEN);
+  const operation = () => ({
+    operationId: randomUUID(),
+    authorityId: application.authorityId,
+  });
+  const api = {
+    ...client,
+    recoverPending: (id: string, identity = operation()) =>
+      client.recoverPending(id, identity),
+    abort: (id: string, identity = operation()) => client.abort(id, identity),
+  };
   await runtime.openSession(sessionId);
   await vi.waitFor(
     async () => {

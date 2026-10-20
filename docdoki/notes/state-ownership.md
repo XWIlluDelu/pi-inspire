@@ -51,6 +51,12 @@ A failed readback must not leave cached old configuration or turn a successful s
 Monotonic catalog generations prevent older reads from refilling invalidated caches.
 See `server/model-settings-routes.ts` and [[model-settings]].
 
+Pending dequeue is also a handoff, not just a mutation acknowledgement. Retain its exact returned
+text and image handles under the operation identity before returning HTTP; otherwise a successful
+clear followed by a lost response leaves nothing to retry. Reconnect observes that receipt on a
+new observer rather than joining a blackholed mutation promise. See [[session-transport]],
+`server/pending-operation-receipts.ts` and `src/controllers/pending-recovery-controller.ts`.
+
 ## Component and module ownership
 
 Split modules where state, transport or lifecycle ownership changes. A facade that only forwards
