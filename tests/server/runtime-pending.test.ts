@@ -82,6 +82,220 @@ beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
 
 describe("RuntimeController Pending input and recovery", () => {
+  it.each(["recover", "abort"] as const)(
+    "includes original Host-deferred images in %s, including image-only input",
+    async (action) => {
+      const attachments = trackedAttachmentStore();
+      const f = schedulingRuntime({ attachments });
+      try {
+        await f.runtime.openSession("a");
+        await waitForReady(f.runtime);
+        const image = await attachments.add(
+          upload("original.png", "image/png"),
+        );
+        f.worker.emit("event", { type: "compaction_start", reason: "auto" });
+        f.worker.responseOverrides.set("get_state", () => ({
+          sessionId: "a",
+          isCompacting: true,
+          isStreaming: false,
+        }));
+        const delivery = f.runtime
+          .prompt({
+            sessionId: "a",
+            message: "",
+            behavior: "followUp",
+            attachmentIds: [image.id],
+          })
+          .catch((error) => error);
+        await vi.waitFor(async () =>
+          expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(
+            1,
+          ),
+        );
+        const result =
+          action === "recover"
+            ? await f.runtime.recoverPending("a")
+            : await f.runtime.abort("a");
+        expect(result).toMatchObject({
+          steering: [],
+          followUp: [""],
+          attachments: [image],
+        });
+        expect(await delivery).toMatchObject({
+          code: "PROMPT_RECOVERED",
+          recoveredAttachments: [image],
+        });
+        expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(0);
+        expect(
+          (await attachments.imagePreview(image.id)).bytes.length,
+        ).toBeGreaterThan(0);
+      } finally {
+        await f.runtime.close();
+      }
+    },
+  );
+
+  it("stages recalled Host-deferred images for both receipt observers", async () => {
+    const attachments = trackedAttachmentStore();
+    let worker!: FakeRpc;
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      attachments,
+      (options) => {
+        worker = new FakeRpc(options);
+        return worker as unknown as PiRpcProcess;
+      },
+      async (session) => {
+        const snapshot = await previewSnapshot(session);
+        snapshot.transcriptPage.messages = [
+          {
+            role: "user",
+            timestamp: 1,
+            content: [
+              {
+                type: "image",
+                mimeType: "image/png",
+                data: Buffer.from("saved pixels").toString("base64"),
+              },
+            ],
+          },
+        ];
+        return new PreviewProjection(session.id, snapshot);
+      },
+    );
+    try {
+      await runtime.openSession("a");
+      await waitForReady(runtime);
+      worker.emit("event", { type: "compaction_start", reason: "auto" });
+      worker.responseOverrides.set("get_state", () => ({
+        sessionId: "a",
+        isCompacting: true,
+        isStreaming: false,
+      }));
+      const snapshot = await runtime.snapshot();
+      const delivery = runtime
+        .prompt({
+          sessionId: "a",
+          message: "",
+          behavior: "followUp",
+          historyArtifacts: {
+            viewId: snapshot.active!.transcriptPage.viewId,
+            incarnation: snapshot.active!.transcriptPage.incarnation ?? null,
+            effectiveLeafId: null,
+            imageReferences: ["pi-embedded://0/0"],
+            fileReferences: [],
+          },
+        })
+        .catch((error) => error);
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
+      );
+      const recovered = await runtime.recoverPending("a");
+      expect(recovered.attachments).toHaveLength(1);
+      expect(
+        (
+          await attachments.imagePreview(recovered.attachments![0]!.id)
+        ).bytes.toString(),
+      ).toBe("saved pixels");
+      expect(await delivery).toMatchObject({
+        code: "PROMPT_RECOVERED",
+        recoveredAttachments: recovered.attachments,
+      });
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("keeps Host-held input queued if image handoff preparation fails", async () => {
+    const attachments = trackedAttachmentStore();
+    const f = schedulingRuntime({ attachments });
+    try {
+      await f.runtime.openSession("a");
+      await waitForReady(f.runtime);
+      const image = await attachments.add(upload("original.png", "image/png"));
+      f.worker.emit("event", { type: "compaction_start", reason: "auto" });
+      f.worker.responseOverrides.set("get_state", () => ({
+        sessionId: "a",
+        isCompacting: true,
+        isStreaming: false,
+      }));
+      const delivery = f.runtime
+        .prompt({
+          sessionId: "a",
+          message: "caption",
+          behavior: "followUp",
+          attachmentIds: [image.id],
+        })
+        .catch((error) => error);
+      await vi.waitFor(async () =>
+        expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
+      );
+      const metadata = vi
+        .spyOn(attachments, "pendingImageAttachments")
+        .mockImplementationOnce(() => {
+          throw new Error("image unavailable");
+        });
+      await expect(f.runtime.recoverPending("a")).rejects.toThrow(
+        "image unavailable",
+      );
+      expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(1);
+      metadata.mockRestore();
+      expect(await f.runtime.recoverPending("a")).toMatchObject({
+        followUp: ["caption"],
+        attachments: [image],
+      });
+      expect(await delivery).toMatchObject({
+        code: "PROMPT_RECOVERED",
+        recoveredAttachments: [image],
+      });
+    } finally {
+      await f.runtime.close();
+    }
+  });
+
+  it("still retires Stop's worker if Host image preparation cannot complete", async () => {
+    const attachments = trackedAttachmentStore();
+    const f = schedulingRuntime({ attachments });
+    try {
+      await f.runtime.openSession("a");
+      await waitForReady(f.runtime);
+      const image = await attachments.add(upload("original.png", "image/png"));
+      f.worker.emit("event", { type: "compaction_start", reason: "auto" });
+      f.worker.responseOverrides.set("get_state", () => ({
+        sessionId: "a",
+        isCompacting: true,
+        isStreaming: false,
+      }));
+      const delivery = f.runtime
+        .prompt({
+          sessionId: "a",
+          message: "caption",
+          behavior: "followUp",
+          attachmentIds: [image.id],
+        })
+        .catch((error) => error);
+      await vi.waitFor(async () =>
+        expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
+      );
+      vi.spyOn(attachments, "pendingImageAttachments").mockImplementation(
+        () => {
+          throw new Error("image unavailable");
+        },
+      );
+      expect(await f.runtime.abort("a")).toMatchObject({
+        error: "image unavailable",
+      });
+      expect(f.worker.stops).toBe(1);
+      expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(0);
+      expect(await delivery).toBeInstanceOf(Error);
+      expect(
+        (await attachments.imagePreview(image.id)).bytes.length,
+      ).toBeGreaterThan(0);
+    } finally {
+      await f.runtime.close();
+    }
+  });
+
   it("keeps observed pending input across reconnect and settlement, clearing it only on queue removal or worker replacement", async () => {
     const store = trackedAttachmentStore();
     const f = schedulingRuntime({ attachments: store });
@@ -1108,6 +1322,34 @@ describe("RuntimeController Pending input and recovery", () => {
     } finally {
       clearGate.resolve();
       await runtime.close();
+    }
+  });
+
+  it("returns already recovered input even if subsequent Stop retirement fails", async () => {
+    const f = schedulingRuntime();
+    try {
+      await f.runtime.openSession("a");
+      await waitForReady(f.runtime);
+      f.worker.emit("event", { type: "agent_start" });
+      f.worker.responseOverrides.set("clear_queue", () => ({
+        steering: ["keep this handoff"],
+        followUp: [],
+      }));
+      f.worker.responseOverrides.set("abort", () => {
+        throw new Error("abort transport lost");
+      });
+      const stop = vi
+        .spyOn(f.worker, "stop")
+        .mockRejectedValueOnce(new Error("retirement unconfirmed"));
+      await expect(f.runtime.abort("a")).resolves.toMatchObject({
+        steering: ["keep this handoff"],
+        followUp: [],
+        error: "retirement unconfirmed",
+      });
+      stop.mockRestore();
+    } finally {
+      await f.worker.stop();
+      await f.runtime.close().catch(() => {});
     }
   });
 

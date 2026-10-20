@@ -107,6 +107,8 @@ export class ComposerController {
   >();
   private readonly uploads = new Map<string, AbortController>();
   private requestEpoch = 0;
+  private recoveryAuthorityId: string | null = null;
+  private readonly appliedRecoveryImages = new Map<string, Set<string>>();
 
   constructor(private readonly host: ComposerControllerHost) {}
 
@@ -178,6 +180,10 @@ export class ComposerController {
    * Include hidden partitions and saved/failed drafts so restoring them cannot
    * resurrect a ready-looking handle from a retired Host. */
   reconcileAuthority(authorityId: string): void {
+    if (this.recoveryAuthorityId !== authorityId) {
+      this.appliedRecoveryImages.clear();
+      this.recoveryAuthorityId = authorityId;
+    }
     let changed = false;
     const reconcile = (items: PendingAttachment[]): PendingAttachment[] =>
       items.map((item) => {
@@ -221,29 +227,57 @@ export class ComposerController {
     sessionId: string,
     attachments: UploadedAttachment[],
     authorityId: string | null,
+    recoveryId?: string,
   ): void {
+    if (
+      recoveryId &&
+      attachments.length &&
+      authorityId === this.host.authorityId()
+    ) {
+      const key = JSON.stringify([authorityId, sessionId, recoveryId]);
+      const applied = this.appliedRecoveryImages.get(key) ?? new Set<string>();
+      this.appliedRecoveryImages.set(key, applied);
+      attachments = attachments.filter((item) => {
+        if (applied.has(item.id)) return false;
+        applied.add(item.id);
+        return true;
+      });
+      if (!attachments.length) return;
+    }
     const composer = this.forSession(sessionId);
     // Recovery merges into the newest saved draft, not a temporary history
     // preview. Exiting that preview must not discard returned upload handles.
     this.restoreHistoryDraft(composer);
     const api = this.host.api();
     const currentAuthority = this.host.authorityId();
-    const pending: PendingAttachment[] = attachments.map((item) => ({
-      localId: globalThis.crypto.randomUUID(),
-      fileName: item.fileName,
-      mimeType: item.mimeType,
-      size: item.size,
-      kind: item.kind,
-      uploadedId: item.id,
-      uploadedAuthorityId: authorityId ?? undefined,
-      previewLoading: item.kind === "image",
-      status: authorityId === currentAuthority ? "ready" : "error",
-      ...(authorityId === currentAuthority
-        ? {}
-        : {
-            error: "The Host changed; remove this attachment and add it again",
-          }),
-    }));
+    const known = new Set(
+      composer.attachments
+        .filter((item) => item.uploadedAuthorityId === authorityId)
+        .map((item) => item.uploadedId),
+    );
+    const pending: PendingAttachment[] = attachments
+      .filter((item) => {
+        if (known.has(item.id)) return false;
+        known.add(item.id);
+        return true;
+      })
+      .map((item) => ({
+        localId: globalThis.crypto.randomUUID(),
+        fileName: item.fileName,
+        mimeType: item.mimeType,
+        size: item.size,
+        kind: item.kind,
+        uploadedId: item.id,
+        uploadedAuthorityId: authorityId ?? undefined,
+        previewLoading: item.kind === "image",
+        status: authorityId === currentAuthority ? "ready" : "error",
+        ...(authorityId === currentAuthority
+          ? {}
+          : {
+              error:
+                "The Host changed; remove this attachment and add it again",
+            }),
+      }));
     if (pending.length) touchSessionDraft(sessionId);
     composer.attachments = [...pending, ...composer.attachments];
     this.publish(sessionId);
@@ -575,20 +609,35 @@ export class ComposerController {
         composer.unknownDeliveries.set(signature, delivery);
       else composer.unknownDeliveries.delete(signature);
       if (error instanceof ApiError && error.code === "PROMPT_RECOVERED") {
-        // The recovery receipt owns text merging. Keep Host-held artifacts
-        // with that same session instead of restoring the message twice.
+        // Both observers share a handoff. A late observer cannot undo a later
+        // removal or send, even after the draft no longer contains the handle.
+        if (error.recoveredAttachments) {
+          this.restoreStagedAttachments(
+            sessionId,
+            error.recoveredAttachments,
+            authorityId,
+            error.recoveryId,
+          );
+          for (const item of record.attachments)
+            if (item.kind === "image" && item.previewUrl)
+              URL.revokeObjectURL(item.previewUrl);
+        }
         composer.attachments = [
-          ...record.attachments.map((item) =>
-            item.recalledArtifact?.preview
-              ? {
-                  ...item,
-                  recalledArtifact: {
-                    ...item.recalledArtifact,
-                    preview: false,
-                  },
-                }
-              : item,
-          ),
+          ...record.attachments
+            .filter(
+              (item) => !error.recoveredAttachments || item.kind !== "image",
+            )
+            .map((item) =>
+              item.recalledArtifact?.preview
+                ? {
+                    ...item,
+                    recalledArtifact: {
+                      ...item.recalledArtifact,
+                      preview: false,
+                    },
+                  }
+                : item,
+            ),
           ...composer.attachments,
         ];
         composer.projectFiles = [

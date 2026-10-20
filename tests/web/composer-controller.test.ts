@@ -14,7 +14,14 @@ function createHarness(sessionId = "session-a") {
   const deleteAttachment = vi.fn().mockResolvedValue(undefined);
   let generation = 0;
   let authorityId = "11111111-1111-4111-8111-111111111111";
-  let api = { prompt, uploadAttachments, deleteAttachment } as unknown as Api;
+  let api = {
+    prompt,
+    uploadAttachments,
+    deleteAttachment,
+    attachmentPreview: vi
+      .fn()
+      .mockRejectedValue(new Error("Preview unavailable")),
+  } as unknown as Api;
   const patch = vi.fn();
   const notify = vi.fn();
   const notifyVisible = vi.fn();
@@ -66,6 +73,44 @@ const acceptedPrompt: PromptAcceptedResponse = {
 };
 
 describe("ComposerController", () => {
+  it("deduplicates each image in a handoff after a draft is removed, not the handle forever", () => {
+    const f = createHarness();
+    const authority = "11111111-1111-4111-8111-111111111111";
+    f.controller.reconcileAuthority(authority);
+    const image = (id: string) => ({
+      id,
+      fileName: id + ".png",
+      mimeType: "image/png",
+      size: 4,
+      kind: "image" as const,
+    });
+    f.controller.restoreStagedAttachments(
+      "session-a",
+      [image("a")],
+      authority,
+      "first",
+    );
+    f.controller.removeAttachment(f.slice().attachments[0]!.localId);
+    expect(f.slice().attachments).toEqual([]);
+    f.controller.restoreStagedAttachments(
+      "session-a",
+      [image("a"), image("b")],
+      authority,
+      "first",
+    );
+    expect(f.slice().attachments.map((item) => item.uploadedId)).toEqual(["b"]);
+    f.controller.restoreStagedAttachments(
+      "session-a",
+      [image("a")],
+      authority,
+      "next",
+    );
+    expect(f.slice().attachments.map((item) => item.uploadedId)).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+
   it("hands off two independent operations and retains a failed first input without replacing later work", async () => {
     const first = deferred<PromptAcceptedResponse>();
     const second = deferred<PromptAcceptedResponse>();

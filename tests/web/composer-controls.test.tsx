@@ -16,6 +16,7 @@ import {
   deferred,
   FakeWebSocket,
   type RouteResponse,
+  TEST_HOST_AUTHORITY,
 } from "./helpers";
 
 let host: Awaited<ReturnType<typeof createComposerFixture>>;
@@ -134,7 +135,11 @@ describe("composer-adjacent status and queued controls", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Abort running task" }));
     await waitFor(() =>
-      expect(host.abortBodies.at(-1)).toEqual({ sessionId: "s1" }),
+      expect(host.abortBodies.at(-1)).toEqual({
+        sessionId: "s1",
+        authorityId: TEST_HOST_AUTHORITY,
+        operationId: expect.any(String),
+      }),
     );
 
     act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));

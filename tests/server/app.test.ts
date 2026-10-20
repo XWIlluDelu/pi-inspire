@@ -1,5 +1,5 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-
 import { dirname, join, resolve } from "node:path";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -380,7 +380,11 @@ describe("typed Host API", () => {
     const recovered = await request(application.server)
       .post("/api/pending/recover")
       .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId: "mock-active" })
+      .send({
+        sessionId: "mock-active",
+        operationId: randomUUID(),
+        authorityId: application.authorityId,
+      })
       .expect(200);
     expect(recovered.body).toEqual({
       steering: ["complete"],

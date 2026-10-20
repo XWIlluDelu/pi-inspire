@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +15,106 @@ import {
 afterEach(disposeOperationFixture);
 
 describe("native Pending recovery", () => {
+  it.each(["recover", "abort"] as const)(
+    "reclaims %s text and image ownership after a lost HTTP result without touching later native input",
+    async (action) => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      try {
+        const f = await fixture(false, 0, gate);
+        await f.api.prompt(f.delivery("Keep the synthetic run active."));
+        await vi.waitFor(() => expect(f.modelRequests).toHaveLength(1));
+        const bytes = Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+          "base64",
+        );
+        const image = await f.attachments.add({
+          originalname: "pending.png",
+          mimetype: "image/png",
+          size: bytes.length,
+          buffer: bytes,
+        } as Express.Multer.File);
+        await f.api.prompt({
+          ...f.delivery("original caption"),
+          behavior: "followUp",
+          attachmentIds: [image.id],
+        });
+        const commands = vi.spyOn(f.workers[0]!, "request");
+        const identity = {
+          operationId: randomUUID(),
+          authorityId: f.application.authorityId,
+        };
+        const fetch = globalThis.fetch;
+        let lost = false;
+        vi.stubGlobal("fetch", (async (input, init) => {
+          const response = await fetch(input, init);
+          if (
+            !lost &&
+            String(input).endsWith(
+              action === "recover"
+                ? "/api/pending/recover"
+                : "/api/control/abort",
+            )
+          ) {
+            lost = true;
+            throw new TypeError(
+              "fixture response connection lost after commit",
+            );
+          }
+          return response;
+        }) satisfies typeof fetch);
+        const mutate = () =>
+          action === "recover"
+            ? f.api.recoverPending(f.sessionId, identity)
+            : f.api.abort(f.sessionId, identity);
+        await expect(mutate()).rejects.toThrow();
+        expect(lost).toBe(true);
+        if (action === "abort") {
+          await f.api.prompt(f.delivery("A later independent run."));
+          await vi.waitFor(() => expect(f.modelRequests).toHaveLength(2));
+        }
+        await f.api.prompt({
+          ...f.delivery("later input stays queued"),
+          behavior: "followUp",
+        });
+        const recovered = await f.api.pendingOperation({
+          ...identity,
+          sessionId: f.sessionId,
+          action,
+        });
+        expect(recovered).toEqual({
+          steering: [],
+          followUp: ["original caption"],
+          attachments: [image],
+          authorityId: identity.authorityId,
+        });
+        expect(await mutate()).toEqual(recovered);
+        expect(
+          Buffer.from(
+            await (await f.api.attachmentPreview(image.id)).arrayBuffer(),
+          ),
+        ).toEqual(bytes);
+        expect((await f.runtime.snapshot()).pendingQueues?.followUp).toEqual([
+          expect.objectContaining({ textPreview: "later input stays queued" }),
+        ]);
+        expect((await f.runtime.snapshot()).runState).toBe("running");
+        expect(
+          commands.mock.calls.filter(
+            ([command]) => command.type === "clear_queue",
+          ),
+        ).toHaveLength(1);
+        expect(
+          commands.mock.calls.filter(([command]) => command.type === "abort"),
+        ).toHaveLength(action === "abort" ? 1 : 0);
+      } finally {
+        release?.();
+      }
+    },
+    30_000,
+  );
+
   it("recovers complete queued text without stopping and Stop never runs pending input", async () => {
     let releaseModel!: () => void;
     const modelGate = new Promise<void>((resolveModel) => {
