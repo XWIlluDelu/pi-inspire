@@ -33,6 +33,7 @@ and untracked.
 
 | State | Work |
 | --- | --- |
+| Implemented | Bounded Git source projection keeps edits reachable beyond long unchanged prefixes, with independent syntax context and explicit context limits. [[workspace-layout]] records the contract and real-Git/Host regression. |
 | Implemented | Run-scoped reclaimable Pending handoffs with Host-held image transfer that preserves later draft actions, project-bound terminal intent, verified native-connection rebind retirement, run-level cancellation, scope-bound digest confirmation and view-bound Prompt Map navigation. Contracts and regression evidence are in [[composer]], [[terminal]], [[herdr-enhancement]], [[conversation]] and [[session-transport]]. |
 | Implemented | Native Herdr continuity and process-bound external-session presence fencing, with independent busy/input activity reporting. [[follow-session-execution-2026-10-19]] records verification and the separate Host/Pi activation boundary. |
 | Implemented | Ready-owned development pairing, native terminal clipboard/interrupt modifiers and focus entry/exit through existing controls. [[platform-compatibility#Development launch and terminal input]] records native startup and browser coverage. |
