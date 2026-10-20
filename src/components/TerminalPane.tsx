@@ -50,7 +50,7 @@ import {
   hasTerminalInsertion,
   subscribeTerminalActions,
   subscribeTerminalInsertion,
-  type TerminalUiAction,
+  type TerminalActionIntent,
 } from "../terminal-actions";
 import { TerminalCatalogController } from "../terminal-catalog";
 import {
@@ -184,7 +184,7 @@ export const TerminalPane = memo(function TerminalPane({
   const menuGroupName = useId();
   const renamePendingRef = useRef(false);
   const terminalActionHandlerRef = useRef<
-    (action: TerminalUiAction) => boolean
+    (intent: TerminalActionIntent) => boolean
   >(() => false);
 
   useEffect(() => {
@@ -829,7 +829,13 @@ export const TerminalPane = memo(function TerminalPane({
     void reorder(fromId, targetId, position);
   };
 
-  terminalActionHandlerRef.current = (action) => {
+  terminalActionHandlerRef.current = ({ action, projectCwd }) => {
+    if (
+      projectCwd !== cwd ||
+      !catalogController.active ||
+      (!launchTarget && sessionCwd !== lastSessionCwdRef.current)
+    )
+      return false;
     if (action === "take-control")
       return activeTerminal ? activeTerminal.status !== "running" : false;
     if (action === "new") {

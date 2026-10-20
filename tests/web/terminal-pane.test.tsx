@@ -131,6 +131,47 @@ afterEach(() => {
 });
 
 describe("terminal shortcut input ownership", () => {
+  it.each(["close", "restart"] as const)(
+    "never carries a targetless %s from project A into B before any request",
+    async (action) => {
+      api.terminals.mockImplementation(async (cwd?: string) =>
+        catalog(cwd === "/B" ? [terminal("B shell", "/B")] : []),
+      );
+      const view = render(<TerminalPane cwd="/A" />);
+      await act(async () => {});
+      act(() => queueTerminalAction(action, "/A"));
+      expect(api.removeTerminal).not.toHaveBeenCalled();
+      expect(api.restartTerminal).not.toHaveBeenCalled();
+      view.rerender(<TerminalPane cwd="/B" />);
+      await screen.findByRole("button", { name: "B shell", pressed: true });
+      expect(api.removeTerminal).not.toHaveBeenCalled();
+      expect(api.restartTerminal).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["close", "restart"] as const)(
+    "binds an immediate %s to the active A terminal",
+    async (action) => {
+      api.removeTerminal.mockResolvedValue({
+        catalogEpoch: "daemon-1",
+        revision: 2,
+      });
+      api.restartTerminal.mockResolvedValue(terminal("A shell", "/A", 2));
+      const view = render(<TerminalPane cwd="/A" />);
+      await screen.findByRole("button", { name: "A shell", pressed: true });
+      act(() => queueTerminalAction(action, "/A"));
+      view.rerender(<TerminalPane cwd="/B" />);
+      await screen.findByRole("button", { name: "B shell", pressed: true });
+      if (action === "close")
+        expect(api.removeTerminal).toHaveBeenCalledExactlyOnceWith(
+          "A shell",
+          false,
+        );
+      else
+        expect(api.restartTerminal).toHaveBeenCalledExactlyOnceWith("A shell");
+    },
+  );
+
   it.each([
     {
       name: "AltGraph digits",
@@ -427,7 +468,7 @@ describe("terminal project ownership", () => {
   it("toggles focus through the existing action without claiming the OS Escape chord", async () => {
     const view = render(<TerminalPane cwd="/A" />);
     await screen.findByRole("button", { name: "A shell", pressed: true });
-    act(() => queueTerminalAction("focus"));
+    act(() => queueTerminalAction("focus", "/A"));
     expect(
       view.container.querySelector(".terminal-pane--focused"),
     ).toBeTruthy();
@@ -447,7 +488,7 @@ describe("terminal project ownership", () => {
     expect(
       view.container.querySelector(".terminal-pane--focused"),
     ).toBeTruthy();
-    act(() => queueTerminalAction("focus"));
+    act(() => queueTerminalAction("focus", "/A"));
     expect(view.container.querySelector(".terminal-pane--focused")).toBeNull();
   });
 

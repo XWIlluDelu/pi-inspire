@@ -754,8 +754,9 @@ export const TerminalView = memo(function TerminalView({
 
   useEffect(
     () =>
-      subscribeTerminalActions((action) => {
+      subscribeTerminalActions(({ action, projectCwd }) => {
         if (
+          projectCwd !== descriptor.projectCwd ||
           action !== "take-control" ||
           !active ||
           !ready ||
@@ -767,7 +768,13 @@ export const TerminalView = memo(function TerminalView({
         xtermRef.current?.focus();
         return true;
       }),
-    [active, currentDimensions, descriptor.status, ready],
+    [
+      active,
+      currentDimensions,
+      descriptor.projectCwd,
+      descriptor.status,
+      ready,
+    ],
   );
 
   useEffect(() => {
