@@ -5,7 +5,11 @@ covers:
   - src/store.ts
   - src/controllers/{git,workspace}-controller.ts
   - src/components/{AppTopbar,SessionActionsMenu,Composer,ExtensionDisplays,ContextPane,ContextPaneShell,ContextSplitBody,FilesPane,ChangesPane,WorkspaceBrowser,BranchTree,PaneResizeHandle}.tsx
-  - src/{git-presentation,use-modal-focus}.ts
+  - src/{git-presentation,source-diff,use-modal-focus}.ts
+  - server/git-inspection.ts
+  - shared/contracts.ts
+  - tests/integration/git-long-prefix.test.ts
+  - tests/web/source-diff.test.ts
   - src/styles/*.css
   - tests/web/{app,workspace-controller,pane-resize,branch-tree,modal-focus}.test.ts*
   - tests/browser/composer.spec.ts
@@ -143,7 +147,12 @@ independent project shells in [[terminal]].
 - Git status/diff request, cancellation, polling, and visible-surface scheduling belong to a bounded
   `GitController`. `AppStore` remains the sole snapshot publisher and executes the explicit
   cross-domain transition between a Git-selected path and a session-bound resource preview, so Git
-  never becomes a parallel browser store.
+  never becomes a parallel browser store. Keep complete selected-file source when it fits the
+  bounded projection. If unchanged context exhausts that budget, reread bounded changed regions
+  instead of hiding the edits behind a long prefix. Mark omitted context separately from a
+  truncated diff. Syntax highlighting has its own bounded complete-revision context; validate it
+  against displayed rows and use literal escaped text when unavailable or changed between reads.
+  `git-long-prefix.test.ts` covers real Git through Host HTTP and source/change navigation projection.
 
 ## Workspace explorer and contextual modes
 
