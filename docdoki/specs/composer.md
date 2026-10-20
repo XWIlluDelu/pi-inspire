@@ -4,7 +4,9 @@ covers:
   - server/{attachments,attachment-references,composer-history,runtime-composer-artifacts,runtime-pending*,project-files,image-content,assistant-text}.ts
   - shared/{contracts,pending-preview,composer-artifact-references,resource-references,image-dimension-notes,attachment-context}.ts
   - src/{App,api,store,app-state,clipboard-files,keyboard-input,composer-*,session-drafts,model-options}.ts*
-  - src/controllers/composer-controller.ts
+  - src/controllers/{composer,pending-recovery}-controller.ts
+  - server/pending-operation-receipts.ts
+  - tests/server/app-pending-recovery.test.ts
   - src/components/{ActivityBar,AttachmentList,Composer,ComposerInput,ImagePreview,ImageLightbox,ImageGallery,ModelSelector,ProjectFiles,Transcript,transcript-rows,Welcome,ExportDialog}.tsx
   - src/{image-viewport,use-image-viewport,use-image-history}.ts
   - src/styles/*.css
@@ -321,11 +323,15 @@ unconsumed view across runs.
   then Queue, then the latest original-session draft with blank lines. This is one editable draft;
   message boundaries/modes are not retained and resending uses the newly selected mode. A delayed
   receipt merges into its original partition, preserving newer text/artifacts and another session's
-  work. Explicit Return restores focus only while its view/action/focus still owns it.
+  work. Receipt reclamation applies each handoff once, including after a lost HTTP result or a
+  reconnect with the previous observer still pending. Explicit Return restores focus only while
+  its view/action/focus still owns it.
 - **Stop / unclaimed Escape:** recover Pending before stopping through [[pi-integration]]. Modal,
   completion and context-hint Escape have priority. Stop blocks deliveries while in progress and
   cannot leave queued work able to resume. Recovery remains available through suspended prompt hooks,
-  preflight, conflict and standalone-compaction cancellation.
+  preflight, conflict and standalone-compaction cancellation. The preliminary recovery and Stop
+  mutation retain the original API/transport owner; a replacement cannot inherit an old Stop.
+  [[session-transport]] owns their authority-bound operation receipts.
 - **Clear all:** confirmation discards unconsumed input without stopping Pi or changing the draft;
   X cancels. Cleared Host deliveries are definitely rejected and release staged artifacts.
 

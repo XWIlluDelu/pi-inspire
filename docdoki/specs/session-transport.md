@@ -4,6 +4,10 @@ covers:
   - server/app.ts
   - server/runtime-event-sockets.ts
   - server/runtime.ts
+  - server/pending-operation-receipts.ts
+  - src/controllers/pending-recovery-controller.ts
+  - tests/server/app-pending-recovery.test.ts
+  - tests/integration/pending-{recovery-lifecycle,stop-native.integration}.test.ts
   - server/runtime-worker-pool.ts
   - shared/{contracts,assistant-stream,tool-argument-updates}.ts
   - server/{tool-argument-stream,tool-argument-batches,runtime-stream-budget}.ts
@@ -201,6 +205,31 @@ and explicit re-open, cancelled-response/401 ownership, and the unconfirmed-crea
   including after a delivery-mode change. Host restart requires inspecting refreshed history before
   resending. [[composer]] owns handoff and restoration; [[state-ownership]] explains these
   observation and execution boundaries.
+
+## Pending handoff observations
+
+Return and Stop bind their dequeue result to Host authority, session, action and a random operation
+ID. Concurrent requests and retries of an unresolved intent share that result. A newly observed run
+or newly admitted queue is a new control intent; its action cannot replay an earlier run's Stop or
+Return. Keep older unclaimed results independently by operation ID and observe them without
+redispatch when a later intent starts. Receipt-only GET observations reclaim a lost HTTP result
+without affecting later input. Reconnect
+can independently observe a receipt even while the old mutation observer remains pending; only a
+current API/transport owner restores it, once, into the original draft partition. Recovered image
+handles keep the normal staging ownership from [[composer]].
+
+A matched authority/operation terminal receipt distinguishes failed execution or result retirement
+from a failed observation. It ends that intent; only a later explicit user action admits a new ID.
+A plain HTTP 500, mismatched proof or transport loss remains uncertain and never triggers a new
+mutation automatically. Host tombstones continue to forbid reexecution of failed/retired IDs.
+`pending-recovery-lifecycle.test.ts` and the isolated native Stop regression cover these boundaries.
+
+The Host retains at most 2,048 settled results and 32 MiB for 15 minutes. Process-lifetime identity
+tombstones refuse redispatch after result retirement; the 65,536-identity limit fails closed.
+These are observation receipts, not another execution queue. HTTP/native regressions cover lost
+results with original image bytes, concurrent reclamation, later queued input, authority/scope
+mismatch and retired receipts; browser regressions cover deduplication, reconnect blackholes and
+the two-stage Stop owner.
 
 ## View-bound transcript and bounded streaming
 

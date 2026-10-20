@@ -59,6 +59,7 @@ import type {
 } from "./maintenance-restart.js";
 import { modelSwitchThinkingLevel } from "./model-catalog.js";
 import { resolveProjectDirectory } from "./paths.js";
+import { PendingOperationReceipts } from "./pending-operation-receipts.js";
 import { installedPiChangelog } from "./pi-changelog.js";
 import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
 import type { PreferencesStore } from "./preferences.js";
@@ -156,7 +157,13 @@ const promptSchema = z
     behavior: z.enum(["steer", "followUp"]).optional(),
   })
   .strict();
-const abortSchema = z.object({ sessionId: sessionIdField });
+const pendingOperationSchema = z
+  .object({
+    sessionId: sessionIdField,
+    operationId: z.string().uuid(),
+    authorityId: z.string().uuid(),
+  })
+  .strict();
 const nativeCommandSchema = z
   .object({
     sessionId: sessionIdField,
@@ -587,6 +594,14 @@ function apiError(
   // declined to choose between. Neither field contains runtime stderr.
   const matches = (error as { matches?: unknown })?.matches;
   const code = (error as { code?: unknown })?.code;
+  const pendingReceipt = (
+    error as { pendingReceipt?: { operationId: string; outcome: string } }
+  )?.pendingReceipt;
+  if (pendingReceipt)
+    response.set({
+      "X-Inspire-Pending-Operation": pendingReceipt.operationId,
+      "X-Inspire-Pending-Outcome": pendingReceipt.outcome,
+    });
   response.status(status).json({
     error: message,
     ...(typeof code === "string" ? { code } : {}),
@@ -634,6 +649,7 @@ export function createInspireServer(deps: AppDependencies): {
   // same ID again. Settled response bodies retire to small fingerprint
   // tombstones; the bounded process-lifetime map fails closed at its generous
   // limit instead of silently evicting identities.
+  const pendingOperations = new PendingOperationReceipts();
   const promptOperations = new Map<string, PromptOperationReceipt>();
   const retainedPromptOperationResults: PromptOperationReceipt[] = [];
   let retainedPromptOperationResultBytes = 0;
@@ -1461,10 +1477,40 @@ export function createInspireServer(deps: AppDependencies): {
     }
     response.json(result);
   });
+  const assertPendingAuthority = (expected: string): void => {
+    if (expected !== authorityId)
+      throw requestError("The Pending operation belongs to another Host", 409, {
+        code: "HOST_AUTHORITY_CHANGED",
+        outcomeUnknown: true,
+      });
+  };
+  app.get("/api/pending/operations/:operationId", async (request, response) => {
+    response.set({
+      "Cache-Control": "no-store",
+      "X-Inspire-Authority": authorityId,
+    });
+    const operation = pendingOperationSchema
+      .extend({ action: z.enum(["recover", "abort"]) })
+      .parse({
+        ...request.query,
+        operationId: request.params.operationId,
+      });
+    assertPendingAuthority(operation.authorityId);
+    const recovered = await pendingOperations.observe(operation);
+    response.json({
+      ...recovered,
+      ...(recovered.attachments?.length ? { authorityId } : {}),
+    });
+  });
   app.post("/api/control/abort", async (request, response) => {
-    const { sessionId } = abortSchema.parse(request.body);
+    response.set("X-Inspire-Authority", authorityId);
+    const operation = pendingOperationSchema.parse(request.body);
+    assertPendingAuthority(operation.authorityId);
     response.setHeader("Cache-Control", "no-store");
-    const recovered = await deps.runtime.abort(sessionId);
+    const recovered = await pendingOperations.run(
+      { ...operation, action: "abort" },
+      () => deps.runtime.abort(operation.sessionId),
+    );
     response.json({
       ...recovered,
       ...(recovered.attachments?.length ? { authorityId } : {}),
@@ -1478,8 +1524,13 @@ export function createInspireServer(deps: AppDependencies): {
   });
   app.post("/api/pending/recover", async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
-    const { sessionId } = clearPendingSchema.parse(request.body);
-    const recovered = await deps.runtime.recoverPending(sessionId);
+    response.set("X-Inspire-Authority", authorityId);
+    const operation = pendingOperationSchema.parse(request.body);
+    assertPendingAuthority(operation.authorityId);
+    const recovered = await pendingOperations.run(
+      { ...operation, action: "recover" },
+      () => deps.runtime.recoverPending(operation.sessionId),
+    );
     response.json({
       ...recovered,
       ...(recovered.attachments?.length ? { authorityId } : {}),

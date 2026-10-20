@@ -24,6 +24,194 @@ describe("Pending input recovery and copying", () => {
     deleteSessionDraft("s2");
   });
 
+  it("does not carry the second Stop mutation across transport replacement during its first recovery", async () => {
+    const recovery = deferred<RouteResponse>();
+    const started = deferred<void>();
+    const aborts: Record<string, unknown>[] = [];
+    installFetch((url, init) => {
+      if (url === "/api/pending/recover") {
+        started.resolve();
+        return recovery.promise;
+      }
+      if (url === "/api/control/abort") {
+        aborts.push(jsonBody(init));
+        return { body: { steering: [], followUp: [] } };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    const stop = store.abort();
+    await started.promise;
+    await store.init("replacement-token");
+    recovery.resolve({
+      body: { steering: ["original handoff"], followUp: [] },
+    });
+    await stop;
+    expect(aborts).toEqual([]);
+  });
+
+  it("reclaims both lost Stop handoffs once across concurrent observers", async () => {
+    const image = {
+      id: "recovered-image",
+      fileName: "pending.png",
+      mimeType: "image/png",
+      size: 7,
+      kind: "image",
+    };
+    const receipts = new Map<
+      string,
+      {
+        steering: string[];
+        followUp: string[];
+        attachments?: (typeof image)[];
+        authorityId?: string;
+      }
+    >();
+    const posts: Record<string, unknown>[] = [];
+    installFetch((url, init) => {
+      if (url === "/api/pending/recover" || url === "/api/control/abort") {
+        const body = jsonBody(init);
+        posts.push(body);
+        receipts.set(
+          String(body.operationId),
+          url === "/api/pending/recover"
+            ? {
+                steering: ["first handoff"],
+                followUp: [],
+                attachments: [image],
+                authorityId: TEST_HOST_AUTHORITY,
+              }
+            : { steering: [], followUp: ["Stop boundary handoff"] },
+        );
+        throw new TypeError("response lost after dequeue");
+      }
+      if (url.startsWith("/api/pending/operations/")) {
+        const operationId = new URL(url, "http://localhost").pathname
+          .split("/")
+          .at(-1)!;
+        return { body: receipts.get(operationId) };
+      }
+      if (url.endsWith("/image")) return { body: "preview bytes" };
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    setSessionDraft("s1", "newer draft");
+    await Promise.all([store.abort(), store.abort()]);
+    expect(posts).toHaveLength(2);
+    expect(
+      posts.every(
+        (post) =>
+          post.sessionId === "s1" && post.authorityId === TEST_HOST_AUTHORITY,
+      ),
+    ).toBe(true);
+    expect(new Set(posts.map((post) => post.operationId)).size).toBe(2);
+    expect(sessionDraft("s1")).toBe(
+      "Stop boundary handoff\n\nfirst handoff\n\nnewer draft",
+    );
+    expect(store.getState().attachments.map((item) => item.uploadedId)).toEqual(
+      [image.id],
+    );
+  });
+
+  it("reclaims an unobserved recovery after reconnect without issuing another mutation or changing B's draft", async () => {
+    let operationId = "";
+    let connected = false;
+    let posts = 0;
+    installFetch((url, init) => {
+      if (url === "/api/pending/recover") {
+        operationId = String(jsonBody(init).operationId);
+        posts++;
+        throw new TypeError("response lost");
+      }
+      if (url.startsWith("/api/pending/operations/")) {
+        expect(url).toContain(operationId);
+        if (!connected) throw new TypeError("observation also unavailable");
+        return { body: { steering: ["returned A"], followUp: [] } };
+      }
+      if (url === "/api/sessions/open")
+        return { body: activeSnapshot({ sessionId: "s2" }) };
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    expect(await store.recoverPending()).toBe(false);
+    await store.openSession("s2");
+    setSessionDraft("s2", "B draft");
+    connected = true;
+    await store.init("token");
+    const { FakeWebSocket } = await import("./helpers");
+    FakeWebSocket.instances.at(-1)!.open();
+    await vi.waitFor(() => expect(sessionDraft("s1")).toBe("returned A"));
+    expect(sessionDraft("s2")).toBe("B draft");
+    expect(posts).toBe(1);
+  });
+
+  it("reclaims through a new transport while the original mutation observer is still pending", async () => {
+    const mutation = deferred<RouteResponse>();
+    const started = deferred<void>();
+    let posts = 0,
+      reads = 0,
+      operationId = "";
+    installFetch((url, init) => {
+      if (url === "/api/pending/recover") {
+        posts++;
+        operationId = String(jsonBody(init).operationId);
+        started.resolve();
+        return mutation.promise;
+      }
+      if (url.startsWith("/api/pending/operations/")) {
+        expect(url).toContain(operationId);
+        reads++;
+        return { body: { steering: ["retained handoff"], followUp: [] } };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    const recovering = store.recoverPending();
+    await started.promise;
+    await store.init("replacement-token");
+    const { FakeWebSocket } = await import("./helpers");
+    FakeWebSocket.instances.at(-1)!.open();
+    await vi.waitFor(() => expect(sessionDraft("s1")).toBe("retained handoff"));
+    expect(posts).toBe(1);
+    expect(reads).toBe(1);
+    mutation.resolve({
+      body: { steering: ["retained handoff"], followUp: [] },
+    });
+    expect(await recovering).toBe(false);
+    expect(sessionDraft("s1")).toBe("retained handoff");
+  });
+
+  it("starts a receipt-only observation on socket resume even when the same API's mutation remains pending", async () => {
+    const mutation = deferred<RouteResponse>();
+    let reads = 0;
+    installFetch((url, init) => {
+      if (url === "/api/pending/recover") return mutation.promise;
+      if (url.startsWith("/api/pending/operations/")) {
+        reads++;
+        return {
+          body: { steering: ["socket-reclaimed handoff"], followUp: [] },
+        };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    const recovering = store.recoverPending();
+    socket.onclose?.();
+    store.recoverConnection("online");
+    const { FakeWebSocket } = await import("./helpers");
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+    FakeWebSocket.instances.at(-1)!.open();
+    await vi.waitFor(() =>
+      expect(sessionDraft("s1")).toBe("socket-reclaimed handoff"),
+    );
+    expect(reads).toBe(1);
+    mutation.resolve({
+      body: { steering: ["socket-reclaimed handoff"], followUp: [] },
+    });
+    expect(await recovering).toBe(true);
+    expect(sessionDraft("s1")).toBe("socket-reclaimed handoff");
+  });
+
   it("restores image handles and thumbnails beside the newest draft attachments, then resends them", async () => {
     const recoveredImage = {
       id: "recovered-image",

@@ -664,6 +664,16 @@ export interface PendingInput {
   followUp: string[];
 }
 
+export interface PendingOperationIdentity {
+  operationId: string;
+  authorityId: string;
+}
+
+export interface PendingOperationRequest extends PendingOperationIdentity {
+  sessionId: string;
+  action: "recover" | "abort";
+}
+
 export interface PendingRecovery extends PendingInput {
   /** Staged handles in Steer/Queue order; recovery never applies send limits. */
   attachments?: UploadedAttachment[];

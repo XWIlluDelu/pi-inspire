@@ -24,6 +24,8 @@ import type {
   InspireUpdateCheckResult,
   NewSessionOptions,
   PendingCopyContent,
+  PendingOperationIdentity,
+  PendingOperationRequest,
   PendingReadRequest,
   PendingRecovery,
   PiMessageDeliveryMode,
@@ -124,6 +126,8 @@ export class ApiError extends Error {
     public outcomeUnknown = false,
     /** A refusal of this operation, not just failure to observe its receipt. */
     public promptReceipt?: { operationId: string; outcome: string },
+    /** A settled Pending handoff, including failure or result retirement. */
+    public pendingReceipt?: { operationId: string; outcome: string },
   ) {
     super(message);
     this.name = "ApiError";
@@ -223,6 +227,12 @@ async function ensureOk(response: Response): Promise<void> {
       ? {
           operationId: response.headers.get("X-Inspire-Prompt-Operation")!,
           outcome: response.headers.get("X-Inspire-Prompt-Outcome") ?? "",
+        }
+      : undefined,
+    response.headers.has("X-Inspire-Pending-Operation")
+      ? {
+          operationId: response.headers.get("X-Inspire-Pending-Operation")!,
+          outcome: response.headers.get("X-Inspire-Pending-Outcome") ?? "",
         }
       : undefined,
   );
@@ -953,21 +963,34 @@ export function createApi(token: string | null = null) {
           return response.blob();
         },
       ),
-    abort: (sessionId: string) =>
+    abort: (sessionId: string, identity: PendingOperationIdentity) =>
       post<PendingRecovery>(
         token,
         "/api/control/abort",
-        { sessionId },
+        {
+          sessionId,
+          operationId: identity.operationId,
+          authorityId: identity.authorityId,
+        },
         {},
         { timeoutMs: null },
       ),
-    recoverPending: (sessionId: string) =>
+    recoverPending: (sessionId: string, identity: PendingOperationIdentity) =>
       post<PendingRecovery>(
         token,
         "/api/pending/recover",
-        { sessionId },
+        {
+          sessionId,
+          operationId: identity.operationId,
+          authorityId: identity.authorityId,
+        },
         {},
         { timeoutMs: null },
+      ),
+    pendingOperation: ({ operationId, ...query }: PendingOperationRequest) =>
+      request<PendingRecovery>(
+        token,
+        `/api/pending/operations/${encodeURIComponent(operationId)}?${new URLSearchParams(query)}`,
       ),
     pendingText: (body: PendingReadRequest, signal?: AbortSignal) =>
       post<PendingCopyContent>(

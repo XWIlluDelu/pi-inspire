@@ -4083,7 +4083,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
     slot.stoppingInput = true;
     slot.inputStopEpoch += 1;
-    let recovered: PendingRecovery = { steering: [], followUp: [] };
+    let recovered: PendingRecovery | null = null;
     try {
       await this.useSlot(slot, async () => {
         const rpc = slot.process;
@@ -4183,7 +4183,25 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         }
         this.extensionUi.clear(slot, "aborted");
       });
-      return recovered;
+      return recovered!;
+    } catch (error) {
+      const retained = recovered as PendingRecovery | null;
+      if (
+        !retained ||
+        !(
+          retained.steering.length ||
+          retained.followUp.length ||
+          retained.attachments?.length
+        )
+      )
+        throw error;
+      return {
+        ...retained,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Stop could not be confirmed",
+      };
     } finally {
       slot.stoppingInput = false;
     }

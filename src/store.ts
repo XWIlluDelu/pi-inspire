@@ -78,6 +78,7 @@ import {
   type ConnectionRecoveryTrigger,
 } from "./controllers/connection-controller";
 import { GitController } from "./controllers/git-controller";
+import { PendingRecoveryController } from "./controllers/pending-recovery-controller";
 import { PreferenceController } from "./controllers/preference-controller";
 import { ResourceController } from "./controllers/resource-controller";
 import { RuntimeEventController } from "./controllers/runtime-event-controller";
@@ -427,8 +428,14 @@ export class AppStore {
   private snapshotDigest: string | null = null;
   /** A bootstrap read cannot replace a snapshot committed while it awaited I/O. */
   private snapshotGeneration = 0;
-  /** ConnectionController owns WebSocket lifetime/backoff only. AppStore
-   * continues to publish connection state and owns every stream consequence. */
+  private readonly pendingRecovery = new PendingRecoveryController({
+    api: () => this.api,
+    authorityId: () => this.hostAuthorityId,
+    transportGeneration: () => this.transportGeneration,
+    restore: (sessionId, recovered) =>
+      this.restorePendingInput(sessionId, recovered),
+    handleAuthFailure: () => this.handleAuthFailure(),
+  });
   private readonly updates = new UpdateController({
     state: () => this.state,
     patch: (patch) => this.set(patch),
@@ -436,6 +443,8 @@ export class AppStore {
     transportGeneration: () => this.transportGeneration,
     notify: (kind, text) => this.notify(kind, text),
   });
+  /** ConnectionController owns WebSocket lifetime/backoff only. AppStore
+   * continues to publish connection state and owns every stream consequence. */
   private readonly connectionController = new ConnectionController({
     state: () => ({
       bootstrapped: this.state.bootstrapped,
@@ -443,8 +452,26 @@ export class AppStore {
       snapshotDigest: this.snapshotDigest,
       sessionId: this.state.sessionId,
     }),
-    patch: (patch) => this.set(patch),
+    patch: (patch) => {
+      this.set(patch);
+      if (patch.connection === "open") this.pendingRecovery.resume();
+    },
     applyEvent: (event) => {
+      if (event.type === "agent_start" && typeof event.sessionId === "string")
+        this.pendingRecovery.startRun(event.sessionId);
+      if (
+        event.type === "queue_update" &&
+        typeof event.sessionId === "string" &&
+        event.pendingQueues
+      ) {
+        const queue = parsePendingQueues(event.pendingQueues);
+        if (queue)
+          this.pendingRecovery.updateQueue(
+            event.sessionId,
+            queue.revision,
+            queue.totalCount,
+          );
+      }
       if (event.type === "snapshot") {
         this.updates.applySnapshot(event.updateStatus);
         if (event.unchanged !== true) this.runtimeEvents.apply(event);
@@ -2048,12 +2075,7 @@ export class AppStore {
         !(this.state.bashRunning && !isBusyRunState(this.state.runState))
       ) {
         try {
-          const pending = await api.recoverPending(sessionId);
-          if (
-            this.api === api &&
-            this.transportGeneration === transportGeneration
-          )
-            this.restorePendingInput(sessionId, pending);
+          await this.pendingRecovery.run(sessionId, "recover");
         } catch (error) {
           if (
             this.api !== api ||
@@ -2073,11 +2095,11 @@ export class AppStore {
           // Host will clear again or retire the worker rather than resume input.
         }
       }
+      if (this.api !== api || this.transportGeneration !== transportGeneration)
+        return;
       // The editor receives the first dequeue before Stop is sent. Host abort
       // clears again at its own boundary, including input arriving meanwhile.
-      const recovered = await api.abort(sessionId);
-      if (this.api === api && this.transportGeneration === transportGeneration)
-        this.restorePendingInput(sessionId, recovered);
+      await this.pendingRecovery.run(sessionId, "abort");
     } catch (error) {
       if (this.api !== api || this.transportGeneration !== transportGeneration)
         return;
@@ -2138,12 +2160,7 @@ export class AppStore {
     const request = ++this.pendingActionRequest;
     this.set({ pendingAction: "recover" });
     try {
-      const recovered = await api.recoverPending(sessionId);
-      if (this.api !== api || this.transportGeneration !== transportGeneration)
-        return false;
-      // A selection change must not lose input already removed on the Host.
-      // Merge into the originating partition's latest draft, not the invocation draft.
-      return this.restorePendingInput(sessionId, recovered);
+      return await this.pendingRecovery.run(sessionId, "recover");
     } catch (error) {
       if (this.api !== api || this.transportGeneration !== transportGeneration)
         return false;

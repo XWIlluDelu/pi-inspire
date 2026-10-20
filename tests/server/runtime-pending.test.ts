@@ -1111,6 +1111,34 @@ describe("RuntimeController Pending input and recovery", () => {
     }
   });
 
+  it("returns already recovered input even if subsequent Stop retirement fails", async () => {
+    const f = schedulingRuntime();
+    try {
+      await f.runtime.openSession("a");
+      await waitForReady(f.runtime);
+      f.worker.emit("event", { type: "agent_start" });
+      f.worker.responseOverrides.set("clear_queue", () => ({
+        steering: ["keep this handoff"],
+        followUp: [],
+      }));
+      f.worker.responseOverrides.set("abort", () => {
+        throw new Error("abort transport lost");
+      });
+      const stop = vi
+        .spyOn(f.worker, "stop")
+        .mockRejectedValueOnce(new Error("retirement unconfirmed"));
+      await expect(f.runtime.abort("a")).resolves.toMatchObject({
+        steering: ["keep this handoff"],
+        followUp: [],
+        error: "retirement unconfirmed",
+      });
+      stop.mockRestore();
+    } finally {
+      await f.worker.stop();
+      await f.runtime.close().catch(() => {});
+    }
+  });
+
   it("reports unavailable recovery and hard-stops instead of aborting with a live queue", async () => {
     const f = schedulingRuntime();
     const { runtime } = f;
