@@ -130,6 +130,11 @@ function SourceDiffView({
           Source truncated
         </div>
       ) : null}
+      {diff.contextLimited && !diff.truncated ? (
+        <div className="source-diff__boundary" role="status">
+          Showing changed regions; source context limited
+        </div>
+      ) : null}
       {diff.encodingLossy ? (
         <div className="source-diff__boundary" role="status">
           Invalid UTF-8 replaced

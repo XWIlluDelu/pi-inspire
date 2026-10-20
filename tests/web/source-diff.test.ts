@@ -70,6 +70,20 @@ describe("Changes source projection", () => {
     );
   });
 
+  it("renders sparse hunks literally if complete highlighting context no longer matches", () => {
+    const diff = {
+      ...diffFor("source.ts", ["-const old = 1;", "+const changed = 42;"]),
+      contextLimited: true,
+      source: {
+        old: "/* a different revision",
+        new: "/* a different revision",
+      },
+    };
+    const { rows } = sourceDiffRows(diff);
+    expect(code(rows[1].html).textContent).toBe("const changed = 42;");
+    expect(rows[1].html).not.toContain("<span");
+  });
+
   it("uses the original filename language for deleted renamed source", () => {
     const { rows } = sourceDiffRows(
       diffFor("renamed.txt", ["-const value = 42;", "+const value = 43;"]),

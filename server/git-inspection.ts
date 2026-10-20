@@ -30,6 +30,8 @@ export const GIT_STATUS_OUTPUT_BYTES = 4 * 1024 * 1024;
 export const GIT_DIFF_OUTPUT_BYTES = 1024 * 1024;
 const MAX_GIT_STATUS_FILES = 1_000;
 const MAX_GIT_DIFF_LINES = 2_000;
+const MAX_GIT_SOURCE_BYTES = 64 * 1024;
+const MAX_GIT_SOURCE_LINES = 10_000;
 const FULL_SOURCE_CONTEXT_LINES = 2_147_483_647;
 const MAX_PATH_ID_LENGTH = 16 * 1024;
 
@@ -425,6 +427,7 @@ export function parsePorcelainV2(
 function decodePatchLines(
   output: Buffer,
   outputTruncated: boolean,
+  lineLimit = MAX_GIT_DIFF_LINES,
 ): {
   lines: string[];
   encodingLossy: boolean;
@@ -439,7 +442,7 @@ function decodePatchLines(
   const encodingLossy = strictUtf8(usable) === undefined;
   const lineBuffers: Buffer[] = [];
   let start = 0;
-  while (start < usable.length && lineBuffers.length < MAX_GIT_DIFF_LINES) {
+  while (start < usable.length && lineBuffers.length < lineLimit) {
     const newline = usable.indexOf(0x0a, start);
     if (newline < 0) {
       lineBuffers.push(usable.subarray(start));
@@ -451,14 +454,14 @@ function decodePatchLines(
   }
   const cardinalityTruncated = start < usable.length;
   const truncated = outputTruncated || cardinalityTruncated;
-  const contentLimit = truncated ? MAX_GIT_DIFF_LINES - 1 : MAX_GIT_DIFF_LINES;
+  const contentLimit = truncated ? lineLimit - 1 : lineLimit;
   const lines = lineBuffers
     .slice(0, contentLimit)
     .map((line) => line.toString("utf8"));
   if (truncated) {
     lines.push(
       cardinalityTruncated
-        ? `… diff truncated at ${MAX_GIT_DIFF_LINES} projected lines`
+        ? `… diff truncated at ${lineLimit} projected lines`
         : `… diff truncated at ${GIT_DIFF_OUTPUT_BYTES} bytes`,
     );
   }
@@ -494,11 +497,12 @@ function parseNumstat(
 export function parseUnifiedDiff(
   output: Buffer,
   outputTruncated = false,
+  lineLimit = MAX_GIT_DIFF_LINES,
 ): Pick<
   Extract<GitDiffResponse, { kind: "text" }>,
   "lines" | "encodingLossy" | "truncated"
 > {
-  const decoded = decodePatchLines(output, outputTruncated);
+  const decoded = decodePatchLines(output, outputTruncated, lineLimit);
   const lines: GitDiffLine[] = [];
   let oldLine = 0;
   let newLine = 0;
@@ -749,7 +753,7 @@ export class GitInspectionService implements GitInspectionLike {
       if (stats.kind === "empty")
         return { ...base, kind: "empty", reason: "no-changes" };
       if (stats.kind === "binary") return { ...base, kind: "binary" };
-      const patch = await runner(
+      const full = await runner(
         [
           ...common,
           `--unified=${FULL_SOURCE_CONTEXT_LINES}`,
@@ -763,14 +767,57 @@ export class GitInspectionService implements GitInspectionLike {
           signal,
         },
       );
-      if (patch.stdout.length === 0)
+      if (full.stdout.length === 0)
         return { ...base, kind: "empty", reason: "no-changes" };
+      let projection = parseUnifiedDiff(full.stdout, full.truncated);
+      let source: { old: string; new: string } | undefined;
+      const contextLimited = projection.truncated;
+      if (contextLimited) {
+        // Full source is useful context, not permission to spend the diff's
+        // entire budget before its first change.
+        if (!full.truncated && full.stdout.length <= MAX_GIT_SOURCE_BYTES) {
+          const context = parseUnifiedDiff(
+            full.stdout,
+            false,
+            MAX_GIT_SOURCE_LINES,
+          );
+          if (!context.truncated && !context.encodingLossy) {
+            const rows = context.lines.filter(
+              (line) =>
+                line.kind === "context" ||
+                line.kind === "add" ||
+                line.kind === "delete",
+            );
+            source = {
+              old: rows
+                .filter((line) => line.kind !== "add")
+                .map((line) => line.text.slice(1))
+                .join("\n"),
+              new: rows
+                .filter((line) => line.kind !== "delete")
+                .map((line) => line.text.slice(1))
+                .join("\n"),
+            };
+          }
+        }
+        const patch = await runner(
+          [...common, "--unified=3", ...cached, "--", ...paths],
+          {
+            stdoutLimit: GIT_DIFF_OUTPUT_BYTES,
+            allowStdoutTruncation: true,
+            signal,
+          },
+        );
+        projection = parseUnifiedDiff(patch.stdout, patch.truncated);
+      }
       return {
         ...base,
         kind: "text",
         additions: stats.additions,
         deletions: stats.deletions,
-        ...parseUnifiedDiff(patch.stdout, patch.truncated),
+        ...projection,
+        ...(contextLimited ? { contextLimited: true } : {}),
+        ...(source ? { source } : {}),
       };
     });
   }

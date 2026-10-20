@@ -451,6 +451,10 @@ export type GitDiffResponse =
   | (GitDiffBase & {
       kind: "text";
       lines: GitDiffLine[];
+      /** Unchanged rows omitted to keep the actual diff within its projection budget. */
+      contextLimited?: boolean;
+      /** Complete revisions under the independent syntax-highlighting budget. */
+      source?: { old: string; new: string };
       additions: number;
       deletions: number;
       truncated: boolean;
