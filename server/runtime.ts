@@ -311,6 +311,7 @@ export interface RuntimeLike {
   pendingText(request: PendingReadRequest): Promise<PendingCopyContent>;
   clearPending(sessionId: string): Promise<void>;
   rename(sessionId: string, name: string): Promise<void>;
+  cycleModel(sessionId: string): Promise<unknown>;
   setModel(
     sessionId: string,
     provider: string,
@@ -4588,6 +4589,22 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         },
       );
       this.catalog.invalidate();
+    });
+  }
+
+  async cycleModel(sessionId: string): Promise<unknown> {
+    return this.withMaintenanceOperation(async () => {
+      const slot = this.requireSlot(sessionId);
+      return this.mutateSlot(slot, async () => {
+        const ready = await this.ensureFreshWriterInsideGate(slot);
+        return this.withExpectedPersistence(slot, [], async () => {
+          const result = await this.requestPersistence(slot, ready.process, {
+            type: "cycle_model",
+          });
+          await this.reconcileAcceptedPersistence(slot, "the model cycle");
+          return result;
+        });
+      });
     });
   }
 

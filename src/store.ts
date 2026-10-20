@@ -20,7 +20,6 @@ import {
   isBusyRunState,
   type LaunchPreference,
   type ModelOption,
-  modelIdentityKey,
   type NewSessionOptions,
   type PalettePreference,
   type PendingRecovery,
@@ -2592,32 +2591,29 @@ export class AppStore {
 
   cycleModel = (direction: 1 | -1): Promise<void> =>
     this.queueModelCycle(async (owns) => {
-      if (this.state.readOnlyReason) return;
-      const available = this.state.availableModels;
-      const byKey = new Map(
-        available.map((model) => [modelIdentityKey(model), model]),
-      );
-      const common = this.state.commonModels.flatMap((model) => {
-        const match = byKey.get(modelIdentityKey(model));
-        return match ? [match] : [];
-      });
-      const models = common.length ? common : available;
-      if (models.length <= 1) return;
-      const index = Math.max(
-        0,
-        models.findIndex(
-          (model) =>
-            model.provider === this.state.model?.provider &&
-            model.id === this.state.model?.id,
-        ),
-      );
-      const next = models[(index + direction + models.length) % models.length]!;
-      const scoped = this.state.commonModels.find(
-        (model) => modelIdentityKey(model) === modelIdentityKey(next),
-      );
-      if (await this.setModel(next.provider, next.id)) {
-        if (scoped?.thinkingLevel && owns())
-          await this.setThinkingLevel(scoped.thinkingLevel);
+      const api = this.api,
+        sessionId = this.state.sessionId;
+      const selection = this.selectionGeneration;
+      if (!api || !sessionId || this.state.readOnlyReason) return;
+      try {
+        // Pi owns scope order, thinking defaults and model_select effects.
+        await api.cycleModel(sessionId, direction);
+        if (!owns()) return;
+        await this.resync(sessionId, selection);
+        if (owns() && this.state.model)
+          this.preferences.rememberModel({
+            provider: this.state.model.provider,
+            id: this.state.model.id,
+          });
+      } catch (error) {
+        if (!owns()) return;
+        if (error instanceof ApiError && error.status === 401)
+          this.handleAuthFailure();
+        else
+          this.notify(
+            "warning",
+            error instanceof Error ? error.message : "Failed to cycle model",
+          );
       }
     });
 

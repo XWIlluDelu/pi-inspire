@@ -10,6 +10,7 @@ covers:
   - src/styles/model-settings.css
   - tests/server/{model-settings,model-catalog,model-metadata.integration,model-workflow.integration,session-model-selection,provider-auth,provider-auth-bridge.integration}.test.ts
   - tests/server/configuration-edit-locks.test.ts
+  - tests/integration/model-cycle-native.test.ts
   - tests/web/{model-settings,model-store,model-selector,modal-focus}.test.ts*
   - tests/browser/{model-settings*,model-workflow}.spec.ts
   - tests/browser/fixtures/model-scale.ts
@@ -73,8 +74,14 @@ action opens the existing rule editor, where the pattern remains explicit. Editi
 retains pattern syntax, order, unmatched entries and unrelated settings. Common matches appear first
 in the picker; without a configured common scope, the picker has no Common group.
 
-Next/previous-model and thinking-cycle commands use cached native choices. Gestures execute in order
-within their session/transport owner and respect editors, menus, modals and IME. macOS uses
+Model cycling must preserve a single native cycle's cached scope, effort defaults and extension-event
+order. Forward cycling uses the owning worker's RPC `cycle_model`, followed by an effective read;
+never replace it with model/effort setters. Pi 1.3.0 RPC and its extension contexts expose no owning
+backward-cycle action: Previous model currently reports that limitation and leaves selection unchanged;
+the model picker remains available. The backward requirement remains in [[pi-capability-gaps]], not
+implemented by repeated forward calls. Explicit thinking selection and thinking-cycle commands keep
+their separate native semantics. Gestures execute in order within their session/transport owner and
+respect editors, menus, modals and IME. macOS uses
 Control+Command+M/P/R; other browser platforms retain Alt+Shift+M/P/R only when the layout actually
 produces that letter. Physical key codes never turn Option/AltGraph characters or dead keys into
 model actions. Palette and keyboard-help hints share the same binding source. Startup-default
