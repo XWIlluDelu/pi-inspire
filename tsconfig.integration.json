@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.web.json",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"]
+  },
+  "include": [
+    "server/**/*.ts",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "shared/**/*.ts",
+    "docs/examples/*.ts",
+    "tests/integration/**/*.ts",
+    "tests/server/fixtures/**/*.ts",
+    "tests/web/helpers.ts",
+    "tests/web/store-fixture.ts",
+    "tests/web/setup.ts",
+    "tests/web/fixtures/session-catalog.ts"
+  ]
+}

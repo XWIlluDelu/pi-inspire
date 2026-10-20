@@ -11,6 +11,7 @@ covers:
   - src/controllers/{connection,session-selection,runtime-event,transcript-data}-controller.ts
   - tests/server/{app-events,app-prompt-delivery,runtime-worker-pool}.test.ts
   - tests/browser/native-pi-continuity.spec.ts
+  - tests/integration/session-detail-confirmation.test.ts
   - tests/web/{events,store,store-transcript,store-navigation,store-async-ownership}.test.ts
 ---
 
@@ -59,14 +60,24 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
   refreshes the browser list without replacing the currently visible conversation.
 
 - Refreshing or reconnecting reconciles live events against an authoritative Pi snapshot without
-  duplicating settled messages or letting a delayed snapshot replace a newer selection. Bootstrap
-  and the WebSocket's first snapshot carry one process-lifetime Host authority plus a SHA-256
+  duplicating settled messages or letting a delayed snapshot replace a newer selection. Bootstrap,
+  HTTP session-open responses and the WebSocket's first snapshot carry one process-lifetime Host
+  authority plus a SHA-256
   snapshot digest, and a WebSocket is not published as open until that authority and snapshot have
   been validated and applied. After a synchronized socket loss, the browser first opens a bounded
   lightweight WebSocket resume naming its last confirmed digest: the Host returns a digest-only
   unchanged confirmation when it still matches or a complete authoritative snapshot when it does
   not; a failed resume falls back to bootstrap rather than rereading bootstrap metadata on every
-  healthy reconnect.
+  healthy reconnect. A committed HTTP-open snapshot passes its authority-bound digest through the
+  changed detail interest. The Host still performs its second authoritative read and queues events
+  behind that synchronization boundary; an identical window gets a digest-only confirmation.
+  The pending detail confirmation retains that exact authority/session/revision/digest witness.
+  Already-sent detail from another session may invalidate the general reconnect cache, but not
+  this witness. Current-target or unscoped runtime changes invalidate it; an unchanged reply still
+  requires the matching scope and digest. `session-detail-confirmation.test.ts` combines actual
+  HTTP/WebSocket synchronization with AppStore routing and tests invalid acknowledgements.
+  `app-events.test.ts` bounds a stable window above 500,000 characters to under 2,000 bytes of
+  synchronization and queued lifecycle frames, and checks changed/foreign-authority fallbacks.
 
   A missing first snapshot, application-frame inactivity, failed server ping/pong, stale visibility
   return, online transition, or BFCache restoration replaces the old transport through that same

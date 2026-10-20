@@ -38,6 +38,7 @@ import type {
   SessionExportRequest,
   SessionExportResponse,
   SessionListResponse,
+  SessionOpenResponse,
   ThinkingLevel,
   TranscriptActivityPage,
   TranscriptPage,
@@ -727,7 +728,12 @@ export function createApi(token: string | null = null) {
         { mutation: false },
       ),
     openSession: (id: string, signal?: AbortSignal) =>
-      post<ActiveSnapshot>(token, "/api/sessions/open", { id }, { signal }),
+      post<SessionOpenResponse>(
+        token,
+        "/api/sessions/open",
+        { id },
+        { signal },
+      ),
     deselectSession: (signal?: AbortSignal) =>
       post<ActiveSnapshot>(token, "/api/sessions/deselect", undefined, {
         signal,

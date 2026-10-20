@@ -33,6 +33,7 @@ and untracked.
 
 | State | Work |
 | --- | --- |
+| Implemented | Reclaimable Pending handoffs, project-bound terminal intent, verified native-connection rebind retirement, run-level cancellation, digest-confirmed session opening and view-bound Prompt Map navigation. Contracts and regression evidence are in [[composer]], [[terminal]], [[herdr-enhancement]], [[conversation]] and [[session-transport]]. |
 | Implemented | Native Herdr continuity and process-bound external-session presence fencing, with independent busy/input activity reporting. [[follow-session-execution-2026-10-19]] records verification and the separate Host/Pi activation boundary. |
 | Implemented | Ready-owned development pairing, native terminal clipboard/interrupt modifiers and focus entry/exit through existing controls. [[platform-compatibility#Development launch and terminal input]] records native startup and browser coverage. |
 | Implemented | Scoped read-only Git, distinct native/URL file identity, native terminal alternate-character input, current-runtime shell/filesystem support, per-instance lifecycle controls, local peer authentication and one-use launch links. Windows/macOS/Linux evidence and capability limits are in [[platform-compatibility]]. |

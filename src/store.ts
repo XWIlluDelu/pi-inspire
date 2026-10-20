@@ -833,7 +833,8 @@ export class AppStore {
   // --- Snapshot & event reconciliation ---
 
   private applySnapshot(
-    snapshot: ActiveSnapshot,
+    snapshot: ActiveSnapshot &
+      Partial<import("../shared/contracts").SnapshotWitness>,
     mode: SnapshotMode = "preserve",
   ): void {
     const pendingQueues =
@@ -845,7 +846,12 @@ export class AppStore {
     // Only a snapshot supplied with its matching wire digest can be confirmed
     // without retransmission. HTTP resyncs and local event reduction invalidate
     // that witness until the next event-stream snapshot.
-    this.snapshotDigest = null;
+    this.snapshotDigest =
+      snapshot.authorityId === this.hostAuthorityId &&
+      typeof snapshot.snapshotDigest === "string" &&
+      /^[0-9a-f]{64}$/u.test(snapshot.snapshotDigest)
+        ? snapshot.snapshotDigest
+        : null;
     const active = snapshot.active;
     const transition = deriveSnapshotTransition(this.state, snapshot, mode);
     const {

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { socketTicket } from "../../src/browser-auth";
 import { MAX_ASSISTANT_STREAM_BATCH_EVENTS } from "../../shared/assistant-stream";
+import { socketTicket } from "../../src/browser-auth";
 import {
   ConnectionController,
   FIRST_SNAPSHOT_TIMEOUT_MS,
@@ -139,6 +139,8 @@ describe("ConnectionController", () => {
       type: "detail_interest",
       sessionId: "b",
       revision: 1,
+      authorityId,
+      snapshotDigest,
     });
     socket.emit({ ...snapshot, detailSessionId: "a", detailRevision: 0 });
     expect(host.applyEvent).not.toHaveBeenCalled();
@@ -151,6 +153,8 @@ describe("ConnectionController", () => {
       type: "detail_interest",
       sessionId: null,
       revision: 2,
+      authorityId,
+      snapshotDigest,
     });
     socket.emit({ ...snapshot, detailSessionId: null, detailRevision: 2 });
     expect(socket.closeCount).toBe(0);
