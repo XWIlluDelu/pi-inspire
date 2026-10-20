@@ -6,8 +6,8 @@ import {
   projectionConflictSeverity,
   type SessionRuntimeStatus,
 } from "../../shared/contracts";
-import type { AppState } from "../app-state";
 import { isExternalSessionActivities } from "../../shared/session-activity";
+import type { AppState } from "../app-state";
 import {
   type ChatMessage,
   type EventSlice,
@@ -291,6 +291,7 @@ export class RuntimeEventController {
       runState: s.runState,
       tools: s.tools,
       retry: s.retry,
+      pendingRetryError: s.pendingRetryError,
       summarizationRetry: s.summarizationRetry,
       queue: s.queue,
       extensionUiRequests: s.extensionUiRequests,

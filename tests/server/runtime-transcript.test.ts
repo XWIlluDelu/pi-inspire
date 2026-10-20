@@ -15,6 +15,53 @@ import {
 afterEach(disposeProjectionFixture);
 
 describe("live and durable transcript reconciliation", () => {
+  it.each(["retry", "completed message"])(
+    "settles a background %s cancellation without completion/failure attention",
+    async (phase) => {
+      const { runtime, workers } = await setup();
+      try {
+        const events: Array<Record<string, unknown>> = [];
+        runtime.on("event", (event) => events.push(event));
+        await runtime.deselectSession();
+        const emit = (event: Record<string, unknown>) =>
+          workers[0]!.emit("event", event);
+        emit({ type: "agent_start" });
+        emit(
+          phase === "retry"
+            ? {
+                type: "auto_retry_end",
+                success: false,
+                finalError: "Retry cancelled",
+              }
+            : {
+                type: "message_end",
+                message: {
+                  role: "assistant",
+                  content: "finished",
+                  stopReason: "stop",
+                  timestamp: 2,
+                },
+              },
+        );
+        emit({ type: "agent_settled", aborted: true });
+        await vi.waitFor(() =>
+          expect(
+            events.findLast((event) => event.type === "agent_settled"),
+          ).toMatchObject({
+            sessionStatus: { runState: "aborted" },
+          }),
+        );
+        const settled = events.findLast(
+          (event) => event.type === "agent_settled",
+        )!;
+        expect(settled.sessionStatus).not.toHaveProperty("indicator");
+        expect((await runtime.snapshot("session-a")).runState).toBe("aborted");
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
+
   it.each(["character", "line"] as const)(
     "keeps the latest output beyond general projection (%s bound)",
     async (bound) => {

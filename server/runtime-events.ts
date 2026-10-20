@@ -628,6 +628,12 @@ export class RuntimeEventController {
       case "agent_settled": {
         slot.toolActivity = {};
         slot.summarizationRetry = null;
+        if (
+          record.aborted === true &&
+          !slot.conflict &&
+          slot.runState !== "conflict"
+        )
+          slot.runState = "aborted";
         const outcome =
           slot.runState === "failed" || slot.runState === "conflict"
             ? "failed"

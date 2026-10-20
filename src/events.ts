@@ -211,6 +211,7 @@ export interface EventSlice {
   runState: RunState;
   tools: Record<string, ActivityTool>;
   retry: RetryInfo | null;
+  pendingRetryError: string | null;
   summarizationRetry: RetryInfo | null;
   queue: PendingQueues;
   extensionUiRequests: ExtensionUiRequest[];
@@ -232,6 +233,7 @@ export function emptyEventSlice(): EventSlice {
     runState: "idle",
     tools: {},
     retry: null,
+    pendingRetryError: null,
     summarizationRetry: null,
     queue: emptyPendingQueues(),
     extensionUiRequests: [],
@@ -608,6 +610,7 @@ export function reduceEvent(
       break;
     }
     case "agent_start": {
+      slice.pendingRetryError = null;
       slice.summarizationRetry = null;
       slice.streaming = true;
       slice.activeAssistantMessageKey = null;
@@ -620,8 +623,17 @@ export function reduceEvent(
       slice.summarizationRetry = null;
       slice.streaming = false;
       slice.activeAssistantMessageKey = null;
-      if (slice.runState !== "failed" && slice.runState !== "aborted")
+      if (event.aborted === true && slice.runState !== "conflict")
+        slice.runState = "aborted";
+      else if (
+        slice.runState !== "failed" &&
+        slice.runState !== "aborted" &&
+        slice.runState !== "conflict"
+      )
         slice.runState = "idle";
+      if (event.aborted !== true && slice.pendingRetryError)
+        pushNotice(slice, "error", `Retry failed: ${slice.pendingRetryError}`);
+      slice.pendingRetryError = null;
       slice.tools = {};
       slice.retry = null;
       changed = true;
@@ -759,13 +771,14 @@ export function reduceEvent(
     }
     case "auto_retry_end": {
       slice.retry = null;
+      slice.pendingRetryError = null;
       changed = true;
       if (event.success) {
         slice.runState = "running";
       } else {
         slice.runState = "failed";
         if (typeof event.finalError === "string" && event.finalError) {
-          pushNotice(slice, "error", `Retry failed: ${event.finalError}`);
+          slice.pendingRetryError = event.finalError;
         }
       }
       break;
@@ -791,6 +804,7 @@ export function reduceEvent(
       break;
     }
     case "runtime_error": {
+      slice.pendingRetryError = null;
       slice.runState = "failed";
       // A dead worker cannot produce the missing agent_settled event. Clear
       // browser-only liveness without fabricating a message or tool outcome;

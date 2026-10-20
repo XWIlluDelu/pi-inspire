@@ -43,6 +43,7 @@ covers:
   - src/components/Composer.tsx
   - src/components/ExtensionUiDialog.tsx
   - server/runtime.ts
+  - server/runtime-events.ts
   - server/session-projection.ts
   - server/session-metadata.ts
   - tests/server/session-metadata.test.ts
@@ -245,7 +246,11 @@ custom messages remain independent readable boundaries in this contract.
   presentation. Do not use substring matching: timeout, connection and other diagnostics remain
   errors even when they mention abortion. Runtime settlement, attention indicators and the browser
   agree on cancellation as `aborted`, so it does not activate the Composer's failed styling.
-  A Stop request or its HTTP receipt alone does not establish completion.
+  Native `agent_settled.aborted` determines the run's cancellation outcome even when retry ended
+  unsuccessfully or the last assistant message already completed. This leaves original message stop
+  reasons, earlier diagnostics and projection conflicts intact. Retry-failure feedback waits for
+  settlement, and cancelled background runs do not announce success or failure. A Stop request or
+  its HTTP receipt alone does not establish completion.
 
   Cancellation reuses the error outcome's compact container, padding, title typography and red
   identity colors, with a plain square stop glyph (no surrounding circle) and the **Stopped** label. The 14px glyph uses
