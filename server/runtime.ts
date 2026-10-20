@@ -4018,10 +4018,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private async abortInside(sessionId: string): Promise<PendingRecovery> {
     const externalSlot = this.requireSlot(sessionId);
     if (this.externalSessions?.has(externalSlot)) {
-      await this.useSlot(externalSlot, () =>
+      const interruptionScope = await this.useSlot(externalSlot, () =>
         this.externalSessions!.abort(externalSlot),
       );
-      return { steering: [], followUp: [] };
+      return {
+        steering: [],
+        followUp: [],
+        ...(interruptionScope ? { interruptionScope } : {}),
+      };
     }
     const initialSlot = this.requireSlot(sessionId);
     if (initialSlot.conflict) {
@@ -4560,10 +4564,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       await this.ensureProcess(slot);
       if (this.externalSessions.has(slot)) {
         await this.useSlot(slot, () =>
-          this.externalSessions!.command(
-            slot,
-            `/name ${name.trim().slice(0, 160)}`,
-          ),
+          this.externalSessions!.rename(slot, name.trim().slice(0, 160)),
         );
         this.catalog.invalidate();
         return;

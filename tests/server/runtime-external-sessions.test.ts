@@ -1,16 +1,16 @@
 import { appendFile, readFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { nullDiagnosticLogger } from "../../server/diagnostics.js";
 import type {
   ExternalSessionConnection,
   ExternalSessionState,
 } from "../../server/external-session.js";
 import type { PiRpcProcess } from "../../server/pi-rpc.js";
-import { nullDiagnosticLogger } from "../../server/diagnostics.js";
-import type { RuntimeSlot } from "../../server/runtime-slot.js";
-import { SessionProjection } from "../../server/session-projection.js";
-import { RuntimeExternalSessions } from "../../server/runtime-external-sessions.js";
-import { createRuntimeSlot } from "../../server/runtime-slot.js";
 import { RuntimeController } from "../../server/runtime.js";
+import { RuntimeExternalSessions } from "../../server/runtime-external-sessions.js";
+import type { RuntimeSlot } from "../../server/runtime-slot.js";
+import { createRuntimeSlot } from "../../server/runtime-slot.js";
+import { SessionProjection } from "../../server/session-projection.js";
 import {
   catalog,
   deferredSignal,
@@ -32,6 +32,9 @@ function nativeFixture() {
     read: vi.fn(async () => state),
     prompt: vi.fn(async () => {
       state = { status: "working" };
+    }),
+    rename: vi.fn(async (_name, beforeSend) => {
+      beforeSend?.();
     }),
     abort: vi.fn(async () => {
       state = { status: "idle" };
@@ -139,9 +142,8 @@ describe("continue an externally owned Pi", () => {
       await runtime.abort("a");
       expect(f.native.abort).toHaveBeenCalledOnce();
       await runtime.rename("a", "Understanding");
-      expect(f.native.prompt).toHaveBeenLastCalledWith(
-        "/name Understanding",
-        undefined,
+      expect(f.native.rename).toHaveBeenLastCalledWith(
+        "Understanding",
         expect.any(Function),
       );
     } finally {
@@ -485,6 +487,8 @@ describe("continue an externally owned Pi", () => {
       };
       if (operation === "abort")
         vi.mocked(f.native.abort).mockImplementation(hold);
+      else if (operation === "rename")
+        vi.mocked(f.native.rename!).mockImplementation(hold);
       else vi.mocked(f.native.prompt).mockImplementation(hold);
       const remove = vi.fn(async () => "trashed" as const);
       const runtime = new RuntimeController(

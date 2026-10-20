@@ -84,8 +84,10 @@ commands own compaction, export and reload. Terminal-only commands expose precis
 `/bug` neither uploads a report nor sends its description to the model.
 The public command inventory is [Pi commands](../../docs/pi-commands.md).
 
-The Host rejects unknown command-shaped text at the prompt boundary, dispatches direct `!`/`!!`
-input to native Bash, normalizes resource-command separators, and revalidates command ownership
+For owned RPC workers, the Host rejects unknown command-shaped text at the prompt boundary and
+dispatches direct `!`/`!!` input to native Bash. Existing TUI connections instead direct shell input
+and interactive built-ins to the original terminal; `sendUserMessage` is not the TUI shell/built-in
+submit handler. The Host normalizes resource-command separators, and revalidates command ownership
 after reload/worker replacement. Snapshots and slash-command admission/delivery read the worker's
 current loaded inventory. Resource-command completion refreshes browser discovery even during model
 work, without settling that work or Pending. Native in-process reload therefore does not require a

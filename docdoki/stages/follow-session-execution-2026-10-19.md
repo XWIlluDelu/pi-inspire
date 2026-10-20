@@ -29,6 +29,8 @@ interfaces and process evidence, not a particular external host's control API.
   evidence, unavailable-owner fence, cold settings admission and shutdown detach/drain are retained.
 - The optional single-file Pi reporter covers TUI/RPC/JSON/print. It reports process-bound session
   presence separately from busy/input activity, and excludes the loaded Inspire-owned RPC bridge.
+  In Herdr TUI only, the same installed entry also receives scope-bound native action frames through
+  existing Herdr control; observation outside that connection remains read-only.
 - A native session with no supported control connection is checked against reported presence
   inside cold writer admission and again after asynchronous pre-start preparation. A live external
   holder produces an `external-active` read-only view, not a new worker or an external control route.
@@ -44,7 +46,24 @@ interfaces and process evidence, not a particular external host's control API.
   prevents shutdown during startup I/O from rearming a timer. SDK quit/dispose while its process
   lives has no reporter-visible persistence-drain completion signal and stays conservatively held.
 
+## Delivery state
+
+The native-action implementation is complete and verified on the isolated `review-native-actions`
+branch. Main integration, push and installation are paused pending explicit publication approval;
+this is a delivery boundary, not an implementation defect. Host restart remains operator-owned.
+
 ## Verification
+
+- `herdr-native-actions.integration.test.ts` uses real offline Pi TUI/PTY with non-default Follow-up
+  and Interrupt keys: native queueing, agent abort/queue restoration, below-editor widget/draft
+  admission, a real dialog, extension command/template dispatch, handled input without a model turn,
+  receiver retirement on reload, stale session rejection and original-terminal continuation. A gated
+  native shell demonstrates why agent Stop cannot claim Bash cancellation. The independent real
+  Herdr continuity case retains the same Pi across Host detach/reconnect with isolated user state.
+- Transport tests require one exact process/session/receiver, reject mismatched or unavailable
+  capability, preserve Stop ownership, distinguish invocation from rejection/unknown outcomes and
+  never repeat a possibly delivered action. Prompt blocked admission is production code, not supplied
+  by its test double.
 
 - An isolated real RPC Pi is observed idle, working and settled while Runtime opens its session
   read-only and never constructs a replacement worker. Native resource reload keeps one report

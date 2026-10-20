@@ -349,18 +349,20 @@ export class RuntimeExternalSessions {
     }
   }
 
-  async command(slot: RuntimeSlot, text: string): Promise<void> {
+  async rename(slot: RuntimeSlot, name: string): Promise<void> {
     const connection = this.connections.get(slot);
     if (!connection)
       throw requestError("The external Pi connection has ended.", 409);
-    await connection.native.prompt(text, undefined, () => {
+    if (!connection.native.rename)
+      throw requestError("Rename this Pi in its original terminal.", 409);
+    await connection.native.rename(name, () => {
       if (this.connections.get(slot) !== connection || !this.host.current(slot))
         throw requestError("The external Pi connection has ended.", 409);
       this.host.assertUsable(slot);
     });
   }
 
-  async abort(slot: RuntimeSlot): Promise<void> {
+  async abort(slot: RuntimeSlot): Promise<"agent" | undefined> {
     const connection = this.connections.get(slot);
     if (!connection)
       throw requestError("The external Pi connection has ended.", 409);
@@ -370,6 +372,7 @@ export class RuntimeExternalSessions {
     slot.stoppingInput = true;
     try {
       await connection.native.abort();
+      return connection.native.interruptionScope;
     } finally {
       slot.stoppingInput = false;
     }

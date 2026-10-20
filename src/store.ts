@@ -2145,6 +2145,11 @@ export class AppStore {
       this.replaceComposerText(sessionDraft(sessionId));
     }
     if (this.state.sessionId === sessionId) {
+      if (recovered.interruptionScope === "agent")
+        this.notify(
+          "info",
+          "Pi agent interruption requested. Interrupt terminal shell commands in the original Pi terminal.",
+        );
       if (recovered.warning) this.notify("warning", recovered.warning);
       if (recovered.error)
         this.notify("warning", `Pending recovery failed: ${recovered.error}`);

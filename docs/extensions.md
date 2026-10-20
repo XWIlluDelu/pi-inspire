@@ -75,7 +75,7 @@ Keep state scoped to its Pi session and reconstruct it from persisted entries du
 The optional [session activity extension](examples/session-activity.ts) lets Inspire show busy,
 waiting-for-input and idle state for local external Pi sessions, including independent RPC hosts
 and terminal, JSON or print modes. Herdr and external execution connectors are not required:
-observing activity does not attach a controller or grant execution authority. The same extension
+observing activity alone does not attach a controller or grant execution authority. The same extension
 reports process-bound session presence so Inspire can open an already-held session read-only
 instead of starting a second writer, even when the other Pi is idle.
 
@@ -92,8 +92,8 @@ supported reload or a later normal restart; restarting Inspire does not reload a
 Remove the configured file with `pi remove` (or remove your copied extension) and reload to disable
 reporting.
 
-The reporter adds no tools, model prompts or session entries and makes no network requests. It writes
-only small, private records into the local user's Inspire cache. Busy indicators expire after
+Reporting adds no tools, model prompts or session entries and makes no network requests. It writes
+small, private records into the local user's Inspire cache. Busy indicators expire after
 about eight seconds without a heartbeat. Session presence does not: idle, a stalled heartbeat
 or a missing previously observed report is not proof of release, including across Host restart.
 Inspire retains that positive admission evidence privately. Shutdown stops activity observation,
@@ -117,6 +117,25 @@ restart each external Pi through its own host. They load code independently. An 
 never loaded the reporter has no presence record to inspect; the extension does not discover
 arbitrary uninstrumented processes or take control of them. Do not clear the cache to bypass a
 live-holder warning. Once the other Pi releases the session, reselect it in Inspire to retry.
+
+### Control the same Herdr Pi terminal
+
+In a Herdr TUI, this same extension also handles Inspire input, Steer, Follow-up, agent Stop and rename
+through Pi's public functions. No additional extension is needed. It reuses Herdr's existing terminal
+control permission, not your shortcut bindings or screen layout; it adds no service listener or
+credentials. Temporary action payloads use the same private cache. Presence reports by themselves
+are not a control channel, and an ordinary Pi outside Herdr remains observation-only.
+
+Reload the updated file with `/reload` in the original idle Pi terminal, or start Pi normally next time.
+Inspire connects to that process; returning to the original terminal continues the same instance.
+An unsent terminal draft or unanswered dialog prevents new browser input without altering either.
+A call receipt means Pi's public function returned, not that a message ran or work completed;
+extensions can handle input without a model turn, and native asynchronous errors remain in Pi.
+
+Shell `!`/`!!` and interactive built-ins must run in the original terminal or their existing Inspire
+command surface, not as model prompts. Extension commands and prompt templates still use native
+dispatch. Agent Stop requests `ctx.abort()`, including Pi's native queued-message restoration. It
+does **not** cancel a shell started in the terminal; interrupt that shell in the original terminal.
 
 ## Try the native UI example
 
