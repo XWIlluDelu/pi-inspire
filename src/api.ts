@@ -128,6 +128,8 @@ export class ApiError extends Error {
     public promptReceipt?: { operationId: string; outcome: string },
     /** A settled Pending handoff, including failure or result retirement. */
     public pendingReceipt?: { operationId: string; outcome: string },
+    public recoveredAttachments?: UploadedAttachment[],
+    public recoveryId?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -197,17 +199,28 @@ async function ensureOk(response: Response): Promise<void> {
   let matches: string[] | undefined;
   let code: string | undefined;
   let outcomeUnknown = false;
+  let recoveredAttachments: UploadedAttachment[] | undefined;
+  let recoveryId: string | undefined;
   try {
     const body = (await response.json()) as {
       error?: string;
       matches?: unknown;
       code?: unknown;
       outcomeUnknown?: unknown;
+      recoveredAttachments?: UploadedAttachment[];
+      recoveryId?: unknown;
     };
     if (body.error) message = body.error;
     if (Array.isArray(body.matches)) matches = body.matches.map(String);
     if (typeof body.code === "string") code = body.code;
     outcomeUnknown = body.outcomeUnknown === true;
+    if (
+      body.code === "PROMPT_RECOVERED" &&
+      Array.isArray(body.recoveredAttachments)
+    )
+      recoveredAttachments = body.recoveredAttachments;
+    if (body.code === "PROMPT_RECOVERED" && typeof body.recoveryId === "string")
+      recoveryId = body.recoveryId;
   } catch (error) {
     if (aborted(error)) throw error;
     // A non-JSON HTTP error still has a useful status. Losing the body in
@@ -235,6 +248,8 @@ async function ensureOk(response: Response): Promise<void> {
           outcome: response.headers.get("X-Inspire-Pending-Outcome") ?? "",
         }
       : undefined,
+    recoveredAttachments,
+    recoveryId,
   );
 }
 

@@ -26,6 +26,7 @@ import {
   MAX_SESSION_ID_HYDRATION_IDS,
   MAX_SESSION_LIST_PAGE_SIZE,
   THINKING_LEVELS,
+  type UploadedAttachment,
 } from "../shared/contracts.js";
 import type { HerdrEnhancementStatus } from "../shared/herdr.js";
 import { HTML_PREVIEW_BYTES } from "../shared/html-preview.js";
@@ -605,6 +606,14 @@ function apiError(
   response.status(status).json({
     error: message,
     ...(typeof code === "string" ? { code } : {}),
+    ...(code === "PROMPT_RECOVERED"
+      ? {
+          recoveryId: (error as { recoveryId?: string }).recoveryId,
+          recoveredAttachments: (
+            error as { recoveredAttachments?: UploadedAttachment[] }
+          ).recoveredAttachments,
+        }
+      : {}),
     ...(Array.isArray(matches) ? { matches } : {}),
     ...((error as { outcomeUnknown?: unknown })?.outcomeUnknown === true
       ? { outcomeUnknown: true }

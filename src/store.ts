@@ -2132,6 +2132,7 @@ export class AppStore {
         sessionId,
         recovered.attachments ?? [],
         recovered.authorityId ?? this.hostAuthorityId,
+        recovered.recoveryId,
       );
     if (text.trim()) {
       const draft = [text, sessionDraft(sessionId)]

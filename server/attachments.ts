@@ -1269,6 +1269,12 @@ export class AttachmentStore {
     });
   }
 
+  pendingImageAttachments(ids: readonly string[]): UploadedAttachment[] {
+    return this.pendingCopyImageIds(ids).map((id) =>
+      this.publicValue(this.values.get(id)!),
+    );
+  }
+
   async imagePreview(id: string): Promise<{ bytes: Buffer; mimeType: string }> {
     const value = this.values.get(id);
     if (

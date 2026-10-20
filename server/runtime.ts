@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -3906,13 +3906,49 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         .filter(({ request }) => request.behavior === "followUp")
         .map(({ request }) => request.message),
     };
+    if (held.length) this.refreshPendingQueues(slot, true);
+    const hostImages = new Map<(typeof held)[number], UploadedAttachment[]>();
+    const copiedImages: UploadedAttachment[] = [];
+    try {
+      for (const item of [
+        ...held.filter(({ request }) => request.behavior === "steer"),
+        ...held.filter(({ request }) => request.behavior === "followUp"),
+      ]) {
+        const uploaded = this.attachments.pendingImageAttachments(
+          item.request.attachmentIds ?? [],
+        );
+        const recalled = item.request.historyArtifacts?.imageReferences.length
+          ? readComposerHistoryImages(slot, item.request.historyArtifacts)
+          : [];
+        const copies = recalled.length
+          ? await this.attachments.stageImages(recalled)
+          : [];
+        copiedImages.push(...copies);
+        hostImages.set(item, [...uploaded, ...copies]);
+      }
+    } catch (error) {
+      await Promise.allSettled(
+        copiedImages.map((image) => this.attachments.remove(image.id)),
+      );
+      slot.deferredPrompts.unshift(...held);
+      this.refreshPendingQueues(slot, true);
+      this.resumeDeferredPrompts(slot);
+      throw error;
+    }
+    const hostAttachments = [...hostImages.values()].flat();
+    const recoveryId = hostAttachments.length ? randomUUID() : undefined;
+    if (hostAttachments.length) {
+      host.attachments = hostAttachments;
+      host.recoveryId = recoveryId;
+    }
     for (const item of held)
       item.reject(
         requestError("Pending input returned to the composer", 409, {
           code: "PROMPT_RECOVERED",
+          recoveryId,
+          recoveredAttachments: hostImages.get(item)!,
         }),
       );
-    if (held.length) this.refreshPendingQueues(slot, true);
     const rpc = slot.process;
     if (!rpc || !slot.ready) {
       return slot.piPendingQueues.totalCount > 0
@@ -3942,9 +3978,18 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         ? await imageOwner!.finishClear(imageClear, pi, true)
         : {};
       return {
+        ...(recoveryId ? { recoveryId } : {}),
         steering: [...pending.steering, ...host.steering],
         followUp: [...pending.followUp, ...host.followUp],
         ...recoveredImages,
+        ...(recoveredImages.attachments?.length || host.attachments?.length
+          ? {
+              attachments: [
+                ...(recoveredImages.attachments ?? []),
+                ...(host.attachments ?? []),
+              ],
+            }
+          : {}),
       };
     } catch (error) {
       if (imageClear) imageOwner!.cancelClear(imageClear);
@@ -4090,7 +4135,18 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         if (!rpc || !slot.ready) {
           throw requestError("There is no live Pi runtime to abort", 409);
         }
-        recovered = await this.recoverPendingInside(slot);
+        try {
+          recovered = await this.recoverPendingInside(slot);
+        } catch (error) {
+          recovered = {
+            steering: [],
+            followUp: [],
+            error:
+              error instanceof Error
+                ? error.message
+                : "Pending recovery failed",
+          };
+        }
         if (recovered.error) {
           // Abort alone can resume Pi's queue. If clearing failed, retire its
           // worker rather than risk running input the user explicitly stopped.
