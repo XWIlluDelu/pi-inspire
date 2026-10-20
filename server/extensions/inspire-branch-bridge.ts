@@ -268,6 +268,25 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
     },
   });
 
+  let navigating:
+    | {
+        sessionId: string;
+        beforeLeaf: string | null;
+        navigationLeaf?: string | null;
+        summaryId?: string;
+      }
+    | undefined;
+  pi.on("session_tree", (event, ctx) => {
+    if (
+      navigating &&
+      ctx.sessionManager.getSessionId() === navigating.sessionId &&
+      event.oldLeafId === navigating.beforeLeaf
+    ) {
+      navigating.navigationLeaf = event.newLeafId;
+      navigating.summaryId = event.summaryEntry?.id;
+    }
+  });
+
   pi.registerCommand(command, {
     description: "Internal Inspire branch navigation bridge",
     handler: async (argument, ctx) => {
@@ -294,25 +313,24 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
         if (!ctx.sessionManager.getEntry(request.targetId))
           throw new Error("branch target does not exist");
         result.beforeLeaf = ctx.sessionManager.getLeafId();
-        const beforeCount = ctx.sessionManager.getEntries().length;
-        const navigation = await ctx.navigateTree(request.targetId, {
-          summarize: request.summarize ?? false,
-          customInstructions: request.customInstructions,
-        });
-        // RPC command contexts expose cancellation, not AgentSession's returned
-        // summaryEntry. Read the native appended entry from SessionManager.
-        const summary = ctx.sessionManager
-          .getEntries()
-          .slice(beforeCount)
-          .find(
-            (entry) =>
-              entry.type === "branch_summary" &&
-              entry.fromId === result.beforeLeaf,
-          );
-        if (summary) result.summaryId = summary.id;
-        result.cancelled = navigation.cancelled;
-        result.effectiveLeaf = ctx.sessionManager.getLeafId();
-        result.ok = !navigation.cancelled;
+        const witness = {
+          sessionId: request.sessionId,
+          beforeLeaf: result.beforeLeaf,
+        } as NonNullable<typeof navigating>;
+        navigating = witness;
+        try {
+          const navigation = await ctx.navigateTree(request.targetId, {
+            summarize: request.summarize ?? false,
+            customInstructions: request.customInstructions,
+          });
+          result.cancelled = navigation.cancelled;
+          result.effectiveLeaf = ctx.sessionManager.getLeafId();
+          result.ok = !navigation.cancelled;
+        } finally {
+          result.navigationLeaf = witness.navigationLeaf;
+          if (witness.summaryId) result.summaryId = witness.summaryId;
+          navigating = undefined;
+        }
       } catch (error) {
         result.effectiveLeaf = ctx.sessionManager.getLeafId();
         result.error = boundedError(error);

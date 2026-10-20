@@ -14,6 +14,7 @@ covers:
   - src/store.ts
   - src/controllers/composer-controller.ts
   - tests/server/{runtime-branching,session-fork,session-tree,branch-bridge-extension,session-export.integration,generated-exports}.test.ts
+  - tests/server/{runtime-branch-bridge,pi-branch-callback.integration}.test.ts
   - tests/web/{branch-tree,branch-store}.test.ts*
   - tests/browser/history.spec.ts
   - src/styles/{history,transcript}.css
@@ -117,7 +118,13 @@ Independent copies do not replace the active source worker. Durable trust comes 
   worker receives randomized command, status-key, and worker identities; the host accepts only one
   bounded nonce-correlated `setStatus` result, awaits both that result and prompt completion, and
   independently verifies the post-operation leaf and Pi-owned persisted effects against the native
-  operation, including expected branch-summary appends and before-target/null leaves. The internal
+  operation, including expected branch-summary appends and before-target/null leaves. A synchronous
+  read-only `session_tree` observer captures the native anchor before callback appends; the completed
+  result also carries the effective leaf. Worker entries and disk must agree on the contiguous native
+  summary/label prefix and callback chain from that anchor. Valid `custom` and `custom_message`
+  callbacks may become the leaf; the pre-navigation leaf is not their required parent. Intermediate
+  callback appends still require same-worker entry witnesses, including while a later hook awaits
+  a dialog; final acceptance retains the nonce/worker/session, handler-completion and disk fences. The internal
   command is hidden from completion and rejected at the public prompt boundary. The registered
   handler's RPC completion fences result delivery: completion without its matching result is a
   protocol failure, not a reason to wait indefinitely. Missing, duplicate, malformed, stale, or

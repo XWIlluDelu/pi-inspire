@@ -509,6 +509,7 @@ export class RuntimePersistenceOwnershipController {
       for (const entry of appendedEntries.slice(expectationsConsumed)) {
         if (
           entry.type === "custom" ||
+          entry.type === "custom_message" ||
           entry.type === "branch_summary" ||
           entry.type === "label"
         )
@@ -533,9 +534,9 @@ export class RuntimePersistenceOwnershipController {
     const pending = slot.pendingBranchBridge;
     const first = result.appendedEntries?.[0];
     if (
-      pending?.summarize &&
-      first?.type === "branch_summary" &&
-      first.fromId === pending.beforeLeafId
+      pending &&
+      pending.navigationParentId !== undefined &&
+      first?.parentId === pending.navigationParentId
     )
       return pending.navigationParentId ?? null;
     return slot.navigationLease
@@ -588,6 +589,12 @@ export class RuntimePersistenceOwnershipController {
         return { owned: false, reason: "worker-entries-unavailable" };
       }
     }
+
+    // During navigation, entries must already match the same worker at the
+    // requested anchor. Final navigation validation additionally fences handler
+    // completion and the native session_tree anchor; do not block hook dialogs.
+    if (slot.pendingBranchBridge)
+      return this.workerAppendWitness(slot, result, []);
 
     let expectedParent = this.appendParent(slot, result);
     const matchedExpectations: PersistenceExpectation[] = [];

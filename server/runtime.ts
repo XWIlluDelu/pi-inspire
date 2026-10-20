@@ -82,7 +82,10 @@ import {
 } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
 import { RuntimeBashController } from "./runtime-bash.js";
-import { newBridgeIdentity } from "./runtime-branch-bridge.js";
+import {
+  branchDeltaMatches,
+  newBridgeIdentity,
+} from "./runtime-branch-bridge.js";
 import {
   assertPromptArtifactBudget,
   readComposerHistoryImages,
@@ -3465,25 +3468,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         );
       }
       const delta = verified.entries as SessionEntry[];
-      const summary = delta[0];
-      const summaryAppend = Boolean(
-        request.summarize &&
-          result.summaryId &&
-          summary?.type === "branch_summary" &&
-          summary.id === result.summaryId &&
-          summary.parentId === navigationTarget &&
-          summary.fromId === beforeLeaf,
-      );
-      let parent = navigationTarget;
-      const validDelta = delta.every((entry, index) => {
-        const valid =
-          entry.parentId === parent &&
-          ((index === 0 && summaryAppend) ||
-            entry.type === "label" ||
-            entry.type === "custom");
-        parent = entry.id;
-        return valid;
-      });
+      const validDelta =
+        (!result.summaryId || request.summarize) &&
+        branchDeltaMatches(result, delta, navigationTarget, beforeLeaf);
       await this.reconcileSlot(slot, true);
       if (slot.pendingBranchBridge === pending) slot.pendingBranchBridge = null;
       if (
@@ -3516,10 +3503,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           );
         throw requestError(result.error ?? "Branch navigation failed", 409);
       }
-      if (
-        result.effectiveLeaf !==
-        (delta.length > 0 ? delta.at(-1)!.id : navigationTarget)
-      ) {
+      if (!validDelta) {
         return this.failUnknownBranchOutcome(
           slot,
           "Branch navigation reached an unexpected leaf; the worker was stopped",
