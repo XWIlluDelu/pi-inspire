@@ -29,6 +29,10 @@ The `ssh-reverse` module reads a private, non-executable configuration and estab
 `-R 127.0.0.1:<remote-port>:127.0.0.1:<local-port>`. It verifies its managed SSH process before
 stopping it and offers an independently restartable user service.
 
+- Start, stop, restart and service installation serialize per installation; restart retains the
+  same lifecycle lock through stop and start. A failed direct-mode state publication retires only
+  the verified launch, and removes its recovery artifacts only after confirmed exit. Uncertain
+  identity or cleanup keeps those artifacts instead of stopping an unrelated process.
 - Initial connection has a ten-second limit. Three unanswered fifteen-second server-alive probes
   detect an interrupted established connection.
 - Diagnostics distinguish Host absence, authentication, server identity, DNS/reachability,
