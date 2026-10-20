@@ -1353,6 +1353,11 @@
   background: var(--bg-surface);
 }
 
+/* Reuse the error styling; cancellation needs no diagnostic spacing. */
+.assistant-error--stopped .assistant-error__head {
+  margin-bottom: 0;
+}
+
 .assistant-error__head {
   display: flex;
   align-items: center;

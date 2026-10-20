@@ -6,6 +6,8 @@ covers:
   - src/events.ts
   - src/store.ts
   - shared/assistant-stream.ts
+  - shared/assistant-outcome.ts
+  - tests/shared/assistant-outcome.test.ts
   - shared/contracts.ts
   - shared/user-turns.ts
   - shared/image-dimension-notes.ts
@@ -219,8 +221,8 @@ custom messages remain independent readable boundaries in this contract.
   first visible thinking, text, or tool delta; that truthful waiting state renders a quiet
   `Working…` indicator and replaces it immediately when content arrives.
 
-  A settled empty assistant without an error allocates no Divider-only transcript row; failed
-  replies instead retain their visible error outcome as specified below. While latest-follow remains
+  A settled empty assistant without a terminal outcome allocates no Divider-only transcript row;
+  stopped and failed replies retain their visible outcome as specified below. While latest-follow remains
   active, the viewport follows actual rendered-content and scrollport geometry—not only
   message-count or ordinary-text changes—so thinking/tool deltas, Markdown reflow, card transitions,
   virtual-row measurement, and a mobile keyboard resizing the scrollport cannot strand new content
@@ -236,7 +238,27 @@ custom messages remain independent readable boundaries in this contract.
   follow; only the user reaching the latest boundary or choosing Jump to latest does so. Transcript
   search retains its separate viewport lock.
 
-- Every Pi assistant message with `stopReason: "error"` displays its `errorMessage` as a persistent
+- Cancellation is a normal terminal outcome, not a Pi failure. An assistant with
+  `stopReason: "aborted"` displays **Stopped** after its partial content,
+  outside activity folding. Pi also persists some native cancellations as `stopReason: "error"`
+  with the standalone default reason `This operation was aborted`; this exact reason has the same
+  presentation. Do not use substring matching: timeout, connection and other diagnostics remain
+  errors even when they mention abortion. Runtime settlement, attention indicators and the browser
+  agree on cancellation as `aborted`, so it does not activate the Composer's failed styling.
+  A Stop request or its HTTP receipt alone does not establish completion.
+
+  Cancellation reuses the error outcome's compact container, padding, title typography and red
+  identity colors, with a plain square stop glyph (no surrounding circle) and the **Stopped** label. The 14px glyph uses
+  the same header alignment and 8px gap as errors. This visual identity does not change the aborted
+  runtime outcome or activate the Composer's failed styling.
+  It has no diagnostic subtext, Copy or details controls. Transcript search indexes the visible label,
+  not the unshown cancellation diagnostic.
+  Partial replies, tools and unsent drafts remain intact. An earlier cancellation cannot suppress
+  a later genuine error. Live events,
+  reconnect, reduced projections and older pages use the same message-derived classification;
+  Pi's stored messages, stop reason and original error text remain unchanged.
+
+- Every other Pi assistant message with `stopReason: "error"` displays its `errorMessage` as a persistent
   plain-text error block after that reply's existing content. Empty and thinking-only failed replies
   remain visible boundaries rather than deferred activity, and activity visibility or
   assistant-round styling cannot hide the error. Short errors are immediately readable; long or
@@ -356,7 +378,7 @@ history keep one result per native execution. [[pi-integration]] owns execution 
   their chronological cards.
 
 - Running, retrying, compacting, queued, user-stopped, failed, and settled states remain
-  distinguishable; a user-initiated abort is presented as neutral `Stopped`, not as a failed run.
+  distinguishable; a user-initiated abort is presented as `Stopped`, not as a failed run.
 
 ## Pagination and presentation ownership
 

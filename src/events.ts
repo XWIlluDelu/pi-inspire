@@ -1,3 +1,4 @@
+import { assistantOutcome } from "../shared/assistant-outcome";
 import {
   applyAssistantMessageDelta,
   assistantStreamTextLength,
@@ -573,6 +574,9 @@ export function reduceEvent(
       if (key) settle.push(key);
       if (message.role === "assistant") {
         slice.streaming = false;
+        const outcome = assistantOutcome(message);
+        if (outcome)
+          slice.runState = outcome === "stopped" ? "aborted" : "failed";
         // A completed call observed in this turn is queued until execution
         // starts. History and reconnect snapshots do not establish that state.
         if (
