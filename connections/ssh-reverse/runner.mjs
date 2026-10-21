@@ -16,6 +16,13 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { systemdEscape } from "../../deploy/systemd/install.mjs";
+// Source checkouts and installed packages keep runtime support in different roots.
+const sourceLockModule = new URL("../../server/file-lock.mjs", import.meta.url);
+const { acquireFileLock } = await import(
+  existsSync(sourceLockModule)
+    ? sourceLockModule.href
+    : new URL("../../build/server/file-lock.mjs", import.meta.url).href
+);
 
 const MODULE_ID = "ssh-reverse";
 const STATE_VERSION = 1;
@@ -443,6 +450,9 @@ async function start(root) {
       console.log("SSH reverse connection is already running.");
       return;
     }
+    throw new Error(
+      "SSH reverse connection is still running without a usable control socket; stop it before starting again",
+    );
   }
   await rm(paths.state, { force: true });
   await ensurePrivateDirectory(paths.stateDirectory);
@@ -467,19 +477,80 @@ async function start(root) {
     target: config.target,
     controlPath: paths.control,
   };
-  const pid = await controlCheck(state);
-  if (!pid) {
-    await rm(paths.control, { force: true });
-    throw new Error("SSH reverse connection did not publish its control socket");
+  let verified = false;
+  try {
+    const pid = await controlCheck(state);
+    if (!pid)
+      throw new Error("SSH reverse connection did not publish its control socket");
+    state.pid = pid;
+    state.processStartTime = await processStartIdentity(pid);
+    verified = await verifyOwnedTunnel(state);
+    if (!verified)
+      throw new Error("SSH reverse connection identity could not be verified");
+    await writePrivateFile(paths.state, `${JSON.stringify(state)}\n`);
+  } catch (error) {
+    // A successful SSH fork is not a committed launch until state is saved.
+    // Retire only the process we verified, and keep recovery artifacts if its
+    // identity or confirmed exit cannot be established.
+    if (verified) {
+      try {
+        await stopOwnedTunnel(state);
+        await removeStoppedTunnel(paths, state);
+      } catch (cleanupError) {
+        throw new Error(
+          `${error.message}; startup cleanup failed: ${cleanupError.message}. Control socket retained at ${state.controlPath}`,
+          { cause: error },
+        );
+      }
+    }
+    throw error;
   }
-  state.pid = pid;
-  state.processStartTime = await processStartIdentity(pid);
-  if (!(await verifyOwnedTunnel(state))) {
-    await run("ssh", ["-S", paths.control, "-O", "exit", config.target]);
-    throw new Error("SSH reverse connection identity could not be verified");
-  }
-  await writePrivateFile(paths.state, `${JSON.stringify(state)}\n`);
   console.log("SSH reverse connection is running.");
+}
+
+async function stopOwnedTunnel(state) {
+  if (!(await verifyOwnedTunnel(state))) {
+    try {
+      process.kill(state.pid, 0);
+    } catch (error) {
+      if (error?.code === "ESRCH") return;
+    }
+    throw new Error("SSH reverse connection identity changed before cleanup");
+  }
+  // A missing/replaced socket does not grant control over its new listener.
+  const exited =
+    (await controlCheck(state)) === state.pid
+      ? await run("ssh", [
+          "-S",
+          state.controlPath,
+          "-O",
+          "exit",
+          "-o",
+          "BatchMode=yes",
+          state.target,
+        ])
+      : { code: 1 };
+  if (exited.code !== 0 && (await verifyOwnedTunnel(state))) {
+    try {
+      process.kill(state.pid, "SIGTERM");
+    } catch (error) {
+      if (error?.code !== "ESRCH") throw error;
+    }
+  }
+  if (!(await waitForExit(state.pid)))
+    throw new Error("SSH reverse connection did not stop");
+}
+
+async function removeStoppedTunnel(paths, state) {
+  const published = await readState(paths.state);
+  if (
+    published?.pid === state.pid &&
+    published.processStartTime === state.processStartTime &&
+    published.controlPath === state.controlPath &&
+    published.root === state.root
+  )
+    await rm(paths.state, { force: true });
+  await rm(state.controlPath, { force: true });
 }
 
 async function stop(root) {
@@ -507,24 +578,8 @@ async function stop(root) {
     console.log("Removed stale SSH reverse connection state without stopping a process.");
     return;
   }
-  const exited = await run("ssh", [
-    "-S",
-    state.controlPath,
-    "-O",
-    "exit",
-    "-o",
-    "BatchMode=yes",
-    state.target,
-  ]);
-  if (exited.code !== 0) {
-    process.kill(state.pid, "SIGTERM");
-  }
-  if (!(await waitForExit(state.pid)))
-    throw new Error("SSH reverse connection did not stop");
-  await Promise.all([
-    rm(paths.state, { force: true }),
-    rm(paths.control, { force: true }),
-  ]);
+  await stopOwnedTunnel(state);
+  await removeStoppedTunnel(paths, state);
   console.log("Stopped SSH reverse connection.");
 }
 
@@ -662,13 +717,25 @@ function usage() {
   );
 }
 
-async function main() {
-  const [flag, root, action = "start"] = process.argv.slice(2);
-  if (flag !== "--root" || !root || process.argv.length > 5) {
-    usage();
-    process.exitCode = 64;
-    return;
+export async function runSshReverseAction(root, action) {
+  if (!["start", "stop", "restart", "install-service"].includes(action))
+    return dispatchAction(root, action);
+  const paths = connectionPaths(root);
+  await ensurePrivateDirectory(paths.stateDirectory);
+  const lock = await acquireFileLock(join(paths.stateDirectory, "lifecycle.lock"), {
+    label: "SSH reverse connection",
+    waitMs: 30_000,
+  });
+  try {
+    await lock.assertOwned();
+    // Restart calls the unlocked stop/start helpers under this one lease.
+    return await dispatchAction(root, action);
+  } finally {
+    await lock.release();
   }
+}
+
+async function dispatchAction(root, action) {
   switch (action) {
     case "init":
       await initialize(root);
@@ -697,7 +764,18 @@ async function main() {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+async function main() {
+  const [flag, root, action = "start"] = process.argv.slice(2);
+  if (flag !== "--root" || !root || process.argv.length > 5) {
+    usage();
+    process.exitCode = 64;
+    return;
+  }
+  await runSshReverseAction(root, action);
+}
+
+// Let Node identify the entry point across directory aliases and Windows paths.
+if (import.meta.main) {
   await main().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
