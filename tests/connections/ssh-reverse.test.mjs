@@ -1,14 +1,16 @@
 import { spawnSync } from "node:child_process";
 import {
   chmod,
+  cp,
   mkdir,
   mkdtemp,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   parseSshReverseConfig,
@@ -128,6 +130,7 @@ describe("ssh-reverse connection module", () => {
         ...process.env,
         HOME: fixture,
         XDG_CONFIG_HOME: configHome,
+        XDG_STATE_HOME: join(fixture, "state"),
         XDG_RUNTIME_DIR: join(fixture, "runtime"),
         INSPIRE_SSH_REVERSE_CONFIG: config,
         PATH: `${bin}:${process.env.PATH ?? ""}`,
@@ -159,6 +162,69 @@ describe("ssh-reverse connection module", () => {
       const calls = (await readFile(log, "utf8")).trim().split("\n");
       expect(calls).toHaveLength(5);
       expect(calls.every((call) => call.includes("is-active"))).toBe(true);
+    },
+  );
+
+  it.each(["direct", "directory alias"])(
+    "loads runtime support from the installed package layout through %s",
+    async (entry) => {
+      const fixture = await mkdtemp(join(tmpdir(), "inspire-ssh-package-"));
+      temporary.push(fixture);
+      const packageRoot = join(fixture, "package");
+      const files = [
+        [
+          "connections/ssh-reverse/runner.mjs",
+          "connections/ssh-reverse/runner.mjs",
+        ],
+        ["deploy/systemd/install.mjs", "deploy/systemd/install.mjs"],
+        ...[
+          "file-lock",
+          "instance-state",
+          "instance-control",
+          "platform-environment",
+        ].map((name) => [`server/${name}.mjs`, `build/server/${name}.mjs`]),
+      ];
+      await Promise.all(
+        files.map(async ([source, destination]) => {
+          const path = join(packageRoot, destination);
+          await mkdir(dirname(path), { recursive: true });
+          await cp(resolve(source), path);
+        }),
+      );
+      let entryRoot = packageRoot;
+      if (entry === "directory alias") {
+        entryRoot = join(fixture, "package-link");
+        await symlink(
+          packageRoot,
+          entryRoot,
+          process.platform === "win32" ? "junction" : "dir",
+        );
+      }
+      const config = join(fixture, "connection.env");
+      const result = spawnSync(
+        process.execPath,
+        [
+          join(entryRoot, "connections/ssh-reverse/runner.mjs"),
+          "--root",
+          entryRoot,
+          "init",
+        ],
+        {
+          encoding: "utf8",
+          timeout: 5_000,
+          env: {
+            ...process.env,
+            HOME: fixture,
+            XDG_CONFIG_HOME: join(fixture, "config"),
+            XDG_STATE_HOME: join(fixture, "state"),
+            INSPIRE_SSH_REVERSE_CONFIG: config,
+          },
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(await readFile(config, "utf8")).toContain(
+        "INSPIRE_SSH_REMOTE_PORT=14587",
+      );
     },
   );
 
