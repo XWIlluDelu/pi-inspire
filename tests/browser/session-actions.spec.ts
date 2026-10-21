@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { expect, type Page, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
+import { actionGeometry } from "./support/action-geometry";
 import { hostRequest } from "./support/host-request";
 import { openMockSession, pairedPage } from "./support/navigation";
 import { firstTextBaseline } from "./support/text-baseline";
@@ -252,15 +253,20 @@ test("export failure keeps long diagnostics readable and the selected format ret
   const message =
     "Cannot read /workspace/archive/TemperatureDependentReferenceSpectrometerCalibrationRepeatabilityAndMeasurementUncertaintyDecompositionAnalysis.jsonl: EACCES (permission denied).";
   let fail = true;
-  await page.route("**/api/sessions/export", (route) =>
-    fail
+  let releaseExport!: () => void;
+  const exportReady = new Promise<void>((resolve) => {
+    releaseExport = resolve;
+  });
+  await page.route("**/api/sessions/export", async (route) => {
+    await exportReady;
+    return fail
       ? route.fulfill({
           status: 409,
           headers: { "X-Inspire-Authority": authority },
           json: { error: message },
         })
-      : route.fallback(),
-  );
+      : route.fallback();
+  });
   await page.getByRole("button", { name: /^Session actions:/ }).click();
   await page
     .getByRole("menuitem", { name: "Export session…", exact: true })
@@ -271,7 +277,18 @@ test("export failure keeps long diagnostics readable and the selected format ret
   });
   const format = dialog.getByRole("radio", { name: "JSONL Current branch" });
   await format.check();
+  await page.evaluate(() => document.fonts.ready);
+  const actions = dialog.locator(".dialog__actions");
+  const geometry = await actionGeometry(actions);
   await dialog.getByRole("button", { name: "Download", exact: true }).click();
+  try {
+    await expect(
+      dialog.getByRole("button", { name: "Exporting…", exact: true }),
+    ).toBeDisabled();
+    expect(await actionGeometry(actions)).toEqual(geometry);
+  } finally {
+    releaseExport();
+  }
   const error = dialog.getByRole("alert");
   await expect(error).toHaveText(message);
   for (const [width, height] of [

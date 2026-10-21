@@ -2,6 +2,7 @@ import { AlertTriangle, Trash2, X } from "lucide-react";
 import type { SessionSummary } from "../../shared/contracts";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
+import { ButtonLabel } from "./ButtonLabel";
 import { PiLoader } from "./PiLoader";
 
 export function SessionDeleteDialog({
@@ -110,11 +111,15 @@ export function SessionDeleteDialog({
             ) : !reviewRequired ? (
               <Trash2 size={14} aria-hidden />
             ) : null}
-            {deleting
-              ? "Deleting…"
-              : reviewRequired
-                ? "Review Hidden"
-                : "Delete session"}
+            <ButtonLabel
+              reserve={reviewRequired ? "Review Hidden" : "Delete session"}
+            >
+              {deleting
+                ? "Deleting…"
+                : reviewRequired
+                  ? "Review Hidden"
+                  : "Delete session"}
+            </ButtonLabel>
           </button>
         </footer>
       </div>

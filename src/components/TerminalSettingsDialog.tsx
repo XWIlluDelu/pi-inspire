@@ -25,6 +25,7 @@ import {
   type TerminalUiSettings,
 } from "../terminal-settings";
 import { useModalFocus } from "../use-modal-focus";
+import { ButtonLabel } from "./ButtonLabel";
 import { Dropdown } from "./Dropdown";
 import {
   SegmentedControl,
@@ -505,7 +506,9 @@ export function TerminalSettingsDialog({
                           onClick={() => void clearHistory()}
                         >
                           <Trash2 size={13} aria-hidden />
-                          {clearing ? "Clearing…" : "Clear history"}
+                          <ButtonLabel reserve="Clear history">
+                            {clearing ? "Clearing…" : "Clear history"}
+                          </ButtonLabel>
                         </button>
                       </SettingField>
                     </>

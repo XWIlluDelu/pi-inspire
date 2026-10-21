@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { McpConfigService } from "../../server/mcp-config";
 import type { McpConfigEdit } from "../../shared/mcp";
+import { actionGeometry } from "./support/action-geometry";
 import { pairAndOpen } from "./support/navigation";
 
 async function scenario(page: Page) {
@@ -177,9 +178,7 @@ test("MCP edits retain stored secrets and scope, keep drafts across categories, 
     await settings
       .getByLabel("Client name", { exact: true })
       .fill("Inspire fixture");
-    await settings
-      .getByRole("button", { name: "Save configuration", exact: true })
-      .click();
+    await settings.getByRole("button", { name: "Save", exact: true }).click();
     await expect(
       settings.getByText(
         "Saved to file. Running sessions have not been reloaded.",
@@ -233,9 +232,7 @@ test("MCP edits retain stored secrets and scope, keep drafts across categories, 
     const external = await fixture.json(fixture.projectFile);
     external.mcpServers.docs.timeout = 99;
     await writeFile(fixture.projectFile, JSON.stringify(external));
-    await settings
-      .getByRole("button", { name: "Save configuration", exact: true })
-      .click();
+    await settings.getByRole("button", { name: "Save", exact: true }).click();
     await expect(settings.getByRole("alert")).toContainText(
       "changed elsewhere",
     );
@@ -249,9 +246,7 @@ test("MCP edits retain stored secrets and scope, keep drafts across categories, 
       .getByRole("button", { name: "Refresh MCP files", exact: true })
       .click();
     await expect(settings.getByRole("alert")).toHaveCount(0);
-    await settings
-      .getByRole("button", { name: "Save configuration", exact: true })
-      .click();
+    await settings.getByRole("button", { name: "Save", exact: true }).click();
     await expect(
       settings.getByRole("button", { name: "Edit project server docs" }),
     ).toBeVisible();
@@ -394,10 +389,30 @@ test("narrow MCP form adds and removes scoped stdio definitions and focuses inhe
       ),
     ).toBe(true);
     const save = settings.getByRole("button", {
-      name: "Save configuration",
+      name: "Save",
       exact: true,
     });
+    let releaseSave!: () => void;
+    const saveReady = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    await page.route("**/api/mcp-config**", async (route) => {
+      if (route.request().method() === "PATCH") await saveReady;
+      await route.fallback();
+    });
+    await save.scrollIntoViewIfNeeded();
+    await page.evaluate(() => document.fonts.ready);
+    const actions = settings.locator(".models-form__actions");
+    const geometry = await actionGeometry(actions);
     await save.click();
+    try {
+      await expect(
+        settings.getByRole("button", { name: "Saving…", exact: true }),
+      ).toBeDisabled();
+      expect(await actionGeometry(actions)).toEqual(geometry);
+    } finally {
+      releaseSave();
+    }
     await expect(
       settings.getByRole("button", {
         name: "Edit project server project-tools",
