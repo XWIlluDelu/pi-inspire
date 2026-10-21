@@ -284,9 +284,7 @@ describe("new-session start surface", () => {
     );
     fireEvent.click(screen.getByRole("option", { name: "This project" }));
     fireEvent.submit(
-      screen
-        .getByRole("button", { name: "Save configuration" })
-        .closest("form")!,
+      screen.getByRole("button", { name: "Save" }).closest("form")!,
     );
     await waitFor(() =>
       expect(save).toHaveBeenCalledWith(

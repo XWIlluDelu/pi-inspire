@@ -48,14 +48,22 @@ This stage does not authorize a tag, npm publication or GitHub release.
   and 4.5:1 text contrast, and assert shared title/body/icon/border roles. All sixteen pass locally
   without retries. Only non-shipped tests and this stage change after 914c24d; the UI, package inputs
   and verified screenshots are unchanged. The argument-menu retry is retained as a separate flaky.
+- Run 39568826267 confirms a stale MCP Save label on all platforms and a non-atomic test probe on
+  Linux. The probe now publishes by same-directory rename, each agent read uses one snapshot, and
+  readiness waits for both state and PTY output within the existing deadlines. Both affected test
+  files pass all 23 cases; cwd, project scope, revision and save payload assertions remain intact.
+- Windows additionally exposes native CRLF in the terminal-error clipboard test. Both failed traces
+  record the complete message with CRLF, not lost content. The assertion now normalizes only CRLF,
+  retaining complete text/whitespace equality like the existing assistant-error copy test. Its
+  isolated Chromium regression passes. Product code and the eight verified screenshots are unchanged.
 
 ## Release gates and next actions
 
 - [x] Fix the candidate source boundary and synchronize package.json, both root lockfile version
   entries and the documented tarball name. A local candidate build is not the running Host version.
-- [ ] Confirm the notice-fixture correction's final CI and three-platform installed-package checks.
-  Windows Settings and Linux native/unit confirmation are complete on the previous source; these
-  results do not replace final-candidate CI. No release or tag is authorized before the gates close.
+- [ ] Confirm final-source CI and three-platform installed-package checks after the test-fixture
+  corrections. Run 39568826267 passes all three package checks but exposes the unit/clipboard
+  issues below; it is not a release-ready result. No release or tag is authorized before the gates close.
 - [x] Prepare a concise changelog from the integrated v0.5.5..candidate diff, retaining upgrade
   requirements and actual capability limits. The existing tarball workflow is unchanged.
 - [x] Build the candidate and capture the existing eight filenames with a real isolated application

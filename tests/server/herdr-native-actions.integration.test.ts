@@ -59,13 +59,17 @@ it.skipIf(process.platform !== "linux")(
     await writeFile(
       extension,
       `
-    import { writeFileSync } from "node:fs";
+    import { renameSync, writeFileSync } from "node:fs";
     export default pi => {
       let ctx, timer, aborted = false, commands = 0, handled = 0;
-      const publish = () => ctx && writeFileSync(${JSON.stringify(probe)}, JSON.stringify({
-        id: ctx.sessionManager.getSessionId(), idle: ctx.isIdle(),
-        pending: ctx.hasPendingMessages(), editor: ctx.ui.getEditorText(), aborted, commands, handled,
-      }));
+      const publish = () => {
+        if (!ctx) return;
+        writeFileSync(${JSON.stringify(probe + ".tmp")}, JSON.stringify({
+          id: ctx.sessionManager.getSessionId(), idle: ctx.isIdle(),
+          pending: ctx.hasPendingMessages(), editor: ctx.ui.getEditorText(), aborted, commands, handled,
+        }));
+        renameSync(${JSON.stringify(probe + ".tmp")}, ${JSON.stringify(probe)});
+      };
       pi.on("session_start", (_, context) => {
         ctx = context; ctx.ui.setWidget("status", ["────────────────", "Normal extension status", "────────────────"], { placement: "belowEditor" });
         timer = setInterval(publish, 25); timer.unref(); publish();
@@ -164,20 +168,22 @@ it.skipIf(process.platform !== "linux")(
       }),
       nativeAgentRequest: async (_server, _pane, method, params = {}) => {
         calls.push(method);
-        if (method === "agent.get")
+        if (method === "agent.get") {
+          const current = await state();
           return {
             agent: {
               agent: "pi",
               pane_id: "native",
-              agent_status: (await state()).idle ? "done" : "working",
+              agent_status: current.idle ? "done" : "working",
               agent_session: {
                 source: "herdr:pi",
                 agent: "pi",
                 kind: "id",
-                value: (await state()).id,
+                value: current.id,
               },
             },
           };
+        }
         if (method === "pane.send_text") {
           paste(String(params.text));
           return {};
@@ -193,11 +199,13 @@ it.skipIf(process.platform !== "linux")(
     );
     try {
       await vi.waitFor(
-        async () =>
-          expect(await state()).toMatchObject({ idle: true, editor: "" }),
+        async () => {
+          expect(await state()).toMatchObject({ idle: true, editor: "" });
+          // Publishing state does not wait for the separate PTY output stream.
+          expect(output).toContain("Normal extension status");
+        },
         { timeout: 15000 },
       );
-      expect(output).toContain("Normal extension status");
       for (const command of [
         "! echo must-not-run",
         "!! echo must-not-run",
@@ -212,13 +220,13 @@ it.skipIf(process.platform !== "linux")(
       await native.prompt("/fixture-command");
       await vi.waitFor(async () => expect((await state()).commands).toBe(1));
       await native.prompt("/fixture-dialog");
-      await vi.waitFor(async () =>
-        expect((await report()).activity).toBe("blocked"),
-      );
+      await vi.waitFor(async () => {
+        expect((await report()).activity).toBe("blocked");
+        expect(output).toContain("Native question");
+      });
       await expect(
         native.prompt("Do not bypass the native question"),
       ).rejects.toMatchObject({ code: "NATIVE_INPUT_BLOCKED" });
-      expect(output).toContain("Native question");
       terminal.write("\x1b");
       await vi.waitFor(async () =>
         expect((await report()).activity).toBe("idle"),

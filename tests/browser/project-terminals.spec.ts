@@ -53,8 +53,14 @@ test("terminal failures use shared error feedback with copy and explicit dismiss
   await error.locator(".notice__text").click();
   await expect(error).toBeVisible();
   await error.getByRole("button", { name: "Copy error" }).click();
+  // Keep all content and whitespace; the Windows clipboard may encode LF as CRLF.
   await expect
-    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .poll(async () =>
+      (await page.evaluate(() => navigator.clipboard.readText())).replace(
+        /\r\n/g,
+        "\n",
+      ),
+    )
     .toBe(message);
   await error.getByRole("button", { name: "Dismiss terminal error" }).click();
   await expect(error).toBeHidden();
