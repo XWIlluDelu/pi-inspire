@@ -74,16 +74,30 @@ addressing; do not expand into cosmetic changes or classify an isolated flake as
   gated chunk-arrival timers synchronously. Real filesystem writes, every byte/batch assertion and
   the five-second deadline remain. Clock simplification alone was not the dominant cost repair.
   The complete history-store suite passes locally; no terminal-runtime change is indicated.
-  Native Windows confirmation of the final assertion correction remains.
+  [CI run 39545599095](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39545599095) confirms
+  the corrected Windows history fixture, all Windows/macOS phases, three packaged releases and
+  size report. Its sole failure is Linux WebKit's notebook execution-count baseline measurement
+  (7.75 px on both attempts); expected 503 fixtures are not additional failures.
+- Reader baseline sampling compared viewport coordinates from separate evaluations. A controlled
+  8 px preview scroll demonstrates the measurement defect: the old assertion reports 8 px while
+  the prompt and source remain aligned relative to their output row. Both samples now use the
+  existing row-relative helper, with that scroll retained as a deterministic regression. All five
+  reader-baseline cases pass across Chromium, Firefox and WebKit in an isolated matching Playwright
+  container, without retries or host-library installation; all gutter/overflow assertions and the
+  1 px threshold remain. The original CI's precise 7.75 px movement was not reproduced, so its
+  dynamic cause is not claimed. No product CSS or component change is indicated by these results.
 
 ## Next actions
 
-- [ ] Check the new CI run for these repairs. Distinguish actual failures, environment startup
-  failures and flaky attempts; do not weaken assertions or skip whole portable scenarios.
-- [ ] Investigate further only from concrete, high-value workflow or cost evidence. Keep each
-  review round's confirmed findings, exclusions and next direction concise.
-- [ ] Implement and verify clear fixes as semantic commits; preserve unrelated work and shared
-  history. Keep project design choices explicit instead of inferring them from missing APIs.
+- [ ] Confirm the CI attached to the row-relative reader-baseline repair. The parent observer
+  follows GitHub; no local watch remains. Investigate actual failures without weakening assertions
+  or skipping portable scenarios.
+- [x] Complete the targeted whole-product review with no remaining evidence-supported major issue.
+  Stop expanding scope; public network latency and arbitrary third-party extensions remain outside
+  these controlled local/remote-chain checks.
+- [x] Verify clear repairs as semantic changes, preserving unrelated work and shared history.
+  The final correction changes only tests/documentation, so it needs no source-install rebuild,
+  prepare-restart repetition or production Host restart.
 
 ## Decisions
 
