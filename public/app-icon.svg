@@ -1,14 +1,32 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
   <title id="title">INSΠRE</title>
-  <desc id="description">A precision Open Reticle mark on a carbon matte field.</desc>
+  <desc id="description">A soft six-color Open Reticle with a carbon center on a porcelain-white tile.</desc>
+  <defs>
+    <linearGradient id="porcelain" x1="0" y1="0" x2=".8" y2="1">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset=".6" stop-color="#FCFCFD"/>
+      <stop offset="1" stop-color="#F0F1F4"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2=".7" y2="1">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset=".5" stop-color="#E9EBEE"/>
+      <stop offset="1" stop-color="#D9DDE2"/>
+    </linearGradient>
+  </defs>
   <!-- Keep a 9.375% transparent inset around the complete launcher tile. -->
   <g transform="translate(48 48) scale(0.8125)">
-    <rect width="512" height="512" rx="112" fill="#14171A"/>
-    <!-- Opposing frame brackets in titanium white -->
-    <path d="M306 136h70v74M206 376h-70v-74" fill="none" stroke="#F4F6F8" stroke-width="28" stroke-linecap="square" stroke-linejoin="miter"/>
-    <!-- Detached datum ticks in neutral silver -->
-    <path d="M256 105v50M256 357v50M105 256h50M357 256h50" fill="none" stroke="#B9C0C7" stroke-width="28" stroke-linecap="square"/>
-    <!-- Center precision aperture -->
-    <rect x="233" y="233" width="46" height="46" fill="#B9C0C7"/>
+    <rect width="512" height="512" rx="112" fill="url(#porcelain)"/>
+    <rect x="1" y="1" width="510" height="510" rx="111" fill="none" stroke="url(#rim)" stroke-width="2"/>
+    <!-- Two stones: Jade upper-right, Amber lower-left. -->
+    <g fill="none" stroke-width="28" stroke-linecap="square" stroke-linejoin="miter">
+      <path d="M306 136h70v74" stroke="#419C9F"/>
+      <path d="M206 376h-70v-74" stroke="#E58850"/>
+      <!-- Four flowers: Wisteria, Chimonanthus, Lycoris, Hydrangea clockwise. -->
+      <path d="M256 105v50" stroke="#9C84BB"/>
+      <path d="M357 256h50" stroke="#D6A252"/>
+      <path d="M256 357v50" stroke="#D17672"/>
+      <path d="M105 256h50" stroke="#6BB08C"/>
+    </g>
+    <rect x="236" y="236" width="40" height="40" fill="#262A30"/>
   </g>
 </svg>

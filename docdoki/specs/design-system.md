@@ -57,14 +57,22 @@ declaration.
 - The Open Reticle is the compact identifier: opposing square ink brackets,
   four detached accent datum ticks, and a centered square aperture. Its small
   and display masters compensate independently; the transparent 16px favicon
-  is a pixel-fitted optical master. Launcher assets place the mark on a carbon
-  tile: ordinary PWA icons scale the complete tile and mark to 81.25% of the
-  canvas, leaving a 9.375% transparent inset on each side (48px on the 512px
-  master). This keeps launcher size comparable to neighboring desktop icons
-  and avoids white corner wedges. Maskable and Apple touch assets use the
-  full-bleed carbon master and rely on the operating system's own mask.
-  Installed icons are palette-independent: carbon `#14171A`, titanium-white
-  brackets `#F4F6F8`, and silver ticks/aperture `#B9C0C7`.
+  is a pixel-fitted optical master.
+- Installed PWA icons use a fixed, soft six-color mark on a porcelain-white tile,
+  independent of the active UI palette. Jade `#419C9F` forms the upper-right
+  bracket and Amber `#E58850` the lower-left. Clockwise from the top, the ticks
+  are Wisteria `#9C84BB`, Chimonanthus `#D6A252`, Lycoris `#D17672`, and
+  Hydrangea `#6BB08C`. These are optically tuned launcher colors, not live theme
+  tokens. The centered carbon square is `#262A30`, 40×40 on the 512px master.
+  The matte tile has a subtle white-to-cool-gray gradient
+  (`#FFFFFF` → `#FCFCFD` → `#F0F1F4`) and a soft edge, without texture,
+  gloss, or a baked-in outer shadow.
+  Ordinary PWA icons scale the complete tile and mark to 81.25% of the canvas,
+  leaving a 9.375% transparent inset on each side (48px on the 512px master).
+  This keeps launcher size comparable to neighboring desktop icons. Maskable
+  and Apple touch assets use an opaque, full-bleed porcelain master and rely
+  on the operating system's own mask. Versioned icon URLs allow installed
+  browsers to discover revised assets.
   The transparent browser-tab favicon is also palette-independent: it keeps its
   pixel geometry and ink/white brackets, with neutral quartz-gray `#63676C` ticks
   in light browser chrome and silver `#B9C0C7` ticks in dark browser chrome.
