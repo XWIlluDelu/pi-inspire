@@ -89,6 +89,7 @@ interface TerminalOperationState {
   label: string;
   busy: boolean;
   uncertain: boolean;
+  confirmed?: "completed" | "rejected";
 }
 
 function operationLabel(entry: PendingOperation): string {
@@ -120,12 +121,13 @@ function operationLabel(entry: PendingOperation): string {
 }
 
 /** Browser-owned delivery identity, never terminal/process authority. Unknown
- * writes survive pane generations and page reload; only a daemon receipt can
- * release an identity. No timeout or local abort claims cancellation. */
+ * writes survive pane generations and page reload. Receipts settle results;
+ * explicitly stopping tracking retires only the browser intent, not the work. */
 export class TerminalOperationController {
   private readonly pending = new Map<string, PendingOperation>();
   private readonly running = new Map<string, Promise<unknown>>();
   private readonly uncertain = new Set<string>();
+  private readonly confirmed = new Map<string, "completed" | "rejected">();
   private readonly listeners = new Set<() => void>();
   private state: TerminalOperationState[] = [];
   private loaded = false;
@@ -193,10 +195,20 @@ export class TerminalOperationController {
     }
     const running = this.running.get(key);
     if (running) return running as Promise<T>;
+    // A confirmed result makes another click a new intent, not a replay.
+    // Retire its stored recovery record before admitting that new intent.
+    if (this.confirmed.has(key)) {
+      try {
+        this.stopTracking(key);
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    }
     const task = this.deliver<T>(token, key, path, method, serialized).finally(
       () => {
         this.running.delete(key);
-        if (this.pending.has(key)) this.uncertain.add(key);
+        if (this.pending.has(key) && !this.confirmed.has(key))
+          this.uncertain.add(key);
         else this.uncertain.delete(key);
         this.publish();
       },
@@ -209,6 +221,10 @@ export class TerminalOperationController {
   retry(token: string | null, key: string): Promise<unknown> {
     try {
       this.restore();
+      if (this.confirmed.has(key)) {
+        this.stopTracking(key);
+        return Promise.resolve();
+      }
     } catch (error) {
       return Promise.reject(error);
     }
@@ -220,6 +236,28 @@ export class TerminalOperationController {
       entry.method,
       entry.body === undefined ? undefined : JSON.parse(entry.body),
     );
+  }
+
+  /** Retire a recovery record; never dispatch or claim cancellation. */
+  stopTracking(key: string): void {
+    this.restore();
+    if (this.running.has(key))
+      throw new Error(
+        "Wait for the current terminal operation check to finish.",
+      );
+    const entry = this.pending.get(key);
+    if (!entry || (!this.uncertain.has(key) && !this.confirmed.has(key)))
+      return;
+    this.pending.delete(key);
+    try {
+      this.persist();
+    } catch (error) {
+      this.pending.set(key, entry);
+      throw error;
+    }
+    this.uncertain.delete(key);
+    this.confirmed.delete(key);
+    this.publish();
   }
 
   private async deliver<T>(
@@ -310,12 +348,11 @@ export class TerminalOperationController {
         this.pending.delete(key);
         try {
           this.persist();
-        } catch (error) {
-          // If retiring the receipt cannot be persisted, keep the same identity
-          // in memory too. A displayed recovery error must never become a new
-          // delivery merely because storage failed after the daemon committed.
+        } catch {
+          // Local bookkeeping failure cannot undo the daemon's confirmed result.
+          // Keep the identity for cleanup without reporting an unknown operation.
           this.pending.set(key, entry);
-          throw error;
+          this.confirmed.set(key, response.ok ? "completed" : "rejected");
         }
         if (response.ok) return result as T;
         throw new TerminalDefiniteRefusal(
@@ -346,6 +383,9 @@ export class TerminalOperationController {
       label: operationLabel(entry),
       busy: this.running.has(entry.key),
       uncertain: this.uncertain.has(entry.key),
+      ...(this.confirmed.has(entry.key)
+        ? { confirmed: this.confirmed.get(entry.key)! }
+        : {}),
     }));
     for (const listener of this.listeners) listener();
   }

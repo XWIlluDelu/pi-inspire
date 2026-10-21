@@ -30,6 +30,49 @@ beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
 
 describe("worker startup and retirement", () => {
+  it("waits for a busy session's confirmed handoff without stopping other sessions", async () => {
+    const f = schedulingRuntime({
+      sessions: [record("a", TEST_CWD), record("b", TEST_CWD)],
+    });
+    const stopped = deferredSignal();
+    let released = false;
+    try {
+      await f.runtime.openSession("a");
+      await waitForReady(f.runtime, "a");
+      await f.runtime.openSession("b");
+      await waitForReady(f.runtime, "b");
+      f.workers[0]!.emit("event", { type: "agent_start" });
+      await expect(
+        f.runtime.setSessionExecution("a", "terminal"),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(f.workers[0]!.stops).toBe(0);
+      f.workers[0]!.stop = async () => {
+        f.workers[0]!.stops += 1;
+        await stopped.promise;
+      };
+      const handingOff = f.runtime
+        .setSessionExecution("a", "terminal", true)
+        .then((result) => {
+          released = true;
+          return result;
+        });
+      await vi.waitFor(() => expect(f.workers[0]!.stops).toBe(1));
+      expect(released).toBe(false);
+      await f.runtime.setThinkingLevel("b", "high");
+      expect(f.workers[1]!.stops).toBe(0);
+      stopped.resolve();
+      expect((await handingOff).active?.readOnlyReason).toBe("terminal");
+      expect((await f.runtime.openSession("a")).active?.readOnlyReason).toBe(
+        "terminal",
+      );
+      expect(f.workers).toHaveLength(2);
+      expect(f.workers[1]!.stops).toBe(0);
+    } finally {
+      stopped.resolve();
+      await f.runtime.close();
+    }
+  });
+
   it("creates the selected directory only on explicit new-session admission, before starting Pi", async () => {
     const cwd = join(fixtureWorkspace, "projects", "new-project");
     const source = catalog([]);

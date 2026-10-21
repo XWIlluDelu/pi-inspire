@@ -51,6 +51,8 @@ covers:
   - src/components/nav-model.ts
   - src/components/HiddenClearDialog.tsx
   - src/components/SessionDeleteDialog.tsx
+  - src/components/SessionTerminalDialog.tsx
+  - tests/server/session-handoff.integration.test.ts
   - src/components/Welcome.tsx
   - src/components/Transcript.tsx
   - src/components/BranchTree.tsx
@@ -189,6 +191,26 @@ Let the user move between existing terminal Pi and inspire without losing histor
   navigation back to page zero. Successful deletion removes committed rows immediately, then runs
   the same authoritative preservation in the background to repair totals and offsets without
   reviving completed-list loading chrome.
+
+## Explicit terminal handoff
+
+Session actions can return one Inspire-owned session to the native terminal without stopping the
+Host or other sessions. A busy browser path first uses ordinary Stop/Pending recovery, then retires
+that session's writer. Pending input must be recovered before release. Confirmed worker retirement,
+not transport disconnection or an idle status, precedes the resume command. Copy provides a correctly
+quoted project change-directory and `pi --session` command for a current POSIX shell or PowerShell.
+Inspire never executes it automatically or modifies the session's history to record this choice.
+
+A small preference keyed by session id preserves the explicit terminal intent across selection,
+worker-cache eviction and Host reconstruction. It is removed with session deletion. The read-only
+view retains history, branch JSONL export and the browser draft. **Continue in Inspire** explicitly
+clears that intent and reuses ordinary installed-Pi/external-owner admission. A live external owner
+therefore still vetoes another writer, or can reconnect through the already supported Herdr channel.
+No ownership lease, new multiwriter protocol or Herdr dependency is introduced.
+
+Linux checks exercise real Pi RPC retirement, native PTY continuation on the same JSONL, persistent
+no-prewarm behavior and occupied/released owner rechecks. Worker-lifecycle checks retain another
+session through a delayed busy handoff; browser checks preserve the draft and show the return action.
 
 ## Navigation and curation
 

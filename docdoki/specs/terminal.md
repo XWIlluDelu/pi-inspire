@@ -145,7 +145,9 @@ receives no POSIX signal argument.
 Browser mutations carry one immutable operation identity through Host and daemon. Same-content retries
 share the running operation or retained result; reuse with different parameters is refused. Lost
 responses, deadlines, and disconnects leave the outcome unresolved, rather than cancelling work.
-Read-only catalog/settings reads and attachment/input continuity remain independent.
+Read-only catalog/settings reads and attachment/input continuity remain independent. A confirmed
+completion or rejection remains authoritative even if the browser cannot remove its recovery record.
+Report that local cleanup failure separately; retrying cleanup sends no terminal mutation.
 
 | Receipt bound | Value |
 | --- | --- |
@@ -157,7 +159,12 @@ Read-only catalog/settings reads and attachment/input continuity remain independ
 Running operations are not evicted. Before forgetting an identity, reclamation fences its admission
 epoch; daemon replacement also changes the epoch. Unknown old identities are refused. The browser
 retains unresolved controls across pane, project, and reload generations, offers same-operation checks,
-and releases them after a confirmed result or definite refusal. Unavailable or malformed storage blocks
+and releases them after a confirmed result or definite refusal. After inspecting current terminals,
+users may explicitly stop tracking an unresolved result, including an expired receipt or retired epoch.
+Confirmation explains that this neither cancels the old work nor establishes its outcome. It sends no
+mutation, persists retirement before releasing the local identity, and is unavailable during a check.
+A subsequent deliberate action gets a new identity; retries never silently become new work.
+Unavailable or malformed storage blocks
 untracked writes. Every control mutation requires an operation identity and receipt support; missing
 identity is refused before dispatch. Valid identified requests rejected during route validation carry
 the matching operation ID and definite rejected outcome, including nested terminal routes.
@@ -328,7 +335,9 @@ focus from the dismissed menu while respecting a newer focus choice.
 ## Selection and output
 
 Selection actions appear with selected text, without a permanent toolbar row. Copy uses that selection;
-quote sends inert fenced text to the current Composer. A Composer code block can be inserted into the
+quote appends inert fenced text to the current Composer without submitting or replacing its draft.
+Successful quoting closes a narrow Context drawer and focuses the editable Composer after modal
+focus restoration. Desktop Context stays open. A Composer code block can be inserted into the
 controlled terminal without submitting it.
 
 More exposes Copy all and Select text independently of shell integration. Copy all reads retained

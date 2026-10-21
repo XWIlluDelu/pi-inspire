@@ -60,6 +60,43 @@ for (const touch of [false, true]) {
         : { width: 1280, height: 900 },
       hasTouch: touch,
     });
+    test("terminal handoff keeps the browser draft and requires explicit continuation", async ({
+      page,
+    }, testInfo) => {
+      const { title, composer } = await namedSession(page);
+      await title.click();
+      await page.getByRole("menuitem", { name: "Use in terminal…" }).click();
+      const dialog = page.getByRole("dialog", {
+        name: "Use in terminal",
+        exact: true,
+      });
+      await expect(dialog).toBeVisible();
+      await expect(dialog).toContainText("Other sessions keep running");
+      await page.screenshot({
+        path: testInfo.outputPath("terminal-handoff-before.png"),
+      });
+      await dialog
+        .getByRole("button", { name: "Use in terminal", exact: true })
+        .click();
+      await expect(dialog).toContainText("pi --session");
+      await expect(
+        dialog.getByRole("button", { name: "Copy command", exact: true }),
+      ).toBeEnabled();
+      await expect(page.locator("html")).toHaveJSProperty(
+        "scrollWidth",
+        touch ? 320 : 1280,
+      );
+      await page.screenshot({
+        path: testInfo.outputPath("terminal-handoff-after.png"),
+      });
+      await dialog.getByRole("button", { name: "Close", exact: true }).click();
+      await expect(
+        page.getByRole("button", { name: "Continue in Inspire" }),
+      ).toBeVisible();
+      await page.reload();
+      await page.getByRole("button", { name: "Continue in Inspire" }).click();
+      await expect(composer).toHaveValue("Keep the unfinished comparison");
+    });
     test("composition Escape preserves title and workspace edits without consuming IME keys", async ({
       page,
     }) => {

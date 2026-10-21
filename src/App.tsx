@@ -27,6 +27,10 @@ import { ExportDialog } from "./components/ExportDialog";
 import { ExtensionDisplayDock } from "./components/ExtensionDisplays";
 import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
 import { Nav } from "./components/Nav";
+import {
+  SessionTerminalDialog,
+  TerminalSessionNotice,
+} from "./components/SessionTerminalDialog";
 import { Notices } from "./components/Notices";
 import { PaneResizeHandle } from "./components/PaneResizeHandle";
 import { PiLoader } from "./components/PiLoader";
@@ -389,7 +393,12 @@ const ConversationStage = memo(function ConversationStage() {
         displays={state.extensionDisplays}
         placement="aboveEditor"
       />
-      {state.readOnlyReason ? (
+      {state.readOnlyReason === "terminal" && state.sessionId ? (
+        <TerminalSessionNotice
+          key={state.sessionId}
+          sessionId={state.sessionId}
+        />
+      ) : state.readOnlyReason ? (
         <p className="composer-readonly" role="status">
           {state.readOnlyReason === "workspace-unavailable"
             ? "Project folder unavailable. This session is read-only."
@@ -452,6 +461,9 @@ export function App() {
   const navSearchRef = useRef<HTMLInputElement>(null);
   const narrowViewport = useMediaQuery("(max-width: 900px)");
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [terminalSessionId, setTerminalSessionId] = useState<string | null>(
+    null,
+  );
   const [exportSessionId, setExportSessionId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [commandHelp, setCommandHelp] = useState<
@@ -526,6 +538,7 @@ export function App() {
   useEffect(() => {
     if (state.sessionId) setWelcomeInheritance(null);
     setExportSessionId(null);
+    setTerminalSessionId(null);
   }, [state.sessionId]);
 
   const closeMobileNavigation = useCallback(() => {
@@ -897,6 +910,7 @@ export function App() {
           onToggleNavigation={toggleNavigation}
           onOpenCommandPalette={openCommandPalette}
           onExportSession={openExport}
+          onTerminalSession={() => setTerminalSessionId(state.sessionId)}
           onToggleSettings={toggleSettings}
           onToggleResources={toggleResources}
         />
@@ -994,6 +1008,14 @@ export function App() {
           modelDestination={modelDestination}
           workspaceOwner={settingsOwner}
           onClose={closeSettings}
+        />
+      ) : null}
+      {terminalSessionId ? (
+        <SessionTerminalDialog
+          key={terminalSessionId}
+          sessionId={terminalSessionId}
+          active={!extensionOverlayOpen}
+          onClose={() => setTerminalSessionId(null)}
         />
       ) : null}
       {exportSessionId && exportSessionId === state.sessionId ? (

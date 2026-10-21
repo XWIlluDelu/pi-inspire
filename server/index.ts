@@ -226,6 +226,11 @@ if (mock) {
     undefined,
     diagnostics,
   )
+    .setTerminalSessionStore({
+      has: async (id) =>
+        (await preferences.read()).terminalSessionIds.includes(id),
+      set: (id, terminal) => preferences.setTerminalSession(id, terminal),
+    })
     .setModelMetadataCatalog(modelMetadata)
     .setExternalSessionConnector((sessionId, sessionFile) =>
       herdr.connectExternalSession(sessionId, sessionFile, sessionOccupancy),

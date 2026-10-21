@@ -1415,6 +1415,30 @@ export function createInspireServer(deps: AppDependencies): {
     response.setHeader("Cache-Control", "no-store");
     response.json(await installedPiChangelog());
   });
+  app.post("/api/sessions/execution", async (request, response) => {
+    const { sessionId, target, interrupt } = z
+      .object({
+        sessionId: sessionIdField,
+        target: z.enum(["terminal", "inspire"]),
+        interrupt: z.boolean().optional(),
+      })
+      .parse(request.body);
+    const snapshot = await deps.runtime.setSessionExecution(
+      sessionId,
+      target,
+      interrupt,
+    );
+    const quote = (value: string) =>
+      "'" +
+      value.replaceAll("'", process.platform === "win32" ? "''" : "'\\''") +
+      "'";
+    const active = snapshot.active;
+    const command = active?.sessionFile
+      ? `${process.platform === "win32" ? "Set-Location -LiteralPath" : "cd --"} ${quote(active.cwd)} && pi --session ${quote(active.sessionFile)}`
+      : "";
+    response.setHeader("Cache-Control", "no-store");
+    response.json({ snapshot, command });
+  });
   app.post("/api/sessions/export", async (request, response) => {
     const { sessionId, format } = z
       .object({
