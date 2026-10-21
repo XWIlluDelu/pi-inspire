@@ -59,6 +59,7 @@ covers:
   - tests/web/transcript-paging.test.tsx
   - tests/shared/user-turns.test.ts
   - tests/web/prompt-map.test.tsx
+  - tests/web/prompt-map-navigation.test.tsx
   - tests/web/transcript-virtual-search.test.tsx
   - tests/web/transcript-viewport.test.tsx
   - tests/server/runtime-transcript.test.ts
@@ -207,7 +208,10 @@ custom messages remain independent readable boundaries in this contract.
   exclusive. While either local tool owns focus or its narrow mode, Escape resolves that tool before
   the global run-abort shortcut. Sparse seek windows remain explicitly separated in Transcript,
   while same-branch pagination, append snapshots, branch rewrites, search ownership, and
-  latest-follow preserve their existing authorities.
+  latest-follow preserve their existing authorities. Outline loading, conflict resync, turn reads
+  and the eventual scroll share the original session/view owner; crossing an await cannot recapture
+  another session. Component regressions exercise both loaded and unloaded destinations across a
+  409/resync gate and selection change.
 
 ## Response streaming and message-owned outcomes
 
