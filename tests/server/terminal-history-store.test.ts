@@ -113,7 +113,9 @@ describe("TerminalHistoryStore", () => {
         );
         for (const chunk of chunks) {
           store.append("terminal-1", chunk);
-          await vi.advanceTimersByTimeAsync(intervalMs);
+          // The first write is gated: advance only the synchronous batch timer,
+          // without making simulated arrival intervals wait on real event turns.
+          vi.advanceTimersByTime(intervalMs);
         }
         release();
         await firstFlush;

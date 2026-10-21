@@ -64,8 +64,15 @@ addressing; do not expand into cosmetic changes or classify an isolated flake as
   and launcher checks pass; its 426-case, single-worker browser run was still progressing when the
   35-minute aggregate job ceiling cancelled it, with no failed-test artifacts. The Linux budget
   now allows 50 minutes for build, core and three browser engines; individual deadlines, assertions
-  and scenario coverage are unchanged. The revised entry path still needs native Windows CI
-  confirmation, and the complete Linux browser tail must finish under the corrected aggregate.
+  and scenario coverage are unchanged.
+- [CI run 39541401547](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39541401547) confirms
+  Windows direct/junction CLI startup, all three packaged releases, complete Linux quality and
+  macOS native/browser checks, and Windows Chromium. Its only failure is the unchanged terminal
+  history slow-storage fixture exceeding five seconds on Windows (previously passing there).
+  During its explicitly gated write, simulated chunk-arrival intervals now advance synchronously;
+  real filesystem writes, all content/batch assertions and the five-second deadline remain. The
+  complete history-store suite passes locally. This is fixture scheduling, not a demonstrated
+  terminal-runtime defect. Native Windows confirmation of this last fixture correction remains.
 
 ## Next actions
 
