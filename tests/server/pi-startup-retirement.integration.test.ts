@@ -71,7 +71,6 @@ describe("installed Pi startup retirement and idle restart", () => {
         modified: new Date(timestamp),
         messageCount: 1,
         firstMessage: "startup fixture",
-        searchText: "fixture",
       };
       const catalog: SessionCatalogLike = {
         refresh: async () => [record],

@@ -59,7 +59,32 @@ test("unavailable-project history keeps its reading surface at desktop and phone
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toHaveCount(0);
-  await expect(page.locator(".topbar__title-button")).toBeDisabled();
+  await page.getByRole("button", { name: /^Session actions:/ }).click();
+  for (const name of [
+    "Rename session",
+    "Clone current branch",
+    "Use in terminal…",
+  ])
+    await expect(
+      page.getByRole("menuitem", { name, exact: true }),
+    ).toBeDisabled();
+  await page
+    .getByRole("menuitem", { name: "Export session…", exact: true })
+    .click();
+  const exportDialog = page.getByRole("dialog", {
+    name: "Export session",
+    exact: true,
+  });
+  await expect(
+    exportDialog.getByRole("radio", { name: /HTML/ }),
+  ).toBeDisabled();
+  await expect(
+    exportDialog.getByRole("radio", { name: /JSONL/ }),
+  ).toBeChecked();
+  await expect(exportDialog).toContainText("Saved branch");
+  await exportDialog
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
 
   const palette = await openCommandPalette(page);
   await palette.getByLabel("Filter commands").fill("history");

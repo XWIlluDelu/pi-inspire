@@ -71,6 +71,7 @@ function ViewportHarness({ viewId = "view" }: { viewId?: string }) {
       ref={viewport.scrollRef}
       role="log"
       data-pinned={viewport.pinned}
+      data-at-latest={viewport.atLatest}
       onScroll={viewport.onScroll}
       onWheel={viewport.markUserScrollIntent}
     >
@@ -151,6 +152,7 @@ describe("transcript viewport geometry", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -269,6 +271,36 @@ describe("transcript viewport geometry", () => {
       expect(onLoadOlder).toHaveBeenCalledOnce();
     },
   );
+
+  it("reports the visible latest boundary independently of follow ownership", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    render(<ViewportHarness />);
+    const log = screen.getByRole("log");
+    setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
+    fireEvent.scroll(log);
+    fireEvent.wheel(log);
+    log.scrollTop = 550;
+    fireEvent.scroll(log);
+    expect(log).toHaveAttribute("data-pinned", "false");
+    expect(log).toHaveAttribute("data-at-latest", "false");
+
+    // Programmatic navigation can reach latest without acquiring live-follow.
+    act(() => vi.advanceTimersByTime(450));
+    log.scrollTop = 600;
+    fireEvent.scroll(log);
+    expect(log).toHaveAttribute("data-pinned", "false");
+    expect(log).toHaveAttribute("data-at-latest", "true");
+    Object.defineProperty(log, "scrollHeight", {
+      configurable: true,
+      value: 1_100,
+    });
+    act(() => {
+      TestResizeObserver.trigger(log);
+      flushAnimationFrames();
+    });
+    expect(log.scrollTop).toBe(600);
+    expect(log).toHaveAttribute("data-at-latest", "false");
+  });
 
   it("does not reclaim latest-follow after an unpinned scrollport resize", () => {
     render(<ViewportHarness />);

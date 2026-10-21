@@ -72,7 +72,7 @@ describe("Stopped assistant outcomes", () => {
       });
       expect(
         screen.getByLabelText("Transcript search matches"),
-      ).toHaveTextContent("No matches");
+      ).toHaveTextContent("0 matches");
       fireEvent.change(search, { target: { value: "Stopped" } });
       fireEvent.keyDown(search, { key: "Enter" });
       expect(

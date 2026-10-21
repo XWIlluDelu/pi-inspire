@@ -122,7 +122,6 @@ async function fixture(trust: "always" | "never", enabled?: boolean) {
       modified: new Date(timestamp),
       messageCount: 2,
       firstMessage: "offline fixture",
-      searchText: "offline fixture",
     });
   }
   const catalog: SessionCatalogLike = {

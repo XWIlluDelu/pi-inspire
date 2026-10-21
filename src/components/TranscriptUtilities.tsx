@@ -46,7 +46,7 @@ export function TranscriptUtilities({
             <button
               ref={promptLauncherRef}
               type="button"
-              className="transcript-mobile-toolbar__button"
+              className="transcript-mobile-toolbar__button transcript-mobile-toolbar__button--prompt"
               aria-label="Open prompt navigation"
               title="Open prompt navigation"
               onClick={() => onOpenMobile("prompt")}
@@ -69,7 +69,7 @@ export function TranscriptUtilities({
       <div
         className={`transcript-search ${search.query ? "transcript-search--active" : ""} ${mobileTool === "search" ? "transcript-search--mobile-open" : ""}`}
         role="search"
-        aria-label="Search settled transcript"
+        aria-label="Search conversation"
         onClick={(event) => {
           if (
             event.target === event.currentTarget ||
@@ -108,6 +108,7 @@ export function TranscriptUtilities({
           }}
           placeholder="Search conversation"
           aria-label="Search conversation"
+          title="Search loaded conversation messages"
         />
         <output aria-live="polite" aria-label="Transcript search matches">
           {search.query
@@ -115,7 +116,7 @@ export function TranscriptUtilities({
               ? search.currentMatch >= 0
                 ? `${search.currentMatch + 1} of ${search.matches.length}`
                 : `${search.matches.length} ${search.matches.length === 1 ? "match" : "matches"}`
-              : "No matches"
+              : "0 matches"
             : ""}
         </output>
         <button

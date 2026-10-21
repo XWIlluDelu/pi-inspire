@@ -202,7 +202,6 @@ async function fixture({ openSource = true } = {}) {
     modified: new Date(timestamp),
     messageCount: 3,
     firstMessage: "Shared prompt",
-    searchText: "Shared prompt",
   };
   const catalog: SessionCatalogLike = {
     refresh: async () => [record],
@@ -275,6 +274,36 @@ async function fixture({ openSource = true } = {}) {
   }
   return { directory, workspace, id, path, runtime, workers, url, headers };
 }
+
+it("exports a saved branch with an unavailable workspace without launching Pi", async () => {
+  const f = await fixture({ openSource: false });
+  await rm(f.workspace, { recursive: true });
+  await f.runtime.openSession(f.id);
+  expect((await f.runtime.snapshot(f.id)).active?.readOnlyReason).toBe(
+    "workspace-unavailable",
+  );
+  const response = await fetch(`${f.url}/api/sessions/export`, {
+    method: "POST",
+    headers: f.headers,
+    body: JSON.stringify({ sessionId: f.id, format: "jsonl" }),
+  });
+  expect(response.status).toBe(200);
+  const result = (await response.json()) as {
+    downloadId: string;
+  };
+  const downloaded = await fetch(
+    `${f.url}/api/sessions/${f.id}/exports/${result.downloadId}`,
+    {
+      headers: f.headers,
+    },
+  );
+  expect(downloaded.status).toBe(200);
+  const content = await downloaded.text();
+  expect(content).toContain("Current branch only");
+  expect(content).toContain('"type":"image"');
+  expect(content).not.toContain("Other branch only");
+  expect(f.workers).toHaveLength(0);
+});
 
 it.skipIf(
   !existsSync(join(piInstallation.packageRoot, "dist/core/session-export.js")),

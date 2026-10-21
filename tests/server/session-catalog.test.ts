@@ -31,7 +31,6 @@ function record(id: string, cwd: string, modified: string): SessionRecord {
     modified: new Date(modified),
     messageCount: 1,
     firstMessage: id,
-    searchText: id,
   };
 }
 
@@ -465,7 +464,6 @@ describe("catalog title provenance", () => {
       "2026-07-01T10:00:00Z",
     );
     unnamed.firstMessage = secret;
-    unnamed.searchText = secret.toLowerCase();
     const summary = new SessionCatalog("/unused").project(unnamed);
     expect(summary.title).toBe(secret);
     expect(summary.project).toBe("research-project");

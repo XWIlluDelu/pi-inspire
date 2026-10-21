@@ -218,7 +218,12 @@ describe("launch behavior", () => {
     expect(store.getState().sessionSelectionPending).toBe(true);
 
     releaseCatalog();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() =>
+      expect(store.getState()).toMatchObject({
+        sessions: [previous],
+        sessionListLoading: false,
+      }),
+    );
     expect(openCalls).toBe(0);
     expect(store.getState().sessionId).toBeNull();
 
@@ -228,6 +233,10 @@ describe("launch behavior", () => {
   });
 
   it("welcome: stays on the welcome page even with recent sessions", async () => {
+    const recent = sessionSummary();
+    const open = vi.fn(() => ({
+      body: activeSnapshot({ sessionId: recent.id }),
+    }));
     installFetch((url) => {
       if (url.startsWith("/api/bootstrap")) {
         return {
@@ -236,16 +245,23 @@ describe("launch behavior", () => {
           }),
         };
       }
+      if (url.startsWith("/api/sessions/open")) return open();
       if (url.startsWith("/api/sessions")) {
         return {
-          body: sessionPage([sessionSummary()], 1),
+          body: sessionPage([recent], 1),
         };
       }
       return undefined;
     });
     const store = new AppStore();
     await store.init("token");
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await vi.waitFor(() =>
+      expect(store.getState()).toMatchObject({
+        sessions: [recent],
+        sessionListLoading: false,
+      }),
+    );
+    expect(open).not.toHaveBeenCalled();
     expect(store.getState().sessionId).toBeNull();
   });
 });

@@ -169,7 +169,6 @@ describe("SessionMetadataIndex", () => {
       name: "Current name",
       firstMessage: "first prompt",
       messageCount: 3,
-      searchText: "current name\nfirst prompt\n/work/project",
     });
     expect(records[0]?.modified.toISOString()).toBe("2026-01-01T00:00:03.000Z");
     expect(records[0]).not.toHaveProperty("allMessagesText");
@@ -196,7 +195,6 @@ describe("SessionMetadataIndex", () => {
     );
     expect((await new SessionMetadataIndex().list(root))[0]).toMatchObject({
       firstMessage: "inspect",
-      searchText: "inspect\n/work/project",
     });
   });
 

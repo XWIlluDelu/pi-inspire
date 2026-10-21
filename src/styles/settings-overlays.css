@@ -2059,3 +2059,5 @@
 .chevron-rotate--open {
   transform: rotate(180deg);
 }
+
+.export-dialog__hint { color: var(--muted); font-size: var(--text-sm); }

@@ -36,7 +36,6 @@ try {
     modified: new Date(timestamp),
     messageCount: 128,
     firstMessage: "benchmark",
-    searchText: "benchmark",
   });
   await projection.suspendReconciliation();
   const samples = { forced: [], versionChecked: [] };

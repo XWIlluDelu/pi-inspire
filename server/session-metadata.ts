@@ -35,7 +35,6 @@ export interface SessionRecord {
   modified: Date;
   messageCount: number;
   firstMessage: string;
-  searchText: string;
   /** Null only for a Pi-owned path that has not entered the catalog yet. */
   source: SessionSourceIdentity | null;
 }
@@ -217,10 +216,6 @@ function projectRecord(
     ),
     messageCount: state.messageCount,
     firstMessage: state.firstMessage,
-    searchText: [state.name, state.firstMessage, header.cwd]
-      .filter(Boolean)
-      .join("\n")
-      .toLowerCase(),
   };
 }
 

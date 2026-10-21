@@ -27,6 +27,89 @@ async function openPendingSession(page: Page) {
   return { composer, input, pending };
 }
 
+test("Pending navigation keeps latest truthful in ordinary and virtualized conversations", async ({
+  page,
+}) => {
+  let virtualized = false;
+  const queue = {
+    revision: 1,
+    totalCount: 1,
+    steering: [
+      {
+        id: "pending-boundary",
+        ...pendingTextSummary("Review the pending changes"),
+      },
+    ],
+    followUp: [],
+  };
+  await routeMockSnapshots(page, {
+    snapshot(snapshot) {
+      if (!snapshot.active) return;
+      snapshot.pendingQueues = queue;
+      if (virtualized) {
+        snapshot.active.transcriptPage.messages = Array.from(
+          { length: 90 },
+          (_, index) => ({
+            role: index % 2 ? "assistant" : "user",
+            content: `Reading turn ${index + 1}\n\n${"A complete conversation remains readable. ".repeat(8)}`,
+            timestamp: index + 1,
+            __inspireMessageId: `boundary-${index}`,
+          }),
+        );
+      }
+    },
+  });
+  await openPendingSession(page);
+  const log = page.getByRole("log");
+  const latest = page.getByRole("button", { name: "Jump to latest" });
+  const pending = page.getByRole("region", { name: "Pending input" });
+  const trigger = page.getByRole("button", { name: "Jump to 1 pending item" });
+  const remaining = () =>
+    log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+  for (const long of [false, true]) {
+    virtualized = long;
+    if (long) {
+      await page.reload();
+      await expect(page.locator(".transcript__column--virtual")).toBeVisible();
+    }
+    for (const [width, height, theme] of [
+      [1440, 960, "light"],
+      [1280, 420, "dark"],
+      [390, 844, "light"],
+    ] as const) {
+      await page.setViewportSize({ width, height });
+      await page.evaluate((theme) => {
+        document.documentElement.dataset.theme = theme;
+      }, theme);
+      await trigger.click();
+      await expect(pending).toBeFocused();
+      await expect.poll(remaining).toBeLessThanOrEqual(1);
+      await expect(latest).toBeHidden();
+      const alignment = await page.evaluate(() => {
+        const activity = document
+          .querySelector(".activity")!
+          .getBoundingClientRect();
+        const composer = document
+          .querySelector(".composer")!
+          .getBoundingClientRect();
+        return {
+          difference: Math.abs(activity.left - composer.left),
+          width: activity.width - composer.width,
+        };
+      });
+      expect(alignment.difference).toBeLessThanOrEqual(1);
+      expect(Math.abs(alignment.width)).toBeLessThanOrEqual(1);
+      await log.hover();
+      await page.mouse.wheel(0, -500);
+      await expect(latest).toBeVisible();
+      await latest.click();
+      await expect.poll(remaining).toBeLessThanOrEqual(1);
+      await expect(latest).toBeHidden();
+      await expect(pending).toBeInViewport();
+    }
+  }
+});
+
 test("Pending image thumbnails open the shared viewer and wrap at narrow widths", async ({
   page,
   context,

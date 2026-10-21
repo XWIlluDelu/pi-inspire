@@ -155,6 +155,7 @@ test("composition keys do not navigate transcript matches or dismiss search", as
   await input.press("Enter");
   await expect(result).toHaveText("2 of 2");
   await input.press("Escape");
+  await expect(input).toBeVisible();
   await expect(input).not.toBeFocused();
   await expect(input).toHaveValue("测量");
 });
@@ -188,12 +189,14 @@ test("search counts only visible shell and checkpoint text", async ({
     },
   );
   const search = page.getByRole("search", {
-    name: "Search settled transcript",
+    name: "Search conversation",
   });
-  const input = search.getByRole("searchbox", { name: "Search conversation" });
+  const input = search.getByRole("searchbox", {
+    name: "Search conversation",
+  });
   for (const query of ["31m", "Magic Context compacted"]) {
     await input.fill(query);
-    await expect(search).toContainText("No matches");
+    await expect(search).toContainText("0 matches");
   }
   for (const query of ["Visible status", "retained decisions"]) {
     await input.fill(query);
@@ -348,6 +351,8 @@ test("literal highlights follow scope, occurrences and disclosure without changi
     )
     .toBe(true);
   await input.press("Escape");
+  await expect(input).toBeVisible();
+  await expect(input).not.toBeFocused();
   await expect(input).toHaveValue("precise match");
   await expect(count).toHaveText("5 of 5");
   await input.focus();
@@ -451,7 +456,7 @@ test.describe("touch reading controls", () => {
       for (const action of await page
         .locator(".code-block__actions button")
         .all()) {
-        const icon = (await action.locator("svg").boundingBox())!;
+        const icon = (await action.locator("svg").first().boundingBox())!;
         const button = (await action.boundingBox())!;
         expect(icon.width).toBe(13);
         expect(icon.height).toBe(13);
@@ -470,7 +475,9 @@ test.describe("touch reading controls", () => {
     );
     await expect(page.locator(".ctx")).toHaveCount(0);
     await page.getByRole("button", { name: "Open conversation search" }).tap();
-    const input = page.getByRole("searchbox", { name: "Search conversation" });
+    const input = page.getByRole("searchbox", {
+      name: "Search conversation",
+    });
     await input.fill("Ready");
     await input.press("Enter");
     await expect

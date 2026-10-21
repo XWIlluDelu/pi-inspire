@@ -2458,7 +2458,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           modified: new Date(),
           messageCount: 0,
           firstMessage: "",
-          searchText: "",
           source: null,
         });
         await pendingProjection.suspendReconciliation();
@@ -3643,7 +3642,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           modified: new Date(),
           messageCount: 0,
           firstMessage: "",
-          searchText: "",
           source: null,
         };
         stagedProjection = await this.openForkProjection(stagedRecord);
@@ -4385,28 +4383,36 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               !this.readyForDelivery(slot))
           )
             throw requestError("Session or worker changed before export", 409);
-          const ready = direct
-            ? slot
-            : await this.ensureFreshWriterInsideGate(slot);
           if (format === "jsonl") {
             await this.reconcileSlot(slot, false);
             this.throwIfConflicted(slot);
-            const entries = slot.projection!.entriesAfter(null);
-            const tail = entries.at(-1)?.id;
-            // The verified prefix is already local. Ask Pi only for unpersisted
-            // entries and its effective leaf, not the entire retained session.
-            const branch = await ready.process!.request<{
-              entries: SessionEntry[];
-              leafId: string | null;
-            }>({ type: "get_entries", ...(tail ? { since: tail } : {}) });
+            let entries = slot.projection!.entriesAfter(null);
+            let leafId = this.effectiveLeaf(slot);
+            // A saved branch is independently readable, even without its cwd
+            // or a writable Pi. Never launch a worker merely to export it.
+            if (slot.process) {
+              const ready = direct
+                ? slot
+                : await this.ensureFreshWriterInsideGate(slot);
+              const tail = entries.at(-1)?.id;
+              const branch = await ready.process!.request<{
+                entries: SessionEntry[];
+                leafId: string | null;
+              }>({ type: "get_entries", ...(tail ? { since: tail } : {}) });
+              entries = [...entries, ...branch.entries];
+              leafId = branch.leafId;
+            }
             const content = serializeBranchExport(slot.id, slot.cwd, {
-              entries: [...entries, ...branch.entries],
-              leafId: branch.leafId,
+              entries,
+              leafId,
             });
             await assertExportDestination(outputPath!, slot.sessionPath);
             await writeBranchExport(outputPath!, content);
             return { path: outputPath! };
           }
+          const ready = direct
+            ? slot
+            : await this.ensureFreshWriterInsideGate(slot);
           return ready.process!.request<{ path?: unknown }>(
             {
               type: "export_html",
