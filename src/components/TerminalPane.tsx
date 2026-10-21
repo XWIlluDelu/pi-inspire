@@ -62,6 +62,7 @@ import {
   loadTerminalUiSettings,
   type TerminalUiSettings,
 } from "../terminal-settings";
+import { ButtonLabel } from "./ButtonLabel";
 import { NoticeCard } from "./NoticeCard";
 import { PiLoader } from "./PiLoader";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
@@ -1386,7 +1387,9 @@ export const TerminalPane = memo(function TerminalPane({
             disabled={creating}
           >
             <Plus size={14} aria-hidden />
-            {creating ? "Starting…" : "New terminal"}
+            <ButtonLabel reserve="New terminal">
+              {creating ? "Starting…" : "New terminal"}
+            </ButtonLabel>
           </button>
         </div>
       ) : (
@@ -1492,7 +1495,9 @@ export const TerminalPane = memo(function TerminalPane({
                     });
                 }}
               >
-                {operation.busy ? "Checking…" : "Retry same operation"}
+                <ButtonLabel reserve="Retry same operation">
+                  {operation.busy ? "Checking…" : "Retry same operation"}
+                </ButtonLabel>
               </button>
             </div>
           ))}

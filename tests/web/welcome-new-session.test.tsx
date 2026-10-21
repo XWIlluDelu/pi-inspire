@@ -218,6 +218,8 @@ afterEach(() => {
 
 describe("new-session start surface", () => {
   it("addresses Models and MCP settings with New's selected directory before creating a session", async () => {
+    // Workspace ownership is independent of the lazy surface's chunk arrival.
+    await import("../../src/components/Settings");
     act(() =>
       FakeWebSocket.instances.at(-1)!.emit({
         type: "snapshot",
@@ -282,9 +284,7 @@ describe("new-session start surface", () => {
     );
     fireEvent.click(screen.getByRole("option", { name: "This project" }));
     fireEvent.submit(
-      screen
-        .getByRole("button", { name: "Save configuration" })
-        .closest("form")!,
+      screen.getByRole("button", { name: "Save" }).closest("form")!,
     );
     await waitFor(() =>
       expect(save).toHaveBeenCalledWith(

@@ -446,7 +446,7 @@ describe("Models settings configuration and ownership", () => {
     fireEvent.change(screen.getByLabelText("Base URL"), {
       target: { value: "https://new-target.test/v1" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save provider" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(fixture.host.editModelConfig).toHaveBeenCalledWith(
         { sessionId: "one" },
@@ -545,7 +545,7 @@ describe("Models settings configuration and ownership", () => {
       screen.getByRole("button", { name: "Edit provider custom" }),
     );
     expect(screen.getByLabelText("API key")).toHaveValue("");
-    fireEvent.click(screen.getByRole("button", { name: "Save provider" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(fixture.host.editModelConfig).toHaveBeenCalledWith(
         { sessionId: "one" },
@@ -557,7 +557,7 @@ describe("Models settings configuration and ownership", () => {
     await screen.findByText("Configured custom provider");
     expect(screen.queryByText("Anthropic")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Save provider" }),
+      screen.queryByRole("button", { name: "Save" }),
     ).not.toBeInTheDocument();
   });
 
@@ -633,7 +633,7 @@ describe("Models settings configuration and ownership", () => {
     fireEvent.change(screen.getByLabelText("API key"), {
       target: { value: "synthetic-key" },
     });
-    const saveProvider = screen.getByRole("button", { name: "Save provider" });
+    const saveProvider = screen.getByRole("button", { name: "Save" });
     saveProvider.focus();
     fireEvent.click(saveProvider);
     const addModel = await screen.findByRole("button", {
@@ -653,7 +653,7 @@ describe("Models settings configuration and ownership", () => {
     fireEvent.change(screen.getByLabelText("Display name"), {
       target: { value: "New model" },
     });
-    const saveModel = screen.getByRole("button", { name: "Save model" });
+    const saveModel = screen.getByRole("button", { name: "Save" });
     saveModel.focus();
     fireEvent.click(saveModel);
     const common = await screen.findByRole("checkbox", {
@@ -733,10 +733,10 @@ describe("Models settings configuration and ownership", () => {
     const api = screen.getByLabelText("API type");
     expect(api).toBeRequired();
     expect((api as HTMLInputElement).validity.valueMissing).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Save model" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(fixture.host.editModelConfig).not.toHaveBeenCalled();
     fireEvent.change(api, { target: { value: "custom-stream-api" } });
-    const submit = screen.getByRole("button", { name: "Save model" });
+    const submit = screen.getByRole("button", { name: "Save" });
     submit.focus();
     fireEvent.click(submit);
     const error = await screen.findByRole("alert");
@@ -772,7 +772,7 @@ describe("Models settings configuration and ownership", () => {
     fireEvent.change(screen.getByLabelText("Model ID"), {
       target: { value: "inherited-api-model" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save model" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(fixture.host.editModelConfig).toHaveBeenCalledWith(
         { sessionId: "one" },
@@ -874,7 +874,7 @@ describe("Models settings configuration and ownership", () => {
       (screen.getByLabelText("Maximum output tokens") as HTMLInputElement)
         .validity.valid,
     ).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Save model" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(fixture.host.editModelConfig).toHaveBeenCalledWith(
         { sessionId: "one" },

@@ -1644,6 +1644,11 @@ span.card__file-arg {
     background var(--dur-micro) var(--ease-standard);
 }
 
+/* The compact bar has no room for an outward focus ring. */
+.code-block__actions > button:focus-visible {
+  outline-offset: -2px;
+}
+
 .code-block__actions > button > svg {
   flex: 0 0 auto;
 }

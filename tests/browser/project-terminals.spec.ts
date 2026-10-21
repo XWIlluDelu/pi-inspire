@@ -6,6 +6,7 @@ import {
   encodeTerminalServerDataFrame,
 } from "../../shared/terminal-contracts";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
+import { actionGeometry } from "./support/action-geometry";
 import { focusRingClipping } from "./support/focus-bounds";
 import { hostRequest } from "./support/host-request";
 import { routeMockSnapshots } from "./support/mock-host";
@@ -1407,13 +1408,29 @@ test("compact terminal controls keep selection, search, and output scoped to the
       ),
   ).toBe(true);
   await expect(textOutput).not.toHaveValue(/TERMINAL_REDESIGN_B/);
+  await page.evaluate(() => document.fonts.ready);
+  await textDialog.evaluate((el) =>
+    Promise.allSettled(
+      el.getAnimations().map((animation) => animation.finished),
+    ),
+  );
+  const copyActions = textDialog.locator(".terminal-text-dialog__copy-actions");
+  const copyGeometry = await actionGeometry(copyActions);
   await textOutput.press("ControlOrMeta+a");
+  await expect(
+    textDialog.getByRole("button", { name: "Copy selection", exact: true }),
+  ).toBeVisible();
+  expect(await actionGeometry(copyActions)).toEqual(copyGeometry);
   await textDialog
     .getByRole("button", { name: "Copy selection", exact: true })
     .click();
   await expect
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
     .toContain("TERMINAL_REDESIGN_A");
+  await expect(
+    textDialog.getByRole("button", { name: "Copied", exact: true }),
+  ).toBeVisible();
+  expect(await actionGeometry(copyActions)).toEqual(copyGeometry);
   await page
     .getByRole("button", {
       name: "Send terminal selection to composer",

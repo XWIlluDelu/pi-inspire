@@ -416,7 +416,7 @@ test.describe("touch model editor", () => {
     await editor.getByText("Connection overrides", { exact: true }).click();
     await page.setViewportSize({ width: 320, height: 460 });
     await expect(
-      editor.getByRole("button", { name: "Save model", exact: true }),
+      editor.getByRole("button", { name: "Save", exact: true }),
     ).toBeInViewport();
     await expect(
       editor.getByRole("button", { name: "Cancel", exact: true }),
@@ -539,9 +539,7 @@ test("provider -> model -> common/default retains row focus, current model and c
   await settings
     .getByLabel("API key", { exact: true })
     .fill("CONFIG_FIXTURE_SECRET");
-  await settings
-    .getByRole("button", { name: "Save provider", exact: true })
-    .click();
+  await settings.getByRole("button", { name: "Save", exact: true }).click();
   const addModel = settings.getByRole("button", {
     name: "Add model to new-provider",
     exact: true,
@@ -558,9 +556,7 @@ test("provider -> model -> common/default retains row focus, current model and c
     .getByLabel("API type", { exact: true })
     .fill("openai-completions");
 
-  await settings
-    .getByRole("button", { name: "Save model", exact: true })
-    .click();
+  await settings.getByRole("button", { name: "Save", exact: true }).click();
   const common = settings.getByRole("checkbox", {
     name: "Common: New available model",
   });

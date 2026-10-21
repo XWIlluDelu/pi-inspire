@@ -304,7 +304,7 @@ describe("command discovery and preparation", () => {
         target: { value: `/${name}\tkeep paths\nnext` },
       });
       const run = screen.getByRole("button", {
-        name: /Run command|Steer Pi|Queue prompt|Send prepared prompt/,
+        name: /^(Run|Steer Pi|Queue prompt|Send)$/,
       });
       expect(run).toBeEnabled();
       fireEvent.click(run);
@@ -338,20 +338,20 @@ describe("command discovery and preparation", () => {
       target: { value: "/review scoped changes" },
     });
     failPrompt = true;
-    fireEvent.click(screen.getByRole("button", { name: "Run command" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(prompts).toHaveLength(1));
     expect(prompts[0]).toMatchObject({ message: "/review scoped changes" });
     expect(prompts[0]).not.toHaveProperty("attachmentIds");
     expect(prompts[0]).not.toHaveProperty("projectFiles");
     expect(prompts[0]).not.toHaveProperty("behavior");
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Run command" })).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Run" })).toBeEnabled(),
     );
     expect(sessionDraft("s1")).toBe("UNFINISHED DRAFT");
     expect(store.getState().attachments[0]?.uploadedId).toBe("upload-a");
     expect(store.getState().failedDeliveryCount).toBe(0);
     failPrompt = false;
-    fireEvent.click(screen.getByRole("button", { name: "Run command" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() =>
       expect(
         screen.queryByRole("dialog", { name: "Command palette" }),
@@ -401,7 +401,7 @@ describe("command discovery and preparation", () => {
     expect(prepared).toHaveValue("/review unsent valuable arguments");
     expect(sessionDraft("s1")).toBe("UNFINISHED DRAFT");
     promptGate = deferred();
-    fireEvent.click(screen.getByRole("button", { name: "Run command" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(prompts).toHaveLength(1));
     interrupt();
     await act(async () =>
@@ -412,7 +412,7 @@ describe("command discovery and preparation", () => {
     );
     remove();
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Run command" })).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Run" })).toBeEnabled(),
     );
     expect(prepared).toHaveValue("/review unsent valuable arguments");
     expect(screen.getByLabelText("Message", { exact: true })).toHaveValue(
@@ -540,7 +540,7 @@ describe("command discovery and preparation", () => {
     fireEvent.change(prepared, {
       target: { value: '/export "report copy.jsonl" ignored' },
     });
-    expect(screen.getByRole("button", { name: "Run command" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
     expect(screen.queryByRole("group", { name: "Export format" })).toBeNull();
     expect(prompts).toEqual([]);
   });

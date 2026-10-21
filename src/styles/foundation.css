@@ -1116,6 +1116,21 @@ input[type="search"]::-webkit-search-cancel-button:hover {
     color var(--dur-micro) var(--ease-standard);
 }
 
+/* Opt-in, content-sized state labels. Unrelated actions retain their own widths. */
+.button-label {
+  display: inline-grid;
+  min-width: 0;
+  text-align: center;
+}
+
+.button-label > span {
+  grid-area: 1 / 1;
+}
+
+.button-label__reserve {
+  visibility: hidden;
+}
+
 /* Skew padding without changing its total, then keep icons on the row centre.
    Independent translate leaves spinning icons' rotation untouched. */
 .button > svg {

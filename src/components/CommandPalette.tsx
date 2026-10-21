@@ -36,6 +36,7 @@ import { useModalFocus } from "../use-modal-focus";
 import { useSearchFocus } from "../use-search-focus";
 import { modelCycleShortcut } from "../workbench-keyboard";
 import { sessionHeading } from "./AppTopbar";
+import { ButtonLabel } from "./ButtonLabel";
 import { ComposerInput } from "./ComposerInput";
 import { SearchMatchText } from "./SearchMatchText";
 import { relativeTime } from "./transcript-rows";
@@ -140,7 +141,8 @@ export const CommandPalette = memo(function CommandPalette({
         (command) => command.name === preparedInvocation.name,
       )
     : undefined;
-  const [preparationSending, setPreparationSending] = useState(false);
+  const [sendingLabel, setSendingLabel] = useState<string | null>(null);
+  const preparationSending = sendingLabel !== null;
   const [delivery, setDelivery] = useState<"steer" | "followUp">("steer");
   const [index, setIndex] = useState(0);
   const [keyboardActive, setKeyboardActive] = useState(true);
@@ -642,6 +644,16 @@ export const CommandPalette = memo(function CommandPalette({
     if (!item.keepOpen) onClose();
   };
 
+  const preparationLabel =
+    preparedCommand?.source === "extension" ||
+    preparedCommand?.source === "builtin"
+      ? "Run"
+      : isBusyRunState(state.runState)
+        ? delivery === "steer"
+          ? "Steer Pi"
+          : "Queue prompt"
+        : "Send";
+
   const submitPreparation = async () => {
     if (
       !preparation ||
@@ -649,13 +661,13 @@ export const CommandPalette = memo(function CommandPalette({
       store.getState().sessionId !== preparation.owner
     )
       return;
-    setPreparationSending(true);
+    setSendingLabel(preparationLabel);
     const sent = await store.sendPreparedCommand(
       preparation.text,
       isBusyRunState(state.runState) ? delivery : undefined,
     );
     if (!mountedRef.current) return;
-    setPreparationSending(false);
+    setSendingLabel(null);
     if (sent && store.getState().sessionId === preparation.owner) onClose();
   };
 
@@ -802,16 +814,11 @@ export const CommandPalette = memo(function CommandPalette({
                 disabled={preparationSending || !preparedCommand}
                 onClick={() => void submitPreparation()}
               >
-                {preparationSending
-                  ? "Sending…"
-                  : preparedCommand?.source === "extension" ||
-                      preparedCommand?.source === "builtin"
-                    ? "Run command"
-                    : isBusyRunState(state.runState)
-                      ? delivery === "steer"
-                        ? "Steer Pi"
-                        : "Queue prompt"
-                      : "Send prepared prompt"}
+                <ButtonLabel
+                  reserve={[sendingLabel ?? preparationLabel, "Sending…"]}
+                >
+                  {preparationSending ? "Sending…" : preparationLabel}
+                </ButtonLabel>
               </button>
             </div>
           </div>

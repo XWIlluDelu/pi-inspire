@@ -92,7 +92,7 @@ async function savedPanel() {
     await screen.findByRole("button", { name: "Edit user server docs" }),
   );
   fireEvent.submit(
-    screen.getByRole("button", { name: "Save configuration" }).closest("form")!,
+    screen.getByRole("button", { name: "Save" }).closest("form")!,
   );
   await screen.findByText(/Saved to file/);
   return view;
@@ -167,7 +167,7 @@ it("withdraws reads from the previous session and saves from the previous Host c
   const save = deferred<unknown>();
   fixture.host.editMcpConfig.mockReturnValueOnce(save.promise);
   fireEvent.submit(
-    screen.getByRole("button", { name: "Save configuration" }).closest("form")!,
+    screen.getByRole("button", { name: "Save" }).closest("form")!,
   );
   fixture.state = { ...fixture.state, transportGeneration: 2 };
   view.rerender(
@@ -193,7 +193,7 @@ it("adds HTTP configuration without copying write-only fields from other entries
     target: { value: "https://new.example.invalid/mcp" },
   });
   fireEvent.submit(
-    screen.getByRole("button", { name: "Save configuration" }).closest("form")!,
+    screen.getByRole("button", { name: "Save" }).closest("form")!,
   );
   await waitFor(() =>
     expect(fixture.host.editMcpConfig).toHaveBeenCalledWith(
@@ -255,13 +255,9 @@ it.each(["unselected", "unavailable"] as const)(
     fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://example.invalid/mcp" },
     });
-    expect(
-      screen.getByRole("button", { name: "Save configuration" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
     fireEvent.submit(
-      screen
-        .getByRole("button", { name: "Save configuration" })
-        .closest("form")!,
+      screen.getByRole("button", { name: "Save" }).closest("form")!,
     );
     await waitFor(() =>
       expect(fixture.host.editMcpConfig).toHaveBeenCalledWith(
@@ -332,9 +328,7 @@ it("preserves secret drafts across transport changes and saves only the selected
   expect(screen.getByLabelText("Header value for Authorization")).toHaveValue(
     "header-secret",
   );
-  const form = screen
-    .getByRole("button", { name: "Save configuration" })
-    .closest("form")!;
+  const form = screen.getByRole("button", { name: "Save" }).closest("form")!;
   fireEvent.submit(form);
   expect(save).toHaveBeenLastCalledWith("user", "new-server", {
     url: "https://example.invalid/mcp",
@@ -382,9 +376,7 @@ it("saves tool rules in displayed order and removes deleted rules", () => {
   fireEvent.change(screen.getAllByLabelText("Tool name or pattern")[1]!, {
     target: { value: "read_*" },
   });
-  const form = screen
-    .getByRole("button", { name: "Save configuration" })
-    .closest("form")!;
+  const form = screen.getByRole("button", { name: "Save" }).closest("form")!;
   fireEvent.submit(form);
   expect(save).toHaveBeenLastCalledWith("user", "docs", {
     toolExposure: { "*": "hidden", "read_*": "codemode" },
@@ -436,7 +428,7 @@ it("focuses and edits project policy overrides without introducing connection se
   fireEvent.click(screen.getByRole("combobox", { name: "Tool exposure" }));
   fireEvent.click(screen.getByRole("option", { name: "Hidden" }));
   fireEvent.submit(
-    screen.getByRole("button", { name: "Save configuration" }).closest("form")!,
+    screen.getByRole("button", { name: "Save" }).closest("form")!,
   );
   await waitFor(() =>
     expect(fixture.host.editMcpConfig).toHaveBeenCalledWith(

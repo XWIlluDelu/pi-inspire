@@ -2,6 +2,7 @@ import { Check, Copy, MessageSquareQuote, TextSelect, X } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { useCopied } from "../use-copied";
 import { useModalFocus } from "../use-modal-focus";
+import { ButtonLabel } from "./ButtonLabel";
 
 export function TerminalTextDialog({
   text,
@@ -136,7 +137,9 @@ export function TerminalTextDialog({
               ) : (
                 <Copy size={15} aria-hidden="true" />
               )}
-              {copied ? "Copied" : hasSelection ? "Copy" : "Copy all"}
+              <ButtonLabel reserve="Copy all">
+                {copied ? "Copied" : hasSelection ? "Copy" : "Copy all"}
+              </ButtonLabel>
             </button>
           </div>
         </footer>

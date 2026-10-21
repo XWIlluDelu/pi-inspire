@@ -69,6 +69,32 @@ test("compact code actions keep square centered icons before and after copying",
         theme,
       );
       await checkIcons();
+      for (const action of await actions.all()) {
+        await action.focus();
+        const focus = await action.evaluate((button) => {
+          const style = getComputedStyle(button);
+          const box = button.getBoundingClientRect();
+          const bar = button
+            .closest(".code-block__bar")!
+            .getBoundingClientRect();
+          const outset = Math.max(
+            0,
+            parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset),
+          );
+          return {
+            visible: button.matches(":focus-visible"),
+            width: parseFloat(style.outlineWidth),
+            contained:
+              box.top - outset >= bar.top &&
+              box.bottom + outset <= bar.bottom - 1 &&
+              box.left - outset >= bar.left &&
+              box.right + outset <= bar.right,
+          };
+        });
+        expect(focus.visible).toBe(true);
+        expect(focus.width).toBeGreaterThan(0);
+        expect(focus.contained).toBe(true);
+      }
     }
   }
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);

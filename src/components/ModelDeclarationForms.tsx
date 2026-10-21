@@ -134,7 +134,7 @@ export function ProviderForm({
           disabled={busy || !id.trim()}
           type="submit"
         >
-          Save provider
+          Save
         </button>
         <button
           className="button button--quiet"
@@ -337,7 +337,7 @@ export function ModelForm({
           disabled={busy || !id.trim()}
           type="submit"
         >
-          Save model
+          Save
         </button>
         <button
           className="button button--quiet"

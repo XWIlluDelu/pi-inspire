@@ -7,6 +7,13 @@ import { CopyAction } from "./CopyAction";
 import { PiLoader } from "./PiLoader";
 import { SettingsSection } from "./SettingsSection";
 
+const checkLabels = {
+  initial: "Check updates",
+  pending: "Submitting…",
+  checking: "Checking…",
+  checked: "Check again",
+};
+
 function UpdateCommand({ command }: { command: string }) {
   const [error, setError] = useState<string | null>(null);
   const { copied, copy } = useCopied({ onError: setError });
@@ -116,6 +123,13 @@ export function SystemVersionsCard() {
     state.piUpdateRequestPending || state.inspireUpdateRequestPending;
   const checking = state.piUpdateChecking || state.inspireUpdateChecking;
   const bothChecked = state.piUpdateCheck !== null && inspire !== null;
+  const checkState = pending
+    ? "pending"
+    : checking
+      ? "checking"
+      : bothChecked
+        ? "checked"
+        : "initial";
   const piActivity = state.piUpdateRequestPending
     ? "Submitting…"
     : state.piUpdateChecking
@@ -163,13 +177,13 @@ export function SystemVersionsCard() {
             ) : (
               <RefreshCw size={13} aria-hidden />
             )}
-            {pending
-              ? "Submitting…"
-              : checking
-                ? "Checking…"
-                : bothChecked
-                  ? "Check again"
-                  : "Check for updates"}
+            <span className="system-versions__check-label">
+              {Object.entries(checkLabels).map(([status, label]) => (
+                <span key={status} aria-hidden={status !== checkState}>
+                  {label}
+                </span>
+              ))}
+            </span>
           </button>
         </div>
       }
