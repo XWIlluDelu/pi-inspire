@@ -5,6 +5,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,7 +29,10 @@ const api = vi.hoisted(() => ({
   retryTerminalOperation: vi.fn(),
   terminalSettings: vi.fn(),
 }));
-vi.mock("../../src/api", () => ({ createApi: () => api }));
+vi.mock("../../src/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/api")>()),
+  createApi: () => api,
+}));
 vi.mock("../../src/components/TerminalView", () => ({
   TerminalView: ({ terminal }: { terminal: TerminalDescriptor }) => (
     <div data-testid="shell-cwd">
@@ -130,7 +134,84 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("terminal error feedback", () => {
+  it("uses shared error presentation, copies complete diagnostics and dismisses only explicitly", async () => {
+    const message =
+      "A terminal endpoint is listening, but its authenticated data connection failed.\nExisting terminal processes were left running.";
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", {
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      clipboard: { writeText },
+    });
+    api.terminals.mockRejectedValue(new Error(message));
+    render(<TerminalPane cwd="/A" />);
+    const error = await screen.findByRole("alert");
+    expect(error).toHaveClass(
+      "notice",
+      "notice--error",
+      "terminal-pane__error",
+    );
+    fireEvent.click(
+      within(error).getByText(/A terminal endpoint is listening/),
+    );
+    expect(error).toBeVisible();
+    fireEvent.click(within(error).getByRole("button", { name: "Copy error" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(message));
+    expect(
+      within(error).getByRole("button", { name: "Error copied" }),
+    ).toBeVisible();
+    fireEvent.click(
+      within(error).getByRole("button", { name: "Dismiss terminal error" }),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(api.restartTerminal).not.toHaveBeenCalled();
+    expect(api.removeTerminal).not.toHaveBeenCalled();
+  });
+});
+
 describe("terminal shortcut input ownership", () => {
+  it.each(["close", "restart"] as const)(
+    "never carries a targetless %s from project A into B before any request",
+    async (action) => {
+      api.terminals.mockImplementation(async (cwd?: string) =>
+        catalog(cwd === "/B" ? [terminal("B shell", "/B")] : []),
+      );
+      const view = render(<TerminalPane cwd="/A" />);
+      await act(async () => {});
+      act(() => queueTerminalAction(action, "/A"));
+      expect(api.removeTerminal).not.toHaveBeenCalled();
+      expect(api.restartTerminal).not.toHaveBeenCalled();
+      view.rerender(<TerminalPane cwd="/B" />);
+      await screen.findByRole("button", { name: "B shell", pressed: true });
+      expect(api.removeTerminal).not.toHaveBeenCalled();
+      expect(api.restartTerminal).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["close", "restart"] as const)(
+    "binds an immediate %s to the active A terminal",
+    async (action) => {
+      api.removeTerminal.mockResolvedValue({
+        catalogEpoch: "daemon-1",
+        revision: 2,
+      });
+      api.restartTerminal.mockResolvedValue(terminal("A shell", "/A", 2));
+      const view = render(<TerminalPane cwd="/A" />);
+      await screen.findByRole("button", { name: "A shell", pressed: true });
+      act(() => queueTerminalAction(action, "/A"));
+      view.rerender(<TerminalPane cwd="/B" />);
+      await screen.findByRole("button", { name: "B shell", pressed: true });
+      if (action === "close")
+        expect(api.removeTerminal).toHaveBeenCalledExactlyOnceWith(
+          "A shell",
+          false,
+        );
+      else
+        expect(api.restartTerminal).toHaveBeenCalledExactlyOnceWith("A shell");
+    },
+  );
+
   it.each([
     {
       name: "AltGraph digits",
@@ -427,7 +508,7 @@ describe("terminal project ownership", () => {
   it("toggles focus through the existing action without claiming the OS Escape chord", async () => {
     const view = render(<TerminalPane cwd="/A" />);
     await screen.findByRole("button", { name: "A shell", pressed: true });
-    act(() => queueTerminalAction("focus"));
+    act(() => queueTerminalAction("focus", "/A"));
     expect(
       view.container.querySelector(".terminal-pane--focused"),
     ).toBeTruthy();
@@ -447,7 +528,7 @@ describe("terminal project ownership", () => {
     expect(
       view.container.querySelector(".terminal-pane--focused"),
     ).toBeTruthy();
-    act(() => queueTerminalAction("focus"));
+    act(() => queueTerminalAction("focus", "/A"));
     expect(view.container.querySelector(".terminal-pane--focused")).toBeNull();
   });
 

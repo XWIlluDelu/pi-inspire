@@ -29,17 +29,34 @@ describe("terminal insertion queue", () => {
     unsubscribe();
   });
 
-  it("delivers a queued UI action to the first capable surface", () => {
-    queueTerminalAction("take-control");
+  it("delivers a project-bound lazy surface action to the first capable surface", () => {
+    queueTerminalAction("focus", "/project/a");
     const inactive = vi.fn(() => false);
     const stopInactive = subscribeTerminalActions(inactive);
-    expect(inactive).toHaveBeenCalledWith("take-control");
+    expect(inactive).toHaveBeenCalledWith({
+      action: "focus",
+      projectCwd: "/project/a",
+    });
     const active = vi.fn(() => true);
     const stopActive = subscribeTerminalActions(active);
-    expect(active).toHaveBeenCalledWith("take-control");
+    expect(active).toHaveBeenCalledWith({
+      action: "focus",
+      projectCwd: "/project/a",
+    });
     stopInactive();
     stopActive();
   });
+
+  it.each(["close", "restart"] as const)(
+    "ends targetless %s rather than queueing for a future terminal",
+    (action) => {
+      queueTerminalAction(action, "/project/a");
+      const later = vi.fn(() => true);
+      const stop = subscribeTerminalActions(later);
+      expect(later).not.toHaveBeenCalled();
+      stop();
+    },
+  );
 
   it("bounds pending inserted text", () => {
     queueTerminalInsertion("x".repeat(300_000), "/project/a");

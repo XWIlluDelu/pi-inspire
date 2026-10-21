@@ -12,6 +12,8 @@ Environment=PATH=@NODE_BIN@:/usr/local/bin:/usr/bin:/bin
 Environment=INSPIRE_ENVIRONMENT=shell
 ExecStart=@LAUNCHER@ terminal-daemon --root @ROOT@ --host 127.0.0.1 --port 4587
 Restart=on-failure
+# A confirmed listening owner is not a recoverable daemon crash.
+RestartPreventExitStatus=78
 RestartSec=3
 TimeoutStartSec=5min
 TimeoutStopSec=15

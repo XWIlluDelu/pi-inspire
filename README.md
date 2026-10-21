@@ -88,7 +88,7 @@ Inspire targets the latest Pi release; `package.json` records the version used b
 ./inspire service enable-host
 ```
 
-The usual launcher commands then manage that installation's services. Host-only restart preserves terminal tabs; `restart --all` also restarts the terminal service and ends its processes. **Settings → System → Restart** provides the same scopes and asks for confirmation before interrupting Pi work.
+The usual launcher commands then manage that installation's services. Host-only restart preserves terminal tabs; `restart --all` also restarts the terminal service and ends its processes. **Settings → System → Host → Restart** provides the same scopes and asks for confirmation before interrupting Pi work.
 
 See [Running and maintaining Inspire](docs/host.md) for service behavior, shell environments, packaging, and diagnostics.
 

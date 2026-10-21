@@ -10,6 +10,11 @@ import {
   type TerminalDaemonInfo,
 } from "./terminal-daemon-configuration.js";
 import { TerminalDaemonServer } from "./terminal-daemon-server.js";
+import {
+  addressAcceptsConnections,
+  TERMINAL_DAEMON_OWNER_CONFLICT_EXIT_CODE,
+  TerminalDaemonOwnerConflictError,
+} from "./terminal-daemon-socket.js";
 import { resolveTerminalDaemonSecret } from "./terminal-daemon-tls.js";
 import { TerminalHistoryStore } from "./terminal-history-store.js";
 import { TerminalServiceError } from "./terminal-service.js";
@@ -77,6 +82,8 @@ async function installedSystemdUnit(): Promise<string | null> {
 
 async function main(): Promise<void> {
   const config = configuration();
+  if (await addressAcceptsConnections(config.address))
+    throw new TerminalDaemonOwnerConflictError();
   const token = await resolveTerminalDaemonSecret(config.tokenPath);
   await prepareTerminalStateDirectory(config.statePath);
   // Keep one writer/PTY owner through startup and the complete shutdown drain.
@@ -199,5 +206,8 @@ async function main(): Promise<void> {
 
 main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+  process.exitCode =
+    error instanceof TerminalDaemonOwnerConflictError
+      ? TERMINAL_DAEMON_OWNER_CONFLICT_EXIT_CODE
+      : 1;
 });

@@ -58,9 +58,11 @@ const THEME_LABELS: Record<ThemePreference, string> = {
 };
 
 function runTerminalAction(action: TerminalUiAction): void {
+  const projectCwd = store.getState().cwd;
+  if (!projectCwd) return;
+  queueTerminalAction(action, projectCwd);
   store.setResourcesOpen(true);
   store.setContextMode("terminal");
-  queueTerminalAction(action);
 }
 
 export const CommandPalette = memo(function CommandPalette({

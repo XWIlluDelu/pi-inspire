@@ -80,6 +80,7 @@ import {
   terminalSelectionColor,
 } from "../terminal-theme";
 import { useCopied } from "../use-copied";
+import { NoticeCard } from "./NoticeCard";
 import { PiLoader } from "./PiLoader";
 import { TerminalTextDialog } from "./TerminalTextDialog";
 import { TerminalTouchKeys } from "./TerminalTouchKeys";
@@ -754,8 +755,9 @@ export const TerminalView = memo(function TerminalView({
 
   useEffect(
     () =>
-      subscribeTerminalActions((action) => {
+      subscribeTerminalActions(({ action, projectCwd }) => {
         if (
+          projectCwd !== descriptor.projectCwd ||
           action !== "take-control" ||
           !active ||
           !ready ||
@@ -767,7 +769,13 @@ export const TerminalView = memo(function TerminalView({
         xtermRef.current?.focus();
         return true;
       }),
-    [active, currentDimensions, descriptor.status, ready],
+    [
+      active,
+      currentDimensions,
+      descriptor.projectCwd,
+      descriptor.status,
+      ready,
+    ],
   );
 
   useEffect(() => {
@@ -1209,14 +1217,13 @@ export const TerminalView = memo(function TerminalView({
             </span>
           ) : null}
           {error ? (
-            <button
-              type="button"
+            <NoticeCard
+              kind="error"
+              text={error}
               className="terminal-view__error"
-              onClick={() => setError(null)}
-              title="Dismiss"
-            >
-              {error}
-            </button>
+              onDismiss={() => setError(null)}
+              dismissLabel="Dismiss terminal error"
+            />
           ) : null}
         </div>
         {!writable && descriptor.status === "running" ? (

@@ -11,11 +11,16 @@ export type TerminalUiAction =
   | "focus"
   | "settings";
 
+export interface TerminalActionIntent {
+  action: TerminalUiAction;
+  projectCwd: string;
+}
+
 type TerminalInsertionListener = () => void;
-type TerminalActionListener = (action: TerminalUiAction) => boolean;
+type TerminalActionListener = (intent: TerminalActionIntent) => boolean;
 
 const pending: Array<{ projectCwd: string; text: string }> = [];
-const pendingActions: TerminalUiAction[] = [];
+const pendingActions: TerminalActionIntent[] = [];
 const listeners = new Set<TerminalInsertionListener>();
 const actionListeners = new Set<TerminalActionListener>();
 
@@ -60,11 +65,19 @@ export function clearTerminalInsertions(): void {
   pending.length = 0;
 }
 
-export function queueTerminalAction(action: TerminalUiAction): void {
+export function queueTerminalAction(
+  action: TerminalUiAction,
+  projectCwd: string | null,
+): void {
+  if (!projectCwd) return;
+  const intent = { action, projectCwd };
   for (const listener of actionListeners) {
-    if (listener(action)) return;
+    if (listener(intent)) return;
   }
-  pendingActions.push(action);
+  // Only opening surfaces may wait for lazy mounting. Terminal operations
+  // must resolve a concrete target synchronously or end without a request.
+  if (action !== "new" && action !== "focus" && action !== "settings") return;
+  pendingActions.push(intent);
   if (pendingActions.length > MAX_PENDING_INSERTIONS) pendingActions.shift();
 }
 
