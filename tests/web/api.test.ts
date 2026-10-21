@@ -515,6 +515,91 @@ describe("ordinary HTTP observation", () => {
   });
 });
 
+describe("resource content observation", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it.each(["headers", "error body", "content body"] as const)(
+    "bounds stalled %s without replaying a resource read",
+    async (phase) => {
+      vi.useFakeTimers();
+      let signal: AbortSignal | undefined;
+      const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+        signal = init?.signal ?? undefined;
+        if (phase === "headers") return new Promise<Response>(() => {});
+        const response = new Response("", {
+          status: phase === "error body" ? 401 : 200,
+        });
+        vi.spyOn(
+          response,
+          phase === "error body" ? "json" : "blob",
+        ).mockImplementation(() => new Promise<never>(() => {}));
+        return response;
+      });
+      vi.stubGlobal("fetch", fetch);
+      const settled = vi.fn();
+      const result = createApi()
+        .resourceContent("resource", "session", { byteLimit: 1_048_576 })
+        .then(settled, (error: unknown) => {
+          settled(error);
+          return error;
+        });
+      await vi.advanceTimersByTimeAsync(LONG_HTTP_OBSERVATION_TIMEOUT_MS);
+      expect(settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(settled).toHaveBeenCalledOnce();
+      expect(await result).toMatchObject({
+        name: "ApiTransportError",
+        timedOut: true,
+        outcomeUnknown: false,
+      });
+      expect(signal?.aborted).toBe(true);
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it("retires a cancelled preview even when its body ignores abort", async () => {
+    vi.useFakeTimers();
+    let finish!: (blob: Blob) => void;
+    const body = new Promise<Blob>((resolve) => {
+      finish = resolve;
+    });
+    const response = new Response("");
+    vi.spyOn(response, "blob").mockImplementation(() => body);
+    const fetch = vi.fn(async () => response);
+    vi.stubGlobal("fetch", fetch);
+    const owner = new AbortController();
+    const settled = vi.fn();
+    const result = createApi()
+      .resourceContent("resource", "session", { signal: owner.signal })
+      .then(settled, (error: unknown) => {
+        settled(error);
+        return error;
+      });
+    await vi.advanceTimersByTimeAsync(0);
+    owner.abort();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toHaveBeenCalledOnce();
+    expect(await result).toMatchObject({
+      name: "AbortError",
+      outcomeUnknown: false,
+    });
+    finish(new Blob(["late content"]));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toHaveBeenCalledOnce();
+    await expect(
+      createApi().resourceContent("other", "session", {
+        signal: AbortSignal.abort(),
+      }),
+    ).rejects.toMatchObject({ name: "AbortError", outcomeUnknown: false });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
 describe("attachment upload observation", () => {
   afterEach(() => {
     vi.useRealTimers();

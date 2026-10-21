@@ -1096,7 +1096,14 @@ export function createInspireServer(deps: AppDependencies): {
   });
   app.post("/api/sessions/open", async (request, response) => {
     const { id } = openSchema.parse(request.body);
-    response.json(await deps.runtime.openSession(id));
+    const snapshot = await deps.runtime.openSession(id);
+    response.json({
+      ...snapshot,
+      authorityId,
+      snapshotDigest: createHash("sha256")
+        .update(JSON.stringify(snapshot))
+        .digest("hex"),
+    });
   });
   app.post("/api/sessions/deselect", async (_request, response) => {
     response.json(await deps.runtime.deselectSession());

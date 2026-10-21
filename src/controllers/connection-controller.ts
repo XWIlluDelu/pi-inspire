@@ -9,8 +9,8 @@ import {
 } from "../../shared/contracts";
 import { structuralMessageIdentity } from "../../shared/message-identity";
 import { eventsUrl, HTTP_OBSERVATION_TIMEOUT_MS } from "../api";
-import type { WireEvent } from "../events";
 import { socketTicket } from "../browser-auth";
+import type { WireEvent } from "../events";
 import { recordTransportMeasure, transportNow } from "../transport-performance";
 
 export const SOCKET_CONNECT_TIMEOUT_MS = 10_000;
@@ -160,6 +160,7 @@ export class ConnectionController {
   private socketPhase: "bootstrap" | "resume" | null = null;
   private detailSessionId: string | null = null;
   private detailRevision = 0;
+  private detailWitness: Required<SessionDetailInterest> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private snapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
@@ -204,7 +205,6 @@ export class ConnectionController {
       return;
     this.detailSessionId = sessionId;
     this.detailRevision += 1;
-    this.host.invalidateSnapshotDigest();
     if (this.streamUpdateTimer) clearTimeout(this.streamUpdateTimer);
     this.streamUpdateTimer = null;
     this.pendingStreamUpdate = null;
@@ -212,7 +212,17 @@ export class ConnectionController {
       type: "detail_interest",
       sessionId,
       revision: this.detailRevision,
+      ...(this.host.state().snapshotDigest && this.host.state().authorityId
+        ? {
+            authorityId: this.host.state().authorityId!,
+            snapshotDigest: this.host.state().snapshotDigest!,
+          }
+        : {}),
     };
+    this.detailWitness =
+      interest.authorityId && interest.snapshotDigest
+        ? (interest as Required<SessionDetailInterest>)
+        : null;
     try {
       socket.send(JSON.stringify(interest));
     } catch {
@@ -224,6 +234,18 @@ export class ConnectionController {
       () => this.failSocket(socket),
       FIRST_SNAPSHOT_TIMEOUT_MS,
     );
+  }
+
+  private expectedDigest(event: WireEvent): string | null {
+    const state = this.host.state();
+    const witness = this.detailWitness;
+    return witness &&
+      witness.authorityId === state.authorityId &&
+      witness.sessionId === state.sessionId &&
+      witness.sessionId === event.detailSessionId &&
+      witness.revision === event.detailRevision
+      ? witness.snapshotDigest
+      : state.snapshotDigest;
   }
 
   private async openSocket(
@@ -314,6 +336,7 @@ export class ConnectionController {
         try {
           this.host.applyEvent(event);
           this.host.recordSnapshotDigest(snapshot.digest);
+          this.detailWitness = null;
         } catch {
           this.failSocket(socket, "bootstrap");
           return;
@@ -345,7 +368,7 @@ export class ConnectionController {
         const snapshot = authoritativeSnapshot(
           event,
           hostState.authorityId,
-          hostState.snapshotDigest,
+          this.expectedDigest(event),
         );
         if (!snapshot) {
           this.failSocket(socket, "bootstrap");
@@ -353,6 +376,7 @@ export class ConnectionController {
         }
         if (!this.applySocketEvent(socket, event)) return;
         this.host.recordSnapshotDigest(snapshot.digest);
+        this.detailWitness = null;
         this.clearSnapshotTimer();
         return;
       }
@@ -361,8 +385,14 @@ export class ConnectionController {
       if (
         event.type !== "update_status" &&
         event.type !== "external_session_activity"
-      )
+      ) {
+        if (
+          typeof event.sessionId !== "string" ||
+          event.sessionId === this.detailSessionId
+        )
+          this.detailWitness = null;
         this.host.invalidateSnapshotDigest();
+      }
       const streamUpdate = streamMessageUpdate(event);
       if (streamUpdate) {
         this.queueStreamUpdate(socket, streamUpdate);
@@ -684,6 +714,7 @@ export class ConnectionController {
   }
 
   private clearStreamTimers(): void {
+    this.detailWitness = null;
     this.flushStreamMetrics();
     this.clearSnapshotTimer();
     if (this.watchdogTimer) clearTimeout(this.watchdogTimer);
