@@ -127,9 +127,12 @@ describe("TerminalHistoryStore", () => {
           await vi.advanceTimersByTimeAsync(50);
         }
         await store.flush();
-        expect(
-          await actual.readFile(join(directory, "terminal-1.log")),
-        ).toEqual(Buffer.concat([Buffer.from("first"), ...chunks]));
+        const received = await actual.readFile(
+          join(directory, "terminal-1.log"),
+        );
+        const expected = Buffer.concat([Buffer.from("first"), ...chunks]);
+        // Compare every byte natively, not as hundreds of thousands of object keys.
+        expect(received.equals(expected)).toBe(true);
         expect(open).toHaveBeenCalledTimes(2);
       } finally {
         release();

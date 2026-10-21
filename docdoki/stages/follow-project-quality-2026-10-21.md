@@ -69,10 +69,12 @@ addressing; do not expand into cosmetic changes or classify an isolated flake as
   Windows direct/junction CLI startup, all three packaged releases, complete Linux quality and
   macOS native/browser checks, and Windows Chromium. Its only failure is the unchanged terminal
   history slow-storage fixture exceeding five seconds on Windows (previously passing there).
-  During its explicitly gated write, simulated chunk-arrival intervals now advance synchronously;
-  real filesystem writes, all content/batch assertions and the five-second deadline remain. The
-  complete history-store suite passes locally. This is fixture scheduling, not a demonstrated
-  terminal-runtime defect. Native Windows confirmation of this last fixture correction remains.
+  A local phase probe attributes about 720 ms to generic deep equality of the 768 KiB Buffer,
+  versus about 0.6 ms for flush/read. The fixture now uses native complete-byte equality and advances
+  gated chunk-arrival timers synchronously. Real filesystem writes, every byte/batch assertion and
+  the five-second deadline remain. Clock simplification alone was not the dominant cost repair.
+  The complete history-store suite passes locally; no terminal-runtime change is indicated.
+  Native Windows confirmation of the final assertion correction remains.
 
 ## Next actions
 
