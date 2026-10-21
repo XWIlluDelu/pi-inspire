@@ -1,0 +1,11 @@
+[Unit]
+Description=INSΠRE idle maintenance restart check
+After=inspire-host.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=@ROOT@
+Environment=INSPIRE_OPEN=0
+Environment=INSPIRE_QUIET=1
+Environment=PATH=@NODE_BIN@:/usr/local/bin:/usr/bin:/bin
+ExecStart=@LAUNCHER@ maintenance-restart

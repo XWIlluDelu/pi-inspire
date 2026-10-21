@@ -1,0 +1,16 @@
+{
+  "id": "ssh-reverse",
+  "entry": "runner.mjs",
+  "actions": [
+    "init",
+    "start",
+    "restart",
+    "stop",
+    "status",
+    "supervise",
+    "install-service"
+  ],
+  "platforms": [
+    "linux"
+  ]
+}

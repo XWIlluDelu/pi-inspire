@@ -1,0 +1,54 @@
+%PDF-1.4
+% Inspire test fixture
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Count 2 /Kids [4 0 R 6 0 R] >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 594] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 364 >>
+stream
+BT /F1 25 Tf 42 520 Td (Experiment summary) Tj ET
+BT /F1 14 Tf 42 485 Td (Three measurements at fixed temperature.) Tj ET
+BT /F1 14 Tf 42 450 Td (Sample A: 12.4 +/- 0.3 ms) Tj ET
+BT /F1 14 Tf 42 415 Td (Sample B: 18.2 +/- 0.5 ms) Tj ET
+BT /F1 14 Tf 42 380 Td (Sample C: 21.7 +/- 0.4 ms) Tj ET
+0.2 0.4 0.6 rg 42 280 110 12 re f 42 256 190 12 re f 42 232 260 12 re f
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 594] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 354 >>
+stream
+BT /F1 25 Tf 42 520 Td (Measurement details) Tj ET
+BT /F1 14 Tf 42 485 Td (Repeat count: 20 per sample) Tj ET
+BT /F1 14 Tf 42 450 Td (Temperature: 23 C) Tj ET
+BT /F1 14 Tf 42 415 Td (Instrument resolution: 0.1 ms) Tj ET
+BT /F1 14 Tf 42 380 Td (Report page 2 - selectable text) Tj ET
+0.2 0.4 0.6 rg 42 280 110 12 re f 42 256 190 12 re f 42 232 260 12 re f
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000032 00000 n 
+0000000081 00000 n 
+0000000144 00000 n 
+0000000214 00000 n 
+0000000340 00000 n 
+0000000755 00000 n 
+0000000881 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+1286
+%%EOF

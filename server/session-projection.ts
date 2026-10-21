@@ -1,0 +1,2816 @@
+import {
+  createHash,
+  createHmac,
+  type Hash,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
+import { EventEmitter } from "node:events";
+import { constants, type FSWatcher, watch } from "node:fs";
+import { lstat, open, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
+import type {
+  SessionEntry,
+  SessionHeader,
+} from "@earendil-works/pi-coding-agent";
+import { assistantOutcome } from "../shared/assistant-outcome.js";
+import { interruptAssistantToolCalls } from "../shared/assistant-stream.js";
+import {
+  type BranchEntryResponse,
+  type BranchTreeQuery,
+  type BranchTreeResponse,
+  type ComposerHistoryPage,
+  MAX_SESSION_ID_CHARS,
+  type ModelOption,
+  type ProjectionHealth,
+  type TranscriptActivityKind,
+  type TranscriptActivityPage,
+  type TranscriptActivityRange,
+  type TranscriptPage,
+  type UserTurnAnchor,
+  type UserTurnIndexPage,
+  type UserTurnTranscriptPage,
+} from "../shared/contracts.js";
+import { messageFallbackCorrelation } from "../shared/message-identity.js";
+import { resultChildCalls } from "../shared/tool-activity.js";
+import { userTurnSummary } from "../shared/user-turns.js";
+import {
+  type ComposerHistoryFileNameResolver,
+  projectComposerHistoryPage,
+} from "./composer-history.js";
+import { samePersistedJson } from "./persisted-json.js";
+import {
+  buildContextEntries,
+  buildSessionContext,
+  CURRENT_SESSION_VERSION,
+  migrateSessionEntries,
+  sessionEntryToContextMessages,
+} from "./pi-runtime.js";
+import { requestError } from "./request-error.js";
+import { projectSafeValue } from "./safe-projection.js";
+import type { SessionRecord } from "./session-catalog.js";
+import { JsonlObjectDecoder } from "./session-jsonl.js";
+import {
+  appendModelSelection,
+  type BranchModelSelection,
+  branchModelSelection,
+  selectedBranchModel,
+} from "./session-model-selection.js";
+import {
+  BRANCH_CONTENT_PAGE_CHARS,
+  BRANCH_TREE_MAX_BYTES,
+  boundedEditableText,
+  boundedUserText,
+  branchEntryContent,
+  branchEntryText,
+  branchNode,
+  projectSessionTree,
+} from "./session-tree.js";
+
+export { MAX_PERSISTED_ENTRY_BYTES } from "./session-jsonl.js";
+/** Includes the complete JSON representation of a TranscriptPage. */
+export const TRANSCRIPT_PAGE_MAX_BYTES = 1024 * 1024;
+export const TRANSCRIPT_PAGE_MAX_MESSAGES = 100;
+const USER_TURN_INDEX_PAGE_SIZE = 100;
+const USER_TURN_INDEX_MAX_BYTES = 128 * 1024;
+const MAX_SESSION_PATH_CHARS = 32_768;
+/** Per-slot reconnect-only live messages are separately bounded by runtime. */
+export const TRANSIENT_OVERLAY_MAX_BYTES = 512 * 1024;
+export const TRANSCRIPT_ITEM_MAX_BYTES = 256 * 1024;
+
+const WATCH_DEBOUNCE_MS = 75;
+const RECONCILE_INTERVAL_MS = 750;
+const CURSOR_KEY = randomBytes(32);
+interface FileIdentity {
+  dev: bigint;
+  ino: bigint;
+  size: bigint;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
+}
+
+interface Candidate {
+  identity: FileIdentity;
+  fingerprint: string;
+  hashState: Hash;
+  committedBytes: number;
+  uncommittedBytes: number;
+  uncommittedFingerprint: string | null;
+  /** Fingerprints observed from this same read, never a later filesystem pass. */
+  previousPrefixFingerprint: string | null;
+  /** This read hashed the old committed bytes instead of reusing an owned prefix. */
+  prefixRevalidated: boolean;
+  previousTailFingerprint: string | null;
+  header: SessionHeader | null;
+  entries: SessionEntry[];
+  entriesById: Map<string, SessionEntry>;
+  messages: unknown[];
+  modelSelection: BranchModelSelection;
+  thinkingLevel: string;
+  leafId: string | null;
+}
+
+export type InitialMaterializationAttestation =
+  | "partial"
+  | "complete"
+  | "mismatch";
+
+type ProjectionMessageChange = "none" | "append" | "replace";
+
+export interface ProjectionReconcileResult {
+  changed: boolean;
+  /** This observation belongs to the new-session file's first materialization. */
+  initialMaterialization: boolean;
+  /** Physical JSONL movement; distinct from the projected message view. */
+  kind: "none" | "append" | "rewrite";
+  /** Whether the projected active-path message sequence stayed stable, grew by suffix, or was replaced. */
+  messageChange: ProjectionMessageChange;
+  previousRevision: number;
+  revision: number;
+  previousFingerprint: string;
+  fingerprint: string;
+  healthChanged: boolean;
+  /** Full file identity or unresolved-tail state moved even if no entry committed. */
+  sourceChanged: boolean;
+  /** Present only after a stable, complete byte-for-byte revalidation of the same object. */
+  verifiedUnchangedContent?: true;
+  previousSourceVersion: string | null;
+  sourceVersion: string | null;
+  /** Projection state captured by this exact filesystem observation. */
+  sourceIdentity: string | null;
+  committedBytes: number;
+  uncommittedBytes: number;
+  uncommittedFingerprint: string | null;
+  health: ProjectionHealth;
+  previousUncommittedBytes: number;
+  /** A prior unresolved tail is an exact prefix of this candidate's post-commit bytes. */
+  previousTailVerified: boolean;
+  /** Exact migrated entries added after the previously verified prefix. */
+  appendedEntries?: readonly SessionEntry[];
+  previousLeafId?: string | null;
+}
+
+export type ProjectionReconcileHandler = (
+  result: ProjectionReconcileResult,
+) => Promise<void>;
+
+export interface ProjectionEntryTarget {
+  id: string;
+  parentId: string | null;
+  type: string;
+  role?: string;
+}
+
+export interface SessionProjectionView {
+  readonly sessionId: string;
+  readonly path: string;
+  readonly revision: number;
+  readonly fingerprint: string;
+  readonly incarnation: string | null;
+  readonly health: ProjectionHealth;
+  readonly messages: readonly unknown[];
+  readonly model: unknown;
+  selectedModel(virtualModels: readonly ModelOption[]): unknown;
+  readonly thinkingLevel: string;
+  readonly leafId: string | null;
+  readonly tailEntryId: string | null;
+  /** Stable only while the projection still addresses the same filesystem object. */
+  readonly sourceIdentity: string | null;
+  /** Exact stat version used to reject any pre-start disk movement. */
+  readonly sourceVersion: string | null;
+  readonly committedBytes: number;
+  readonly uncommittedBytes: number;
+  readonly uncommittedFingerprint: string | null;
+  attestInitialMaterialization(
+    workerEntries: readonly SessionEntry[],
+  ): InitialMaterializationAttestation;
+  hasActiveEntryType(type: string): boolean;
+  suspendReconciliation(): Promise<void>;
+  resumeReconciliation(): void;
+  /** The Host consumes each observation inside the read FIFO, before the next read. */
+  setReconcileHandler(handler: ProjectionReconcileHandler): void;
+  /** Reuse the verified content-hash prefix only while the Host has an exact
+   * append claim from the sole writer for this projection. */
+  setOwnedAppendWindow?(isOpen: () => boolean): void;
+  latestPage(
+    overlay?: readonly unknown[],
+    effectiveLeafId?: string | null,
+    viewId?: string,
+  ): TranscriptPage;
+  page(
+    cursor: string,
+    effectiveLeafId?: string | null,
+    viewId?: string,
+  ): TranscriptPage;
+  visiblePage(
+    cursor: string,
+    effectiveLeafId?: string | null,
+    viewId?: string,
+  ): TranscriptPage;
+  activityPage(
+    cursor: string,
+    effectiveLeafId?: string | null,
+    viewId?: string,
+  ): TranscriptActivityPage;
+  userTurnIndexPage(
+    start?: number,
+    effectiveLeafId?: string | null,
+    viewId?: string,
+  ): UserTurnIndexPage;
+  userTurnTranscriptPage(
+    targetMessageId: string,
+    effectiveLeafId?: string | null,
+    viewId?: string,
+    cursor?: string,
+  ): UserTurnTranscriptPage;
+  composerHistoryPage(
+    start?: number,
+    effectiveLeafId?: string | null,
+    viewId?: string,
+    cwd?: string,
+    fileNameForPath?: ComposerHistoryFileNameResolver,
+  ): ComposerHistoryPage;
+  branchTree(
+    effectiveLeafId?: string | null,
+    query?: BranchTreeQuery,
+  ): BranchTreeResponse;
+  branchEntry(
+    id: string,
+    offset: number,
+    effectiveLeafId: string | null,
+  ): BranchEntryResponse;
+  branchImage(id: string, index: number): { data: Buffer; mimeType: string };
+  editableText(id: string, maxChars: number): string;
+  entry(id: string): ProjectionEntryTarget | null;
+  /** Committed append suffix after an operation's admitted durable tail. */
+  entriesAfter(tailEntryId: string | null): readonly SessionEntry[];
+  persistedEntryMatches(entry: SessionEntry): boolean;
+  userText(id: string, maxChars: number): string;
+  userImages(id: string): Array<{ data: string; mimeType: string }>;
+  viewMessages(effectiveLeafId?: string | null): readonly unknown[];
+  /** Retained USER entries on this branch, independent of model compaction. */
+  composerHistoryMessages(effectiveLeafId?: string | null): readonly unknown[];
+  reconcile(force?: boolean): Promise<ProjectionReconcileResult>;
+  /** Host startup attestation only: reconcile while ordinary readers are suspended. */
+  reconcileSuspended(force?: boolean): Promise<ProjectionReconcileResult>;
+  close(): Promise<void>;
+  on(
+    event: "update",
+    listener: (result: ProjectionReconcileResult) => void,
+  ): this;
+}
+
+function validSessionHeader(value: unknown): value is SessionHeader {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const header = value as unknown as Record<string, unknown>;
+  return (
+    header.type === "session" &&
+    typeof header.id === "string" &&
+    header.id.length > 0 &&
+    header.id.length <= MAX_SESSION_ID_CHARS &&
+    typeof header.cwd === "string" &&
+    header.cwd.length > 0 &&
+    header.cwd.length <= MAX_SESSION_PATH_CHARS &&
+    !header.cwd.includes("\0") &&
+    isAbsolute(header.cwd) &&
+    (header.parentSession === undefined ||
+      (typeof header.parentSession === "string" &&
+        header.parentSession.length > 0 &&
+        header.parentSession.length <= MAX_SESSION_PATH_CHARS &&
+        !header.parentSession.includes("\0") &&
+        isAbsolute(header.parentSession)))
+  );
+}
+
+function identity(
+  details: Awaited<ReturnType<Awaited<ReturnType<typeof open>>["stat"]>>,
+): FileIdentity {
+  const value = details as unknown as {
+    dev: bigint;
+    ino: bigint;
+    size: bigint;
+    mtimeNs: bigint;
+    ctimeNs: bigint;
+  };
+  return {
+    dev: value.dev,
+    ino: value.ino,
+    size: value.size,
+    mtimeNs: value.mtimeNs,
+    ctimeNs: value.ctimeNs,
+  };
+}
+
+function sameObject(
+  left: Pick<FileIdentity, "dev" | "ino">,
+  right: Pick<FileIdentity, "dev" | "ino">,
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function sameVersion(left: FileIdentity, right: FileIdentity): boolean {
+  return (
+    sameObject(left, right) &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
+  );
+}
+
+async function sameDirectory(left: string, right: string): Promise<boolean> {
+  try {
+    const [leftStat, rightStat] = await Promise.all([
+      stat(left, { bigint: true }),
+      stat(right, { bigint: true }),
+    ]);
+    return (
+      leftStat.isDirectory() &&
+      rightStat.isDirectory() &&
+      leftStat.dev === rightStat.dev &&
+      leftStat.ino === rightStat.ino
+    );
+  } catch {
+    return false;
+  }
+}
+
+function indexSessionEntries(
+  entries: readonly SessionEntry[],
+  existing: ReadonlyMap<string, SessionEntry> = new Map(),
+): Map<string, SessionEntry> {
+  const byId = new Map(existing);
+  for (const entry of entries) {
+    if (
+      typeof entry.type !== "string" ||
+      entry.type.length === 0 ||
+      entry.type.length > 200 ||
+      typeof entry.id !== "string" ||
+      entry.id.length === 0 ||
+      entry.id.length > 200 ||
+      (entry.parentId !== null &&
+        (typeof entry.parentId !== "string" || entry.parentId.length > 200))
+    )
+      throw new Error("Persisted session contains an invalid entry identity");
+    if (byId.has(entry.id))
+      throw new Error(`Persisted session contains duplicate entry ${entry.id}`);
+    if (entry.parentId !== null && !byId.has(entry.parentId))
+      throw new Error(
+        `Persisted session entry ${entry.id} has a missing or forward parent`,
+      );
+    byId.set(entry.id, entry);
+  }
+  return byId;
+}
+
+/** System prompts/tool declarations remain canonical Pi state, not transcript
+ * rows. Keep the SDK's original per-entry index for stable message identities,
+ * including summaries returned after a compaction's system checkpoint. */
+function transcriptEntryMessages(entry: SessionEntry) {
+  const source =
+    entry.type === "compaction" &&
+    entry.details &&
+    typeof entry.details === "object" &&
+    "source" in entry.details &&
+    typeof entry.details.source === "string"
+      ? entry.details.source
+      : undefined;
+  return sessionEntryToContextMessages(entry).flatMap((message, index) =>
+    message.role === "system"
+      ? []
+      : [
+          {
+            ...message,
+            __inspireMessageId: `${entry.id}:${index}`,
+            __inspireEntryId: entry.id,
+            ...(source && message.role === "compactionSummary"
+              ? { __inspireCompactionSource: source }
+              : {}),
+          },
+        ],
+  );
+}
+
+function contextMessages(
+  entries: SessionEntry[],
+  leafId: string | null,
+  byId: Map<string, SessionEntry>,
+): unknown[] {
+  const contextEntries = buildContextEntries(entries, leafId, byId);
+  // Pi prepends the latest summary for model consumption. A transcript must
+  // retain the same selected entries, but show the compaction where it happened.
+  // Persisted append order is authoritative even with skewed/equal timestamps;
+  // membership from Pi excludes discarded context and unrelated branches.
+  let transcriptEntries = contextEntries;
+  if (contextEntries[0]?.type === "compaction") {
+    const included = new Set(contextEntries.map((entry) => entry.id));
+    transcriptEntries = entries.filter((entry) => included.has(entry.id));
+  }
+  const messages = transcriptEntries.flatMap(transcriptEntryMessages);
+  let turnOrdinal = -1;
+  let turnId: string | null = null;
+  return messages.map((message) => {
+    if (message.role === "user") {
+      turnOrdinal += 1;
+      turnId = message.__inspireMessageId;
+    }
+    return {
+      ...message,
+      ...(turnId !== null
+        ? {
+            __inspireUserTurnId: turnId,
+            __inspireUserTurnIndex: turnOrdinal,
+          }
+        : {}),
+    };
+  });
+}
+
+function appendContextMessages(
+  previous: readonly unknown[],
+  entries: readonly SessionEntry[],
+): unknown[] {
+  let turnOrdinal = -1;
+  let turnId: string | null = null;
+  for (let index = previous.length - 1; index >= 0; index -= 1) {
+    const value = previous[index];
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const record = value as Record<string, unknown>;
+    if (
+      Number.isSafeInteger(record.__inspireUserTurnIndex) &&
+      typeof record.__inspireUserTurnId === "string"
+    ) {
+      turnOrdinal = record.__inspireUserTurnIndex as number;
+      turnId = record.__inspireUserTurnId;
+      break;
+    }
+  }
+  const appended = entries.flatMap(transcriptEntryMessages).map((message) => {
+    const id = message.__inspireMessageId;
+    if (message.role === "user") {
+      turnOrdinal += 1;
+      turnId = id;
+    }
+    return {
+      ...message,
+      ...(turnId !== null
+        ? {
+            __inspireUserTurnId: turnId,
+            __inspireUserTurnIndex: turnOrdinal,
+          }
+        : {}),
+    };
+  });
+  return [...previous, ...appended];
+}
+
+function appendedThinkingLevel(
+  currentThinkingLevel: string,
+  entries: readonly SessionEntry[],
+): string {
+  let thinkingLevel = currentThinkingLevel;
+  for (const entry of entries) {
+    if (entry.type === "thinking_level_change")
+      thinkingLevel = entry.thinkingLevel;
+  }
+  return thinkingLevel;
+}
+
+function isLinearAppend(
+  currentLeafId: string | null,
+  entries: readonly SessionEntry[],
+): boolean {
+  let parentId = currentLeafId;
+  for (const entry of entries) {
+    if (entry.parentId !== parentId) return false;
+    parentId = entry.id;
+  }
+  return !entries.some((entry) => entry.type === "compaction");
+}
+
+function changesComposerHistory(entry: SessionEntry): boolean {
+  return (
+    entry.type === "message" &&
+    (entry.message.role === "user" || entry.message.role === "bashExecution")
+  );
+}
+
+function composerHistoryAnchor(
+  entries: ReadonlyMap<string, SessionEntry>,
+  leafId: string | null,
+): string | null {
+  let id = leafId;
+  while (id !== null) {
+    const entry = entries.get(id);
+    if (!entry) break;
+    if (changesComposerHistory(entry)) return id;
+    id = entry.parentId;
+  }
+  return null;
+}
+
+function projectedMessageId(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const id = (value as Record<string, unknown>).__inspireMessageId;
+  return typeof id === "string" ? id : null;
+}
+
+function projectedMessageChange(
+  physicalKind: ProjectionReconcileResult["kind"],
+  previous: readonly unknown[],
+  next: readonly unknown[],
+): ProjectionMessageChange {
+  if (physicalKind === "rewrite") return "replace";
+  if (previous.length > next.length) return "replace";
+  const prefixMatches = previous.every((message, index) => {
+    const previousId = projectedMessageId(message);
+    const nextId = projectedMessageId(next[index]);
+    return previousId !== null && previousId === nextId;
+  });
+  if (!prefixMatches) return "replace";
+  return previous.length === next.length ? "none" : "append";
+}
+
+interface BoundedTranscriptItem {
+  value: unknown;
+  serialized: string;
+}
+
+/** Pi persists embedded image bytes in the canonical message. The browser only
+ * needs their MIME and stable message/part coordinates: content is fetched
+ * through the existing session-bound resource adapter when a thumbnail mounts. */
+function withoutPersistedImageData(
+  value: unknown,
+  persistedIndex: number | undefined,
+): unknown {
+  if (
+    persistedIndex === undefined ||
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  )
+    return value;
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.content)) return value;
+  let changed = false;
+  const content = record.content.map((part) => {
+    if (!part || typeof part !== "object" || Array.isArray(part)) return part;
+    const item = part as Record<string, unknown>;
+    if (item.type !== "image" || typeof item.data !== "string") return part;
+    const { data: _data, ...metadata } = item;
+    changed = true;
+    return metadata;
+  });
+  return changed ? { ...record, content } : value;
+}
+
+/** Browser projection, not persisted data: constrain breadth/depth and strings.
+ * The optional persisted index is applied before the item's sole serialization. */
+function boundedTranscriptItem(
+  value: unknown,
+  persistedIndex?: number,
+): BoundedTranscriptItem {
+  const browserValue = withoutPersistedImageData(
+    interruptAssistantToolCalls(value),
+    persistedIndex,
+  );
+  const sourceRecord =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  const calls =
+    sourceRecord?.role === "toolResult"
+      ? projectSafeValue(resultChildCalls(sourceRecord), {
+          depth: 12,
+          stringChars: 8_192,
+          arrayItems: 256,
+          objectEntries: 256,
+        })
+      : undefined;
+  const identityMetadata = sourceRecord
+    ? {
+        ...(typeof sourceRecord.__inspireMessageId === "string"
+          ? { __inspireMessageId: sourceRecord.__inspireMessageId }
+          : {}),
+        ...(typeof sourceRecord.__inspireEntryId === "string"
+          ? { __inspireEntryId: sourceRecord.__inspireEntryId }
+          : {}),
+        ...(typeof sourceRecord.__inspireLiveId === "string"
+          ? { __inspireLiveId: sourceRecord.__inspireLiveId }
+          : {}),
+        ...(typeof sourceRecord.__inspireSettled === "boolean"
+          ? { __inspireSettled: sourceRecord.__inspireSettled }
+          : {}),
+        ...(Number.isSafeInteger(sourceRecord.__inspireStreamRevision) &&
+        Number(sourceRecord.__inspireStreamRevision) >= 0
+          ? {
+              __inspireStreamRevision: Number(
+                sourceRecord.__inspireStreamRevision,
+              ),
+            }
+          : {}),
+        ...(typeof sourceRecord.__inspireUserTurnId === "string"
+          ? { __inspireUserTurnId: sourceRecord.__inspireUserTurnId }
+          : {}),
+        ...(Number.isSafeInteger(sourceRecord.__inspireUserTurnIndex)
+          ? { __inspireUserTurnIndex: sourceRecord.__inspireUserTurnIndex }
+          : {}),
+      }
+    : {};
+  const decorate = (projected: unknown, stringChars: number): unknown =>
+    projected && typeof projected === "object" && !Array.isArray(projected)
+      ? {
+          ...(projected as Record<string, unknown>),
+          ...identityMetadata,
+          ...(calls ? { __inspireCalls: calls } : {}),
+          ...(sourceRecord?.role === "toolResult" &&
+          typeof sourceRecord.isError === "boolean"
+            ? { isError: sourceRecord.isError }
+            : {}),
+          // Reduced item projections are replacements, not valid bases for
+          // replaying the original un-clipped argument patch on a browser.
+          ...(stringChars === 2_000
+            ? { __inspireProjectionReduced: true }
+            : {}),
+          // Terminal outcomes remain inspectable even when large content forces
+          // the reduced or omitted projection. Keep the same string budget.
+          ...(sourceRecord?.role === "assistant" &&
+          assistantOutcome(sourceRecord) !== null
+            ? {
+                role: "assistant",
+                stopReason: sourceRecord.stopReason,
+                ...(typeof sourceRecord.errorMessage === "string"
+                  ? {
+                      errorMessage: projectSafeValue(
+                        sourceRecord.errorMessage,
+                        {
+                          depth: 0,
+                          stringChars,
+                          arrayItems: 0,
+                        },
+                      ),
+                    }
+                  : {}),
+              }
+            : {}),
+          ...(persistedIndex !== undefined
+            ? { __inspireMessageIndex: persistedIndex }
+            : {}),
+        }
+      : projected;
+  for (const limits of [
+    { depth: 16, stringChars: 64_000, arrayItems: 256, objectEntries: 256 },
+    { depth: 8, stringChars: 2_000, arrayItems: 32, objectEntries: 32 },
+  ]) {
+    const projected = decorate(
+      projectSafeValue(browserValue, limits),
+      limits.stringChars,
+    );
+    const serialized = JSON.stringify(projected) ?? "null";
+    if (Buffer.byteLength(serialized) <= TRANSCRIPT_ITEM_MAX_BYTES)
+      return { value: projected, serialized };
+  }
+  const record =
+    value && typeof value === "object"
+      ? (value as Record<string, unknown>)
+      : {};
+  const role = typeof record.role === "string" ? record.role : "unknown";
+  const omitted =
+    "[message omitted: projected content exceeded the transcript item limit]";
+  const projected = decorate(
+    {
+      role,
+      ...(record.timestamp !== undefined
+        ? { timestamp: record.timestamp }
+        : {}),
+      ...(typeof record.display === "boolean"
+        ? { display: record.display }
+        : {}),
+      ...(typeof record.toolCallId === "string"
+        ? { toolCallId: record.toolCallId }
+        : {}),
+      ...(typeof record.toolName === "string"
+        ? { toolName: record.toolName }
+        : {}),
+      content:
+        role === "assistant" && !isVisibleTranscriptBoundary(value)
+          ? [{ type: "projectionOmitted", content: omitted }]
+          : omitted,
+    },
+    2_000,
+  );
+  return { value: projected, serialized: JSON.stringify(projected) };
+}
+
+function oversizedTranscriptItem(): never {
+  throw requestError(
+    "A projected transcript message exceeds the browser page budget",
+    422,
+  );
+}
+
+function withinTranscriptPageBudget<T>(page: T): T {
+  if (Buffer.byteLength(JSON.stringify(page)) > TRANSCRIPT_PAGE_MAX_BYTES)
+    throw new Error("Transcript page exceeded its declared byte bound");
+  return page;
+}
+
+export function boundedTranscriptProjection(value: unknown): {
+  value: unknown;
+  bytes: number;
+} {
+  const item = boundedTranscriptItem(value);
+  return { value: item.value, bytes: Buffer.byteLength(item.serialized) };
+}
+
+export function boundedTranscriptValue(value: unknown): unknown {
+  return boundedTranscriptItem(value).value;
+}
+
+function isVisibleTranscriptBoundary(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (record.role === "user" || record.role === "bashExecution") return true;
+  // Visible extension messages are context content, not lazily hidden tools.
+  if (record.role === "custom") return record.display !== false;
+  if (record.role !== "assistant") return false;
+  if (assistantOutcome(record) !== null) return true;
+  if (typeof record.content === "string") return record.content.length > 0;
+  return (
+    Array.isArray(record.content) &&
+    record.content.some(
+      (part) =>
+        part !== null &&
+        typeof part === "object" &&
+        !Array.isArray(part) &&
+        (part as Record<string, unknown>).type === "text" &&
+        typeof (part as Record<string, unknown>).text === "string" &&
+        String((part as Record<string, unknown>).text).length > 0,
+    )
+  );
+}
+
+function projectedTimestamp(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const raw = (value as Record<string, unknown>).timestamp;
+  if (typeof raw !== "string" && typeof raw !== "number") return;
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+/** Bounded chronological hints retain one/many per kind, including when a
+ * reader hides the other kind. Paired results do not create extra tools. */
+function deferredActivityKinds(
+  source: readonly unknown[],
+  start: number,
+  end: number,
+): TranscriptActivityKind[] {
+  const cues: TranscriptActivityKind[] = [];
+  const calls = new Set<string>();
+  const add = (kind: TranscriptActivityKind) => {
+    if (cues.filter((cue) => cue === kind).length < 2) cues.push(kind);
+  };
+  for (let index = start; index < end; index += 1) {
+    const value = source[index];
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const record = value as Record<string, unknown>;
+    if (record.role === "assistant") {
+      if (!Array.isArray(record.content)) continue;
+      for (const part of record.content) {
+        if (!part || typeof part !== "object" || Array.isArray(part)) continue;
+        const item = part as Record<string, unknown>;
+        if (item.type === "text") continue;
+        if (
+          item.type === "toolCall" &&
+          typeof item.id === "string" &&
+          calls.size < 2
+        )
+          calls.add(item.id);
+        add(item.type === "thinking" ? "thinking" : "tool");
+      }
+    } else if (
+      !(record.role === "custom" && record.display === false) &&
+      !(
+        record.role === "toolResult" &&
+        typeof record.toolCallId === "string" &&
+        calls.has(record.toolCallId)
+      )
+    )
+      add("tool");
+  }
+  return cues;
+}
+
+function signedCursor(payloadValue: Record<string, unknown>): string {
+  const payload = Buffer.from(JSON.stringify(payloadValue)).toString(
+    "base64url",
+  );
+  const signature = createHmac("sha256", CURSOR_KEY)
+    .update(payload)
+    .digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function cursorFor(
+  sessionId: string,
+  incarnation: string,
+  fingerprint: string,
+  revision: number,
+  before: number,
+  effectiveLeafId: string | null,
+  viewId: string,
+): string {
+  return signedCursor({
+    sessionId,
+    incarnation,
+    fingerprint,
+    revision,
+    before,
+    effectiveLeafId,
+    viewId,
+  });
+}
+
+function activityCursorFor(
+  sessionId: string,
+  incarnation: string,
+  fingerprint: string,
+  revision: number,
+  start: number,
+  before: number,
+  effectiveLeafId: string | null,
+  viewId: string,
+): string {
+  return signedCursor({
+    kind: "activity",
+    sessionId,
+    incarnation,
+    fingerprint,
+    revision,
+    start,
+    before,
+    effectiveLeafId,
+    viewId,
+  });
+}
+
+function userTurnCursorFor(
+  sessionId: string,
+  incarnation: string,
+  fingerprint: string,
+  revision: number,
+  target: number,
+  after: number,
+  effectiveLeafId: string | null,
+  viewId: string,
+): string {
+  return signedCursor({
+    kind: "user-turn",
+    sessionId,
+    incarnation,
+    fingerprint,
+    revision,
+    start: target,
+    before: after,
+    effectiveLeafId,
+    viewId,
+  });
+}
+
+interface ParsedCursor {
+  kind: "page" | "activity" | "user-turn";
+  sessionId: string;
+  incarnation: string;
+  fingerprint: string;
+  revision: number;
+  start: number;
+  before: number;
+  effectiveLeafId: string | null;
+  viewId: string;
+}
+
+function parseCursor(cursor: string): ParsedCursor {
+  const [payload, supplied] = cursor.split(".");
+  if (!payload || !supplied)
+    throw requestError("Transcript cursor is invalid", 400);
+  const expected = createHmac("sha256", CURSOR_KEY).update(payload).digest();
+  let actual: Buffer;
+  try {
+    actual = Buffer.from(supplied, "base64url");
+  } catch {
+    throw requestError("Transcript cursor is invalid", 400);
+  }
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+    throw requestError("Transcript cursor is invalid", 400);
+  }
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8"),
+    ) as Record<string, unknown>;
+    if (
+      typeof parsed.sessionId !== "string" ||
+      typeof parsed.incarnation !== "string" ||
+      typeof parsed.fingerprint !== "string" ||
+      !Number.isSafeInteger(parsed.revision) ||
+      !Number.isSafeInteger(parsed.before) ||
+      Number(parsed.before) < 0 ||
+      (parsed.effectiveLeafId !== null &&
+        typeof parsed.effectiveLeafId !== "string") ||
+      typeof parsed.viewId !== "string" ||
+      !parsed.viewId ||
+      (parsed.kind !== undefined &&
+        parsed.kind !== "activity" &&
+        parsed.kind !== "user-turn") ||
+      ((parsed.kind === "activity" || parsed.kind === "user-turn") &&
+        (!Number.isSafeInteger(parsed.start) ||
+          Number(parsed.start) < 0 ||
+          Number(parsed.start) > Number(parsed.before)))
+    )
+      throw new Error("invalid");
+    return {
+      kind:
+        parsed.kind === "activity"
+          ? "activity"
+          : parsed.kind === "user-turn"
+            ? "user-turn"
+            : "page",
+      sessionId: parsed.sessionId,
+      incarnation: parsed.incarnation,
+      fingerprint: parsed.fingerprint,
+      revision: Number(parsed.revision),
+      start:
+        parsed.kind === "activity" || parsed.kind === "user-turn"
+          ? Number(parsed.start)
+          : 0,
+      before: Number(parsed.before),
+      effectiveLeafId: parsed.effectiveLeafId,
+      viewId: parsed.viewId,
+    };
+  } catch {
+    throw requestError("Transcript cursor is invalid", 400);
+  }
+}
+
+function healthError(error: unknown): ProjectionHealth {
+  const message = error instanceof Error ? error.message : String(error);
+  return { status: "error", message };
+}
+
+export interface SessionProjectionReadHooks {
+  afterFullReadChunk?(): Promise<void> | void;
+}
+
+export class SessionProjection
+  extends EventEmitter
+  implements SessionProjectionView
+{
+  readonly sessionId: string;
+  readonly path: string;
+  private currentRevision = 0;
+  readonly incarnation = randomBytes(18).toString("base64url");
+  private appendFromRevision = 0;
+  private readonly revisionFingerprints = new Map<number, string>();
+  private currentHealth: ProjectionHealth = { status: "ok" };
+  private currentFailureStatus: number | null = null;
+  private currentFailureCode: string | undefined;
+  private currentMessages: unknown[] = [];
+  private currentModelSelection: BranchModelSelection = {
+    change: null,
+    fallback: null,
+  };
+  private currentThinkingLevel = "off";
+  private currentLeafId: string | null = null;
+  private currentEntries: SessionEntry[] = [];
+  private currentEntriesById = new Map<string, SessionEntry>();
+  private currentHistoryAnchor: string | null = null;
+  private historyReplacementRevision = 0;
+  private readonly userTurnIndexes = new Map<
+    string,
+    { revision: number; turns: readonly UserTurnAnchor[] }
+  >();
+  private currentHeader: SessionHeader | null = null;
+  private currentIdentity: FileIdentity | null = null;
+  private currentFingerprint = "";
+  private currentHashState: Hash | null = null;
+  private currentCommittedBytes = 0;
+  private currentUncommittedBytes = 0;
+  private currentUncommittedFingerprint: string | null = null;
+  private reconcileTail: Promise<void> = Promise.resolve();
+  private reconcileHandler: ProjectionReconcileHandler | null = null;
+  private watcher: FSWatcher | null = null;
+  private watchTimer: ReturnType<typeof setTimeout> | null = null;
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private hintReading = false;
+  private hintDirty = false;
+  private reconciliationResume: Promise<void> | null = null;
+  private resolveReconciliationResume: (() => void) | null = null;
+  private closed = false;
+  private ownedAppendWindow: () => boolean = () => false;
+  /** Pi reserves a path for a new session but delays creating the JSONL.
+   * Only new-session ownership may enter this state; it remains active across
+   * complete-line prefixes until disk catches the creating worker's entries. */
+  private initialMaterializationPending: boolean;
+  private readonly initialSourceIdentity: { dev: bigint; ino: bigint } | null;
+  private readonly initialCwd: string;
+
+  private constructor(
+    session: SessionRecord,
+    private readonly readHooks?: SessionProjectionReadHooks,
+    initialMaterializationPending = false,
+  ) {
+    super();
+    this.sessionId = session.id;
+    this.path = resolve(session.path);
+    this.initialCwd = session.cwd;
+    this.initialMaterializationPending = initialMaterializationPending;
+    this.initialSourceIdentity =
+      initialMaterializationPending || !session.source
+        ? null
+        : { dev: session.source.dev, ino: session.source.ino };
+    if (initialMaterializationPending) {
+      this.currentRevision = 1;
+      this.appendFromRevision = 1;
+      this.revisionFingerprints.set(1, "");
+    }
+  }
+
+  private static async openMode(
+    session: SessionRecord,
+    readHooks: SessionProjectionReadHooks | undefined,
+    initialMaterializationPending: boolean,
+  ): Promise<SessionProjection> {
+    const projection = new SessionProjection(
+      session,
+      readHooks,
+      initialMaterializationPending,
+    );
+    const result = await projection.reconcile(true);
+    const loaded = initialMaterializationPending
+      ? projection.health.status !== "error"
+      : projection.revision > 0;
+    if (!loaded) {
+      await projection.close();
+      throw requestError(
+        projection.health.message ?? "Session projection could not be loaded",
+        projection.currentFailureStatus ?? 422,
+        projection.currentFailureCode
+          ? { code: projection.currentFailureCode }
+          : undefined,
+      );
+    }
+    projection.startWatching();
+    if (result.changed) projection.emit("update", result);
+    return projection;
+  }
+
+  static open(
+    session: SessionRecord,
+    readHooks?: SessionProjectionReadHooks,
+  ): Promise<SessionProjection> {
+    return SessionProjection.openMode(session, readHooks, false);
+  }
+
+  /** Create the sole projection for a Pi-owned new session whose reported
+   * path may not exist until Pi flushes its first assistant message. */
+  static openPending(
+    session: SessionRecord,
+    readHooks?: SessionProjectionReadHooks,
+  ): Promise<SessionProjection> {
+    return SessionProjection.openMode(session, readHooks, true);
+  }
+
+  get revision(): number {
+    return this.currentRevision;
+  }
+  get fingerprint(): string {
+    return this.currentFingerprint;
+  }
+  get health(): ProjectionHealth {
+    return this.currentHealth;
+  }
+  get messages(): readonly unknown[] {
+    return this.currentMessages;
+  }
+  get model(): unknown {
+    return this.currentModelSelection.fallback;
+  }
+  selectedModel(virtualModels: readonly ModelOption[]): unknown {
+    return selectedBranchModel(this.currentModelSelection, virtualModels);
+  }
+  get thinkingLevel(): string {
+    return this.currentThinkingLevel;
+  }
+  get leafId(): string | null {
+    return this.currentLeafId;
+  }
+  get tailEntryId(): string | null {
+    return this.currentEntries.at(-1)?.id ?? null;
+  }
+  get sourceIdentity(): string | null {
+    return this.currentIdentity
+      ? `${this.currentIdentity.dev}:${this.currentIdentity.ino}`
+      : null;
+  }
+  get sourceVersion(): string | null {
+    const value = this.currentIdentity;
+    return value
+      ? `${value.dev}:${value.ino}:${value.size}:${value.mtimeNs}:${value.ctimeNs}`
+      : null;
+  }
+  attestInitialMaterialization(
+    workerEntries: readonly SessionEntry[],
+  ): InitialMaterializationAttestation {
+    if (!this.initialMaterializationPending) return "mismatch";
+    const header = this.currentHeader;
+    if (!header) {
+      return this.currentEntries.length === 0 &&
+        this.currentCommittedBytes === 0 &&
+        this.currentUncommittedBytes > 0
+        ? "partial"
+        : "mismatch";
+    }
+    if (
+      header.version !== CURRENT_SESSION_VERSION ||
+      header.parentSession !== undefined ||
+      this.currentEntries.length > workerEntries.length ||
+      !samePersistedJson(
+        this.currentEntries,
+        workerEntries.slice(0, this.currentEntries.length),
+      )
+    )
+      return "mismatch";
+    if (
+      this.currentEntries.length < workerEntries.length ||
+      this.currentUncommittedBytes > 0
+    )
+      return "partial";
+    this.initialMaterializationPending = false;
+    return "complete";
+  }
+  get committedBytes(): number {
+    return this.currentCommittedBytes;
+  }
+  get uncommittedBytes(): number {
+    return this.currentUncommittedBytes;
+  }
+  get uncommittedFingerprint(): string | null {
+    return this.currentUncommittedFingerprint;
+  }
+
+  hasActiveEntryType(type: string): boolean {
+    const seen = new Set<string>();
+    let id = this.currentLeafId;
+    while (id !== null) {
+      if (seen.has(id)) return false;
+      seen.add(id);
+      const entry = this.currentEntriesById.get(id);
+      if (!entry) return false;
+      if (entry.type === type) return true;
+      id = entry.parentId;
+    }
+    return false;
+  }
+
+  async suspendReconciliation(): Promise<void> {
+    if (!this.reconciliationResume) {
+      this.reconciliationResume = new Promise<void>((resolveResume) => {
+        this.resolveReconciliationResume = resolveResume;
+      });
+    }
+    if (this.watchTimer) clearTimeout(this.watchTimer);
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.watchTimer = null;
+    this.pollTimer = null;
+    this.watcher?.close();
+    this.watcher = null;
+    await this.reconcileTail;
+  }
+
+  resumeReconciliation(): void {
+    this.resolveReconciliationResume?.();
+    this.resolveReconciliationResume = null;
+    this.reconciliationResume = null;
+    if (!this.closed && !this.watcher && !this.pollTimer) this.startWatching();
+  }
+
+  setOwnedAppendWindow(isOpen: () => boolean): void {
+    this.ownedAppendWindow = isOpen;
+  }
+
+  setReconcileHandler(handler: ProjectionReconcileHandler): void {
+    this.reconcileHandler = handler;
+  }
+
+  entry(id: string): ProjectionEntryTarget | null {
+    const found = this.currentEntriesById.get(id);
+    if (!found) return null;
+    return {
+      id: found.id,
+      parentId: found.parentId,
+      type: found.type,
+      ...(found.type === "message" &&
+      typeof (found.message as { role?: unknown }).role === "string"
+        ? { role: (found.message as { role: string }).role }
+        : {}),
+    };
+  }
+
+  entriesAfter(tailEntryId: string | null): readonly SessionEntry[] {
+    const index =
+      tailEntryId === null
+        ? -1
+        : this.currentEntries.findLastIndex(
+            (entry) => entry.id === tailEntryId,
+          );
+    if (tailEntryId !== null && index < 0)
+      throw requestError("Session persistence boundary no longer exists", 409);
+    return this.currentEntries.slice(index + 1);
+  }
+
+  persistedEntryMatches(entry: SessionEntry): boolean {
+    const found = this.currentEntriesById.get(entry.id);
+    return found !== undefined && samePersistedJson(found, entry);
+  }
+
+  userText(id: string, maxChars: number): string {
+    const entry = this.currentEntriesById.get(id);
+    if (!entry) throw requestError("Branch target does not exist", 404);
+    return boundedUserText(entry, maxChars);
+  }
+
+  userImages(id: string): Array<{ data: string; mimeType: string }> {
+    const entry = this.currentEntriesById.get(id);
+    if (entry?.type !== "message" || entry.message.role !== "user")
+      throw requestError("Fork requires a retained user message", 409);
+    const content = entry.message.content;
+    return Array.isArray(content)
+      ? content.filter((block) => block.type === "image")
+      : [];
+  }
+
+  editableText(id: string, maxChars: number): string {
+    const entry = this.currentEntriesById.get(id);
+    if (!entry) throw requestError("Branch target does not exist", 404);
+    return boundedEditableText(entry, maxChars);
+  }
+
+  branchEntry(
+    id: string,
+    offset: number,
+    effectiveLeafId: string | null,
+  ): BranchEntryResponse {
+    const entry = this.currentEntriesById.get(id);
+    if (!entry) throw requestError("History point no longer exists", 404);
+    const text = branchEntryText(entry, "separate");
+    if (offset > text.length)
+      throw requestError("History content offset is invalid", 400);
+    const end = Math.min(text.length, offset + BRANCH_CONTENT_PAGE_CHARS);
+    const content = branchEntryContent(entry);
+    const images = Array.isArray(content)
+      ? content.flatMap((block, index) =>
+          block.type === "image" ? [{ index, mimeType: block.mimeType }] : [],
+        )
+      : [];
+    return {
+      sessionId: this.sessionId,
+      revision: this.revision,
+      node: branchNode(entry, false, id === effectiveLeafId),
+      text: text.slice(offset, end),
+      totalChars: text.length,
+      nextOffset: end < text.length ? end : null,
+      images,
+    };
+  }
+
+  branchImage(id: string, index: number): { data: Buffer; mimeType: string } {
+    const entry = this.currentEntriesById.get(id);
+    const content = entry ? branchEntryContent(entry) : undefined;
+    const block = Array.isArray(content) ? content[index] : undefined;
+    if (block?.type !== "image")
+      throw requestError("History image no longer exists", 404);
+    return {
+      data: Buffer.from(block.data, "base64"),
+      mimeType: block.mimeType,
+    };
+  }
+
+  branchTree(
+    effectiveLeafId: string | null = this.currentLeafId,
+    query: BranchTreeQuery = {},
+  ): BranchTreeResponse {
+    if (
+      effectiveLeafId !== null &&
+      !this.currentEntriesById.has(effectiveLeafId)
+    ) {
+      throw requestError("Effective branch leaf does not exist", 409);
+    }
+    const tree = projectSessionTree(
+      this.currentEntries,
+      effectiveLeafId,
+      query,
+    );
+    const response: BranchTreeResponse = {
+      sessionId: this.sessionId,
+      revision: this.revision,
+      incarnation: this.incarnation,
+      durableLeafId: this.currentLeafId,
+      effectiveLeafId,
+      activePath: tree.activePath,
+      nodes: tree.nodes,
+      ...(tree.leadingPrompt ? { leadingPrompt: tree.leadingPrompt } : {}),
+      truncated: tree.truncated,
+      nextBefore: tree.nextBefore,
+      routeLeafId: tree.routeLeafId,
+      rootCount: tree.rootCount,
+      health: this.health,
+    };
+    if (Buffer.byteLength(JSON.stringify(response)) > BRANCH_TREE_MAX_BYTES) {
+      throw requestError(
+        "Session tree response exceeds its serialized limit",
+        422,
+      );
+    }
+    return response;
+  }
+
+  viewMessages(
+    effectiveLeafId: string | null = this.currentLeafId,
+  ): readonly unknown[] {
+    if (effectiveLeafId === this.currentLeafId) return this.currentMessages;
+    if (
+      effectiveLeafId !== null &&
+      !this.currentEntriesById.has(effectiveLeafId)
+    ) {
+      throw requestError("Effective branch leaf does not exist", 409);
+    }
+    return contextMessages(
+      this.currentEntries,
+      effectiveLeafId,
+      this.currentEntriesById,
+    );
+  }
+
+  composerHistoryMessages(
+    effectiveLeafId: string | null = this.currentLeafId,
+  ): readonly unknown[] {
+    if (
+      effectiveLeafId !== null &&
+      !this.currentEntriesById.has(effectiveLeafId)
+    )
+      throw requestError("Effective branch leaf does not exist", 409);
+    const messages: unknown[] = [];
+    let id = effectiveLeafId;
+    while (id !== null) {
+      const entry = this.currentEntriesById.get(id)!;
+      if (
+        entry.type === "message" &&
+        (entry.message.role === "user" ||
+          entry.message.role === "bashExecution")
+      ) {
+        messages.push({
+          ...entry.message,
+          __inspireHistoryEntryId: entry.id,
+        });
+      }
+      id = entry.parentId;
+    }
+    return messages.reverse();
+  }
+
+  private resultObservation(): Pick<
+    ProjectionReconcileResult,
+    | "sourceIdentity"
+    | "committedBytes"
+    | "uncommittedBytes"
+    | "uncommittedFingerprint"
+    | "health"
+  > {
+    return {
+      sourceIdentity: this.sourceIdentity,
+      committedBytes: this.committedBytes,
+      uncommittedBytes: this.uncommittedBytes,
+      uncommittedFingerprint: this.uncommittedFingerprint,
+      health: this.health,
+    };
+  }
+
+  private recordHealthFailure(
+    error: unknown,
+  ): ProjectionReconcileResult | null {
+    const health = healthError(error);
+    if (
+      health.status === this.currentHealth.status &&
+      health.message === this.currentHealth.message
+    )
+      return null;
+    this.currentHealth = health;
+    return {
+      changed: false,
+      initialMaterialization: this.initialMaterializationPending,
+      kind: "none",
+      messageChange: "none",
+      previousRevision: this.revision,
+      revision: this.revision,
+      previousFingerprint: this.fingerprint,
+      fingerprint: this.fingerprint,
+      healthChanged: true,
+      sourceChanged: false,
+      previousSourceVersion: this.sourceVersion,
+      sourceVersion: this.sourceVersion,
+      ...this.resultObservation(),
+      previousUncommittedBytes: this.uncommittedBytes,
+      previousTailVerified: true,
+    };
+  }
+
+  private startWatching(): void {
+    if (this.closed || this.watcher || this.pollTimer) return;
+    try {
+      const watcher = watch(
+        dirname(this.path),
+        { persistent: false },
+        (_event, name) => {
+          if (this.closed || this.watcher !== watcher) return;
+          if (name && name !== basename(this.path)) return;
+          if (this.watchTimer) clearTimeout(this.watchTimer);
+          this.watchTimer = setTimeout(() => {
+            this.watchTimer = null;
+            this.reconcileFromHint();
+          }, WATCH_DEBOUNCE_MS);
+          this.watchTimer.unref();
+        },
+      );
+      this.watcher = watcher;
+      watcher.on("error", (error) => {
+        if (this.closed || this.watcher !== watcher) return;
+        this.reportHealthFailure(
+          new Error(`Session watch failed: ${error.message}`),
+        );
+      });
+    } catch (error) {
+      this.reportHealthFailure(error);
+    }
+    this.pollTimer = setInterval(
+      () => this.reconcileFromHint(),
+      RECONCILE_INTERVAL_MS,
+    );
+    this.pollTimer.unref();
+  }
+
+  private reconcileFromHint(): void {
+    if (this.closed || this.reconciliationResume) return;
+    if (this.hintReading) {
+      this.hintDirty = true;
+      return;
+    }
+    this.hintReading = true;
+    void this.reconcile()
+      .then((result) => {
+        if (result.changed || result.healthChanged || result.sourceChanged)
+          this.emit("update", result);
+      })
+      .catch((error) => this.reportHealthFailure(error))
+      .finally(() => {
+        this.hintReading = false;
+        if (this.hintDirty) {
+          this.hintDirty = false;
+          this.reconcileFromHint();
+        }
+      });
+  }
+
+  private reportHealthFailure(error: unknown): void {
+    void this.enqueueObservation(async () => {
+      if (this.closed) return;
+      const result = this.recordHealthFailure(error);
+      if (!result) return;
+      await this.reconcileHandler?.(result);
+      this.emit("update", result);
+    }).catch(() => undefined);
+  }
+
+  async reconcile(force = false): Promise<ProjectionReconcileResult> {
+    while (this.reconciliationResume) await this.reconciliationResume;
+    return this.enqueueReconcile(force, true);
+  }
+
+  reconcileSuspended(force = false): Promise<ProjectionReconcileResult> {
+    // Startup attestation consumes its result itself while ordinary readers wait.
+    return this.enqueueReconcile(force, false);
+  }
+
+  private enqueueObservation<T>(observe: () => Promise<T>): Promise<T> {
+    const run = this.reconcileTail.then(observe);
+    // A failed operation still rejects its caller. Draining the FIFO means only
+    // that its consumer settled, not that the observation or worker stop succeeded.
+    this.reconcileTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private enqueueReconcile(
+    force: boolean,
+    consume: boolean,
+  ): Promise<ProjectionReconcileResult> {
+    return this.enqueueObservation(async () => {
+      const result = await this.reconcileOnce(force);
+      if (consume) await this.reconcileHandler?.(result);
+      return result;
+    });
+  }
+
+  private async reconcileOnce(
+    force: boolean,
+  ): Promise<ProjectionReconcileResult> {
+    if (this.closed) throw new Error("Session projection is closed");
+    const previousRevision = this.revision;
+    const previousFingerprint = this.fingerprint;
+    const previousHealth = JSON.stringify(this.health);
+    const previousSourceVersion = this.sourceVersion;
+    const previousUncommittedBytes = this.uncommittedBytes;
+    const previousUncommittedFingerprint = this.uncommittedFingerprint;
+    const initialMaterialization = this.initialMaterializationPending;
+    try {
+      if (
+        !force &&
+        this.currentIdentity &&
+        this.currentHealth.status === "ok"
+      ) {
+        // Ordinary reads reuse a verified version, not merely a pathname or
+        // size. Do not follow a replacement symlink back to the former inode;
+        // changed or unhealthy sources still take the full verification path.
+        const details = await lstat(this.path, { bigint: true });
+        const next = identity(details as never);
+        if (details.isFile() && sameVersion(next, this.currentIdentity)) {
+          return {
+            changed: false,
+            initialMaterialization,
+            kind: "none",
+            messageChange: "none",
+            previousRevision,
+            revision: this.revision,
+            previousFingerprint,
+            fingerprint: this.fingerprint,
+            healthChanged: false,
+            sourceChanged: false,
+            previousSourceVersion: this.sourceVersion,
+            sourceVersion: this.sourceVersion,
+            ...this.resultObservation(),
+            previousUncommittedBytes: this.uncommittedBytes,
+            previousTailVerified: true,
+          };
+        }
+      }
+
+      const candidate =
+        (await this.tryReadAppendCandidate()) ?? (await this.readCandidate());
+      const initialFileAppearance =
+        initialMaterialization && this.currentHeader === null;
+      const changed = candidate.fingerprint !== this.currentFingerprint;
+      const verifiedUnchangedContent =
+        !changed &&
+        candidate.prefixRevalidated &&
+        this.currentIdentity !== null &&
+        sameObject(candidate.identity, this.currentIdentity) &&
+        previousUncommittedBytes === 0 &&
+        candidate.uncommittedBytes === 0 &&
+        candidate.committedBytes === this.currentCommittedBytes &&
+        candidate.identity.size === BigInt(this.currentCommittedBytes) &&
+        candidate.previousPrefixFingerprint === previousFingerprint;
+      const previousEntries = this.currentEntries;
+      const previousLeafId = this.currentLeafId;
+      let kind: ProjectionReconcileResult["kind"] = "none";
+      let messageChange: ProjectionMessageChange = "none";
+      let appendedEntries: SessionEntry[] | undefined;
+      if (changed) {
+        const prefixVerified =
+          this.currentCommittedBytes === 0 ||
+          candidate.previousPrefixFingerprint === this.currentFingerprint;
+        const tailVerified =
+          previousUncommittedBytes === 0 ||
+          candidate.previousTailFingerprint === previousUncommittedFingerprint;
+        kind =
+          initialFileAppearance ||
+          (this.currentIdentity &&
+            sameObject(candidate.identity, this.currentIdentity) &&
+            candidate.committedBytes >= this.currentCommittedBytes &&
+            this.currentFingerprint &&
+            prefixVerified &&
+            tailVerified)
+            ? "append"
+            : "rewrite";
+        if (
+          kind === "append" &&
+          previousEntries.every(
+            (entry, index) => candidate.entries[index]?.id === entry.id,
+          )
+        ) {
+          appendedEntries = structuredClone(
+            candidate.entries.slice(previousEntries.length),
+          );
+        }
+        messageChange = projectedMessageChange(
+          kind,
+          this.currentMessages,
+          candidate.messages,
+        );
+        this.currentRevision += 1;
+        if (messageChange === "replace")
+          this.appendFromRevision = this.currentRevision;
+        this.revisionFingerprints.set(
+          this.currentRevision,
+          candidate.fingerprint,
+        );
+        while (this.revisionFingerprints.size > 256) {
+          this.revisionFingerprints.delete(
+            this.revisionFingerprints.keys().next().value!,
+          );
+        }
+        if (kind !== "append")
+          this.historyReplacementRevision = this.currentRevision;
+        if (
+          appendedEntries &&
+          isLinearAppend(previousLeafId, appendedEntries)
+        ) {
+          for (const entry of appendedEntries)
+            if (changesComposerHistory(entry))
+              this.currentHistoryAnchor = entry.id;
+        } else {
+          this.currentHistoryAnchor = composerHistoryAnchor(
+            candidate.entriesById,
+            candidate.leafId,
+          );
+        }
+        this.currentModelSelection = candidate.modelSelection;
+        this.currentMessages = candidate.messages;
+        this.currentThinkingLevel = candidate.thinkingLevel;
+        this.currentLeafId = candidate.leafId;
+        this.currentEntries = candidate.entries;
+        this.currentEntriesById = candidate.entriesById;
+        if (!candidate.header)
+          throw new Error("Session file has no complete Pi session header");
+        this.currentHeader = candidate.header;
+        this.currentFingerprint = candidate.fingerprint;
+        this.currentCommittedBytes = candidate.committedBytes;
+      }
+      this.currentHashState = candidate.hashState;
+      this.currentIdentity = candidate.identity;
+      this.currentUncommittedBytes = candidate.uncommittedBytes;
+      this.currentUncommittedFingerprint = candidate.uncommittedFingerprint;
+      this.currentHealth = { status: "ok" };
+      this.currentFailureStatus = null;
+      this.currentFailureCode = undefined;
+      const sourceChanged =
+        previousSourceVersion !== this.sourceVersion ||
+        previousUncommittedBytes !== this.uncommittedBytes ||
+        previousUncommittedFingerprint !== this.uncommittedFingerprint;
+      const previousTailVerified =
+        previousUncommittedBytes === 0 ||
+        candidate.previousTailFingerprint === previousUncommittedFingerprint;
+      return {
+        changed,
+        initialMaterialization,
+        kind,
+        messageChange,
+        previousRevision,
+        revision: this.revision,
+        previousFingerprint,
+        fingerprint: this.fingerprint,
+        healthChanged: previousHealth !== JSON.stringify(this.health),
+        sourceChanged,
+        ...(verifiedUnchangedContent
+          ? { verifiedUnchangedContent: true as const }
+          : {}),
+        previousSourceVersion,
+        sourceVersion: this.sourceVersion,
+        ...this.resultObservation(),
+        previousUncommittedBytes,
+        previousTailVerified,
+        ...(appendedEntries ? { appendedEntries, previousLeafId } : {}),
+      };
+    } catch (error) {
+      if (
+        initialMaterialization &&
+        this.currentIdentity === null &&
+        (error as NodeJS.ErrnoException)?.code === "ENOENT"
+      ) {
+        this.currentHealth = { status: "ok" };
+        this.currentFailureStatus = null;
+        this.currentFailureCode = undefined;
+        return {
+          changed: false,
+          initialMaterialization,
+          kind: "none",
+          messageChange: "none",
+          previousRevision,
+          revision: this.revision,
+          previousFingerprint,
+          fingerprint: this.fingerprint,
+          healthChanged: previousHealth !== JSON.stringify(this.health),
+          sourceChanged: false,
+          previousSourceVersion,
+          sourceVersion: this.sourceVersion,
+          ...this.resultObservation(),
+          previousUncommittedBytes,
+          previousTailVerified: true,
+        };
+      }
+      this.currentHealth = healthError(error);
+      const code = (error as { code?: string } | null)?.code;
+      this.currentFailureCode =
+        code === "SESSION_CATALOG_STALE" ||
+        (this.currentRevision === 0 &&
+          (code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP"))
+          ? "SESSION_CATALOG_STALE"
+          : undefined;
+      this.currentFailureStatus =
+        error &&
+        typeof error === "object" &&
+        Number.isInteger((error as { status?: unknown }).status)
+          ? (error as { status: number }).status
+          : 422;
+      return {
+        changed: false,
+        initialMaterialization,
+        kind: "none",
+        messageChange: "none",
+        previousRevision,
+        revision: this.revision,
+        previousFingerprint,
+        fingerprint: this.fingerprint,
+        healthChanged: previousHealth !== JSON.stringify(this.health),
+        sourceChanged: false,
+        previousSourceVersion: this.sourceVersion,
+        sourceVersion: this.sourceVersion,
+        ...this.resultObservation(),
+        previousUncommittedBytes,
+        previousTailVerified: false,
+      };
+    }
+  }
+
+  /** Reconcile newly appended frames, reusing an owned prefix when provenance allows. */
+  private async tryReadAppendCandidate(): Promise<Candidate | null> {
+    if (
+      !this.currentIdentity ||
+      !this.currentHeader ||
+      !this.currentHashState ||
+      this.currentRevision === 0
+    )
+      return null;
+    const addressed = identity(
+      (await stat(this.path, { bigint: true })) as never,
+    );
+    if (
+      !sameObject(addressed, this.currentIdentity) ||
+      addressed.size < BigInt(this.currentCommittedBytes)
+    )
+      return null;
+    const handle = await open(
+      this.path,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    );
+    try {
+      const before = identity((await handle.stat({ bigint: true })) as never);
+      if (!sameObject(before, addressed)) return null;
+      // An exact pending Pi claim supplies the provenance for the ordinary
+      // one-writer append path. Otherwise reread the prefix so unowned rewrites
+      // still fail closed before any new entries are projected.
+      const reuseVerifiedPrefix =
+        before.size > this.currentIdentity.size && this.ownedAppendWindow();
+      const hash = reuseVerifiedPrefix
+        ? this.currentHashState.copy()
+        : createHash("sha256");
+      if (!reuseVerifiedPrefix) {
+        let prefixBytes = 0;
+        if (this.currentCommittedBytes > 0) {
+          for await (const raw of handle.createReadStream({
+            start: 0,
+            end: this.currentCommittedBytes - 1,
+            autoClose: false,
+          })) {
+            const chunk = raw as Buffer;
+            hash.update(chunk);
+            prefixBytes += chunk.length;
+          }
+        }
+        if (
+          prefixBytes !== this.currentCommittedBytes ||
+          hash.copy().digest("hex") !== this.currentFingerprint
+        )
+          return null;
+      }
+
+      const appended: Record<string, unknown>[] = [];
+      let committedBytes = this.currentCommittedBytes;
+      let previousTailRemaining = this.currentUncommittedBytes;
+      const previousTailHash = createHash("sha256");
+      const decoder = new JsonlObjectDecoder((frame) => {
+        hash.update(frame);
+        committedBytes += frame.length;
+      });
+      if (before.size > BigInt(this.currentCommittedBytes)) {
+        for await (const raw of handle.createReadStream({
+          start: this.currentCommittedBytes,
+          autoClose: false,
+        })) {
+          const chunk = raw as Buffer;
+          if (previousTailRemaining > 0) {
+            const used = chunk.subarray(0, previousTailRemaining);
+            previousTailHash.update(used);
+            previousTailRemaining -= used.length;
+          }
+          for (const value of decoder.push(chunk)) {
+            if (value.type === "session")
+              throw new Error(
+                "Persisted session contains a second session header",
+              );
+            appended.push(value);
+          }
+        }
+      }
+      const after = identity((await handle.stat({ bigint: true })) as never);
+      const finalAddressed = identity(
+        (await stat(this.path, { bigint: true })) as never,
+      );
+      if (!sameVersion(before, after) || !sameVersion(after, finalAddressed))
+        return null;
+      const tail = decoder.tail();
+      const appendedEntries = appended as unknown as SessionEntry[];
+      const entriesById = indexSessionEntries(
+        appendedEntries,
+        this.currentEntriesById,
+      );
+      const entries = [...this.currentEntries, ...appendedEntries];
+      const leafId = entries.at(-1)?.id ?? null;
+      let messages = this.currentMessages;
+      let modelSelection = this.currentModelSelection;
+      let thinkingLevel = this.currentThinkingLevel;
+      if (appendedEntries.length > 0) {
+        if (isLinearAppend(this.currentLeafId, appendedEntries)) {
+          messages = appendContextMessages(
+            this.currentMessages,
+            appendedEntries,
+          );
+          modelSelection = appendModelSelection(
+            this.currentModelSelection,
+            appendedEntries,
+          );
+          thinkingLevel = appendedThinkingLevel(
+            this.currentThinkingLevel,
+            appendedEntries,
+          );
+        } else {
+          const context = buildSessionContext(entries, leafId, entriesById);
+          messages = contextMessages(entries, leafId, entriesById);
+          modelSelection = branchModelSelection(entriesById, leafId);
+          thinkingLevel = context.thinkingLevel;
+        }
+      }
+      const fingerprint = hash.copy().digest("hex");
+      return {
+        identity: finalAddressed,
+        fingerprint,
+        hashState: hash,
+        committedBytes,
+        uncommittedBytes: tail.length,
+        uncommittedFingerprint:
+          tail.length > 0
+            ? createHash("sha256").update(tail).digest("hex")
+            : null,
+        previousPrefixFingerprint: this.currentFingerprint,
+        prefixRevalidated: !reuseVerifiedPrefix,
+        previousTailFingerprint:
+          previousTailRemaining === 0 && this.currentUncommittedBytes > 0
+            ? previousTailHash.digest("hex")
+            : this.currentUncommittedBytes === 0
+              ? null
+              : "",
+        header: this.currentHeader,
+        entries,
+        entriesById,
+        messages,
+        modelSelection,
+        thinkingLevel,
+        leafId,
+      };
+    } finally {
+      await handle.close();
+    }
+  }
+
+  private async readCandidate(): Promise<Candidate> {
+    // A path can be atomically replaced while its old inode is being read. Retry
+    // once against the now-addressed object rather than publishing an orphan.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const handle = await open(
+        this.path,
+        constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+      );
+      try {
+        const before = identity((await handle.stat({ bigint: true })) as never);
+        if (
+          this.currentRevision === 0 &&
+          this.initialSourceIdentity &&
+          !sameObject(before, this.initialSourceIdentity)
+        ) {
+          throw requestError(
+            "The session changed since the catalog was loaded",
+            409,
+            { code: "SESSION_CATALOG_STALE" },
+          );
+        }
+        const hash = createHash("sha256");
+        const parsed: Record<string, unknown>[] = [];
+        let committedBytes = 0;
+        let readOffset = 0;
+        let previousPrefixBytes = 0;
+        let previousTailBytes = 0;
+        const previousPrefixHash = createHash("sha256");
+        const previousTailHash = createHash("sha256");
+        const decoder = new JsonlObjectDecoder((frame) => {
+          hash.update(frame);
+          committedBytes += frame.length;
+        });
+        for await (const raw of handle.createReadStream({ autoClose: false })) {
+          const chunk = raw as Buffer;
+          await this.readHooks?.afterFullReadChunk?.();
+          const end = readOffset + chunk.length;
+          if (readOffset < this.currentCommittedBytes) {
+            const prefixEnd = Math.min(end, this.currentCommittedBytes);
+            const used = chunk.subarray(0, prefixEnd - readOffset);
+            previousPrefixHash.update(used);
+            previousPrefixBytes += used.length;
+          }
+          const tailStart = Math.max(readOffset, this.currentCommittedBytes);
+          const tailEnd = Math.min(
+            end,
+            this.currentCommittedBytes + this.currentUncommittedBytes,
+          );
+          if (tailEnd > tailStart) {
+            const used = chunk.subarray(
+              tailStart - readOffset,
+              tailEnd - readOffset,
+            );
+            previousTailHash.update(used);
+            previousTailBytes += used.length;
+          }
+          readOffset = end;
+          parsed.push(...decoder.push(chunk));
+        }
+        const after = identity((await handle.stat({ bigint: true })) as never);
+        const addressed = identity(
+          (await stat(this.path, { bigint: true })) as never,
+        );
+        if (!sameVersion(before, after) || !sameVersion(after, addressed))
+          continue;
+        const tail = decoder.tail();
+        if (
+          parsed.length === 0 &&
+          this.initialMaterializationPending &&
+          this.currentHeader === null
+        ) {
+          if (tail.length === 0) {
+            const pending = new Error(
+              "The new session file has not materialized yet",
+            ) as NodeJS.ErrnoException;
+            pending.code = "ENOENT";
+            throw pending;
+          }
+          return {
+            identity: addressed,
+            fingerprint: this.currentFingerprint,
+            hashState: hash,
+            committedBytes,
+            uncommittedBytes: tail.length,
+            uncommittedFingerprint:
+              tail.length > 0
+                ? createHash("sha256").update(tail).digest("hex")
+                : null,
+            previousPrefixFingerprint:
+              this.currentCommittedBytes === 0 ? null : "",
+            prefixRevalidated: true,
+            previousTailFingerprint:
+              previousTailBytes === this.currentUncommittedBytes &&
+              this.currentUncommittedBytes > 0
+                ? previousTailHash.digest("hex")
+                : this.currentUncommittedBytes === 0
+                  ? null
+                  : "",
+            header: null,
+            entries: [],
+            entriesById: new Map(),
+            messages: [],
+            modelSelection: { change: null, fallback: null },
+            thinkingLevel: "off",
+            leafId: null,
+          };
+        }
+        const header = parsed[0];
+        if (!validSessionHeader(header))
+          throw new Error("Session file has an invalid Pi session header");
+        if (header.id !== this.sessionId)
+          throw requestError("Session file belongs to another session", 409, {
+            code: "SESSION_CATALOG_STALE",
+          });
+        if (
+          header.cwd !== this.initialCwd &&
+          !(await sameDirectory(header.cwd, this.initialCwd))
+        ) {
+          throw requestError(
+            "The session working directory changed since the catalog was loaded",
+            409,
+            { code: "SESSION_CATALOG_STALE" },
+          );
+        }
+        if (
+          parsed
+            .slice(1)
+            .some((entry) => (entry as { type?: unknown }).type === "session")
+        ) {
+          throw new Error("Persisted session contains a second session header");
+        }
+        const mutable = parsed as unknown as Array<
+          SessionHeader | SessionEntry
+        >;
+        migrateSessionEntries(mutable);
+        const entries = mutable.slice(1) as SessionEntry[];
+        const leafId = entries.at(-1)?.id ?? null;
+        const byId = indexSessionEntries(entries);
+        const context = buildSessionContext(entries, leafId, byId);
+        const fingerprint = hash.copy().digest("hex");
+        return {
+          identity: addressed,
+          fingerprint,
+          hashState: hash,
+          committedBytes,
+          uncommittedBytes: tail.length,
+          uncommittedFingerprint:
+            tail.length > 0
+              ? createHash("sha256").update(tail).digest("hex")
+              : null,
+          prefixRevalidated: true,
+          previousPrefixFingerprint:
+            previousPrefixBytes === this.currentCommittedBytes &&
+            this.currentCommittedBytes > 0
+              ? previousPrefixHash.digest("hex")
+              : this.currentCommittedBytes === 0
+                ? null
+                : "",
+          previousTailFingerprint:
+            previousTailBytes === this.currentUncommittedBytes &&
+            this.currentUncommittedBytes > 0
+              ? previousTailHash.digest("hex")
+              : this.currentUncommittedBytes === 0
+                ? null
+                : "",
+          header,
+          entries,
+          entriesById: byId,
+          messages: contextMessages(entries, leafId, byId),
+          modelSelection: branchModelSelection(byId, leafId),
+          thinkingLevel: context.thinkingLevel,
+          leafId,
+        };
+      } finally {
+        await handle.close();
+      }
+    }
+    throw new Error("Session file changed while it was being reconciled");
+  }
+
+  latestPage(
+    overlay: readonly unknown[] = [],
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+  ): TranscriptPage {
+    const persisted = this.viewMessages(effectiveLeafId);
+    const persistedCorrelation = new Set(
+      persisted
+        .map((value) => {
+          if (!value || typeof value !== "object") return null;
+          const record = value as Record<string, unknown>;
+          const copy = { ...record };
+          delete copy.__inspireMessageId;
+          return messageFallbackCorrelation(copy);
+        })
+        .filter((key): key is string => key !== null),
+    );
+    const persistedIndexByEntryId = new Map(
+      persisted.flatMap((value, index) => {
+        if (!value || typeof value !== "object" || Array.isArray(value))
+          return [];
+        const entryId = (value as Record<string, unknown>).__inspireEntryId;
+        return typeof entryId === "string" ? [[entryId, index] as const] : [];
+      }),
+    );
+    const combined = [...persisted];
+    for (const item of overlay) {
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        const overlayRecord = item as Record<string, unknown>;
+        const entryId =
+          typeof overlayRecord.__inspireEntryId === "string"
+            ? overlayRecord.__inspireEntryId
+            : null;
+        const persistedIndex = entryId
+          ? persistedIndexByEntryId.get(entryId)
+          : undefined;
+        if (persistedIndex !== undefined) {
+          const durable = persisted[persistedIndex] as Record<string, unknown>;
+          combined[persistedIndex] = {
+            ...overlayRecord,
+            __inspireMessageId: durable.__inspireMessageId,
+            __inspireEntryId: entryId,
+            ...(durable.__inspireMessageIndex !== undefined
+              ? { __inspireMessageIndex: durable.__inspireMessageIndex }
+              : {}),
+            ...(durable.__inspireUserTurnId !== undefined
+              ? { __inspireUserTurnId: durable.__inspireUserTurnId }
+              : {}),
+            ...(durable.__inspireUserTurnIndex !== undefined
+              ? { __inspireUserTurnIndex: durable.__inspireUserTurnIndex }
+              : {}),
+          };
+          continue;
+        }
+      }
+      let key: string | null = null;
+      if (item && typeof item === "object") {
+        const copy = { ...(item as Record<string, unknown>) };
+        delete copy.__inspireLiveId;
+        key = messageFallbackCorrelation(copy);
+      }
+      if (!key || !persistedCorrelation.has(key)) combined.push(item);
+    }
+    return this.buildPage(
+      combined,
+      combined.length,
+      persisted.length,
+      effectiveLeafId,
+      viewId,
+    );
+  }
+
+  private validatedCursor(
+    cursor: string,
+    expectedKind: ParsedCursor["kind"],
+    effectiveLeafId: string | null,
+    viewId: string,
+  ): { decoded: ParsedCursor; messages: readonly unknown[] } {
+    const decoded = parseCursor(cursor);
+    if (decoded.kind !== expectedKind) {
+      throw requestError("Transcript cursor has the wrong purpose", 400);
+    }
+    if (decoded.sessionId !== this.sessionId) {
+      throw requestError("Transcript cursor belongs to another session", 409);
+    }
+    if (decoded.incarnation !== this.incarnation) {
+      throw requestError(
+        "Transcript cursor belongs to an expired projection incarnation",
+        409,
+      );
+    }
+    if (decoded.viewId !== viewId) {
+      throw requestError(
+        "Transcript cursor belongs to another branch view",
+        409,
+      );
+    }
+    if (decoded.effectiveLeafId !== effectiveLeafId) {
+      let branchCursor = effectiveLeafId;
+      let appendDescendant = decoded.effectiveLeafId === null;
+      while (branchCursor && !appendDescendant) {
+        if (branchCursor === decoded.effectiveLeafId) appendDescendant = true;
+        branchCursor =
+          this.currentEntriesById.get(branchCursor)?.parentId ?? null;
+      }
+      // Cursors survive a strictly append-only continuation of the same
+      // branch. A switch to a sibling or ancestor view remains stale.
+      if (!appendDescendant || decoded.revision < this.appendFromRevision) {
+        throw requestError(
+          "Transcript cursor is stale or belongs to another branch view",
+          409,
+        );
+      }
+    }
+    const knownFingerprint = this.revisionFingerprints.get(decoded.revision);
+    if (
+      decoded.revision > this.revision ||
+      decoded.revision < this.appendFromRevision ||
+      knownFingerprint !== decoded.fingerprint
+    ) {
+      throw requestError(
+        "Transcript cursor is stale; refresh the session",
+        409,
+      );
+    }
+    const messages = this.viewMessages(effectiveLeafId);
+    if (decoded.before > messages.length) {
+      throw requestError("Transcript cursor is invalid", 400);
+    }
+    return { decoded, messages };
+  }
+
+  page(
+    cursor: string,
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+  ): TranscriptPage {
+    const { decoded, messages } = this.validatedCursor(
+      cursor,
+      "page",
+      effectiveLeafId,
+      viewId,
+    );
+    return this.buildPage(
+      messages,
+      decoded.before,
+      messages.length,
+      effectiveLeafId,
+      viewId,
+    );
+  }
+
+  visiblePage(
+    cursor: string,
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+  ): TranscriptPage {
+    const { decoded, messages } = this.validatedCursor(
+      cursor,
+      "page",
+      effectiveLeafId,
+      viewId,
+    );
+    return this.buildVisiblePage(
+      messages,
+      decoded.before,
+      effectiveLeafId,
+      viewId,
+    );
+  }
+
+  activityPage(
+    cursor: string,
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+  ): TranscriptActivityPage {
+    const { decoded, messages } = this.validatedCursor(
+      cursor,
+      "activity",
+      effectiveLeafId,
+      viewId,
+    );
+    return this.buildActivityPage(
+      messages,
+      decoded.start,
+      decoded.before,
+      effectiveLeafId,
+      viewId,
+    );
+  }
+
+  userTurnIndexPage(
+    start: number | undefined,
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+  ): UserTurnIndexPage {
+    const indexKey = effectiveLeafId ?? "\u0000current";
+    const cached = this.userTurnIndexes.get(indexKey);
+    const turns =
+      cached?.revision === this.revision
+        ? cached.turns
+        : this.buildUserTurnIndex(effectiveLeafId);
+    if (cached?.revision !== this.revision) {
+      if (this.userTurnIndexes.size >= 16) this.userTurnIndexes.clear();
+      this.userTurnIndexes.set(indexKey, { revision: this.revision, turns });
+    }
+    if (start !== undefined && (!Number.isSafeInteger(start) || start < 0))
+      throw requestError("User-turn index offset is invalid", 400);
+    const pageStart =
+      start === undefined
+        ? Math.max(0, turns.length - USER_TURN_INDEX_PAGE_SIZE)
+        : Math.min(start, turns.length);
+    const page: UserTurnIndexPage = {
+      sessionId: this.sessionId,
+      revision: this.revision,
+      viewId,
+      incarnation: this.incarnation,
+      appendFromRevision: this.appendFromRevision,
+      effectiveLeafId,
+      total: turns.length,
+      start: pageStart,
+      turns: turns.slice(pageStart, pageStart + USER_TURN_INDEX_PAGE_SIZE),
+    };
+    if (Buffer.byteLength(JSON.stringify(page)) > USER_TURN_INDEX_MAX_BYTES) {
+      throw new Error("User-turn index page exceeded its declared byte bound");
+    }
+    return page;
+  }
+
+  private composerHistoryVersion(effectiveLeafId: string | null): string {
+    const anchor =
+      effectiveLeafId === this.currentLeafId
+        ? this.currentHistoryAnchor
+        : composerHistoryAnchor(this.currentEntriesById, effectiveLeafId);
+    // Entry ancestry is immutable during append. A rewrite may reuse IDs with
+    // changed content, so it starts a new history epoch even at the same leaf.
+    return JSON.stringify([this.historyReplacementRevision, anchor]);
+  }
+
+  composerHistoryPage(
+    start = 0,
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+    cwd?: string,
+    fileNameForPath?: ComposerHistoryFileNameResolver,
+  ): ComposerHistoryPage {
+    return projectComposerHistoryPage(
+      this.composerHistoryMessages(effectiveLeafId),
+      {
+        sessionId: this.sessionId,
+        revision: this.revision,
+        viewId,
+        incarnation: this.incarnation,
+        effectiveLeafId,
+        composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
+      },
+      start,
+      cwd,
+      fileNameForPath,
+    );
+  }
+
+  private buildUserTurnIndex(
+    effectiveLeafId: string | null,
+  ): readonly UserTurnAnchor[] {
+    return this.viewMessages(effectiveLeafId).flatMap((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value))
+        return [];
+      const record = value as Record<string, unknown>;
+      const id = projectedMessageId(value);
+      const ordinal = record.__inspireUserTurnIndex;
+      if (
+        record.role !== "user" ||
+        id === null ||
+        !Number.isSafeInteger(ordinal) ||
+        Number(ordinal) < 0
+      )
+        return [];
+      const summary = userTurnSummary(value);
+      const timestamp = projectedTimestamp(value);
+      return [
+        {
+          id,
+          ordinal: Number(ordinal),
+          snippet: summary.snippet,
+          ...(timestamp ? { timestamp } : {}),
+          attachmentCount: summary.attachmentCount,
+        },
+      ];
+    });
+  }
+
+  private activityRange(
+    rangeStart: number,
+    rangeEnd: number,
+    afterMessageId: string | null,
+    source: readonly unknown[],
+    effectiveLeafId: string | null,
+    viewId: string,
+  ): TranscriptActivityRange | null {
+    const kinds = deferredActivityKinds(source, rangeStart, rangeEnd);
+    return kinds.length > 0
+      ? {
+          cursor: activityCursorFor(
+            this.sessionId,
+            this.incarnation,
+            this.currentFingerprint,
+            this.revision,
+            rangeStart,
+            rangeEnd,
+            effectiveLeafId,
+            viewId,
+          ),
+          afterMessageId,
+          messageCount: rangeEnd - rangeStart,
+          kinds,
+        }
+      : null;
+  }
+
+  userTurnTranscriptPage(
+    targetMessageId: string,
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+    continuationCursor?: string,
+  ): UserTurnTranscriptPage {
+    const source = this.viewMessages(effectiveLeafId);
+    const target = source.findIndex(
+      (value) =>
+        projectedMessageId(value) === targetMessageId &&
+        Boolean(
+          value &&
+            typeof value === "object" &&
+            !Array.isArray(value) &&
+            (value as Record<string, unknown>).role === "user",
+        ),
+    );
+    if (target < 0)
+      throw requestError("User turn does not exist in this branch", 404);
+    let turnEnd = target + 1;
+    while (turnEnd < source.length) {
+      const value = source[turnEnd];
+      if (
+        value &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        (value as Record<string, unknown>).role === "user"
+      )
+        break;
+      turnEnd += 1;
+    }
+
+    let cursor = target;
+    if (continuationCursor) {
+      const validated = this.validatedCursor(
+        continuationCursor,
+        "user-turn",
+        effectiveLeafId,
+        viewId,
+      ).decoded;
+      if (
+        validated.start !== target ||
+        validated.before <= target ||
+        validated.before >= turnEnd
+      )
+        throw requestError("User-turn cursor is invalid", 400);
+      cursor = validated.before;
+    }
+
+    const messages: unknown[] = [];
+    const activityRanges: TranscriptActivityRange[] = [];
+    let committedEnd = cursor;
+    let previousVisibleId: string | null = null;
+    for (let index = cursor - 1; index >= target; index -= 1) {
+      if (!isVisibleTranscriptBoundary(source[index])) continue;
+      previousVisibleId = projectedMessageId(source[index]);
+      break;
+    }
+    let pendingStart: number | null = null;
+    const shell = (
+      nextMessages: unknown[],
+      nextRanges: TranscriptActivityRange[],
+      rangeEnd: number,
+    ): UserTurnTranscriptPage => ({
+      sessionId: this.sessionId,
+      revision: this.revision,
+      viewId,
+      incarnation: this.incarnation,
+      appendFromRevision: this.appendFromRevision,
+      effectiveLeafId,
+      composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
+      messages: nextMessages,
+      ...(nextRanges.length > 0 ? { activityRanges: nextRanges } : {}),
+      hasOlder: target > 0,
+      olderCursor:
+        target > 0
+          ? cursorFor(
+              this.sessionId,
+              this.incarnation,
+              this.currentFingerprint,
+              this.revision,
+              target,
+              effectiveLeafId,
+              viewId,
+            )
+          : null,
+      targetMessageId,
+      rangeStart: target,
+      rangeEnd,
+      hasMoreInTurn: rangeEnd < turnEnd,
+      continuationCursor:
+        rangeEnd < turnEnd
+          ? userTurnCursorFor(
+              this.sessionId,
+              this.incarnation,
+              this.currentFingerprint,
+              this.revision,
+              target,
+              rangeEnd,
+              effectiveLeafId,
+              viewId,
+            )
+          : null,
+    });
+
+    while (cursor < turnEnd && messages.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
+      const value = source[cursor];
+      if (!isVisibleTranscriptBoundary(value)) {
+        if (pendingStart === null) pendingStart = cursor;
+        cursor += 1;
+        continue;
+      }
+      const item = boundedTranscriptItem(value, cursor);
+      const range =
+        pendingStart === null
+          ? null
+          : this.activityRange(
+              pendingStart,
+              cursor,
+              previousVisibleId,
+              source,
+              effectiveLeafId,
+              viewId,
+            );
+      const nextMessages = [...messages, item.value];
+      const nextRanges = [...activityRanges, ...(range ? [range] : [])];
+      if (
+        Buffer.byteLength(
+          JSON.stringify(shell(nextMessages, nextRanges, cursor + 1)),
+        ) > TRANSCRIPT_PAGE_MAX_BYTES
+      ) {
+        if (messages.length === 0) oversizedTranscriptItem();
+        cursor = pendingStart ?? cursor;
+        break;
+      }
+      messages.push(item.value);
+      if (range) activityRanges.push(range);
+      previousVisibleId = projectedMessageId(value);
+      pendingStart = null;
+      cursor += 1;
+      committedEnd = cursor;
+    }
+
+    if (cursor === turnEnd && pendingStart !== null) {
+      const trailing = this.activityRange(
+        pendingStart,
+        turnEnd,
+        previousVisibleId,
+        source,
+        effectiveLeafId,
+        viewId,
+      );
+      if (
+        trailing &&
+        Buffer.byteLength(
+          JSON.stringify(
+            shell(messages, [...activityRanges, trailing], turnEnd),
+          ),
+        ) <= TRANSCRIPT_PAGE_MAX_BYTES
+      ) {
+        activityRanges.push(trailing);
+        committedEnd = turnEnd;
+      } else if (!trailing) {
+        committedEnd = turnEnd;
+      }
+    }
+    return withinTranscriptPageBudget(
+      shell(messages, activityRanges, committedEnd),
+    );
+  }
+
+  private buildPage(
+    source: readonly unknown[],
+    before: number,
+    persistedLength: number,
+    effectiveLeafId: string | null,
+    viewId: string,
+  ): TranscriptPage {
+    let start = before;
+    const reversed: unknown[] = [];
+    let messagesBytes = 2; // JSON array brackets; commas are added per accepted item.
+    const shell = (
+      candidateStart: number,
+      messages: unknown[],
+    ): TranscriptPage => {
+      const persistedStart = Math.min(candidateStart, persistedLength);
+      return {
+        sessionId: this.sessionId,
+        revision: this.revision,
+        viewId,
+        incarnation: this.incarnation,
+        appendFromRevision: this.appendFromRevision,
+        effectiveLeafId,
+        composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
+        messages,
+        hasOlder: persistedStart > 0,
+        olderCursor:
+          persistedStart > 0
+            ? cursorFor(
+                this.sessionId,
+                this.incarnation,
+                this.currentFingerprint,
+                this.revision,
+                persistedStart,
+                effectiveLeafId,
+                viewId,
+              )
+            : null,
+      };
+    };
+    while (start > 0 && reversed.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
+      const index = start - 1;
+      const item = boundedTranscriptItem(
+        source[index],
+        index < persistedLength ? index : undefined,
+      );
+      const projected = item.value;
+      const serialized = item.serialized;
+      const candidateMessagesBytes =
+        messagesBytes +
+        Buffer.byteLength(serialized) +
+        (reversed.length > 0 ? 1 : 0);
+      const emptyShellBytes = Buffer.byteLength(
+        JSON.stringify(shell(index, [])),
+      );
+      if (
+        emptyShellBytes - 2 + candidateMessagesBytes >
+        TRANSCRIPT_PAGE_MAX_BYTES
+      )
+        break;
+      reversed.push(projected);
+      messagesBytes = candidateMessagesBytes;
+      start = index;
+    }
+    if (reversed.length === 0 && before > 0) oversizedTranscriptItem();
+    return withinTranscriptPageBudget(shell(start, reversed.reverse()));
+  }
+
+  private buildVisiblePage(
+    source: readonly unknown[],
+    before: number,
+    effectiveLeafId: string | null,
+    viewId: string,
+  ): TranscriptPage {
+    let start = before;
+    let pendingActivityEnd: number | null = null;
+    const reversed: unknown[] = [];
+    const ranges: TranscriptActivityRange[] = [];
+    const shell = (
+      candidateStart: number,
+      messages: unknown[],
+      activityRanges: TranscriptActivityRange[],
+    ): TranscriptPage => ({
+      sessionId: this.sessionId,
+      revision: this.revision,
+      viewId,
+      incarnation: this.incarnation,
+      appendFromRevision: this.appendFromRevision,
+      effectiveLeafId,
+      composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
+      messages,
+      ...(activityRanges.length > 0 ? { activityRanges } : {}),
+      hasOlder: candidateStart > 0,
+      olderCursor:
+        candidateStart > 0
+          ? cursorFor(
+              this.sessionId,
+              this.incarnation,
+              this.currentFingerprint,
+              this.revision,
+              candidateStart,
+              effectiveLeafId,
+              viewId,
+            )
+          : null,
+    });
+    while (start > 0 && reversed.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
+      const index = start - 1;
+      const sourceItem = source[index];
+      if (!isVisibleTranscriptBoundary(sourceItem)) {
+        if (pendingActivityEnd === null) pendingActivityEnd = start;
+        start = index;
+        continue;
+      }
+
+      const item = boundedTranscriptItem(sourceItem, index);
+      const nextRange =
+        pendingActivityEnd === null
+          ? null
+          : this.activityRange(
+              index + 1,
+              pendingActivityEnd,
+              projectedMessageId(sourceItem),
+              source,
+              effectiveLeafId,
+              viewId,
+            );
+      const candidateMessages = [...reversed, item.value].reverse();
+      const candidateRanges = [
+        ...ranges,
+        ...(nextRange ? [nextRange] : []),
+      ].reverse();
+      if (
+        Buffer.byteLength(
+          JSON.stringify(shell(index, candidateMessages, candidateRanges)),
+        ) > TRANSCRIPT_PAGE_MAX_BYTES
+      ) {
+        // The skipped activity needs this older visible message as its stable
+        // insertion anchor, so leave both for the next page.
+        start = pendingActivityEnd ?? start;
+        break;
+      }
+      reversed.push(item.value);
+      if (nextRange) ranges.push(nextRange);
+      start = index;
+      pendingActivityEnd = null;
+    }
+
+    if (start === 0 && pendingActivityEnd !== null) {
+      const leading = this.activityRange(
+        0,
+        pendingActivityEnd,
+        null,
+        source,
+        effectiveLeafId,
+        viewId,
+      );
+      if (leading) {
+        const withLeading = shell(
+          0,
+          [...reversed].reverse(),
+          [...ranges, leading].reverse(),
+        );
+        if (
+          Buffer.byteLength(JSON.stringify(withLeading)) <=
+          TRANSCRIPT_PAGE_MAX_BYTES
+        )
+          ranges.push(leading);
+        else start = pendingActivityEnd;
+      }
+    }
+    if (reversed.length === 0 && start === before && before > 0)
+      oversizedTranscriptItem();
+    return withinTranscriptPageBudget(
+      shell(start, reversed.reverse(), ranges.reverse()),
+    );
+  }
+
+  private buildActivityPage(
+    source: readonly unknown[],
+    floor: number,
+    before: number,
+    effectiveLeafId: string | null,
+    viewId: string,
+  ): TranscriptActivityPage {
+    let start = before;
+    const reversed: unknown[] = [];
+    const shell = (
+      candidateStart: number,
+      messages: unknown[],
+    ): TranscriptActivityPage => ({
+      sessionId: this.sessionId,
+      revision: this.revision,
+      viewId,
+      incarnation: this.incarnation,
+      effectiveLeafId,
+      messages,
+      hasMore: candidateStart > floor,
+      cursor:
+        candidateStart > floor
+          ? activityCursorFor(
+              this.sessionId,
+              this.incarnation,
+              this.currentFingerprint,
+              this.revision,
+              floor,
+              candidateStart,
+              effectiveLeafId,
+              viewId,
+            )
+          : null,
+    });
+    while (start > floor && reversed.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
+      const index = start - 1;
+      const item = boundedTranscriptItem(source[index], index);
+      const candidate = [...reversed, item.value].reverse();
+      if (
+        Buffer.byteLength(JSON.stringify(shell(index, candidate))) >
+        TRANSCRIPT_PAGE_MAX_BYTES
+      )
+        break;
+      reversed.push(item.value);
+      start = index;
+    }
+    if (reversed.length === 0 && before > floor) oversizedTranscriptItem();
+    return withinTranscriptPageBudget(shell(start, reversed.reverse()));
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    this.resolveReconciliationResume?.();
+    this.resolveReconciliationResume = null;
+    this.reconciliationResume = null;
+    if (this.watchTimer) clearTimeout(this.watchTimer);
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.watcher?.close();
+    await this.reconcileTail;
+    this.reconcileHandler = null;
+    this.removeAllListeners();
+    this.currentEntries = [];
+    this.currentMessages = [];
+  }
+}

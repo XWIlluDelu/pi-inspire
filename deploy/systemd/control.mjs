@@ -1,0 +1,447 @@
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const HOST_SERVICE_NAME = "inspire-host.service";
+const TERMINAL_SERVICE_NAME = "inspire-terminal.service";
+const IDLE_MAINTENANCE_TIMER_NAME =
+  "inspire-idle-maintenance-restart.timer";
+
+function transientTerminalServiceName(root) {
+  const key = createHash("sha256")
+    .update(resolve(root))
+    .update("\0")
+    .update("127.0.0.1")
+    .update("\0")
+    .update("4587")
+    .digest("hex")
+    .slice(0, 12);
+  return `inspire-terminal-${key}.service`;
+}
+
+function configHome(environment = process.env) {
+  return environment.XDG_CONFIG_HOME || join(environment.HOME || homedir(), ".config");
+}
+
+export function hostServicePath(environment = process.env) {
+  return join(configHome(environment), "systemd", "user", HOST_SERVICE_NAME);
+}
+
+export function terminalServicePath(environment = process.env) {
+  return join(configHome(environment), "systemd", "user", TERMINAL_SERVICE_NAME);
+}
+
+function runSystemctl(arguments_, environment = process.env) {
+  return new Promise((resolveRun) => {
+    const child = spawn("systemctl", arguments_, {
+      env: environment,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk) => (stdout += String(chunk)));
+    child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
+    child.once("error", (error) =>
+      resolveRun({
+        code: 1,
+        issued: false,
+        stdout,
+        stderr: `${stderr}${error.message}`,
+      }),
+    );
+    child.once("exit", (code) =>
+      resolveRun({ code: code ?? 1, stdout, stderr }),
+    );
+  });
+}
+
+function properties(text) {
+  return Object.fromEntries(
+    text
+      .trim()
+      .split("\n")
+      .flatMap((line) => {
+        const separator = line.indexOf("=");
+        return separator < 0 ? [] : [[line.slice(0, separator), line.slice(separator + 1)]];
+      }),
+  );
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function expectedExecStart(value, launcher) {
+  const escaped = escapeRegExp(launcher);
+  const boundary = "(?:\\s|;|\\})";
+  return (
+    new RegExp(`(?:^|\\s)path=${escaped}${boundary}`, "u").test(value) &&
+    new RegExp(`(?:^|\\s)argv\\[\\]=${escaped}${boundary}`, "u").test(value)
+  );
+}
+
+function expectedReadyHook(value, launcher) {
+  const escaped = escapeRegExp(launcher);
+  const boundary = "(?:\\s|;|\\})";
+  return (
+    new RegExp(`(?:^|\\s)path=${escaped}${boundary}`, "u").test(value) &&
+    new RegExp(
+      `(?:^|\\s)argv\\[\\]=${escaped}\\s+wait-ready${boundary}`,
+      "u",
+    ).test(value)
+  );
+}
+
+function expectedTerminalStart(value, launcher, root) {
+  const escapedLauncher = escapeRegExp(launcher);
+  const escapedRoot = escapeRegExp(root);
+  const boundary = "(?:\\s|;|\\})";
+  return (
+    new RegExp(`(?:^|\\s)path=${escapedLauncher}${boundary}`, "u").test(
+      value,
+    ) &&
+    new RegExp(
+      `(?:^|\\s)argv\\[\\]=${escapedLauncher}\\s+terminal-daemon\\s+--root\\s+${escapedRoot}\\s+--host\\s+127\\.0\\.0\\.1\\s+--port\\s+4587${boundary}`,
+      "u",
+    ).test(value)
+  );
+}
+
+function commandDetail(result) {
+  return `${result.stderr}${result.stdout}`.trim();
+}
+
+/**
+ * A generic user-unit name is shared by installations, so a launcher may
+ * delegate only when systemd proves the unit is this exact checkout's unit.
+ */
+export async function inspectHostService(
+  root,
+  { environment = process.env, run = runSystemctl } = {},
+) {
+  const expectedRoot = resolve(root);
+  const result = await run(
+    [
+      "--user",
+      "show",
+      HOST_SERVICE_NAME,
+      "--property=LoadState",
+      "--property=FragmentPath",
+      "--property=WorkingDirectory",
+      "--property=ExecStart",
+      "--property=ExecStartPost",
+      "--property=Wants",
+      "--property=After",
+      "--property=UnitFileState",
+      "--property=ActiveState",
+      "--property=SubState",
+    ],
+    environment,
+  );
+  if (result.code !== 0) {
+    if (/not[ -]found|not loaded/iu.test(commandDetail(result))) return { kind: "absent" };
+    return { kind: "unavailable", detail: commandDetail(result) };
+  }
+  const value = properties(result.stdout);
+  if (value.LoadState !== "loaded") return { kind: "absent" };
+
+  const launcher = join(expectedRoot, "inspire");
+  if (
+    value.FragmentPath !== hostServicePath(environment) ||
+    value.WorkingDirectory !== expectedRoot ||
+    !expectedExecStart(value.ExecStart ?? "", launcher)
+  ) {
+    return { kind: "foreign", fragmentPath: value.FragmentPath || undefined };
+  }
+  if (
+    !expectedReadyHook(value.ExecStartPost ?? "", launcher) ||
+    !(value.Wants ?? "").split(/\s+/u).includes(TERMINAL_SERVICE_NAME) ||
+    !(value.After ?? "").split(/\s+/u).includes(TERMINAL_SERVICE_NAME)
+  ) {
+    return { kind: "outdated" };
+  }
+
+  const terminalResult = await run(
+    [
+      "--user",
+      "show",
+      TERMINAL_SERVICE_NAME,
+      "--property=LoadState",
+      "--property=FragmentPath",
+      "--property=WorkingDirectory",
+      "--property=ExecStart",
+    ],
+    environment,
+  );
+  if (terminalResult.code !== 0) {
+    if (/not[ -]found|not loaded/iu.test(commandDetail(terminalResult)))
+      return { kind: "outdated" };
+    return { kind: "unavailable", detail: commandDetail(terminalResult) };
+  }
+  const terminal = properties(terminalResult.stdout);
+  if (
+    terminal.LoadState !== "loaded" ||
+    terminal.FragmentPath !== terminalServicePath(environment) ||
+    terminal.WorkingDirectory !== expectedRoot ||
+    !expectedTerminalStart(terminal.ExecStart ?? "", launcher, expectedRoot)
+  ) {
+    return { kind: "outdated" };
+  }
+  return {
+    kind: "managed",
+    activeState: value.ActiveState || "unknown",
+    subState: value.SubState || "unknown",
+    unitFileState: value.UnitFileState || "unknown",
+  };
+}
+
+function stateDescription(service) {
+  return service.activeState === "active" ? "running" : service.activeState;
+}
+
+function serviceStatusLine(service) {
+  return `INSΠRE system service is ${stateDescription(service)} (${service.unitFileState}).`;
+}
+
+export async function manageHostService(root, action, options) {
+  const service = await inspectHostService(root, options);
+  if (service.kind !== "managed") return service;
+
+  const commands = {
+    // Host Wants/After starts the installed terminal unit. A duplicate owner
+    // may refuse that start without blocking Host access to a compatible daemon.
+    start: [["start", HOST_SERVICE_NAME]],
+    stop: [
+      ["stop", HOST_SERVICE_NAME],
+      ["stop", TERMINAL_SERVICE_NAME],
+    ],
+    restart: [["restart", HOST_SERVICE_NAME]],
+    // One systemd transaction honors Host After=terminal: stop Host first,
+    // restart the terminal owner, then start Host after terminal readiness.
+    "restart-all": [["restart", TERMINAL_SERVICE_NAME, HOST_SERVICE_NAME]],
+    enable: [
+      ["enable", TERMINAL_SERVICE_NAME],
+      ["enable", "--now", HOST_SERVICE_NAME],
+      ["enable", "--now", IDLE_MAINTENANCE_TIMER_NAME],
+    ],
+    disable: [
+      ["disable", "--now", IDLE_MAINTENANCE_TIMER_NAME],
+      ["disable", "--now", HOST_SERVICE_NAME],
+      ["disable", "--now", TERMINAL_SERVICE_NAME],
+    ],
+  };
+  const commandsForAction = commands[action];
+  if (!commandsForAction)
+    throw new Error(`Unsupported host-service action: ${action}`);
+
+  // Starting/enabling must not migrate ownership or end existing terminals.
+  // Only explicit stop/disable includes the installation's transient owner.
+  if (["stop", "disable"].includes(action))
+    await (options?.run ?? runSystemctl)(
+      ["--user", "stop", transientTerminalServiceName(root)],
+      options?.environment,
+    );
+
+  for (const arguments_ of commandsForAction) {
+    const result = await (options?.run ?? runSystemctl)(
+      ["--user", ...arguments_],
+      options?.environment,
+    );
+    if (result.code !== 0)
+      return { kind: "control-failed", action, detail: commandDetail(result) };
+  }
+  const settled = await inspectHostService(root, options);
+  if (settled.kind !== "managed") return settled;
+  const expectedActive = action === "stop" || action === "disable" ? false : true;
+  if ((settled.activeState === "active") !== expectedActive) {
+    return { kind: "control-failed", action, detail: serviceStatusLine(settled) };
+  }
+  return { kind: "controlled", action, service: settled };
+}
+
+/** Browser controls may act only on the systemd invocation hosting this exact
+ * process, never merely a matching checkout or another local instance. */
+export async function inspectBrowserRestart(root, options = {}) {
+  if (!/^[a-f0-9]{32}$/u.test(options.invocationId ?? ""))
+    return { kind: "unsupported" };
+  const service = await inspectHostService(root, options);
+  if (service.kind !== "managed") return service;
+  const result = await (options.run ?? runSystemctl)(
+    ["--user", "show", HOST_SERVICE_NAME, "--property=InvocationID", "--property=ActiveState"],
+    options.environment,
+  );
+  const value = properties(result.stdout);
+  if (result.code !== 0 || value.InvocationID !== options.invocationId || value.ActiveState !== "active")
+    return { kind: "invocation-changed" };
+  return { kind: "managed" };
+}
+
+export async function requestBrowserRestart(root, all, commit, options = {}) {
+  const service = await inspectBrowserRestart(root, options);
+  if (service.kind !== "managed") return { issued: false, code: 1 };
+  // Final owner commit follows every asynchronous inspection. A committed
+  // runtime drain cannot expire while systemd is processing this transaction.
+  if (!commit()) return { issued: false, code: 1 };
+  return (options.run ?? runSystemctl)(
+    ["--user", "--no-block", "restart", ...(all ? [TERMINAL_SERVICE_NAME] : []), HOST_SERVICE_NAME],
+    options.environment,
+  );
+}
+
+/** Scheduled restarts have a separate entry point: ordinary/manual restart
+ * remains explicit, but maintenance can never bypass the Host's final fence.
+ * The handoff callbacks belong to one lease owner and must not retry commit. */
+export async function restartIdleHost(root, handoff, options = {}) {
+  const cancel = async (reason) => {
+    try {
+      if (await handoff.release()) return { kind: "skipped", reason };
+    } catch {
+      // A lost release response is not evidence that admission reopened.
+    }
+    return { kind: "recovery-required", reason: "release-unconfirmed" };
+  };
+
+  let service;
+  try {
+    service = await inspectHostService(root, options);
+    if (service.kind !== "managed") return cancel(service.kind);
+    // This is deliberately AFTER every potentially slow systemctl inspection.
+    // Only the Host can atomically validate the lease and commit its drain.
+    if (!(await handoff.commit())) return cancel("commit-not-authorized");
+  } catch {
+    // No restart was issued. Release also invalidates a late HTTP commit.
+    return cancel("pre-restart-failed");
+  }
+
+  let result;
+  try {
+    result = await (options.run ?? runSystemctl)(
+      ["--user", "restart", HOST_SERVICE_NAME],
+      options.environment,
+    );
+  } catch {
+    return { kind: "recovery-required", reason: "restart-outcome-unknown" };
+  }
+  // Only failure to spawn proves systemctl could not submit a restart. Nonzero
+  // exit, signal, or transport failure can follow submission: never reopen then.
+  if (result.issued === false) return cancel("restart-not-issued");
+  if (result.code !== 0)
+    return { kind: "recovery-required", reason: "restart-outcome-unknown" };
+  return { kind: "restarted" };
+}
+
+function unavailableMessage(service) {
+  return service.detail
+    ? `Unable to contact the user systemd manager: ${service.detail}`
+    : "Unable to contact the user systemd manager.";
+}
+
+function foreignMessage(service) {
+  return service.fragmentPath
+    ? `The ${HOST_SERVICE_NAME} unit belongs to another INSΠRE checkout: ${service.fragmentPath}`
+    : `The ${HOST_SERVICE_NAME} unit belongs to another INSΠRE checkout.`;
+}
+
+function outdatedMessage() {
+  return `The ${HOST_SERVICE_NAME} unit is outdated. Reinstall it with: ./inspire service install-host`;
+}
+
+function usage() {
+  console.error(
+    "Use: systemd control --root <path> [status|start|stop|restart|restart-all|enable|disable]",
+  );
+}
+
+async function main() {
+  const [flag, root, action = "status"] = process.argv.slice(2);
+  if (flag !== "--root" || !root || process.argv.length > 5) {
+    usage();
+    process.exitCode = 64;
+    return;
+  }
+
+  if (action === "status") {
+    const service = await inspectHostService(root);
+    if (service.kind === "absent") {
+      process.exitCode = 3;
+      return;
+    }
+    if (service.kind === "foreign") {
+      console.error(foreignMessage(service));
+      process.exitCode = 4;
+      return;
+    }
+    if (service.kind === "outdated") {
+      console.error(outdatedMessage());
+      process.exitCode = 4;
+      return;
+    }
+    if (service.kind === "unavailable") {
+      console.error(unavailableMessage(service));
+      process.exitCode = 4;
+      return;
+    }
+    console.log(serviceStatusLine(service));
+    if (service.activeState !== "active") process.exitCode = 5;
+    return;
+  }
+
+  if (!new Set(["start", "stop", "restart", "restart-all", "enable", "disable"]).has(action)) {
+    usage();
+    process.exitCode = 64;
+    return;
+  }
+
+  const result = await manageHostService(root, action);
+  if (result.kind === "absent") {
+    console.error(`No ${HOST_SERVICE_NAME} unit is installed for this checkout.`);
+    process.exitCode = 3;
+    return;
+  }
+  if (result.kind === "foreign") {
+    console.error(foreignMessage(result));
+    process.exitCode = 4;
+    return;
+  }
+  if (result.kind === "outdated") {
+    console.error(outdatedMessage());
+    process.exitCode = 4;
+    return;
+  }
+  if (result.kind === "unavailable") {
+    console.error(unavailableMessage(result));
+    process.exitCode = 4;
+    return;
+  }
+  if (result.kind === "control-failed") {
+    console.error(
+      result.detail || `Unable to ${result.action} the INSΠRE system service.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const verbs = {
+    start: "Started",
+    stop: "Stopped",
+    restart: "Restarted",
+    "restart-all": "Restarted Host and terminal services for",
+    enable: "Enabled and started (with daily idle maintenance)",
+    disable: "Disabled and stopped (with daily idle maintenance)",
+  };
+  console.log(action === "restart"
+    ? "Restarted INSΠRE Host. Terminals remain running."
+    : action === "restart-all"
+      ? "Restarted INSΠRE Host and terminal services."
+      : `${verbs[action]} INSΠRE system service.`);
+  console.log(serviceStatusLine(result.service));
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  await main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}

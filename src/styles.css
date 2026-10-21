@@ -1,0 +1,32 @@
+/* INSΠRE — restrained scientific workbench.
+   Implements the design-system contract (docdoki/specs/design-system.md):
+   botanical neutral ladders, hairline boundaries, one selected botanical
+   accent palette tuned per light/dark theme, IBM Plex UI voices, and the
+   Flux Mono SC code voice. */
+
+/* --- Self-hosted fonts (SIL OFL, see src/assets/licenses) --- */
+
+/* Render-critical Latin faces stay in the blocking sheet. Exact,
+   checksum-pinned CJK splits load after the shell becomes interactive. */
+@import "./assets/fonts/core-fonts.css";
+
+@import "./styles/foundation.css";
+@import "./styles/loading.css";
+@import "./styles/window-titlebar.css";
+@import "./styles/choice-input.css";
+@import "./styles/scrollbars.css";
+@import "./styles/navigation.css";
+@import "./styles/topbar.css";
+@import "./styles/transcript.css";
+@import "./styles/activity-cards.css";
+@import "./styles/composer.css";
+@import "./styles/image-preview.css";
+@import "./styles/workbench.css";
+@import "./styles/terminal.css";
+@import "./styles/welcome.css";
+@import "./styles/settings-overlays.css";
+@import "./styles/model-settings.css";
+@import "./styles/mcp-settings.css";
+@import "./styles/system-settings.css";
+@import "./styles/responsive.css";
+@import "./styles/history.css";

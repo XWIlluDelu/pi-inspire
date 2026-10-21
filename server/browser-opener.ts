@@ -1,0 +1,67 @@
+import { type SpawnOptions, spawn } from "node:child_process";
+import { win32 } from "node:path";
+import { environmentValue } from "./platform-environment.mjs";
+
+interface DetachedChild {
+  once(event: "error", listener: (error: Error) => void): unknown;
+  once(
+    event: "exit",
+    listener: (code: number | null, signal: NodeJS.Signals | null) => void,
+  ): unknown;
+  unref(): void;
+}
+
+type SpawnDetached = (
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+) => DetachedChild;
+
+/** Best-effort desktop integration: inability to find or start an opener must
+ * never change the lifetime of the already-listening Host. */
+export function openBrowser(
+  url: string,
+  onError: (error: Error) => void,
+  platform = process.platform,
+  spawnDetached: SpawnDetached = spawn as unknown as SpawnDetached,
+  environment: NodeJS.ProcessEnv = process.env,
+): void {
+  const systemRoot = environmentValue(environment, "SystemRoot", platform);
+  const windowsOpener = systemRoot
+    ? win32.join(systemRoot, "System32", "rundll32.exe")
+    : "rundll32.exe";
+  const [command, args] =
+    platform === "darwin"
+      ? ["open", [url]]
+      : platform === "win32"
+        ? [windowsOpener, ["url.dll,FileProtocolHandler", url]]
+        : ["xdg-open", [url]];
+  try {
+    const child = spawnDetached(command, args, {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    let reported = false;
+    const report = (error: Error): void => {
+      if (reported) return;
+      reported = true;
+      onError(error);
+    };
+    child.once("error", report);
+    child.once("exit", (code, signal) => {
+      if (code === 0) return;
+      report(
+        Object.assign(
+          new Error(
+            `Desktop browser opener ${signal ? `ended with ${signal}` : `exited with status ${code ?? "unknown"}`}`,
+          ),
+          { code: signal ?? (code === null ? "EXIT_UNKNOWN" : `EXIT_${code}`) },
+        ),
+      );
+    });
+    child.unref();
+  } catch (error) {
+    onError(error instanceof Error ? error : new Error(String(error)));
+  }
+}

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Interactive preview</title>
+  <link rel="stylesheet" href="./interactive.css">
+</head>
+<body>
+  <h1>Interactive preview fixture</h1>
+  <p id="status">Static preview</p>
+  <button id="toggle" type="button">Pause</button>
+  <label>Speed <input id="speed" type="range" min="1" max="3" value="1"></label>
+  <output id="speed-value">1</output>
+  <div id="motion" style="width:40px;height:40px;background:teal"></div>
+  <img id="local-image" src="./training%20curve.png" alt="Local training curve">
+  <img id="remote-image" src="https://preview.example.test/image.png" alt="External image">
+  <script>
+    document.querySelector("#status").textContent = "Scripts running";
+    try { parent.document.body.dataset.previewAccess = "unexpected"; }
+    catch { document.body.dataset.parentIsolated = "true"; }
+    try { localStorage.setItem("preview-access", "unexpected"); }
+    catch { document.body.dataset.storageIsolated = "true"; }
+    fetch("/api/snapshot", { credentials: "include" }).then(response => {
+      document.body.dataset.apiStatus = String(response.status);
+    }).catch(() => { document.body.dataset.apiStatus = "blocked"; });
+    let running = true, position = 0;
+    document.querySelector("#toggle").onclick = () => {
+      running = !running;
+      document.querySelector("#toggle").textContent = running ? "Pause" : "Resume";
+    };
+    document.querySelector("#speed").oninput = event => {
+      document.querySelector("#speed-value").value = event.target.value;
+    };
+    function tick() {
+      if (running) document.querySelector("#motion").style.transform =
+        "translateX(" + (++position % 100) + "px)";
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  </script>
+  <script type="module" src="./interactive.js"></script>
+  <script src="https://preview.example.test/remote.js"></script>
+</body>
+</html>

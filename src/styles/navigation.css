@@ -1,0 +1,1234 @@
+/* --- Left navigation --- */
+
+.nav {
+  /* Shared 16px icon slot, 8px label gap and 8px inner inset. */
+  --nav-label-inset: calc(var(--space-2) + var(--space-4) + var(--space-2));
+  width: var(--nav-w);
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-rail);
+  border-right: 1px solid var(--line-subtle);
+  transition: width var(--dur-panel) var(--ease-standard);
+}
+
+.nav--rail {
+  width: var(--nav-w-collapsed);
+}
+
+@media (min-width: 901px) {
+  .nav {
+    border-right: 0;
+  }
+}
+
+.nav__top {
+  flex: 0 0 auto;
+}
+
+.nav__rail-toggle-icon {
+  display: none;
+  color: var(--muted);
+  transition: color var(--dur-micro) var(--ease-standard);
+}
+
+.nav__brand-rail:is(:hover, :active) .nav__rail-toggle-icon {
+  color: var(--ink);
+}
+
+/* Overlay owns the app identity; desktop navigation starts with its actions. */
+@media (display-mode: window-controls-overlay) and (min-width: 901px) {
+  .nav__top {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: var(--topbar-h) auto;
+    gap: var(--space-2);
+    padding: 0 var(--space-3) var(--space-4);
+  }
+
+  .nav__top .nav__header,
+  .nav__top .nav__controls {
+    display: contents;
+  }
+
+  .nav__top .nav__brand-lockup,
+  .nav__brand-icon--rail {
+    display: none;
+  }
+
+  .nav__rail-toggle-icon {
+    display: block;
+  }
+
+  .nav__top .nav__close {
+    grid-area: 1 / 2;
+    align-self: center;
+  }
+
+  .nav__top .nav__new-session {
+    grid-area: 1 / 1;
+    align-self: center;
+  }
+
+  .nav__top .nav__search {
+    grid-area: 2 / 1 / auto / -1;
+  }
+}
+
+/* Align the brand with the workbench header without enclosing the controls. */
+.nav__header {
+  flex: 0 0 auto;
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+}
+
+.nav__header--rail {
+  justify-content: center;
+  padding: 0;
+}
+
+.nav__close {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+}
+
+.nav__brand-lockup {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  user-select: none;
+}
+
+.nav__brand-icon {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+}
+
+.welcome__hero-icon {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+}
+
+.nav__new-session {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  height: 32px;
+  min-height: 32px;
+  padding: 0 var(--space-2) 0 calc(var(--space-1) - 1px);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: var(--leading-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease-standard);
+}
+
+.nav__new-session-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.nav__new-session:hover,
+.nav__new-session:focus-visible,
+.nav__brand-rail:hover,
+.nav__brand-rail:focus-visible {
+  background: var(--bg-control);
+}
+
+.nav__new-session:active,
+.nav__brand-rail:active {
+  background: var(--bg-inset);
+}
+
+.nav__new-session--rail {
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  margin: var(--space-1) auto 0;
+  padding: 0;
+  border-radius: var(--radius-sm);
+}
+
+.nav__new-session-icon {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.nav__new-session:is(:hover, :focus-visible) .nav__new-session-icon {
+  color: var(--ink);
+}
+
+.nav__brand-rail {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-control);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease-standard);
+}
+
+.nav__brand-icon--rail {
+  width: 24px;
+  height: 24px;
+}
+
+@media (max-width: 900px), (pointer: coarse) {
+  .nav__new-session,
+  .nav__search {
+    min-height: 36px;
+  }
+
+  .nav__brand-rail,
+  .nav__new-session--rail {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .nav__close {
+    flex-basis: 44px;
+    width: 44px;
+    height: 44px;
+  }
+}
+
+.nav__controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) var(--space-4);
+}
+
+.nav__error {
+  margin: calc(var(--space-3) * -1) var(--space-3) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  color: var(--error-ink);
+  background: var(--error-tint);
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.nav__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 32px;
+  padding: 0 calc(var(--space-1) - 1px);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-control);
+  color: var(--muted);
+  box-shadow: none;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard),
+    box-shadow var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+.nav__search:hover {
+  background: var(--bg-surface);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.nav__search:focus-within {
+  background: var(--bg-surface);
+  border-color: var(--accent-focus);
+  box-shadow: 0 0 0 1px var(--accent-tint);
+  color: var(--ink);
+}
+
+.nav__search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: 400 var(--text-sm)/var(--leading-ui) var(--font-sans);
+  outline: none;
+}
+
+.nav__search input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+.nav__list {
+  flex: 1;
+  /* Keep browsing usable when both bottom drawers are expanded. */
+  min-height: min(144px, 25%);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Folder rows reserve 8px for the active marker; compensate at the outer
+     gutter so their icon/text axes still match New, Search and Workspace. */
+  padding: 0 var(--space-3) var(--space-3) var(--space-2);
+}
+
+/* Align sessions with folder labels, leaving the icon column as hierarchy. */
+.nav__group .nav__row-main {
+  padding-left: var(--nav-label-inset);
+}
+
+/* The row is a container: a main select button plus curation actions that
+   take over its right-hand meta column on hover or focus (nested buttons
+   would be invalid HTML). */
+.nav__row {
+  position: relative;
+  border-radius: var(--radius-sm);
+  transition: background var(--dur-micro) var(--ease-standard);
+}
+
+.nav__row--active::before,
+.nav__group-title--active::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 6px;
+  bottom: 6px;
+  width: 2.5px;
+  border-radius: 2px;
+  background: var(--accent-deep);
+  z-index: 1;
+}
+
+/* One dense line: title left, meta right. */
+.nav__row-main {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: left;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 5px var(--space-2);
+  min-height: 32px;
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease-standard);
+}
+
+.nav__row:hover {
+  background: var(--bg-inset);
+}
+
+.nav__row--active,
+.nav__row--active:hover {
+  background: var(--nav-active-bg);
+  box-shadow: inset 0 0 0 1px var(--accent-soft);
+}
+
+.nav__row--highlighted {
+  background: var(--accent-tint);
+  outline: 1px solid var(--accent-deep);
+  outline-offset: -1px;
+}
+
+.nav__row-actions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-micro) var(--ease-standard);
+}
+
+.nav__row:hover .nav__row-actions,
+.nav__row:has(:focus-visible) .nav__row-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.nav__row-action,
+.nav__row-action-spacer {
+  width: 22px;
+  height: 22px;
+  display: inline-block;
+}
+
+.nav__row-action {
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  transition:
+    color var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
+}
+
+.nav__row-action:hover {
+  color: var(--accent-deep);
+  background: var(--bg-inset);
+}
+
+.nav__row-action--danger:hover:not(:disabled),
+.nav__row-action--danger:focus-visible:not(:disabled) {
+  color: var(--error);
+  background: var(--error-tint);
+}
+
+.nav__row-action:disabled {
+  color: var(--faint);
+  background: transparent;
+  cursor: default;
+  opacity: 0.5;
+}
+
+@media (hover: none), (max-width: 600px) {
+  /* Touch and phone-width layouts reserve distinct grid columns for session
+     metadata and persistent actions, so age text cannot enter either action
+     hit area. */
+  .nav__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    align-items: center;
+    column-gap: var(--space-2);
+    min-height: 44px;
+  }
+
+  .nav__row-main {
+    width: auto;
+    min-width: 0;
+    min-height: 44px;
+  }
+
+  .nav__row-actions {
+    position: static;
+    flex: 0 0 auto;
+    transform: none;
+    gap: 2px;
+    margin-right: 4px;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .nav__row-action,
+  .nav__row-action-spacer {
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+  }
+
+  .nav__row:hover .nav__row-meta,
+  .nav__row:has(:focus-visible) .nav__row-meta {
+    opacity: 1;
+  }
+}
+
+.nav__row-title {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-sm);
+  font-weight: 400;
+  color: var(--ink);
+}
+
+/* Ellipsis lives on the inner text span so the dot's halo is not clipped
+   by the truncation box. */
+.nav__list .search-match {
+  font-weight: 600;
+}
+
+.nav__row-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav__row--active .nav__row-title {
+  font-weight: 500;
+}
+
+.nav__row-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav__row-state {
+  flex: 0 0 12px;
+  display: inline-flex;
+  align-items: center;
+}
+.nav__row-state--running { color: var(--brand-accent); }
+
+.nav__row-state--completed {
+  color: var(--success);
+}
+
+.nav__row-state--failed {
+  color: var(--error);
+}
+
+.nav__row-dot--attention {
+  background: var(--warning);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 30%, transparent);
+}
+
+/* The row's right-hand column. The age sits in a fixed slot the width of the
+   two action buttons, so ages line up down the list and the actions can take
+   the same ground without moving anything. */
+.nav__row-meta {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  transition: opacity var(--dur-micro) var(--ease-standard);
+}
+
+/* The actions occupy this column; the meta yields rather than sitting under
+   them. */
+@media (hover: hover) and (min-width: 601px) {
+  .nav__row:hover .nav__row-meta,
+  .nav__row:has(:focus-visible) .nav__row-meta {
+    opacity: 0;
+  }
+}
+
+.nav__row-age {
+  flex: 0 0 46px;
+  text-align: right;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Only where a section crosses folders; it yields width before the age does. */
+.nav__row-project {
+  min-width: 0;
+  max-width: 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-control);
+  background: var(--bg-inset);
+}
+
+/* Compact empty-state stack for lists and search results.
+   Conversation-specific spacing and type use an explicit variant. */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+.empty-state svg {
+  color: var(--faint);
+  opacity: 0.75;
+  margin-bottom: 2px;
+}
+
+.empty-state__title {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.empty-state__hint {
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+
+/* The two bottom drawers share one header grammar. */
+.nav__dock-heading {
+  flex: 0 0 36px;
+  display: flex;
+  align-items: stretch;
+  margin: 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.nav__dock-toggle {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+.nav__dock-toggle:hover:not(:disabled) {
+  background: var(--bg-control);
+  color: var(--ink);
+}
+
+.nav__dock-toggle:focus-visible {
+  /* Full-width dock headers meet the app/drawer edge; keep every side visible. */
+  outline-offset: -2px;
+}
+
+.nav__dock-toggle:disabled {
+  cursor: default;
+}
+
+.nav__dock-toggle > svg {
+  flex: 0 0 auto;
+}
+
+.nav__dock-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Plex's ink sits slightly high in a geometrically centred line box.
+   Correct text only; icons and hit targets stay on the row centre. */
+.nav__dock-title,
+.nav__hidden-count,
+.nav__hidden-content .nav__row-name,
+.nav__hidden-content .nav__row-meta {
+  translate: 0 var(--ui-text-offset);
+}
+
+.nav__hidden-count {
+  color: var(--faint);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Hidden follows the workspace explorer, outside the scrolling session catalog. */
+.nav__group.nav__group--hidden {
+  flex: 0 1 auto;
+  min-height: 36px;
+  max-height: 40%;
+  gap: 0;
+}
+
+.nav__hidden-content {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--space-3) var(--space-2);
+}
+
+.nav__hidden-content > .nav__group + .nav__group {
+  margin-top: var(--space-2);
+}
+
+/* Independent Hidden sessions start shallower than folder contents, so a
+   preceding collapsed folder does not appear to own the following row. */
+.nav__hidden-content > .nav__row > .nav__row-main {
+  padding-left: var(--space-4);
+}
+
+.nav__hidden-content > .nav__group > .nav__row > .nav__row-main {
+  padding-left: calc(var(--nav-label-inset) + var(--space-4));
+}
+
+.nav__hidden-content .nav__row-project {
+  padding: 0;
+  background: transparent;
+}
+
+.nav__hidden-heading {
+  --hidden-action-width: 28px;
+  position: relative;
+}
+
+.nav__hidden-toggle .nav__hidden-count {
+  margin-right: var(--hidden-action-width);
+}
+
+/* An independent hit target between the count and disclosure, never nested
+   inside the toggle and never taking a row from the content. */
+.nav__hidden-clear {
+  position: absolute;
+  right: 28px;
+  top: 0;
+  bottom: 0;
+  margin: auto 0;
+  width: var(--hidden-action-width);
+  height: 28px;
+}
+
+@media (hover: none), (max-width: 600px) {
+  .nav__hidden-heading {
+    --hidden-action-width: 36px;
+  }
+
+  .nav__hidden-clear {
+    height: 34px;
+  }
+
+  /* Cross-project rows (Pinned, search and Hidden) need a second line when
+     actions stay visible: identity leads, with project and age beneath it. */
+  .nav__row--cross-project .nav__row-main {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    padding-block: 6px;
+  }
+
+  .nav__row--cross-project .nav__row-meta {
+    opacity: 1;
+  }
+
+  .nav__row--cross-project .nav__row-project {
+    flex: 0 1 auto;
+    max-width: none;
+    color: var(--faint);
+  }
+
+  .nav__row-age {
+    /* Touch actions own a separate column; do not reserve their width twice. */
+    flex-basis: auto;
+    margin-left: auto;
+  }
+}
+
+/* --- Shared workspace browser --- */
+
+.explorer {
+  flex: 0 0 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.explorer--open {
+  flex: 0 1 50%;
+}
+
+.explorer__browser {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.explorer__tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--space-3) var(--space-2);
+}
+
+.workspace-tree {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.workspace-tree__row {
+  display: flex;
+  width: 100%;
+  min-height: 26px;
+  height: 26px;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding-block: 2px;
+  padding-right: var(--space-2);
+  color: var(--body);
+  font: var(--text-sm)/var(--leading-ui) var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+/* Leaf rows reserve the same disclosure slot as sibling folders, not search results. */
+.workspace-tree__row--file:not(.workspace-tree__row--result)::before {
+  content: "";
+  flex: 0 0 11px;
+}
+
+.workspace-tree__row:hover {
+  background: var(--bg-inset);
+  color: var(--ink);
+}
+
+.workspace-tree__row--active,
+.workspace-tree__row--active:hover {
+  background: var(--accent-tint);
+  color: var(--ink);
+}
+
+.workspace-tree__row svg {
+  flex: 0 0 auto;
+  color: var(--faint);
+}
+
+.workspace-tree__row--folder > svg:nth-child(2) {
+  color: var(--muted);
+}
+
+.workspace-tree__row--active > svg {
+  color: var(--accent-deep);
+}
+
+.workspace-tree__file-label {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.workspace-tree__name,
+.workspace-tree__path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-tree__name {
+  flex: 1;
+}
+
+.workspace-tree__path {
+  color: var(--faint);
+  font: var(--text-xs)/var(--leading-ui) var(--font-mono);
+}
+
+.workspace-tree--results .search-match {
+  font-weight: 600;
+}
+
+.workspace-tree__row--result {
+  height: auto;
+  min-height: 34px;
+  padding-block: 4px;
+  align-items: flex-start;
+}
+
+.workspace-tree__row--result svg {
+  margin-top: 2px;
+}
+
+.workspace-tree__status {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  gap: var(--space-1);
+  border: 0;
+  background: transparent;
+  padding: 3px var(--space-2);
+  color: var(--faint);
+  font: var(--text-xs)/var(--leading-ui) var(--font-sans);
+  text-align: left;
+}
+
+button.workspace-tree__status {
+  width: 100%;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background var(--dur-micro) var(--ease-standard);
+}
+
+button.workspace-tree__status:hover {
+  background: var(--bg-inset);
+}
+
+button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) {
+  color: var(--ink);
+}
+
+.workspace-tree__status--error {
+  color: var(--warning-ink);
+}
+
+.workspace-tree__status--error > svg {
+  color: var(--warning);
+}
+
+.workspace-tree--results .workspace-tree__row {
+  padding-left: var(--space-2) !important;
+}
+
+.workspace-search {
+  display: flex;
+  min-width: 0;
+  height: 34px;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--hairline) 75%, transparent);
+  border-radius: var(--radius-control);
+  background: var(--bg-surface);
+  padding: 0 var(--space-3);
+  color: var(--muted);
+  box-shadow: none;
+  transition:
+    border-color var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+.workspace-search:hover {
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.workspace-search:focus-within {
+  border-color: var(--accent-focus);
+  color: var(--ink);
+}
+
+.workspace-search svg {
+  flex: 0 0 auto;
+  color: inherit;
+}
+
+.workspace-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: var(--space-2) 0;
+  color: var(--ink);
+  font: var(--text-sm)/var(--leading-ui) var(--font-sans);
+}
+
+/* This field already provides a themed clear button. */
+.workspace-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.workspace-search input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+.workspace-search__clear {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+.workspace-search__clear:hover {
+  background: var(--bg-inset);
+  color: var(--ink);
+}
+
+.git-rollup {
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.git-rollup::before {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.nav__group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav__group + .nav__group {
+  margin-top: var(--space-4);
+}
+
+.nav__pagination {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  margin-top: var(--space-3);
+  padding: 0 var(--space-2);
+}
+
+.nav__pagination-status {
+  min-height: 16px;
+  color: var(--faint);
+  font-size: var(--text-xs);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.nav__pagination-button {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.nav__pagination-button:hover:not(:disabled),
+.nav__pagination-button:focus-visible {
+  color: var(--accent-deep);
+  background: var(--accent-tint);
+}
+
+.nav__pagination-button:hover:not(:disabled) {
+  border-color: var(--accent-deep);
+}
+
+.nav__pagination-button:focus-visible:not(:disabled) {
+  border-color: var(--accent-focus);
+}
+
+.nav__pagination-button:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+@media (hover: none) {
+  .nav__pagination-button {
+    min-height: 40px;
+  }
+}
+
+/* Folder headers and session rows share one interaction grammar: the main
+   button owns the full row, and a fixed right column swaps count for actions. */
+.nav__group-title {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  height: 28px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--muted);
+  overflow: hidden;
+  white-space: nowrap;
+  border-radius: var(--radius-control);
+}
+
+.nav__group-title--folder:hover {
+  background: var(--bg-inset);
+}
+
+.nav__group--pinned > .nav__group-title {
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+}
+
+/* A collapsed folder hiding the active session carries the highlight. */
+.nav__group-title--active,
+.nav__group-title--active:hover {
+  background: var(--accent-tint);
+  color: var(--ink);
+}
+
+.nav__list > .nav__group--pinned + .nav__group {
+  margin-top: var(--space-5);
+}
+
+/* Pinned folders sit above ordinary ones; a step marks where they end. */
+.nav__list > .nav__group--pinned-folder + .nav__group:not(.nav__group--pinned-folder) {
+  margin-top: var(--space-5);
+}
+
+.nav__group-toggle {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  /* Reserve a clear gutter beside the inset active marker. */
+  padding: 0 var(--space-2);
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.nav__group-toggle > svg {
+  flex: 0 0 auto;
+}
+
+.nav__group-toggle:focus-visible {
+  /* The heading clips its contents; keep keyboard focus inside that contour. */
+  outline-offset: -2px;
+}
+
+.nav__group-toggle:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.nav__group-actions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-micro) var(--ease-standard);
+}
+
+.nav__group-title--folder:hover .nav__group-actions,
+.nav__group-title--folder:has(:focus-visible) .nav__group-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* The same right-hand column the rows give their activity age. */
+.nav__group-count {
+  flex: 0 0 46px;
+  margin-left: auto;
+  text-align: right;
+  font-size: var(--text-xs);
+  font-weight: 400;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+  pointer-events: none;
+  transition: opacity var(--dur-micro) var(--ease-standard);
+}
+
+.nav__group-title--folder:hover .nav__group-count,
+.nav__group-title--folder:has(:focus-visible) .nav__group-count {
+  opacity: 0;
+}
+
+@media (hover: none), (max-width: 600px) {
+  .nav__group-title {
+    height: 36px;
+  }
+
+  .nav__group-title--folder .nav__group-toggle {
+    padding-right: 78px;
+  }
+
+  .nav__group-title--folder .nav__group-actions {
+    gap: 2px;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .nav__group-title--folder .nav__group-count {
+    /* Actions already reserve their column; a hidden count must not reserve it twice. */
+    display: none;
+  }
+}
+
+.nav__group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nav__group-context {
+  min-width: 0;
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--faint);
+  opacity: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nav__group--hidden-folder > .nav__group-title {
+  margin-left: var(--space-4);
+}
+
+.nav__row-main:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.nav__row-main:disabled:hover {
+  background: transparent;
+}
+
+.nav__row--active .nav__row-main:disabled,
+.nav__row--active .nav__row-main:disabled:hover {
+  background: transparent;
+  opacity: 1;
+}

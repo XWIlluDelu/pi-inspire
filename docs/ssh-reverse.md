@@ -1,0 +1,145 @@
+# SSH reverse connection
+
+This optional module targets Linux hosts with systemd user services. The core
+INSΠRE Host and browser workbench support macOS and Windows independently; the
+connection dispatcher rejects this module explicitly on those systems. Local
+lifecycle commands require `flock` (normally provided by Linux's `util-linux`).
+
+The `ssh-reverse` connection module exposes one local INSΠRE host through a server you control without binding INSΠRE to a public interface. INSΠRE and Pi remain on the local machine; the module owns only the local SSH tunnel.
+
+```text
+local INSΠRE host 127.0.0.1:4587
+  → SSH reverse tunnel
+  → server 127.0.0.1:<remote-port>
+  → HTTPS reverse proxy
+  → browser
+```
+
+The server-side HTTPS proxy is a user-controlled edge. It terminates HTTPS and can observe application traffic, so use a server and security policy you trust.
+
+The examples use the globally installed `inspire` command. In a source checkout, use `./inspire` instead.
+
+## Local configuration
+
+Start the local host normally:
+
+```bash
+inspire
+```
+
+Create the module configuration:
+
+```bash
+inspire connection ssh-reverse init
+```
+
+For a source checkout, the command creates the ignored file `.inspire/connections/ssh-reverse.env`. An installed release uses `${XDG_CONFIG_HOME:-~/.config}/inspire/connections/ssh-reverse.env` instead. Both locations must remain private to the current user.
+
+Set the remote SSH target and server loopback port:
+
+```dotenv
+INSPIRE_SSH_TARGET=relay-user@relay-host
+INSPIRE_SSH_REMOTE_PORT=14587
+
+# Optional; default is 4587.
+# INSPIRE_SSH_LOCAL_PORT=4587
+
+# Optional. When omitted, SSH uses the user's normal SSH config, agent, and keys.
+# INSPIRE_SSH_IDENTITY_FILE=/absolute/path/to/private-key
+```
+
+The parser accepts only these fields; it never executes the configuration as shell code. It never accepts a remote bind address and always issues the equivalent of:
+
+```bash
+ssh -N -R 127.0.0.1:14587:127.0.0.1:4587 relay-user@relay-host
+```
+
+The managed command also bounds the initial connection to 10 seconds and probes the server every 15 seconds with three missed probes allowed, detecting a dead tunnel in roughly 45 seconds without changing the routing topology. The module leaves SSH compression at its default. `Compression=yes` can reduce bootstrap, asset, and other HTTP bytes carried inside the encrypted reverse hop, but costs CPU and may duplicate WebSocket per-message compression when the proxy preserves that negotiation. Benchmark the end-to-end path before opting in; the Caddy setting below compresses only the separate phone-facing HTTP response.
+
+## Connection lifecycle
+
+```bash
+inspire connection ssh-reverse start
+inspire connection ssh-reverse status
+inspire connection ssh-reverse restart
+inspire connection ssh-reverse stop
+```
+
+The connection commands manage only the verified SSH tunnel. They do not stop, replace, or otherwise own the local INSΠRE host. A tunnel start requires that the configured local loopback port is already listening. Startup and service logs distinguish SSH authentication, server-identity verification, relay DNS/reachability, remote-port rejection, and an interrupted established connection while retaining the raw SSH diagnostics.
+
+`status` verifies the local host listener and this module's managed SSH control connection. It does not prove public DNS, TLS, HTTPS proxying, or browser WebSocket delivery. If those are operational requirements, monitor the public endpoint independently with a paired test client that requires both an authenticated health response and the WebSocket's initial snapshot.
+
+For a bounded client-side trace, browser developer tools can inspect `performance.getEntriesByType("measure").filter(({ name }) => name.startsWith("inspire:"))`. These process-local entries report bootstrap and WebSocket handshake duration (including whether `permessage-deflate` was actually negotiated), prompt-confirmation outcome, and ten-second stream frame/event/character aggregates; they contain no prompt or response text and are neither persisted nor uploaded.
+
+`./inspire --ssh-reverse` is a shorthand for `./inspire connection ssh-reverse start`.
+
+## Automatic recovery
+
+Install the local host and tunnel user services:
+
+```bash
+./inspire stop
+./inspire service install-host
+./inspire connection ssh-reverse install-service
+./inspire service enable-host
+systemctl --user enable --now inspire-connection-ssh-reverse.service
+```
+
+The two services are independent: the host service owns the local INSΠRE process, while the tunnel service owns only SSH. The tunnel uses `Restart=always`, so it reconnects after a network interruption or server restart; the host uses `Restart=on-failure`. Because the tunnel runs with `BatchMode=yes`, an unattended service needs an SSH identity usable without an interactive password or passphrase prompt.
+
+There is one per-user SSH reverse unit. Lifecycle commands verify that it belongs to the current INSΠRE installation instead of controlling a stale or different checkout. Re-run `install-service` after moving or upgrading the installation; it restarts an active matching unit, but refuses to replace one owned by another active checkout.
+
+For recovery before a graphical login, enable the user manager to persist across logouts:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+Stopping the connection service leaves `inspire-host.service` running:
+
+```bash
+systemctl --user stop inspire-connection-ssh-reverse.service
+```
+
+## Server-side minimum
+
+The server needs an SSH account permitted to create the selected reverse listener and an HTTPS reverse proxy. Keep the SSH listener loopback-only; do not expose the tunnel port directly to the internet.
+
+A minimal Caddy site is:
+
+```caddyfile
+inspire.example.com {
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+        X-Frame-Options "DENY"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+
+    # Compresses the phone-facing HTTP response. The INSΠRE Host separately
+    # offers WebSocket per-message compression; verify negotiated extensions
+    # in the browser trace rather than assuming the proxy preserved them.
+    encode zstd gzip
+
+    reverse_proxy 127.0.0.1:14587
+
+    # Mark only Caddy handler failures, not a 5xx response returned by INSΠRE.
+    handle_errors 502 503 504 {
+        header X-Inspire-Edge "ssh-reverse"
+        respond "{err.status_code} {err.status_text}"
+    }
+}
+```
+
+Configure the site without an access log that retains request URLs. Caddy sets `X-Forwarded-Proto` for proxied requests by default; any substitute must overwrite that header. INSΠRE trusts it only when the immediate connection is loopback-local.
+
+Use an SSH authorization policy that confines the key to the assigned `127.0.0.1:<remote-port>` reverse listener and disallows ordinary interactive use. Keep the reverse listener itself local to the server. Permit TCP 443 for HTTPS and, where the server firewall supports it, UDP 443 so Caddy can serve HTTP/3 on the phone-facing hop; `curl --http3-only -I https://inspire.example.com` can confirm that path when the installed curl build supports HTTP/3.
+
+## Browser pairing
+
+A request received through the trusted HTTPS proxy removes `?token=` without pairing. Run `inspire token` in a private terminal on the Host (or `npm run inspire -- token` from source), then paste that token into the Pair form once. The command verifies the matching Host before explicitly printing the credential; local launcher URLs contain only one-use loopback pairing fragments, not the token. The browser stores a non-extractable origin-scoped signing key and a public registration certificate, not a token or pairing cookie. After reload or Host restart it signs a one-use challenge to obtain a short-lived, memory-only API bearer. Event and terminal WebSockets use single-use exact-origin tickets minted through authenticated fetch. The proxy must preserve the public Host header and overwrite `X-Forwarded-Proto` with `https`.
+
+Project terminals use a dedicated `/terminal` WebSocket over this same HTTPS proxy and SSH tunnel; no additional listener is exposed. Their PTYs remain in the local terminal daemon when the tunnel disconnects and the browser resumes them after transport recovery. Pairing also grants the browser authority to take control of a real shell running as the local Host user, so a paired browser profile must be trusted as fully as that operating-system account.
+
+The Host token remains a shared personal credential. Rotate it if exposed, and keep it out of public server configuration, shell history, remote URLs and logs. Browser pairing keys are isolated by scheme, hostname and port; API bearers are never sent as cookies to another port. Trust the entire browser-facing origin (including its reverse proxy and any content served on it), not just one path. If an older browser was paired with an explicit `INSPIRE_TOKEN`, operator rotation is required: see [cookie-pairing migration](host.md#migration-from-cookie-pairing).

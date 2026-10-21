@@ -1,0 +1,321 @@
+import {
+  appendFile,
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { SessionMetadataIndex } from "../../server/session-metadata.js";
+
+const directories: string[] = [];
+
+async function directory(): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), "inspire-session-metadata-"));
+  directories.push(path);
+  return path;
+}
+
+function header(id = "session-a") {
+  return {
+    type: "session",
+    version: 3,
+    id,
+    timestamp: "2026-01-01T00:00:00.000Z",
+    cwd: "/work/project",
+  };
+}
+
+function message(
+  id: string,
+  role: "user" | "assistant" | "toolResult",
+  content: string,
+  timestamp: number,
+) {
+  return {
+    type: "message",
+    id,
+    parentId: null,
+    timestamp: new Date(timestamp).toISOString(),
+    message: { role, content, timestamp },
+  };
+}
+
+afterEach(async () => {
+  await Promise.all(
+    directories.splice(0).map((path) => rm(path, { recursive: true })),
+  );
+});
+
+describe("SessionMetadataIndex", () => {
+  it("deduplicates repeated roots and root aliases", async () => {
+    const root = await directory();
+    const alias = `${root}-alias`;
+    directories.push(alias);
+    await writeFile(
+      join(root, "session.jsonl"),
+      `${JSON.stringify(header())}\n`,
+    );
+    await symlink(
+      root,
+      alias,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const index = new SessionMetadataIndex();
+    expect(await index.list([root, root, alias])).toHaveLength(1);
+  });
+
+  it("retains every root's cached metadata and aborts on any failed root", async () => {
+    const root = await directory();
+    const first = join(root, "first");
+    const second = join(root, "second");
+    await mkdir(first);
+    await mkdir(second);
+    const firstPath = join(first, "one.jsonl");
+    await writeFile(firstPath, `${JSON.stringify(header("one"))}\n`);
+    await writeFile(
+      join(second, "two.jsonl"),
+      `${JSON.stringify(header("two"))}\n`,
+    );
+    const index = new SessionMetadataIndex();
+    expect((await index.list([first, second])).map((row) => row.id)).toEqual([
+      "one",
+      "two",
+    ]);
+    await appendFile(firstPath, "malformed\n");
+    expect((await index.list([first, second])).map((row) => row.id)).toEqual([
+      "one",
+      "two",
+    ]);
+    const broken = join(root, "broken");
+    await writeFile(broken, "not a directory");
+    await expect(index.list([first, broken, second])).rejects.toMatchObject({
+      code: "ENOTDIR",
+    });
+    expect((await index.list([first, second])).map((row) => row.id)).toEqual([
+      "one",
+      "two",
+    ]);
+  });
+
+  it("does not promote a symlinked JSONL into the session catalog", async () => {
+    const root = await directory();
+    const outside = await directory();
+    const target = join(outside, "target.jsonl");
+    await writeFile(target, `${JSON.stringify(header("outside"))}\n`);
+    await symlink(target, join(root, "linked.jsonl"));
+
+    await expect(new SessionMetadataIndex().list(root)).resolves.toEqual([]);
+  });
+
+  it("distinguishes a missing catalog from an unreadable catalog root", async () => {
+    const root = await directory();
+    await expect(
+      new SessionMetadataIndex().list(join(root, "missing")),
+    ).resolves.toEqual([]);
+
+    const notDirectory = join(root, "catalog-file");
+    await writeFile(notDirectory, "not a directory");
+    await expect(
+      new SessionMetadataIndex().list(notDirectory),
+    ).rejects.toMatchObject({ code: "ENOTDIR" });
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "fails a catalog scan rather than omitting an unreadable regular file",
+    async () => {
+      const root = await directory();
+      const path = join(root, "unreadable.jsonl");
+      await writeFile(path, `${JSON.stringify(header())}\n`);
+      await chmod(path, 0o000);
+      try {
+        if (process.getuid?.() !== 0) {
+          await expect(
+            new SessionMetadataIndex().list(root),
+          ).rejects.toMatchObject({ code: "EACCES" });
+        }
+      } finally {
+        await chmod(path, 0o600);
+      }
+    },
+  );
+
+  it("projects only bounded catalog metadata from Pi JSONL", async () => {
+    const root = await directory();
+    const path = join(root, "session.jsonl");
+    await writeFile(
+      path,
+      [
+        header(),
+        { type: "session_info", id: "n1", name: " Old name " },
+        message("t1", "toolResult", "tool output", 1_767_225_601_000),
+        message("u1", "user", "first prompt", 1_767_225_602_000),
+        message("a1", "assistant", "answer", 1_767_225_603_000),
+        { type: "session_info", id: "n2", name: " Current name " },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n") + "\n",
+    );
+
+    const records = await new SessionMetadataIndex().list(root);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      id: "session-a",
+      cwd: "/work/project",
+      name: "Current name",
+      firstMessage: "first prompt",
+      messageCount: 3,
+      searchText: "current name\nfirst prompt\n/work/project",
+    });
+    expect(records[0]?.modified.toISOString()).toBe("2026-01-01T00:00:03.000Z");
+    expect(records[0]).not.toHaveProperty("allMessagesText");
+  });
+
+  it("omits model-facing image notes from catalog titles and search", async () => {
+    const root = await directory();
+    const path = join(root, "session.jsonl");
+    const text =
+      "inspect\n\n[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]";
+    const entry = {
+      ...message("u1", "user", "", 1_767_225_602_000),
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text },
+          { type: "image", mimeType: "image/png", data: "cGl4ZWxz" },
+        ],
+      },
+    };
+    await writeFile(
+      path,
+      [header(), entry].map((value) => JSON.stringify(value)).join("\n") + "\n",
+    );
+    expect((await new SessionMetadataIndex().list(root))[0]).toMatchObject({
+      firstMessage: "inspect",
+      searchText: "inspect\n/work/project",
+    });
+  });
+
+  it("reuses unchanged summaries and rescans only a changed file", async () => {
+    const root = await directory();
+    const path = join(root, "session.jsonl");
+    await writeFile(
+      path,
+      `${JSON.stringify(header())}\n${JSON.stringify(
+        message("u1", "user", "one", 1_767_225_601_000),
+      )}\n`,
+    );
+    const index = new SessionMetadataIndex();
+    const first = await index.list(root);
+    const unchanged = await index.list(root);
+    expect(unchanged[0]).toBe(first[0]);
+
+    await appendFile(
+      path,
+      `${JSON.stringify(
+        message("a1", "assistant", "two", 1_767_225_602_000),
+      )}\n`,
+    );
+    const changed = await index.list(root);
+    expect(changed[0]).not.toBe(first[0]);
+    expect(changed[0]).toMatchObject({ messageCount: 2 });
+  });
+
+  it("resumes an incomplete final frame without recounting the prefix", async () => {
+    const root = await directory();
+    const path = join(root, "session.jsonl");
+    const entry = JSON.stringify(
+      message("u1", "user", "split frame", 1_767_225_601_000),
+    );
+    const split = Math.floor(entry.length / 2);
+    await writeFile(
+      path,
+      `${JSON.stringify(header())}\n${entry.slice(0, split)}`,
+    );
+    const index = new SessionMetadataIndex();
+    expect((await index.list(root))[0]).toMatchObject({
+      messageCount: 0,
+      firstMessage: "",
+    });
+
+    await appendFile(path, `${entry.slice(split)}\n`);
+    expect((await index.list(root))[0]).toMatchObject({
+      messageCount: 1,
+      firstMessage: "split frame",
+    });
+  });
+
+  it("rejects malformed session authority instead of inventing catalog identity", async () => {
+    const root = await directory();
+    await writeFile(
+      join(root, "missing-cwd.jsonl"),
+      `${JSON.stringify({ ...header("missing-cwd"), cwd: undefined })}\n`,
+    );
+    await writeFile(
+      join(root, "relative-cwd.jsonl"),
+      `${JSON.stringify({ ...header("relative-cwd"), cwd: "project" })}\n`,
+    );
+    await writeFile(
+      join(root, "second-header.jsonl"),
+      `${JSON.stringify(header("first"))}\n${JSON.stringify(header("second"))}\n`,
+    );
+
+    await expect(new SessionMetadataIndex().list(root)).resolves.toEqual([]);
+  });
+
+  it("omits a new malformed file and discovers it after a valid rewrite", async () => {
+    const root = await directory();
+    const path = join(root, "session.jsonl");
+    await writeFile(path, `${JSON.stringify(header())}\n{broken}\n`);
+    const index = new SessionMetadataIndex();
+    expect(await index.list(root)).toEqual([]);
+    expect(await index.list(root)).toEqual([]);
+
+    await writeFile(
+      path,
+      `${JSON.stringify(header())}\n${JSON.stringify(
+        message("u1", "user", "repaired", 1_767_225_601_000),
+      )}\n`,
+    );
+    expect((await index.list(root))[0]).toMatchObject({
+      id: "session-a",
+      firstMessage: "repaired",
+    });
+  });
+
+  it("retains the last complete record while a present session is malformed", async () => {
+    const root = await directory();
+    const path = join(root, "session.jsonl");
+    await writeFile(
+      path,
+      `${JSON.stringify(header("known"))}\n${JSON.stringify(
+        message("u1", "user", "known prompt", 1_767_225_601_000),
+      )}\n`,
+    );
+    const index = new SessionMetadataIndex();
+    expect((await index.list(root))[0]).toMatchObject({ id: "known" });
+
+    await writeFile(path, `${JSON.stringify(header("known"))}\n{broken}\n`);
+    expect((await index.list(root))[0]).toMatchObject({
+      id: "known",
+      firstMessage: "known prompt",
+    });
+  });
+
+  it("leaves whitespace-only conversations untitled", async () => {
+    const root = await directory();
+    await writeFile(
+      join(root, "empty.jsonl"),
+      `${JSON.stringify(header())}\n${JSON.stringify(
+        message("u1", "user", "   ", 1_767_225_601_000),
+      )}\n`,
+    );
+    expect((await new SessionMetadataIndex().list(root))[0]).toMatchObject({
+      firstMessage: "",
+    });
+  });
+});

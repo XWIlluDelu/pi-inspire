@@ -1,0 +1,238 @@
+import { constants } from "node:fs";
+import { access, readFile, realpath, stat } from "node:fs/promises";
+import { dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { filesystemRelativePath } from "./filesystem-containment.js";
+import {
+  environmentValue,
+  executablePathDirectories,
+} from "./platform-environment.mjs";
+
+const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
+
+interface PiPackageManifest {
+  name?: unknown;
+  version?: unknown;
+  bin?: unknown;
+  exports?: unknown;
+}
+
+interface PiInstallationIdentity {
+  commandPath: string;
+  packageRoot: string;
+  cliPath: string;
+  sdkEntryPath: string;
+  version: string;
+}
+
+interface PiInstallation extends PiInstallationIdentity {
+  sdk: typeof import("@earendil-works/pi-coding-agent");
+}
+
+interface PiInstallationOptions {
+  command?: string;
+  path?: string;
+  installationRoot?: string;
+}
+
+async function isInside(path: string, parent: string): Promise<boolean> {
+  return (await filesystemRelativePath(parent, path)) !== null;
+}
+
+function commandNames(command: string): string[] {
+  if (process.platform !== "win32" || extname(command)) return [command];
+  const extensions = (
+    environmentValue(process.env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD"
+  )
+    .split(";")
+    .filter(Boolean)
+    .map((extension) => `${command}${extension.toLowerCase()}`);
+  return [...extensions, command];
+}
+
+function executableCandidates(command: string, path: string): string[] {
+  const names = commandNames(command);
+  if (/[\\/]/u.test(command) || isAbsolute(command))
+    return names.map((name) => resolve(name));
+  return executablePathDirectories(path).flatMap((directory) =>
+    names.map((name) => resolve(directory, name)),
+  );
+}
+
+async function isExecutable(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.X_OK);
+    return (await stat(path)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function readPiManifest(root: string): Promise<PiPackageManifest | null> {
+  try {
+    const manifest = JSON.parse(
+      await readFile(join(root, "package.json"), "utf8"),
+    ) as PiPackageManifest;
+    return manifest.name === PI_PACKAGE_NAME ? manifest : null;
+  } catch {
+    return null;
+  }
+}
+
+async function findPackageRoot(entryPath: string): Promise<{
+  root: string;
+  manifest: PiPackageManifest;
+} | null> {
+  let directory = dirname(entryPath);
+  while (true) {
+    const manifest = await readPiManifest(directory);
+    if (manifest) return { root: directory, manifest };
+    const parent = dirname(directory);
+    if (parent === directory) return null;
+    directory = parent;
+  }
+}
+
+async function packagePath(
+  root: string,
+  field: unknown,
+  label: string,
+): Promise<string> {
+  if (typeof field !== "string" || isAbsolute(field)) {
+    throw new Error(`The installed Pi package does not expose its ${label}.`);
+  }
+  const path = resolve(root, field);
+  if (!(await isInside(path, root))) {
+    throw new Error(`The installed Pi package has an invalid ${label}.`);
+  }
+  return path;
+}
+
+async function manifestPaths(
+  root: string,
+  manifest: PiPackageManifest,
+): Promise<{
+  cliPath: string;
+  sdkEntryPath: string;
+}> {
+  const bin = manifest.bin as Record<string, unknown> | undefined;
+  const exportsField = manifest.exports as Record<string, unknown> | undefined;
+  const rootExport = exportsField?.["."];
+  const importEntry =
+    typeof rootExport === "string"
+      ? rootExport
+      : (rootExport as Record<string, unknown> | undefined)?.import;
+  return {
+    cliPath: await packagePath(root, bin?.pi, "pi CLI entry"),
+    sdkEntryPath: await packagePath(root, importEntry, "Pi SDK entry"),
+  };
+}
+
+async function adjacentPackageRoot(
+  commandPath: string,
+): Promise<{ root: string; manifest: PiPackageManifest } | null> {
+  const directory = dirname(commandPath);
+  const candidates = [
+    join(directory, "node_modules", PI_PACKAGE_NAME),
+    resolve(directory, "..", PI_PACKAGE_NAME),
+    resolve(directory, "..", "node_modules", PI_PACKAGE_NAME),
+  ];
+  for (const root of candidates) {
+    const physicalRoot = await realpath(root).catch(() => null);
+    if (!physicalRoot) continue;
+    const manifest = await readPiManifest(physicalRoot);
+    if (manifest) return { root: physicalRoot, manifest };
+  }
+  return null;
+}
+
+async function inspectCandidate(commandPath: string): Promise<{
+  commandPath: string;
+  packageRoot: string;
+  manifest: PiPackageManifest;
+  cliPath: string;
+  sdkEntryPath: string;
+} | null> {
+  if (!(await isExecutable(commandPath))) return null;
+  const resolvedCommand = await realpath(commandPath);
+  const found =
+    (await findPackageRoot(resolvedCommand)) ??
+    (await adjacentPackageRoot(commandPath));
+  if (!found) return null;
+  const paths = await manifestPaths(found.root, found.manifest);
+  return {
+    commandPath,
+    packageRoot: found.root,
+    manifest: found.manifest,
+    ...paths,
+  };
+}
+
+/** Resolve the external package identity without importing its SDK. Maintenance
+ * uses this to compare an installed upgrade without loading it into the host
+ * that is still serving the old runtime. */
+export async function resolvePiInstallationIdentity(
+  options: PiInstallationOptions = {},
+): Promise<PiInstallationIdentity> {
+  const explicitCommand = options.command ?? process.env.INSPIRE_PI_COMMAND;
+  const command = explicitCommand || "pi";
+  const searchPath =
+    options.path ?? environmentValue(process.env, "PATH") ?? "";
+  const requestedInstallationRoot = resolve(
+    options.installationRoot ??
+      process.env.INSPIRE_INSTALLATION_ROOT ??
+      process.cwd(),
+  );
+  const installationRoot = await realpath(requestedInstallationRoot).catch(
+    () => requestedInstallationRoot,
+  );
+  let discoveredLocal: Awaited<ReturnType<typeof inspectCandidate>> = null;
+
+  for (const candidate of executableCandidates(command, searchPath)) {
+    const inspected = await inspectCandidate(candidate);
+    if (!inspected) continue;
+    if (
+      !explicitCommand &&
+      (await isInside(inspected.packageRoot, installationRoot))
+    ) {
+      discoveredLocal ??= inspected;
+      continue;
+    }
+    const version = inspected.manifest.version;
+    if (typeof version !== "string") {
+      throw new Error(`The Pi package at ${candidate} has no version.`);
+    }
+    return {
+      commandPath: candidate,
+      packageRoot: inspected.packageRoot,
+      cliPath: inspected.cliPath,
+      sdkEntryPath: inspected.sdkEntryPath,
+      version,
+    };
+  }
+
+  if (discoveredLocal) {
+    throw new Error(
+      "INSΠRE requires a separately installed Pi runtime; the only Pi found belongs to this INSΠRE checkout. " +
+        "Install or update Pi globally, then restart INSΠRE.",
+    );
+  }
+  throw new Error(
+    explicitCommand
+      ? `INSPIRE_PI_COMMAND does not identify a ${PI_PACKAGE_NAME} installation: ${explicitCommand}`
+      : "INSΠRE requires Pi to be installed and available on PATH. Install Pi globally, then restart INSΠRE.",
+  );
+}
+
+export async function resolvePiInstallation(
+  options: PiInstallationOptions = {},
+): Promise<PiInstallation> {
+  const identity = await resolvePiInstallationIdentity(options);
+  const imported = await import(pathToFileURL(identity.sdkEntryPath).href);
+  return {
+    ...identity,
+    sdk: imported as PiInstallation["sdk"],
+  };
+}
+
+export const piInstallation = await resolvePiInstallation();

@@ -1,0 +1,1121 @@
+import {
+  type ComposerHistoryEntry,
+  MAX_ATTACHMENTS,
+  MAX_PROJECT_FILES,
+  type PromptAcceptedResponse,
+  type PromptDeliveryRequest,
+  type UploadedAttachment,
+} from "../../shared/contracts";
+import { type Api, ApiError, ApiTransportError } from "../api";
+import { selectAttachmentFiles } from "../attachment-selection";
+import {
+  type ComposerHistoryScope,
+  composerHistoryScopeKey,
+  discardComposerHistory,
+} from "../composer-history";
+import { deleteSessionDraft, touchSessionDraft } from "../session-drafts";
+
+interface RecalledHistoryArtifact {
+  type: "image" | "file";
+  reference: string;
+  fileKind?: "attachment" | "project";
+  viewId: string;
+  incarnation: string | null;
+  effectiveLeafId: string | null;
+  scopeKey: string;
+  preview: boolean;
+}
+
+export interface PendingAttachment {
+  localId: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  kind: "image" | "file";
+  previewUrl?: string;
+  previewLoading?: boolean;
+  status: "uploading" | "ready" | "error";
+  uploadedId?: string;
+  uploadedAuthorityId?: string;
+  recalledArtifact?: RecalledHistoryArtifact;
+  error?: string;
+}
+
+interface ComposerArtifactDraft {
+  scopeKey: string;
+  attachments: PendingAttachment[];
+  projectFiles: string[];
+}
+
+interface PendingPromptDelivery {
+  signature: string;
+  request: PromptDeliveryRequest;
+}
+
+interface DeliveryRecord {
+  delivery: PendingPromptDelivery;
+  message: string;
+  attachments: PendingAttachment[];
+  projectFiles: string[];
+  historyDraft: ComposerArtifactDraft | null;
+  /** Palette preparation owns its text; it never transfers the Composer draft. */
+  independent?: boolean;
+}
+
+export interface ComposerPartition {
+  attachments: PendingAttachment[];
+  projectFiles: string[];
+  sending: boolean;
+  historyDraft: ComposerArtifactDraft | null;
+  /** Independently owned operations; only an exact retry may reuse an unknown ID. */
+  deliveries: Map<string, DeliveryRecord>;
+  unknownDeliveries: Map<string, PendingPromptDelivery>;
+  failedDeliveries: DeliveryRecord[];
+}
+
+interface ComposerControllerState {
+  sessionId: string | null;
+}
+
+export type ComposerSlice = Pick<
+  ComposerPartition,
+  "attachments" | "projectFiles" | "sending"
+> & { failedDeliveryCount: number };
+
+interface ComposerControllerHost {
+  state(): ComposerControllerState;
+  api(): Api | null;
+  authorityId(): string | null;
+  transportGeneration(): number;
+  patch(slice: ComposerSlice): void;
+  notify(kind: "warning", text: string): void;
+  notifyVisible(sessionId: string, message: string): void;
+  handleAuthFailure(): void;
+  restoreDraftIfEmpty(sessionId: string, message: string): boolean;
+}
+
+/**
+ * Owns per-session staged attachments, project files, and prompt delivery.
+ * AppStore remains the canonical browser snapshot and commits this controller's
+ * visible slice only when its session owns the active composer.
+ */
+export class ComposerController {
+  private readonly composers = new Map<string, ComposerPartition>();
+  private readonly confirmations = new Map<
+    string,
+    Map<string, AbortController>
+  >();
+  private readonly uploads = new Map<string, AbortController>();
+  private requestEpoch = 0;
+  private recoveryAuthorityId: string | null = null;
+  private readonly appliedRecoveryImages = new Map<string, Set<string>>();
+
+  constructor(private readonly host: ComposerControllerHost) {}
+
+  slice(sessionId: string | null): ComposerSlice {
+    const composer = sessionId ? this.composers.get(sessionId) : undefined;
+    return composer
+      ? {
+          attachments: composer.attachments,
+          projectFiles: composer.projectFiles,
+          sending: composer.sending,
+          failedDeliveryCount: composer.failedDeliveries.length,
+        }
+      : {
+          attachments: [],
+          projectFiles: [],
+          sending: false,
+          failedDeliveryCount: 0,
+        };
+  }
+
+  invalidateForTransportReplacement(): void {
+    this.requestEpoch += 1;
+    for (const confirmations of this.confirmations.values())
+      for (const confirmation of confirmations.values()) confirmation.abort();
+    this.confirmations.clear();
+    for (const upload of new Set(this.uploads.values())) upload.abort();
+    this.uploads.clear();
+    let deliveryOutcomeUnknown = false;
+    for (const [sessionId, composer] of this.composers) {
+      deliveryOutcomeUnknown ||= composer.deliveries.size > 0;
+      for (const record of composer.deliveries.values()) {
+        composer.unknownDeliveries.set(
+          record.delivery.signature,
+          record.delivery,
+        );
+        if (!record.independent) composer.failedDeliveries.push(record);
+      }
+      composer.deliveries.clear();
+      composer.sending = false;
+      this.restoreFailedIfEmpty(sessionId, composer);
+      const invalidateUploads = (items: PendingAttachment[]) =>
+        items.map((item) =>
+          item.status === "uploading"
+            ? {
+                ...item,
+                status: "error" as const,
+                error:
+                  "Connection changed while uploading; add this file again",
+              }
+            : item,
+        );
+      composer.attachments = invalidateUploads(composer.attachments);
+      if (composer.historyDraft)
+        composer.historyDraft.attachments = invalidateUploads(
+          composer.historyDraft.attachments,
+        );
+      this.prune(sessionId, composer);
+    }
+    const sessionId = this.host.state().sessionId;
+    if (sessionId) this.publish(sessionId);
+    if (deliveryOutcomeUnknown)
+      this.host.notify(
+        "warning",
+        "Connection changed while sending. Retry keeps the same delivery identity while this Host is unchanged; after a Host restart, check the conversation first.",
+      );
+  }
+
+  /** Upload handles belong to one Host process, unlike a dropped event socket.
+   * Include hidden partitions and saved/failed drafts so restoring them cannot
+   * resurrect a ready-looking handle from a retired Host. */
+  reconcileAuthority(authorityId: string): void {
+    if (this.recoveryAuthorityId !== authorityId) {
+      this.appliedRecoveryImages.clear();
+      this.recoveryAuthorityId = authorityId;
+    }
+    let changed = false;
+    const reconcile = (items: PendingAttachment[]): PendingAttachment[] =>
+      items.map((item) => {
+        if (
+          !item.uploadedId ||
+          item.status === "error" ||
+          item.uploadedAuthorityId === authorityId
+        )
+          return item;
+        changed = true;
+        return {
+          ...item,
+          status: "error",
+          error: "The Host restarted; remove this attachment and add it again",
+        };
+      });
+    for (const composer of this.composers.values()) {
+      composer.attachments = reconcile(composer.attachments);
+      if (composer.historyDraft)
+        composer.historyDraft.attachments = reconcile(
+          composer.historyDraft.attachments,
+        );
+      for (const record of [
+        ...composer.deliveries.values(),
+        ...composer.failedDeliveries,
+      ]) {
+        record.attachments = reconcile(record.attachments);
+        if (record.historyDraft)
+          record.historyDraft.attachments = reconcile(
+            record.historyDraft.attachments,
+          );
+      }
+    }
+    const sessionId = this.host.state().sessionId;
+    if (changed && sessionId) this.publish(sessionId);
+  }
+
+  /** The receipt transfers handles, not a browser queue. Preserve every image
+   * and the existing draft even when their combined count exceeds send limits. */
+  restoreStagedAttachments(
+    sessionId: string,
+    attachments: UploadedAttachment[],
+    authorityId: string | null,
+    recoveryId?: string,
+  ): void {
+    if (
+      recoveryId &&
+      attachments.length &&
+      authorityId === this.host.authorityId()
+    ) {
+      const key = JSON.stringify([authorityId, sessionId, recoveryId]);
+      const applied = this.appliedRecoveryImages.get(key) ?? new Set<string>();
+      this.appliedRecoveryImages.set(key, applied);
+      attachments = attachments.filter((item) => {
+        if (applied.has(item.id)) return false;
+        applied.add(item.id);
+        return true;
+      });
+      if (!attachments.length) return;
+    }
+    const composer = this.forSession(sessionId);
+    // Recovery merges into the newest saved draft, not a temporary history
+    // preview. Exiting that preview must not discard returned upload handles.
+    this.restoreHistoryDraft(composer);
+    const api = this.host.api();
+    const currentAuthority = this.host.authorityId();
+    const known = new Set(
+      composer.attachments
+        .filter((item) => item.uploadedAuthorityId === authorityId)
+        .map((item) => item.uploadedId),
+    );
+    const pending: PendingAttachment[] = attachments
+      .filter((item) => {
+        if (known.has(item.id)) return false;
+        known.add(item.id);
+        return true;
+      })
+      .map((item) => ({
+        localId: globalThis.crypto.randomUUID(),
+        fileName: item.fileName,
+        mimeType: item.mimeType,
+        size: item.size,
+        kind: item.kind,
+        uploadedId: item.id,
+        uploadedAuthorityId: authorityId ?? undefined,
+        previewLoading: item.kind === "image",
+        status: authorityId === currentAuthority ? "ready" : "error",
+        ...(authorityId === currentAuthority
+          ? {}
+          : {
+              error:
+                "The Host changed; remove this attachment and add it again",
+            }),
+      }));
+    if (pending.length) touchSessionDraft(sessionId);
+    composer.attachments = [...pending, ...composer.attachments];
+    this.publish(sessionId);
+    if (!api || authorityId !== currentAuthority) return;
+    for (const item of pending)
+      if (item.kind === "image") {
+        void api
+          .attachmentPreview(item.uploadedId!)
+          .then((blob) => {
+            if (
+              this.composers.get(sessionId) !== composer ||
+              this.host.authorityId() !== authorityId
+            )
+              return;
+            const lists = [
+              composer.attachments,
+              ...(composer.historyDraft
+                ? [composer.historyDraft.attachments]
+                : []),
+              ...[
+                ...composer.deliveries.values(),
+                ...composer.failedDeliveries,
+              ].flatMap((record) => [
+                record.attachments,
+                ...(record.historyDraft
+                  ? [record.historyDraft.attachments]
+                  : []),
+              ]),
+            ];
+            if (
+              !lists.some((items) =>
+                items.some((value) => value.localId === item.localId),
+              )
+            )
+              return;
+            const previewUrl = URL.createObjectURL(blob);
+            this.patchRecoveredPreview(composer, item.localId, {
+              previewUrl,
+              previewLoading: false,
+            });
+            this.publish(sessionId);
+          })
+          .catch((error) => {
+            if (
+              this.composers.get(sessionId) !== composer ||
+              this.host.authorityId() !== authorityId
+            )
+              return;
+            if (
+              this.patchRecoveredPreview(composer, item.localId, {
+                previewLoading: false,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Image preview failed",
+              })
+            )
+              this.publish(sessionId);
+          });
+      }
+  }
+
+  private patchRecoveredPreview(
+    composer: ComposerPartition,
+    localId: string,
+    patch: Partial<PendingAttachment>,
+  ): boolean {
+    let found = false;
+    const apply = (items: PendingAttachment[]) => {
+      if (!items.some((item) => item.localId === localId)) return items;
+      found = true;
+      return items.map((item) =>
+        item.localId === localId ? { ...item, ...patch } : item,
+      );
+    };
+    composer.attachments = apply(composer.attachments);
+    if (composer.historyDraft)
+      composer.historyDraft.attachments = apply(
+        composer.historyDraft.attachments,
+      );
+    for (const record of [
+      ...composer.deliveries.values(),
+      ...composer.failedDeliveries,
+    ]) {
+      record.attachments = apply(record.attachments);
+      if (record.historyDraft)
+        record.historyDraft.attachments = apply(
+          record.historyDraft.attachments,
+        );
+    }
+    return found;
+  }
+
+  discard(sessionId: string): void {
+    for (const confirmation of this.confirmations.get(sessionId)?.values() ??
+      [])
+      confirmation.abort();
+    this.confirmations.delete(sessionId);
+    const composer = this.composers.get(sessionId);
+    if (composer) {
+      this.releaseAttachments(composer.attachments);
+      if (composer.historyDraft)
+        this.releaseAttachments(composer.historyDraft.attachments);
+      // Uploads still in flight retain this object. Emptying it makes their
+      // completion path reclaim any host copy rather than resurrecting the
+      // deleted partition.
+      composer.attachments = [];
+      composer.projectFiles = [];
+      composer.sending = false;
+      composer.historyDraft = null;
+      for (const record of [
+        ...composer.deliveries.values(),
+        ...composer.failedDeliveries,
+      ]) {
+        this.releaseAttachments(record.attachments);
+        if (record.historyDraft)
+          this.releaseAttachments(record.historyDraft.attachments);
+      }
+      composer.deliveries.clear();
+      composer.failedDeliveries = [];
+      composer.unknownDeliveries.clear();
+      this.composers.delete(sessionId);
+    }
+    deleteSessionDraft(sessionId);
+    discardComposerHistory(sessionId);
+  }
+
+  async send(
+    message: string,
+    behavior?: "steer" | "followUp",
+    onHandoff?: () => void,
+    independent = false,
+  ): Promise<PromptAcceptedResponse | false> {
+    const sessionId = this.host.state().sessionId;
+    const api = this.host.api();
+    const authorityId = this.host.authorityId();
+    if (!api || !sessionId || !authorityId) return false;
+    this.reconcileAuthority(authorityId);
+    const generation = this.host.transportGeneration();
+    const requestEpoch = this.requestEpoch;
+    const ownsTransport = (): boolean =>
+      this.host.api() === api &&
+      this.host.transportGeneration() === generation &&
+      this.requestEpoch === requestEpoch &&
+      this.composers.get(sessionId) === composer;
+    const composer = this.forSession(sessionId);
+    // A matching in-flight request is a duplicate click, not a new message.
+    // Different input may proceed while a previous Pi receipt is pending.
+    if (
+      !independent &&
+      composer.attachments.some((item) => item.status === "uploading")
+    ) {
+      this.host.notify("warning", "Attachments are still uploading");
+      return false;
+    }
+    if (
+      !independent &&
+      composer.attachments.some((item) => item.status === "error")
+    ) {
+      this.host.notify("warning", "Remove failed attachments before sending");
+      return false;
+    }
+    const included = independent ? [] : composer.attachments;
+    if (
+      message.trim().startsWith("!") &&
+      (included.length > 0 || composer.projectFiles.length > 0)
+    ) {
+      this.host.notify(
+        "warning",
+        "Shell commands cannot include attachments or project-file references",
+      );
+      return false;
+    }
+    const attachmentCount = included.filter(
+      (item) =>
+        !(
+          item.recalledArtifact?.type === "file" &&
+          item.recalledArtifact.fileKind === "project"
+        ),
+    ).length;
+    if (attachmentCount > MAX_ATTACHMENTS) {
+      this.host.notify(
+        "warning",
+        `At most ${MAX_ATTACHMENTS} attachments per message`,
+      );
+      return false;
+    }
+    const attachmentIds = included
+      .map((item) => item.uploadedId)
+      .filter((id): id is string => Boolean(id));
+    const recalled = included.filter(
+      (
+        item,
+      ): item is PendingAttachment & {
+        recalledArtifact: RecalledHistoryArtifact;
+      } => Boolean(item.recalledArtifact),
+    );
+    const historyOwner = recalled[0]?.recalledArtifact;
+    if (
+      historyOwner &&
+      recalled.some(
+        (item) => item.recalledArtifact.scopeKey !== historyOwner.scopeKey,
+      )
+    ) {
+      this.host.notify(
+        "warning",
+        "Recalled attachments belong to another branch",
+      );
+      return false;
+    }
+    const projectFiles = independent ? [] : composer.projectFiles;
+    const recalledProjectCount = recalled.filter(
+      (item) =>
+        item.recalledArtifact.type === "file" &&
+        item.recalledArtifact.fileKind === "project",
+    ).length;
+    if (projectFiles.length + recalledProjectCount > MAX_PROJECT_FILES) {
+      this.host.notify(
+        "warning",
+        `At most ${MAX_PROJECT_FILES} project files per message`,
+      );
+      return false;
+    }
+    if (
+      !message.trim() &&
+      attachmentIds.length === 0 &&
+      recalled.length === 0 &&
+      projectFiles.length === 0
+    ) {
+      return false;
+    }
+    const deliveryContent = {
+      sessionId,
+      message,
+      ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+      ...(historyOwner
+        ? {
+            historyArtifacts: {
+              viewId: historyOwner.viewId,
+              incarnation: historyOwner.incarnation,
+              effectiveLeafId: historyOwner.effectiveLeafId,
+              imageReferences: recalled
+                .filter((item) => item.recalledArtifact.type === "image")
+                .map((item) => item.recalledArtifact.reference),
+              fileReferences: recalled
+                .filter((item) => item.recalledArtifact.type === "file")
+                .map((item) => item.recalledArtifact.reference),
+            },
+          }
+        : {}),
+      ...(projectFiles.length > 0 ? { projectFiles } : {}),
+      ...(behavior ? { behavior } : {}),
+    };
+    // A phase change (e.g. compacting → idle) cannot turn an unknown steer
+    // into a second operation. Reobserve its original, exact payload.
+    const signature = JSON.stringify({
+      ...deliveryContent,
+      behavior: undefined,
+    });
+    if (
+      [...composer.deliveries.values()].some(
+        (record) => record.delivery.signature === signature,
+      )
+    )
+      return false;
+    const retained = composer.unknownDeliveries.get(signature);
+    if (retained && retained.request.authorityId !== authorityId) {
+      composer.unknownDeliveries.delete(signature);
+      this.host.notifyVisible(
+        sessionId,
+        "The Host restarted after this message had an unknown delivery outcome. Check the conversation before sending it again.",
+      );
+      return false;
+    }
+    const delivery: PendingPromptDelivery = retained ?? {
+      signature,
+      request: {
+        operationId: globalThis.crypto.randomUUID(),
+        authorityId,
+        ...deliveryContent,
+      },
+    };
+    const record: DeliveryRecord = {
+      delivery,
+      message,
+      attachments: included,
+      projectFiles,
+      historyDraft: independent ? null : composer.historyDraft,
+      independent,
+    };
+    composer.failedDeliveries = composer.failedDeliveries.filter(
+      (item) => item.delivery !== retained,
+    );
+    composer.deliveries.set(delivery.request.operationId, record);
+    if (!independent) {
+      composer.attachments = [];
+      composer.projectFiles = [];
+      composer.historyDraft = null;
+    }
+    composer.sending = true;
+    onHandoff?.();
+    this.publish(sessionId);
+    const confirmation = new AbortController();
+    const confirmations = this.confirmations.get(sessionId) ?? new Map();
+    confirmations.set(delivery.request.operationId, confirmation);
+    this.confirmations.set(sessionId, confirmations);
+    try {
+      const response = await api.prompt(delivery.request, confirmation.signal);
+      if (!ownsTransport()) return false;
+      for (const item of record.attachments)
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      if (record.historyDraft)
+        this.releaseAttachments(record.historyDraft.attachments);
+      composer.unknownDeliveries.delete(signature);
+      return { accepted: true, historyEntry: response.historyEntry };
+    } catch (error) {
+      if (!ownsTransport()) return false;
+      const acceptanceUnknown =
+        !(error instanceof ApiError) ||
+        error.edge === "ssh-reverse" ||
+        error.outcomeUnknown ||
+        error.code === "PI_RPC_OUTCOME_UNKNOWN" ||
+        error.code === "PROMPT_OPERATION_RESULT_RETIRED" ||
+        error.code === "PROMPT_OPERATION_NOT_FOUND" ||
+        error.code === "HOST_AUTHORITY_CHANGED" ||
+        ((error.status === 408 || error.status >= 500) &&
+          error.authorityId !== authorityId);
+      if (acceptanceUnknown)
+        composer.unknownDeliveries.set(signature, delivery);
+      else composer.unknownDeliveries.delete(signature);
+      if (error instanceof ApiError && error.code === "PROMPT_RECOVERED") {
+        // Both observers share a handoff. A late observer cannot undo a later
+        // removal or send, even after the draft no longer contains the handle.
+        if (error.recoveredAttachments) {
+          this.restoreStagedAttachments(
+            sessionId,
+            error.recoveredAttachments,
+            authorityId,
+            error.recoveryId,
+          );
+          for (const item of record.attachments)
+            if (item.kind === "image" && item.previewUrl)
+              URL.revokeObjectURL(item.previewUrl);
+        }
+        composer.attachments = [
+          ...record.attachments
+            .filter(
+              (item) => !error.recoveredAttachments || item.kind !== "image",
+            )
+            .map((item) =>
+              item.recalledArtifact?.preview
+                ? {
+                    ...item,
+                    recalledArtifact: {
+                      ...item.recalledArtifact,
+                      preview: false,
+                    },
+                  }
+                : item,
+            ),
+          ...composer.attachments,
+        ];
+        composer.projectFiles = [
+          ...new Set([...record.projectFiles, ...composer.projectFiles]),
+        ];
+        if (record.historyDraft)
+          this.releaseAttachments(record.historyDraft.attachments);
+        return false;
+      }
+      if (error instanceof ApiError && error.code === "PROMPT_CLEARED") {
+        this.releaseAttachments(record.attachments);
+        if (record.historyDraft)
+          this.releaseAttachments(record.historyDraft.attachments);
+        return false;
+      }
+      if (
+        error instanceof ApiError &&
+        error.code === "ATTACHMENTS_EXPIRED" &&
+        !acceptanceUnknown
+      ) {
+        record.attachments = record.attachments.map((item) =>
+          item.uploadedId && error.matches?.includes(item.uploadedId)
+            ? {
+                ...item,
+                status: "error",
+                error: "This attachment expired; remove it and add it again",
+              }
+            : item,
+        );
+      }
+      if (!independent) {
+        composer.failedDeliveries.push(record);
+        this.restoreFailedIfEmpty(sessionId, composer);
+      }
+      if (error instanceof ApiError && error.code === "PROMPT_ABORTED")
+        return false;
+      if (error instanceof ApiError && error.status === 401) {
+        composer.deliveries.delete(delivery.request.operationId);
+        composer.sending = composer.deliveries.size > 0;
+        this.publish(sessionId);
+        this.host.handleAuthFailure();
+      } else
+        (independent
+          ? (_sessionId: string, text: string) =>
+              this.host.notify("warning", text)
+          : this.host.notifyVisible)(
+          sessionId,
+          acceptanceUnknown
+            ? "INSΠRE could not confirm whether Pi accepted this message. Retry sends the same delivery safely while this Host remains running."
+            : error instanceof Error
+              ? error.message
+              : "Failed to send",
+        );
+      return false;
+    } finally {
+      const confirmations = this.confirmations.get(sessionId);
+      confirmations?.delete(delivery.request.operationId);
+      if (confirmations?.size === 0) this.confirmations.delete(sessionId);
+      if (ownsTransport()) {
+        composer.deliveries.delete(delivery.request.operationId);
+        composer.sending = composer.deliveries.size > 0;
+        this.prune(sessionId, composer);
+        this.publish(sessionId);
+      }
+    }
+  }
+
+  failedPrompt(sessionId: string | null): { message: string } | null {
+    const record = sessionId
+      ? this.composers.get(sessionId)?.failedDeliveries[0]
+      : undefined;
+    return record ? { message: record.message } : null;
+  }
+
+  restoreFailedPrompt(sessionId: string): boolean {
+    const composer = this.composers.get(sessionId);
+    if (!composer) return false;
+    const restored = this.restoreFailedIfEmpty(sessionId, composer);
+    if (restored) this.publish(sessionId);
+    return restored;
+  }
+
+  private restoreFailedIfEmpty(
+    sessionId: string,
+    composer: ComposerPartition,
+  ): boolean {
+    const record = composer.failedDeliveries[0];
+    if (
+      !record ||
+      composer.attachments.length > 0 ||
+      composer.projectFiles.length > 0 ||
+      !this.host.restoreDraftIfEmpty(sessionId, record.message)
+    )
+      return false;
+    composer.failedDeliveries.shift();
+    composer.attachments = record.attachments.map((item) =>
+      item.recalledArtifact?.preview
+        ? {
+            ...item,
+            recalledArtifact: { ...item.recalledArtifact, preview: false },
+          }
+        : item,
+    );
+    composer.projectFiles = record.projectFiles;
+    if (record.historyDraft)
+      this.releaseAttachments(record.historyDraft.attachments);
+    return true;
+  }
+
+  previewHistoryEntry(
+    scope: ComposerHistoryScope,
+    entry: ComposerHistoryEntry | null,
+  ): void {
+    if (this.host.state().sessionId !== scope.sessionId) return;
+    const composer = this.forSession(scope.sessionId);
+    if (entry || composer.historyDraft) touchSessionDraft(scope.sessionId);
+    if (!entry) {
+      this.restoreHistoryDraft(composer);
+      this.prune(scope.sessionId, composer);
+      this.publish(scope.sessionId);
+      return;
+    }
+
+    const scopeKey = composerHistoryScopeKey(scope);
+    if (composer.historyDraft?.scopeKey !== scopeKey) {
+      this.restoreHistoryDraft(composer);
+      composer.historyDraft = {
+        scopeKey,
+        attachments: composer.attachments,
+        projectFiles: composer.projectFiles,
+      };
+    } else {
+      this.releaseAttachments(
+        composer.attachments.filter((item) => !item.recalledArtifact),
+      );
+    }
+    composer.projectFiles = [];
+    const owner = {
+      viewId: scope.viewId,
+      incarnation: scope.incarnation,
+      effectiveLeafId: scope.effectiveLeafId,
+      scopeKey,
+      preview: true,
+    };
+    composer.attachments = [
+      ...entry.images.map<PendingAttachment>((image, index) => ({
+        localId: `history:${scopeKey}:${image.reference}`,
+        fileName: `Recalled image ${index + 1}`,
+        mimeType: image.mimeType,
+        size: image.size,
+        kind: "image",
+        status: "ready",
+        recalledArtifact: {
+          ...owner,
+          type: "image",
+          reference: image.reference,
+        },
+      })),
+      ...entry.files.map<PendingAttachment>((file) => ({
+        localId: `history:${scopeKey}:${file.reference}`,
+        fileName: file.fileName,
+        mimeType: "application/octet-stream",
+        size: 0,
+        kind: "file",
+        status: "ready",
+        recalledArtifact: {
+          ...owner,
+          type: "file",
+          reference: file.reference,
+          fileKind: file.kind,
+        },
+      })),
+    ];
+    this.publish(scope.sessionId);
+  }
+
+  commitHistoryPreview(scope: ComposerHistoryScope): void {
+    const composer = this.composers.get(scope.sessionId);
+    if (!composer) return;
+    const scopeKey = composerHistoryScopeKey(scope);
+    if (composer.historyDraft?.scopeKey !== scopeKey) return;
+    touchSessionDraft(scope.sessionId);
+    this.commitHistoryDraft(composer);
+    this.publish(scope.sessionId);
+  }
+
+  cancelHistoryPreview(sessionId: string): void {
+    const composer = this.composers.get(sessionId);
+    if (!composer) return;
+    if (composer.historyDraft) touchSessionDraft(sessionId);
+    this.restoreHistoryDraft(composer);
+    this.prune(sessionId, composer);
+    this.publish(sessionId);
+  }
+
+  async addFiles(files: File[]): Promise<void> {
+    const sessionId = this.host.state().sessionId;
+    const api = this.host.api();
+    const authorityId = this.host.authorityId();
+    if (!api || !sessionId || !authorityId || files.length === 0) return;
+    const generation = this.host.transportGeneration();
+    const requestEpoch = this.requestEpoch;
+    const ownsTransport = (): boolean =>
+      this.host.api() === api &&
+      this.host.transportGeneration() === generation &&
+      this.requestEpoch === requestEpoch;
+    const composer = this.forSession(sessionId);
+    const { accepted, warning } = selectAttachmentFiles(
+      composer.attachments.filter(
+        (item) =>
+          !(
+            item.recalledArtifact?.type === "file" &&
+            item.recalledArtifact.fileKind === "project"
+          ),
+      ),
+      files,
+    );
+    if (warning) this.host.notify("warning", warning);
+    if (accepted.length === 0) return;
+
+    const pending: PendingAttachment[] = accepted.map((file) => {
+      const isImage = /^image\//i.test(file.type);
+      return {
+        localId: crypto.randomUUID(),
+        fileName: file.name || "pasted-image",
+        mimeType: file.type || "application/octet-stream",
+        size: file.size,
+        kind: isImage ? "image" : "file",
+        previewUrl: isImage ? URL.createObjectURL(file) : undefined,
+        status: "uploading",
+      };
+    });
+    touchSessionDraft(sessionId);
+    composer.attachments = [...composer.attachments, ...pending];
+    const upload = new AbortController();
+    for (const item of pending) this.uploads.set(item.localId, upload);
+    this.publish(sessionId);
+
+    try {
+      const { attachments: uploaded } = await api.uploadAttachments(
+        accepted,
+        upload.signal,
+      );
+      if (!ownsTransport()) {
+        await Promise.all(
+          uploaded.map((item) =>
+            api.deleteAttachment(item.id).catch(() => undefined),
+          ),
+        );
+        return;
+      }
+      if (uploaded.length !== pending.length) {
+        await Promise.all(
+          uploaded.map((item) =>
+            api.deleteAttachment(item.id).catch(() => undefined),
+          ),
+        );
+        throw new Error("The Host returned an invalid attachment upload");
+      }
+      const applyUploaded = (items: PendingAttachment[]) =>
+        items.map((item) => {
+          const index = pending.findIndex(
+            (candidate) => candidate.localId === item.localId,
+          );
+          const result = index >= 0 ? uploaded[index] : undefined;
+          return result
+            ? {
+                ...item,
+                status: "ready" as const,
+                uploadedId: result.id,
+                uploadedAuthorityId: authorityId,
+                fileName: result.fileName,
+                kind: result.kind,
+              }
+            : item;
+        });
+      composer.attachments = applyUploaded(composer.attachments);
+      if (composer.historyDraft)
+        composer.historyDraft.attachments = applyUploaded(
+          composer.historyDraft.attachments,
+        );
+      this.publish(sessionId);
+      // An item removed while its upload was in flight never got a chance to
+      // delete its host copy; reclaim it now.
+      pending.forEach((candidate, index) => {
+        const id = uploaded[index]?.id;
+        if (
+          id &&
+          !composer.attachments.some(
+            (item) => item.localId === candidate.localId,
+          ) &&
+          !composer.historyDraft?.attachments.some(
+            (item) => item.localId === candidate.localId,
+          )
+        ) {
+          void api.deleteAttachment(id).catch(() => undefined);
+        }
+      });
+    } catch (error) {
+      if (!ownsTransport()) return;
+      if (error instanceof ApiError && error.status === 401) {
+        this.host.handleAuthFailure();
+        return;
+      }
+      const message =
+        error instanceof ApiTransportError
+          ? error.timedOut
+            ? "Upload timed out; remove this attachment and add it again"
+            : "Upload could not be confirmed; remove this attachment and add it again"
+          : error instanceof Error
+            ? error.message
+            : "Upload failed";
+      const failPending = (items: PendingAttachment[]) =>
+        items.map((item) =>
+          pending.some((candidate) => candidate.localId === item.localId)
+            ? { ...item, status: "error" as const, error: message }
+            : item,
+        );
+      composer.attachments = failPending(composer.attachments);
+      if (composer.historyDraft)
+        composer.historyDraft.attachments = failPending(
+          composer.historyDraft.attachments,
+        );
+      this.publish(sessionId);
+    } finally {
+      for (const item of pending) this.uploads.delete(item.localId);
+    }
+  }
+
+  private withdrawUpload(localId: string): void {
+    const upload = this.uploads.get(localId);
+    if (!upload) return;
+    this.uploads.delete(localId);
+    if (![...this.uploads.values()].includes(upload)) upload.abort();
+  }
+
+  removeAttachment(localId: string): void {
+    const sessionId = this.host.state().sessionId;
+    if (!sessionId) return;
+    const composer = this.composers.get(sessionId);
+    if (!composer) return;
+    // Outgoing files are owned by their operation, not this editable partition.
+    const target = composer.attachments.find(
+      (item) => item.localId === localId,
+    );
+    if (target) {
+      touchSessionDraft(sessionId);
+      this.withdrawUpload(target.localId);
+    }
+    if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+    composer.attachments = composer.attachments.filter(
+      (item) => item.localId !== localId,
+    );
+    this.prune(sessionId, composer);
+    this.publish(sessionId);
+    // A withdrawn upload is unreferenced; reclaim its host cache file too.
+    if (target?.uploadedId) {
+      void this.host
+        .api()
+        ?.deleteAttachment(target.uploadedId)
+        .catch(() => undefined);
+    }
+  }
+
+  addProjectFile(path: string): void {
+    const sessionId = this.host.state().sessionId;
+    if (!sessionId || !path) return;
+    const composer = this.forSession(sessionId);
+    if (composer.projectFiles.includes(path)) return;
+    const recalledProjectCount = composer.attachments.filter(
+      (item) =>
+        item.recalledArtifact?.type === "file" &&
+        item.recalledArtifact.fileKind === "project",
+    ).length;
+    if (
+      composer.projectFiles.length + recalledProjectCount >=
+      MAX_PROJECT_FILES
+    ) {
+      this.host.notify(
+        "warning",
+        `At most ${MAX_PROJECT_FILES} project files per message`,
+      );
+      return;
+    }
+    touchSessionDraft(sessionId);
+    composer.projectFiles = [...composer.projectFiles, path];
+    this.publish(sessionId);
+  }
+
+  removeProjectFile(path: string): void {
+    const sessionId = this.host.state().sessionId;
+    if (!sessionId) return;
+    const composer = this.composers.get(sessionId);
+    if (!composer) return;
+    if (composer.projectFiles.includes(path)) touchSessionDraft(sessionId);
+    composer.projectFiles = composer.projectFiles.filter(
+      (item) => item !== path,
+    );
+    this.prune(sessionId, composer);
+    this.publish(sessionId);
+  }
+
+  private releaseAttachments(items: readonly PendingAttachment[]): void {
+    for (const attachment of items) {
+      this.withdrawUpload(attachment.localId);
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      if (attachment.uploadedId) {
+        void this.host
+          .api()
+          ?.deleteAttachment(attachment.uploadedId)
+          .catch(() => undefined);
+      }
+    }
+  }
+
+  private releaseHistoryDraft(composer: ComposerPartition): void {
+    if (!composer.historyDraft) return;
+    this.releaseAttachments(composer.historyDraft.attachments);
+    composer.historyDraft = null;
+  }
+
+  private restoreHistoryDraft(composer: ComposerPartition): void {
+    const draft = composer.historyDraft;
+    if (!draft) return;
+    this.releaseAttachments(
+      composer.attachments.filter((item) => !item.recalledArtifact),
+    );
+    composer.attachments = draft.attachments;
+    composer.projectFiles = draft.projectFiles;
+    composer.historyDraft = null;
+  }
+
+  private commitHistoryDraft(composer: ComposerPartition): void {
+    if (!composer.historyDraft) return;
+    this.releaseHistoryDraft(composer);
+    composer.attachments = composer.attachments.map((item) =>
+      item.recalledArtifact?.preview
+        ? {
+            ...item,
+            recalledArtifact: { ...item.recalledArtifact, preview: false },
+          }
+        : item,
+    );
+  }
+
+  private forSession(sessionId: string): ComposerPartition {
+    let composer = this.composers.get(sessionId);
+    if (!composer) {
+      composer = {
+        attachments: [],
+        projectFiles: [],
+        sending: false,
+        historyDraft: null,
+        deliveries: new Map(),
+        unknownDeliveries: new Map(),
+        failedDeliveries: [],
+      };
+      this.composers.set(sessionId, composer);
+    }
+    return composer;
+  }
+
+  private prune(sessionId: string, composer: ComposerPartition): void {
+    if (
+      !composer.sending &&
+      !composer.historyDraft &&
+      composer.deliveries.size === 0 &&
+      composer.unknownDeliveries.size === 0 &&
+      composer.failedDeliveries.length === 0 &&
+      composer.attachments.length === 0 &&
+      composer.projectFiles.length === 0
+    ) {
+      this.composers.delete(sessionId);
+    }
+  }
+
+  private publish(sessionId: string): void {
+    if (this.host.state().sessionId !== sessionId) return;
+    this.host.patch(this.slice(sessionId));
+  }
+}

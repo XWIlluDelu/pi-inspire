@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" role="img" aria-labelledby="title description">
+  <title id="title">Observation pipeline map</title>
+  <desc id="description">Three sensor inputs flow through validation into a shared observation record and two outputs.</desc>
+  <rect width="720" height="420" fill="#f4f1ea" />
+  <g fill="none" stroke="#d5d0c6" stroke-width="2">
+    <path d="M174 102H286" />
+    <path d="M174 210H286" />
+    <path d="M174 318H286" />
+    <path d="M434 210H546" />
+    <path d="M360 272V338H546" />
+  </g>
+  <g fill="#fbfaf7" stroke="#aaa49a" stroke-width="2">
+    <rect x="42" y="66" width="132" height="72" rx="4" />
+    <rect x="42" y="174" width="132" height="72" rx="4" />
+    <rect x="42" y="282" width="132" height="72" rx="4" />
+    <rect x="286" y="146" width="148" height="126" rx="4" />
+    <rect x="546" y="174" width="132" height="72" rx="4" />
+    <rect x="546" y="302" width="132" height="72" rx="4" />
+  </g>
+  <g fill="#2f766d">
+    <circle cx="174" cy="102" r="5" />
+    <circle cx="174" cy="210" r="5" />
+    <circle cx="174" cy="318" r="5" />
+    <circle cx="434" cy="210" r="5" />
+  </g>
+  <rect x="286" y="146" width="5" height="126" fill="#d95a00" />
+  <g fill="#282723" font-family="ui-monospace, monospace">
+    <text x="60" y="95" font-size="12" fill="#747067">CHANNEL 01</text>
+    <text x="60" y="119" font-size="17">Temperature</text>
+    <text x="60" y="203" font-size="12" fill="#747067">CHANNEL 02</text>
+    <text x="60" y="227" font-size="17">Humidity</text>
+    <text x="60" y="311" font-size="12" fill="#747067">CHANNEL 03</text>
+    <text x="60" y="335" font-size="17">Wind</text>
+    <text x="314" y="181" font-size="12" fill="#a44708">VALIDATE</text>
+    <text x="314" y="211" font-size="19">Observation</text>
+    <text x="314" y="236" font-size="13" fill="#747067">ordered · typed</text>
+    <text x="568" y="203" font-size="12" fill="#747067">DOCUMENT</text>
+    <text x="568" y="227" font-size="17">Field log</text>
+    <text x="568" y="331" font-size="12" fill="#747067">ANALYSIS</text>
+    <text x="568" y="355" font-size="17">Notebook</text>
+  </g>
+</svg>

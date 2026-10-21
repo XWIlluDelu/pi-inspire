@@ -1,0 +1,611 @@
+// @vitest-environment jsdom
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import { ActivityBar } from "../../src/components/ActivityBar";
+import { CommandActivity } from "../../src/components/CommandActivity";
+import { emptyEventSlice, reduceEvent } from "../../src/events";
+import { store } from "../../src/store";
+import { sessionPage } from "./fixtures/session-catalog";
+import {
+  activeSnapshot,
+  bootstrapPayload,
+  deferred,
+  FakeWebSocket,
+  installFakeWebSocket,
+  installFetch,
+} from "./helpers";
+import { pendingQueues } from "./pending-fixtures";
+
+let snapshot = activeSnapshot();
+let nativeResult = deferred<unknown>();
+let sessionNumber = 0;
+const socket = () => FakeWebSocket.instances.at(-1)!;
+const progress = () =>
+  screen.queryByRole("status", { name: "Context compaction status" });
+const retryStatus = () =>
+  screen.queryByRole("status", { name: "Retry status" });
+const renderActivity = () =>
+  render(
+    <>
+      <CommandActivity />
+      <ActivityBar onJumpToPending={() => undefined} />
+    </>,
+  );
+
+beforeAll(async () => {
+  installFakeWebSocket();
+  installFetch((url) => {
+    if (url.startsWith("/api/bootstrap"))
+      return { body: bootstrapPayload({ snapshot }) };
+    if (url.startsWith("/api/snapshot")) return { body: snapshot };
+    if (url.startsWith("/api/control/native-command"))
+      return nativeResult.promise.then((body) => ({ body }));
+    if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
+    return undefined;
+  });
+  await store.init("token");
+  socket().open();
+});
+
+beforeEach(() => {
+  snapshot = activeSnapshot({ sessionId: `activity-${++sessionNumber}` });
+  nativeResult = deferred<unknown>();
+  act(() => socket().emit({ type: "snapshot", data: snapshot }));
+});
+
+function start(
+  reason: "manual" | "threshold" | "overflow",
+  sessionId = store.getState().sessionId,
+) {
+  act(() =>
+    socket().emit({
+      type: "compaction_start",
+      reason,
+      sessionId,
+      sessionStatus: { runState: "compacting", indicator: "running" },
+    }),
+  );
+}
+function finish(reason: string, extra: Record<string, unknown> = {}) {
+  act(() =>
+    socket().emit({
+      type: "compaction_end",
+      reason,
+      sessionId: store.getState().sessionId,
+      sessionStatus: { runState: "idle" },
+      ...extra,
+    }),
+  );
+}
+
+const retry = { attempt: 2, maxAttempts: 3, message: "Provider overloaded" };
+afterEach(() => vi.useRealTimers());
+
+describe("runtime-owned activity", () => {
+  it.each([
+    { command: "session", duration: 30_000 },
+    { command: "name", duration: 15_000 },
+    { command: "quit", duration: 15_000 },
+  ])(
+    "renews one /$command card without remounting or evicting it on runtime progress",
+    async ({ command, duration }) => {
+      vi.useFakeTimers();
+      render(<CommandActivity />);
+      await act(() => store.sendPrompt(`/${command}`));
+      const card = screen.getByText(`/${command}`).closest("article")!;
+      act(() => vi.advanceTimersByTime(duration - 1_000));
+      await act(() => store.sendPrompt(`/${command}`));
+      expect(screen.getByText(`/${command}`).closest("article")).toBe(card);
+      act(() =>
+        socket().emit({
+          type: "agent_start",
+          sessionId: store.getState().sessionId,
+        }),
+      );
+      act(() => vi.advanceTimersByTime(duration - 1));
+      expect(card).not.toHaveClass("feedback--leaving");
+      act(() => vi.advanceTimersByTime(1));
+      expect(card).toHaveClass("feedback--leaving");
+      act(() => vi.advanceTimersByTime(150));
+      expect(screen.queryByText(`/${command}`)).not.toBeInTheDocument();
+    },
+  );
+
+  it("pauses readouts while keyboard focus is on the scrollable dock itself", async () => {
+    vi.useFakeTimers();
+    render(<CommandActivity />);
+    await act(() => store.sendPrompt("/session"));
+    const dock = screen.getByRole("region", { name: "Command activity" });
+    act(() => dock.focus());
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(screen.getByText("/session")).toBeInTheDocument();
+    act(() => dock.blur());
+    act(() => vi.advanceTimersByTime(30_150));
+    expect(screen.queryByText("/session")).not.toBeInTheDocument();
+  });
+
+  it("uses the existing Pending count as a queue navigation control", () => {
+    act(() =>
+      socket().emit({
+        type: "snapshot",
+        data: { ...snapshot, pendingQueues: pendingQueues(["Queued prompt"]) },
+      }),
+    );
+    const navigate = vi.fn();
+    render(<ActivityBar onJumpToPending={navigate} />);
+    const button = screen.getByRole("button", {
+      name: "Jump to 1 pending item",
+    });
+    expect(button).toHaveTextContent("1 Pending");
+    expect(button).toHaveClass("chip--info");
+    fireEvent.click(button);
+    expect(navigate).toHaveBeenCalledOnce();
+    act(() => socket().emit({ type: "snapshot", data: snapshot }));
+    expect(
+      screen.queryByRole("button", { name: /Jump to .* pending/ }),
+    ).toBeNull();
+  });
+
+  it.each(["threshold", "overflow", "manual"] as const)(
+    "shows identical %s compaction regardless of the trigger",
+    async (reason) => {
+      renderActivity();
+      expect(progress()).not.toBeInTheDocument();
+      start(reason);
+      expect(progress()).toHaveTextContent("Compacting context");
+      expect(progress()?.querySelector(".chip")).toHaveClass(
+        "chip--activity-event",
+      );
+      expect(progress()).not.toHaveTextContent("/compact");
+      expect(progress()).not.toHaveTextContent("%");
+      finish(reason, { result: { summary: "Pi-owned summary" } });
+      expect(progress()).not.toBeInTheDocument();
+      await waitFor(() => expect(store.getState().runState).toBe("idle"));
+      expect(screen.queryByText("Pi-owned summary")).not.toBeInTheDocument();
+    },
+  );
+
+  it("restores compaction from a snapshot and component remount without a start event", () => {
+    snapshot.runState = "compacting";
+    act(() => socket().emit({ type: "snapshot", data: snapshot }));
+    const first = renderActivity();
+    expect(progress()).toHaveTextContent("Compacting context");
+    first.unmount();
+    renderActivity();
+    expect(progress()).toHaveTextContent("Compacting context");
+  });
+
+  it("never displays another session's phase or failure in the foreground", () => {
+    renderActivity();
+    start("overflow", "background");
+    expect(progress()).not.toBeInTheDocument();
+    const noticesBefore = store.getState().notices;
+    act(() =>
+      socket().emit({
+        type: "compaction_end",
+        reason: "overflow",
+        sessionId: "background",
+        sessionStatus: { runState: "failed" },
+        result: null,
+        errorMessage: "background quota failure",
+      }),
+    );
+    expect(store.getState().notices).toBe(noticesBefore);
+    expect(progress()).not.toBeInTheDocument();
+  });
+
+  it("confirms compact success without owning or extending its phase display", async () => {
+    renderActivity();
+    act(() => {
+      void store.sendPrompt("/compact");
+    });
+    expect(screen.queryByText("/compact")).not.toBeInTheDocument();
+    start("manual");
+    expect(progress()).toHaveTextContent("Compacting context");
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    finish("manual", { result: { summary: "summary" } });
+    expect(progress()).not.toBeInTheDocument(); // HTTP result is still pending.
+    await act(async () =>
+      nativeResult.resolve({
+        command: "compact",
+        outcome: "completed",
+        message: "Context compacted.",
+      }),
+    );
+    expect(screen.queryByText("/compact")).not.toBeInTheDocument();
+    expect(store.getState().notices.at(-1)?.text).toBe("Context compacted.");
+    start("threshold");
+    expect(progress()).toHaveTextContent("Compacting context");
+  });
+
+  it("does not lose phase display when a command result arrives before its end event", async () => {
+    snapshot.runState = "compacting";
+    renderActivity();
+    act(() => {
+      void store.sendPrompt("/compact");
+    });
+    start("manual");
+    await act(async () =>
+      nativeResult.resolve({
+        command: "compact",
+        outcome: "completed",
+        message: "Context compacted.",
+      }),
+    );
+    expect(store.getState().notices.at(-1)?.text).toBe("Context compacted.");
+    expect(progress()).toHaveTextContent("Compacting context");
+    snapshot.runState = "idle";
+    finish("manual", { result: {} });
+    expect(progress()).not.toBeInTheDocument();
+  });
+
+  it("keeps automatic failure feedback across transcript resync", async () => {
+    renderActivity();
+    start("threshold");
+    finish("threshold", {
+      result: null,
+      errorMessage: "Provider quota exceeded",
+    });
+    expect(progress()).not.toBeInTheDocument();
+    expect(store.getState().notices.at(-1)).toMatchObject({
+      kind: "error",
+      text: "Automatic context compaction failed: Provider quota exceeded",
+    });
+    await waitFor(() => expect(store.getState().runState).toBe("idle"));
+    expect(store.getState().notices.at(-1)?.text).toContain(
+      "Provider quota exceeded",
+    );
+  });
+
+  it.each([null, retry])(
+    "restores retry state with optional snapshot details: %j",
+    (detail) => {
+      snapshot.runState = "retrying";
+      snapshot.retry = detail;
+      act(() => socket().emit({ type: "snapshot", data: snapshot }));
+      renderActivity();
+      expect(retryStatus()).toHaveTextContent(
+        detail ? "Retry 2/3 — Provider overloaded" : "Retrying",
+      );
+      expect(retryStatus()?.querySelector(".chip")).toHaveClass(
+        "chip--warning",
+      );
+      if (detail)
+        expect(
+          retryStatus()?.querySelector(".activity__retry-reason"),
+        ).toHaveTextContent("Provider overloaded");
+      // An unrelated settings/projection snapshot must not erase retry detail.
+      act(() => socket().emit({ type: "snapshot", data: snapshot }));
+      expect(retryStatus()).toHaveTextContent(
+        detail ? "Retry 2/3" : "Retrying",
+      );
+      snapshot = activeSnapshot({ sessionId: "other-session" });
+      act(() => socket().emit({ type: "snapshot", data: snapshot }));
+      expect(retryStatus()).not.toBeInTheDocument();
+    },
+  );
+
+  it("does not render stale retry metadata outside retrying", () => {
+    snapshot.retry = retry;
+    act(() => socket().emit({ type: "snapshot", data: snapshot }));
+    renderActivity();
+    expect(retryStatus()).not.toBeInTheDocument();
+    expect(store.getState().retry).toBeNull();
+  });
+});
+
+describe("phase event reduction", () => {
+  it.each([
+    {
+      type: "message_end",
+      message: { role: "assistant", content: [], stopReason: "error" },
+    },
+    { type: "agent_settled" },
+    { type: "session_status" },
+  ])(
+    "adopts failed Host state from $type rather than inferring running/idle",
+    (event) => {
+      const result = reduceEvent(
+        { ...emptyEventSlice(), runState: "running" },
+        new Set(),
+        {
+          ...event,
+          sessionStatus: { runState: "failed", indicator: "failed" },
+        },
+      );
+      expect(result.slice.runState).toBe("failed");
+      expect(result.changed).toBe(true);
+    },
+  );
+
+  it.each([
+    [
+      { aborted: true, result: null },
+      "info",
+      "Automatic context compaction cancelled.",
+    ],
+    [
+      { result: null, errorMessage: "Quota exceeded" },
+      "error",
+      "Automatic context compaction failed: Quota exceeded",
+    ],
+    [
+      { result: null },
+      "warning",
+      "Automatic context compaction ended without a result.",
+    ],
+  ] as const)(
+    "reports %j and adopts Host return state before resync",
+    (outcome, kind, text) => {
+      const result = reduceEvent(
+        { ...emptyEventSlice(), runState: "compacting" },
+        new Set(),
+        {
+          type: "compaction_end",
+          reason: "overflow",
+          sessionStatus: { runState: "aborted" },
+          ...outcome,
+        },
+      );
+      expect(result.resync).toBe(true);
+      expect(result.slice.runState).toBe("aborted");
+      expect(result.slice.notices).toEqual([{ id: 1, kind, text }]);
+    },
+  );
+
+  it("leaves successful summaries in Pi history instead of manufacturing a message", () => {
+    const result = reduceEvent(emptyEventSlice(), new Set(), {
+      type: "compaction_end",
+      reason: "overflow",
+      result: { summary: "canonical summary" },
+      willRetry: true,
+      sessionStatus: { runState: "running", indicator: "running" },
+    });
+    expect(result.resync).toBe(true);
+    expect(result.slice.runState).toBe("running");
+    expect(result.slice.notices).toEqual([]);
+    expect(result.slice.messages).toEqual([]);
+  });
+
+  it("reports manual failures and cancellation without requiring a local receipt", () => {
+    for (const outcome of [
+      { aborted: true },
+      { errorMessage: "manual failure" },
+    ]) {
+      const result = reduceEvent(emptyEventSlice(), new Set(), {
+        type: "compaction_end",
+        reason: "manual",
+        result: null,
+        ...outcome,
+      });
+      expect(result.slice.notices).toEqual([
+        expect.objectContaining({
+          kind: "aborted" in outcome ? "info" : "error",
+          text: expect.stringContaining(
+            "aborted" in outcome ? "cancelled" : "manual failure",
+          ),
+        }),
+      ]);
+    }
+  });
+
+  it.each([
+    "agent_start",
+    "agent_settled",
+    "compaction_start",
+    "runtime_error",
+  ])("%s retires retry details", (type) => {
+    const result = reduceEvent(
+      { ...emptyEventSlice(), runState: "retrying", retry },
+      new Set(),
+      { type },
+    );
+    expect(result.slice.retry).toBeNull();
+  });
+
+  it("malformed retry detail never invents a 1/1 attempt", () => {
+    const result = reduceEvent(emptyEventSlice(), new Set(), {
+      type: "auto_retry_start",
+    });
+    expect(result.slice.runState).toBe("retrying");
+    expect(result.slice.retry).toBeNull();
+  });
+});
+
+describe("summary retry and command receipts", () => {
+  it("restores compaction backoff from snapshots and clears it when the next attempt starts", () => {
+    snapshot.runState = "compacting";
+    snapshot.summarizationRetry = retry;
+    act(() => socket().emit({ type: "snapshot", data: snapshot }));
+    const first = renderActivity();
+    expect(progress()).toHaveTextContent(
+      "Compaction retry 2/3 — waiting — Provider overloaded",
+    );
+    expect(store.getState().runState).toBe("compacting");
+    first.unmount();
+    renderActivity();
+    expect(progress()).toHaveTextContent("Compaction retry 2/3");
+    act(() =>
+      socket().emit({
+        type: "summarization_retry_attempt_start",
+        source: "compaction",
+        reason: "manual",
+        sessionId: store.getState().sessionId,
+        sessionStatus: { runState: "compacting" },
+      }),
+    );
+    expect(progress()).toHaveTextContent("Compacting context");
+    expect(progress()).not.toHaveTextContent("waiting");
+    expect(store.getState().summarizationRetry).toBeNull();
+  });
+
+  it("handles live backoff without replacing the enclosing operation state", () => {
+    renderActivity();
+    start("manual");
+    act(() =>
+      socket().emit({
+        type: "summarization_retry_scheduled",
+        attempt: 2,
+        maxAttempts: 3,
+        errorMessage: "Provider overloaded",
+        sessionId: store.getState().sessionId,
+        sessionStatus: { runState: "compacting" },
+      }),
+    );
+    expect(progress()).toHaveTextContent("Compaction retry 2/3");
+    expect(store.getState().retry).toBeNull();
+    act(() =>
+      socket().emit({
+        type: "summarization_retry_finished",
+        sessionId: store.getState().sessionId,
+        sessionStatus: { runState: "compacting" },
+      }),
+    );
+    expect(progress()).toHaveTextContent("Compacting context");
+  });
+
+  it("does not retain backoff in an idle or different session snapshot", () => {
+    snapshot.summarizationRetry = retry;
+    act(() => socket().emit({ type: "snapshot", data: snapshot }));
+    renderActivity();
+    expect(store.getState().summarizationRetry).toBeNull();
+    expect(progress()).not.toBeInTheDocument();
+  });
+
+  it("shows a manual failure after joining an already compacting session", async () => {
+    snapshot.runState = "compacting";
+    act(() => socket().emit({ type: "snapshot", data: snapshot }));
+    renderActivity();
+    expect(
+      store.getState().commandActivities[store.getState().sessionId!],
+    ).toBeUndefined();
+    snapshot.runState = "failed";
+    finish("manual", {
+      errorMessage: "Summary provider unavailable",
+      result: null,
+      sessionStatus: { runState: "failed" },
+    });
+    expect(store.getState().notices.at(-1)?.text).toContain(
+      "Summary provider unavailable",
+    );
+    await waitFor(() => expect(store.getState().runState).toBe("failed"));
+  });
+
+  it("keeps cancelled command results attributable, with times in data only", async () => {
+    renderActivity();
+    act(() => {
+      void store.sendPrompt("/compact");
+    });
+    await act(async () =>
+      nativeResult.resolve({
+        command: "compact",
+        outcome: "cancelled",
+        message: "Compaction cancelled.",
+      }),
+    );
+    await screen.findByText("Cancelled");
+    const receipt = screen.getByText("/compact").closest("article")!;
+    expect(receipt.querySelector("time")).toBeNull();
+    expect(
+      store.getState().commandActivities[store.getState().sessionId!]?.at(-1)
+        ?.createdAt,
+    ).toEqual(expect.any(Number));
+    act(() =>
+      socket().emit({
+        type: "agent_start",
+        sessionId: store.getState().sessionId,
+        sessionStatus: { runState: "running" },
+      }),
+    );
+    expect(screen.getByText("/compact")).toBeInTheDocument();
+  });
+
+  it.each([
+    "compaction_start",
+    "compaction_end",
+    "agent_start",
+    "agent_settled",
+    "runtime_error",
+  ])("%s retires summary retry details", (type) => {
+    const result = reduceEvent(
+      {
+        ...emptyEventSlice(),
+        runState: "compacting",
+        summarizationRetry: retry,
+      },
+      new Set(),
+      { type, result: {} },
+    );
+    expect(result.slice.summarizationRetry).toBeNull();
+  });
+
+  it("bounds malformed retry details instead of inventing counters", () => {
+    const prior = { ...emptyEventSlice(), runState: "compacting" as const };
+    const result = reduceEvent(prior, new Set(), {
+      type: "summarization_retry_scheduled",
+      attempt: 99,
+      maxAttempts: 3,
+    });
+    expect(result.slice.runState).toBe("compacting");
+    expect(result.slice.summarizationRetry).toBeNull();
+  });
+});
+
+it("keeps retry status without duplicating live or failed tools", () => {
+  const ws = socket();
+  act(() => ws.emit({ type: "snapshot", data: activeSnapshot() }));
+
+  render(<ActivityBar onJumpToPending={() => undefined} />);
+  act(() =>
+    ws.emit({
+      type: "tool_execution_start",
+      sessionId: store.getState().sessionId!,
+      toolCallId: "tool-1",
+      toolName: "bash",
+      args: { command: "pwd" },
+    }),
+  );
+  expect(screen.queryByText(/bash/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+  act(() =>
+    ws.emit({
+      type: "tool_execution_end",
+      sessionId: store.getState().sessionId!,
+      toolCallId: "tool-1",
+      toolName: "bash",
+      result: "failed",
+      isError: true,
+    }),
+  );
+  expect(screen.queryByText(/bash/)).not.toBeInTheDocument();
+
+  act(() =>
+    ws.emit({
+      type: "auto_retry_start",
+      sessionId: store.getState().sessionId!,
+      attempt: 2,
+      maxAttempts: 3,
+      errorMessage: "rate limited",
+    }),
+  );
+  expect(
+    screen.getByRole("status", { name: "Retry status" }),
+  ).toHaveTextContent("Retry 2/3 — rate limited");
+
+  act(() => ws.emit({ type: "snapshot", data: activeSnapshot() }));
+});

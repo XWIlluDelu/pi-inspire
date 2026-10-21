@@ -1,0 +1,312 @@
+/* Shared by attachments, conversation images, and the file reader. The image
+   owns its opaque inspection background; the modal scrim only dims the shell. */
+.image-surface {
+  --image-white: #fff;
+  --image-black: #000;
+  --image-check-light: #eee;
+  --image-check-dark: #ccc;
+  background-color: var(--image-check-light);
+  background-image: repeating-conic-gradient(
+    var(--image-check-dark) 0% 25%,
+    var(--image-check-light) 0% 50%
+  );
+  background-size: 16px 16px;
+}
+
+.image-surface[data-background="white"] {
+  background-color: var(--image-white);
+  background-image: none;
+}
+
+.image-surface[data-background="black"] {
+  background-color: var(--image-black);
+  background-image: none;
+}
+
+.image-preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  color: var(--faint);
+  cursor: zoom-in;
+}
+
+.image-preview:disabled {
+  cursor: default;
+}
+
+.image-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  user-select: none;
+}
+
+.image-preview--attachment {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: inherit;
+}
+
+.image-preview--message {
+  width: clamp(104px, 20vw, 160px);
+  height: clamp(78px, 15vw, 120px);
+}
+
+.image-preview--inline {
+  max-width: 100%;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  vertical-align: middle;
+}
+
+.image-preview--inline img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.image-preview[data-image-error] img {
+  display: none;
+}
+
+.overlay.image-lightbox {
+  --image-gutter: clamp(16px, 3vw, 24px);
+  z-index: 80;
+  padding: max(var(--image-gutter), var(--safe-top))
+    max(var(--image-gutter), var(--safe-right))
+    max(var(--image-gutter), var(--safe-bottom))
+    max(var(--image-gutter), var(--safe-left));
+  overflow: hidden;
+  overscroll-behavior: contain;
+  touch-action: none;
+}
+
+.image-lightbox__dialog {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  outline: none;
+}
+
+.image-lightbox__header {
+  width: 100%;
+  max-width: 1400px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-overlay);
+  background: var(--bg-raised);
+}
+
+.image-lightbox__identity {
+  flex: 1;
+  min-width: 0;
+}
+
+.image-lightbox__name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--text-base);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.image-lightbox__dimensions {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.image-lightbox__actions,
+.image-lightbox__view-controls,
+.image-lightbox__toolbar,
+.image-lightbox__zoom,
+.image-lightbox__navigation {
+  display: flex;
+  align-items: center;
+}
+
+.image-lightbox__actions {
+  flex: 0 0 auto;
+}
+
+.image-lightbox__toolbar {
+  flex: 0 0 auto;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  max-width: 100%;
+}
+
+.image-lightbox__view-controls {
+  gap: var(--space-2);
+}
+
+.image-lightbox__zoom,
+.image-lightbox__navigation,
+.image-lightbox__background {
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-overlay);
+  background: var(--bg-raised);
+}
+
+.image-lightbox__navigation > span {
+  min-width: 36px;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.image-lightbox__control {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-overlay);
+  background: transparent;
+  color: var(--body);
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+.image-lightbox__control:hover:not(:disabled) {
+  background: var(--bg-control);
+  color: var(--ink);
+}
+
+.image-lightbox__control:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.image-lightbox__scale {
+  width: 64px;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.image-lightbox__background {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+}
+
+.image-lightbox__background > span {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-xs);
+  background-size: 10px 10px;
+}
+
+.image-lightbox__background > select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.image-lightbox__control:focus-visible,
+.image-lightbox__background:has(select:focus-visible) {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: 3px;
+  box-shadow: none;
+}
+
+.image-lightbox__canvas {
+  position: relative;
+  width: 100%;
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  touch-action: none;
+  outline: none;
+  user-select: none;
+}
+
+.image-lightbox__canvas:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: -2px;
+}
+
+.image-lightbox__canvas > img {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: block;
+  max-width: none;
+  max-height: none;
+  user-select: none;
+  cursor: grab;
+  transform-origin: center;
+  /* Direct manipulation must not lag behind the pointer or pinch center. */
+  will-change: transform;
+}
+
+.image-lightbox__canvas--panning,
+.image-lightbox__canvas--panning > img {
+  cursor: grabbing;
+}
+
+.image-lightbox__status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  margin: auto;
+  width: fit-content;
+  height: fit-content;
+  max-width: 100%;
+  padding: var(--space-6);
+  border-radius: var(--radius-overlay);
+  background: var(--bg-raised);
+  color: var(--body);
+  font-size: var(--text-base);
+  text-align: center;
+}
+
+.image-lightbox__error {
+  flex: 0 0 auto;
+  max-width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--bg-raised);
+  color: var(--error-ink);
+  font-size: var(--text-sm);
+}

@@ -1,0 +1,1140 @@
+import { describe, expect, it } from "vitest";
+import { MAX_EXTENSION_STATUS_CHARS } from "../../shared/contracts";
+import {
+  type EventSlice,
+  emptyEventSlice,
+  reduceEvent,
+  type WireEvent,
+} from "../../src/events";
+import { pendingMessage, pendingQueues } from "./pending-fixtures";
+
+function reduce(
+  slice: EventSlice,
+  settled: ReadonlySet<string>,
+  event: WireEvent,
+) {
+  return reduceEvent(slice, settled, event);
+}
+
+describe("message reconciliation", () => {
+  it("replays compacted tool argument batches across snapshots and rejects revision/identity gaps", () => {
+    const settled = new Set<string>();
+    const start = reduce(emptyEventSlice(), settled, {
+      type: "message_start",
+      message: {
+        role: "assistant",
+        timestamp: 2,
+        content: [],
+        __inspireLiveId: "stream-write",
+        __inspireStreamRevision: 0,
+      },
+    });
+    const shell = reduce(start.slice, settled, {
+      type: "message_update_batch",
+      streamMessageKey: "live:stream-write",
+      streamRevision: 1,
+      streamTextLength: 0,
+      assistantMessageEvents: [
+        {
+          type: "toolcall_start",
+          contentIndex: 0,
+          id: "write-1",
+          toolName: "write",
+        },
+      ],
+    });
+    expect(shell.resync).toBe(false);
+    expect(shell.slice.messages[0]).toMatchObject({
+      content: [
+        {
+          id: "write-1",
+          name: "write",
+          arguments: {},
+          __inspireToolCall: { phase: "streaming" },
+        },
+      ],
+    });
+    const batch: WireEvent = {
+      type: "message_update_batch",
+      streamMessageKey: "live:stream-write",
+      streamRevision: 8,
+      streamTextLength: 16,
+      sourceEventCount: 7,
+      assistantMessageEvents: [
+        {
+          type: "toolcall_delta",
+          contentIndex: 0,
+          argumentChars: 16,
+          argumentsTruncated: false,
+          argumentUpdates: [
+            { path: ["path"], set: "src/file.ts" },
+            { path: ["content"], set: "first" },
+          ],
+        },
+      ],
+    };
+    const preview = reduce(shell.slice, settled, batch);
+    expect(preview.resync).toBe(false);
+    expect(preview.slice.messages[0]).toMatchObject({
+      __inspireStreamRevision: 8,
+      content: [{ arguments: { content: "first" } }],
+    });
+    expect(reduce(preview.slice, settled, batch).resync).toBe(true);
+    expect(
+      reduce(shell.slice, settled, { ...batch, sourceEventCount: 6 }).resync,
+    ).toBe(true);
+    expect(
+      reduce(shell.slice, settled, {
+        ...batch,
+        streamMessageKey: "live:other-call",
+      }).resync,
+    ).toBe(true);
+    const restored = reduce(emptyEventSlice(), settled, {
+      type: "message_start",
+      message: preview.slice.messages[0],
+    });
+    const continued = reduce(restored.slice, settled, {
+      type: "message_update_batch",
+      streamMessageKey: "live:stream-write",
+      streamRevision: 9,
+      streamTextLength: 23,
+      assistantMessageEvents: [
+        {
+          type: "toolcall_delta",
+          contentIndex: 0,
+          argumentChars: 23,
+          argumentsTruncated: false,
+          argumentUpdates: [{ path: ["content"], append: " second" }],
+        },
+      ],
+    });
+    expect(continued.resync).toBe(false);
+    expect(continued.slice.messages[0]).toMatchObject({
+      content: [{ arguments: { content: "first second" } }],
+    });
+    expect(preview.slice.messages[0]).toMatchObject({
+      content: [{ arguments: { content: "first" } }],
+    });
+    const interrupted = reduce(continued.slice, settled, {
+      type: "message_end",
+      message: {
+        ...continued.slice.messages[0],
+        stopReason: "aborted",
+      },
+    });
+    expect(interrupted.slice.messages[0]).toMatchObject({
+      content: [{ __inspireToolCall: { phase: "interrupted" } }],
+    });
+  });
+  it("ignores a message_start whose key is already settled (post-resync duplicate)", () => {
+    const slice = emptyEventSlice();
+    slice.messages = [{ role: "user", content: "hi", timestamp: 1 }];
+    const settled = new Set(["user:1"]);
+    const { slice: next, changed } = reduce(slice, settled, {
+      type: "message_start",
+      message: { role: "user", content: "hi", timestamp: 1 },
+    });
+    expect(changed).toBe(false);
+    expect(next).toBe(slice); // same reference: nothing to publish
+    expect(next.messages).toHaveLength(1);
+    expect(next.messages).toBe(slice.messages); // untouched
+  });
+
+  it("replaces the trailing unsettled assistant message on update", () => {
+    const slice = emptyEventSlice();
+    const start = reduce(slice, new Set(), {
+      type: "message_start",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "a" }],
+        timestamp: 2,
+      },
+    });
+    const update = reduce(start.slice, new Set(), {
+      type: "message_update",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "ab" }],
+        timestamp: 2,
+      },
+    });
+    expect(update.slice.messages).toHaveLength(1);
+    expect(update.slice.messages[0]!.content).toEqual([
+      { type: "text", text: "ab" },
+    ]);
+    expect(start.slice.streaming).toBe(true);
+    expect(start.slice.activeAssistantMessageKey).toBe("assistant:2");
+    expect(start.slice.runState).toBe("running");
+  });
+
+  it("reconstructs message_update deltas without creating phantom rows", () => {
+    let result = reduce(emptyEventSlice(), new Set(), {
+      type: "message_start",
+      message: {
+        role: "assistant",
+        content: [],
+        timestamp: 2,
+        provider: "openai-codex",
+        model: "gpt-5.6",
+        __inspireLiveId: "call-1",
+      },
+    });
+
+    const updates: WireEvent[] = [
+      {
+        type: "message_update",
+        assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          contentIndex: 0,
+          delta: "check ",
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          contentIndex: 0,
+          delta: "state",
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_end",
+          contentIndex: 0,
+          content: "check state",
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 1,
+          delta: "hel",
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 1,
+          delta: "lo",
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "toolcall_start",
+          contentIndex: 2,
+        },
+      },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "toolcall_delta",
+          contentIndex: 2,
+          delta: '{"path":',
+        },
+      },
+    ];
+    for (const update of updates)
+      result = reduce(result.slice, new Set(), update);
+
+    expect(result.resync).toBe(false);
+    expect(result.slice.messages[0]!.content).toMatchObject([
+      { type: "thinking", thinking: "check state" },
+      { type: "text", text: "hello" },
+    ]);
+
+    result = reduce(result.slice, new Set(), {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "toolcall_end",
+        contentIndex: 2,
+        toolCall: {
+          type: "toolCall",
+          id: "tool-1",
+          name: "read",
+          arguments: { path: "README.md" },
+        },
+      },
+    });
+    expect(result.slice.messages).toHaveLength(1);
+    expect(result.slice.messages[0]).toMatchObject({
+      role: "assistant",
+      __inspireLiveId: "call-1",
+      content: [
+        { type: "thinking", thinking: "check state" },
+        { type: "text", text: "hello" },
+        { type: "toolCall", id: "tool-1", name: "read" },
+      ],
+    });
+  });
+
+  it("reduces an ordered delta batch once and rejects a broken length witness", () => {
+    const started = reduce(emptyEventSlice(), new Set(), {
+      type: "message_start",
+      message: {
+        role: "assistant",
+        content: [],
+        timestamp: 2,
+        __inspireLiveId: "call-batch",
+        __inspireStreamRevision: 0,
+      },
+    });
+    const streamMessageKey = started.slice.activeAssistantMessageKey!;
+    const batch = reduce(started.slice, new Set(), {
+      type: "message_update_batch",
+      streamMessageKey,
+      streamTextLength: 5,
+      streamRevision: 3,
+      assistantMessageEvents: [
+        { type: "text_start", contentIndex: 0 },
+        { type: "text_delta", contentIndex: 0, delta: "hel" },
+        { type: "text_delta", contentIndex: 0, delta: "lo" },
+      ],
+    });
+    expect(batch.changed).toBe(true);
+    expect(batch.resync).toBe(false);
+    expect(batch.slice.messages[0]!.content).toEqual([
+      { type: "text", text: "hello" },
+    ]);
+
+    const broken = reduce(batch.slice, new Set(), {
+      type: "message_update_batch",
+      streamMessageKey,
+      streamTextLength: 99,
+      streamRevision: 4,
+      assistantMessageEvents: [
+        { type: "text_delta", contentIndex: 0, delta: "!" },
+      ],
+    });
+    expect(broken.resync).toBe(true);
+    expect(broken.slice.messages).toBe(batch.slice.messages);
+  });
+
+  it("does not let a joining backlog regress a newer snapshot projection", () => {
+    const started = reduce(emptyEventSlice(), new Set(), {
+      type: "message_start",
+      message: {
+        role: "assistant",
+        content: [],
+        timestamp: 2,
+        __inspireLiveId: "call-overlap",
+        __inspireStreamRevision: 0,
+      },
+    });
+    const streamMessageKey = started.slice.activeAssistantMessageKey!;
+    const atThree = reduce(started.slice, new Set(), {
+      type: "message_update",
+      streamDelta: true,
+      streamMessageKey,
+      streamTextLength: 3,
+      streamRevision: 3,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "abc" }],
+        timestamp: 2,
+        __inspireLiveId: "call-overlap",
+        __inspireStreamRevision: 3,
+      },
+    });
+    const stale = reduce(atThree.slice, new Set(), {
+      type: "message_update",
+      streamDelta: true,
+      streamMessageKey,
+      streamTextLength: 2,
+      streamRevision: 2,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "ab" }],
+        timestamp: 2,
+        __inspireLiveId: "call-overlap",
+        __inspireStreamRevision: 2,
+      },
+    });
+    expect(stale.changed).toBe(false);
+    expect(stale.resync).toBe(false);
+    expect(stale.slice.messages).toBe(atThree.slice.messages);
+
+    const advanced = reduce(stale.slice, new Set(), {
+      type: "message_update",
+      streamDelta: true,
+      streamMessageKey,
+      streamTextLength: 4,
+      streamRevision: 4,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "abcd" }],
+        timestamp: 2,
+        __inspireLiveId: "call-overlap",
+        __inspireStreamRevision: 4,
+      },
+    });
+    expect(advanced.resync).toBe(false);
+    expect(advanced.slice.messages[0]).toMatchObject({
+      __inspireStreamRevision: 4,
+      content: [{ type: "text", text: "abcd" }],
+    });
+  });
+
+  it("resyncs rather than applying a delta when no assistant call is active", () => {
+    const slice = emptyEventSlice();
+    slice.messages = [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "settled" }],
+        timestamp: 1,
+      },
+    ];
+    const result = reduce(slice, new Set(["assistant:1"]), {
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "orphan",
+      },
+    });
+    expect(result.resync).toBe(true);
+    expect(result.slice.messages).toBe(slice.messages);
+    expect(result.slice.messages[0]!.content).toEqual([
+      { type: "text", text: "settled" },
+    ]);
+  });
+
+  it("settles message keys on message_end so later duplicates are dropped", () => {
+    const slice = emptyEventSlice();
+    const end = reduce(slice, new Set(), {
+      type: "message_end",
+      message: { role: "assistant", content: [], timestamp: 3 },
+    });
+    expect(end.settle).toEqual(["assistant:3"]);
+    expect(end.slice.streaming).toBe(false);
+
+    const settled = new Set(end.settle);
+    const duplicate = reduce(end.slice, settled, {
+      type: "message_start",
+      message: { role: "assistant", content: [], timestamp: 3 },
+    });
+    expect(duplicate.slice.messages).toHaveLength(1);
+    expect(duplicate.changed).toBe(false);
+  });
+
+  it("keeps an observed completed call queued until execution is observed", () => {
+    const message = {
+      role: "assistant",
+      timestamp: 7,
+      content: [
+        {
+          type: "toolCall",
+          id: "queued",
+          name: "write",
+          arguments: { path: "a.ts", content: "ready" },
+        },
+      ],
+    };
+    const started = reduce(emptyEventSlice(), new Set(), {
+      type: "message_start",
+      message,
+    });
+    const ended = reduce(started.slice, new Set(), {
+      type: "message_end",
+      message,
+    });
+    expect(ended.slice.streaming).toBe(false);
+    expect(ended.slice.tools.queued).toEqual({
+      id: "queued",
+      name: "write",
+      phase: "queued",
+    });
+    const executing = reduce(ended.slice, new Set(), {
+      type: "tool_execution_update",
+      toolCallId: "queued",
+      toolName: "write",
+      outputPreview: { text: "Writing…", truncated: false },
+    });
+    expect(executing.slice.tools.queued?.phase).toBe("running");
+    const replayed = reduce(executing.slice, new Set(), {
+      type: "message_end",
+      message,
+    });
+    expect(replayed.slice.tools.queued?.phase).toBe("running");
+    const settled = reduce(ended.slice, new Set(), { type: "agent_settled" });
+    expect(settled.slice.tools).toEqual({});
+  });
+
+  it("does not infer a queued execution from unobserved or interrupted calls", () => {
+    const call = {
+      type: "toolCall",
+      id: "unobserved",
+      name: "write",
+      arguments: { path: "a.ts" },
+    };
+    const message = { role: "assistant", timestamp: 7, content: [call] };
+    expect(
+      reduce(emptyEventSlice(), new Set(), { type: "message_end", message })
+        .slice.tools,
+    ).toEqual({});
+    const started = reduce(emptyEventSlice(), new Set(), {
+      type: "message_start",
+      message,
+    });
+    for (const stopReason of ["aborted", "error"]) {
+      const ended = reduce(started.slice, new Set(), {
+        type: "message_end",
+        message: { ...message, stopReason },
+      });
+      expect(ended.slice.tools).toEqual({});
+    }
+    const partial = reduce(started.slice, new Set(), {
+      type: "message_end",
+      message: {
+        ...message,
+        content: [
+          {
+            ...call,
+            __inspireToolCall: {
+              phase: "streaming",
+              characters: 12,
+              truncated: false,
+            },
+          },
+        ],
+      },
+    });
+    expect(partial.slice.tools).toEqual({});
+  });
+
+  it("keeps the current assistant key through its tool batch and replaces it at the next LLM call", () => {
+    const firstStart = reduce(emptyEventSlice(), new Set(), {
+      type: "message_start",
+      message: {
+        role: "assistant",
+        content: [],
+        timestamp: 2,
+        __inspireLiveId: "call-1",
+      },
+    });
+    const firstEnd = reduce(firstStart.slice, new Set(), {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        timestamp: 2,
+        __inspireLiveId: "call-1",
+      },
+    });
+    expect(firstEnd.slice.activeAssistantMessageKey).toBe("live:call-1");
+
+    const secondStart = reduce(firstEnd.slice, new Set(firstEnd.settle), {
+      type: "message_start",
+      message: {
+        role: "assistant",
+        content: [],
+        timestamp: 3,
+        __inspireLiveId: "call-2",
+      },
+    });
+    expect(secondStart.slice.activeAssistantMessageKey).toBe("live:call-2");
+  });
+
+  it("keeps same-role same-timestamp ordinary lifecycles distinct by host live identity", () => {
+    let slice = emptyEventSlice();
+    const settled = new Set<string>();
+    for (const [id, content] of [
+      ["live-1", "first"],
+      ["live-2", "second"],
+    ] as const) {
+      const start = reduce(slice, settled, {
+        type: "message_start",
+        message: {
+          role: "assistant",
+          content,
+          timestamp: 2,
+          __inspireLiveId: id,
+        },
+      });
+      const end = reduce(start.slice, settled, {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content,
+          timestamp: 2,
+          __inspireLiveId: id,
+        },
+      });
+      for (const key of end.settle) settled.add(key);
+      slice = end.slice;
+    }
+    expect(slice.messages.map((message) => message.content)).toEqual([
+      "first",
+      "second",
+    ]);
+    expect(settled).toEqual(new Set(["live:live-1", "live:live-2"]));
+  });
+
+  it("appends genuinely new messages in source order", () => {
+    const slice = emptyEventSlice();
+    const first = reduce(slice, new Set(), {
+      type: "message_start",
+      message: { role: "user", content: "a", timestamp: 1 },
+    });
+    const second = reduce(first.slice, new Set(), {
+      type: "message_start",
+      message: { role: "assistant", content: [], timestamp: 2 },
+    });
+    expect(second.slice.messages.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+  });
+
+  it("does not overwrite an older keyed turn when its end event is absent", () => {
+    const slice = emptyEventSlice();
+    slice.messages = [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "first answer" }],
+        timestamp: 2,
+      },
+      { role: "user", content: "second question", timestamp: 3 },
+    ];
+
+    const next = reduce(slice, new Set(), {
+      type: "message_start",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "second answer" }],
+        timestamp: 4,
+      },
+    });
+
+    expect(next.slice.messages.map((message) => message.timestamp)).toEqual([
+      2, 3, 4,
+    ]);
+    expect(next.slice.messages[0]!.content).toEqual([
+      { type: "text", text: "first answer" },
+    ]);
+  });
+
+  it("refreshes the snapshot after a handled prompt without inventing an agent settlement", () => {
+    const slice = emptyEventSlice();
+    slice.runState = "running";
+    slice.streaming = true;
+    slice.activeAssistantMessageKey = "live:retained";
+    slice.queue = pendingQueues(["steer"], ["later"]);
+    const result = reduce(slice, new Set(), { type: "prompt_finished" });
+    expect(result.resync).toBe(true);
+    expect(result.slice).toEqual(slice);
+    expect(result.settle).toEqual([]);
+  });
+
+  it("resyncs on settle without discarding the Host's pending-input projection", () => {
+    const slice = emptyEventSlice();
+    slice.activeAssistantMessageKey = "live:active-assistant";
+    slice.tools = { t1: { id: "t1", name: "bash", phase: "running" } };
+    slice.retry = { attempt: 1, maxAttempts: 3, message: "x" };
+    slice.queue = pendingQueues(["steer"], ["later one", "later two"], {
+      revision: 4,
+    });
+    const { slice: next, resync } = reduce(slice, new Set(), {
+      type: "agent_settled",
+    });
+    expect(resync).toBe(true);
+    expect(next.streaming).toBe(false);
+    expect(next.activeAssistantMessageKey).toBeNull();
+    expect(next.tools).toEqual({});
+    expect(next.retry).toBeNull();
+    expect(next.queue).toEqual(slice.queue);
+  });
+});
+
+describe("transient tool/retry/queue activity", () => {
+  it("maps tool_execution start/update/end into per-tool activity", () => {
+    const slice = emptyEventSlice();
+    const started = reduce(slice, new Set(), {
+      type: "tool_execution_start",
+      toolCallId: "t1",
+      toolName: "read",
+      args: { path: "src/index.ts" },
+    });
+    expect(started.slice.tools.t1).toMatchObject({
+      name: "read",
+      phase: "running",
+    });
+
+    const updated = reduce(started.slice, new Set(), {
+      type: "tool_execution_update",
+      toolCallId: "t1",
+      toolName: "read",
+      args: {},
+      outputPreview: { text: "reading lines 1-40", truncated: false },
+    });
+    expect(updated.slice.tools.t1).toMatchObject({
+      phase: "running",
+      outputPreview: { text: "reading lines 1-40", truncated: false },
+    });
+
+    const failed = reduce(updated.slice, new Set(), {
+      type: "tool_execution_end",
+      toolCallId: "t1",
+      toolName: "read",
+      result: {},
+      isError: true,
+    });
+    expect(failed.slice.tools.t1!.phase).toBe("error");
+    expect(failed.slice.tools.t1!.outputPreview).toBeUndefined();
+  });
+
+  it("maps auto-retry start/end into run state and retry info", () => {
+    const slice = emptyEventSlice();
+    const started = reduce(slice, new Set(), {
+      type: "auto_retry_start",
+      attempt: 2,
+      maxAttempts: 5,
+      errorMessage: "rate limited",
+    });
+    expect(started.slice.runState).toBe("retrying");
+    expect(started.slice.retry).toEqual({
+      attempt: 2,
+      maxAttempts: 5,
+      message: "rate limited",
+    });
+
+    const recovered = reduce(started.slice, new Set(), {
+      type: "auto_retry_end",
+      success: true,
+      attempt: 2,
+    });
+    expect(recovered.slice.runState).toBe("running");
+    expect(recovered.slice.retry).toBeNull();
+
+    const failed = reduce(started.slice, new Set(), {
+      type: "auto_retry_end",
+      success: false,
+      attempt: 5,
+      finalError: "overloaded",
+    });
+    expect(failed.slice.runState).toBe("failed");
+    expect(failed.slice.notices).toEqual([]);
+    const settled = reduce(failed.slice, new Set(), {
+      type: "agent_settled",
+      aborted: false,
+    });
+    expect(settled.slice.notices.at(-1)).toMatchObject({
+      kind: "error",
+      text: "Retry failed: overloaded",
+    });
+  });
+
+  it.each(["retry", "completed message"])(
+    "uses run-level cancellation after %s without erasing diagnostics",
+    (phase) => {
+      let slice = reduce(emptyEventSlice(), new Set(), {
+        type: "agent_start",
+      }).slice;
+      slice = reduce(slice, new Set(), {
+        type: "extension_error",
+        error: "earlier diagnostic",
+      }).slice;
+      const message = {
+        role: "assistant",
+        content: "finished",
+        timestamp: 1,
+        stopReason: "stop",
+      };
+      slice = reduce(
+        slice,
+        new Set(),
+        phase === "retry"
+          ? {
+              type: "auto_retry_end",
+              success: false,
+              finalError: "Retry cancelled",
+            }
+          : { type: "message_end", message },
+      ).slice;
+      slice = reduce(slice, new Set(), {
+        type: "agent_settled",
+        aborted: true,
+      }).slice;
+      expect(slice.runState).toBe("aborted");
+      expect(slice.notices.map(({ text }) => text)).toEqual([
+        "Extension error: earlier diagnostic",
+      ]);
+      if (phase === "completed message")
+        expect(slice.messages[0]?.stopReason).toBe("stop");
+      const conflicted = reduce({ ...slice, runState: "conflict" }, new Set(), {
+        type: "agent_settled",
+        aborted: true,
+      });
+      expect(conflicted.slice.runState).toBe("conflict");
+    },
+  );
+
+  it("preserves queued steering and follow-up input in separate source order", () => {
+    const pending = pendingQueues(["a"], ["b", "c"], {
+      revision: 3,
+    });
+    const { slice } = reduce(emptyEventSlice(), new Set(), {
+      type: "queue_update",
+      pendingQueues: pending,
+    });
+    expect(slice.queue).toEqual(pending);
+  });
+
+  it("surfaces extension errors as error notices without touching messages", () => {
+    const { slice } = reduce(emptyEventSlice(), new Set(), {
+      type: "extension_error",
+      extensionPath: "ext/weather.ts",
+      event: "tool_call",
+      error: "boom",
+    });
+    expect(slice.notices.at(-1)).toMatchObject({ kind: "error" });
+    expect(slice.notices.at(-1)!.text).toContain("ext/weather.ts");
+    expect(slice.notices.at(-1)!.text).toContain("boom");
+    expect(slice.messages).toHaveLength(0);
+  });
+});
+
+describe("extension_ui_request mapping", () => {
+  it("presents dialog methods as a pending request", () => {
+    const { slice } = reduce(emptyEventSlice(), new Set(), {
+      type: "extension_ui_request",
+      sessionId: "s1",
+      id: "r1",
+      method: "select",
+      title: "Pick one",
+      options: ["a", "b"],
+    });
+    expect(slice.extensionUiRequests).toEqual([
+      {
+        sessionId: "s1",
+        id: "r1",
+        method: "select",
+        title: "Pick one",
+        message: undefined,
+        options: ["a", "b"],
+        placeholder: undefined,
+        prefill: undefined,
+      },
+    ]);
+  });
+
+  it("queues concurrent dialogs in arrival order and removes only the addressed request", () => {
+    let slice = reduce(emptyEventSlice(), new Set(), {
+      type: "extension_ui_request",
+      sessionId: "s1",
+      id: "first",
+      method: "confirm",
+      timeout: 1_000,
+      expiresAt: 2_000,
+    }).slice;
+    slice = reduce(slice, new Set(), {
+      type: "extension_ui_request",
+      sessionId: "s1",
+      id: "second",
+      method: "input",
+    }).slice;
+    expect(slice.extensionUiRequests.map((request) => request.id)).toEqual([
+      "first",
+      "second",
+    ]);
+    expect(slice.extensionUiRequests[0]).toMatchObject({
+      timeout: 1_000,
+      expiresAt: 2_000,
+    });
+
+    slice = reduce(slice, new Set(), {
+      type: "extension_ui_remove",
+      sessionId: "s1",
+      id: "first",
+      reason: "responded",
+    }).slice;
+    expect(slice.extensionUiRequests.map((request) => request.id)).toEqual([
+      "second",
+    ]);
+    slice = reduce(slice, new Set(), { type: "agent_settled" }).slice;
+    expect(slice.extensionUiRequests.map((request) => request.id)).toEqual([
+      "second",
+    ]);
+    slice = reduce(slice, new Set(), {
+      type: "extension_ui_clear",
+      reason: "stopped",
+    }).slice;
+    expect(slice.extensionUiRequests).toEqual([]);
+  });
+
+  it("clears browser-only liveness when a runtime dies without settling", () => {
+    const pending = reduce(emptyEventSlice(), new Set(), {
+      type: "extension_ui_request",
+      sessionId: "s1",
+      id: "r1",
+      method: "confirm",
+    }).slice;
+    const result = reduce(
+      {
+        ...pending,
+        streaming: true,
+        activeAssistantMessageKey: "live:call-1",
+        tools: {
+          tool: { id: "tool", name: "read", phase: "running" },
+        },
+        retry: { attempt: 2, maxAttempts: 3, message: "network" },
+        statuses: { usage: "37%" },
+        extensionDisplays: [
+          {
+            id: "setWidget:plan",
+            kind: "widget",
+            label: "plan",
+            source: "Pi extension",
+            placement: "aboveEditor",
+            lines: ["one"],
+          },
+        ],
+      },
+      new Set(),
+      {
+        type: "runtime_error",
+        error: "crashed",
+        extensionDisplays: [],
+        extensionStatuses: {},
+      },
+    );
+    expect(result.resync).toBe(true);
+    expect(result.slice).toMatchObject({
+      runState: "failed",
+      streaming: false,
+      activeAssistantMessageKey: null,
+      tools: {},
+      retry: null,
+      extensionUiRequests: [],
+      extensionDisplays: [],
+      statuses: {},
+    });
+  });
+
+  it("resyncs when a controlled worker stop retires the branch view", () => {
+    expect(
+      reduce(emptyEventSlice(), new Set(), {
+        type: "extension_runtime_stopped",
+        extensionDisplays: [],
+        extensionStatuses: {},
+      }).resync,
+    ).toBe(true);
+  });
+
+  it("turns notify into a fire-and-forget notice with the given severity", () => {
+    const { slice } = reduce(emptyEventSlice(), new Set(), {
+      type: "extension_ui_request",
+      id: "r2",
+      method: "notify",
+      message: "Indexed 12 files",
+      notifyType: "warning",
+    });
+    expect(slice.extensionUiRequests).toEqual([]);
+    expect(slice.notices.at(-1)).toMatchObject({
+      kind: "warning",
+      text: "Indexed 12 files",
+    });
+  });
+
+  it("replaces setStatus state from the authoritative Host projection", () => {
+    const withStatus = reduce(emptyEventSlice(), new Set(), {
+      type: "extension_ui_request",
+      id: "r3",
+      method: "setStatus",
+      extensionStatuses: {
+        linter: "linting…",
+        oversized: "x".repeat(MAX_EXTENSION_STATUS_CHARS + 1),
+        invalid: 4,
+      },
+    });
+    expect(withStatus.slice.statuses).toEqual({ linter: "linting…" });
+
+    const cleared = reduce(withStatus.slice, new Set(), {
+      type: "extension_ui_request",
+      id: "r4",
+      method: "setStatus",
+      extensionStatuses: {},
+    });
+    expect(cleared.slice.statuses).toEqual({});
+  });
+
+  it("injects set_editor_text with an incrementing nonce", () => {
+    const first = reduce(emptyEventSlice(), new Set(), {
+      type: "extension_ui_request",
+      id: "r5",
+      method: "set_editor_text",
+      text: "draft one",
+    });
+    expect(first.slice.editorText).toEqual({ text: "draft one", nonce: 1 });
+    const second = reduce(first.slice, new Set(), {
+      type: "extension_ui_request",
+      id: "r6",
+      method: "set_editor_text",
+      text: "draft two",
+    });
+    expect(second.slice.editorText).toEqual({ text: "draft two", nonce: 2 });
+  });
+
+  it("maps setTitle to the window title", () => {
+    const { slice } = reduce(emptyEventSlice(), new Set(), {
+      type: "extension_ui_request",
+      id: "r7",
+      method: "setTitle",
+      title: "Running tests",
+    });
+    expect(slice.windowTitle).toBe("Running tests");
+  });
+});
+
+describe("truthful change reporting", () => {
+  it("creates fresh pending queue arrays for every slice", () => {
+    const first = emptyEventSlice();
+    const second = emptyEventSlice();
+    first.queue.steering.push(pendingMessage("one"));
+    expect(second.queue).toEqual({
+      totalCount: 0,
+      revision: 0,
+      steering: [],
+      followUp: [],
+    });
+  });
+
+  it("projects bounded text widgets natively and clears them by key", () => {
+    const slice = emptyEventSlice();
+    const shown = reduce(slice, new Set(), {
+      type: "extension_ui_request",
+      id: "w1",
+      method: "setWidget",
+      widgetKey: "plan",
+      widgetLines: ["one", "two"],
+      extensionDisplays: [
+        {
+          id: "setWidget:plan",
+          kind: "widget",
+          label: "plan",
+          source: "extensions/plan.ts",
+          placement: "belowEditor",
+          lines: ["one", "two"],
+        },
+      ],
+    });
+    expect(shown.changed).toBe(true);
+    expect(shown.slice.extensionDisplays).toEqual([
+      {
+        id: "setWidget:plan",
+        kind: "widget",
+        label: "plan",
+        source: "extensions/plan.ts",
+        placement: "belowEditor",
+        lines: ["one", "two"],
+      },
+    ]);
+    expect(shown.slice.extensionUiRequests).toEqual([]);
+
+    const rawFallback = reduce(shown.slice, new Set(), {
+      type: "extension_ui_request",
+      id: "w1",
+      method: "setWidget",
+      widgetKey: "plan",
+      extensionDisplays: [
+        {
+          id: "setWidget:plan",
+          kind: "raw",
+          label: "plan",
+          source: "extensions/plan.ts",
+          placement: "aboveEditor",
+          method: "setWidget",
+          payload: { truncated: true, preview: "bounded" },
+        },
+      ],
+    });
+    expect(rawFallback.slice.extensionDisplays[0]).toMatchObject({
+      kind: "raw",
+      payload: { truncated: true, preview: "bounded" },
+    });
+
+    const cleared = reduce(rawFallback.slice, new Set(), {
+      type: "extension_ui_request",
+      id: "w2",
+      method: "setWidget",
+      widgetKey: "plan",
+      widgetLines: undefined,
+      extensionDisplays: [],
+    });
+    expect(cleared.slice.extensionDisplays).toEqual([]);
+  });
+
+  it("shows unknown response-bearing methods as unsupported dialogs", () => {
+    const result = reduce(emptyEventSlice(), new Set(), {
+      type: "extension_ui_request",
+      sessionId: "s1",
+      id: "future-1",
+      method: "chooseFiles",
+      title: "Choose files",
+      paths: ["a", "b"],
+    });
+    expect(result.slice.extensionUiRequests).toEqual([
+      expect.objectContaining({
+        sessionId: "s1",
+        id: "future-1",
+        method: "chooseFiles",
+        unsupported: true,
+      }),
+    ]);
+  });
+
+  it("uses the generic surface for explicitly one-way future display methods", () => {
+    const result = reduce(emptyEventSlice(), new Set(), {
+      type: "extension_ui_request",
+      id: "display-1",
+      method: "showPanel",
+      responseRequired: false,
+      content: { title: "Build", lines: ["passing"] },
+      extensionDisplays: [
+        {
+          id: "showPanel:display-1",
+          kind: "raw",
+          label: "display-1",
+          source: "Pi extension",
+          placement: "aboveEditor",
+          method: "showPanel",
+          payload: { title: "Build" },
+        },
+      ],
+    });
+    expect(result.slice.extensionUiRequests).toEqual([]);
+    expect(result.slice.extensionDisplays[0]).toMatchObject({
+      method: "showPanel",
+    });
+  });
+
+  it("never reconstructs a generic display from an unprojected raw event", () => {
+    const result = reduce(emptyEventSlice(), new Set(), {
+      type: "extension_ui_request",
+      id: "raw",
+      method: "setWidget",
+      widgetKey: "raw",
+      widgetLines: ["secret"],
+    });
+    expect(result.slice.extensionDisplays).toEqual([]);
+  });
+
+  it("reports changed=true and a fresh slice for state-bearing events", () => {
+    const slice = emptyEventSlice();
+    const result = reduce(slice, new Set(), { type: "agent_start" });
+    expect(result.changed).toBe(true);
+    expect(result.slice).not.toBe(slice);
+    expect(result.slice.runState).toBe("running");
+  });
+});

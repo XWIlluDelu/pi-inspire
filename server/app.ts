@@ -1,0 +1,2118 @@
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { createServer, type IncomingMessage, type Server } from "node:http";
+import { isAbsolute, join, resolve } from "node:path";
+import express, {
+  type NextFunction,
+  type Request,
+  type Response,
+} from "express";
+import multer from "multer";
+import { ZodError, z } from "zod";
+import {
+  COMPOSER_HISTORY_FILE_REFERENCE,
+  COMPOSER_HISTORY_IMAGE_REFERENCE,
+} from "../shared/composer-artifact-references.js";
+import {
+  type BootstrapResponse,
+  type GitDiffSide,
+  MAX_ATTACHMENT_FILE_BYTES,
+  MAX_ATTACHMENTS,
+  MAX_COMPOSER_HISTORY_ENTRIES,
+  MAX_CURATED_SESSION_RESULTS,
+  MAX_PROJECT_FILES,
+  MAX_SESSION_CWD_HYDRATION_CWDS,
+  MAX_SESSION_ID_CHARS,
+  MAX_SESSION_ID_HYDRATION_IDS,
+  MAX_SESSION_LIST_PAGE_SIZE,
+  THINKING_LEVELS,
+  type UploadedAttachment,
+} from "../shared/contracts.js";
+import type { HerdrEnhancementStatus } from "../shared/herdr.js";
+import { HTML_PREVIEW_BYTES } from "../shared/html-preview.js";
+import {
+  MAX_RESOURCE_LIST_PAGE_SIZE,
+  MAX_RESOURCE_PROBE_REFERENCES,
+  MAX_RESOURCE_REFERENCE_LENGTH,
+  RESOURCE_LIST_INITIAL_SIZE,
+} from "../shared/resource-references.js";
+import { emptyToolPresentationConfiguration } from "../shared/tool-presentation-config.js";
+import type { AttachmentStore } from "./attachments.js";
+import {
+  BrowserAuth,
+  canonicalOrigin,
+  challengeSchema,
+  downloadOriginAllowed,
+  exchangeSchema,
+  registrationSchema,
+  socketTicketSchema,
+  secretMatches as tokenMatches,
+} from "./browser-auth.js";
+import { GeneratedExportStore } from "./generated-exports.js";
+import type { GitInspectionLike } from "./git-inspection.js";
+import { listHostDirectories, listHostRoots } from "./host-dirs.js";
+import { HtmlPreviewStore } from "./html-preview.js";
+import { InstanceHttpControl } from "./instance-control.mjs";
+import { type InstanceState, instanceUrl } from "./instance-state.mjs";
+import type {
+  MaintenanceRestartOutcome,
+  MaintenanceRestartTransition,
+} from "./maintenance-restart.js";
+import { modelSwitchThinkingLevel } from "./model-catalog.js";
+import { resolveProjectDirectory } from "./paths.js";
+import { PendingOperationReceipts } from "./pending-operation-receipts.js";
+import { installedPiChangelog } from "./pi-changelog.js";
+import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
+import type { PreferencesStore } from "./preferences.js";
+import {
+  invalidateProjectFiles,
+  listProjectDirectory,
+  searchProjectFiles,
+} from "./project-files.js";
+import { requestError } from "./request-error.js";
+import { resourceByteRange, sendResourceFile } from "./resource-http.js";
+import type { ResourceStore } from "./resources.js";
+import type { RuntimeLike } from "./runtime.js";
+import { createRuntimeEventSockets } from "./runtime-event-sockets.js";
+import type { SessionCatalogLike } from "./session-catalog.js";
+import { createTerminalGateway } from "./terminal-gateway.js";
+import type { TerminalService } from "./terminal-service.js";
+import type {
+  ToolPresentationConfigLike,
+  ToolPresentationConfigurationState,
+} from "./tool-presentation-config.js";
+import type { UpdateCheckerLike } from "./update-checker.js";
+import {
+  UpdateCoordinator,
+  type UpdateCoordinatorLike,
+} from "./update-coordinator.js";
+
+const updateSnoozeSchema = z
+  .object({
+    identity: z
+      .string()
+      .min(1)
+      .max(64 * 1024),
+  })
+  .strict();
+const openSchema = z.object({
+  id: z.string().min(1).max(MAX_SESSION_ID_CHARS),
+});
+const deleteSessionParamsSchema = z.object({
+  sessionId: z.string().min(1).max(MAX_SESSION_ID_CHARS),
+});
+const clearHiddenSchema = z
+  .object({
+    sessionIds: z
+      .array(z.string().min(1).max(MAX_SESSION_ID_CHARS))
+      .min(1)
+      .max(MAX_CURATED_SESSION_RESULTS),
+    projectCwd: z.string().min(1).max(4_096).optional(),
+  })
+  .strict();
+const newSchema = z
+  .object({
+    cwd: z.string().min(1).max(4_096),
+    createDirectory: z.boolean().optional(),
+    name: z.string().max(160).optional(),
+    model: z
+      .object({
+        provider: z.string().min(1).max(120),
+        id: z.string().min(1).max(240),
+      })
+      .strict()
+      .optional(),
+    thinkingLevel: z.enum(THINKING_LEVELS).optional(),
+  })
+  .strict();
+const sessionIdField = z.string().min(1).max(MAX_SESSION_ID_CHARS);
+const promptSchema = z
+  .object({
+    operationId: z.string().uuid(),
+    authorityId: z.string().uuid(),
+    sessionId: sessionIdField,
+    message: z.string().max(500_000),
+    attachmentIds: z.array(z.string().uuid()).max(MAX_ATTACHMENTS).optional(),
+    historyArtifacts: z
+      .object({
+        viewId: z.string().min(1).max(240),
+        incarnation: z.string().min(1).max(240).nullable(),
+        effectiveLeafId: z.string().min(1).max(240).nullable(),
+        imageReferences: z
+          .array(z.string().max(800).regex(COMPOSER_HISTORY_IMAGE_REFERENCE))
+          .max(MAX_ATTACHMENTS),
+        fileReferences: z
+          .array(z.string().max(800).regex(COMPOSER_HISTORY_FILE_REFERENCE))
+          .max(MAX_ATTACHMENTS + MAX_PROJECT_FILES),
+      })
+      .strict()
+      .refine(
+        ({ imageReferences, fileReferences }) =>
+          imageReferences.length + fileReferences.length > 0,
+      )
+      .optional(),
+    projectFiles: z
+      .array(z.string().max(4_096))
+      .max(MAX_PROJECT_FILES)
+      .optional(),
+    behavior: z.enum(["steer", "followUp"]).optional(),
+  })
+  .strict();
+const pendingOperationSchema = z
+  .object({
+    sessionId: sessionIdField,
+    operationId: z.string().uuid(),
+    authorityId: z.string().uuid(),
+  })
+  .strict();
+const nativeCommandSchema = z
+  .object({
+    sessionId: sessionIdField,
+    command: z.enum(["compact", "export", "reload"]),
+    argument: z
+      .string()
+      .max(64 * 1024)
+      .optional(),
+  })
+  .strict();
+const runtimeBooleanSchema = z
+  .object({
+    sessionId: sessionIdField,
+    enabled: z.boolean(),
+  })
+  .strict();
+const runtimeDeliveryModeSchema = z
+  .object({
+    sessionId: sessionIdField,
+    mode: z.enum(["all", "one-at-a-time"]),
+  })
+  .strict();
+const clearPendingSchema = z.object({ sessionId: sessionIdField }).strict();
+const pendingReadSchema = z
+  .object({
+    sessionId: sessionIdField,
+    viewId: z.string().min(1).max(256),
+    revision: z.number().int().nonnegative(),
+    itemId: z.string().min(1).max(128).optional(),
+  })
+  .strict();
+const renameSchema = z.object({
+  sessionId: sessionIdField,
+  name: z.string().max(160),
+});
+const modelSchema = z.object({
+  sessionId: sessionIdField,
+  provider: z.string().min(1).max(120),
+  modelId: z.string().min(1).max(240),
+});
+const thinkingSchema = z.object({
+  sessionId: sessionIdField,
+  level: z.enum(THINKING_LEVELS),
+});
+const extensionSchema = z
+  .object({
+    sessionId: sessionIdField,
+    id: z.string().min(1).max(200),
+  })
+  .passthrough();
+const sessionQuerySchema = z.object({
+  q: z.string().max(200).default(""),
+  offset: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(Number.MAX_SAFE_INTEGER)
+    .default(0),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_SESSION_LIST_PAGE_SIZE)
+    .default(40),
+});
+const showHiddenField = z
+  .enum(["0", "1"])
+  .default("0")
+  .transform((value) => value === "1");
+const fileQuerySchema = z.object({
+  showHidden: showHiddenField,
+  sessionId: sessionIdField,
+  q: z.string().max(200).default(""),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+const newSessionFileQuerySchema = z.object({
+  showHidden: showHiddenField,
+  cwd: z.string().min(1).max(4_096),
+  q: z.string().max(200).default(""),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+const fileListSchema = z.object({
+  showHidden: showHiddenField,
+  sessionId: sessionIdField,
+  dir: z
+    .string()
+    .max(4_096)
+    .default("")
+    .refine(
+      (value) => !value.split("/").includes(".."),
+      "dir must stay inside the project",
+    ),
+  refresh: z.literal("1").optional(),
+});
+const hostDirsSchema = z.object({
+  showHidden: z
+    .enum(["0", "1"])
+    .default("0")
+    .transform((value) => value === "1"),
+  path: z
+    .string()
+    .min(1)
+    .max(4_096)
+    .refine(isAbsolute, "path must be absolute")
+    .optional(),
+});
+// Hydration unions can also contain selected/live identities, so the browser
+// chunks the deduplicated union to this explicit per-request contract.
+const sessionIdsSchema = z.object({
+  ids: z
+    .array(z.string().min(1).max(MAX_SESSION_ID_CHARS))
+    .max(MAX_SESSION_ID_HYDRATION_IDS),
+});
+const sessionCwdsSchema = z.object({
+  cwds: z
+    .array(z.string().min(1).max(4_096))
+    .max(MAX_SESSION_CWD_HYDRATION_CWDS),
+});
+const attachmentIdSchema = z.string().uuid();
+const resourceListSchema = z
+  .object({
+    sessionId: sessionIdField,
+    cursor: z.string().min(1).max(2_048).optional(),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_RESOURCE_LIST_PAGE_SIZE)
+      .default(RESOURCE_LIST_INITIAL_SIZE),
+  })
+  .strict();
+const resourceResolveSchema = z
+  .object({
+    sessionId: sessionIdField,
+    reference: z.string().min(1).max(MAX_RESOURCE_REFERENCE_LENGTH),
+    workspacePath: z.string().min(1).max(8_192).optional(),
+  })
+  .strict();
+const resourceProbeSchema = z.object({
+  sessionId: sessionIdField,
+  references: z
+    .array(z.string().min(1).max(MAX_RESOURCE_REFERENCE_LENGTH))
+    .max(MAX_RESOURCE_PROBE_REFERENCES),
+});
+const resourceContentSchema = z.object({
+  sessionId: sessionIdField,
+  download: z.literal("1").optional(),
+});
+const transcriptPageSchema = z.object({
+  sessionId: sessionIdField,
+  cursor: z.string().min(1).max(2_048),
+});
+const assistantTextSchema = z
+  .object({
+    sessionId: sessionIdField,
+    viewId: z.string().min(1).max(512),
+  })
+  .strict();
+const transcriptOlderPageSchema = transcriptPageSchema.extend({
+  deferActivity: z.literal("1").optional(),
+});
+const transcriptUserTurnsSchema = z
+  .object({
+    sessionId: sessionIdField,
+    start: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(Number.MAX_SAFE_INTEGER)
+      .optional(),
+  })
+  .strict();
+const transcriptUserTurnSchema = z
+  .object({
+    sessionId: sessionIdField,
+    id: z.string().min(1).max(512),
+    cursor: z.string().min(1).max(2_048).optional(),
+  })
+  .strict();
+const composerHistorySchema = z
+  .object({
+    sessionId: sessionIdField,
+    start: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_COMPOSER_HISTORY_ENTRIES)
+      .optional(),
+  })
+  .strict();
+const branchTreeSchema = z
+  .object({
+    sessionId: sessionIdField,
+    before: z.string().min(1).max(200).optional(),
+    query: z.string().max(2000).optional(),
+    leafId: z.string().min(1).max(200).optional(),
+    parentId: z.string().max(200).optional(),
+  })
+  .strict();
+const branchEntrySchema = z
+  .object({
+    sessionId: sessionIdField,
+    viewId: z.string().min(1).max(200),
+    targetId: z.string().min(1).max(200),
+    offset: z.coerce.number().int().min(0).optional(),
+  })
+  .strict();
+const branchNavigateSchema = z
+  .object({
+    sessionId: sessionIdField,
+    revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    targetId: z.string().min(1).max(200),
+    mode: z.enum(["switch", "edit"]),
+    summarize: z.boolean().optional(),
+    customInstructions: z.string().max(2000).optional(),
+  })
+  .strict();
+const branchForkSchema = z
+  .object({
+    sessionId: sessionIdField,
+    revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    targetId: z.string().min(1).max(200),
+  })
+  .strict();
+const branchCloneSchema = branchForkSchema.extend({
+  targetId: z.string().min(1).max(200).optional(),
+});
+const gitStatusSchema = z.object({ sessionId: sessionIdField });
+const gitDiffSchema = z.object({
+  sessionId: sessionIdField,
+  pathId: z
+    .string()
+    .min(1)
+    .max(16_384)
+    .regex(/^[A-Za-z0-9_-]+$/),
+  side: z.enum(["staged", "unstaged"] satisfies GitDiffSide[]),
+});
+const MAX_PROMPT_OPERATION_RECEIPTS = 65_536;
+const MAX_PROMPT_OPERATION_RESULTS = 2_048;
+const MAX_PROMPT_OPERATION_RESULT_BYTES = 32 * 1024 * 1024;
+const PROMPT_OPERATION_RESULT_TTL_MS = 15 * 60 * 1_000;
+const PROMPT_OBSERVATION_WINDOW_MS = 20_000;
+const WEBSOCKET_HEARTBEAT_INTERVAL_MS = 20_000;
+const ACCESS_COOKIE = "inspire_access";
+/** Legacy names are retained only to expire this Host\'s cookie-era credentials. */
+export function accessCookieName(host: string | undefined): string {
+  const suffix = createHash("sha256")
+    .update(host?.trim().toLowerCase() || "missing-host")
+    .digest("base64url")
+    .slice(0, 12);
+  return `${ACCESS_COOKIE}_${suffix}`;
+}
+
+interface MaintenanceRestartLike {
+  reserve(): Promise<MaintenanceRestartOutcome>;
+  commit(leaseId: string): MaintenanceRestartTransition;
+  release(leaseId: string): MaintenanceRestartTransition;
+}
+
+import type { McpConfigService } from "./mcp-config.js";
+import { registerMcpConfigRoutes } from "./mcp-config-routes.js";
+import type { ModelSettingsService } from "./model-settings.js";
+import { registerModelSettingsRoutes } from "./model-settings-routes.js";
+import type { ProviderAuthService } from "./provider-auth.js";
+
+interface AppDependencies {
+  /** An HTTP observation window, never a Pi operation deadline. */
+  promptObservationWindowMs?: number;
+  token: string;
+  /** Ready, currently owned publication; never a caller-supplied process identity. */
+  instanceState?: () => InstanceState | null;
+  runtime: RuntimeLike;
+  catalog: SessionCatalogLike;
+  attachments: AttachmentStore;
+  preferences: PreferencesStore;
+  toolPresentations?: ToolPresentationConfigLike;
+  resources: ResourceStore;
+  git: GitInspectionLike;
+  mock: boolean;
+  version: string;
+  piVersion: string;
+  /** Authenticated timer coordination; it detects installed updates and asks
+   * the runtime for its short idle fence, never restarts systemd itself. */
+  maintenanceRestart?: MaintenanceRestartLike;
+  hostRestart?: import("./host-restart.js").HostRestartController;
+  /** Effective-at-startup Herdr state; omitted when this Host has no enhancement integration. */
+  getHerdrStatus?: () => Promise<HerdrEnhancementStatus>;
+  /** Already-known picker metadata; bootstrap never starts model discovery. */
+  bootstrapModels?: () => BootstrapResponse["availableModels"];
+  availableModels?: (
+    refresh?: boolean,
+    cwd?: string,
+  ) => Promise<BootstrapResponse["availableModels"]>;
+  modelMetadata?: (
+    cwd: string,
+    refresh?: boolean,
+  ) => Promise<import("./model-metadata.js").ModelMetadata>;
+  modelSettings?: ModelSettingsService;
+  mcpConfig?: McpConfigService;
+  invalidateModels?: () => void;
+  providerAuth?: ProviderAuthService;
+  /** Cached public-release observation; failures never block local work. */
+  updateChecker?: UpdateCheckerLike;
+  /** Read-only Pi and configured-package update observation. */
+  piUpdateChecker?: PiUpdateCheckerLike;
+  /** Shared update-state owner. Production supplies the persistent deployment
+   * instance; internal hosts may use the in-memory checker fallback. */
+  updateCoordinator?: UpdateCoordinatorLike;
+  distDir?: string;
+  /** Complete prior asset generations retained for already-open clients. */
+  staticAssetCacheDirs?: readonly string[];
+  /** The persistent PTY authority. Production connects to the terminal
+   * daemon; tests may supply an in-process implementation. */
+  terminal?: TerminalService;
+  /** Authenticated local launcher shutdown. System service policy remains
+   * outside the HTTP server; this callback only closes this exact Host. */
+  shutdown?: () => void | Promise<void>;
+  /** Internal cadence override used by the transport liveness test. */
+  websocketHeartbeatIntervalMs?: number;
+}
+
+function bearerToken(request: Request): string | undefined {
+  const value = request.get("authorization");
+  return value?.startsWith("Bearer ") ? value.slice(7) : undefined;
+}
+
+function expireLegacyCookies(request: Request, response: Response): void {
+  const names = new Set([ACCESS_COOKIE, accessCookieName(request.get("host"))]);
+  for (const segment of (request.get("cookie") ?? "").split(";")) {
+    const name = segment.slice(0, segment.indexOf("=")).trim();
+    if (!names.has(name)) continue;
+    response.clearCookie(name, {
+      httpOnly: true,
+      sameSite: "strict",
+      secure: request.secure,
+      path: "/",
+    });
+  }
+}
+
+function requestOrigin(request: Request): string {
+  return canonicalOrigin(request.get("host"), request.secure);
+}
+
+function originAllowed(
+  origin: string | undefined,
+  host: string | undefined,
+  secure: boolean,
+): boolean {
+  if (!origin) return true;
+  if (!host) return false;
+  try {
+    const url = new URL(origin);
+    return url.origin === canonicalOrigin(host, secure);
+  } catch {
+    return false;
+  }
+}
+
+function isLoopbackAddress(address: string | undefined): boolean {
+  return (
+    address === "127.0.0.1" ||
+    address === "::1" ||
+    address === "::ffff:127.0.0.1"
+  );
+}
+
+/** An HTTPS edge must overwrite this header while forwarding over a local hop.
+ * Direct loopback requests never carry it, so their launch URL remains local. */
+function trustedForwardedHttps(request: IncomingMessage): boolean {
+  const forwarded = request.headers["x-forwarded-proto"];
+  return (
+    isLoopbackAddress(request.socket.remoteAddress) &&
+    typeof forwarded === "string" &&
+    forwarded.trim().toLowerCase() === "https"
+  );
+}
+
+function encodeContentDispositionName(name: string): string {
+  return encodeURIComponent(name).replace(
+    /['()*]/gu,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
+async function withRequestSignal<T>(
+  request: Request,
+  response: Response,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  const abortIfUnfinished = () => {
+    if (!response.writableEnded) abort();
+  };
+  request.once("aborted", abort);
+  response.once("close", abortIfUnfinished);
+  try {
+    return await operation(controller.signal);
+  } finally {
+    request.off("aborted", abort);
+    response.off("close", abortIfUnfinished);
+  }
+}
+
+function apiError(
+  error: unknown,
+  request: Request,
+  response: Response,
+  _next: NextFunction,
+): void {
+  const status =
+    error instanceof ZodError
+      ? 400
+      : error instanceof multer.MulterError
+        ? error.code === "LIMIT_FILE_SIZE"
+          ? 413
+          : 400
+        : Number((error as { status?: unknown })?.status) || 500;
+  const message =
+    error instanceof Error ? error.message : "Unexpected server error";
+  const contentRange = (error as { contentRange?: unknown })?.contentRange;
+  if (status === 416 && typeof contentRange === "string")
+    response.set("Content-Range", contentRange);
+  if (status >= 500)
+    console.error(`[${request.method} ${request.path}]`, error);
+  // Refusals may carry machine-readable provenance and candidates the host
+  // declined to choose between. Neither field contains runtime stderr.
+  const matches = (error as { matches?: unknown })?.matches;
+  const code = (error as { code?: unknown })?.code;
+  const pendingReceipt = (
+    error as { pendingReceipt?: { operationId: string; outcome: string } }
+  )?.pendingReceipt;
+  if (pendingReceipt)
+    response.set({
+      "X-Inspire-Pending-Operation": pendingReceipt.operationId,
+      "X-Inspire-Pending-Outcome": pendingReceipt.outcome,
+    });
+  response.status(status).json({
+    error: message,
+    ...(typeof code === "string" ? { code } : {}),
+    ...(code === "PROMPT_RECOVERED"
+      ? {
+          recoveryId: (error as { recoveryId?: string }).recoveryId,
+          recoveredAttachments: (
+            error as { recoveredAttachments?: UploadedAttachment[] }
+          ).recoveredAttachments,
+        }
+      : {}),
+    ...(Array.isArray(matches) ? { matches } : {}),
+    ...((error as { outcomeUnknown?: unknown })?.outcomeUnknown === true
+      ? { outcomeUnknown: true }
+      : {}),
+  });
+}
+
+export function createInspireServer(deps: AppDependencies): {
+  app: express.Express;
+  server: Server;
+  /** Process-lifetime prompt-delivery authority, also advertised by bootstrap. */
+  authorityId: string;
+  launchUrl: (origin: string) => string;
+  close: () => Promise<void>;
+} {
+  const app = express();
+  const generatedExports = new GeneratedExportStore();
+  // HTTP production behavior belongs to this application, not NODE_ENV:
+  // changing the process environment also changes Pi and every tool it spawns.
+  app.set("env", "production");
+  const authorityId = randomUUID();
+  const heartbeatIntervalMs =
+    deps.websocketHeartbeatIntervalMs ?? WEBSOCKET_HEARTBEAT_INTERVAL_MS;
+  const updateCoordinator =
+    deps.updateCoordinator ??
+    new UpdateCoordinator({
+      currentPiVersion: deps.piVersion,
+      inspireChecker: deps.updateChecker,
+      piChecker: deps.piUpdateChecker,
+    });
+  type PromptOperationResponse = {
+    accepted: true;
+    historyEntry: Awaited<ReturnType<RuntimeLike["prompt"]>>;
+  };
+  interface PromptOperationReceipt {
+    fingerprint: string;
+    promise: Promise<PromptOperationResponse> | null;
+    settledAt: number | null;
+    resultBytes: number;
+  }
+  // A process authority must never forget an operation and later accept the
+  // same ID again. Settled response bodies retire to small fingerprint
+  // tombstones; the bounded process-lifetime map fails closed at its generous
+  // limit instead of silently evicting identities.
+  const pendingOperations = new PendingOperationReceipts();
+  const promptOperations = new Map<string, PromptOperationReceipt>();
+  const retainedPromptOperationResults: PromptOperationReceipt[] = [];
+  let retainedPromptOperationResultBytes = 0;
+  const retirePromptOperationResults = (now = Date.now()): void => {
+    while (retainedPromptOperationResults.length > 0) {
+      const operation = retainedPromptOperationResults[0]!;
+      if (
+        retainedPromptOperationResults.length <= MAX_PROMPT_OPERATION_RESULTS &&
+        retainedPromptOperationResultBytes <=
+          MAX_PROMPT_OPERATION_RESULT_BYTES &&
+        operation.settledAt !== null &&
+        now - operation.settledAt <= PROMPT_OPERATION_RESULT_TTL_MS
+      )
+        break;
+      retainedPromptOperationResults.shift();
+      operation.promise = null;
+      retainedPromptOperationResultBytes -= operation.resultBytes;
+      operation.resultBytes = 0;
+    }
+  };
+
+  const observePrompt = async (
+    operationId: string,
+    operation: PromptOperationReceipt,
+    response: Response,
+  ) => {
+    const completion = operation.promise;
+    if (!completion)
+      throw requestError(
+        "This Host resolved that prompt operation, but its receipt retired; inspect the conversation before resending",
+        409,
+        { code: "PROMPT_OPERATION_RESULT_RETIRED", outcomeUnknown: true },
+      );
+    const pending = {
+      accepted: false,
+      pending: true,
+      operationId,
+      authorityId,
+    } as const;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let disconnected: (() => void) | undefined;
+    try {
+      return await Promise.race([
+        completion,
+        new Promise<typeof pending>((resolve) => {
+          timer = setTimeout(
+            () => resolve(pending),
+            deps.promptObservationWindowMs ?? PROMPT_OBSERVATION_WINDOW_MS,
+          );
+          disconnected = () => resolve(pending);
+          response.once("close", disconnected);
+        }),
+      ]);
+    } catch (error) {
+      // This is the retained operation's own result. Middleware failures and
+      // missing/retired receipt lookups must never acquire this rejection proof.
+      const unknown = Boolean(
+        error &&
+          typeof error === "object" &&
+          "outcomeUnknown" in error &&
+          error.outcomeUnknown === true,
+      );
+      response.set({
+        "X-Inspire-Prompt-Operation": operationId,
+        "X-Inspire-Prompt-Outcome": unknown ? "unknown" : "rejected",
+      });
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      if (disconnected) response.off("close", disconnected);
+    }
+  };
+
+  // The host itself remains loopback-only. A local reverse proxy may report
+  // the original HTTPS protocol, but arbitrary network hops never gain trust.
+  app.set("trust proxy", "loopback");
+  app.disable("x-powered-by");
+  app.use((request, response, next) => {
+    response.set({
+      "X-Content-Type-Options": "nosniff",
+      "Referrer-Policy": "no-referrer",
+      "X-Frame-Options": "DENY",
+      "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+      "Content-Security-Policy": [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "font-src 'self' data:",
+        // Remote images stay out: untrusted transcript content must not be
+        // able to fire network requests just by being rendered.
+        "img-src 'self' data: blob:",
+        "media-src 'self' blob:",
+        "connect-src 'self' ws: wss:",
+        "frame-src 'self' blob:",
+        "object-src 'none'",
+        "base-uri 'none'",
+        "form-action 'self'",
+      ].join("; "),
+    });
+    if (request.path.startsWith("/api/"))
+      response.set("Cache-Control", "no-store");
+    next();
+  });
+  app.use((request, response, next) => {
+    expireLegacyCookies(request, response);
+    next();
+  });
+  app.use(express.json({ limit: "2mb" }));
+  const browserAuth = new BrowserAuth(deps.token);
+  const launchUrl = (origin: string): string =>
+    `${origin}/#inspire-bootstrap=${browserAuth.bootstrap(origin)}`;
+  const htmlPreviews = new HtmlPreviewStore(deps.resources, (sessionId) =>
+    deps.runtime.resourceContext(sessionId),
+  );
+  app.get("/html-preview/:id/*path", (request, response) =>
+    htmlPreviews.serve(request, response),
+  );
+
+  app.use("/api", (request, response, next) => {
+    if (
+      !originAllowed(request.get("origin"), request.get("host"), request.secure)
+    )
+      return response.status(403).json({ error: "Origin is not allowed" });
+    next();
+  });
+  // Registration is the only browser exchange that accepts the master token.
+  // Require an exact Origin even for read-like authentication POSTs.
+  app.use("/api/auth", (request, response, next) => {
+    if (request.get("origin") !== requestOrigin(request))
+      return response
+        .status(403)
+        .json({ error: "An exact browser Origin is required" });
+    next();
+  });
+  app.post("/api/auth/pair", (request, response) => {
+    response.json(
+      browserAuth.register(
+        requestOrigin(request),
+        registrationSchema.parse(request.body),
+      ),
+    );
+  });
+  app.post("/api/auth/challenge", (request, response) => {
+    const { certificate } = challengeSchema.parse(request.body);
+    response.json(browserAuth.challenge(requestOrigin(request), certificate));
+  });
+  app.post("/api/auth/exchange", (request, response) => {
+    const { challenge, signature } = exchangeSchema.parse(request.body);
+    response.json(
+      browserAuth.exchange(requestOrigin(request), challenge, signature),
+    );
+  });
+
+  const localControl = new InstanceHttpControl();
+  const maintenanceLeaseSchema = z.object({
+    leaseId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+  });
+  // CLI peers prove only one fresh action and authenticate the signed result.
+  // Neither readiness nor maintenance sends the reusable Host bearer to a
+  // possibly replaced listener. Ordinary explicit-bearer APIs remain separate.
+  app.post("/api/host/local-control", async (request, response) => {
+    response.set("Cache-Control", "no-store");
+    const state = deps.instanceState?.();
+    if (!state || state.token !== deps.token || state.mock !== deps.mock)
+      return response
+        .status(503)
+        .json({ error: "Local control is unavailable" });
+    const grant = localControl.accept(state, request.body);
+    if (!grant)
+      return response
+        .status(401)
+        .json({ error: "Local control proof is invalid" });
+    let result: unknown;
+    switch (grant.request.action) {
+      case "readiness":
+        result = { appName: "inspire", mock: deps.mock };
+        break;
+      case "launch-url": {
+        let origin = new URL(instanceUrl(state)).origin;
+        if (grant.request.payload.origin !== undefined) {
+          const candidate = z
+            .string()
+            .max(512)
+            .url()
+            .parse(grant.request.payload.origin);
+          const target = new URL(candidate);
+          if (
+            target.origin !== candidate ||
+            target.protocol !== "http:" ||
+            !["127.0.0.1", "[::1]", "localhost"].includes(target.hostname)
+          )
+            throw requestError(
+              "A canonical loopback browser origin is required",
+              400,
+            );
+          origin = target.origin;
+        }
+        result = { url: launchUrl(origin) };
+        break;
+      }
+      case "maintenance-prepare":
+        result = deps.maintenanceRestart
+          ? await deps.maintenanceRestart.reserve()
+          : { kind: "skipped", reason: "runtime-unsupported" };
+        break;
+      case "maintenance-commit":
+      case "maintenance-release": {
+        const { leaseId } = maintenanceLeaseSchema.parse(grant.request.payload);
+        result = (grant.request.action === "maintenance-commit"
+          ? deps.maintenanceRestart?.commit(leaseId)
+          : deps.maintenanceRestart?.release(leaseId)) ?? {
+          kind: "skipped",
+          reason: "runtime-unsupported",
+        };
+        break;
+      }
+    }
+    response.json(localControl.reply(grant, result));
+  });
+
+  // Native downloads cannot carry Authorization. A narrowly scoped one-use
+  // capability preserves streaming, with no file bytes buffered in JavaScript.
+  app.get("/api/resource-downloads/:ticket", async (request, response) => {
+    const origin = requestOrigin(request);
+    if (
+      !downloadOriginAllowed(origin, {
+        origin: request.get("origin"),
+        fetchSite: request.get("sec-fetch-site"),
+        referer: request.get("referer"),
+      })
+    )
+      return response
+        .status(403)
+        .json({ error: "An exact browser origin is required" });
+    const grant = browserAuth.consumeDownload(request.params.ticket, origin);
+    await sendResourceContent(
+      request,
+      response,
+      grant.resourceId,
+      grant.sessionId,
+      true,
+    );
+  });
+
+  app.use("/api", (request, response, next) => {
+    const bearer = bearerToken(request);
+    if (
+      !tokenMatches(bearer, deps.token) &&
+      !browserAuth.accepts(bearer, requestOrigin(request))
+    )
+      return response.status(401).json({ error: "Authentication required" });
+    next();
+  });
+  app.post("/api/auth/socket-ticket", (request, response) => {
+    const { audience } = socketTicketSchema.parse(request.body);
+    response.json(browserAuth.ticket(requestOrigin(request), audience));
+  });
+
+  app.get("/api/health", (_request, response) => {
+    response.json({ appName: "inspire", mock: deps.mock });
+  });
+
+  app.get("/api/host/herdr", async (_request, response) => {
+    response.set("Cache-Control", "no-store");
+    if (!deps.getHerdrStatus)
+      throw requestError(
+        "Herdr enhancement status is unavailable for this Host.",
+        503,
+      );
+    response.json(await deps.getHerdrStatus());
+  });
+
+  app.get("/api/host/restart", async (_request, response) => {
+    response.set("Cache-Control", "no-store");
+    response.json(
+      deps.hostRestart
+        ? await deps.hostRestart.status()
+        : {
+            hostId: authorityId,
+            available: false,
+            allAvailable: false,
+            allReason:
+              "Restart all requires this Host's installed Linux systemd services.",
+            reason: "Page restart is unavailable for this Host.",
+            operation: null,
+          },
+    );
+  });
+  const hostRestartSchema = z
+    .object({
+      hostId: z.string().uuid(),
+      operationId: z.string().uuid(),
+      scope: z.enum(["host", "all"]),
+      interruptWork: z.literal(true).optional(),
+    })
+    .strict();
+  app.post("/api/host/restart", (request, response) => {
+    const intent = hostRestartSchema.parse(request.body);
+    if (!deps.hostRestart)
+      throw requestError("Page restart is unavailable for this Host.", 503);
+    response.status(202).json(deps.hostRestart.start(intent));
+  });
+
+  app.post("/api/host/shutdown", (_request, response) => {
+    if (!deps.shutdown)
+      return response
+        .status(503)
+        .json({ error: "Host shutdown is unavailable" });
+    response.status(202).end();
+    setImmediate(() => {
+      Promise.resolve(deps.shutdown?.()).catch((error) => {
+        console.error("Authenticated host shutdown failed", error);
+      });
+    });
+  });
+
+  const terminalGateway = createTerminalGateway(
+    app,
+    deps.terminal,
+    heartbeatIntervalMs,
+  );
+
+  app.get("/api/update", async (request, response) => {
+    const updateStatus = await updateCoordinator.checkInspire(
+      request.query.refresh === "1",
+    );
+    response.json({
+      ...(updateStatus.inspireUpdateCheck ?? { kind: "unavailable" }),
+      updateStatus,
+    });
+  });
+
+  app.get("/api/pi-update", async (request, response) => {
+    const updateStatus = await updateCoordinator.checkPi(
+      request.query.refresh === "1",
+    );
+    response.json({
+      ...(updateStatus.piUpdateCheck ?? {
+        currentVersion: deps.piVersion,
+        pi: { kind: "unavailable" },
+        extensions: { kind: "unavailable" },
+      }),
+      updateStatus,
+    });
+  });
+
+  app.post("/api/update/snooze", async (request, response) => {
+    const { identity } = updateSnoozeSchema.parse(request.body);
+    response.json(await updateCoordinator.dismiss(identity));
+  });
+
+  /** Prepare alone never authorizes restart. The unique owner must commit after
+   * service inspection, and release only when restart definitely was not issued. */
+  app.post("/api/maintenance/restart", async (_request, response) => {
+    response.json(
+      deps.maintenanceRestart
+        ? await deps.maintenanceRestart.reserve()
+        : { kind: "skipped", reason: "runtime-unsupported" },
+    );
+  });
+
+  app.post("/api/maintenance/restart/commit", (request, response) => {
+    const { leaseId } = maintenanceLeaseSchema.parse(request.body);
+    response.json(
+      deps.maintenanceRestart?.commit(leaseId) ?? {
+        kind: "skipped",
+        reason: "runtime-unsupported",
+      },
+    );
+  });
+  app.post("/api/maintenance/restart/release", (request, response) => {
+    const { leaseId } = maintenanceLeaseSchema.parse(request.body);
+    response.json(
+      deps.maintenanceRestart?.release(leaseId) ?? {
+        kind: "skipped",
+        reason: "runtime-unsupported",
+      },
+    );
+  });
+
+  const requestedDetail = (value: unknown): string | null | undefined =>
+    value === undefined
+      ? undefined
+      : value === ""
+        ? null
+        : sessionIdField.parse(value);
+
+  app.get("/api/bootstrap", async (request, response) => {
+    const startedAt = performance.now();
+    const [preferenceState, toolPresentationState, updateStatus, snapshot] =
+      await Promise.all([
+        deps.preferences.inspect(),
+        deps.toolPresentations
+          ? deps.toolPresentations.inspect()
+          : Promise.resolve<ToolPresentationConfigurationState>({
+              configuration: emptyToolPresentationConfiguration(),
+            }),
+        updateCoordinator.status(),
+        deps.runtime.snapshot(requestedDetail(request.query.detail)),
+      ]);
+    const encodedSnapshot = JSON.stringify(snapshot);
+    const body: BootstrapResponse = {
+      appName: "inspire",
+      authorityId,
+      snapshotDigest: createHash("sha256")
+        .update(encodedSnapshot)
+        .digest("hex"),
+      version: deps.version,
+      piVersion: deps.piVersion,
+      mock: deps.mock,
+      updateStatus,
+      preferences: preferenceState.preferences,
+      ...(preferenceState.warning
+        ? { preferencesWarning: preferenceState.warning }
+        : {}),
+      toolPresentations: toolPresentationState.configuration,
+      ...(toolPresentationState.warning
+        ? { toolPresentationsWarning: toolPresentationState.warning }
+        : {}),
+      availableModels: deps.bootstrapModels?.() ?? [],
+      snapshot,
+    };
+    response.set(
+      "Server-Timing",
+      `inspire-bootstrap;dur=${(performance.now() - startedAt).toFixed(1)}`,
+    );
+    response.json(body);
+  });
+
+  app.get("/api/sessions", async (request, response) => {
+    const { q, offset, limit } = sessionQuerySchema.parse(request.query);
+    const observer = new AbortController();
+    const cancel = () => observer.abort();
+    response.once("close", cancel);
+    try {
+      const page = await deps.catalog.list({
+        query: q,
+        offset,
+        limit,
+        signal: observer.signal,
+      });
+      if (!observer.signal.aborted) response.json(page);
+    } catch (error) {
+      if (!observer.signal.aborted) throw error;
+    } finally {
+      response.off("close", cancel);
+    }
+  });
+  app.post("/api/sessions/refresh", async (_request, response) => {
+    await deps.catalog.refresh(true);
+    response.json({ ok: true });
+  });
+  app.post("/api/sessions/by-id", async (request, response) => {
+    const { ids } = sessionIdsSchema.parse(request.body);
+    response.json({ sessions: await deps.catalog.listByIds(ids) });
+  });
+  app.post("/api/sessions/by-cwd", async (request, response) => {
+    const { cwds } = sessionCwdsSchema.parse(request.body);
+    response.json({ sessions: await deps.catalog.listByCwds(cwds) });
+  });
+  app.post("/api/sessions/open", async (request, response) => {
+    const { id } = openSchema.parse(request.body);
+    const snapshot = await deps.runtime.openSession(id);
+    response.json({
+      ...snapshot,
+      authorityId,
+      snapshotDigest: createHash("sha256")
+        .update(JSON.stringify(snapshot))
+        .digest("hex"),
+    });
+  });
+  app.post("/api/sessions/deselect", async (_request, response) => {
+    response.json(await deps.runtime.deselectSession());
+  });
+  app.post("/api/sessions/new", async (request, response) => {
+    const { cwd, ...options } = newSchema.parse(request.body);
+    response.json(await deps.runtime.newSession(cwd, options));
+  });
+  registerModelSettingsRoutes(app, deps);
+  registerMcpConfigRoutes(app, deps);
+  app.get("/api/models", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    const {
+      sessionId,
+      cwd: requestedCwd,
+      inherit,
+    } = z
+      .object({
+        sessionId: sessionIdField.optional(),
+        cwd: z.string().min(1).max(4_096).optional(),
+        inherit: z.literal("1").optional(),
+      })
+      .parse(request.query);
+    const cwd = sessionId
+      ? deps.runtime.sessionCwd(sessionId)
+      : requestedCwd
+        ? await resolveProjectDirectory(requestedCwd)
+        : process.cwd();
+    const result = sessionId
+      ? await deps.runtime.refreshModels(sessionId, inherit === "1")
+      : deps.modelMetadata
+        ? await deps.modelMetadata(cwd!, true)
+        : { models: (await deps.availableModels?.(true, cwd!)) ?? [] };
+    const catalogCwd = sessionId ? deps.runtime.sessionCwd(sessionId) : cwd;
+    const commonModels =
+      deps.modelSettings && catalogCwd
+        ? (await deps.modelSettings.read(catalogCwd, result.models))
+            .commonModels
+        : [];
+    response.json({
+      models: result.models,
+      ...("defaults" in result ? { defaults: result.defaults } : {}),
+      ...("selection" in result ? { selection: result.selection } : {}),
+      ...("warning" in result && result.warning
+        ? { warning: result.warning }
+        : {}),
+      commonModels,
+    });
+  });
+  app.get("/api/new-session/thinking", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    const query = z
+      .object({
+        cwd: z.string().min(1).max(4_096),
+        provider: z.string().min(1).max(256),
+        modelId: z.string().min(1).max(512),
+        current: z.enum(THINKING_LEVELS),
+      })
+      .parse(request.query);
+    const cwd = await resolveProjectDirectory(query.cwd);
+    response.json({
+      level: modelSwitchThinkingLevel(
+        cwd,
+        query.provider,
+        query.modelId,
+        query.current,
+      ),
+    });
+  });
+  app.get("/api/new-session/files", async (request, response) => {
+    const { cwd, q, limit, showHidden } = newSessionFileQuerySchema.parse(
+      request.query,
+    );
+    const root = await resolveProjectDirectory(cwd);
+    response.json({
+      cwd: root,
+      ...(await searchProjectFiles(root, q, limit, showHidden)),
+    });
+  });
+  app.post("/api/sessions/rename", async (request, response) => {
+    const { sessionId, name } = renameSchema.parse(request.body);
+    await deps.runtime.rename(sessionId, name);
+    response.json({ ok: true });
+  });
+  app.delete("/api/sessions/:sessionId", async (request, response) => {
+    const { sessionId } = deleteSessionParamsSchema.parse(request.params);
+    const result = await deps.runtime.deleteSession(sessionId);
+    deps.resources.forgetSession(sessionId);
+    try {
+      const preferences = await deps.preferences.removeSession(sessionId);
+      response.json({ ...result, preferences });
+    } catch (error) {
+      // The destructive result is already known. Never turn a metadata-write
+      // failure into a retryable DELETE whose second execution is ambiguous.
+      console.error(
+        `[session ${sessionId}] navigation metadata cleanup failed`,
+        error,
+      );
+      response.json({ ...result, preferenceCleanupFailed: true });
+    }
+  });
+  app.post("/api/sessions/clear-hidden", async (request, response) => {
+    const { sessionIds, projectCwd } = clearHiddenSchema.parse(request.body);
+    const current = await deps.preferences.inspect();
+    if (
+      projectCwd !== undefined &&
+      !current.preferences.hiddenProjectCwds.includes(projectCwd)
+    ) {
+      return response.status(409).json({
+        error: "The folder is no longer hidden; review it before deleting",
+        code: "HIDDEN_SELECTION_CHANGED",
+      });
+    }
+    // The optional scope is an existing Hidden folder, never an arbitrary cwd
+    // or a client-supplied subset of the catalog. Runtime validates every id.
+    const reviewedHiddenSessionIds =
+      projectCwd === undefined ? current.preferences.hiddenSessionIds : [];
+    const reviewedHiddenProjectCwds =
+      projectCwd === undefined
+        ? current.preferences.hiddenProjectCwds
+        : [projectCwd];
+    if (
+      reviewedHiddenSessionIds.length === 0 &&
+      reviewedHiddenProjectCwds.length === 0
+    ) {
+      return response.status(409).json({
+        error: "Hidden must remain non-empty before it can be cleared",
+      });
+    }
+    const result = await deps.runtime.clearHiddenSessions(
+      sessionIds,
+      reviewedHiddenSessionIds,
+      reviewedHiddenProjectCwds,
+    );
+    for (const session of result.deleted)
+      deps.resources.forgetSession(session.sessionId);
+    if (result.deleted.length === 0) return response.json(result);
+    try {
+      const preferences = await deps.preferences.removeClearedHidden(
+        result.deleted.map((session) => session.sessionId),
+        reviewedHiddenSessionIds,
+        reviewedHiddenProjectCwds,
+        !result.failure,
+      );
+      response.json({ ...result, preferences });
+    } catch (error) {
+      // Earlier files are already in Trash (or permanently removed). Return
+      // that committed subset and never turn it into a retryable batch.
+      console.error(
+        `[Hidden] navigation metadata cleanup failed after deleting ${result.deleted.length} sessions`,
+        error,
+      );
+      response.json({ ...result, preferenceCleanupFailed: true });
+    }
+  });
+
+  const upload = multer({
+    defParamCharset: "utf8",
+    storage: deps.attachments.multerStorage(),
+    limits: {
+      fileSize: MAX_ATTACHMENT_FILE_BYTES,
+      files: MAX_ATTACHMENTS,
+      fields: MAX_ATTACHMENTS,
+    },
+  });
+  app.post(
+    "/api/attachments",
+    upload.array("files", MAX_ATTACHMENTS),
+    async (request, response) => {
+      const files = Array.isArray(request.files) ? request.files : [];
+      if (files.length === 0)
+        return response.status(400).json({ error: "No files provided" });
+      response.json({ attachments: await deps.attachments.addMany(files) });
+    },
+  );
+  app.get("/api/attachments/:id/image", async (request, response) => {
+    const image = await deps.attachments.imagePreview(
+      attachmentIdSchema.parse(request.params.id),
+    );
+    response.setHeader("Cache-Control", "no-store");
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.type(image.mimeType).send(image.bytes);
+  });
+  app.delete("/api/attachments/:id", async (request, response) => {
+    await deps.attachments.remove(attachmentIdSchema.parse(request.params.id));
+    response.json({ ok: true });
+  });
+
+  app.post("/api/prompt", async (request, response) => {
+    // Lets the browser distinguish a definitive Host refusal from an
+    // intermediary 5xx whose delivery outcome remains unknown.
+    response.set("X-Inspire-Authority", authorityId);
+    const prompt = promptSchema.parse(request.body);
+    if (prompt.authorityId !== authorityId)
+      throw requestError(
+        "The Host restarted before this prompt delivery could be confirmed",
+        409,
+        { code: "HOST_AUTHORITY_CHANGED" },
+      );
+
+    retirePromptOperationResults();
+    const fingerprint = createHash("sha256")
+      .update(JSON.stringify(prompt))
+      .digest("hex");
+    let operation = promptOperations.get(prompt.operationId);
+    if (operation && operation.fingerprint !== fingerprint)
+      throw requestError(
+        "That prompt operation ID was reused with different content",
+        409,
+        { code: "PROMPT_OPERATION_MISMATCH" },
+      );
+    if (operation && !operation.promise)
+      throw requestError(
+        "This Host already resolved that prompt operation, but its response receipt has retired; inspect the conversation before resending",
+        409,
+        { code: "PROMPT_OPERATION_RESULT_RETIRED", outcomeUnknown: true },
+      );
+    if (!operation) {
+      if (promptOperations.size >= MAX_PROMPT_OPERATION_RECEIPTS)
+        throw requestError(
+          "This Host has reached its process-lifetime prompt receipt limit",
+          503,
+          { code: "PROMPT_OPERATION_CAPACITY" },
+        );
+      const receipt: PromptOperationReceipt = {
+        fingerprint,
+        promise: null,
+        settledAt: null,
+        resultBytes: 0,
+      };
+      const {
+        operationId: _operationId,
+        authorityId: _authorityId,
+        ...request
+      } = prompt;
+      const promise = deps.runtime.prompt(request).then((historyEntry) => {
+        // This runs only for the first successful acceptance of an operation;
+        // response retries reuse the same receipt without retriggering checks.
+        void updateCoordinator.promptAccepted();
+        return { accepted: true as const, historyEntry };
+      });
+      receipt.promise = promise;
+      void promise.then(
+        (result) => {
+          receipt.settledAt = Date.now();
+          receipt.resultBytes = Buffer.byteLength(JSON.stringify(result));
+          retainedPromptOperationResultBytes += receipt.resultBytes;
+          retainedPromptOperationResults.push(receipt);
+          retirePromptOperationResults(receipt.settledAt);
+        },
+        () => {
+          receipt.settledAt = Date.now();
+          retainedPromptOperationResults.push(receipt);
+          retirePromptOperationResults(receipt.settledAt);
+        },
+      );
+      promptOperations.set(prompt.operationId, receipt);
+      operation = receipt;
+    }
+    response
+      .status(202)
+      .json(await observePrompt(prompt.operationId, operation, response));
+  });
+  app.get("/api/prompt/:operationId", async (request, response) => {
+    response.set("X-Inspire-Authority", authorityId);
+    const operationId = z.string().uuid().parse(request.params.operationId);
+    if (request.query.authorityId !== authorityId)
+      throw requestError("The prompt receipt belongs to another Host", 409, {
+        code: "HOST_AUTHORITY_CHANGED",
+        outcomeUnknown: true,
+      });
+    retirePromptOperationResults();
+    const operation = promptOperations.get(operationId);
+    if (!operation)
+      throw requestError("This Host cannot identify that prompt receipt", 409, {
+        code: "PROMPT_OPERATION_NOT_FOUND",
+        outcomeUnknown: true,
+      });
+    response
+      .status(202)
+      .json(await observePrompt(operationId, operation, response));
+  });
+  app.get("/api/pi/changelog", async (_request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json(await installedPiChangelog());
+  });
+  app.post("/api/sessions/export", async (request, response) => {
+    const { sessionId, format } = z
+      .object({
+        sessionId: sessionIdField,
+        format: z.enum(["html", "jsonl"]),
+      })
+      .parse(request.body);
+    response.setHeader("Cache-Control", "no-store");
+    response.json(
+      await generatedExports.create(sessionId, format, (path) =>
+        deps.runtime.nativeCommand({
+          sessionId,
+          command: "export",
+          argument: `"${path}"`,
+        }),
+      ),
+    );
+  });
+  app.get(
+    "/api/sessions/:sessionId/exports/:exportId",
+    async (request, response, next) => {
+      const file = await generatedExports.get(
+        sessionIdField.parse(request.params.sessionId),
+        z.string().uuid().parse(request.params.exportId),
+      );
+      response.download(
+        file.path,
+        file.fileName,
+        {
+          headers: {
+            "Cache-Control": "no-store",
+            "Content-Type": "application/octet-stream",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox",
+          },
+        },
+        (error) => {
+          if (error) next(error);
+        },
+      );
+    },
+  );
+  app.post("/api/control/native-command", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    const command = nativeCommandSchema.parse(request.body);
+    const result = await deps.runtime.nativeCommand(command);
+    if (result.export) {
+      try {
+        Object.assign(
+          result.export,
+          await generatedExports.add(
+            command.sessionId,
+            result.export.path,
+            result.export.format,
+          ),
+        );
+      } catch (error) {
+        result.details = [
+          ...(result.details ?? []),
+          {
+            label: "Download unavailable",
+            value:
+              error instanceof Error
+                ? error.message
+                : "Export again to download",
+          },
+        ];
+      }
+    }
+    response.json(result);
+  });
+  const assertPendingAuthority = (expected: string): void => {
+    if (expected !== authorityId)
+      throw requestError("The Pending operation belongs to another Host", 409, {
+        code: "HOST_AUTHORITY_CHANGED",
+        outcomeUnknown: true,
+      });
+  };
+  app.get("/api/pending/operations/:operationId", async (request, response) => {
+    response.set({
+      "Cache-Control": "no-store",
+      "X-Inspire-Authority": authorityId,
+    });
+    const operation = pendingOperationSchema
+      .extend({ action: z.enum(["recover", "abort"]) })
+      .parse({
+        ...request.query,
+        operationId: request.params.operationId,
+      });
+    assertPendingAuthority(operation.authorityId);
+    const recovered = await pendingOperations.observe(operation);
+    response.json({
+      ...recovered,
+      ...(recovered.attachments?.length ? { authorityId } : {}),
+    });
+  });
+  app.post("/api/control/abort", async (request, response) => {
+    response.set("X-Inspire-Authority", authorityId);
+    const operation = pendingOperationSchema.parse(request.body);
+    assertPendingAuthority(operation.authorityId);
+    response.setHeader("Cache-Control", "no-store");
+    const recovered = await pendingOperations.run(
+      { ...operation, action: "abort" },
+      () => deps.runtime.abort(operation.sessionId),
+    );
+    response.json({
+      ...recovered,
+      ...(recovered.attachments?.length ? { authorityId } : {}),
+    });
+  });
+  app.post("/api/pending/text", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json(
+      await deps.runtime.pendingText(pendingReadSchema.parse(request.body)),
+    );
+  });
+  app.post("/api/pending/recover", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.set("X-Inspire-Authority", authorityId);
+    const operation = pendingOperationSchema.parse(request.body);
+    assertPendingAuthority(operation.authorityId);
+    const recovered = await pendingOperations.run(
+      { ...operation, action: "recover" },
+      () => deps.runtime.recoverPending(operation.sessionId),
+    );
+    response.json({
+      ...recovered,
+      ...(recovered.attachments?.length ? { authorityId } : {}),
+    });
+  });
+  app.post("/api/pending/clear", async (request, response) => {
+    const { sessionId } = clearPendingSchema.parse(request.body);
+    await deps.runtime.clearPending(sessionId);
+    response.json({ ok: true });
+  });
+  app.post("/api/control/model-cycle", async (request, response) => {
+    const { sessionId, direction } = z
+      .object({
+        sessionId: z.string().min(1),
+        direction: z.union([z.literal(1), z.literal(-1)]),
+      })
+      .strict()
+      .parse(request.body);
+    if (direction !== 1)
+      throw requestError(
+        "This Pi version exposes only forward model cycling over RPC. Select a model in the picker instead.",
+        409,
+        { code: "PI_CAPABILITY_UNAVAILABLE" },
+      );
+    response.json((await deps.runtime.cycleModel(sessionId)) ?? null);
+  });
+  app.post("/api/control/model", async (request, response) => {
+    const value = modelSchema.parse(request.body);
+    response.json(
+      await deps.runtime.setModel(
+        value.sessionId,
+        value.provider,
+        value.modelId,
+      ),
+    );
+  });
+  app.post("/api/control/thinking", async (request, response) => {
+    const { sessionId, level } = thinkingSchema.parse(request.body);
+    await deps.runtime.setThinkingLevel(sessionId, level);
+    response.json({ ok: true });
+  });
+  app.post("/api/control/auto-compaction", async (request, response) => {
+    const { sessionId, enabled } = runtimeBooleanSchema.parse(request.body);
+    await deps.runtime.setAutoCompaction(sessionId, enabled);
+    response.json({ ok: true });
+  });
+  app.post("/api/control/auto-retry", async (request, response) => {
+    const { sessionId, enabled } = runtimeBooleanSchema.parse(request.body);
+    await deps.runtime.setAutoRetry(sessionId, enabled);
+    response.json({ ok: true });
+  });
+  app.post("/api/control/steering-mode", async (request, response) => {
+    const { sessionId, mode } = runtimeDeliveryModeSchema.parse(request.body);
+    await deps.runtime.setSteeringMode(sessionId, mode);
+    response.json({ ok: true });
+  });
+  app.post("/api/control/follow-up-mode", async (request, response) => {
+    const { sessionId, mode } = runtimeDeliveryModeSchema.parse(request.body);
+    await deps.runtime.setFollowUpMode(sessionId, mode);
+    response.json({ ok: true });
+  });
+  app.post("/api/extension-ui", async (request, response) => {
+    await deps.runtime.extensionUiResponse(extensionSchema.parse(request.body));
+    response.json({ ok: true });
+  });
+
+  const openSessionCwd = (sessionId: string): string => {
+    const cwd = deps.runtime.sessionCwd(sessionId);
+    if (!cwd) throw requestError("That session is not open on this host", 409);
+    return cwd;
+  };
+
+  app.get("/api/files", async (request, response) => {
+    const { sessionId, q, limit, showHidden } = fileQuerySchema.parse(
+      request.query,
+    );
+    const cwd = openSessionCwd(sessionId);
+    response.json(await searchProjectFiles(cwd, q, limit, showHidden));
+  });
+  app.get("/api/files/list", async (request, response) => {
+    const { sessionId, dir, refresh, showHidden } = fileListSchema.parse(
+      request.query,
+    );
+    const cwd = openSessionCwd(sessionId);
+    if (refresh) invalidateProjectFiles(cwd);
+    response.json(await listProjectDirectory(cwd, dir, showHidden));
+  });
+  app.get("/api/git/status", async (request, response) => {
+    const { sessionId } = gitStatusSchema.parse(request.query);
+    const cwd = openSessionCwd(sessionId);
+    response.json(
+      await withRequestSignal(request, response, (signal) =>
+        deps.git.status(cwd, signal),
+      ),
+    );
+  });
+  app.post("/api/git/diff", async (request, response) => {
+    const { sessionId, pathId, side } = gitDiffSchema.parse(request.body);
+    const cwd = openSessionCwd(sessionId);
+    response.json(
+      await withRequestSignal(request, response, (signal) =>
+        deps.git.diff(cwd, pathId, side, signal),
+      ),
+    );
+  });
+
+  // Session-independent: the picker browses the host filesystem before any
+  // session exists. The bearer token is the guard, as everywhere else.
+  app.get("/api/host/roots", async (_request, response) => {
+    response.json(await listHostRoots());
+  });
+
+  app.get("/api/host/dirs", async (request, response) => {
+    const { path, showHidden } = hostDirsSchema.parse(request.query);
+    try {
+      response.json(await listHostDirectories(path, showHidden));
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (code === "ENOENT" || code === "ENOTDIR")
+        throw requestError("No such directory on the host", 404);
+      if (code === "EACCES" || code === "EPERM")
+        throw requestError("The host cannot read that directory", 403);
+      throw error;
+    }
+  });
+
+  app.post("/api/resources/list", async (request, response) => {
+    const { sessionId, cursor, limit } = resourceListSchema.parse(request.body);
+    const context = await deps.runtime.resourceContext(sessionId);
+    const page = await deps.resources.list(context, { cursor, limit });
+    response.json({
+      sessionId,
+      viewId: context.viewId,
+      revision: context.revision,
+      ...page,
+    });
+  });
+  app.post("/api/resources/probe", async (request, response) => {
+    const { sessionId, references } = resourceProbeSchema.parse(request.body);
+    const context = await deps.runtime.resourceContext(sessionId);
+    response.json({
+      sessionId,
+      viewId: context.viewId,
+      revision: context.revision,
+      results: await deps.resources.probe(context, references),
+    });
+  });
+  app.post("/api/resources/resolve", async (request, response) => {
+    const { sessionId, reference, workspacePath } = resourceResolveSchema.parse(
+      request.body,
+    );
+    const context = await deps.runtime.resourceContext(sessionId);
+    response.json(
+      await deps.resources.resolve(context, reference, true, workspacePath),
+    );
+  });
+  app.post("/api/resources/:id/interactive", async (request, response) => {
+    const { sessionId, html } = z
+      .object({
+        sessionId: z.string().min(1),
+        html: z.string().max(HTML_PREVIEW_BYTES),
+      })
+      .strict()
+      .parse(request.body);
+    const context = await deps.runtime.resourceContext(sessionId);
+    const preview = await htmlPreviews.create(request.params.id, context, html);
+    if (response.destroyed) htmlPreviews.remove(preview.id, sessionId);
+    else response.json(preview);
+  });
+  app.delete("/api/html-previews/:id", (request, response) => {
+    const { sessionId } = z
+      .object({ sessionId: z.string().min(1) })
+      .strict()
+      .parse(request.query);
+    htmlPreviews.remove(request.params.id, sessionId);
+    response.status(204).end();
+  });
+  app.post("/api/resources/:id/download-ticket", async (request, response) => {
+    const { sessionId } = z
+      .object({ sessionId: sessionIdField })
+      .strict()
+      .parse(request.body);
+    const context = await deps.runtime.resourceContext(sessionId);
+    const resource = deps.resources.get(
+      request.params.id,
+      sessionId,
+      context.viewId,
+    );
+    await deps.resources.revalidate(resource, context);
+    response.json(
+      browserAuth.downloadTicket(
+        requestOrigin(request),
+        request.params.id,
+        sessionId,
+      ),
+    );
+  });
+  app.get("/api/resources/:id/content", async (request, response) => {
+    const { sessionId, download } = resourceContentSchema.parse(request.query);
+    await sendResourceContent(
+      request,
+      response,
+      request.params.id,
+      sessionId,
+      download === "1",
+    );
+  });
+  async function sendResourceContent(
+    request: Request,
+    response: Response,
+    resourceId: string,
+    sessionId: string,
+    download: boolean,
+  ): Promise<void> {
+    let closed = response.destroyed;
+    response.once("close", () => {
+      closed = true;
+    });
+    // Handles are bound to the opaque branch view that authorized them. The
+    // current authority is rechecked before any headers or bytes are sent.
+    const context = await deps.runtime.resourceContext(sessionId);
+    const resource = deps.resources.get(resourceId, sessionId, context.viewId);
+    await deps.resources.revalidate(resource, context);
+    if (closed || response.destroyed) return;
+    const setResourceHeaders = (
+      mimeType = resource.descriptor.mimeType,
+    ): void => {
+      response.set({
+        "Content-Type": mimeType,
+        "Content-Disposition": `${download ? "attachment" : "inline"}; filename*=UTF-8''${encodeContentDispositionName(resource.descriptor.name)}`,
+      });
+    };
+    if (resource.authority === "embedded") {
+      const { data, mimeType } = await deps.resources.embeddedContent(
+        resource,
+        context,
+      );
+      if (closed || response.destroyed) return;
+      const range = resourceByteRange(request, data.length);
+      setResourceHeaders(mimeType);
+      response.set("Accept-Ranges", "bytes");
+      if (range) {
+        response.status(206).set({
+          "Content-Range": `bytes ${range.start}-${range.end}/${data.length}`,
+          "Content-Length": String(range.end - range.start + 1),
+        });
+        response.send(data.subarray(range.start, range.end + 1));
+      } else {
+        response.set("Content-Length", String(data.length));
+        response.send(data);
+      }
+    } else if (resource.path) {
+      const { handle, size } = await deps.resources.openForServing(resource);
+      if (closed || response.destroyed) {
+        await handle.close();
+        return;
+      }
+      setResourceHeaders();
+      await sendResourceFile(request, response, handle, size);
+    } else {
+      response
+        .status(404)
+        .json({ error: "The resource preview is no longer available" });
+    }
+  }
+
+  app.get("/api/preferences", async (_request, response) =>
+    response.json(await deps.preferences.read()),
+  );
+  app.patch("/api/preferences", async (request, response) => {
+    const preferences = await deps.preferences.patch(request.body);
+    if (
+      Object.hasOwn(request.body, "pinnedProjectCwds") ||
+      Object.hasOwn(request.body, "hiddenProjectCwds")
+    ) {
+      deps.catalog.invalidate();
+    }
+    response.json(preferences);
+  });
+  app.get("/api/snapshot", async (request, response) =>
+    response.json(
+      await deps.runtime.snapshot(requestedDetail(request.query.detail)),
+    ),
+  );
+  app.get("/api/transcript/older", async (request, response) => {
+    const { sessionId, cursor, deferActivity } =
+      transcriptOlderPageSchema.parse(request.query);
+    response.json(
+      await deps.runtime.transcriptPage(
+        sessionId,
+        cursor,
+        deferActivity === "1",
+      ),
+    );
+  });
+  app.get("/api/transcript/activity", async (request, response) => {
+    const { sessionId, cursor } = transcriptPageSchema.parse(request.query);
+    response.json(await deps.runtime.transcriptActivityPage(sessionId, cursor));
+  });
+  app.get("/api/transcript/user-turns", async (request, response) => {
+    const { sessionId, start } = transcriptUserTurnsSchema.parse(request.query);
+    response.json(await deps.runtime.transcriptUserTurns(sessionId, start));
+  });
+  app.get("/api/transcript/user-turn", async (request, response) => {
+    const { sessionId, id, cursor } = transcriptUserTurnSchema.parse(
+      request.query,
+    );
+    response.json(await deps.runtime.transcriptUserTurn(sessionId, id, cursor));
+  });
+  app.get("/api/transcript/assistant-text", async (request, response) => {
+    const { sessionId, viewId } = assistantTextSchema.parse(request.query);
+    response.json(await deps.runtime.lastAssistantText(sessionId, viewId));
+  });
+  app.get("/api/composer/history", async (request, response) => {
+    const { sessionId, start } = composerHistorySchema.parse(request.query);
+    response.json(await deps.runtime.composerHistory(sessionId, start));
+  });
+  app.get("/api/branches/tree", async (request, response) => {
+    const { sessionId, ...query } = branchTreeSchema.parse(request.query);
+    response.json(await deps.runtime.branchTree(sessionId, query));
+  });
+  app.get("/api/branches/entry", async (request, response) => {
+    response.json(
+      await deps.runtime.branchEntry(branchEntrySchema.parse(request.query)),
+    );
+  });
+  app.get("/api/branches/image", async (request, response) => {
+    const { index, ...query } = request.query;
+    const image = await deps.runtime.branchImage(
+      branchEntrySchema.parse(query),
+      z.coerce.number().int().min(0).parse(index),
+    );
+    response.setHeader("Cache-Control", "private, no-store");
+    response.type(
+      ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(
+        image.mimeType,
+      )
+        ? image.mimeType
+        : "application/octet-stream",
+    );
+    response.send(image.data);
+  });
+  app.post("/api/branches/clone", async (request, response) => {
+    response.json(
+      await deps.runtime.cloneBranch(branchCloneSchema.parse(request.body)),
+    );
+  });
+  app.post("/api/branches/navigate", async (request, response) => {
+    response.json(
+      await deps.runtime.navigateBranch(
+        branchNavigateSchema.parse(request.body),
+      ),
+    );
+  });
+  app.post("/api/branches/fork", async (request, response) => {
+    response.json(
+      await deps.runtime.forkBranch(branchForkSchema.parse(request.body)),
+    );
+  });
+
+  // Unknown API paths are protocol errors, never client-side routes. Keep
+  // them out of the SPA fallback so a typo cannot return index.html as 200.
+  app.all(["/api", "/api/*path"], (_request, response) => {
+    response.status(404).json({ error: "API route not found" });
+  });
+
+  const distDir = resolve(deps.distDir ?? "dist");
+  if (existsSync(distDir)) {
+    // Replace the direct launch master token with a one-use, origin-bound
+    // transfer in the fragment. Fragments never reach HTTP/referrers; the bundle
+    // removes it from history before registering its origin-stored browser key.
+    // HTTPS proxy launches strip query credentials without pairing.
+    app.get("/", (request, response, next) => {
+      const candidate =
+        typeof request.query.token === "string"
+          ? request.query.token
+          : undefined;
+      if (candidate === undefined) return next();
+      const bootstrap =
+        !trustedForwardedHttps(request) &&
+        !request.secure &&
+        isLoopbackAddress(request.socket.remoteAddress) &&
+        tokenMatches(candidate, deps.token)
+          ? browserAuth.bootstrap(requestOrigin(request))
+          : null;
+      const clean = new URL(
+        request.originalUrl,
+        `http://${request.get("host") ?? "127.0.0.1"}`,
+      );
+      clean.searchParams.delete("token");
+      clean.hash = bootstrap ? `inspire-bootstrap=${bootstrap}` : "";
+      response.set("Cache-Control", "no-store");
+      response.redirect(
+        303,
+        `${clean.pathname}${clean.search}${clean.hash}` || "/",
+      );
+    });
+    // Content-hashed bundles under /assets are safe to cache forever. Serve
+    // the active build first, then bounded prior generations so a connected
+    // old page can still perform its first lazy import after a Host rebuild.
+    const immutableAssets = {
+      immutable: true,
+      maxAge: "1y",
+      fallthrough: true,
+    } as const;
+    app.use(
+      "/assets",
+      express.static(join(distDir, "assets"), immutableAssets),
+    );
+    for (const cacheDirectory of deps.staticAssetCacheDirs ?? [])
+      app.use(
+        "/assets",
+        express.static(resolve(cacheDirectory), immutableAssets),
+      );
+    // A missing module is an asset error, never a client-side route. Returning
+    // index.html here both hides the cause and lets a Service Worker cache HTML
+    // under a JavaScript URL.
+    app.use("/assets", (_request, response) => {
+      response
+        .set("Cache-Control", "no-store")
+        .status(404)
+        .type("text/plain")
+        .send("Static asset not found");
+    });
+    // Every other dist file is unhashed — theme-init.js, index.html — so it
+    // must revalidate, or a rebuild is served stale for up to a year.
+    app.use(
+      express.static(distDir, { index: false, fallthrough: true, maxAge: 0 }),
+    );
+    app.get("*path", (_request, response) => {
+      response.set("Cache-Control", "no-cache");
+      response.sendFile("index.html", { root: distDir });
+    });
+  }
+
+  app.use(apiError);
+  const server = createServer(app);
+  const runtimeEvents = createRuntimeEventSockets({
+    runtime: deps.runtime,
+    updateCoordinator,
+    authorityId,
+    heartbeatIntervalMs,
+  });
+
+  server.on("upgrade", (request, socket, head) => {
+    let url: URL;
+    try {
+      url = new URL(
+        request.url ?? "/",
+        `http://${request.headers.host ?? "127.0.0.1"}`,
+      );
+    } catch {
+      socket.destroy();
+      return;
+    }
+    let origin: string;
+    try {
+      origin = canonicalOrigin(
+        request.headers.host,
+        trustedForwardedHttps(request),
+      );
+    } catch {
+      socket.destroy();
+      return;
+    }
+    const audience = url.pathname.slice(1);
+    const browserAuthenticated =
+      request.headers.origin === origin &&
+      browserAuth.consumeTicket(
+        url.searchParams.get("ticket"),
+        origin,
+        audience,
+      );
+    // Trusted non-browser clients can supply an explicit header, never a URL
+    // token. Browsers must use exact-origin, audience-bound single-use tickets.
+    const explicitAuthenticated =
+      request.headers.origin === undefined &&
+      tokenMatches(
+        request.headers.authorization?.startsWith("Bearer ")
+          ? request.headers.authorization.slice(7)
+          : undefined,
+        deps.token,
+      );
+    if (url.pathname === "/terminal" && deps.terminal && browserAuthenticated) {
+      terminalGateway.upgrade(request, socket, head);
+      return;
+    }
+    if (
+      url.pathname === "/events" &&
+      (browserAuthenticated || explicitAuthenticated)
+    ) {
+      runtimeEvents.upgrade(request, socket, head, url);
+      return;
+    }
+    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+  });
+
+  return {
+    app,
+    server,
+    authorityId,
+    launchUrl,
+    close: async () => {
+      deps.providerAuth?.close();
+      htmlPreviews.close();
+      // Stop accepting HTTP/upgrades first, but do not await the drain before
+      // runtime teardown: an active request may itself be waiting on runtime.
+      const drained = server.listening
+        ? new Promise<void>((resolveClose, reject) => {
+            server.close((error) => (error ? reject(error) : resolveClose()));
+          })
+        : Promise.resolve();
+      runtimeEvents.close();
+      terminalGateway.close();
+      const runtimeResult = await deps.runtime.close().then(
+        () => ({ status: "fulfilled" as const }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+      server.closeIdleConnections();
+      await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+      // HTTP's closeAllConnections excludes upgraded sockets. They have had
+      // their normal close notification and runtime teardown opportunity; a
+      // missing peer acknowledgement must not extend the Host's network drain.
+      const upgradedDrained = Promise.all([
+        runtimeEvents.terminateRemaining(),
+        terminalGateway.terminateRemaining(),
+      ]);
+      server.closeAllConnections();
+      await upgradedDrained;
+      const drainedResult = await drained.then(
+        () => ({ status: "fulfilled" as const }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+      const terminalResult = await (
+        deps.terminal?.close() ?? Promise.resolve()
+      ).then(
+        () => ({ status: "fulfilled" as const }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+      const resourceResult = await deps.resources.close().then(
+        () => ({ status: "fulfilled" as const }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+      const exportResult = await generatedExports.close().then(
+        () => ({ status: "fulfilled" as const }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+      const attachmentResult = await deps.attachments.close().then(
+        () => ({ status: "fulfilled" as const }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+      const updateResult = await updateCoordinator.close().then(
+        () => ({ status: "fulfilled" as const }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      );
+      const failures = [
+        runtimeResult,
+        drainedResult,
+        terminalResult,
+        resourceResult,
+        exportResult,
+        attachmentResult,
+        updateResult,
+      ]
+        .filter(
+          (result): result is { status: "rejected"; reason: unknown } =>
+            result.status === "rejected",
+        )
+        .map((result) => result.reason);
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1)
+        throw new AggregateError(failures, "Inspire server shutdown failed");
+    },
+  };
+}

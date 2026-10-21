@@ -1,0 +1,696 @@
+import { FolderSearch, Paperclip, Send, Square } from "lucide-react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { isAbortableRunState, isBusyRunState } from "../../shared/contracts";
+import { clipboardFiles } from "../clipboard-files";
+import {
+  type ComposerHistoryScope,
+  composerHistory,
+  composerHistoryScopeKey,
+  hydrateComposerHistory,
+  rememberComposerHistory,
+} from "../composer-history";
+import { shouldSubmitComposerEnter } from "../composer-keyboard";
+import { isComposingKeyboardEvent } from "../keyboard-input";
+import { supportedThinkingLevels } from "../model-options";
+import {
+  sessionDraft,
+  sessionDraftRevision,
+  setSessionDraft,
+} from "../session-drafts";
+import { shallowEqual, store, useAppState } from "../store";
+import { hasActiveModal } from "../use-modal-focus";
+import { AttachmentList } from "./AttachmentList";
+import { ComposerInput } from "./ComposerInput";
+import { Dropdown } from "./Dropdown";
+import { ModelSelector } from "./ModelSelector";
+import { ProjectFileChips, ProjectFilePicker } from "./ProjectFiles";
+
+const RING_RADIUS = 5;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
+const ContextMeter = memo(function ContextMeter() {
+  const { usage, model, sessionId } = useAppState(
+    (state) => ({
+      usage: state.contextUsage,
+      model: state.model,
+      sessionId: state.sessionId,
+    }),
+    shallowEqual,
+  );
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const hintId = useId();
+  useEffect(() => setOpen(false), [sessionId]);
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const dismissKey = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        isComposingKeyboardEvent(event) ||
+        hasActiveModal()
+      )
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+    };
+    window.addEventListener("pointerdown", dismiss);
+    // Focused controls dismiss first; the hint precedes window-level Stop.
+    document.addEventListener("keydown", dismissKey);
+    return () => {
+      window.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", dismissKey);
+    };
+  }, [open]);
+  if (!usage) return null;
+  const percent = usage.percent;
+  const fillPercent = Math.max(0, Math.min(100, percent ?? 0));
+  const tone =
+    percent !== null && percent >= 85
+      ? "meter--error"
+      : percent !== null && percent >= 60
+        ? "meter--warning"
+        : "";
+  const tokens = `${usage.tokens?.toLocaleString() ?? "—"} / ${usage.contextWindow.toLocaleString()} tokens`;
+  return (
+    <div
+      className="meter-anchor"
+      ref={rootRef}
+      onPointerEnter={(event) => {
+        if (event.pointerType !== "touch") setOpen(true);
+      }}
+      onPointerLeave={(event) => {
+        if (
+          event.pointerType !== "touch" &&
+          !rootRef.current?.contains(document.activeElement)
+        )
+          setOpen(false);
+      }}
+    >
+      <button
+        type="button"
+        className={`meter ${tone}`}
+        aria-label={`Session & usage, context ${percent === null ? "unknown" : `${Math.round(percent)} percent full`}`}
+        aria-describedby={open ? hintId : undefined}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onClick={() => {
+          setOpen(false);
+          void store.runPaletteNativeCommand("/session");
+        }}
+      >
+        <span
+          className="meter__reading"
+          {...(percent === null
+            ? { role: "img", "aria-label": "Context usage unknown" }
+            : {
+                role: "meter",
+                "aria-label": `Context ${Math.round(percent)} percent full`,
+                "aria-valuemin": 0,
+                "aria-valuemax": 100,
+                "aria-valuenow": Math.round(fillPercent),
+                "aria-valuetext": `${Math.round(percent)}%`,
+              })}
+        >
+          <svg className="meter__ring" viewBox="0 0 14 14" aria-hidden>
+            <circle
+              className="meter__ring-track"
+              cx="7"
+              cy="7"
+              r={RING_RADIUS}
+            />
+            {percent !== null && (
+              <circle
+                className="meter__ring-fill"
+                cx="7"
+                cy="7"
+                r={RING_RADIUS}
+                strokeDasharray={`${(fillPercent / 100) * RING_CIRCUMFERENCE} ${RING_CIRCUMFERENCE}`}
+                transform="rotate(-90 7 7)"
+              />
+            )}
+          </svg>
+          <span className="meter__value" aria-hidden>
+            <span>{percent === null ? "—" : `${Math.round(percent)}%`}</span>
+          </span>
+        </span>
+      </button>
+      {open && (
+        <div className="meter__hint" id={hintId} role="tooltip">
+          {model && (
+            <span className="meter__model">{model.name ?? model.id}</span>
+          )}
+          <span>
+            {percent === null ? tokens : `${Math.round(percent)}% · ${tokens}`}
+          </span>
+          {usage.tokens === null && <span>Updates after the next reply</span>}
+        </div>
+      )}
+    </div>
+  );
+});
+
+export const Composer = memo(function Composer() {
+  const state = useAppState(
+    (source) => ({
+      sessionId: source.sessionId,
+      transcriptViewId: source.transcriptViewId,
+      transcriptIncarnation: source.transcriptIncarnation,
+      transcriptEffectiveLeafId: source.transcriptEffectiveLeafId,
+      composerHistoryVersion: source.composerHistoryVersion,
+      runState: source.runState,
+      bashRunning: source.bashRunning,
+      sessionSelectionPending: source.sessionSelectionPending,
+      editorText: source.editorText,
+      attachments: source.attachments,
+      projectFiles: source.projectFiles,
+      failedDeliveryCount: source.failedDeliveryCount,
+      workspaceShowHidden: source.workspaceShowHidden,
+      model: source.model,
+      availableModels: source.availableModels,
+      commonModels: source.commonModels,
+      commands: source.commands,
+      thinkingLevel: source.thinkingLevel,
+      desktopSendKey: source.prefs.desktopSendKey,
+      recentModelIds: source.prefs.recentModelIds,
+      nativeCommandUiRequest: source.nativeCommandUiRequest,
+    }),
+    shallowEqual,
+  );
+  const sessionId = state.sessionId;
+  const historyScope = useMemo<ComposerHistoryScope | null>(
+    () =>
+      sessionId &&
+      state.transcriptViewId &&
+      state.composerHistoryVersion !== null
+        ? {
+            sessionId,
+            viewId: state.transcriptViewId,
+            incarnation: state.transcriptIncarnation,
+            effectiveLeafId: state.transcriptEffectiveLeafId,
+            historyVersion: state.composerHistoryVersion,
+          }
+        : null,
+    [
+      sessionId,
+      state.transcriptEffectiveLeafId,
+      state.transcriptIncarnation,
+      state.transcriptViewId,
+      state.composerHistoryVersion,
+    ],
+  );
+  const historyKey = historyScope
+    ? composerHistoryScopeKey(historyScope)
+    : null;
+  // A branch view remains the same while its effective leaf advances through
+  // persisted run activity. Keep the textarea instance alive across that
+  // append-only movement so streaming cannot take focus or selection.
+  const inputKey = useMemo(
+    () =>
+      JSON.stringify([
+        sessionId,
+        state.transcriptViewId,
+        state.transcriptIncarnation,
+      ]),
+    [sessionId, state.transcriptIncarnation, state.transcriptViewId],
+  );
+  const [historyState, setHistoryState] = useState(() => ({
+    key: historyKey,
+    entries: historyScope ? composerHistory(historyScope) : [],
+  }));
+  const history =
+    historyState.key === historyKey
+      ? historyState.entries
+      : historyScope
+        ? composerHistory(historyScope)
+        : [];
+  const [draft, setDraft] = useState(() =>
+    sessionId ? sessionDraft(sessionId) : "",
+  );
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
+  const [deliveryBehavior, setDeliveryBehavior] = useState<
+    "steer" | "followUp"
+  >("steer");
+  const wasBusyRef = useRef(false);
+  const inputSnapshot = useMemo(
+    () => ({
+      draft,
+      attachments: state.attachments,
+      projectFiles: state.projectFiles,
+    }),
+    [draft, state.attachments, state.projectFiles],
+  );
+  const handedOffRef = useRef<typeof inputSnapshot | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const projectPickerButtonRef = useRef<HTMLButtonElement>(null);
+  const busy = isBusyRunState(state.runState);
+  const sessionOpening = state.sessionSelectionPending;
+
+  const abortable = isAbortableRunState(state.runState) || state.bashRunning;
+  const isRunning = state.runState === "running";
+  const isRetrying = state.runState === "retrying";
+  const isCompacting = state.runState === "compacting";
+  const isFailed = state.runState === "failed";
+  const deliveryBusy = busy;
+  const shellInput = draft.trim().startsWith("!");
+
+  const runStateClass = isRunning
+    ? "composer--running"
+    : isRetrying
+      ? "composer--retrying"
+      : isCompacting
+        ? "composer--compacting"
+        : isFailed
+          ? "composer--failed"
+          : "";
+
+  const updateDraft = (text: string) => {
+    handedOffRef.current = null;
+    setDraft(text);
+    if (sessionId) setSessionDraft(sessionId, text);
+  };
+
+  const previewHistory = useCallback(
+    (text: string, entry: (typeof history)[number] | null) => {
+      setDraft(text);
+      if (historyScope) store.previewComposerHistoryEntry(historyScope, entry);
+    },
+    [historyScope],
+  );
+  const commitHistoryPreview = useCallback(() => {
+    if (historyScope) store.commitComposerHistoryPreview(historyScope);
+  }, [historyScope]);
+  const cancelHistoryPreview = useCallback(() => {
+    if (sessionId) store.cancelComposerHistoryPreview(sessionId);
+  }, [sessionId]);
+
+  useLayoutEffect(() => {
+    setHistoryState({
+      key: historyKey,
+      entries: historyScope ? composerHistory(historyScope) : [],
+    });
+  }, [historyKey, historyScope]);
+
+  useEffect(() => {
+    if (!historyScope) return;
+    let cancelled = false;
+    void hydrateComposerHistory(historyScope, () =>
+      store.loadComposerHistory(
+        historyScope.sessionId,
+        historyScope.viewId,
+        historyScope.incarnation,
+        historyScope.historyVersion,
+      ),
+    ).then((entries) => {
+      if (!cancelled) setHistoryState({ key: historyKey, entries });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [historyKey, historyScope]);
+
+  useEffect(() => {
+    const owner = sessionId;
+    return () => {
+      if (owner) store.cancelComposerHistoryPreview(owner);
+    };
+  }, [historyKey, sessionId]);
+
+  const previousSessionRef = useRef(sessionId);
+  // Restore the target draft before paint so immediate typing after navigation
+  // cannot be overwritten by delayed session synchronization.
+  useLayoutEffect(() => {
+    if (previousSessionRef.current === sessionId) return;
+    previousSessionRef.current = sessionId;
+    handedOffRef.current = null;
+    // Every transient composer surface belongs to the session that opened it.
+    // Reset before paint so it cannot silently retarget the newly visible one.
+    setDraft(sessionId ? sessionDraft(sessionId) : "");
+    setPickerOpen(false);
+    setDropActive(false);
+    setDeliveryBehavior("steer");
+  }, [sessionId]);
+
+  const previousHistoryKeyRef = useRef(historyKey);
+  useLayoutEffect(() => {
+    if (previousHistoryKeyRef.current === historyKey) return;
+    previousHistoryKeyRef.current = historyKey;
+    if (previousSessionRef.current === sessionId)
+      setDraft(sessionId ? sessionDraft(sessionId) : "");
+  }, [historyKey, sessionId]);
+
+  useEffect(() => {
+    if (busy && !wasBusyRef.current) setDeliveryBehavior("steer");
+    wasBusyRef.current = busy;
+  }, [busy]);
+
+  const editorNonce = state.editorText?.nonce;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Pi's nonce is the editor-delivery revision; same-nonce payload changes must not replace a draft.
+  useLayoutEffect(() => {
+    const delivery = state.editorText;
+    if (
+      delivery &&
+      (delivery.draftRevision === undefined ||
+        (sessionId &&
+          sessionDraftRevision(sessionId) === delivery.draftRevision))
+    )
+      updateDraft(delivery.text);
+  }, [editorNonce]);
+
+  const canSend = Boolean(
+    !sessionOpening &&
+      sessionId &&
+      (draft.trim() ||
+        state.attachments.length > 0 ||
+        state.projectFiles.length > 0),
+  );
+  const activeBehavior = deliveryBusy
+    ? deliveryBehavior
+    : state.runState === "conflict"
+      ? "steer"
+      : undefined;
+  const submit = async (behavior?: "steer" | "followUp") => {
+    const message = draft;
+    if (!canSend || sessionOpening || handedOffRef.current === inputSnapshot)
+      return;
+    const owner = sessionId;
+    if (owner && sessionDraft(owner) !== message)
+      setSessionDraft(owner, message);
+    const recordsHistory = !store.isNativeCommand(message);
+    let handedOff = false;
+    const sent = await store.sendPrompt(message, behavior, () => {
+      handedOff = true;
+      handedOffRef.current = inputSnapshot;
+      if (owner && sessionDraft(owner) === message) {
+        setSessionDraft(owner, "");
+        if (store.getState().sessionId === owner) setDraft("");
+      }
+    });
+    if (!sent || !owner) return;
+    if (recordsHistory && historyScope) {
+      const entries = rememberComposerHistory(
+        historyScope,
+        sent.historyEntry ?? message,
+      );
+      setHistoryState((current) =>
+        current.key === historyKey ? { key: historyKey, entries } : current,
+      );
+    }
+    if (handedOff || sessionDraft(owner) !== message) return;
+    setSessionDraft(owner, "");
+    if (store.getState().sessionId === owner) setDraft("");
+  };
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!shouldSubmitComposerEnter(event.nativeEvent, state.desktopSendKey))
+      return;
+    event.preventDefault();
+    void submit(activeBehavior);
+  };
+
+  const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = clipboardFiles(event.clipboardData);
+    if (files.length === 0) return;
+    event.preventDefault();
+    void store.addFiles(files);
+  };
+
+  const activeModel = state.model
+    ? (state.availableModels.find(
+        (model) =>
+          model.provider === state.model?.provider &&
+          model.id === state.model?.id,
+      ) ?? state.model)
+    : null;
+  const thinkingSupported = activeModel?.reasoning !== false;
+  const thinkingLevels = supportedThinkingLevels(activeModel);
+
+  return (
+    <form
+      className={`composer ${dropActive ? "composer--drop" : ""} ${runStateClass}`}
+      aria-label="Message composer"
+      aria-busy={busy || sessionOpening || undefined}
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit(activeBehavior);
+      }}
+      onDragOver={(event) => {
+        event.preventDefault();
+        setDropActive(true);
+      }}
+      onDragLeave={() => setDropActive(false)}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDropActive(false);
+        if (!sessionOpening)
+          void store.addFiles(Array.from(event.dataTransfer.files));
+      }}
+    >
+      <input
+        key={`file-input-${sessionId ?? "none"}`}
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="composer__file-input"
+        aria-label="Attach files"
+        tabIndex={-1}
+        disabled={sessionOpening}
+        onChange={(event) => {
+          void store.addFiles(Array.from(event.target.files ?? []));
+          event.target.value = "";
+        }}
+      />
+      <AttachmentList
+        sessionId={sessionId}
+        items={state.attachments}
+        disabled={sessionOpening}
+        onRemove={store.removeAttachment}
+      />
+      <ProjectFileChips
+        paths={state.projectFiles}
+        disabled={sessionOpening}
+        onRemove={store.removeProjectFile}
+      />
+      {state.failedDeliveryCount > 0 ? (
+        <div className="composer__failed-delivery" role="status">
+          <span>Message not delivered</span>
+          <button
+            type="button"
+            className="button button--quiet"
+            disabled={
+              sessionOpening ||
+              Boolean(
+                draft || state.attachments.length || state.projectFiles.length,
+              )
+            }
+            onClick={() => store.restoreFailedComposerPrompt()}
+          >
+            Restore
+          </button>
+        </div>
+      ) : null}
+      <ComposerInput
+        key={`input-${inputKey}`}
+        value={draft}
+        onChange={updateDraft}
+        onHistoryPreview={previewHistory}
+        onHistoryCommit={commitHistoryPreview}
+        onHistoryCancel={cancelHistoryPreview}
+        history={history}
+        commands={state.commands}
+        models={state.availableModels}
+        activeModel={activeModel}
+        completionDisabled={sessionOpening}
+        disabled={sessionOpening}
+        completionScope={historyKey}
+        showHiddenFiles={state.workspaceShowHidden}
+        onShowHiddenFilesChange={store.setWorkspaceShowHidden}
+        searchProjectFiles={store.searchProjectFiles}
+        placeholder={
+          deliveryBusy
+            ? deliveryBehavior === "steer"
+              ? "Add direction to the running task…"
+              : "Add a follow-up for after this task…"
+            : "Message Pi…"
+        }
+        label="Message"
+        onKeyDown={onKeyDown}
+        onPaste={onPaste}
+      />
+      {deliveryBusy ? (
+        <div className="composer__delivery">
+          <div className="segmented" role="group" aria-label="Message delivery">
+            <button
+              type="button"
+              aria-pressed={deliveryBehavior === "steer"}
+              disabled={sessionOpening}
+              onClick={() => setDeliveryBehavior("steer")}
+              title="Influence the running task"
+            >
+              Steer
+            </button>
+            <button
+              type="button"
+              aria-pressed={deliveryBehavior === "followUp"}
+              disabled={sessionOpening}
+              onClick={() => setDeliveryBehavior("followUp")}
+              title="Send after the current task"
+            >
+              Queue
+            </button>
+          </div>
+        </div>
+      ) : null}
+      <div className="composer__meta">
+        <div className="composer__selectors">
+          <ModelSelector
+            key={`model-${sessionId ?? "none"}`}
+            value={activeModel}
+            models={state.availableModels}
+            recent={state.recentModelIds}
+            common={state.commonModels}
+            onManageModels={store.openModelSettings}
+            disabled={sessionOpening}
+            openRequest={
+              state.nativeCommandUiRequest?.sessionId === state.sessionId &&
+              state.nativeCommandUiRequest.action === "model"
+                ? state.nativeCommandUiRequest
+                : undefined
+            }
+            onOpenRequestHandled={store.consumeNativeCommandUiRequest}
+            refreshModels={store.refreshModels}
+            onChange={(provider, id) => void store.setModel(provider, id)}
+          />
+          <Dropdown
+            key={`thinking-${sessionId ?? "none"}`}
+            label="Thinking level"
+            title={
+              thinkingSupported
+                ? "Thinking level"
+                : "The active model does not support thinking"
+            }
+            direction="up"
+            value={state.thinkingLevel}
+            display={thinkingSupported ? state.thinkingLevel : "unavailable"}
+            disabled={!thinkingSupported || sessionOpening}
+            openRequest={
+              state.nativeCommandUiRequest?.sessionId === state.sessionId &&
+              state.nativeCommandUiRequest.action === "thinking"
+                ? state.nativeCommandUiRequest.id
+                : undefined
+            }
+            onOpenRequestHandled={store.consumeNativeCommandUiRequest}
+            options={thinkingLevels.map((level) => ({
+              value: level,
+              label: level,
+            }))}
+            onChange={(value) => void store.setThinkingLevel(value)}
+          />
+        </div>
+        <button
+          ref={projectPickerButtonRef}
+          type="button"
+          className={`icon-button ${pickerOpen ? "icon-button--active" : ""}`}
+          disabled={sessionOpening}
+          onClick={() => setPickerOpen((value) => !value)}
+          aria-label="Add project files"
+          aria-haspopup="dialog"
+          aria-expanded={pickerOpen}
+          title="Reference project files"
+        >
+          <FolderSearch size={14} aria-hidden />
+        </button>
+        <button
+          type="button"
+          className="icon-button"
+          disabled={sessionOpening}
+          onClick={() => fileInputRef.current?.click()}
+          aria-label="Attach files"
+          title="Attach files (or paste / drop them)"
+        >
+          <Paperclip size={14} aria-hidden />
+        </button>
+        <span className="composer__spacer" />
+        <ContextMeter />
+        {abortable ? (
+          <button
+            type="button"
+            className={`composer__send ${state.runState === "conflict" ? "composer__send--recover" : "composer__send--abort"}`}
+            disabled={sessionOpening}
+            onClick={() => void store.abort()}
+            aria-label={
+              state.runState === "conflict"
+                ? "Recover session"
+                : isCompacting
+                  ? "Cancel context compaction"
+                  : "Abort running task"
+            }
+            title={
+              state.runState === "conflict"
+                ? "Recover session"
+                : isCompacting
+                  ? "Cancel compaction"
+                  : "Stop"
+            }
+          >
+            <Square size={14} aria-hidden />
+          </button>
+        ) : null}
+        {!abortable || deliveryBusy || state.bashRunning ? (
+          <button
+            type="submit"
+            className="composer__send"
+            disabled={!canSend}
+            aria-label={
+              shellInput
+                ? "Run shell command"
+                : !deliveryBusy
+                  ? "Send message"
+                  : deliveryBehavior === "steer"
+                    ? "Send as steer"
+                    : "Queue after current task"
+            }
+            title={
+              shellInput
+                ? "Run shell command"
+                : !deliveryBusy
+                  ? "Send"
+                  : deliveryBehavior === "steer"
+                    ? "Send as steer"
+                    : "Queue after current task"
+            }
+          >
+            <Send size={14} aria-hidden />
+          </button>
+        ) : null}
+      </div>
+      {pickerOpen && sessionId ? (
+        <ProjectFilePicker
+          anchorRef={projectPickerButtonRef}
+          scope={sessionId}
+          showHidden={state.workspaceShowHidden}
+          onShowHiddenChange={store.setWorkspaceShowHidden}
+          selected={state.projectFiles}
+          disabled={sessionOpening}
+          search={store.searchProjectFiles}
+          onAdd={(file) => store.addProjectFile(file.path)}
+          onClose={() => setPickerOpen(false)}
+        />
+      ) : null}
+    </form>
+  );
+});

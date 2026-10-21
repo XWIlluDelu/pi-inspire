@@ -1,0 +1,418 @@
+import {
+  type BranchTreeResponse,
+  defaultPreferences,
+  type GitDiffSide,
+  type GitStatusResponse,
+  type InspirePreferences,
+  type ModelOption,
+  type PiRuntimeSettings,
+  type PiUpdateCheckResponse,
+  type ProjectionConflict,
+  type ProjectionHealth,
+  type ResourceProbeResult,
+  type SessionReadOnlyReason,
+  type SessionRuntimeStatus,
+  type SessionSummary,
+  type TranscriptActivityRange,
+  type UpdateCheckResponse,
+  type UserTurnAnchor,
+} from "../shared/contracts";
+import type { ModelSettingsOwner } from "../shared/model-settings";
+import type { ExternalSessionActivities } from "../shared/session-activity";
+import type { PiCommand } from "./composer-completion";
+import type { PendingAttachment } from "./controllers/composer-controller";
+import type {
+  ManagedConnectionProblem,
+  ManagedConnectionState,
+} from "./controllers/connection-controller";
+import type { GitDiffView } from "./controllers/git-controller";
+import {
+  emptyWorkspaceBrowserState,
+  type WorkspaceBrowserState,
+} from "./controllers/workspace-controller";
+import { type EventSlice, emptyEventSlice } from "./events";
+import type { ResourcePreview } from "./resource-preview";
+
+/** Context-window occupancy from Pi's session stats. `tokens`/`percent` are
+ * null right after a compaction until the next assistant response reports
+ * fresh usage; the whole value is null when Pi provides no usable stats. */
+export interface ContextUsage {
+  tokens: number | null;
+  contextWindow: number;
+  percent: number | null;
+}
+
+export type NativeCommandActivityStatus =
+  | "running"
+  | "success"
+  | "info"
+  | "warning"
+  | "error"
+  | "cancelled";
+
+export interface NativeCommandActivity {
+  id: number;
+  sessionId: string;
+  input: string;
+  command: string;
+  status: NativeCommandActivityStatus;
+  title: string;
+  message: string;
+  createdAt?: number;
+  details?: Array<{ id?: string; label: string; value: string }>;
+  download?: { id: string; fileName: string };
+  action?:
+    | { kind: "open-terminal"; label: string; value?: string }
+    | { kind: "copy"; label: string; value: string };
+}
+
+export function isCommandQuery(
+  activity: Pick<NativeCommandActivity, "command" | "status">,
+): boolean {
+  return (
+    activity.status === "info" &&
+    ["session", "name", "quit"].includes(activity.command)
+  );
+}
+
+export interface NativeCommandUiRequest {
+  id: number;
+  sessionId: string;
+  action:
+    | "model"
+    | "thinking"
+    | "models"
+    | "settings"
+    | "updates"
+    | "sessions"
+    | "new"
+    | "hotkeys"
+    | "changelog";
+  query?: string;
+  modelSettingsFocus?: "credentials" | "common";
+  modelSettingsOwner?: ModelSettingsOwner;
+}
+
+export interface TranscriptActivityRangeState extends TranscriptActivityRange {
+  status: "idle" | "loading" | "error";
+  error: string | null;
+}
+
+export type ActivityMaterializationMode = "all" | "tail";
+
+/** Whether a projection revision still contains the unchanged prefix ending at
+ * an earlier revision. */
+export function transcriptRevisionContains(
+  revision: number,
+  appendFromRevision: number,
+  ancestorRevision: number,
+): boolean {
+  return (
+    revision === ancestorRevision ||
+    (revision > ancestorRevision && appendFromRevision <= ancestorRevision)
+  );
+}
+
+export function contextUsage(stats: unknown): ContextUsage | null {
+  if (!stats || typeof stats !== "object") return null;
+  const raw = (stats as { contextUsage?: unknown }).contextUsage;
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const contextWindow =
+    typeof record.contextWindow === "number" &&
+    Number.isFinite(record.contextWindow) &&
+    record.contextWindow > 0
+      ? record.contextWindow
+      : null;
+  if (contextWindow === null) return null;
+  const tokens =
+    typeof record.tokens === "number" && Number.isFinite(record.tokens)
+      ? record.tokens
+      : null;
+  const percent =
+    typeof record.percent === "number" && Number.isFinite(record.percent)
+      ? record.percent
+      : tokens !== null
+        ? (tokens / contextWindow) * 100
+        : null;
+  return { tokens, contextWindow, percent };
+}
+
+export interface AppState extends EventSlice, WorkspaceBrowserState {
+  needsToken: boolean;
+  connection: ManagedConnectionState;
+  connectionProblem: ManagedConnectionProblem;
+  bootstrapped: boolean;
+  /** Monotonic identity of the current HTTP/WebSocket authority. */
+  transportGeneration: number;
+  mock: boolean;
+  /** Host-reported runtime versions, shown on the settings page. */
+  version: string;
+  piVersion: string;
+  inspireUpdateCheck: UpdateCheckResponse | null;
+  piUpdateCheck: PiUpdateCheckResponse | null;
+  inspireUpdateChecking: boolean;
+  piUpdateChecking: boolean;
+  /** Browser request confirmation, separate from Host-owned check execution. */
+  inspireUpdateRequestPending: boolean;
+  piUpdateRequestPending: boolean;
+  availableUpdateIdentity: string | null;
+  updateSnoozedUntil: number | null;
+  prefs: InspirePreferences;
+  sessionId: string | null;
+  sessionName: string;
+  sessionFile: string | null;
+  sessionStats: unknown;
+  runtimeSettings: PiRuntimeSettings | null;
+  readOnlyReason: SessionReadOnlyReason | null;
+  cwd: string | null;
+  model: ModelOption | null;
+  modelDiscovery: "loading" | "unavailable" | null;
+  thinkingLevel: string;
+  availableModels: ModelOption[];
+  commonModels: import("../shared/model-settings").CommonModelOption[];
+  commands: PiCommand[];
+  contextUsage: ContextUsage | null;
+  /** Ephemeral command lifecycle receipts are partitioned by session. */
+  commandActivities: Record<string, NativeCommandActivity[]>;
+  nativeCommandUiRequest: NativeCommandUiRequest | null;
+  nextNativeCommandId: number;
+  transcriptRevision: number;
+  /** Earliest revision still sharing this projection's unchanged prefix. */
+  transcriptAppendFromRevision: number;
+  transcriptIncarnation: string | null;
+  transcriptViewId: string | null;
+  /** Durable Pi projection leaf. It differs from effective only while the
+   * visible session is inspecting an earlier branch. */
+  transcriptDurableLeafId: string | null;
+  transcriptEffectiveLeafId: string | null;
+  composerHistoryVersion: string | null;
+  hasOlderMessages: boolean;
+  olderMessagesCursor: string | null;
+  loadingOlderMessages: boolean;
+  olderMessagesError: string | null;
+  transcriptActivityRanges: TranscriptActivityRangeState[];
+  /** Sparse, branch-bound user-turn outline pages backing Prompt Map. */
+  promptMapTurns: UserTurnAnchor[];
+  promptMapTotal: number;
+  promptMapLoadedStarts: number[];
+  promptMapLoadingStarts: number[];
+  promptMapError: string | null;
+  promptMapNavigatingOrdinal: number | null;
+  projectionHealth: ProjectionHealth;
+  projectionConflict: ProjectionConflict | null;
+  projectionError: string | null;
+  /** Current session synchronization/projection error. Operation feedback
+   * stays local or uses Notices. Attention conflicts are warnings. */
+  errorSeverity: "error" | "warning";
+  /** Rendered union of chronological catalog pages and separately hydrated
+   * curated/live identities. Only the chronological pages advance the cursor. */
+  sessions: SessionSummary[];
+  sessionQuery: string;
+  sessionListTotal: number;
+  sessionListNextOffset: number;
+  sessionListLoading: boolean;
+  sessionListLoadingOlder: boolean;
+  sessionListHydrating: boolean;
+  /** Current operation, retained after failure so retry copy stays truthful. */
+  sessionListOperation:
+    | "reset"
+    | "older"
+    | "refresh"
+    | "preserve"
+    | "hydrate"
+    | "curation"
+    | null;
+  sessionListError: string | null;
+  /** Selection failures stay with the session navigation/start surface rather
+   * than competing with transcript integrity errors in the topbar. */
+  sessionActionError: string | null;
+  /** Destructive-action failures stay inside the confirmation dialog. */
+  sessionDeleteError: string | null;
+  sessionDeleteReviewRequired: boolean;
+  /** Authoritative per-session runtime status for every live session worker,
+   * keyed by session id. Drives nav attention indicators. */
+  sessionStatuses: Record<string, SessionRuntimeStatus>;
+  /** Read-only Herdr observations, never execution/control authority. */
+  externalSessionActivities: ExternalSessionActivities;
+  /** Unseen terminal transitions currently contributing a title marker. */
+  attentionSessionIds: string[];
+  /** Ephemeral cue for observed successful runs finishing in the selected session. */
+  completedRunSequence: number;
+  /** Session currently owned by the newest open operation, if any. */
+  openingSessionId: string | null;
+  /** Whether an open, deselect, or create request still owns selection. */
+  sessionSelectionPending: boolean;
+  /** The Hidden-row destructive action currently awaiting its host result. */
+  deletingSessionId: string | null;
+  /** Whether the complete Hidden selection is awaiting its host result. */
+  clearingHidden: boolean;
+  /** The visible session's composer slice. Authoritative copies live in
+   * per-session partitions inside the store; a session switch swaps the
+   * slice, so staged work never leaks across sessions. */
+  attachments: PendingAttachment[];
+  projectFiles: string[];
+  /** Outgoing operations own their handed-off artifacts independently of the
+   * editable next draft. */
+  sending: boolean;
+  /** Failed inputs retained for explicit restoration without replacing a draft. */
+  failedDeliveryCount: number;
+  /** Pending queue mutation currently awaiting the Host. */
+  pendingAction: "clear" | "recover" | null;
+  /** Files/resources pane visibility (Ctrl+.). */
+  resourcesOpen: boolean;
+  contextMode: "files" | "changes" | "branches" | "terminal";
+  /** Full browsing or the shared workspace/detail split. */
+  fileBrowserView: "browse" | "preview";
+  /** The compact nav disclosure is store-owned so drawer remounts and
+   * responsive transitions retain it. */
+  workspaceExplorerOpen: boolean;
+  branchTree: BranchTreeResponse | null;
+  branchTreeLoading: boolean;
+  branchTreeError: string | null;
+  branchActionId: string | null;
+  /** Reference currently selected in the resources pane. */
+  selectedResourceReference: string | null;
+  /** Exact project-index path when the selection came from Files or Changes.
+   * Textual transcript references remain null so their path syntax can retain
+   * citation and line-location semantics. */
+  selectedResourceWorkspacePath: string | null;
+  resourcePreview: ResourcePreview | null;
+  gitStatus: GitStatusResponse | null;
+  gitStatusError: string | null;
+  gitStatusLoading: boolean;
+  gitStatusRefreshing: boolean;
+  selectedGitPathId: string | null;
+  selectedGitSide: GitDiffSide | null;
+  gitDiff: GitDiffView | null;
+  /** Preflight standing for the bounded Files-pane references. A textual
+   * mention stays unverified until the host classifies it for this branch
+   * view; only a successful resolve grants a separate content handle. */
+  resourceAvailability: Record<string, ResourceProbeResult>;
+  /** Canonical workspace identity for successfully resolved references. */
+  resourceWorkspacePaths: Record<string, string>;
+  error: string | null;
+}
+
+export function emptyResourceInspectionState(): Pick<
+  AppState,
+  | "fileBrowserView"
+  | "selectedResourceReference"
+  | "selectedResourceWorkspacePath"
+  | "resourcePreview"
+  | "resourceAvailability"
+  | "resourceWorkspacePaths"
+> {
+  return {
+    fileBrowserView: "browse",
+    selectedResourceReference: null,
+    selectedResourceWorkspacePath: null,
+    resourcePreview: null,
+    resourceAvailability: {},
+    resourceWorkspacePaths: {},
+  };
+}
+
+export function createInitialAppState(): AppState {
+  return {
+    ...emptyEventSlice(),
+    ...emptyWorkspaceBrowserState(),
+    needsToken: false,
+    connection: "connecting",
+    connectionProblem: null,
+    bootstrapped: false,
+    transportGeneration: 0,
+    mock: false,
+    version: "",
+    piVersion: "",
+    inspireUpdateCheck: null,
+    piUpdateCheck: null,
+    inspireUpdateChecking: false,
+    piUpdateChecking: false,
+    inspireUpdateRequestPending: false,
+    piUpdateRequestPending: false,
+    availableUpdateIdentity: null,
+    updateSnoozedUntil: null,
+    prefs: defaultPreferences,
+    sessionId: null,
+    sessionName: "",
+    sessionFile: null,
+    sessionStats: null,
+    runtimeSettings: null,
+    readOnlyReason: null,
+    cwd: null,
+    model: null,
+    modelDiscovery: null,
+    thinkingLevel: "medium",
+    availableModels: [],
+    commonModels: [],
+    commands: [],
+    contextUsage: null,
+    commandActivities: {},
+    nativeCommandUiRequest: null,
+    nextNativeCommandId: 1,
+    transcriptRevision: 0,
+    transcriptAppendFromRevision: 0,
+    transcriptIncarnation: null,
+    transcriptViewId: null,
+    transcriptDurableLeafId: null,
+    transcriptEffectiveLeafId: null,
+    composerHistoryVersion: null,
+    hasOlderMessages: false,
+    olderMessagesCursor: null,
+    loadingOlderMessages: false,
+    olderMessagesError: null,
+    transcriptActivityRanges: [],
+    promptMapTurns: [],
+    promptMapTotal: 0,
+    promptMapLoadedStarts: [],
+    promptMapLoadingStarts: [],
+    promptMapError: null,
+    promptMapNavigatingOrdinal: null,
+    projectionHealth: { status: "ok" },
+    projectionConflict: null,
+    projectionError: null,
+    errorSeverity: "error",
+    sessions: [],
+    sessionQuery: "",
+    sessionListTotal: 0,
+    sessionListNextOffset: 0,
+    sessionListLoading: false,
+    sessionListLoadingOlder: false,
+    sessionListHydrating: false,
+    sessionListOperation: null,
+    sessionListError: null,
+    sessionActionError: null,
+    sessionDeleteError: null,
+    sessionDeleteReviewRequired: false,
+    sessionStatuses: {},
+    externalSessionActivities: {},
+    attentionSessionIds: [],
+    completedRunSequence: 0,
+    openingSessionId: null,
+    sessionSelectionPending: false,
+    deletingSessionId: null,
+    clearingHidden: false,
+    attachments: [],
+    projectFiles: [],
+    sending: false,
+    failedDeliveryCount: 0,
+    pendingAction: null,
+    resourcesOpen: false,
+    contextMode: "files",
+    ...emptyResourceInspectionState(),
+    workspaceExplorerOpen: false,
+    branchTree: null,
+    branchTreeLoading: false,
+    branchTreeError: null,
+    branchActionId: null,
+    gitStatus: null,
+    gitStatusError: null,
+    gitStatusLoading: false,
+    gitStatusRefreshing: false,
+    selectedGitPathId: null,
+    selectedGitSide: null,
+    gitDiff: null,
+    error: null,
+  };
+}

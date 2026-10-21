@@ -1,0 +1,286 @@
+---
+purpose: "Every event socket and asynchronous browser completion remains bound to its session, view, and transport generation across reconnect and concurrent navigation."
+covers:
+  - server/app.ts
+  - server/runtime-event-sockets.ts
+  - server/runtime.ts
+  - server/pending-operation-receipts.ts
+  - src/controllers/pending-recovery-controller.ts
+  - tests/server/app-pending-recovery.test.ts
+  - tests/integration/pending-{recovery-lifecycle,stop-native.integration}.test.ts
+  - server/runtime-worker-pool.ts
+  - shared/{contracts,assistant-stream,tool-argument-updates}.ts
+  - server/{tool-argument-stream,tool-argument-batches,runtime-stream-budget}.ts
+  - src/{api,events,store,snapshot-transition,transport-performance}.ts
+  - src/controllers/{connection,session-selection,runtime-event,transcript-data}-controller.ts
+  - tests/server/{app-events,app-prompt-delivery,runtime-worker-pool}.test.ts
+  - tests/browser/native-pi-continuity.spec.ts
+  - tests/integration/session-detail-confirmation.test.ts
+  - tests/web/{events,store,store-transcript,store-navigation,store-async-ownership}.test.ts
+---
+
+# Session transport and browser ownership
+
+## Goal
+
+Reconstruct one current browser projection from Pi without unbounded transport queues or stale
+writebacks. This is the transport part of [[session-continuity]], not a second conversation store.
+
+## Per-browser detail and reconnect
+
+- Each authenticated event connection owns one explicit session-detail interest (or no detail).
+  Selection changes fence detail delivery behind a fresh addressed snapshot and subscription
+  revision, including in-flight initial handshakes and reconnects; another browser's Host selection
+  cannot retarget that connection. Other sessions send only changed compact status and lifecycle
+  outcomes, with an attention indicator for pending extension interaction, not
+  message/tool/queue/dialog bodies. The Host filters before encoding those bodies and preserves its
+  bounded joining backlog and event-batch ordering for interested clients.
+
+- A live detail subscription retains its session view before the initial snapshot read. Observed
+  views and their workers are not idle-reclamation candidates, independently of the Host's last
+  selection. Multiple browsers retain independently; switching interest, disconnecting, or closing
+  the Host releases only that subscription. Retention neither starts a worker nor changes shared
+  selection, and does not prevent explicit session deletion. After a Host restart, automatic
+  recovery must restore usable history and input without a page refresh; failed dependent reads
+  must not cause repeated reclamation and reconstruction of the visible conversation.
+
+- Foreground run state and navigation status adopt the Host's explicit `sessionStatus`, not an
+  independently inferred event-name transition. Inferred transitions are a fallback only for
+  unannotated events; failed messages and settlement cannot briefly become running/idle merely
+  because the corrective snapshot has not arrived. Retry details are bounded Host-owned current
+  metadata carried in addressed snapshots as well as live events; non-retry phases retire those
+  details. Missing or malformed details do not hide a valid `retrying` state or invent attempt counts.
+
+- An addressed reconnect to a session confirmed absent falls back once to bootstrap with no detail
+  interest. It keeps the Host reachable, explains the missing session, and never adopts another
+  browser's Host selection. Recovery uses the same transport owner and deadline; newer committed or
+  pending navigation remains authoritative. Authentication, ambiguity, projection corruption, and
+  unclassified read failures do not count as proof that a session was deleted.
+
+  Initial read-only hydration uses the cached catalog on the normal path. If its pinned source has
+  disappeared, moved, or changed identity, it refreshes the catalog once and revalidates the new
+  record before opening. Ambiguous identity and continuing source changes still refuse the read;
+  recovery neither replaces a live owned projection nor retries a write. A missing open target
+  refreshes the browser list without replacing the currently visible conversation.
+
+- Refreshing or reconnecting reconciles live events against an authoritative Pi snapshot without
+  duplicating settled messages or letting a delayed snapshot replace a newer selection. Bootstrap,
+  HTTP session-open responses and the WebSocket's first snapshot carry one process-lifetime Host
+  authority plus a SHA-256
+  snapshot digest, and a WebSocket is not published as open until that authority and snapshot have
+  been validated and applied. After a synchronized socket loss, the browser first opens a bounded
+  lightweight WebSocket resume naming its last confirmed digest: the Host returns a digest-only
+  unchanged confirmation when it still matches or a complete authoritative snapshot when it does
+  not; a failed resume falls back to bootstrap rather than rereading bootstrap metadata on every
+  healthy reconnect. A committed HTTP-open snapshot passes its authority-bound digest through the
+  changed detail interest. The Host still performs its second authoritative read and queues events
+  behind that synchronization boundary; an identical window gets a digest-only confirmation.
+  The pending detail confirmation retains that exact authority/session/revision/digest witness.
+  Already-sent detail from another session may invalidate the general reconnect cache, but not
+  this witness. Current-target or unscoped runtime changes invalidate it; an unchanged reply still
+  requires the matching scope and digest. `session-detail-confirmation.test.ts` combines actual
+  HTTP/WebSocket synchronization with AppStore routing and tests invalid acknowledgements.
+  `app-events.test.ts` bounds a stable window above 500,000 characters to under 2,000 bytes of
+  synchronization and queued lifecycle frames, and checks changed/foreign-authority fallbacks.
+
+  A missing first snapshot, application-frame inactivity, failed server ping/pong, stale visibility
+  return, online transition, or BFCache restoration replaces the old transport through that same
+  resume-or-bootstrap boundary. Server heartbeats never overtake a joining snapshot, and both
+  snapshot and reconnect attempts remain bounded by deadlines and backoff. WebSocket connection
+  establishment has a 10-second bound; once open, the first authoritative snapshot gets a separate
+  45-second observation window, allowing Pi's 30-second read budget plus transfer time. Bootstrap
+  (initial or addressed reconnect) and changed detail interest reuse that observation budget;
+  missing-detail bootstrap fallback stays within the original bootstrap deadline. Neither heartbeats
+  nor stale snapshots extend it; expired sockets cannot apply late frames or close callbacks to a
+  replacement owner. Established sockets
+  receive ordered Host-coalesced assistant deltas rather than repeated cumulative messages, while a
+  socket joining behind snapshot synchronization receives complete idempotent message replacements.
+  The Host flushes a same-message batch after 16ms or before a lifecycle/identity boundary; the
+  browser reduces that ordered batch and adapts visual commits from 16ms to 50ms as the streamed
+  text/argument preview grows. Adjacent updates to one tool are coalesced inside that window;
+  `sourceEventCount` retains the original revision span even when several argument fragments
+  become one update. Browser render-window batching preserves that count and the 2,048-source-event
+  ceiling.
+
+  Invalid identity, reconstructed length, serialization, or size state fails to an authoritative
+  snapshot instead of guessing across a sequence gap. Bootstrap itself is latest-wins: each request
+  captures its API identity and transport generation, and only the still-current request may apply
+  bootstrap state, load launch preferences, create a WebSocket, or interpret a 401 as pairing
+  failure. Within that transport, a snapshot already committed by selection or resync supersedes
+  the older bootstrap's snapshot and digest; Host metadata can still refresh. Launch continuation
+  honors the selection intent captured before bootstrap began. Browser-only, bounded Performance
+  timeline measures expose bootstrap confirmation, prompt
+  confirmation, WebSocket handshake phase, snapshot characters, and event-window frame/character
+  rates without creating persistent telemetry. If selection changes while the host is reading a
+  snapshot, it retries against the new owner before sending anything authoritative.
+
+  Browser selection operations carry one explicit owner: the bounded `SessionSelectionController`
+  accepts an open/new/deselect response only while its API client, transport generation, and
+  explicit owner still match the `AppStore` facade. A newer open, new-session, deselection,
+  unaddressed selection push, bootstrap, or transport replacement supersedes the older opener
+  without serializing navigation. An addressed stream snapshot refreshes the existing detail
+  interest; it must not retire a newer explicit selection still awaiting its HTTP response.
+  A successful new-session selection clears the prior opener, and stale completion/finally paths
+  cannot clear a newer owner. Every open/new endpoint completes all fallible projection and
+  runtime-metadata reads before its selection or identity commit.
+
+  HTTP resync failures obey the same session and selection-generation checks as successful reads,
+  including switching away and back or replacing a same-session branch view. An old read must not
+  publish an error over the current selection. A current-API 401 remains transport-wide; an error
+  from a replaced API remains stale. Obsolete operation completions cannot start a new resync that
+  invalidates the current selection's pending read. Abort error publication and optimistic thinking
+  rollback also require the original selection generation, including A → B → A navigation.
+  `store-async-ownership.test.ts` covers these boundaries.
+
+  Fork validates its private destination before publication; once that complete JSONL is atomically
+  published, any later attachment failure reports the exact committed destination and cannot become
+  a retryable outcome. Catalog invalidation and observer notification are best-effort post-commit
+  work and can never turn an operation that already changed host or disk state into an apparently
+  uncommitted failure. Entering the New session surface calls an explicit host deselection
+  operation; the selected session id becomes null in both host and browser while the old idle worker
+  may remain only as an unselected LRU cache entry.
+
+  The transition clears conversation-derived status, resources, attention acknowledgement, and
+  Escape targeting, so the previous session becomes eligible for deletion and no browser-only
+  "drafting" identity can diverge from runtime ownership. Rename and prompt completions remain bound
+  to their sending/opening session and cannot retitle, clear drafts, or replace a visible error
+  belonging to another session. Projection conflicts carry a machine-readable kind and opaque
+  incident id rather than requiring message-text inference: a stopped worker whose healthy
+  projection only moved to an external source is a persistent yellow attention state that still
+  blocks writes and offers recovery; incomplete persistence, projection failure, and
+  acceptance-unknown outcomes remain red blocking errors.
+
+## HTTP observation ownership
+
+- Ordinary JSON requests bound the complete response (headers and body) to 45 seconds. New-session
+  and one-shot fork observations allow 120 seconds for startup and publication. Native commands
+  (including compaction/export) and branch navigation remain completion-driven with no observation
+  deadline: Pi hooks, dialogs, and long work may legitimately take longer. Real transport loss still
+  reports typed uncertainty, and explicit observer cancellation remains available. Bounded deadlines
+  abort only the HTTP observer and never stop a worker or retry a write. An operation may still
+  complete after its observer expires; the browser reports an unconfirmed outcome, not a definitive
+  execution failure. Resource preview and attachment upload use the same observation/cancellation
+  boundary, with size-dependent transfer budgets defined in [[resource-preview]] and [[composer]].
+  Uploads also reclaim late handles. Prompt and terminal receipts retain their separate identity
+  semantics.
+
+- Explicit cancellation is distinct from transport failure. A superseded open/new/deselect aborts
+  its observer immediately, including replacement by bootstrap. Pending-open deduplication lasts
+  only for that bounded observation. Success, failure, and cleanup still require the selection,
+  API, and transport owner; a cancelled request's late response or 401 cannot replace the current
+  view or retire its authentication. Ordinary socket loss alone does not supersede a current HTTP
+  selection; a subsequent bootstrap replacement does.
+
+- A transport failure cannot establish whether a mutation happened. Read-only POSTs use read
+  uncertainty rather than mutation-outcome language. Session creation has no retained receipt:
+  concurrent creates are suppressed, and another create after an unconfirmed outcome requires an
+  explicit warning/confirmation to inspect the session list first. That guard survives selection
+  and transport replacement within the current page; it is not a durable operation identity or
+  an exactly-once guarantee across page reloads. Gateway timeouts do not count as definitive
+  creation refusals. Pre-dispatch cancellation is known not to have created a session and does not
+  require that confirmation. A lost error-response body is transport uncertainty, not an
+  authoritative application refusal; non-JSON HTTP error pages retain their status and edge markers
+  for ordinary connection-error presentation.
+
+Checks: API/controller tests cover stalled headers and bodies, cancellation, late replies,
+read/write uncertainty, successful commands/navigation beyond 120 seconds, and bounded
+connect/snapshot/bootstrap blackholes.
+`store-async-ownership.test.ts` also exercises a blackholed open with healthy heartbeats, release
+and explicit re-open, cancelled-response/401 ownership, and the unconfirmed-create warning.
+
+## Prompt observation ownership
+
+- Every prompt carries a random operation identity and process-lifetime Host authority. Bounded
+  Host fingerprints admit it once: concurrent/near-term copies await or return the same result,
+  changed content under an identity is refused, and replaced-Host identities fail explicitly.
+  Retired response bodies leave tombstones; a retired result fails closed rather than allowing
+  redispatch.
+- POST observes one delivery for at most 20 seconds, then returns a pending receipt. Authenticated,
+  identity/authority-bound GET observations continue without resending payloads. Each browser
+  observation has a 30-second limit; cancellation/reconnect retires observation, not Pi execution.
+  Only the current browser owner can apply its result. Acceptance can exceed these windows.
+- Same-Host headers identify the respondent, not the operation result. Only matched Host authority,
+  operation ID and retained rejected outcome establish refusal. A receipt lookup's 401/404/500,
+  transport timeout, marked-edge error, unowned 5xx or unknown/retired outcome remains uncertain.
+  Unchanged-draft user retry reuses the exact identity/payload while Host authority is unchanged,
+  including after a delivery-mode change. Host restart requires inspecting refreshed history before
+  resending. [[composer]] owns handoff and restoration; [[state-ownership]] explains these
+  observation and execution boundaries.
+
+## Pending handoff observations
+
+Return and Stop bind their dequeue result to Host authority, session, action and a random operation
+ID. Concurrent requests and retries of an unresolved intent share that result. A newly observed run
+or newly admitted queue is a new control intent; its action cannot replay an earlier run's Stop or
+Return. Keep older unclaimed results independently by operation ID and observe them without
+redispatch when a later intent starts. Receipt-only GET observations reclaim a lost HTTP result
+without affecting later input. Reconnect
+can independently observe a receipt even while the old mutation observer remains pending; only a
+current API/transport owner restores it, once, into the original draft partition. Recovered image
+handles keep the normal staging ownership from [[composer]].
+
+A matched authority/operation terminal receipt distinguishes failed execution or result retirement
+from a failed observation. It ends that intent; only a later explicit user action admits a new ID.
+A plain HTTP 500, mismatched proof or transport loss remains uncertain and never triggers a new
+mutation automatically. Host tombstones continue to forbid reexecution of failed/retired IDs.
+`pending-recovery-lifecycle.test.ts` and the isolated native Stop regression cover these boundaries.
+
+The Host retains at most 2,048 settled results and 32 MiB for 15 minutes. Process-lifetime identity
+tombstones refuse redispatch after result retirement; the 65,536-identity limit fails closed.
+These are observation receipts, not another execution queue. HTTP/native regressions cover lost
+results with original image bytes, concurrent reclamation, later queued input, authority/scope
+mismatch and retired receipts; browser regressions cover deduplication, reconnect blackholes and
+the two-stage Stop owner.
+
+## View-bound transcript and bounded streaming
+
+- Every transcript snapshot/page carries an opaque branch-view generation plus its effective leaf.
+  The selected snapshot has one transcript-row authority at `active.transcriptPage`; it does not
+  duplicate those rows through a compatibility `active.messages` field. Explicit same-session
+  navigation, worker reset, and non-append replacement change the generation; ordinary append
+  continuation does not. Older-page cursors bind both view and effective-leaf lineage, and the
+  browser aborts/discards a page that completes after a branch boundary.
+
+- Pi system prompt/tool-loadout messages remain host-side canonical state, not browser transcript
+  rows or live overlays. This also applies to system checkpoints returned with a compaction and
+  system messages inside aggregate agent events. Full, incremental, reopened, and branch views
+  share the same filtering while preserving the SDK's per-entry message identities and the
+  chronological compaction summary. History search, complete-content preview and image access share
+  this exclusion; system placeholders do not create empty search results. Structured-key redaction
+  remains shared with the ordinary projection, without an additional text-redaction rule. Filtering
+  never changes persisted bytes or drops ownership claims.
+
+- Assistant overlay text/thinking and tool-argument string appends produced by the trusted reducer
+  account for appended JSON bytes, preview metadata, and stream-revision growth without serializing
+  cumulative messages. Escaping, UTF-8, split surrogates, per-string caps, per-item caps, and the total
+  overlay budget remain enforced. Structural changes, authoritative message completion, and
+  snapshots retain full projection validation. If an item limit requires a reduced or omitted
+  projection, publish that bounded replacement rather than replaying the pre-clipping argument
+  patch against a browser that still holds the larger tree.
+
+- Live tool execution updates carry one Host-authored `outputPreview`, computed from the original
+  cumulative result before general projection: at most 16,000 characters and 400 lines from the tail.
+  The browser uses that same projection as reconnect snapshots. Live `partialResult.content` is not
+  sent a second time; projected details and child-call metadata remain. Completed results retain
+  their ordinary transcript representation.
+
+- Each active tool's Host-only parser consumes public Pi argument JSON once, emits immutable
+  path-based display updates, and retains no cumulative raw JSON. Sensitive keyed values use the
+  same redaction policy as ordinary projections; escaped keys and nested secret containers cannot
+  leak through an earlier fragment. Neither raw JSON fragments nor the unbounded final tool-call
+  object bypass the browser projection. `toolcall_end` uses one bounded complete assistant
+  replacement rather than duplicating its raw ToolCall inside a delta envelope.
+
+  Each tool preview permits 32,000 decoded string characters, 256 argument nodes, eight nested path
+  segments, 256-character keys, and 256,000 inspected source characters. Primitive tokens are
+  separately bounded. A limit or malformed partial source freezes the readable prefix with an
+  explicit truncation indication; later fragments emit no repeated preview updates. This is a
+  presentation bound, not an execution or file-size limit: the authoritative completed call and
+  `message_end` retain normal Pi ownership and existing transcript bounds. Parser ownership is
+  scoped to the worker and current assistant message, survives interleaved extension messages and
+  peer calls, and is retired on call/message completion or worker replacement.
+
+  Reconnect snapshots contain the bounded typed call, its argument preview, and stream revision,
+  not private parser state. Subsequent structured updates apply to that same identity without
+  requiring the browser to reparse old JSON or recreate the card. Older public Pi starts without
+  identity/name continue to publish only the completed call.

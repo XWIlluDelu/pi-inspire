@@ -1,0 +1,1299 @@
+import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
+import { type IMarker, type ITheme, Terminal } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  Circle,
+  ClipboardPaste,
+  Copy,
+  Eraser,
+  Eye,
+  Keyboard,
+  MessageSquareQuote,
+  Monitor,
+  RotateCcw,
+  Search,
+  Square,
+  TextSelect,
+  X,
+} from "lucide-react";
+import {
+  memo,
+  type KeyboardEvent as ReactKeyboardEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
+import {
+  INSPIRE_SHELL_OSC,
+  MAX_TERMINAL_COLS,
+  MAX_TERMINAL_COMMAND_CHARS,
+  MAX_TERMINAL_ROWS,
+  MIN_TERMINAL_COLS,
+  MIN_TERMINAL_ROWS,
+  type TerminalDescriptor,
+  type TerminalServerControlMessage,
+  type TerminalServerDataFrame,
+} from "../../shared/terminal-contracts";
+import type { Api } from "../api";
+import { isComposingKeyboardEvent } from "../keyboard-input";
+import {
+  hasTerminalInsertion,
+  subscribeTerminalActions,
+  subscribeTerminalInsertion,
+  takeTerminalInsertion,
+} from "../terminal-actions";
+import {
+  TerminalConnection,
+  type TerminalTransportStatus,
+} from "../terminal-connection";
+import { terminalActivationFocus } from "../terminal-focus";
+import {
+  NO_TERMINAL_MODIFIERS,
+  type TerminalModifiers,
+  type TerminalTouchKey,
+  terminalTextInput,
+  terminalTouchInput,
+} from "../terminal-input";
+import {
+  isMacTerminalBrowser,
+  terminalTabShortcutIndex,
+} from "../terminal-keyboard";
+import { terminalFileLinks, terminalFileReference } from "../terminal-links";
+import {
+  type TerminalCommandOutput,
+  terminalBufferText,
+  terminalCommandOutput,
+} from "../terminal-output";
+import type { TerminalUiSettings } from "../terminal-settings";
+import {
+  TerminalSearchAddon,
+  terminalSearchOptions,
+  terminalSelectionColor,
+} from "../terminal-theme";
+import { useCopied } from "../use-copied";
+import { NoticeCard } from "./NoticeCard";
+import { PiLoader } from "./PiLoader";
+import { TerminalTextDialog } from "./TerminalTextDialog";
+import { TerminalTouchKeys } from "./TerminalTouchKeys";
+
+interface TerminalViewProps {
+  api: Api;
+  terminal: TerminalDescriptor;
+  active: boolean;
+  settings: TerminalUiSettings;
+  toolbarHost: HTMLElement | null;
+  menuHost: HTMLElement | null;
+  onDescriptor(terminal: TerminalDescriptor): void;
+  onBackgroundOutput(id: string): void;
+  onBell(terminal: TerminalDescriptor): void;
+  onOpenFile?(reference: string): void;
+  onSendToComposer?(text: string): void;
+  onCommandComplete?(
+    terminal: TerminalDescriptor,
+    message: Extract<
+      TerminalServerControlMessage,
+      { type: "command_complete" }
+    >,
+  ): void;
+}
+
+interface SearchState {
+  open: boolean;
+  query: string;
+  caseSensitive: boolean;
+  regex: boolean;
+  wholeWord: boolean;
+  resultIndex: number;
+  resultCount: number;
+}
+
+const initialSearch: SearchState = {
+  open: false,
+  query: "",
+  caseSensitive: false,
+  regex: false,
+  wholeWord: false,
+  resultIndex: -1,
+  resultCount: 0,
+};
+
+function cssColor(name: string, fallback: string): string {
+  return (
+    getComputedStyle(document.documentElement).getPropertyValue(name).trim() ||
+    fallback
+  );
+}
+
+function terminalTheme(): ITheme {
+  return {
+    background: cssColor("--terminal-bg", "#0a0c0f"),
+    foreground: cssColor("--terminal-fg", "#cad0d8"),
+    cursor: cssColor("--terminal-cursor", "#ff781f"),
+    cursorAccent: cssColor("--terminal-bg", "#0a0c0f"),
+    selectionBackground: terminalSelectionColor(
+      cssColor("--terminal-selection", "#5b331f"),
+      "#5b331f",
+    ),
+    black: cssColor("--terminal-black", "#20252b"),
+    red: cssColor("--terminal-red", "#f06a65"),
+    green: cssColor("--terminal-green", "#4eba88"),
+    yellow: cssColor("--terminal-yellow", "#e4b65a"),
+    blue: cssColor("--terminal-blue", "#65a8df"),
+    magenta: cssColor("--terminal-magenta", "#a290f5"),
+    cyan: cssColor("--terminal-cyan", "#5bbdc1"),
+    white: cssColor("--terminal-white", "#cad0d8"),
+    brightBlack: cssColor("--terminal-bright-black", "#737d8a"),
+    brightRed: cssColor("--terminal-bright-red", "#ff8782"),
+    brightGreen: cssColor("--terminal-bright-green", "#69d7a3"),
+    brightYellow: cssColor("--terminal-bright-yellow", "#ffd27a"),
+    brightBlue: cssColor("--terminal-bright-blue", "#83c3f4"),
+    brightMagenta: cssColor("--terminal-bright-magenta", "#c0b2ff"),
+    brightCyan: cssColor("--terminal-bright-cyan", "#76d9dc"),
+    brightWhite: cssColor("--terminal-bright-white", "#f4f6f8"),
+  };
+}
+
+function terminalFontFamily(): string {
+  return cssColor("--font-mono", '"Flux Mono SC", ui-monospace, monospace');
+}
+
+function safeDimensions(
+  dimensions: { cols: number; rows: number } | undefined,
+  fallback: TerminalDescriptor,
+): { cols: number; rows: number } {
+  return {
+    cols: Math.max(
+      MIN_TERMINAL_COLS,
+      Math.min(MAX_TERMINAL_COLS, dimensions?.cols ?? fallback.cols),
+    ),
+    rows: Math.max(
+      MIN_TERMINAL_ROWS,
+      Math.min(MAX_TERMINAL_ROWS, dimensions?.rows ?? fallback.rows),
+    ),
+  };
+}
+
+function shellMarkerCommand(phase: string, payload: string): string {
+  let command = payload;
+  if (phase === "C1") {
+    try {
+      command = decodeURIComponent(payload);
+    } catch {
+      return "";
+    }
+  }
+  if (
+    command.length < 1 ||
+    command.length > MAX_TERMINAL_COMMAND_CHARS ||
+    /[\u0000\u0007\u001b]/u.test(command) ||
+    !/\S/u.test(command)
+  )
+    return "";
+  return command;
+}
+
+function hasUnsafePasteControl(value: string): boolean {
+  return /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value);
+}
+
+function isRiskyPaste(value: string): boolean {
+  return /[\r\n]/u.test(value) || hasUnsafePasteControl(value);
+}
+
+async function clipboardText(): Promise<string> {
+  if (!navigator.clipboard?.readText)
+    throw new Error("Clipboard access is unavailable in this browser");
+  return navigator.clipboard.readText();
+}
+
+export const TerminalView = memo(function TerminalView({
+  api,
+  terminal: descriptor,
+  active,
+  settings,
+  toolbarHost,
+  menuHost,
+  onDescriptor,
+  onBackgroundOutput,
+  onBell,
+  onOpenFile,
+  onSendToComposer,
+  onCommandComplete,
+}: TerminalViewProps) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const xtermRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const searchRef = useRef<TerminalSearchAddon | null>(null);
+  const connectionRef = useRef<TerminalConnection | null>(null);
+  const descriptorRef = useRef(descriptor);
+  const activeRef = useRef(active);
+  const writableRef = useRef(false);
+  const settingsRef = useRef(settings);
+  const onBellRef = useRef(onBell);
+  const onOpenFileRef = useRef(onOpenFile);
+  const onSendToComposerRef = useRef(onSendToComposer);
+  const onCommandCompleteRef = useRef(onCommandComplete);
+  const modifiersRef = useRef(NO_TERMINAL_MODIFIERS);
+  const replayGenerationRef = useRef(0);
+  const clipboardEpochRef = useRef(0);
+  const snapshotStartedRef = useRef(false);
+  const resizeFrameRef = useRef<number | null>(null);
+  const bellTimerRef = useRef<number | null>(null);
+  const commandStartRef = useRef<{ marker: IMarker; column: number } | null>(
+    null,
+  );
+  const lastOutputRef = useRef<TerminalCommandOutput | null>(null);
+  const [transport, setTransport] =
+    useState<TerminalTransportStatus>("connecting");
+  const [writable, setWritable] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState<SearchState>(initialSearch);
+  const searchStateRef = useRef(search);
+  searchStateRef.current = search;
+  const [modifiers, setModifiers] = useState(NO_TERMINAL_MODIFIERS);
+  const [textSnapshot, setTextSnapshot] = useState<{
+    text: string;
+    scrollRatio: number;
+  } | null>(null);
+  const { copied, copy } = useCopied({
+    onError: (message) =>
+      setError(`${message}\nUse Select text to copy manually.`),
+  });
+  const [bellFlash, setBellFlash] = useState(false);
+  const [hasSelection, setHasSelection] = useState(false);
+  const [outputBelow, setOutputBelow] = useState(false);
+  const [lastOutput, setLastOutput] = useState<TerminalCommandOutput | null>(
+    null,
+  );
+
+  descriptorRef.current = descriptor;
+  activeRef.current = active;
+  writableRef.current = writable;
+  settingsRef.current = settings;
+  onBellRef.current = onBell;
+  onOpenFileRef.current = onOpenFile;
+  onSendToComposerRef.current = onSendToComposer;
+  onCommandCompleteRef.current = onCommandComplete;
+
+  const updateModifiers = useCallback((next: TerminalModifiers) => {
+    modifiersRef.current = next;
+    setModifiers(next);
+  }, []);
+  const clearModifiers = useCallback(
+    () => updateModifiers(NO_TERMINAL_MODIFIERS),
+    [updateModifiers],
+  );
+
+  useLayoutEffect(() => {
+    clipboardEpochRef.current += 1;
+    if (!active) setTextSnapshot(null);
+  }, [active]);
+
+  useEffect(() => {
+    if (!active || !ready || !writable) clearModifiers();
+  }, [active, ready, writable, clearModifiers]);
+
+  const clearCommandOutput = useCallback(() => {
+    const start = commandStartRef.current;
+    const output = lastOutputRef.current;
+    commandStartRef.current = null;
+    lastOutputRef.current = null;
+    start?.marker.dispose();
+    output?.start.dispose();
+    output?.end.dispose();
+    setLastOutput(null);
+  }, []);
+
+  const currentDimensions = useCallback(() => {
+    const proposed = fitRef.current?.proposeDimensions();
+    return safeDimensions(proposed, descriptorRef.current);
+  }, []);
+
+  const fitAndResize = useCallback(() => {
+    if (!activeRef.current || !writableRef.current) return;
+    const dimensions = currentDimensions();
+    const xterm = xtermRef.current;
+    if (!xterm) return;
+    if (xterm.cols !== dimensions.cols || xterm.rows !== dimensions.rows)
+      xterm.resize(dimensions.cols, dimensions.rows);
+    connectionRef.current?.resize(dimensions.cols, dimensions.rows);
+  }, [currentDimensions]);
+
+  const applyDescriptor = useCallback(
+    (next: TerminalDescriptor) => {
+      descriptorRef.current = next;
+      onDescriptor(next);
+    },
+    [onDescriptor],
+  );
+
+  const handleControl = useCallback(
+    (message: TerminalServerControlMessage) => {
+      if (
+        message.type === "attached" ||
+        (message.type === "ownership" &&
+          message.writable !== writableRef.current)
+      )
+        clipboardEpochRef.current += 1;
+      const xterm = xtermRef.current;
+      if (message.type === "attached") {
+        replayGenerationRef.current += 1;
+        snapshotStartedRef.current = false;
+        writableRef.current = message.writable;
+        setWritable(message.writable);
+        setReady(false);
+        setError(null);
+        applyDescriptor(message.terminal);
+        if (
+          xterm &&
+          (xterm.cols !== message.terminal.cols ||
+            xterm.rows !== message.terminal.rows)
+        )
+          xterm.resize(message.terminal.cols, message.terminal.rows);
+      } else if (message.type === "replay_complete") {
+        const replayGeneration = replayGenerationRef.current;
+        const completeReplay = () => {
+          if (replayGeneration !== replayGenerationRef.current) return;
+          setReady(true);
+          if (activeRef.current && writableRef.current)
+            requestAnimationFrame(fitAndResize);
+        };
+        // The protocol replay edge can arrive before xterm has drained its
+        // asynchronous write queue. Use an empty write as a parser barrier so
+        // input and protected code insertion see the restored terminal modes.
+        if (xterm) xterm.write("", completeReplay);
+        else completeReplay();
+      } else if (message.type === "ownership") {
+        writableRef.current = message.writable;
+        setWritable(message.writable);
+        if (message.writable && activeRef.current)
+          requestAnimationFrame(fitAndResize);
+      } else if (message.type === "resized") {
+        if (
+          xterm &&
+          (xterm.cols !== message.cols || xterm.rows !== message.rows)
+        )
+          xterm.resize(message.cols, message.rows);
+      } else if (message.type === "descriptor") {
+        applyDescriptor(message.terminal);
+      } else if (message.type === "command_complete") {
+        onCommandCompleteRef.current?.(descriptorRef.current, message);
+      } else if (message.type === "exit") {
+        writableRef.current = false;
+        setWritable(false);
+        applyDescriptor(message.terminal);
+      } else if (message.type === "error") {
+        setError(message.message);
+      }
+    },
+    [applyDescriptor, fitAndResize],
+  );
+
+  const handleData = useCallback(
+    (frame: TerminalServerDataFrame) => {
+      const xterm = xtermRef.current;
+      if (!xterm) return;
+      if (frame.kind === "snapshot" && !snapshotStartedRef.current) {
+        clearCommandOutput();
+        // A retired connection can still have output in xterm's parser queue.
+        // Reset at the same ordered boundary as the replacement snapshot;
+        // synchronous reset() would let those queued bytes repaint it.
+        xterm.write("\u001bc");
+        snapshotStartedRef.current = true;
+      }
+      xterm.write(frame.data, () => {
+        setOutputBelow(
+          xterm.buffer.active.viewportY < xterm.buffer.active.baseY,
+        );
+      });
+      if (frame.kind === "output" && !activeRef.current)
+        onBackgroundOutput(descriptorRef.current.id);
+    },
+    [clearCommandOutput, onBackgroundOutput],
+  );
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const xterm = new Terminal({
+      allowProposedApi: true,
+      cursorBlink: settingsRef.current.cursorBlink,
+      cursorStyle: settingsRef.current.cursorStyle,
+      cursorInactiveStyle: "outline",
+      customGlyphs: true,
+      fontFamily: terminalFontFamily(),
+      fontSize: settingsRef.current.fontSize,
+      fontWeight: 400,
+      fontWeightBold: 600,
+      letterSpacing: 0,
+      lineHeight: settingsRef.current.lineHeight,
+      logLevel: "off",
+      macOptionIsMeta: settingsRef.current.macOptionIsMeta,
+      minimumContrastRatio: 4.5,
+      rescaleOverlappingGlyphs: true,
+      rightClickSelectsWord: true,
+      screenReaderMode: settingsRef.current.screenReaderMode,
+      scrollback: settingsRef.current.scrollbackRows,
+      scrollOnEraseInDisplay: true,
+      smoothScrollDuration: 0,
+      theme: terminalTheme(),
+    });
+    const fit = new FitAddon();
+    const searchAddon = new TerminalSearchAddon();
+    xterm.loadAddon(fit);
+    xterm.loadAddon(searchAddon);
+    xterm.loadAddon(
+      new WebLinksAddon((_event, value) => {
+        try {
+          const url = new URL(value);
+          if (url.protocol !== "http:" && url.protocol !== "https:") return;
+          window.open(url.href, "_blank", "noopener,noreferrer");
+        } catch {
+          // Terminal-controlled malformed links stay inert.
+        }
+      }),
+    );
+    xterm.open(host);
+    const protectNativePaste = (event: ClipboardEvent) => {
+      clearModifiers();
+      const value = event.clipboardData?.getData("text/plain") ?? "";
+      if (
+        !value ||
+        !settingsRef.current.pasteProtection ||
+        !isRiskyPaste(value)
+      )
+        return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (
+        window.confirm(
+          "Paste multiple lines or control characters into this terminal?",
+        )
+      )
+        xterm.paste(value);
+    };
+    host.addEventListener("paste", protectNativePaste, true);
+    xterm.textarea?.addEventListener("blur", clearModifiers);
+    const shellMarkerDisposable = xterm.parser.registerOscHandler(
+      INSPIRE_SHELL_OSC,
+      (value) => {
+        const separator = value.indexOf(";");
+        const phase = separator < 0 ? value : value.slice(0, separator);
+        const payload = separator < 0 ? "" : value.slice(separator + 1);
+        if (phase === "C" || phase === "C1") {
+          if (!shellMarkerCommand(phase, payload)) return true;
+          commandStartRef.current?.marker.dispose();
+          const marker = xterm.registerMarker(0);
+          commandStartRef.current = marker
+            ? { marker, column: xterm.buffer.active.cursorX }
+            : null;
+        } else if (phase === "D") {
+          const start = commandStartRef.current;
+          commandStartRef.current = null;
+          if (!start || start.marker.isDisposed) return true;
+          const end = xterm.registerMarker(0);
+          if (!end) {
+            start.marker.dispose();
+            return true;
+          }
+          // Keep only the last completed output, not a second command history.
+          lastOutputRef.current?.start.dispose();
+          lastOutputRef.current?.end.dispose();
+          const output = {
+            start: start.marker,
+            startColumn: start.column,
+            end,
+            endColumn: xterm.buffer.active.cursorX,
+          };
+          lastOutputRef.current = output;
+          setLastOutput(output);
+          const retire = () => {
+            if (lastOutputRef.current === output) setLastOutput(null);
+          };
+          start.marker.onDispose(retire);
+          end.onDispose(retire);
+        }
+        return true;
+      },
+    );
+    const resetDisposable = xterm.parser.registerEscHandler(
+      { final: "c" },
+      () => {
+        clearCommandOutput();
+        return false;
+      },
+    );
+    const fileLinksDisposable = xterm.registerLinkProvider({
+      provideLinks(lineNumber, callback) {
+        if (!onOpenFileRef.current) {
+          callback(undefined);
+          return;
+        }
+        const line = xterm.buffer.active.getLine(lineNumber - 1);
+        if (!line) {
+          callback(undefined);
+          return;
+        }
+        const links = terminalFileLinks(line, lineNumber, (_event, value) =>
+          onOpenFileRef.current?.(
+            terminalFileReference(value, descriptorRef.current.currentCwd),
+          ),
+        );
+        callback(links.length > 0 ? links : undefined);
+      },
+    });
+    xtermRef.current = xterm;
+    fitRef.current = fit;
+    searchRef.current = searchAddon;
+    const updateTheme = () => {
+      xterm.options.theme = terminalTheme();
+      xterm.options.fontFamily = terminalFontFamily();
+      searchAddon.refreshTheme(searchStateRef.current);
+    };
+    const refitAfterFontLoad = () => {
+      if (xtermRef.current !== xterm) return;
+      updateTheme();
+      requestAnimationFrame(fitAndResize);
+    };
+    document.fonts?.addEventListener("loadingdone", refitAfterFontLoad);
+    void document.fonts?.ready.then(refitAfterFontLoad);
+    const themeObserver = new MutationObserver(updateTheme);
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme", "data-palette", "style", "class"],
+    });
+    let webgl: WebglAddon | null = null;
+    try {
+      webgl = new WebglAddon();
+      webgl.onContextLoss(() => {
+        webgl?.dispose();
+        webgl = null;
+      });
+      xterm.loadAddon(webgl);
+    } catch {
+      webgl?.dispose();
+      webgl = null;
+    }
+    const resultsDisposable = searchAddon.onDidChangeResults((result) =>
+      setSearch((current) => ({
+        ...current,
+        resultIndex: result.resultIndex,
+        resultCount: result.resultCount,
+      })),
+    );
+    // Rows do not reflow text; markers still track their lines when the mobile
+    // keyboard changes the height. A column change invalidates cell offsets.
+    let outputColumns = xterm.cols;
+    const resizeDisposable = xterm.onResize(({ cols }) => {
+      if (cols === outputColumns) return;
+      outputColumns = cols;
+      clearCommandOutput();
+    });
+    const selectionDisposable = xterm.onSelectionChange(() =>
+      setHasSelection(xterm.hasSelection()),
+    );
+    const scrollDisposable = xterm.onScroll(() =>
+      setOutputBelow(xterm.buffer.active.viewportY < xterm.buffer.active.baseY),
+    );
+    const bellDisposable = xterm.onBell(() => {
+      if (settingsRef.current.bell === "off") return;
+      setBellFlash(true);
+      if (bellTimerRef.current !== null)
+        window.clearTimeout(bellTimerRef.current);
+      bellTimerRef.current = window.setTimeout(() => {
+        bellTimerRef.current = null;
+        setBellFlash(false);
+      }, 180);
+      onBellRef.current(descriptorRef.current);
+    });
+    const inputDisposable = xterm.onData((value) => {
+      const input = terminalTextInput(value, modifiersRef.current);
+      if (input !== null) clearModifiers();
+      connectionRef.current?.sendInput(input ?? value);
+    });
+    xterm.attachCustomKeyEventHandler((event) => {
+      const command = event.metaKey || event.ctrlKey;
+      const workbenchShortcut =
+        settingsRef.current.shortcutMode === "workbench" || event.metaKey;
+      if (event.type !== "keydown") return true;
+      if (event.defaultPrevented) return false;
+      if (isComposingKeyboardEvent(event) || event.getModifierState("AltGraph"))
+        return true;
+      const applicationShortcut =
+        workbenchShortcut &&
+        ((command && ["k", "b", "."].includes(event.key.toLowerCase())) ||
+          (settingsRef.current.shortcutMode === "workbench" &&
+            ((command && ["PageUp", "PageDown"].includes(event.key)) ||
+              terminalTabShortcutIndex(event) !== null ||
+              (command && event.shiftKey && event.key === "`"))));
+      // Returning early leaves the DOM event available to the workbench-level
+      // shortcut handlers instead of letting xterm stop its propagation.
+      if (applicationShortcut) return false;
+      if (workbenchShortcut && command && event.key.toLowerCase() === "f") {
+        setSearch((current) => ({ ...current, open: true }));
+        return false;
+      }
+      const clipboardModifier = isMacTerminalBrowser()
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey;
+      if (
+        workbenchShortcut &&
+        clipboardModifier &&
+        event.key.toLowerCase() === "c"
+      ) {
+        if (!xterm.hasSelection()) return event.ctrlKey && !event.metaKey;
+        // Let xterm's native copy event place its selection on the clipboard.
+        return false;
+      }
+      if (
+        workbenchShortcut &&
+        clipboardModifier &&
+        event.key.toLowerCase() === "v"
+      ) {
+        // Leave the native paste event intact so clipboard text remains
+        // ordered before any immediately following keystroke. The capture
+        // handler above protects risky content before xterm receives it.
+        return false;
+      }
+      return true;
+    });
+    const connection = new TerminalConnection(api, descriptor.id, {
+      dimensions: currentDimensions,
+      data: handleData,
+      control: handleControl,
+      status: (status) => {
+        setTransport(status);
+        if (status !== "connected") {
+          clipboardEpochRef.current += 1;
+          replayGenerationRef.current += 1;
+          writableRef.current = false;
+          setWritable(false);
+          setReady(false);
+        }
+      },
+      error: setError,
+    });
+    connectionRef.current = connection;
+    const initialize = async () => {
+      try {
+        await document.fonts?.ready;
+      } catch {
+        // Browser font loading failures use the declared monospace fallback.
+      }
+      if (xtermRef.current !== xterm) return;
+      updateTheme();
+      fit.fit();
+      connection.start();
+    };
+    void initialize();
+    const resizeObserver = new ResizeObserver(() => {
+      if (resizeFrameRef.current !== null)
+        cancelAnimationFrame(resizeFrameRef.current);
+      resizeFrameRef.current = requestAnimationFrame(() => {
+        resizeFrameRef.current = null;
+        fitAndResize();
+      });
+    });
+    resizeObserver.observe(host);
+    return () => {
+      if (resizeFrameRef.current !== null)
+        cancelAnimationFrame(resizeFrameRef.current);
+      connection.stop();
+      connectionRef.current = null;
+      resizeObserver.disconnect();
+      themeObserver.disconnect();
+      document.fonts?.removeEventListener("loadingdone", refitAfterFontLoad);
+      host.removeEventListener("paste", protectNativePaste, true);
+      xterm.textarea?.removeEventListener("blur", clearModifiers);
+      inputDisposable.dispose();
+      resizeDisposable.dispose();
+      resultsDisposable.dispose();
+      bellDisposable.dispose();
+      selectionDisposable.dispose();
+      scrollDisposable.dispose();
+      fileLinksDisposable.dispose();
+      shellMarkerDisposable.dispose();
+      resetDisposable.dispose();
+      if (bellTimerRef.current !== null)
+        window.clearTimeout(bellTimerRef.current);
+      webgl?.dispose();
+      xterm.dispose();
+      xtermRef.current = null;
+      fitRef.current = null;
+      searchRef.current = null;
+    };
+  }, [
+    api,
+    clearCommandOutput,
+    clearModifiers,
+    currentDimensions,
+    descriptor.id,
+    fitAndResize,
+    handleControl,
+    handleData,
+  ]);
+
+  useEffect(() => {
+    if (!active) return;
+    const permitted = terminalActivationFocus();
+    const frame = requestAnimationFrame(() => {
+      fitAndResize();
+      if (activeRef.current && permitted()) xtermRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [active, fitAndResize]);
+
+  useEffect(
+    () =>
+      subscribeTerminalActions(({ action, projectCwd }) => {
+        if (
+          projectCwd !== descriptor.projectCwd ||
+          action !== "take-control" ||
+          !active ||
+          !ready ||
+          descriptor.status !== "running"
+        )
+          return false;
+        const dimensions = currentDimensions();
+        connectionRef.current?.takeControl(dimensions.cols, dimensions.rows);
+        xtermRef.current?.focus();
+        return true;
+      }),
+    [
+      active,
+      currentDimensions,
+      descriptor.projectCwd,
+      descriptor.status,
+      ready,
+    ],
+  );
+
+  useEffect(() => {
+    const deliver = () => {
+      const xterm = xtermRef.current;
+      if (!active || !ready || !writable || !xterm) return;
+      let inserted = false;
+      while (hasTerminalInsertion(descriptor.projectCwd)) {
+        const text = takeTerminalInsertion(descriptor.projectCwd);
+        if (!text) break;
+        if (hasUnsafePasteControl(text)) {
+          setError("Code containing control characters was not inserted");
+          continue;
+        }
+        if (/[\r\n]/u.test(text)) {
+          if (!xterm.modes.bracketedPasteMode) {
+            setError(
+              "Multiline code needs protected paste support from the active program",
+            );
+            continue;
+          }
+          if (
+            settingsRef.current.pasteProtection &&
+            !window.confirm(
+              "Insert multiple lines into this terminal? Review them before running.",
+            )
+          )
+            continue;
+        }
+        clearModifiers();
+        xterm.paste(text);
+        inserted = true;
+      }
+      if (inserted) xterm.focus();
+    };
+    deliver();
+    return subscribeTerminalInsertion(deliver);
+  }, [active, clearModifiers, descriptor.projectCwd, ready, writable]);
+
+  useEffect(() => {
+    const xterm = xtermRef.current;
+    if (!xterm) return;
+    xterm.options.fontSize = settings.fontSize;
+    xterm.options.lineHeight = settings.lineHeight;
+    xterm.options.cursorStyle = settings.cursorStyle;
+    xterm.options.cursorBlink = settings.cursorBlink;
+    xterm.options.screenReaderMode = settings.screenReaderMode;
+    xterm.options.macOptionIsMeta = settings.macOptionIsMeta;
+    xterm.options.scrollback = settings.scrollbackRows;
+    requestAnimationFrame(fitAndResize);
+  }, [fitAndResize, settings]);
+
+  useEffect(() => {
+    if (!xtermRef.current) return;
+    xtermRef.current.options.disableStdin =
+      !writable || !ready || descriptor.status !== "running";
+  }, [descriptor.status, ready, writable]);
+
+  const toggleSearchOption = (
+    option: "caseSensitive" | "regex" | "wholeWord",
+  ) => {
+    const next = { ...search, [option]: !search[option] };
+    setSearch(next);
+    if (next.query)
+      searchRef.current?.findNext(next.query, {
+        ...terminalSearchOptions(next),
+        incremental: true,
+      });
+  };
+  const find = (direction: "next" | "previous") => {
+    const addon = searchRef.current;
+    if (!addon || !search.query) return;
+    const options = terminalSearchOptions(search);
+    if (direction === "next") addon.findNext(search.query, options);
+    else addon.findPrevious(search.query, options);
+  };
+  const closeSearch = (returnToInput: boolean) => {
+    searchRef.current?.clearDecorations();
+    setSearch(initialSearch);
+    if (returnToInput) xtermRef.current?.focus();
+  };
+  const copySelection = () => {
+    const selection = xtermRef.current?.getSelection();
+    if (selection) void copy(selection);
+  };
+  const copyAll = () => {
+    const xterm = xtermRef.current;
+    if (xterm) void copy(terminalBufferText(xterm.buffer.active));
+  };
+  const selectText = () => {
+    const buffer = xtermRef.current?.buffer.active;
+    if (!buffer) return;
+    clearModifiers();
+    menuHost?.closest("details")?.querySelector("summary")?.focus();
+    setTextSnapshot({
+      text: terminalBufferText(buffer),
+      scrollRatio: buffer.baseY > 0 ? buffer.viewportY / buffer.baseY : 0,
+    });
+  };
+  const pasteClipboard = async () => {
+    const xterm = xtermRef.current;
+    if (!xterm || !ready || !writableRef.current) return;
+    const epoch = clipboardEpochRef.current;
+    const opener = document.activeElement;
+    const ownsPaste = () =>
+      epoch === clipboardEpochRef.current &&
+      activeRef.current &&
+      writableRef.current &&
+      descriptorRef.current.status === "running" &&
+      xtermRef.current === xterm;
+    try {
+      const value = await clipboardText();
+      if (!ownsPaste()) return;
+      if (
+        value &&
+        (!settingsRef.current.pasteProtection ||
+          !isRiskyPaste(value) ||
+          window.confirm(
+            "Paste multiple lines or control characters into this terminal?",
+          ))
+      ) {
+        clearModifiers();
+        xterm.paste(value);
+      }
+    } catch (clipboardError) {
+      if (!ownsPaste()) return;
+      setError(
+        clipboardError instanceof Error
+          ? clipboardError.message
+          : "Clipboard access failed",
+      );
+    } finally {
+      // Return from the dismissed menu, but never steal a newer focus choice.
+      if (
+        ownsPaste() &&
+        (document.activeElement === opener ||
+          document.activeElement === document.body)
+      )
+        xterm.focus();
+    }
+  };
+  const sendTouchKey = (key: TerminalTouchKey) => {
+    connectionRef.current?.sendInput(
+      terminalTouchInput(
+        key,
+        modifiersRef.current,
+        xtermRef.current?.modes.applicationCursorKeysMode ?? false,
+      ),
+    );
+    clearModifiers();
+  };
+  const handleSearchKey = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (isComposingKeyboardEvent(event.nativeEvent)) return;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      find(event.shiftKey ? "previous" : "next");
+    }
+  };
+
+  const copyLastCommandOutput = () => {
+    const xterm = xtermRef.current;
+    const outputRange = lastOutputRef.current;
+    if (!xterm || !outputRange) return;
+    const output = terminalCommandOutput(xterm.buffer.normal, outputRange);
+    if (output) void copy(output);
+  };
+  const statusLabel =
+    descriptor.status === "exited"
+      ? `Exited ${descriptor.exitCode ?? ""}`.trim()
+      : transport !== "connected"
+        ? transport.charAt(0).toUpperCase() + transport.slice(1)
+        : writable
+          ? "Controlling"
+          : descriptor.hasOwner
+            ? "View only"
+            : "Control available";
+
+  return (
+    <section
+      className={`terminal-view${active ? " terminal-view--active" : ""}${bellFlash ? " terminal-view--bell" : ""}`}
+      aria-label={`Terminal ${descriptor.title}`}
+      aria-hidden={!active}
+    >
+      {active && toolbarHost
+        ? createPortal(
+            <>
+              <span
+                className={`terminal-view__status terminal-view__status--${transport}`}
+                role="status"
+                aria-label={statusLabel}
+                title={`${statusLabel} · ${transport}`}
+              >
+                {descriptor.status === "exited" ? (
+                  <Square size={12} aria-hidden />
+                ) : transport !== "connected" ? (
+                  transport === "offline" ? (
+                    <Circle size={14} aria-hidden />
+                  ) : (
+                    <PiLoader size={14} aria-hidden />
+                  )
+                ) : writable ? (
+                  <button
+                    type="button"
+                    className="icon-button terminal-view__keyboard"
+                    aria-label="Focus terminal input"
+                    title="Focus terminal input"
+                    disabled={!ready}
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      const pending = modifiersRef.current;
+                      xtermRef.current?.blur();
+                      xtermRef.current?.focus();
+                      updateModifiers(pending);
+                    }}
+                  >
+                    <Keyboard size={14} aria-hidden />
+                  </button>
+                ) : (
+                  <Eye size={14} aria-hidden />
+                )}
+                <span className="terminal-view__status-label">
+                  {statusLabel}
+                </span>
+              </span>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => {
+                  if (search.open) closeSearch(false);
+                  else setSearch((current) => ({ ...current, open: true }));
+                }}
+                aria-label="Search terminal output"
+                aria-expanded={search.open}
+                title="Search terminal output"
+              >
+                <Search size={14} aria-hidden />
+              </button>
+            </>,
+            toolbarHost,
+          )
+        : null}
+      {active && menuHost
+        ? createPortal(
+            <>
+              <button
+                type="button"
+                onClick={() => void pasteClipboard()}
+                disabled={
+                  !writable || !ready || descriptor.status !== "running"
+                }
+                aria-label="Paste into terminal"
+              >
+                <ClipboardPaste size={14} aria-hidden /> Paste
+              </button>
+              <button type="button" onClick={copyAll}>
+                <Copy size={14} aria-hidden /> Copy all
+              </button>
+              <button type="button" onClick={selectText}>
+                <TextSelect size={14} aria-hidden /> Select text
+              </button>
+              <button
+                type="button"
+                disabled={!lastOutput}
+                title="Copy the last completed command output"
+                onClick={copyLastCommandOutput}
+              >
+                <Copy size={14} aria-hidden /> Copy last output
+              </button>
+              <details
+                className="terminal-menu__group"
+                data-terminal-menu-group
+              >
+                <summary>
+                  <Monitor size={14} aria-hidden /> Display
+                  <ChevronRight
+                    className="terminal-menu__chevron"
+                    size={13}
+                    aria-hidden
+                  />
+                </summary>
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => xtermRef.current?.clear()}
+                  >
+                    <Eraser size={14} aria-hidden /> Clear local scrollback
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearCommandOutput();
+                      xtermRef.current?.reset();
+                      connectionRef.current?.forceSnapshot();
+                    }}
+                  >
+                    <RotateCcw size={14} aria-hidden /> Reset terminal display
+                  </button>
+                </div>
+              </details>
+            </>,
+            menuHost,
+          )
+        : null}
+      <div className="terminal-view__stage">
+        <div ref={hostRef} className="terminal-view__xterm" />
+        <div className="terminal-view__overlays">
+          {search.open ? (
+            <div
+              className="terminal-search"
+              role="search"
+              aria-label="Terminal output"
+              onPointerDown={(event) => {
+                if ((event.target as HTMLElement).closest("button"))
+                  event.preventDefault();
+              }}
+              onKeyDown={(event) => {
+                if (isComposingKeyboardEvent(event.nativeEvent)) return;
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                event.stopPropagation();
+                closeSearch(true);
+              }}
+            >
+              <Search size={13} aria-hidden />
+              <input
+                autoFocus
+                value={search.query}
+                onChange={(event) => {
+                  const query = event.target.value;
+                  setSearch((current) => ({ ...current, query }));
+                  if (query)
+                    searchRef.current?.findNext(query, {
+                      ...terminalSearchOptions(search),
+                      incremental: true,
+                    });
+                  else searchRef.current?.clearDecorations();
+                }}
+                onKeyDown={handleSearchKey}
+                aria-label="Search terminal output"
+                placeholder="Find"
+              />
+              <button
+                type="button"
+                className="terminal-search__option"
+                aria-pressed={search.caseSensitive}
+                aria-label="Match case"
+                title="Match case"
+                onClick={() => toggleSearchOption("caseSensitive")}
+              >
+                Aa
+              </button>
+              <button
+                type="button"
+                className="terminal-search__option"
+                aria-pressed={search.wholeWord}
+                aria-label="Match whole word"
+                title="Match whole word"
+                onClick={() => toggleSearchOption("wholeWord")}
+              >
+                ab
+              </button>
+              <button
+                type="button"
+                className="terminal-search__option"
+                aria-pressed={search.regex}
+                aria-label="Use regular expression"
+                title="Use regular expression"
+                onClick={() => toggleSearchOption("regex")}
+              >
+                .*
+              </button>
+              <span className="terminal-search__count" aria-live="polite">
+                {search.resultCount > 0
+                  ? `${search.resultIndex + 1}/${search.resultCount}`
+                  : "0/0"}
+              </span>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => find("previous")}
+                aria-label="Previous terminal match"
+                title="Previous match"
+              >
+                <ChevronUp size={14} aria-hidden />
+              </button>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => find("next")}
+                aria-label="Next terminal match"
+                title="Next match"
+              >
+                <ChevronDown size={14} aria-hidden />
+              </button>
+              <button
+                type="button"
+                className="icon-button terminal-search__close"
+                onClick={() => closeSearch(false)}
+                aria-label="Close terminal search"
+                title="Close search"
+              >
+                <X size={14} aria-hidden />
+              </button>
+            </div>
+          ) : null}
+          {hasSelection && !search.open ? (
+            <div
+              className="terminal-selection"
+              role="group"
+              aria-label="Selected terminal text"
+              onPointerDown={(event) => event.preventDefault()}
+            >
+              <button
+                type="button"
+                onClick={copySelection}
+                aria-label="Copy terminal selection"
+              >
+                <Copy size={14} aria-hidden /> Copy
+              </button>
+              {onSendToComposer ? (
+                <button
+                  type="button"
+                  className="terminal-selection__quote"
+                  onClick={() => {
+                    const selection = xtermRef.current?.getSelection();
+                    if (selection) onSendToComposerRef.current?.(selection);
+                  }}
+                  aria-label="Send terminal selection to composer"
+                  title="Add selection to the composer without sending"
+                >
+                  <MessageSquareQuote size={14} aria-hidden /> Add to chat
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {copied ? (
+            <span className="terminal-copy-confirmation" role="status">
+              <Check size={14} aria-hidden /> Copied
+            </span>
+          ) : null}
+          {error ? (
+            <NoticeCard
+              kind="error"
+              text={error}
+              className="terminal-view__error"
+              onDismiss={() => setError(null)}
+              dismissLabel="Dismiss terminal error"
+            />
+          ) : null}
+        </div>
+        {!writable && descriptor.status === "running" ? (
+          <div className="terminal-view__ownership">
+            <span>{statusLabel}</span>
+            {ready ? (
+              <button
+                type="button"
+                className="terminal-view__control"
+                onClick={() => {
+                  const dimensions = currentDimensions();
+                  connectionRef.current?.takeControl(
+                    dimensions.cols,
+                    dimensions.rows,
+                  );
+                  xtermRef.current?.focus();
+                }}
+              >
+                <Keyboard size={13} aria-hidden /> Take control
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {outputBelow ? (
+          <button
+            type="button"
+            className="terminal-view__new-output"
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={(event) => {
+              xtermRef.current?.scrollToBottom();
+              if (event.detail === 0) xtermRef.current?.focus();
+              setOutputBelow(false);
+            }}
+          >
+            New output ↓
+          </button>
+        ) : null}
+        {descriptor.status === "exited" ? (
+          <div className="terminal-view__exit" role="status">
+            Process exited
+            {descriptor.exitCode !== null
+              ? ` with code ${descriptor.exitCode}`
+              : ""}
+          </div>
+        ) : null}
+      </div>
+      <TerminalTouchKeys
+        disabled={!writable || !ready || descriptor.status !== "running"}
+        modifiers={modifiers}
+        onToggleModifier={(modifier) =>
+          updateModifiers({
+            ...modifiersRef.current,
+            [modifier]: !modifiersRef.current[modifier],
+          })
+        }
+        onKey={sendTouchKey}
+      />
+      {active && textSnapshot
+        ? createPortal(
+            <TerminalTextDialog
+              {...textSnapshot}
+              onClose={() => setTextSnapshot(null)}
+              onSendToComposer={onSendToComposer}
+            />,
+            document.body,
+          )
+        : null}
+      <span className="sr-only" aria-live="polite">
+        {transport === "reconnecting" ? "Terminal reconnecting" : ""}
+      </span>
+    </section>
+  );
+});

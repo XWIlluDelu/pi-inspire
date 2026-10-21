@@ -1,0 +1,125 @@
+import { spawn } from "node:child_process";
+import { chmod, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { browserWorkspace } from "../tests/browser/fixtures/workspace.mjs";
+import { testPiCommand } from "./test-pi-command.mjs";
+
+const [portText] = process.argv.slice(2);
+const port = Number(portText);
+if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+  console.error("Usage: node scripts/start-browser-test-host.mjs <port>");
+  process.exit(64);
+}
+
+const output = resolve(
+  process.env.INSPIRE_BROWSER_TEST_OUTPUT_DIR ?? "output/playwright",
+);
+const preferencesPath = resolve(output, "preferences.json");
+const instanceStatePath = resolve(output, "instance.json");
+const stopRequestPath = resolve(output, "stop-request.json");
+const diagnosticsPath = resolve(output, "diagnostics.jsonl");
+const home = resolve(output, "fixture-home");
+await mkdir(home, { recursive: true, mode: 0o700 });
+await writeFile(
+  resolve(home, ".zshrc"),
+  "# Isolated browser fixture; no user startup or first-run wizard.\n",
+);
+await mkdir(output, { recursive: true, mode: 0o700 });
+if (process.platform !== "win32") await chmod(output, 0o700);
+await Promise.all([
+  rm(preferencesPath, { force: true }),
+  rm(instanceStatePath, { force: true }),
+  rm(`${instanceStatePath}.lock`, { force: true }),
+  rm(stopRequestPath, { force: true }),
+  rm(diagnosticsPath, { force: true }),
+]);
+
+// UI acceptance needs real files, not a search of node_modules, build output,
+// and prior test artifacts. That search is intentionally bounded and can be
+// incomplete on slower hosts. Scanner budget/partial-result tests live below
+// this layer; these fixtures keep layout, preview and navigation deterministic.
+await rm(browserWorkspace, { recursive: true, force: true });
+for (const path of [
+  "README.md",
+  "src/components/FilePreview.tsx",
+  "src/components/WorkspaceBrowser.tsx",
+  "src/components/TerminalSettingsDialog.tsx",
+  "tests/browser/fixtures/file-previews",
+]) {
+  const target = resolve(browserWorkspace, path);
+  await mkdir(dirname(target), { recursive: true });
+  await cp(resolve(path), target, { recursive: true });
+}
+
+await writeFile(
+  resolve(browserWorkspace, "native-shell.log"),
+  `${Array.from({ length: 2500 }, (_, index) => `native shell line ${index + 1}`).join("\n")}\nCOMPLETE_NATIVE_SHELL_LOG_END\n`,
+);
+
+const historyImage = (
+  await readFile(
+    resolve(
+      browserWorkspace,
+      "tests/browser/fixtures/file-previews/training curve.png",
+    ),
+  )
+).toString("base64");
+const child = spawn(
+  process.execPath,
+  [resolve("node_modules", "tsx", "dist", "cli.mjs"), "server/index.ts"],
+  {
+    env: {
+      ...process.env,
+      // Shell startup, terminal settings/history and optional SDK discovery
+      // belong to this fixture, never to the developer's user profile.
+      HOME: home,
+      USERPROFILE: home,
+      ZDOTDIR: home,
+      APPDATA: resolve(home, "AppData", "Roaming"),
+      LOCALAPPDATA: resolve(home, "AppData", "Local"),
+      XDG_CONFIG_HOME: resolve(home, "config"),
+      XDG_STATE_HOME: resolve(home, "state"),
+      XDG_RUNTIME_DIR: resolve(home, "runtime"),
+      INSPIRE_INSTALLATION_ROOT: resolve(
+        process.env.INSPIRE_BROWSER_TEST_ROOT ?? ".",
+      ),
+      INSPIRE_TOKEN: "inspire-browser-test-token",
+      INSPIRE_PI_COMMAND: testPiCommand,
+      INSPIRE_MOCK: "1",
+      INSPIRE_MOCK_WORKSPACE: browserWorkspace,
+      INSPIRE_MOCK_HISTORY_IMAGE: historyImage,
+      INSPIRE_MOCK_STREAM_INTERVAL_MS: "250",
+      INSPIRE_PREFERENCES_PATH: preferencesPath,
+      INSPIRE_STATE_PATH: instanceStatePath,
+      INSPIRE_STOP_REQUEST_PATH: stopRequestPath,
+      INSPIRE_LOG_PATH: diagnosticsPath,
+      INSPIRE_PORT: String(port),
+      INSPIRE_TERMINAL_IN_PROCESS: "1",
+    },
+    stdio: "inherit",
+    windowsHide: true,
+  },
+);
+
+const relay = (signal) => {
+  try {
+    child.kill(signal);
+  } catch {
+    // Child exit owns settlement.
+  }
+};
+const onInterrupt = () => relay("SIGINT");
+const onTerminate = () => relay("SIGTERM");
+process.once("SIGINT", onInterrupt);
+process.once("SIGTERM", onTerminate);
+
+try {
+  const code = await new Promise((resolveExit, rejectExit) => {
+    child.once("error", rejectExit);
+    child.once("close", (exitCode) => resolveExit(exitCode));
+  });
+  process.exitCode = code ?? 1;
+} finally {
+  process.off("SIGINT", onInterrupt);
+  process.off("SIGTERM", onTerminate);
+}

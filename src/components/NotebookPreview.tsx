@@ -1,0 +1,371 @@
+import { memo, useContext, useMemo } from "react";
+import { stripTerminalSequences } from "../ansi";
+import { highlightSource } from "../syntax-highlighting";
+import {
+  DocumentResourceContext,
+  MarkdownAttachmentsContext,
+} from "./DocumentPreview";
+import { ImagePreview } from "./ImagePreview";
+import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
+
+const MAX_NOTEBOOK_CELLS = 200;
+const MAX_NOTEBOOK_OUTPUTS = 400;
+const MAX_NOTEBOOK_TEXT = 512 * 1024;
+const MAX_INLINE_IMAGE_BASE64 = 4 * 1024 * 1024;
+
+interface NotebookCell {
+  kind: "markdown" | "code" | "raw";
+  source: string;
+  executionCount: string | null;
+  outputs: NotebookOutput[];
+  attachments: ReadonlyMap<string, string>;
+}
+
+type NotebookOutput =
+  | { kind: "text" | "markdown" | "error"; text: string }
+  | { kind: "image"; mimeType: string; base64: string }
+  | { kind: "unsupported" };
+
+interface NotebookDocument {
+  cells: NotebookCell[];
+  language: string;
+  clipped: boolean;
+  totalCells: number;
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function joinedText(value: unknown, separator = ""): string | null {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value) && value.every((item) => typeof item === "string"))
+    return value.join(separator);
+  return null;
+}
+
+function imageFromBundle(
+  value: unknown,
+): Extract<NotebookOutput, { kind: "image" }> | null {
+  const bundle = record(value);
+  if (!bundle) return null;
+  for (const mimeType of [
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+  ]) {
+    const encoded = joinedText(bundle[mimeType]);
+    if (!encoded) continue;
+    const base64 = encoded.replace(/\s+/g, "");
+    if (
+      base64.length <= MAX_INLINE_IMAGE_BASE64 &&
+      base64.length % 4 === 0 &&
+      /^[A-Za-z0-9+/]*={0,2}$/.test(base64)
+    ) {
+      try {
+        if (btoa(atob(base64)) === base64)
+          return { kind: "image", mimeType, base64 };
+      } catch {
+        /* Malformed bundles remain unavailable. */
+      }
+    }
+  }
+  return null;
+}
+
+function cellAttachments(value: unknown): ReadonlyMap<string, string> {
+  const attachments = new Map<string, string>();
+  for (const [name, bundle] of Object.entries(record(value) ?? {}).slice(
+    0,
+    64,
+  )) {
+    const image = imageFromBundle(bundle);
+    if (image)
+      attachments.set(name, `data:${image.mimeType};base64,${image.base64}`);
+  }
+  return attachments;
+}
+
+function outputFromBundle(value: unknown): NotebookOutput {
+  const bundle = record(value);
+  if (!bundle) return { kind: "unsupported" };
+  const image = imageFromBundle(bundle);
+  if (image) return image;
+  const markdown = joinedText(bundle["text/markdown"]);
+  if (markdown !== null) return { kind: "markdown", text: markdown };
+  const plain = joinedText(bundle["text/plain"]);
+  if (plain !== null) return { kind: "text", text: plain };
+  const json = bundle["application/json"];
+  if (json !== undefined)
+    return { kind: "text", text: JSON.stringify(json, null, 2)! };
+  return { kind: "unsupported" };
+}
+
+function normalizeOutput(value: unknown): NotebookOutput {
+  const output = record(value);
+  if (!output || typeof output.output_type !== "string")
+    return { kind: "unsupported" };
+  if (output.output_type === "stream") {
+    const text = joinedText(output.text);
+    return text === null
+      ? { kind: "unsupported" }
+      : { kind: "text", text: stripTerminalSequences(text) };
+  }
+  if (output.output_type === "error") {
+    const traceback = joinedText(output.traceback, "\n");
+    if (traceback !== null)
+      return { kind: "error", text: stripTerminalSequences(traceback) };
+    const name = typeof output.ename === "string" ? output.ename : "Error";
+    const message = typeof output.evalue === "string" ? output.evalue : "";
+    return { kind: "error", text: `${name}${message ? `: ${message}` : ""}` };
+  }
+  if (
+    output.output_type === "display_data" ||
+    output.output_type === "execute_result"
+  )
+    return outputFromBundle(output.data);
+  return { kind: "unsupported" };
+}
+
+/** Kernel identifiers are hints, not display names or executable commands. */
+function kernelLanguage(name: unknown): string | undefined {
+  if (typeof name !== "string") return undefined;
+  const kernel = name.trim().toLowerCase();
+  if (/^python(?:\d+(?:\.\d+)*)?$/.test(kernel)) return "python";
+  if (/^julia(?:-\d+(?:\.\d+)*)?$/.test(kernel)) return "julia";
+  const aliases: Record<string, string> = {
+    ir: "r",
+    r: "r",
+    javascript: "javascript",
+    nodejs: "javascript",
+    typescript: "typescript",
+    deno: "typescript",
+    bash: "bash",
+    zsh: "bash",
+    ruby: "ruby",
+    iruby: "ruby",
+    scala: "scala",
+    kotlin: "kotlin",
+    java: "java",
+    "c++": "cpp",
+    xeus_cling: "cpp",
+    xcpp11: "cpp",
+    xcpp14: "cpp",
+    xcpp17: "cpp",
+  };
+  return Object.hasOwn(aliases, kernel) ? aliases[kernel] : undefined;
+}
+
+function parseNotebook(text: string): NotebookDocument | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const notebook = record(value);
+  if (!notebook || !Array.isArray(notebook.cells)) return null;
+  const metadata = record(notebook.metadata);
+  const languageInfo = record(metadata?.language_info);
+  const kernelspec = record(metadata?.kernelspec);
+  const language =
+    (typeof languageInfo?.name === "string" && languageInfo.name) ||
+    (typeof kernelspec?.language === "string" && kernelspec.language) ||
+    kernelLanguage(kernelspec?.name) ||
+    "plaintext";
+  let remainingText = MAX_NOTEBOOK_TEXT;
+  let remainingOutputs = MAX_NOTEBOOK_OUTPUTS;
+  let clipped = notebook.cells.length > MAX_NOTEBOOK_CELLS;
+  const takeText = (input: string): string => {
+    if (input.length <= remainingText) {
+      remainingText -= input.length;
+      return input;
+    }
+    const visible = input.slice(0, Math.max(0, remainingText));
+    remainingText = 0;
+    clipped = true;
+    return visible;
+  };
+  const cells: NotebookCell[] = [];
+  for (const rawCell of notebook.cells.slice(0, MAX_NOTEBOOK_CELLS)) {
+    const cell = record(rawCell);
+    const cellType = cell?.cell_type;
+    if (
+      !cell ||
+      (cellType !== "markdown" && cellType !== "code" && cellType !== "raw")
+    )
+      continue;
+    const source = joinedText(cell.source);
+    if (source === null) continue;
+    const executionCount =
+      typeof cell.execution_count === "number" ||
+      typeof cell.execution_count === "string"
+        ? String(cell.execution_count)
+        : null;
+    const rawOutputs = Array.isArray(cell.outputs) ? cell.outputs : [];
+    const visibleOutputs = rawOutputs.slice(0, remainingOutputs);
+    if (visibleOutputs.length < rawOutputs.length) clipped = true;
+    remainingOutputs -= visibleOutputs.length;
+    const outputs = visibleOutputs
+      .map(normalizeOutput)
+      .map((output) =>
+        output.kind === "text" ||
+        output.kind === "markdown" ||
+        output.kind === "error"
+          ? { ...output, text: takeText(output.text) }
+          : output,
+      );
+    cells.push({
+      kind: cellType,
+      source: takeText(source),
+      executionCount,
+      outputs,
+      attachments:
+        cellType === "markdown" ? cellAttachments(cell.attachments) : new Map(),
+    });
+    if (remainingText === 0) break;
+  }
+  return {
+    cells,
+    language,
+    clipped,
+    totalCells: notebook.cells.length,
+  };
+}
+
+function NotebookOutputView({
+  output,
+  executionCount,
+}: {
+  output: NotebookOutput;
+  executionCount: string | null;
+}) {
+  const document = useContext(DocumentResourceContext);
+  // Incoming anchors wait for image layout; ordinary reading can defer outputs.
+  const imageLoading = document?.descriptor.reference.includes("#")
+    ? "eager"
+    : "lazy";
+  if (output.kind === "unsupported")
+    return (
+      <div className="notebook-preview__unsupported">
+        This output is available in Source.
+      </div>
+    );
+  return (
+    <div
+      className={`notebook-preview__output ${output.kind === "error" ? "notebook-preview__output--error" : ""}`}
+    >
+      <div className="notebook-preview__prompt" aria-hidden>
+        {executionCount ? `Out [${executionCount}]` : "Output"}
+      </div>
+      <div className="notebook-preview__output-body">
+        {output.kind === "markdown" ? (
+          <RichText text={output.text} variant="assistant" />
+        ) : output.kind === "image" ? (
+          <ImagePreview
+            inline
+            imageLoading={imageLoading}
+            src={`data:${output.mimeType};base64,${output.base64}`}
+            alt="Notebook output"
+          />
+        ) : (
+          <pre>{output.text}</pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const NotebookSource = memo(function NotebookSource({
+  source,
+  language,
+}: {
+  source: string;
+  language: string;
+}) {
+  const highlighted = useMemo(
+    () => highlightSource(source, language),
+    [source, language],
+  );
+  return (
+    <pre tabIndex={0}>
+      <code
+        className={`hljs language-${language}`}
+        // highlight.js escapes the input and emits span elements only.
+        dangerouslySetInnerHTML={{ __html: highlighted }}
+      />
+    </pre>
+  );
+});
+
+export function NotebookPreview({ text }: { text: string }) {
+  const notebook = useMemo(() => parseNotebook(text), [text]);
+  if (!notebook)
+    return (
+      <div className="notebook-preview notebook-preview--state">
+        <strong>Notebook preview unavailable</strong>
+        <span>Open Source to inspect this file.</span>
+      </div>
+    );
+  if (notebook.cells.length === 0)
+    return (
+      <div className="notebook-preview notebook-preview--state">
+        <strong>Empty notebook</strong>
+      </div>
+    );
+  return (
+    <div
+      className="notebook-preview"
+      role="document"
+      aria-label="Notebook preview"
+      data-pane-scroll-active="true"
+    >
+      {notebook.cells.map((cell, index) => (
+        <article
+          className={`notebook-preview__cell notebook-preview__cell--${cell.kind}`}
+          key={index}
+        >
+          <div className="notebook-preview__prompt" aria-hidden>
+            {cell.kind === "code"
+              ? cell.executionCount
+                ? `In [${cell.executionCount}]`
+                : "In [ ]"
+              : cell.kind === "raw"
+                ? "Raw"
+                : null}
+          </div>
+          <div className="notebook-preview__cell-body">
+            {cell.kind === "markdown" ? (
+              <MarkdownAttachmentsContext.Provider value={cell.attachments}>
+                <RichText text={cell.source} variant="assistant" />
+              </MarkdownAttachmentsContext.Provider>
+            ) : (
+              <NotebookSource
+                source={cell.source}
+                language={
+                  cell.kind === "code" ? notebook.language : "plaintext"
+                }
+              />
+            )}
+          </div>
+          {cell.outputs.map((output, outputIndex) => (
+            <NotebookOutputView
+              key={outputIndex}
+              output={output}
+              executionCount={cell.executionCount}
+            />
+          ))}
+        </article>
+      ))}
+      {notebook.clipped ? (
+        <div className="notebook-preview__more" role="status">
+          Showing a bounded preview of {notebook.totalCells} cells. Open Source
+          for the complete file.
+        </div>
+      ) : null}
+    </div>
+  );
+}
