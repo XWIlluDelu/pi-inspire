@@ -22,8 +22,9 @@ addressing; do not expand into cosmetic changes or classify an isolated flake as
 
 - The reviewed source `f67d6eef659ca4500bf39167c8460813d5d2a85d` passes all seven jobs in
   [CI run 39574685523](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39574685523), including
-  Linux/macOS/Windows workflows and three installed-package checks. It is published as
-  [v0.6.0](https://github.com/XWIlluDelu/pi-inspire/releases/tag/v0.6.0). No demonstrated major
+  Linux/macOS/Windows workflows and three installed-package checks. Annotated tag
+  [v0.6.0](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.0) points to that source; there is no
+  GitHub Release or uploaded release-asset distribution. No demonstrated major
   issue remains from this review. The earlier failed runs below retain their diagnostic context;
   they are not outstanding release blockers. Production activation is separate.
 - Resource preview observations now share the bounded transfer/cancellation boundary with uploads
@@ -123,9 +124,9 @@ addressing; do not expand into cosmetic changes or classify an isolated flake as
   jobs pass at f67d6ee. No long-running local watch or repeated whole-suite run was needed.
 - [x] Complete the requested terminal design review and focused repairs without broadening into a
   negotiation framework. Public network latency and arbitrary extensions remain outside these checks.
-- [x] Complete [[follow-release-0-6-0-2026-10-21]] with an annotated tag, stable release and verified
-  downloadable tarball/checksum assets. Production activation is distinct from publication; no Host
-  restart or terminal migration was performed. An upgrade ending existing PTYs requires approval.
+- [x] Complete [[follow-release-0-6-0-2026-10-21]] with annotated tag v0.6.0, documentation and
+  screenshots. Production activation is distinct from tagging; no Host restart or terminal
+  migration was performed. An upgrade ending existing PTYs requires approval.
 
 ## Decisions
 

@@ -7,30 +7,27 @@ scope:
   - docs/**
 ---
 
-# Release 0.6.0
+# Tag 0.6.0
 
 ## Objective
 
-Publish the verified 0.6.0 source with accurate user documentation, real application screenshots
-and an installable tarball. Production activation remains a separate operator action.
+Record annotated tag v0.6.0 for the verified source, user documentation and real application
+screenshots. The requested deliverable is the tag, not a GitHub Release or uploaded assets.
+Production activation remains a separate operator action.
 
 ## Current state
 
-- [Inspire v0.6.0](https://github.com/XWIlluDelu/pi-inspire/releases/tag/v0.6.0) is published on
-  2026-10-21 as the latest stable release. Annotated tag `v0.6.0` resolves to
-  `f67d6eef659ca4500bf39167c8460813d5d2a85d`; all seven jobs in
+- Annotated tag [v0.6.0](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.0) was created on
+  2026-10-21 and resolves to `f67d6eef659ca4500bf39167c8460813d5d2a85d`. All seven jobs in
   [CI run 39574685523](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39574685523) pass,
   including the three installed-package verifications. Production dependency audit reports zero
-  advisories. No whole-suite rerun was needed to publish the verified source.
-- Previous release baseline: annotated tag `v0.5.5`. Distribution remains
-  `release:verify` → `npm pack` → tarball installation. The GitHub release carries
-  `inspire-pi-gui-0.6.0.tgz` (33,159,990 bytes) and `SHA256SUMS` (91 bytes). Both unauthenticated
-  public downloads return HTTP 200 and match their uploaded sizes/digests. Tarball SHA256:
-  `d7aa42cadb94c987523dfd807333102137a31c50a694bb7bc539749accc45891`.
-  The public npm registry returns 404 for `inspire-pi-gui`; no npm publication was introduced.
-- The tarball is built from an exact Git archive of f67d6ee, using the committed prepack mechanism
-  and dependencies matching its lockfile. Later publication-date/status bookkeeping does not move
-  the release tag or change its assets. The running Host and production build are not upgraded.
+  advisories. No whole-suite rerun was needed to create the tag.
+- Previous baseline: annotated tag `v0.5.5`. Version 0.6.0 has no GitHub Release or uploaded
+  release-asset distribution. The documented local package flow remains
+  `release:verify` → `npm pack` → tarball installation; no npm publication was introduced.
+- Exact-source package verification used the committed prepack mechanism and lockfile dependencies.
+  Documentation/status corrections do not move the tag. The running Host and production build
+  are not upgraded.
 - Merge `0ed3d6c` preserves the published quality line and the completed PWA/workbench refinements
   without rewriting either history. Candidate scope is fixed; package.json, both root lockfile
   versions and the documented tarball name now use 0.6.0. CHANGELOG.md is included in the package.
@@ -79,8 +76,8 @@ and an installable tarball. Production activation remains a separate operator ac
   requirements and actual capability limits. The existing tarball workflow is unchanged.
 - [x] Build the candidate and capture the existing eight filenames with a real isolated application
   and synthetic content, including the 390px mobile image. Inspect pixels, text, version and privacy.
-- [x] Publish the authorized annotated tag and stable GitHub release with verified downloadable
-  tarball/checksum assets. No registry credentials or new release workflow are introduced.
+- [x] Create annotated tag v0.6.0. No GitHub Release, uploaded assets or npm publication are
+  requested for this version.
 - Production Host restart remains an operator action. No Host, daemon, service unit or existing PTY
-  was operated on during publication; migrating an incompatible old daemon still requires explicit
+  was operated on during tagging; migrating an incompatible old daemon still requires explicit
   approval to end its terminal work.
