@@ -132,8 +132,16 @@ test("notebook execution counts share a bounded gutter without covering source",
           const row = preview.locator(".notebook-preview__output").last();
           const baseline = await row
             .locator(".notebook-preview__prompt")
-            .evaluate(firstTextBaseline);
-          const code = await row.locator("pre").evaluate(firstTextBaseline);
+            .evaluate(firstTextBaseline, ".notebook-preview__output");
+          if (size === "Compact" && width === 1280 && theme === "light") {
+            // The row can move between samples without changing text alignment.
+            await preview.evaluate((element) => {
+              element.scrollTop += 8;
+            });
+          }
+          const code = await row
+            .locator("pre")
+            .evaluate(firstTextBaseline, ".notebook-preview__output");
           expect(Math.abs(baseline! - code!)).toBeLessThanOrEqual(
             FIRST_TEXT_BASELINE_TOLERANCE_PX,
           );

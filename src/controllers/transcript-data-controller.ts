@@ -473,7 +473,6 @@ export class TranscriptDataController {
       !scope ||
       !Number.isSafeInteger(ordinal) ||
       ordinal < 0 ||
-      ordinal >= this.host.state().promptMapTotal ||
       this.host.state().promptMapNavigatingOrdinal !== null
     )
       return false;
@@ -484,6 +483,10 @@ export class TranscriptDataController {
     });
     let request: AbortController | null = null;
     try {
+      if (ordinal >= this.host.state().promptMapTotal)
+        await this.loadPromptMapTurns();
+      if (!this.ownsScope(scope) || ordinal >= this.host.state().promptMapTotal)
+        return false;
       let turn = this.host
         .state()
         .promptMapTurns.find((candidate) => candidate.ordinal === ordinal);
@@ -491,6 +494,7 @@ export class TranscriptDataController {
         const start =
           Math.floor(ordinal / PROMPT_MAP_PAGE_SIZE) * PROMPT_MAP_PAGE_SIZE;
         const page = await this.loadPromptMapTurns(start);
+        if (!this.ownsScope(scope)) return false;
         turn =
           page.find((candidate) => candidate.ordinal === ordinal) ??
           this.host
@@ -517,6 +521,7 @@ export class TranscriptDataController {
       const seenCursors = new Set<string>();
       let continuationCursor: string | undefined;
       do {
+        if (request.signal.aborted || !this.ownsScope(scope)) return false;
         const page = await api.transcriptUserTurn(
           sessionId,
           turn.id,

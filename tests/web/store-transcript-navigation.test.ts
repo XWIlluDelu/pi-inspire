@@ -23,6 +23,47 @@ function userMessage(index: number) {
 beforeEach(() => installFakeWebSocket());
 
 describe("Prompt Map navigation ownership", () => {
+  it("retires an outline-conflict continuation when selection changes during resync", async () => {
+    const resyncStarted = deferred<void>();
+    const resync = deferred<RouteResponse>();
+    const turnReads: string[] = [];
+    installFetch((url, init) => {
+      if (url.startsWith("/api/transcript/user-turns"))
+        return { status: 409, body: { error: "view changed" } };
+      if (url.startsWith("/api/snapshot")) {
+        resyncStarted.resolve();
+        return resync.promise;
+      }
+      if (url.startsWith("/api/transcript/user-turn?")) turnReads.push(url);
+      if (url === "/api/sessions/open")
+        return {
+          body: activeSnapshot({
+            sessionId: "s2",
+            transcriptPage: {
+              sessionId: "s2",
+              revision: 1,
+              viewId: "view-s2",
+              messages: [userMessage(0)],
+              hasOlder: false,
+              olderCursor: null,
+            },
+          }),
+        };
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    const navigation = store.navigatePromptMapTurn(0);
+    await resyncStarted.promise;
+    await store.openSession("s2");
+    resync.resolve({ body: activeSnapshot() });
+    expect(await navigation).toBe(false);
+    expect(turnReads).toEqual([]);
+    expect(store.getState()).toMatchObject({
+      sessionId: "s2",
+      promptMapNavigatingOrdinal: null,
+    });
+  });
+
   describe("older paging during Prompt Map navigation", () => {
     it.each(["late page", "late failure", "page first"] as const)(
       "preserves the navigation boundary when the older request is %s",

@@ -142,6 +142,15 @@ export const Transcript = memo(function Transcript({
     () => ({ sessionId, viewId, projectionKey: projectionViewKey }),
     [sessionId, viewId, projectionViewKey],
   );
+  const promptNavigationOwnerRef = useRef<typeof imageOwner | null>(imageOwner);
+  promptNavigationOwnerRef.current = imageOwner;
+  useLayoutEffect(() => {
+    promptNavigationOwnerRef.current = imageOwner;
+    return () => {
+      if (promptNavigationOwnerRef.current === imageOwner)
+        promptNavigationOwnerRef.current = null;
+    };
+  }, [imageOwner]);
   const preserveActivityAnchorRef = useRef<
     (element: HTMLElement, alignment: "start" | "center" | "end") => void
   >(() => undefined);
@@ -198,9 +207,10 @@ export const Transcript = memo(function Transcript({
   const [activePromptOrdinal, setActivePromptOrdinal] = useState<number | null>(
     null,
   );
-  const [pendingPromptOrdinal, setPendingPromptOrdinal] = useState<
-    number | null
-  >(null);
+  const [pendingPromptOrdinal, setPendingPromptOrdinal] = useState<{
+    ordinal: number;
+    owner: typeof imageOwner;
+  } | null>(null);
   const promptNavigationOverrideRef = useRef<number | null>(null);
   const viewport = useTranscriptViewport({
     rows,
@@ -331,7 +341,9 @@ export const Transcript = memo(function Transcript({
       if (viewport.virtualize) {
         viewport.virtualizer.scrollToIndex(rowIndex, { align: "start" });
       } else {
+        const owner = promptNavigationOwnerRef.current;
         requestAnimationFrame(() => {
+          if (promptNavigationOwnerRef.current !== owner) return;
           viewport.scrollRef.current
             ?.querySelector<HTMLElement>(`[data-transcript-row="${rowIndex}"]`)
             ?.scrollIntoView({ block: "start" });
@@ -347,19 +359,14 @@ export const Transcript = memo(function Transcript({
     async (ordinal: number) => {
       search.clearCurrentMatch();
       if (scrollToPromptOrdinal(ordinal)) return true;
-      if (ordinal >= promptMapTotal) await onLoadPromptMapTurns();
-      setPendingPromptOrdinal(ordinal);
+      const owner = imageOwner;
+      setPendingPromptOrdinal({ ordinal, owner });
       const loaded = await onNavigatePromptMapTurn(ordinal);
+      if (promptNavigationOwnerRef.current !== owner) return false;
       if (!loaded) setPendingPromptOrdinal(null);
       return loaded;
     },
-    [
-      onLoadPromptMapTurns,
-      onNavigatePromptMapTurn,
-      promptMapTotal,
-      scrollToPromptOrdinal,
-      search,
-    ],
+    [imageOwner, onNavigatePromptMapTurn, scrollToPromptOrdinal, search],
   );
 
   useEffect(() => {
@@ -370,10 +377,11 @@ export const Transcript = memo(function Transcript({
   }, [sessionId, projectionViewKey]);
 
   useLayoutEffect(() => {
-    if (pendingPromptOrdinal === null) return;
-    if (scrollToPromptOrdinal(pendingPromptOrdinal))
+    if (!pendingPromptOrdinal || pendingPromptOrdinal.owner !== imageOwner)
+      return;
+    if (scrollToPromptOrdinal(pendingPromptOrdinal.ordinal))
       setPendingPromptOrdinal(null);
-  }, [pendingPromptOrdinal, rows, scrollToPromptOrdinal]);
+  }, [imageOwner, pendingPromptOrdinal, rows, scrollToPromptOrdinal]);
 
   useEffect(() => {
     const scroller = viewport.scrollRef.current;
