@@ -378,7 +378,12 @@ for (const theme of ["light", "dark"] as const) {
       for (const width of [1280, 820, 390, 320]) {
         for (const height of [900, 420]) {
           await page.setViewportSize({ width, height });
-          await expect(error).toHaveText(message);
+          await expect(error.locator(".notice__text")).toHaveText(message);
+          await expect(error).toHaveAttribute("role", "alert");
+          await expect(error.locator(".notice__title")).toHaveText("Error");
+          await expect(
+            error.getByRole("button", { name: "Copy error", exact: true }),
+          ).toBeVisible();
           await page.evaluate(() => document.fonts.ready);
           await expect
             .poll(() => error.evaluate(textOverflowsInlineBounds))
@@ -403,7 +408,9 @@ for (const theme of ["light", "dark"] as const) {
       }
       // Let the actual dismiss click win before restoring the transport.
       // Otherwise its automatic reconnect can remove the click target first.
-      await error.click();
+      await error
+        .getByRole("button", { name: "Dismiss terminal error", exact: true })
+        .click();
       recover = true;
       await expect(error).toHaveCount(0);
     });

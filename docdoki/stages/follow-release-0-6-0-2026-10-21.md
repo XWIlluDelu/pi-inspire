@@ -39,13 +39,23 @@ This stage does not authorize a tag, npm publication or GitHub release.
 - Combined UI/icon/package-manifest targets pass (115 cases); five selected browser cases pass
   without retries for update states, code focus/copy, command preparation, MCP saving and terminal
   errors. Earlier terminal/Settings checks overlap this evidence and are not added to its count.
+- Exact candidate `914c24d` passes isolated installed-package verification at 0.6.0. The public
+  tarball includes the changelog, eight new screenshots, licenses and production runtime, not tests
+  or source-only modules. Its temporary source snapshot and processes are removed.
+- Run 39561923512 exposes sixteen stale terminal-notice checks: four compare the entire new card
+  with body text and click its old whole-button target; twelve color probes still build the old
+  error button. Updated checks preserve exact body text, independent dismissal, viewport containment
+  and 4.5:1 text contrast, and assert shared title/body/icon/border roles. All sixteen pass locally
+  without retries. Only non-shipped tests and this stage change after 914c24d; the UI, package inputs
+  and verified screenshots are unchanged. The argument-menu retry is retained as a separate flaky.
 
 ## Release gates and next actions
 
 - [x] Fix the candidate source boundary and synchronize package.json, both root lockfile version
   entries and the documented tarball name. A local candidate build is not the running Host version.
-- [ ] Finish the Windows Settings CI closure and confirm the final candidate's CI and three-platform
-  installed-package checks. Earlier green jobs are evidence for their own source, not an untested tip.
+- [ ] Confirm the notice-fixture correction's final CI and three-platform installed-package checks.
+  Windows Settings and Linux native/unit confirmation are complete on the previous source; these
+  results do not replace final-candidate CI. No release or tag is authorized before the gates close.
 - [x] Prepare a concise changelog from the integrated v0.5.5..candidate diff, retaining upgrade
   requirements and actual capability limits. The existing tarball workflow is unchanged.
 - [x] Build the candidate and capture the existing eight filenames with a real isolated application

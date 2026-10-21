@@ -38,8 +38,6 @@ const surfaces = [
 // or input backgrounds. Generic chips/text below support the wider ladder.
 const notices = [
   ["prompt-map__error", "raised"],
-  ["terminal-view__error", "raised"],
-  ["terminal-pane__error", "raised"],
   ["session-delete__error", "raised"],
   ["session-delete__warning", "raised"],
   ["nav__error", "rail"],
@@ -118,6 +116,24 @@ const choiceGroups = [
   ["resource-mode", "", "ctx__modes", ""],
   ["palette", "dialog settings", "palette-picker", "palette-picker__choice"],
 ] as const;
+
+// NoticeCard owns error ink on its title and body; placement classes are not text roles.
+const terminalErrorCards = ["terminal-pane__error", "terminal-view__error"]
+  .map(
+    (className) => `
+    <section class="terminal-pane" style="background:var(--bg-stage);height:160px">
+      <div class="notice notice--error ${className}" role="alert">
+        <div class="notice__head">
+          <span class="notice__title" data-role="${className}-title" data-ink="error-ink">
+            <svg data-state-mark="error" width="14" height="14" aria-hidden="true"></svg>
+            <span>Error</span>
+          </span>
+        </div>
+        <div class="notice__text" data-role="${className}-text" data-ink="body">Terminal outcome remains unknown</div>
+      </div>
+    </section>`,
+  )
+  .join("");
 
 for (const palette of PALETTE_PREFERENCES)
   for (const theme of ["light", "dark"]) {
@@ -327,8 +343,8 @@ for (const palette of PALETTE_PREFERENCES)
             <section class="terminal-pending" aria-label="Unconfirmed terminal controls">
               <div class="terminal-pending__row"><span class="terminal-pending__description">Outcome unknown</span><button class="button button--quiet">Retry same operation</button></div>
             </section>
-            <button class="terminal-pane__error" data-role="terminal-pending-error" data-ink="error-ink">Terminal outcome remains unknown</button>
-          </section>
+            </section>
+          ${terminalErrorCards}
           <section style="background:var(--bg-canvas)">
             ${["warning", "error"]
               .map(
@@ -367,6 +383,7 @@ for (const palette of PALETTE_PREFERENCES)
             "error-tint",
             "accent-tint",
             "ink",
+            "body",
             "faint",
             "bg-inset",
             "bg-control",
@@ -718,6 +735,10 @@ for (const palette of PALETTE_PREFERENCES)
         "color",
         "rgb(205, 49, 49)",
       );
+      for (const error of await page
+        .locator(".terminal-pane > .notice--error")
+        .all())
+        await expect(error).toHaveCSS("border-left-color", roles.error!);
       for (const label of await page.locator("[data-role]").all()) {
         const ink = await label.getAttribute("data-ink");
         if (ink) await expect(label).toHaveCSS("color", roles[ink]!);
