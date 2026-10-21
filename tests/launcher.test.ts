@@ -388,7 +388,8 @@ describe("production launcher", () => {
       expect(log).toContain("--user stop inspire-host.service");
       expect(log).toContain("--user enable --now inspire-host.service");
       expect(log).toContain("--user disable --now inspire-host.service");
-      expect(log).toContain("--user enable --now inspire-terminal.service");
+      expect(log).toContain("--user enable inspire-terminal.service");
+      expect(log).not.toContain("--user enable --now inspire-terminal.service");
       expect(log).toContain("--user disable --now inspire-terminal.service");
       expect(log).toContain(
         "--user enable --now inspire-idle-maintenance-restart.timer",

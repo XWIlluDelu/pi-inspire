@@ -125,6 +125,35 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
     }
   });
 
+  it("starts or enables the Host without stopping an existing transient terminal owner", async () => {
+    for (const action of ["start", "enable"]) {
+      const calls = [];
+      const run = async (args) => {
+        calls.push(args);
+        return show(managedProperties())(args);
+      };
+      expect(
+        (await manageHostService(root, action, { environment, run })).kind,
+      ).toBe("controlled");
+      const controls = calls.filter((args) => args[1] !== "show");
+      expect(controls).toEqual(
+        action === "start"
+          ? [["--user", "start", "inspire-host.service"]]
+          : [
+              ["--user", "enable", "inspire-terminal.service"],
+              ["--user", "enable", "--now", "inspire-host.service"],
+              [
+                "--user",
+                "enable",
+                "--now",
+                "inspire-idle-maintenance-restart.timer",
+              ],
+            ],
+      );
+      expect(controls.some((args) => args.includes("stop"))).toBe(false);
+    }
+  });
+
   it("refuses full restart without verified terminal-before-Host ordering", async () => {
     const calls = [];
     const run = async (args) => {

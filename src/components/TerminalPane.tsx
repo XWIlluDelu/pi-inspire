@@ -63,6 +63,7 @@ import {
   type TerminalUiSettings,
 } from "../terminal-settings";
 import { ButtonLabel } from "./ButtonLabel";
+import { NoticeCard } from "./NoticeCard";
 import { PiLoader } from "./PiLoader";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 import { TerminalSettingsDialog } from "./TerminalSettingsDialog";
@@ -1503,14 +1504,13 @@ export const TerminalPane = memo(function TerminalPane({
         </section>
       ) : null}
       {error ? (
-        <button
-          type="button"
+        <NoticeCard
+          kind="error"
+          text={error}
           className="terminal-pane__error"
-          onClick={() => setError(null)}
-          title="Dismiss"
-        >
-          {error}
-        </button>
+          onDismiss={() => setError(null)}
+          dismissLabel="Dismiss terminal error"
+        />
       ) : null}
     </div>
   );

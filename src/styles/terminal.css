@@ -850,23 +850,13 @@
   background: var(--accent-tint);
 }
 
-.terminal-view__error,
-.terminal-pane__error {
-  overflow-wrap: anywhere;
-  border: 1px solid color-mix(in srgb, var(--error) 50%, var(--hairline));
-  border-radius: var(--radius-control);
-  padding: 7px 9px;
-  color: var(--error-ink);
-  background: color-mix(in srgb, var(--error-tint) 85%, var(--bg-raised));
-  box-shadow: var(--shadow-2);
-  font: var(--text-xs)/var(--leading-ui) var(--font-sans);
-  text-align: left;
-  cursor: pointer;
+.terminal-view__error .notice__text,
+.terminal-pane__error .notice__text {
+  white-space: pre-line;
 }
 
 .terminal-view__error {
-  max-width: min(360px, 100%);
-  white-space: pre-line;
+  width: min(380px, 100%);
 }
 
 .terminal-pane__error {
@@ -874,7 +864,9 @@
   z-index: 20;
   right: 10px;
   bottom: 10px;
-  max-width: calc(100% - 20px);
+  width: min(380px, calc(100% - 20px));
+  max-height: calc(100% - 20px);
+  overflow-y: auto;
 }
 
 .terminal-view__exit {
@@ -1208,6 +1200,7 @@
   .terminal-undo,
   .terminal-pane__error {
     bottom: calc(58px + var(--safe-bottom));
+    max-height: calc(100% - 68px - var(--safe-bottom));
   }
 
   .terminal-settings__footer .button {

@@ -16,7 +16,10 @@ import {
   type TerminalDaemonRpcRequest,
   type TerminalDaemonRpcResponse,
 } from "./terminal-daemon-protocol.js";
-import { addressAcceptsConnections } from "./terminal-daemon-socket.js";
+import {
+  addressAcceptsConnections,
+  TerminalDaemonOwnerConflictError,
+} from "./terminal-daemon-socket.js";
 import { terminalDaemonTlsOptions } from "./terminal-daemon-tls.js";
 import {
   decodeTerminalIpcJson,
@@ -82,7 +85,7 @@ async function prepareUnixSocket(address: string): Promise<void> {
         `The terminal IPC socket is owned by another user: ${address}`,
       );
     if (await addressAcceptsConnections(address))
-      throw new Error("The Inspire terminal daemon is already running.");
+      throw new TerminalDaemonOwnerConflictError();
     await rm(address);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -159,6 +162,11 @@ export class TerminalDaemonServer {
       for (const socket of this.connections) socket.destroy();
       if (server.listening)
         await new Promise<void>((done) => server.close(() => done()));
+      if (
+        (error as NodeJS.ErrnoException).code === "EADDRINUSE" &&
+        (await addressAcceptsConnections(this.address))
+      )
+        throw new TerminalDaemonOwnerConflictError();
       throw error;
     }
   }

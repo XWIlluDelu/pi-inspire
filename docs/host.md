@@ -28,7 +28,7 @@ or `npm.cmd run inspire -- restart`.
 | `inspire terminal restart` | Replace that daemon, restoring saved tabs as exited. Running terminals require `--force`. |
 
 A CLI restart stops Inspire-owned Pi workers; connected external Herdr sessions keep running.
-In **Settings → System**, restart first checks for unfinished work. A refusal offers a separately confirmed **Stop work and restart**, which interrupts Pi work and discards Pending input. An idle worker does not block this check. Preparation failure leaves the current Host running; after a disconnect, the browser observes the submitted restart instead of sending another one.
+In **Settings → System → Host**, restart first checks for unfinished work. A refusal offers a separately confirmed **Stop work and restart**, which interrupts Pi work and discards Pending input. An idle worker does not block this check. Preparation failure leaves the current Host running; after a disconnect, the browser observes the submitted restart instead of sending another one.
 
 **Restart Host** works from the page on native Windows, macOS, and Linux when started through
 `inspire` (or `npm run inspire`), as well as with the installed Linux service. Direct page restart keeps
@@ -96,6 +96,24 @@ reported as not listening, not as proof of process exit. A dedicated daemon life
 protects startup/drain handoff. The installed Linux terminal unit retains its service supervisor;
 portable maintenance does not restart the Host or expand `Restart all`.
 
+### Connection recovery and upgrades
+
+Compatible terminal services reconnect without restarting the Host. If startup connection fails,
+later terminal requests retry authentication on demand; there is no background restart loop and no
+automatic replay of terminal input or dispatched controls. Missing optional maintenance controls
+do not disable a compatible data connection.
+
+A listening endpoint with a failed connection check is not by itself proof of a protocol mismatch.
+Inspect `inspire terminal status` and the owning service before choosing maintenance; an unavailable
+maintenance connection alone does not describe normal terminal-data compatibility. The error card
+keeps the connection detail available to read and copy.
+
+Installing or enabling Linux units does not migrate an existing transient daemon or stop its work.
+A confirmed duplicate listener exits with code 78; the terminal unit does not crash-restart that
+conflict, while recoverable crashes still use its normal restart policy. A compatible existing daemon
+can continue serving the Host. An incompatible owner needs an explicit migration after its terminal
+work is finished; the failed installed unit does not prove that the old owner's PTYs have ended.
+
 The authenticated terminal IPC upgrade needs a terminal-service restart, not only a Host restart.
 Finish terminal work first. A still-listening old daemon is never killed or silently replaced by a new
 Host; its input and output remain with that process. New daemons use a fresh private TLS secret at
@@ -105,7 +123,9 @@ paths on POSIX need an existing current-user-private parent, or a new parent Ins
 `0700`. Inspire refuses shared parents without changing their permissions.
 
 Daemons from before lifecycle controls need a one-time upgrade through their existing owner.
-Installed Linux services can use `Restart all` after finishing terminal work. For older direct/native
+Installed Linux services can use **System → Host → Restart all** after finishing terminal work,
+but that scope does not retire an independent transient owner. Inspect its exact owning service
+and obtain approval before stopping it; that action ends its live PTYs. For older direct/native
 instances, stop the Host, inspect the current user's exact terminal daemon, and stop that process tree
 manually once. On macOS, inspect `ps -axo user,pid,command` (the process title may be
 `inspire-terminal`) and use `lsof` to correlate its socket and working directory before sending

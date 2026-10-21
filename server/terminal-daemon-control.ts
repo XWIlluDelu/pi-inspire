@@ -22,7 +22,7 @@ import { prepareTerminalStateDirectory } from "./terminal-state-store.js";
 const execFile = promisify(execFileCallback);
 const STOP_TIMEOUT_MS = 20_000;
 const LEGACY_GUIDANCE =
-  "A terminal endpoint is listening without verified lifecycle controls. Refusing to guess a PID or replace its PTYs. Upgrade it once through its existing service manager or manually stop the inspected terminal daemon. Host-only restart cannot replace it.";
+  "A terminal endpoint is listening, but its authenticated maintenance connection could not be verified. This does not establish whether normal terminal data is compatible. Existing terminal processes were left running. Inspect the owning service and connection error before deciding whether replacement is needed; replacing that daemon ends its live terminals.";
 
 type TerminalDaemonStatus =
   | { kind: "running"; info: TerminalDaemonInfo }

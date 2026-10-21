@@ -159,6 +159,10 @@ actions in the header. Activate their count in the activity bar to jump to and f
 moving focus into the editor. **Return all** removes all unconsumed input without stopping Pi:
 Steer texts come first, then Queue texts, separated by blank lines and followed by your current draft. Edit this as one draft; sending uses the currently selected delivery mode.
 
+**Stopped** describes a natively cancelled run; **Pi error** describes a failed run. A failed Stop
+request does not relabel a failed reply as cancelled. An unconfirmed Stop retains its uncertain
+result rather than claiming cancellation.
+
 When stopping a model task, **Stop** and Escape use the same recovery, so pending work does not restart the task.
 An open modal, completion menu, or context-detail hint keeps first ownership of Escape. Pending's single/all copy actions
 copy complete text, including messages not shown in the bounded preview. **Clear queue** asks for
@@ -230,5 +234,11 @@ Keep one writer per Pi session. Stop the Host before continuing one of its owned
 Pi terminal; switching conversations alone does not release a cached worker. With Herdr enhancement,
 Inspire can instead connect to an already running native Pi: Composer and Stop use that same process;
 Reload and worker settings stay in its terminal. Project terminal tabs remain separate shells.
+
+Terminal appearance and interaction preferences are saved in this browser for this origin, not in
+Pi settings. On macOS, **Option as Meta** is off by default to preserve native characters and accents;
+turn it on to send Escape-prefixed shell keys instead. **Persist output** and **Retention** belong to
+the connected Host's terminal service and are shared by its browsers. Turning saved output off deletes
+that service's retained output; it does not reset browser preferences.
 
 For extension commands, dialogs, and widgets, see [Extension adaptation](extensions.md).

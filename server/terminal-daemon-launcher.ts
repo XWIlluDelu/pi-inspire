@@ -9,8 +9,14 @@ import {
   type TerminalDaemonLaunchOptions,
 } from "./terminal-daemon-configuration.js";
 import { legacyTerminalDaemonAddress } from "./terminal-daemon-protocol.js";
-import { addressAcceptsConnections } from "./terminal-daemon-socket.js";
-import { resolveTerminalDaemonSecret } from "./terminal-daemon-tls.js";
+import {
+  addressAcceptsConnections,
+  TERMINAL_DAEMON_OWNER_CONFLICT_EXIT_CODE,
+} from "./terminal-daemon-socket.js";
+import {
+  readTerminalDaemonSecret,
+  resolveTerminalDaemonSecret,
+} from "./terminal-daemon-tls.js";
 import { TerminalServiceError } from "./terminal-service.js";
 import {
   independentProcessEnvironment,
@@ -42,6 +48,7 @@ async function runSystemdUnit(
         "--collect",
         "--quiet",
         "--property=Restart=on-failure",
+        `--property=RestartPreventExitStatus=${TERMINAL_DAEMON_OWNER_CONFLICT_EXIT_CODE}`,
         "--property=RestartSec=2s",
         ...systemdEnvironmentArguments(environment),
         "--",
@@ -79,48 +86,91 @@ function daemonCommand(): { command: string; prefix: string[]; entry: string } {
   };
 }
 
+async function terminalEndpointListening(
+  options: TerminalDaemonLaunchOptions,
+): Promise<boolean> {
+  const { root, address } = resolveTerminalDaemonConfiguration(options);
+  const environment = options.environment ?? process.env;
+  const legacyAddress = environment.INSPIRE_TERMINAL_DAEMON_ADDRESS
+    ? address
+    : legacyTerminalDaemonAddress(root, options.host, options.port, {
+        environment,
+      });
+  return (
+    (await addressAcceptsConnections(address)) ||
+    (legacyAddress !== address &&
+      (await addressAcceptsConnections(legacyAddress)))
+  );
+}
+
+function terminalConnectionFailure(
+  error: unknown,
+  listening: boolean,
+): TerminalServiceError {
+  const prefix = fileURLToPath(import.meta.url).endsWith(".ts")
+    ? "npm run inspire --"
+    : "inspire";
+  const detail =
+    error instanceof Error ? error.message : "No authenticated reply.";
+  return new TerminalServiceError(
+    listening
+      ? "terminal_service_connection_unverified"
+      : "terminal_daemon_unavailable",
+    503,
+    (listening
+      ? "A terminal endpoint is listening, but its authenticated data connection failed. "
+      : "The terminal service is unavailable; no endpoint accepted the connection. ") +
+      "Existing terminal processes were left running. " +
+      `Run ${prefix} terminal status and inspect the owning service before deciding whether replacement is needed. ` +
+      "Replacing that daemon ends its live terminals; a Host-only restart does not replace it.\n" +
+      `Connection check: ${detail}`,
+  );
+}
+
+/** Recovery only reconnects: no process launch, authority creation or owner replacement. */
+export async function connectExistingTerminalDaemon(
+  options: TerminalDaemonLaunchOptions,
+): Promise<TerminalDaemonClient> {
+  const { address, tokenPath } = resolveTerminalDaemonConfiguration(options);
+  let client: TerminalDaemonClient | undefined;
+  try {
+    client = new TerminalDaemonClient(
+      address,
+      await readTerminalDaemonSecret(tokenPath),
+    );
+    await client.probe();
+    return client;
+  } catch (error) {
+    await client?.close();
+    throw terminalConnectionFailure(
+      error,
+      await terminalEndpointListening(options),
+    );
+  }
+}
+
 export async function launchTerminalDaemon(
   options: TerminalDaemonLaunchOptions,
 ): Promise<TerminalDaemonClient> {
   const environment = options.environment ?? process.env;
-  const paths = { environment };
   const { root, address, tokenPath, statePath } =
     resolveTerminalDaemonConfiguration(options);
   const token = await resolveTerminalDaemonSecret(tokenPath);
   const client = new TerminalDaemonClient(address, token);
+  let probeError: unknown;
   try {
     await client.probe();
     return client;
-  } catch {
-    // Start a private daemon below and wait for its authenticated IPC socket.
+  } catch (error) {
+    probeError = error;
   }
 
   // A failed probe does not grant authority to stop an independently owned
   // daemon and its PTYs. In particular, an old protocol's replace handshake
   // can terminate active shells. Leave a listening owner untouched.
-  const legacyAddress = environment.INSPIRE_TERMINAL_DAEMON_ADDRESS
-    ? address
-    : legacyTerminalDaemonAddress(root, options.host, options.port, paths);
-  if (
-    (await addressAcceptsConnections(address)) ||
-    (legacyAddress !== address &&
-      (await addressAcceptsConnections(legacyAddress)))
-  ) {
+  if (await terminalEndpointListening(options)) {
     await client.close();
-    const prefix = fileURLToPath(import.meta.url).endsWith(".ts")
-      ? "npm run inspire --"
-      : "inspire";
-    const maintenance = `Use ${prefix} terminal status, then ${prefix} terminal restart --force to end terminal work and replace a managed daemon. `;
-    throw new TerminalServiceError(
-      "terminal_service_restart_required",
-      503,
-      "The terminal service is incompatible or unavailable. " +
-        maintenance +
-        (process.platform === "linux"
-          ? "Older services without lifecycle controls require their service manager; installed Linux services also support Settings → System → Restart all. "
-          : "Older services without lifecycle controls require a one-time manual shutdown. ") +
-        "Host-only restart cannot replace it.",
-    );
+    throw terminalConnectionFailure(probeError, true);
   }
 
   const executable = daemonCommand();

@@ -74,16 +74,52 @@ addressing; do not expand into cosmetic changes or classify an isolated flake as
   gated chunk-arrival timers synchronously. Real filesystem writes, every byte/batch assertion and
   the five-second deadline remain. Clock simplification alone was not the dominant cost repair.
   The complete history-store suite passes locally; no terminal-runtime change is indicated.
-  Native Windows confirmation of the final assertion correction remains.
+  [CI run 39545599095](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39545599095) confirms
+  the corrected Windows history fixture, all Windows/macOS phases, three packaged releases and
+  size report. Its sole failure is Linux WebKit's notebook execution-count baseline measurement
+  (7.75 px on both attempts); expected 503 fixtures are not additional failures.
+- Reader baseline sampling compared viewport coordinates from separate evaluations. A controlled
+  8 px preview scroll demonstrates the measurement defect: the old assertion reports 8 px while
+  the prompt and source remain aligned relative to their output row. Both samples now use the
+  existing row-relative helper, with that scroll retained as a deterministic regression. All five
+  reader-baseline cases pass across Chromium, Firefox and WebKit in an isolated matching Playwright
+  container, without retries or host-library installation; all gutter/overflow assertions and the
+  1 px threshold remain. The original CI's precise 7.75 px movement was not reproduced, so its
+  dynamic cause is not claimed. No product CSS or component change is indicated by these results.
+
+- [CI run 39552440372](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39552440372) confirms
+  complete Linux quality, including the reader repair, all macOS phases, Windows Chromium and
+  three packaged releases. Its sole failure is the Windows New-session settings ownership test's
+  wait for Settings navigation; no product-open failure has been demonstrated. Delaying the real
+  Settings module import reproduces that exact failure. The workspace-ownership case now preloads
+  the actual surface before opening it, preserving Models/MCP interactions and directory assertions
+  without increasing timeouts. The temporary delay is removed; all 22 cases in the file pass.
+- The terminal follow-up finds three concrete lifecycle gaps: a startup connection failure was
+  frozen for the Host lifetime; service start/enable silently stopped a transient owner; and a
+  confirmed duplicate listener exited like a recoverable crash, allowing endless systemd retries.
+  Recovery now shares demand-driven, connection-only initialization, fences close/late results and
+  never replays input or dispatched controls. Service startup preserves existing work; duplicate
+  ownership has exit 78 and a no-retry unit policy without suppressing ordinary crash recovery.
+- Terminal errors now reuse the shared notice card with complete Copy and explicit Dismiss.
+  Diagnostics distinguish absent endpoints, unverified data and unavailable maintenance; missing
+  optional lifecycle support does not block compatible data. Mutual authentication and the wire
+  protocol remain required; legacy plaintext fallback is not introduced.
+- Focused native/service/UI checks pass, including a real TLS endpoint recovering after initial
+  failure, initialization concurrency, close races, no idle retries, no input replay, duplicate-owner
+  process exit, non-destructive service controls and installed CLI delegation. Browser Copy,
+  layout boundaries and light/dark desktop/390px QA pass. Isolated installed-package verification
+  passes with a live daemon PTY surviving Host restart and scoped maintenance. No production service
+  or existing terminal process was operated on.
 
 ## Next actions
 
-- [ ] Check the new CI run for these repairs. Distinguish actual failures, environment startup
-  failures and flaky attempts; do not weaken assertions or skip whole portable scenarios.
-- [ ] Investigate further only from concrete, high-value workflow or cost evidence. Keep each
-  review round's confirmed findings, exclusions and next direction concise.
-- [ ] Implement and verify clear fixes as semantic commits; preserve unrelated work and shared
-  history. Keep project design choices explicit instead of inferring them from missing APIs.
+- [ ] Confirm final CI for the terminal fixes and Windows Settings fixture correction. The parent
+  observes GitHub; no long-running local watch is needed.
+- [x] Complete the requested terminal design review and focused repairs without broadening into a
+  negotiation framework. Public network latency and arbitrary extensions remain outside these checks.
+- [ ] Continue [[follow-release-0-6-0-2026-10-21]] after the source boundary is fixed. Production
+  activation is distinct from source/build verification; no Host restart or terminal migration was
+  performed, and an upgrade that ends existing PTYs still requires operator approval.
 
 ## Decisions
 

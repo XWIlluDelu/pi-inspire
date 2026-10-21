@@ -5,8 +5,9 @@ import {
 } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { expect, it, vi } from "vitest";
 import { processStartIdentity } from "../../server/instance-state.mjs";
@@ -17,6 +18,7 @@ import {
   inspectTerminalDaemon,
 } from "../../server/terminal-daemon-control.js";
 import { defaultTerminalDaemonAddress } from "../../server/terminal-daemon-protocol.js";
+import { TERMINAL_DAEMON_OWNER_CONFLICT_EXIT_CODE } from "../../server/terminal-daemon-socket.js";
 import { readTerminalDaemonSecret } from "../../server/terminal-daemon-tls.js";
 import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 
@@ -105,6 +107,55 @@ async function fixture() {
   };
   return { directory, environment, options, start, cli, cleanup };
 }
+
+it("refuses duplicate startup with a non-retrying exit without altering the listening owner", async () => {
+  const f = await fixture();
+  const address = f.environment.INSPIRE_TERMINAL_DAEMON_ADDRESS!;
+  if (process.platform !== "win32")
+    await mkdir(dirname(address), { recursive: true, mode: 0o700 });
+  const server = createServer((socket) => socket.destroy());
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(address, resolve);
+    });
+    await expect(
+      execFile(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          join(root, "server/terminal-daemon-entry.ts"),
+          "--root",
+          root,
+        ],
+        {
+          cwd: root,
+          env: f.environment,
+          timeout: 20_000,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: TERMINAL_DAEMON_OWNER_CONFLICT_EXIT_CODE,
+      stderr: expect.stringContaining("already running"),
+    });
+    expect(server.listening).toBe(true);
+    await expect(
+      readTerminalDaemonSecret(f.environment.INSPIRE_TERMINAL_TOKEN_PATH!),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    const unit = await readFile(
+      join(root, "deploy/systemd/inspire-terminal.service.in"),
+      "utf8",
+    );
+    expect(unit).toContain("Restart=on-failure");
+    expect(unit).toContain(
+      `RestartPreventExitStatus=${TERMINAL_DAEMON_OWNER_CONFLICT_EXIT_CODE}`,
+    );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await f.cleanup();
+  }
+}, 30_000);
 
 it("status is observational and invalid commands never create an authority", async () => {
   const f = await fixture();
