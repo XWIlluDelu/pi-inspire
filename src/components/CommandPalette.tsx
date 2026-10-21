@@ -647,12 +647,12 @@ export const CommandPalette = memo(function CommandPalette({
   const preparationLabel =
     preparedCommand?.source === "extension" ||
     preparedCommand?.source === "builtin"
-      ? "Run command"
+      ? "Run"
       : isBusyRunState(state.runState)
         ? delivery === "steer"
           ? "Steer Pi"
           : "Queue prompt"
-        : "Send prepared prompt";
+        : "Send";
 
   const submitPreparation = async () => {
     if (

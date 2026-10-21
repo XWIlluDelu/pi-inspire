@@ -418,9 +418,7 @@ test("types and runs prepared arguments without consuming the draft", {
   await palette
     .getByLabel("Prepared command")
     .pressSequentially("scoped changes");
-  await palette
-    .getByRole("button", { name: "Run command", exact: true })
-    .click();
+  await palette.getByRole("button", { name: "Run", exact: true }).click();
   expect(prompts[0]).toMatchObject({ message: "/review scoped changes" });
   expect(prompts[0]).not.toHaveProperty("attachmentIds");
   expect(prompts[0]).not.toHaveProperty("behavior");
@@ -441,8 +439,8 @@ test("preparation sizes each action locally and holds it through pending run-sta
     await page.setViewportSize({ width, height: 900 });
     const widths: number[] = [];
     for (const [command, label, busy, queue] of [
-      ["review", "Run command", false, false],
-      ["plan", "Send prepared prompt", false, false],
+      ["review", "Run", false, false],
+      ["plan", "Send", false, false],
       ["plan", "Steer Pi", true, false],
       ["plan", "Queue prompt", true, true],
     ] as const) {
@@ -494,7 +492,7 @@ test("preparation sizes each action locally and holds it through pending run-sta
       }
       await expect(palette).toHaveCount(0);
     }
-    expect(widths[0]).toBeLessThan(widths[1]!);
+    expect(widths[0]).toBeLessThan(widths[3]!);
     expect(widths[2]).toBeLessThan(widths[3]!);
   }
   await commandSession.assertDraft();
@@ -517,9 +515,7 @@ test.describe("touch commands", () => {
     await expect(prepared).toHaveValue("/review scoped changes\n");
     expect(commandSession.prompts).toEqual([]);
     await prepared.press("Backspace");
-    await palette
-      .getByRole("button", { name: "Run command", exact: true })
-      .tap();
+    await palette.getByRole("button", { name: "Run", exact: true }).tap();
     expect(commandSession.prompts).toMatchObject([
       { message: "/review scoped changes" },
     ]);
