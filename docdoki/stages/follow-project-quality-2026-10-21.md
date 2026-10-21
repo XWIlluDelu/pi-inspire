@@ -15,6 +15,8 @@ scope:
 Review high-value workflows across the project against [[northstar]], preserving the user's native
 Pi settings, sessions and extensions. Fix demonstrated problems with clear repair directions,
 retain useful regressions, and ask before changing product semantics or adding capabilities.
+Continue until no demonstrated major correctness, reliability or performance problem remains worth
+addressing; do not expand into cosmetic changes or classify an isolated flake as a product defect.
 
 ## Current state
 
@@ -34,6 +36,27 @@ retain useful regressions, and ask before changing product semantics or adding c
 - No Pi runtime source or native cancellation behavior changes belong to these repairs. The
   initial review retained existing bounded/incremental read paths rather than adding another cache
   without evidence of material cost. [[performance]] owns the maintained measurement procedures.
+
+## Current review evidence
+
+- Session switching and recovery: addressed writes, latest-selection ownership, unavailable-workspace
+  history, restored-workspace admission and confirmed worker retirement pass the targeted Runtime
+  and browser-store checks. No new major defect was demonstrated in these paths.
+- Native execution: isolated real-Pi checks confirm receipt reobservation does not execute a shell
+  twice, shell Stop uses `abort_bash`, hook dialogs remain answerable, and unexpected worker exit
+  retains an unknown outcome without fabricated terminal metadata. These test the existing owned-RPC
+  contract; they do not add shell control to native TUI connections.
+- Transport/history/resources: addressed snapshot barriers, heartbeat/backlog bounds, retained-content
+  search/cancellation, incremental catalog summaries, byte ranges and disconnect-time file release
+  pass their focused suites. Existing projection measurements and bounded/incremental paths do not
+  justify another cache. Public DNS/TLS/proxy latency is not measured by these loopback fixtures.
+- CI run 39537796587: macOS passes all phases, including native WebKit; Windows passes Chromium,
+  Trash/recovery and launcher checks. Its sole unit failure is the installed SSH runner silently
+  skipping `init` through a directory junction. Entry detection now uses Node's `import.meta.main`
+  (available before the supported Node 22.19 baseline); both real CLI assertions remain unchanged,
+  and the targeted SSH package/lifecycle suites pass locally. Windows Chromium's one successful
+  layout retry is a separate flake, not evidence of a major product defect. Linux quality remains
+  in progress; the revised entry path still needs native Windows CI confirmation.
 
 ## Next actions
 
