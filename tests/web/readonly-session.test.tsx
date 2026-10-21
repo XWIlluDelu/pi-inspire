@@ -87,11 +87,12 @@ it.each([
       reason === "workspace-unavailable"
         ? "Project folder unavailable. This session is read-only."
         : reason === "external-active"
-          ? "Open in another Pi. History is read-only; reopen this session after the other Pi releases it."
+          ? "Open in another Pi. Read-only here; reopen after it releases the session."
           : "Pi connection unavailable. History remains readable; reopen this session to check its connection.";
     expect(screen.getByText(notice)).toBeInTheDocument();
     const settings = within(screen.getByLabelText("Session settings"));
     expect(settings.getByText("example/session-model")).toBeInTheDocument();
+    expect(settings.getByText("Thinking")).toBeInTheDocument();
     expect(settings.getByText("xhigh")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Model" })).toBeNull();
     expect(

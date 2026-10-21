@@ -412,7 +412,7 @@ const ConversationStage = memo(function ConversationStage() {
               </dd>
             </div>
             <div>
-              <dt>Effort</dt>
+              <dt>Thinking</dt>
               <dd>{state.thinkingLevel}</dd>
             </div>
           </dl>
@@ -420,7 +420,7 @@ const ConversationStage = memo(function ConversationStage() {
             {state.readOnlyReason === "workspace-unavailable"
               ? "Project folder unavailable. This session is read-only."
               : state.readOnlyReason === "external-active"
-                ? "Open in another Pi. History is read-only; reopen this session after the other Pi releases it."
+                ? "Open in another Pi. Read-only here; reopen after it releases the session."
                 : "Pi connection unavailable. History remains readable; reopen this session to check its connection."}
           </p>
         </div>

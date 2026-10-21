@@ -411,8 +411,8 @@ rightmost Send (with conflict recovery following the exception above).
 [[design-system]] owns sizing; project identity is in the topbar under [[workbench]].
 
 Read-only history retains a static readout of the viewed session's selected provider/model identity
-and thinking effort above its existing read-only notice. It uses the session snapshot, not Host defaults
-or physical response identity. An unknown model stays unavailable rather than borrowing a catalog choice.
+and thinking effort above its read-only notice, sharing a left edge and the normal toolbar's
+Model/Thinking terminology. It uses the session snapshot, not Host defaults or physical response identity. An unknown model stays unavailable rather than borrowing a catalog choice.
 These readouts neither expose selection controls nor initiate discovery, writes or ownership acquisition.
 
 The model picker groups/searches Pi choices by provider/ID/display name, with Common first and a
