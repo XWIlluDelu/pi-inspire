@@ -20,6 +20,13 @@ addressing; do not expand into cosmetic changes or classify an isolated flake as
 
 ## Current state
 
+- The reviewed source `f67d6eef659ca4500bf39167c8460813d5d2a85d` passes all seven jobs in
+  [CI run 39574685523](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39574685523), including
+  Linux/macOS/Windows workflows and three installed-package checks. Annotated tag
+  [v0.6.0](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.0) points to that source; there is no
+  GitHub Release or uploaded release-asset distribution. No demonstrated major
+  issue remains from this review. The earlier failed runs below retain their diagnostic context;
+  they are not outstanding release blockers. Production activation is separate.
 - Resource preview observations now share the bounded transfer/cancellation boundary with uploads
   (`f1c9169`). Loaded Pi command names, including Unicode and punctuation, remain executable through
   preparation and normalized delivery (`1ff7a1e`). Their new tests pass in the Linux, macOS and
@@ -113,13 +120,13 @@ addressing; do not expand into cosmetic changes or classify an isolated flake as
 
 ## Next actions
 
-- [ ] Confirm final CI for the terminal fixes and Windows Settings fixture correction. The parent
-  observes GitHub; no long-running local watch is needed.
+- [x] Confirm exact final CI for the terminal, Settings and test-fixture corrections: all seven
+  jobs pass at f67d6ee. No long-running local watch or repeated whole-suite run was needed.
 - [x] Complete the requested terminal design review and focused repairs without broadening into a
   negotiation framework. Public network latency and arbitrary extensions remain outside these checks.
-- [ ] Continue [[follow-release-0-6-0-2026-10-21]] after the source boundary is fixed. Production
-  activation is distinct from source/build verification; no Host restart or terminal migration was
-  performed, and an upgrade that ends existing PTYs still requires operator approval.
+- [x] Complete [[follow-release-0-6-0-2026-10-21]] with annotated tag v0.6.0, documentation and
+  screenshots. Production activation is distinct from tagging; no Host restart or terminal
+  migration was performed. An upgrade ending existing PTYs requires approval.
 
 ## Decisions
 
