@@ -1616,15 +1616,16 @@ export class AppStore {
     input: string,
     behavior?: "steer" | "followUp",
   ): Promise<PromptAcceptedResponse | false> => {
-    const invocation = parseCommandInvocation(input);
+    const inventory = resolveCommandInventory(this.state.commands);
+    const invocation = parseCommandInvocation(input, (name) =>
+      inventory.some((command) => command.name === name),
+    );
     if (!invocation) {
       this.notify("warning", "Enter a slash command to prepare");
       return false;
     }
     if (parseNativeCommand(input)) return this.runPaletteNativeCommand(input);
-    const command = resolveCommandInventory(this.state.commands).find(
-      (item) => item.name === invocation.name,
-    );
+    const command = inventory.find((item) => item.name === invocation.name);
     if (!command || command.source === "builtin") {
       this.notify(
         "warning",
@@ -2023,9 +2024,12 @@ export class AppStore {
 
     if (message.trim().startsWith("!"))
       return this.composer.send(message.trim(), undefined, onHandoff);
-    const invocation = parseCommandInvocation(message);
+    const inventory = resolveCommandInventory(this.state.commands);
+    const invocation = parseCommandInvocation(message, (name) =>
+      inventory.some((command) => command.name === name),
+    );
     if (invocation) {
-      const dynamic = resolveCommandInventory(this.state.commands).find(
+      const dynamic = inventory.find(
         (command) => command.name === invocation.name,
       );
       if (!dynamic) {

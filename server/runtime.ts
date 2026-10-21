@@ -2632,7 +2632,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         409,
       );
     assertPublicPrompt(slot, entered);
-    const invocation = parseCommandInvocation(entered);
+    const invocation = parseCommandInvocation(entered, (name) =>
+      runtimeResourceOwnsCommand(slot, name),
+    );
     const native = parseNativeCommand(entered);
     if (invocation && !native && slot.process && slot.ready)
       await this.readRuntimeCommands(slot, slot.process);

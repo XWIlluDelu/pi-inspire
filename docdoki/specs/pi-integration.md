@@ -77,8 +77,10 @@ and errors omit stored or resolved keys/tokens.
 Pi RPC enumerates extension, prompt, and skill commands but not interactive built-ins.
 `shared/commands.ts` reserves the installed interactive built-in vocabulary before resource dispatch,
 matching Pi's interactive client. Within resources, preserve Pi's first wire owner. Namespaced
-extension commands remain available. Names are case-sensitive. First-message completion hides native
-commands needing a session without exposing colliding resources instead. Browser commands reuse
+extension commands remain available. Names are case-sensitive. Exact inventory matches also admit
+Pi-registered Unicode and punctuated names without classifying other filesystem paths as commands.
+First-message completion hides native commands needing a session without exposing colliding resources
+instead. Browser commands reuse
 existing surfaces, including Models settings for `/scoped-models`, `/login` and `/logout`; Host
 commands own compaction, export and reload. Terminal-only commands expose precise copy/open guidance.
 `/bug` neither uploads a report nor sends its description to the model.

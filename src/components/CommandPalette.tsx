@@ -126,11 +126,17 @@ export const CommandPalette = memo(function CommandPalette({
     text: string;
   } | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const commandInventory = useMemo(
+    () => resolveCommandInventory(state.commands),
+    [state.commands],
+  );
   const preparedInvocation = preparation
-    ? parseCommandInvocation(preparation.text)
+    ? parseCommandInvocation(preparation.text, (name) =>
+        commandInventory.some((command) => command.name === name),
+      )
     : null;
   const preparedCommand = preparedInvocation
-    ? resolveCommandInventory(state.commands).find(
+    ? commandInventory.find(
         (command) => command.name === preparedInvocation.name,
       )
     : undefined;
