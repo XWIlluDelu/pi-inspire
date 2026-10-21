@@ -7,18 +7,27 @@ scope:
   - docs/**
 ---
 
-# Prepare 0.6.0
+# Tag 0.6.0
 
 ## Objective
 
-Prepare an accurate 0.6.0 candidate, user documentation and real application screenshots.
-This stage does not authorize a tag, npm publication or GitHub release.
+Record annotated tag v0.6.0 for the verified source, user documentation and real application
+screenshots. The requested deliverable is the tag, not a GitHub Release or uploaded assets.
+Production activation remains a separate operator action.
 
 ## Current state
 
-- The existing release baseline is annotated tag `v0.5.5`. The documented distribution path is
-  `release:verify` → `npm pack` → tarball installation; there is no release workflow to replace.
-  The public npm registry currently returns 404 for `inspire-pi-gui`.
+- Annotated tag [v0.6.0](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.0) was created on
+  2026-10-21 and resolves to `f67d6eef659ca4500bf39167c8460813d5d2a85d`. All seven jobs in
+  [CI run 39574685523](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39574685523) pass,
+  including the three installed-package verifications. Production dependency audit reports zero
+  advisories. No whole-suite rerun was needed to create the tag.
+- Previous baseline: annotated tag `v0.5.5`. Version 0.6.0 has no GitHub Release or uploaded
+  release-asset distribution. The documented local package flow remains
+  `release:verify` → `npm pack` → tarball installation; no npm publication was introduced.
+- Exact-source package verification used the committed prepack mechanism and lockfile dependencies.
+  Documentation/status corrections do not move the tag. The running Host and production build
+  are not upgraded.
 - Merge `0ed3d6c` preserves the published quality line and the completed PWA/workbench refinements
   without rewriting either history. Candidate scope is fixed; package.json, both root lockfile
   versions and the documented tarball name now use 0.6.0. CHANGELOG.md is included in the package.
@@ -61,12 +70,14 @@ This stage does not authorize a tag, npm publication or GitHub release.
 
 - [x] Fix the candidate source boundary and synchronize package.json, both root lockfile version
   entries and the documented tarball name. A local candidate build is not the running Host version.
-- [ ] Confirm final-source CI and three-platform installed-package checks after the test-fixture
-  corrections. Run 39568826267 passes all three package checks but exposes the unit/clipboard
-  issues below; it is not a release-ready result. No release or tag is authorized before the gates close.
+- [x] Confirm exact-source CI and three-platform installed-package checks: run 39574685523 at
+  f67d6ee passes all seven jobs. Earlier failed runs are diagnostic history, not current blockers.
 - [x] Prepare a concise changelog from the integrated v0.5.5..candidate diff, retaining upgrade
   requirements and actual capability limits. The existing tarball workflow is unchanged.
 - [x] Build the candidate and capture the existing eight filenames with a real isolated application
   and synthetic content, including the 390px mobile image. Inspect pixels, text, version and privacy.
-- [ ] Obtain the separate release/tag go-ahead after these gates. Production Host restart remains an
-  operator action; terminal migration that ends PTYs requires explicit approval.
+- [x] Create annotated tag v0.6.0. No GitHub Release, uploaded assets or npm publication are
+  requested for this version.
+- Production Host restart remains an operator action. No Host, daemon, service unit or existing PTY
+  was operated on during tagging; migrating an incompatible old daemon still requires explicit
+  approval to end its terminal work.

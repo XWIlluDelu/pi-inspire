@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0 — Unreleased
+## 0.6.0 — 2026-10-21
 
 Changes since [v0.5.5](https://github.com/XWIlluDelu/pi-inspire/tree/v0.5.5).
 
