@@ -1,6 +1,6 @@
 {
   "name": "inspire-pi-gui",
-  "version": "0.5.5",
+  "version": "0.6.0",
   "description": "A cross-platform local web workbench for Pi Coding Agent",
   "type": "module",
   "license": "MIT",
@@ -23,6 +23,7 @@
   },
   "files": [
     "build/",
+    "CHANGELOG.md",
     "connections/",
     "deploy/",
     "dist/",
