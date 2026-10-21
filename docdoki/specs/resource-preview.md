@@ -212,7 +212,9 @@ respects intrinsic aspect ratio, including viewBox-only SVGs, without tinting le
 
 Text transfer is capped at 256 KiB, with a marker at the Source cutoff and in truncated Markdown/HTML
 Preview. Image, PDF, audio, and video blobs are capped at 32 MiB. Loaded content size replaces the
-resolve-time size estimate.
+resolve-time size estimate. Preview transfers bound headers and body to 120 seconds plus allowance
+at 128 KiB/s of the requested byte limit. Expiry ends the read and shows a preview error; selection
+replacement cancels observation even if the transport ignores abort.
 
 ### Documents and local images
 

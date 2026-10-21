@@ -203,6 +203,8 @@ export interface SessionDetailInterest {
   type: "detail_interest";
   sessionId: string | null;
   revision: number;
+  authorityId?: string;
+  snapshotDigest?: string;
 }
 
 export function isSessionRuntimeStatus(
@@ -1232,6 +1234,13 @@ export interface ActiveSnapshot {
   extensionDisplays?: ExtensionDisplay[];
   extensionStatuses?: Record<string, string>;
 }
+
+export interface SnapshotWitness {
+  authorityId: string;
+  snapshotDigest: string;
+}
+
+export type SessionOpenResponse = ActiveSnapshot & SnapshotWitness;
 
 export interface BootstrapResponse {
   /** Stable wire identifier; visual branding lives in the client. */

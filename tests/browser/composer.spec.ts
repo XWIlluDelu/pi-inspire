@@ -119,7 +119,13 @@ test("composer selectors stay readable in narrow desktop panes without moving or
       if (snapshot.active) source = structuredClone(snapshot);
     },
     event: (event) => {
-      if (event.type === "snapshot" && event.data?.active)
+      // A valid unchanged confirmation has an addressed owner without data.
+      if (
+        event.type === "snapshot" &&
+        source?.active &&
+        (event.detailSessionId ?? event.data?.active?.sessionId) ===
+          source.active.sessionId
+      )
         envelope = { ...event };
     },
   });

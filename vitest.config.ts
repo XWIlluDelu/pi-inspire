@@ -18,10 +18,19 @@ export default defineConfig({
           name: "node",
           include: [
             "tests/*.test.{ts,mjs}",
-            "tests/!(web|portable)/**/*.test.{ts,mjs}",
+            "tests/!(web|portable|integration)/**/*.test.{ts,mjs}",
             ...staticWebTests,
           ],
           environment: "node",
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "integration",
+          include: ["tests/integration/**/*.test.ts"],
+          environment: "jsdom",
+          setupFiles: ["tests/web/setup.ts"],
         },
       },
       {

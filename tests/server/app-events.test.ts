@@ -45,6 +45,91 @@ describe("WebSocket observation and transport limits", () => {
     return observed;
   }
 
+  it("confirms a stable large HTTP-open window without retransmitting its body and keeps the event barrier", async () => {
+    const window = await runtime.openSession("mock-active");
+    window.active!.transcriptPage.messages = [
+      {
+        role: "user",
+        content: "large window ".repeat(40_000),
+        timestamp: 1,
+      },
+    ];
+    const open = vi.spyOn(runtime, "openSession").mockResolvedValue(window);
+    const snapshot = vi.spyOn(runtime, "snapshot").mockResolvedValue(window);
+    const observed = await connect("detail=mock-older");
+    try {
+      observed.frames.length = 0;
+      const opened = await request(application.server)
+        .post("/api/sessions/open")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ id: "mock-active" })
+        .expect(200);
+      expect(JSON.stringify(opened.body).length).toBeGreaterThan(500_000);
+      let finish!: (value: typeof window) => void;
+      snapshot.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      const readsBefore = snapshot.mock.calls.length;
+      observed.socket.send(
+        JSON.stringify({
+          type: "detail_interest",
+          sessionId: "mock-active",
+          revision: 1,
+          authorityId: opened.body.authorityId,
+          snapshotDigest: opened.body.snapshotDigest,
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(snapshot.mock.calls.length).toBe(readsBefore + 1),
+      );
+      runtime.emit("event", {
+        type: "agent_start",
+        sessionId: "mock-active",
+        sessionStatus: { runState: "running" },
+      });
+      expect(observed.frames).toEqual([]);
+      finish(window);
+      await vi.waitFor(() => expect(observed.frames).toHaveLength(2));
+      expect(observed.frames[0]).toMatchObject({
+        unchanged: true,
+        detailRevision: 1,
+      });
+      expect(observed.frames[0]).not.toHaveProperty("data");
+      expect(observed.frames[1]?.type).toBe("agent_start");
+      expect(Buffer.byteLength(JSON.stringify(observed.frames))).toBeLessThan(
+        2_000,
+      );
+
+      for (const [revision, authorityId, value] of [
+        [2, opened.body.authorityId, { ...window, runState: "running" }],
+        [3, "00000000-0000-4000-8000-000000000000", window],
+      ] as const) {
+        snapshot.mockResolvedValueOnce(value);
+        observed.socket.send(
+          JSON.stringify({
+            type: "detail_interest",
+            sessionId: "mock-active",
+            revision,
+            authorityId,
+            snapshotDigest: opened.body.snapshotDigest,
+          }),
+        );
+        await vi.waitFor(() =>
+          expect(
+            observed.frames.find((f) => f.detailRevision === revision),
+          ).toHaveProperty("data"),
+        );
+      }
+    } finally {
+      open.mockRestore();
+      snapshot.mockRestore();
+      observed.socket.close();
+    }
+  });
+
   it("retains detail before synchronization and releases only the departing subscription", async () => {
     const observers = new Map<string, number>();
     Object.assign(runtime, {

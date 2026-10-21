@@ -75,6 +75,44 @@ describe("websocket lifecycle", () => {
     });
     expect(store.getState().tools).toEqual({});
   });
+  it("carries the authority-bound HTTP-open digest into detail interest and accepts unchanged confirmation", async () => {
+    const next = activeSnapshot({ sessionId: "s2" });
+    installFetch((url, init) =>
+      url === "/api/sessions/open"
+        ? {
+            body: {
+              ...next,
+              authorityId: "11111111-1111-4111-8111-111111111111",
+              snapshotDigest: "b".repeat(64),
+            },
+          }
+        : baseRoutes(url, init),
+    );
+    const { store, socket } = await initStore();
+    await store.openSession("s2");
+    expect(JSON.parse(socket.sent[0]!)).toEqual({
+      type: "detail_interest",
+      sessionId: "s2",
+      revision: 1,
+      authorityId: "11111111-1111-4111-8111-111111111111",
+      snapshotDigest: "b".repeat(64),
+    });
+    socket.emit({
+      type: "snapshot",
+      unchanged: true,
+      detailSessionId: "s2",
+      detailRevision: 1,
+      snapshotDigest: "b".repeat(64),
+    });
+    expect(store.getState()).toMatchObject({
+      sessionId: "s2",
+      connection: "open",
+    });
+    expect(store.getState().messages).toEqual(
+      next.active!.transcriptPage.messages,
+    );
+  });
+
   it("commits selection interest on the existing socket and addresses resync and fallback bootstrap", async () => {
     const reads: string[] = [];
     installFetch((url, init) => {

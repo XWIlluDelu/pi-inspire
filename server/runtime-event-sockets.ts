@@ -545,6 +545,11 @@ export function createRuntimeEventSockets({
             type: z.literal("detail_interest"),
             sessionId: sessionIdField.nullable(),
             revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+            authorityId: z.string().uuid().optional(),
+            snapshotDigest: z
+              .string()
+              .regex(/^[0-9a-f]{64}$/u)
+              .optional(),
           })
           .strict()
           .parse(JSON.parse(data.toString()));
@@ -555,7 +560,12 @@ export function createRuntimeEventSockets({
         flushStreamBatch();
         setDetailInterest(socket, interest);
         backgroundStatuses.delete(socket);
-        requestedSnapshotDigests.set(socket, null);
+        requestedSnapshotDigests.set(
+          socket,
+          interest.authorityId === authorityId
+            ? (interest.snapshotDigest ?? null)
+            : null,
+        );
         synchronize();
       } catch {
         socket.close(1008, "Invalid detail interest");
