@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
+import type { HostUpdateStatus } from "../../shared/contracts";
 import { modelSettingsScenario } from "./fixtures/model-settings";
 import { clipboardLines } from "./support/clipboard";
 import { hostRequest } from "./support/host-request";
+import { routeMockSnapshots } from "./support/mock-host";
 import {
   openCommandPalette,
   pairAndOpen,
@@ -11,6 +13,130 @@ import { textMarkOffsets } from "./support/text-baseline";
 
 // These suites own mocked Host responses, not Service Worker fetch handling.
 test.use({ serviceWorkers: "block" });
+
+test("update-check labels keep button geometry stable through submission, checking and results", async ({
+  page,
+}) => {
+  let status: HostUpdateStatus = {
+    revision: 10_000,
+    piUpdateCheck: null,
+    inspireUpdateCheck: null,
+    piUpdateChecking: false,
+    inspireUpdateChecking: false,
+    availableUpdateIdentity: null,
+    updateSnoozedUntil: null,
+  };
+  const transport = await routeMockSnapshots(page, {
+    bootstrap: (body) => {
+      body.updateStatus = status;
+    },
+  });
+  let release: (() => void) | undefined;
+  let responseReady: Promise<void>;
+  await page.route(/\/api\/(?:pi-)?update\?refresh=1$/, async (route) => {
+    await responseReady;
+    await route.fulfill({ json: { updateStatus: status } });
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await pairedPage(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Settings categories" })
+    .getByRole("button", { name: "System", exact: true })
+    .click();
+  const versions = page.locator("#settings-section-updates");
+  const button = versions.getByRole("button", {
+    name: "Check for updates",
+    exact: true,
+  });
+  const label = button.locator(
+    '.system-versions__check-label > [aria-hidden="false"]',
+  );
+  const publish = (patch: Partial<typeof status>) => {
+    status = { ...status, ...patch, revision: status.revision + 1 };
+    transport.send({ type: "update_status", updateStatus: status });
+  };
+  try {
+    for (const width of [1280, 820, 390, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const theme of ["light", "dark"]) {
+        await page.evaluate((theme) => {
+          document.documentElement.dataset.theme = theme;
+        }, theme);
+        publish({ piUpdateCheck: null, inspireUpdateCheck: null });
+        await expect(label).toHaveText("Check updates");
+        await page.evaluate(() => document.fonts.ready);
+        await page
+          .getByRole("dialog", { name: "Settings", exact: true })
+          .evaluate((el) =>
+            Promise.allSettled(
+              el.getAnimations().map((animation) => animation.finished),
+            ),
+          );
+        const before = (await button.boundingBox())!;
+        const stable = async (text: string) => {
+          await expect(label).toHaveText(text);
+          await expect(label).toBeVisible();
+          const after = (await button.boundingBox())!;
+          for (const key of ["x", "y", "width", "height"] as const)
+            expect(
+              after[key],
+              `${width} / ${theme} / ${text} / ${key}`,
+            ).toBeCloseTo(before[key], 1);
+          expect(
+            await versions
+              .locator(".settings__section-title-wrap")
+              .evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+          ).toBe(true);
+        };
+        responseReady = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        await button.click();
+        await stable("Submitting…");
+        status = {
+          ...status,
+          revision: status.revision + 1,
+          piUpdateChecking: true,
+        };
+        release!();
+        await stable("Checking…");
+        publish({
+          piUpdateChecking: false,
+          piUpdateCheck: {
+            currentVersion: "1.0.0",
+            pi: {
+              kind: "available",
+              latestVersion: "1.1.0",
+              releaseUrl: "https://example.invalid/pi",
+            },
+            extensions: { kind: "none" },
+          },
+          inspireUpdateCheck: { kind: "current" },
+        });
+        await stable("Check again");
+        await expect(button).toBeEnabled();
+        await expect(
+          versions.getByRole("button", {
+            name: "Copy update details",
+            exact: true,
+          }),
+        ).toBeVisible();
+        publish({
+          piUpdateCheck: {
+            currentVersion: "1.0.0",
+            pi: { kind: "unavailable" },
+            extensions: { kind: "unavailable" },
+          },
+          inspireUpdateCheck: { kind: "unavailable" },
+        });
+        await stable("Check again");
+      }
+    }
+  } finally {
+    release?.();
+  }
+});
 
 test("selected Settings categories remain visible across responsive layouts without trapping manual navigation scrolling", async ({
   page,

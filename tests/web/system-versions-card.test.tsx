@@ -138,7 +138,11 @@ describe("System versions", () => {
     fixture.state.inspireUpdateChecking = true;
     const { rerender } = render(<SystemVersionsCard />);
     const check = screen.getByRole("button", { name: "Check for updates" });
-    expect(check).toHaveTextContent("Submitting…");
+    const activeLabel = () =>
+      check.querySelector(
+        '.system-versions__check-label > [aria-hidden="false"]',
+      );
+    expect(activeLabel()).toHaveTextContent(/^Submitting…$/);
     expect(check).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "Copy update details" }),
@@ -156,14 +160,14 @@ describe("System versions", () => {
     fixture.state.piUpdateChecking = true;
     fixture.state.inspireUpdateChecking = false;
     rerender(<SystemVersionsCard />);
-    expect(check).toHaveTextContent("Checking…");
+    expect(activeLabel()).toHaveTextContent(/^Checking…$/);
     expect(check).toBeDisabled();
     expect(row("Pi").getByText("Checking…")).toBeVisible();
     expect(row("Extensions").getByText("Checking…")).toBeVisible();
 
     fixture.state.piUpdateChecking = false;
     rerender(<SystemVersionsCard />);
-    expect(check).toHaveTextContent("Check again");
+    expect(activeLabel()).toHaveTextContent(/^Check again$/);
     expect(check).toBeEnabled();
     expect(
       screen.getByRole("link", { name: "v1.1.0 available ↗" }),

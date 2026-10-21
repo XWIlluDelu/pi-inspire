@@ -509,7 +509,9 @@ keep their existing behavior. Embedded documents retain their own styles.
   Anchored menus inside filtered overlays convert viewport measurements into the
   overlay's fixed-position coordinates, accounting for its scroll offset and reserved
   window chrome without changing the trigger gap. Settings update checks use the same section/card geometry as preferences, with compact rows
-  for Pi, Extensions, and INSΠRE. Settings and Terminal settings categories show one page at a time
+  for Pi, Extensions, and INSΠRE. The update-check button reserves its longest state label so
+  submission, checking, and repeat-check feedback do not shift its width or neighboring actions.
+  Settings and Terminal settings categories show one page at a time
   within their dialog frame, with fixed navigation and utility footer. Both use the same safe-area-aware
   narrow frame. Narrow category selection uses one accent underline without a selected card fill,
   border or shadow; keyboard focus keeps the shared outline.
@@ -634,7 +636,8 @@ Wide palettes retain their compact, right-aligned secondary column.
 Code-block Copy and Insert in terminal remain compact 24px controls on mouse layouts.
 Coarse-pointer layouts use separate 36px targets with an 8px gap, without enlarging their glyphs
 or sharing a hit area. Their 13px square glyphs remain centered and do not shrink into browser-default
-button padding. Hover feedback is mouse-only; touch has local pressed feedback.
+button padding. Keyboard focus rings stay inside these targets rather than clipping against the
+compact header or crossing its separator. Hover feedback is mouse-only; touch has local pressed feedback.
 
 Copy, Fork, Pending Return/Clear and similar actions share three presentation types:
 

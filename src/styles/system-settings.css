@@ -10,6 +10,20 @@
   gap: var(--space-1);
 }
 
+/* All state labels share one cell so the longest reserves the button width. */
+.system-versions__check-label {
+  display: grid;
+  text-align: center;
+}
+
+.system-versions__check-label > span {
+  grid-area: 1 / 1;
+}
+
+.system-versions__check-label > [aria-hidden="true"] {
+  visibility: hidden;
+}
+
 .system-versions__copy-error {
   margin: 0;
   padding: var(--set-row-pad);
