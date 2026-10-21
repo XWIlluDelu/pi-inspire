@@ -19,7 +19,7 @@ export function parseRpcEntryChain(
   value: unknown,
   options: {
     expectedParentId: string | null;
-    maxEntries: number;
+    maxEntries?: number;
     maxBytes: number;
     label: string;
   },
@@ -33,7 +33,8 @@ export function parseRpcEntryChain(
   const response = value as Record<string, unknown>;
   if (
     !Array.isArray(response.entries) ||
-    response.entries.length > options.maxEntries
+    (options.maxEntries !== undefined &&
+      response.entries.length > options.maxEntries)
   )
     throw invalid("invalid");
   const entries: SessionEntry[] = [];

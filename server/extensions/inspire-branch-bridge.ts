@@ -14,6 +14,7 @@ import {
   MODEL_REFRESH_TIMEOUT_MS,
   PENDING_IMAGE_SUFFIX,
   RETRY_STATE_SUFFIX,
+  UI_RELOAD_SUFFIX,
   type RetryStateRequest,
   type RetryStateResult,
 } from "../../shared/branch-bridge-protocol.js";
@@ -108,7 +109,22 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
 
   registerProviderAuthBridge(pi, { command, statusKey, workerId });
 
-  pi.on("session_start", (_event, ctx) => {
+  pi.on("session_start", (event, ctx) => {
+    // This explicit Host extension loads before configured extensions. Clear
+    // the prior runtime (including shutdown UI) before their startup handlers.
+    if (event.reason === "reload" && ctx.mode === "rpc") {
+      ctx.ui.setStatus(
+        `${statusKey}${UI_RELOAD_SUFFIX}`,
+        encodeBranchBridgeJson(
+          {
+            v: BRANCH_BRIDGE_VERSION,
+            workerId,
+            sessionId: ctx.sessionManager.getSessionId(),
+          },
+          BRANCH_BRIDGE_MAX_RESULT_BYTES,
+        ),
+      );
+    }
     if (ctx.mode === "rpc" && !ctx.isProjectTrusted()) {
       ctx.ui.notify(
         "Pi is skipping trust-protected project settings and resources. Review this folder with /trust in terminal Pi, then Reload this session.",

@@ -7,6 +7,7 @@ import {
   within,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
+import { TaskBoardAdapter } from "../../docs/examples/task-board/TaskBoardAdapter";
 import { App } from "../../src/App";
 import {
   deleteSessionDraft,
@@ -167,6 +168,69 @@ function runBusy() {
 }
 
 describe("command discovery and preparation", () => {
+  it("runs source-DIY task actions only from inventory, preserves artifacts, and resets on session change", async () => {
+    await savedDraft();
+    const details = {
+      version: 1,
+      tasks: [
+        {
+          id: "task-1",
+          name: "Review input",
+          status: "running",
+          summary: "Demo timer is running",
+          details: "Local demo work",
+          notes: "Saved notes",
+          capabilities: { stop: true, retry: false, open: true },
+        },
+      ],
+    };
+    const message = {
+      role: "custom",
+      customType: "example-task-board",
+      content: "Demo tasks",
+      details,
+    };
+    const snapshot = (available: boolean) =>
+      activeSnapshot({
+        commands: [
+          ...commands,
+          ...(available
+            ? [{ name: "demo-tasks-stop", source: "extension" }]
+            : []),
+        ],
+        pageMessages: [message],
+      });
+    act(() =>
+      FakeWebSocket.instances
+        .at(-1)
+        ?.emit({ type: "snapshot", data: snapshot(false) }),
+    );
+    render(<TaskBoardAdapter />);
+    fireEvent.click(screen.getByRole("button", { name: /Review input/ }));
+    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+    act(() =>
+      FakeWebSocket.instances
+        .at(-1)
+        ?.emit({ type: "snapshot", data: snapshot(true) }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(prompts).toHaveLength(1));
+    expect(prompts[0]).toMatchObject({ message: "/demo-tasks-stop task-1" });
+    expect(prompts[0]).not.toHaveProperty("attachmentIds");
+    expect(sessionDraft("s1")).toBe("UNFINISHED DRAFT");
+    expect(store.getState().attachments[0]?.uploadedId).toBe("upload-a");
+    act(() =>
+      FakeWebSocket.instances.at(-1)?.emit({
+        type: "snapshot",
+        data: activeSnapshot({ sessionId: "s2", pageMessages: [] }),
+      }),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Back to tasks" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/No task snapshot is loaded/)).toBeInTheDocument();
+  });
+
   it("keeps defaults compact, ranks destinations/aliases, and labels terminal limits", async () => {
     render(<App />);
     const input = await palette();

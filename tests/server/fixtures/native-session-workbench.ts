@@ -20,7 +20,11 @@ import { isolatedTestEnvironment } from "./isolated-environment.js";
 
 export async function nativeSessionWorkbench(
   cleanup: Array<() => Promise<unknown>>,
-  { openSource = true, workspaceName = "workspace" } = {},
+  {
+    openSource = true,
+    workspaceName = "workspace",
+    extraExtensions = [] as readonly string[],
+  } = {},
 ) {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), "inspire-export-test-")),
@@ -216,6 +220,7 @@ export async function nativeSessionWorkbench(
         "--thinking",
         "off",
         ...(options.args ?? []),
+        ...extraExtensions.flatMap((path) => ["--extension", path]),
       ],
       env: isolatedTestEnvironment(directory, {
         ...options.env,
