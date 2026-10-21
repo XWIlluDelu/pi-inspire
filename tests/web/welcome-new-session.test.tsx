@@ -218,6 +218,8 @@ afterEach(() => {
 
 describe("new-session start surface", () => {
   it("addresses Models and MCP settings with New's selected directory before creating a session", async () => {
+    // Workspace ownership is independent of the lazy surface's chunk arrival.
+    await import("../../src/components/Settings");
     act(() =>
       FakeWebSocket.instances.at(-1)!.emit({
         type: "snapshot",

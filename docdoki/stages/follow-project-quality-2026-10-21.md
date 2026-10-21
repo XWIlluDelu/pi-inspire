@@ -90,7 +90,10 @@ addressing; do not expand into cosmetic changes or classify an isolated flake as
 - [CI run 39552440372](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39552440372) confirms
   complete Linux quality, including the reader repair, all macOS phases, Windows Chromium and
   three packaged releases. Its sole failure is the Windows New-session settings ownership test's
-  wait for Settings navigation; no product-open failure has been demonstrated.
+  wait for Settings navigation; no product-open failure has been demonstrated. Delaying the real
+  Settings module import reproduces that exact failure. The workspace-ownership case now preloads
+  the actual surface before opening it, preserving Models/MCP interactions and directory assertions
+  without increasing timeouts. The temporary delay is removed; all 22 cases in the file pass.
 - The terminal follow-up finds three concrete lifecycle gaps: a startup connection failure was
   frozen for the Host lifetime; service start/enable silently stopped a transient owner; and a
   confirmed duplicate listener exited like a recoverable crash, allowing endless systemd retries.
