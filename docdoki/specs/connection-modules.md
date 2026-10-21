@@ -49,4 +49,5 @@ responses, marks tunnel-originated 502/503/504 failures, and describes optional 
 The module does not provision remote accounts, keys, DNS, proxies or firewalls.
 
 The release includes the dispatcher, module, service templates and [setup guide](../../docs/ssh-reverse.md).
+Package-layout regressions exercise direct and directory-alias CLI entry paths.
 [[remote-relay-options]] compares alternatives.

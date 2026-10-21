@@ -6,6 +6,7 @@ import {
   mkdir,
   readFile,
   readlink,
+  realpath,
   rename,
   rm,
   stat,
@@ -774,7 +775,13 @@ async function main() {
   await runSshReverseAction(root, action);
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+const entryPath = process.argv[1];
+const modulePath = fileURLToPath(import.meta.url);
+if (
+  entryPath &&
+  (entryPath === modulePath ||
+    (await realpath(entryPath).catch(() => null)) === modulePath)
+) {
   await main().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
