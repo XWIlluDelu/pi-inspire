@@ -316,6 +316,8 @@ const ConversationStage = memo(function ConversationStage() {
     (source) => ({
       sessionId: source.sessionId,
       readOnlyReason: source.readOnlyReason,
+      model: source.model,
+      thinkingLevel: source.thinkingLevel,
       messages: source.messages,
       transcriptActivityRanges: source.transcriptActivityRanges,
       promptMapTurns: source.promptMapTurns,
@@ -345,6 +347,9 @@ const ConversationStage = memo(function ConversationStage() {
     shallowEqual,
   );
   if (!state.sessionId) return null;
+  const modelIdentity = state.model
+    ? `${state.model.provider}/${state.model.id}`
+    : null;
 
   const transcript = (
     <Transcript
@@ -389,13 +394,36 @@ const ConversationStage = memo(function ConversationStage() {
         placement="aboveEditor"
       />
       {state.readOnlyReason ? (
-        <p className="composer-readonly" role="status">
-          {state.readOnlyReason === "workspace-unavailable"
-            ? "Project folder unavailable. This session is read-only."
-            : state.readOnlyReason === "external-active"
-              ? "Open in another Pi. History is read-only; reopen this session after the other Pi releases it."
-              : "Pi connection unavailable. History remains readable; reopen this session to check its connection."}
-        </p>
+        <div className="composer-readonly">
+          <dl
+            className="composer-readonly__settings"
+            aria-label="Session settings"
+          >
+            <div>
+              <dt>Model</dt>
+              <dd
+                title={
+                  state.model?.name
+                    ? `${state.model.name} — ${modelIdentity}`
+                    : (modelIdentity ?? undefined)
+                }
+              >
+                {modelIdentity ?? "Model unavailable"}
+              </dd>
+            </div>
+            <div>
+              <dt>Effort</dt>
+              <dd>{state.thinkingLevel}</dd>
+            </div>
+          </dl>
+          <p role="status">
+            {state.readOnlyReason === "workspace-unavailable"
+              ? "Project folder unavailable. This session is read-only."
+              : state.readOnlyReason === "external-active"
+                ? "Open in another Pi. History is read-only; reopen this session after the other Pi releases it."
+                : "Pi connection unavailable. History remains readable; reopen this session to check its connection."}
+          </p>
+        </div>
       ) : (
         <Composer />
       )}
