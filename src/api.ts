@@ -377,37 +377,51 @@ function contentTotalSize(response: Response, blob: Blob): number {
   return total;
 }
 
+/** Two minutes of overhead plus transfer time at 128 KiB/s. */
+function transferObservationTimeout(bytes: number): number {
+  return LONG_HTTP_OBSERVATION_TIMEOUT_MS + Math.ceil(bytes / 131_072) * 1_000;
+}
+
 async function fetchResourceContent(
   token: string | null,
   id: string,
   sessionId: string,
   options: ResourceContentOptions = {},
 ): Promise<ResourceContentResponse> {
-  const response = await applicationFetch(
-    `/api/resources/${encodeURIComponent(id)}/content?sessionId=${encodeURIComponent(sessionId)}`,
-    {
-      signal: options.signal,
-      credentials: "same-origin",
-      headers: {
-        ...authorizationHeader(token),
-        ...(options.byteLimit
-          ? { Range: `bytes=0-${Math.max(0, options.byteLimit - 1)}` }
-          : {}),
-      },
+  return observeRequest(
+    options.signal,
+    { timeoutMs: transferObservationTimeout(options.byteLimit ?? 0) },
+    async (signal) => {
+      const response = await applicationFetch(
+        `/api/resources/${encodeURIComponent(id)}/content?sessionId=${encodeURIComponent(sessionId)}`,
+        {
+          signal,
+          credentials: "same-origin",
+          headers: {
+            ...authorizationHeader(token),
+            ...(options.byteLimit
+              ? { Range: `bytes=0-${Math.max(0, options.byteLimit - 1)}` }
+              : {}),
+          },
+        },
+      );
+      await ensureOk(response);
+      let blob: Blob;
+      try {
+        blob = await response.blob();
+      } catch (error) {
+        if (aborted(error)) throw error;
+        throw new ApiTransportError("response");
+      }
+      if (options.byteLimit !== undefined && blob.size > options.byteLimit) {
+        throw new ApiError(
+          502,
+          "The resource response exceeded its byte limit",
+        );
+      }
+      return { blob, totalSize: contentTotalSize(response, blob) };
     },
   );
-  await ensureOk(response);
-  let blob: Blob;
-  try {
-    blob = await response.blob();
-  } catch (error) {
-    if (aborted(error)) throw error;
-    throw new ApiTransportError("response");
-  }
-  if (options.byteLimit !== undefined && blob.size > options.byteLimit) {
-    throw new ApiError(502, "The resource response exceeded its byte limit");
-  }
-  return { blob, totalSize: contentTotalSize(response, blob) };
 }
 
 async function uploadFiles(
@@ -417,15 +431,10 @@ async function uploadFiles(
 ): Promise<{ attachments: UploadedAttachment[] }> {
   const form = new FormData();
   for (const file of files) form.append("files", file, file.name);
-  // Allow two minutes of overhead plus transfer time at 128 KiB/s. The raw
-  // attachment cap also bounds this budget; uploads never inherit Pi's
-  // completion-driven command waits.
   const bytes = files.reduce((total, file) => total + file.size, 0);
-  const timeoutMs =
-    LONG_HTTP_OBSERVATION_TIMEOUT_MS + Math.ceil(bytes / 131_072) * 1_000;
   return observeRequest(
     signal,
-    { mutation: true, timeoutMs },
+    { mutation: true, timeoutMs: transferObservationTimeout(bytes) },
     async (signal) => {
       // No Content-Type header: the browser sets the multipart boundary.
       const response = await applicationFetch("/api/attachments", {
