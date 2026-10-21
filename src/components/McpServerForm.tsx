@@ -760,8 +760,8 @@ export function McpServerForm({
           className="button button--primary"
           disabled={busy || Boolean(file.error)}
         >
-          <ButtonLabel reserve="Save configuration">
-            {busy ? "Saving…" : "Save configuration"}
+          <ButtonLabel reserve="Saving…">
+            {busy ? "Saving…" : "Save"}
           </ButtonLabel>
         </button>
         <button

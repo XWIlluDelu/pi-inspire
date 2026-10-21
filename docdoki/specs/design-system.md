@@ -490,8 +490,9 @@ keep their existing behavior. Embedded documents retain their own styles.
   icons and Copy center against the attribution group, including when the sender wraps.
 - Button sizing follows local visual balance, not a shared equal-width rule. Stateful actions
   reserve only their own relevant labels where feedback would otherwise disturb the action row;
-  different actions and command delivery modes retain content-sized widths. Preparation keeps
-  the submitted action's label footprint while awaiting acceptance. Export stays a text action
+  different actions and command delivery modes retain content-sized widths. MCP forms use
+  `Save` / `Saving…` without repeating the configuration context. Preparation keeps the submitted
+  action's label footprint while awaiting acceptance. Export stays a text action
   in both states, without inserting a new icon only while busy.
 - Searchable menus use the same accent tint for pointer hover and keyboard candidates. Pointer
   movement and arrow navigation select one highlight mode; leaving a row removes its hover without

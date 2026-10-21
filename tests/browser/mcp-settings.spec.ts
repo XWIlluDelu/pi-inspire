@@ -178,9 +178,7 @@ test("MCP edits retain stored secrets and scope, keep drafts across categories, 
     await settings
       .getByLabel("Client name", { exact: true })
       .fill("Inspire fixture");
-    await settings
-      .getByRole("button", { name: "Save configuration", exact: true })
-      .click();
+    await settings.getByRole("button", { name: "Save", exact: true }).click();
     await expect(
       settings.getByText(
         "Saved to file. Running sessions have not been reloaded.",
@@ -234,9 +232,7 @@ test("MCP edits retain stored secrets and scope, keep drafts across categories, 
     const external = await fixture.json(fixture.projectFile);
     external.mcpServers.docs.timeout = 99;
     await writeFile(fixture.projectFile, JSON.stringify(external));
-    await settings
-      .getByRole("button", { name: "Save configuration", exact: true })
-      .click();
+    await settings.getByRole("button", { name: "Save", exact: true }).click();
     await expect(settings.getByRole("alert")).toContainText(
       "changed elsewhere",
     );
@@ -250,9 +246,7 @@ test("MCP edits retain stored secrets and scope, keep drafts across categories, 
       .getByRole("button", { name: "Refresh MCP files", exact: true })
       .click();
     await expect(settings.getByRole("alert")).toHaveCount(0);
-    await settings
-      .getByRole("button", { name: "Save configuration", exact: true })
-      .click();
+    await settings.getByRole("button", { name: "Save", exact: true }).click();
     await expect(
       settings.getByRole("button", { name: "Edit project server docs" }),
     ).toBeVisible();
@@ -395,7 +389,7 @@ test("narrow MCP form adds and removes scoped stdio definitions and focuses inhe
       ),
     ).toBe(true);
     const save = settings.getByRole("button", {
-      name: "Save configuration",
+      name: "Save",
       exact: true,
     });
     let releaseSave!: () => void;
