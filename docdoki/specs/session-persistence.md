@@ -75,18 +75,19 @@ selected/running work retains its worker.
   instead of exposing an unanswerable dialog or waiting for timeout; one-way startup UI remains
   allowed.
 
-  After start, the only accepted delta is one strictly bounded, direct, contiguous append composed
-  of installed-extension non-transcript `custom` state plus at most one missing
-  `thinking_level_change`; `get_entries`, `get_state`, and disk must agree byte-for-byte on every entry, parent,
-  final leaf, session, path, thinking level, and append lineage before the writer baseline advances.
+  After start, Pi and its extensions may persist native session entries. The delta must be a
+  complete, direct, contiguous append within the existing RPC transport limit, without a separate
+  startup size/count cap or entry-type whitelist. `get_entries`, `get_state`, and disk must agree
+  on every persisted entry, parent, final leaf, session, path, thinking level, and append lineage
+  before the writer baseline advances.
   After the final filesystem observation, the same worker must still own the slot and remain RPC
   available before readiness is published or the writer baseline advances. A retired worker cannot
   reset failure to idle or emit `runtime_ready`.
   This establishes state equivalence, not causal authorship: stock public RPC cannot distinguish an
   exactly matching entry from a prohibited concurrent writer in the interval after the second
-  baseline. The one-writer rule remains authoritative, and messages, model changes, compactions,
-  unsupported or oversized mixed deltas, wrong parents or values, path/session mismatch,
-  filesystem-object change, and rewrites stop the worker.
+  baseline. The one-writer rule remains authoritative. RPC/disk disagreement, wrong parents or
+  values, path/session mismatch, filesystem-object change, incomplete entries, and rewrites stop
+  the worker; legitimate extension persistence is not evidence of an external writer.
 
 - After an RPC mutation frame is written, stream failure or child loss leaves acceptance unknown.
   Confirm worker termination, reconcile disk inside the operation lane and retain a conflict rather

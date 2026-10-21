@@ -1418,6 +1418,34 @@
 }
 
 /* Extension questions are purposeful forms, not generic tool-output cards. */
+.extension-dialog {
+  min-height: 0;
+  max-height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.extension-dialog > form,
+.extension-dialog .dialog__options {
+  min-height: 0;
+}
+
+.extension-dialog .dialog__editor {
+  min-height: calc(4lh + 2 * var(--space-2) + 2px);
+  flex-shrink: 1;
+}
+
+.extension-dialog .dialog__error {
+  min-height: 0;
+  margin: 0;
+  overflow-y: auto;
+}
+
+.extension-dialog .dialog__error:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: 2px;
+}
+
 .extension-dialog__identity {
   display: flex;
   align-items: center;
@@ -1474,6 +1502,7 @@
 }
 
 .extension-dialog .dialog__actions {
+  flex-shrink: 0;
   padding-top: var(--space-2);
 }
 

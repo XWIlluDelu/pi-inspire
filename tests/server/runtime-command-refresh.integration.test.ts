@@ -15,7 +15,7 @@ import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 
 const nativeCommandNames = ["audit.inspect", "审阅/检查"];
 
-it("discovers and admits native in-process reload commands without replacing either worker", async () => {
+it("refreshes commands and extension UI on native reload without replacing either worker", async () => {
   const root = await mkdtemp(join(tmpdir(), "inspire-command-refresh-"));
   const agent = join(root, "agent");
   const cwd = join(root, "workspace");
@@ -39,6 +39,7 @@ it("discovers and admits native in-process reload commands without replacing eit
   };
   for (const [key, value] of Object.entries(environment))
     vi.stubEnv(key, value);
+  const extension = join(root, "reload.ts");
   await writeFile(join(agent, "auth.json"), "{}");
   await writeFile(
     join(agent, "settings.json"),
@@ -49,12 +50,20 @@ it("discovers and admits native in-process reload commands without replacing eit
       compaction: { enabled: false },
       retry: { enabled: false },
       packages: [],
+      extensions: [extension],
     }),
   );
-  const extension = join(root, "reload.ts");
   await writeFile(
     extension,
     `export default function (pi) {
+    pi.on("session_shutdown", (event, ctx) => {
+      if (event.reason === "reload") ctx.ui.setStatus("fixture.cleanup", "old shutdown");
+    });
+    pi.on("session_start", (event, ctx) => {
+      const phase = event.reason === "reload" ? "fresh" : "old";
+      ctx.ui.setStatus("fixture." + phase, phase);
+      ctx.ui.setWidget("fixture." + phase, [phase], {placement: "belowEditor"});
+    });
     for (const name of ${JSON.stringify(nativeCommandNames)}) {
       pi.registerCommand(name, {
         handler: async (argument, ctx) => { ctx.ui.notify(name + ":" + argument, "info"); }
@@ -139,19 +148,20 @@ it("discovers and admits native in-process reload commands without replacing eit
         }),
         args: [
           ...(options.args ?? []),
-          "--no-extensions",
           "--no-skills",
           "--no-context-files",
           "--no-themes",
           "--no-tools",
-          "--extension",
-          extension,
         ],
       });
       workers.push(rpc);
       rpc.on("event", (event) => events.push(event));
       return rpc;
     },
+  );
+  const browserEvents: Record<string, unknown>[] = [];
+  runtime.on("event", (event: Record<string, unknown>) =>
+    browserEvents.push(event),
   );
   const a = records[0]!;
   const b = records[1]!;
@@ -193,6 +203,26 @@ it("discovers and admits native in-process reload commands without replacing eit
     await rm(join(prompts, "removed.md"));
     await writeFile(join(prompts, "discovered.md"), "DISCOVERED_TEMPLATE");
     await runtime.prompt({ sessionId: a.id, message: "/reload-fixture" });
+    expect((await runtime.snapshot(a.id)).extensionStatuses).toEqual({
+      "fixture.fresh": "fresh",
+    });
+    expect((await runtime.snapshot(a.id)).extensionDisplays).toMatchObject([
+      { label: "fixture.fresh", lines: ["fresh"] },
+    ]);
+    expect((await runtime.snapshot(a.id)).extensionDisplays).toHaveLength(1);
+    expect((await runtime.snapshot(b.id)).extensionStatuses).toEqual({
+      "fixture.old": "old",
+    });
+    expect((await runtime.snapshot(b.id)).extensionDisplays).toMatchObject([
+      { label: "fixture.old", lines: ["old"] },
+    ]);
+    expect(browserEvents).toContainEqual(
+      expect.objectContaining({
+        type: "extension_ui_request",
+        extensionStatuses: {},
+        extensionDisplays: [],
+      }),
+    );
     expect(await names(a.id)).toContain("discovered");
     expect(await names(a.id)).not.toContain("removed");
     expect(await names(b.id)).toContain("removed");

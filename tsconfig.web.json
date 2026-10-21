@@ -19,5 +19,5 @@
     "jsx": "react-jsx",
     "composite": true
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "shared/**/*.ts", "tests/web/**/*.ts", "tests/web/**/*.tsx"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "shared/**/*.ts", "tests/web/**/*.ts", "tests/web/**/*.tsx", "docs/examples/task-board/*.tsx", "docs/examples/task-board/types.ts"]
 }
