@@ -15,7 +15,7 @@ covers:
   - src/styles/*.css
   - tests/server/{app-resources,app-auth,resources,resources-windows-paths,resource-reference-identity,runtime-reads,git-inspection,git-configuration,runtime-selection}.test.ts
   - tests/web/{resources,document-resources,document-image-controller,git-controller,workspace-controller,store-resources}.test.ts
-  - tests/web/{document-preview,pdf-preview,resources-pane,search-match-text,changes-pane,pane-resize,rich-text}.test.tsx
+  - tests/web/{document-preview,pdf-preview,file-preview,resources-pane,search-match-text,changes-pane,pane-resize,rich-text}.test.tsx
   - tests/web/{source-diff,file-icons,syntax-highlighting}.test.ts
   - tests/server/html-preview.test.ts
   - tests/browser/{filesystem-files,document-images,pdf-preview,html-preview,resource-reading}.spec.ts
@@ -197,7 +197,10 @@ Pending issuance is retired
 when selection, session, view or transport changes. Downloads do not inherit preview byte limits or
 buffer arbitrary files in JavaScript. Dual-view files retain one reciprocal view action
 in a fixed trailing slot. Files with no alternative view omit that action. Source uses highlighting and line numbers; `:line` and `#Lline`
-open Source at that position, including for files that normally open in Preview. Files does not
+open Source at that position, including for files that normally open in Preview. Refreshing the
+same selected file retains its chosen view and Source reading offsets while replacing the content;
+file, session, workspace, or transport replacement starts a new reading context. HTML execution
+leases remain separate and are still retired on refresh. Files does not
 duplicate Changes with a Diff mode or add file-editing controls. Files Source and Changes share an unframed, full-width source canvas below the fixed header, without
 outer card padding; inner text spacing remains. Their line-number gutters stay visible during
 horizontal scrolling. Changes line numbers and change marks share the source line baseline despite

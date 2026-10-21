@@ -9,6 +9,35 @@ import {
 } from "../../src/controllers/git-controller";
 
 const notRepository: GitStatusResponse = { kind: "not-repository" };
+const path = { id: "file", display: "file.txt", utf8Path: "file.txt" };
+const modified: GitStatusResponse = {
+  kind: "repository",
+  head: { kind: "branch", name: "main", oid: "abc" },
+  files: [{ path, unstaged: { kind: "modified" }, untracked: false }],
+  total: 1,
+  truncated: false,
+  groups: { conflicted: [], staged: [], unstaged: [path.id], untracked: [] },
+};
+const diff = (version: string) => ({
+  kind: "text" as const,
+  path,
+  side: "unstaged" as const,
+  additions: 1,
+  deletions: 0,
+  truncated: false,
+  encodingLossy: false,
+  lines: [
+    { kind: "add" as const, text: `+${version}`, oldLine: null, newLine: 1 },
+  ],
+});
+const visibleSelection = {
+  resourcesOpen: true,
+  contextMode: "changes" as const,
+  gitStatus: modified,
+  selectedGitPathId: path.id,
+  selectedGitSide: "unstaged" as const,
+  gitDiff: { status: "ready" as const, result: diff("before") },
+};
 
 function createHarness(initial: Partial<GitControllerState> = {}) {
   let state: GitControllerState = {
@@ -57,6 +86,105 @@ describe("GitController", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it("retains readable source while coalescing refresh hints behind a slow diff", async () => {
+    const harness = createHarness(visibleSelection);
+    const releases: Array<(value: ReturnType<typeof diff>) => void> = [];
+    harness.gitStatus.mockResolvedValue(modified);
+    harness.gitDiff.mockImplementation(
+      () => new Promise((resolve) => releases.push(resolve)),
+    );
+    try {
+      harness.controller.setSurfaceVisible("detail", true);
+      await vi.waitFor(() => expect(harness.gitDiff).toHaveBeenCalledTimes(1));
+      const refreshes = [
+        harness.controller.refreshStatus(),
+        harness.controller.refreshStatus(),
+        harness.controller.refreshStatus(),
+        harness.controller.openDiff(path.id, "unstaged"),
+      ];
+      expect(harness.gitDiff).toHaveBeenCalledTimes(1);
+      expect(harness.state().gitDiff).toMatchObject({
+        status: "ready",
+        result: diff("before"),
+      });
+
+      releases.shift()!(diff("first update"));
+      await vi.waitFor(() => expect(harness.gitDiff).toHaveBeenCalledTimes(2));
+      expect(harness.state().gitDiff).toMatchObject({
+        status: "ready",
+        result: diff("first update"),
+      });
+      releases.shift()!(diff("latest update"));
+      await Promise.all(refreshes);
+      expect(harness.gitStatus).toHaveBeenCalledTimes(2);
+      expect(harness.gitDiff).toHaveBeenCalledTimes(2);
+      expect(harness.state().gitDiff).toMatchObject({
+        status: "ready",
+        result: diff("latest update"),
+      });
+    } finally {
+      harness.controller.setSurfaceVisible("detail", false);
+      harness.controller.cancelAll();
+    }
+  });
+
+  it("keeps the last source visibly stale on failure and clears the warning on recovery", async () => {
+    const harness = createHarness(visibleSelection);
+    harness.gitStatus.mockResolvedValue(modified);
+    harness.gitDiff.mockRejectedValueOnce(new Error("Repository busy"));
+    await harness.controller.refreshStatus();
+    expect(harness.state().gitDiff).toMatchObject({
+      status: "ready",
+      result: diff("before"),
+      refreshError: "Repository busy",
+    });
+
+    harness.gitDiff.mockResolvedValue(diff("recovered"));
+    await harness.controller.refreshStatus();
+    expect(harness.state().gitDiff).toEqual({
+      status: "ready",
+      result: diff("recovered"),
+    });
+  });
+
+  it("cannot replace a newer file selection with an old background refresh", async () => {
+    const other = { id: "other", display: "other.txt", utf8Path: "other.txt" };
+    const status = {
+      ...modified,
+      files: [
+        ...modified.files,
+        {
+          path: other,
+          unstaged: { kind: "modified" as const },
+          untracked: false,
+        },
+      ],
+    };
+    const harness = createHarness({ ...visibleSelection, gitStatus: status });
+    harness.gitStatus.mockResolvedValue(status);
+    let release!: (value: ReturnType<typeof diff>) => void;
+    harness.gitDiff
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            release = resolve;
+          }),
+      )
+      .mockResolvedValueOnce({ ...diff("new selection"), path: other });
+    const refresh = harness.controller.refreshStatus();
+    await vi.waitFor(() => expect(harness.gitDiff).toHaveBeenCalledTimes(1));
+    await harness.controller.openChange(other.id);
+    release(diff("late old file"));
+    await refresh;
+    expect(harness.state()).toMatchObject({
+      selectedGitPathId: other.id,
+      gitDiff: {
+        status: "ready",
+        result: { path: other, lines: [{ text: "+new selection" }] },
+      },
+    });
   });
 
   it("does not publish a status response after its selection generation changes", async () => {

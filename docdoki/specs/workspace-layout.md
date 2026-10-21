@@ -148,9 +148,17 @@ independent project shells in [[terminal]].
 - Git status/diff request, cancellation, polling, and visible-surface scheduling belong to a bounded
   `GitController`. `AppStore` remains the sole snapshot publisher and executes the explicit
   cross-domain transition between a Git-selected path and a session-bound resource preview, so Git
-  never becomes a parallel browser store. Keep complete selected-file source when it fits the
-  bounded projection. If unchanged context exhausts that budget, reread bounded changed regions
-  instead of hiding the edits behind a long prefix. Mark omitted context separately from a
+  never becomes a parallel browser store. While Changes is visible, status observations also refresh
+  its selected file and side. Polling, Pi tool completion, terminal command completion and explicit
+  Refresh share that inspection path. One active read and one queued refresh coalesce repeated hints;
+  slow reads do not overlap polling. Keep the previous source readable until its replacement is ready,
+  preserve the selected path/side and reader offsets, and reuse unchanged results. A failed refresh
+  retains the source with a visible stale-result notice; a successful read clears it.
+  `tests/web/git-{controller,store}.test.ts` and `tests/browser/changes.spec.ts` cover refresh ownership,
+  coalescing, retained content and reading continuity.
+
+  Keep complete selected-file source when it fits the bounded projection. If unchanged context exhausts
+  that budget, reread bounded changed regions instead of hiding the edits behind a long prefix. Mark omitted context separately from a
   truncated diff. Syntax highlighting has its own bounded complete-revision context; validate it
   against displayed rows and use literal escaped text when unavailable or changed between reads.
   `git-long-prefix.test.ts` covers real Git through Host HTTP and source/change navigation projection.

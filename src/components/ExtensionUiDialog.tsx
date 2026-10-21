@@ -1,5 +1,11 @@
 import { Puzzle } from "lucide-react";
-import { memo, useEffect, useState } from "react";
+import {
+  memo,
+  type Ref,
+  useEffect,
+  useImperativeHandle,
+  useState,
+} from "react";
 import type { ExtensionUiRequest } from "../../shared/contracts";
 import { ExtensionDialogContent } from "./ExtensionDialogContent";
 import { shallowEqual, store, useAppState } from "../store";
@@ -50,8 +56,16 @@ function DialogBody({
   );
 }
 
+export interface ExtensionUiDialogHandle {
+  cancel(): void;
+}
+
 /** Web-native presentation of Pi extension_ui_request dialogs. */
-export const ExtensionUiDialog = memo(function ExtensionUiDialog() {
+export const ExtensionUiDialog = memo(function ExtensionUiDialog({
+  ref,
+}: {
+  ref?: Ref<ExtensionUiDialogHandle>;
+}) {
   const { requests, respondingId, runState } = useAppState(
     (state) => ({
       requests: state.extensionUiRequests,
@@ -74,17 +88,17 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog() {
       if (message) setResponseError({ owner, message });
     });
   };
+  const cancel = () => {
+    // Conflict recovery is a host-owned Escape path and must remain available
+    // even when this extension request is still visible.
+    if (runState === "conflict") return false;
+    if (request && !responding) onRespond({ id: request.id, cancelled: true });
+  };
+  useImperativeHandle(ref, () => ({ cancel }));
   const dialogRef = useModalFocus<HTMLDivElement>(
     Boolean(request),
-    request ? `${request.sessionId}:${request.id}` : null,
-    request
-      ? () => {
-          // Conflict recovery is a host-owned Escape path and must remain
-          // available even when this extension request is still visible.
-          if (runState === "conflict") return false;
-          if (!responding) onRespond({ id: request.id, cancelled: true });
-        }
-      : undefined,
+    owner,
+    request ? cancel : undefined,
   );
   if (!request) return null;
   return (
