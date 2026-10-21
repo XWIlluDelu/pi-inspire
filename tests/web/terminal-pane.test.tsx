@@ -5,6 +5,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,7 +29,10 @@ const api = vi.hoisted(() => ({
   retryTerminalOperation: vi.fn(),
   terminalSettings: vi.fn(),
 }));
-vi.mock("../../src/api", () => ({ createApi: () => api }));
+vi.mock("../../src/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/api")>()),
+  createApi: () => api,
+}));
 vi.mock("../../src/components/TerminalView", () => ({
   TerminalView: ({ terminal }: { terminal: TerminalDescriptor }) => (
     <div data-testid="shell-cwd">
@@ -128,6 +132,42 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+describe("terminal error feedback", () => {
+  it("uses shared error presentation, copies complete diagnostics and dismisses only explicitly", async () => {
+    const message =
+      "A terminal endpoint is listening, but its authenticated data connection failed.\nExisting terminal processes were left running.";
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", {
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      clipboard: { writeText },
+    });
+    api.terminals.mockRejectedValue(new Error(message));
+    render(<TerminalPane cwd="/A" />);
+    const error = await screen.findByRole("alert");
+    expect(error).toHaveClass(
+      "notice",
+      "notice--error",
+      "terminal-pane__error",
+    );
+    fireEvent.click(
+      within(error).getByText(/A terminal endpoint is listening/),
+    );
+    expect(error).toBeVisible();
+    fireEvent.click(within(error).getByRole("button", { name: "Copy error" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(message));
+    expect(
+      within(error).getByRole("button", { name: "Error copied" }),
+    ).toBeVisible();
+    fireEvent.click(
+      within(error).getByRole("button", { name: "Dismiss terminal error" }),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(api.restartTerminal).not.toHaveBeenCalled();
+    expect(api.removeTerminal).not.toHaveBeenCalled();
+  });
 });
 
 describe("terminal shortcut input ownership", () => {

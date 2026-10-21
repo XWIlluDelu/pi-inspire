@@ -16,6 +16,49 @@ import { terminalTransportFixture } from "./support/terminal-transport";
 import { firstTextBaseline } from "./support/text-baseline";
 import { textOverflowsInlineBounds } from "./support/text-bounds";
 
+test("terminal failures use shared error feedback with copy and explicit dismissal", async ({
+  page,
+  context,
+}) => {
+  const message =
+    "A terminal endpoint is listening, but its authenticated data connection failed. " +
+    "Existing terminal processes were left running. Inspect the owning service before deciding whether replacement is needed.\n" +
+    "Connection check: Client network socket disconnected before secure TLS connection was established";
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.route(/\/api\/terminals(?:\?|$)/, (route) =>
+    route.fulfill({ status: 503, json: { error: message } }),
+  );
+  await pairedPage(page);
+  await openMockSession(page, /Review extension event lifecycle/);
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  const error = page.locator(".terminal-pane__error");
+  await expect(error).toBeVisible();
+  await expect(error).toHaveClass(/notice--error/);
+  await expect(error).toHaveAttribute("role", "alert");
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((value) => {
+      document.documentElement.dataset.theme = value;
+    }, theme);
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(error).toBeInViewport({ ratio: 1 });
+      expect(await error.evaluate(textOverflowsInlineBounds)).toBe(false);
+      await expect(
+        error.getByRole("button", { name: "Copy error" }),
+      ).toBeInViewport({ ratio: 1 });
+    }
+  }
+  await error.locator(".notice__text").click();
+  await expect(error).toBeVisible();
+  await error.getByRole("button", { name: "Copy error" }).click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe(message);
+  await error.getByRole("button", { name: "Dismiss terminal error" }).click();
+  await expect(error).toBeHidden();
+});
+
 for (const touch of [false, true]) {
   test.describe(`foreign-project terminal context · ${touch ? "touch" : "mouse"}`, () => {
     test.use({ hasTouch: touch, deviceScaleFactor: touch ? 2 : 1 });

@@ -69,67 +69,138 @@ export interface TerminalService {
   close(): Promise<void>;
 }
 
-export class UnavailableTerminalService implements TerminalService {
-  constructor(private readonly reason: string) {}
+/** Initialize only on demand. Connection failures may be retried; dispatched work never is. */
+export class LazyTerminalService implements TerminalService {
+  private pending: Promise<TerminalService> | null = null;
+  private service: TerminalService | null = null;
+  private closed = false;
+  private closing: Promise<void> | null = null;
+
+  constructor(private readonly connect: () => Promise<TerminalService>) {}
 
   operationEpoch(): Promise<string> {
-    return this.unavailable();
+    return this.run((service) => service.operationEpoch());
   }
 
-  operate<Result>(): Promise<Result> {
-    return this.unavailable();
+  operate<Result>(
+    method: TerminalMutationMethod,
+    params: unknown,
+    operation: TerminalOperationIdentity,
+  ): Promise<Result> {
+    return this.run((service) =>
+      service.operate<Result>(method, params, operation),
+    );
   }
 
-  list(): Promise<TerminalCatalogResponse> {
-    return this.unavailable();
+  list(cwd?: string): Promise<TerminalCatalogResponse> {
+    return this.run((service) => service.list(cwd));
   }
 
-  create(): Promise<TerminalDescriptor> {
-    return this.unavailable();
+  create(request: TerminalCreateRequest): Promise<TerminalDescriptor> {
+    return this.run((service) => service.create(request));
   }
 
-  rename(): Promise<TerminalDescriptor> {
-    return this.unavailable();
+  rename(
+    id: string,
+    request: TerminalRenameRequest,
+  ): Promise<TerminalDescriptor> {
+    return this.run((service) => service.rename(id, request));
   }
 
-  reorder(): Promise<TerminalCatalogResponse> {
-    return this.unavailable();
+  reorder(
+    cwd: string,
+    terminalIds: string[],
+  ): Promise<TerminalCatalogResponse> {
+    return this.run((service) => service.reorder(cwd, terminalIds));
   }
 
-  restart(): Promise<TerminalDescriptor> {
-    return this.unavailable();
+  restart(id: string): Promise<TerminalDescriptor> {
+    return this.run((service) => service.restart(id));
   }
 
-  remove(): Promise<TerminalRemoveResponse> {
-    return this.unavailable();
+  remove(id: string, force: boolean): Promise<TerminalRemoveResponse> {
+    return this.run((service) => service.remove(id, force));
   }
 
   getSettings(): Promise<TerminalServiceSettings> {
-    return this.unavailable();
+    return this.run((service) => service.getSettings());
   }
 
-  updateSettings(): Promise<TerminalServiceSettings> {
-    return this.unavailable();
+  updateSettings(
+    patch: TerminalServiceSettingsPatch,
+  ): Promise<TerminalServiceSettings> {
+    return this.run((service) => service.updateSettings(patch));
   }
 
   clearHistory(): Promise<void> {
-    return this.unavailable();
+    return this.run((service) => service.clearHistory());
   }
 
-  attach(): Promise<TerminalAttachment> {
-    return this.unavailable();
+  attach(
+    options: TerminalAttachOptions,
+    sink: TerminalAttachmentSink,
+  ): Promise<TerminalAttachment> {
+    return this.run((service) => service.attach(options, sink));
   }
 
   close(): Promise<void> {
-    return Promise.resolve();
+    if (this.closing) return this.closing;
+    this.closed = true;
+    this.closing = (async () => {
+      await this.pending?.catch(() => {});
+      const service = this.service;
+      this.service = null;
+      await service?.close();
+    })();
+    return this.closing;
   }
 
-  private unavailable<Result>(): Promise<Result> {
-    return Promise.reject(
-      new TerminalServiceError(
-        "terminal_service_unavailable",
-        503,
-        this.reason,
+  private closedError(): TerminalServiceError {
+    return new TerminalServiceError(
+      "terminal_service_closed",
+      503,
+      "The terminal service is stopping.",
+    );
+  }
+
+  private async connected(): Promise<TerminalService> {
+    if (this.closed) throw this.closedError();
+    if (this.service) return this.service;
+    if (this.pending) return this.pending;
+    const pending: Promise<TerminalService> = Promise.resolve()
+      .then(() => {
+        if (this.closed) throw this.closedError();
+        return this.connect();
+      })
+      .then(async (service) => {
+        if (this.closed) {
+          await service.close();
+          throw this.closedError();
+        }
+        this.service = service;
+        return service;
+      })
+      .finally(() => {
+        if (this.pending === pending) this.pending = null;
+      });
+    this.pending = pending;
+    return pending;
+  }
+
+  private async run<Result>(
+    action: (service: TerminalService) => Result | Promise<Result>,
+  ): Promise<Result> {
+    const service = await this.connected();
+    if (this.closed) throw this.closedError();
+    return action(service);
+  }
+}
+
+export class UnavailableTerminalService extends LazyTerminalService {
+  constructor(reason: string) {
+    super(() =>
+      Promise.reject(
+        new TerminalServiceError("terminal_service_unavailable", 503, reason),
       ),
     );
   }

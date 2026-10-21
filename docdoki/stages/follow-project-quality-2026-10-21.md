@@ -87,17 +87,36 @@ addressing; do not expand into cosmetic changes or classify an isolated flake as
   1 px threshold remain. The original CI's precise 7.75 px movement was not reproduced, so its
   dynamic cause is not claimed. No product CSS or component change is indicated by these results.
 
+- [CI run 39552440372](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39552440372) confirms
+  complete Linux quality, including the reader repair, all macOS phases, Windows Chromium and
+  three packaged releases. Its sole failure is the Windows New-session settings ownership test's
+  wait for Settings navigation; no product-open failure has been demonstrated.
+- The terminal follow-up finds three concrete lifecycle gaps: a startup connection failure was
+  frozen for the Host lifetime; service start/enable silently stopped a transient owner; and a
+  confirmed duplicate listener exited like a recoverable crash, allowing endless systemd retries.
+  Recovery now shares demand-driven, connection-only initialization, fences close/late results and
+  never replays input or dispatched controls. Service startup preserves existing work; duplicate
+  ownership has exit 78 and a no-retry unit policy without suppressing ordinary crash recovery.
+- Terminal errors now reuse the shared notice card with complete Copy and explicit Dismiss.
+  Diagnostics distinguish absent endpoints, unverified data and unavailable maintenance; missing
+  optional lifecycle support does not block compatible data. Mutual authentication and the wire
+  protocol remain required; legacy plaintext fallback is not introduced.
+- Focused native/service/UI checks pass, including a real TLS endpoint recovering after initial
+  failure, initialization concurrency, close races, no idle retries, no input replay, duplicate-owner
+  process exit, non-destructive service controls and installed CLI delegation. Browser Copy,
+  layout boundaries and light/dark desktop/390px QA pass. Isolated installed-package verification
+  passes with a live daemon PTY surviving Host restart and scoped maintenance. No production service
+  or existing terminal process was operated on.
+
 ## Next actions
 
-- [ ] Confirm the CI attached to the row-relative reader-baseline repair. The parent observer
-  follows GitHub; no local watch remains. Investigate actual failures without weakening assertions
-  or skipping portable scenarios.
-- [x] Complete the targeted whole-product review with no remaining evidence-supported major issue.
-  Stop expanding scope; public network latency and arbitrary third-party extensions remain outside
-  these controlled local/remote-chain checks.
-- [x] Verify clear repairs as semantic changes, preserving unrelated work and shared history.
-  The final correction changes only tests/documentation, so it needs no source-install rebuild,
-  prepare-restart repetition or production Host restart.
+- [ ] Confirm final CI for the terminal fixes and Windows Settings fixture correction. The parent
+  observes GitHub; no long-running local watch is needed.
+- [x] Complete the requested terminal design review and focused repairs without broadening into a
+  negotiation framework. Public network latency and arbitrary extensions remain outside these checks.
+- [ ] Continue [[follow-release-0-6-0-2026-10-21]] after the source boundary is fixed. Production
+  activation is distinct from source/build verification; no Host restart or terminal migration was
+  performed, and an upgrade that ends existing PTYs still requires operator approval.
 
 ## Decisions
 

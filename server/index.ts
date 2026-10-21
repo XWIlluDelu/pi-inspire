@@ -74,11 +74,13 @@ import {
   defaultStaticAssetCacheDirectory,
   prepareStaticAssetCache,
 } from "./static-asset-cache.mjs";
-import { launchTerminalDaemon } from "./terminal-daemon-launcher.js";
 import {
+  connectExistingTerminalDaemon,
+  launchTerminalDaemon,
+} from "./terminal-daemon-launcher.js";
+import {
+  LazyTerminalService,
   type TerminalService,
-  TerminalServiceError,
-  UnavailableTerminalService,
 } from "./terminal-service.js";
 import { TerminalSessionManager } from "./terminal-session-manager.js";
 import {
@@ -263,11 +265,8 @@ if (process.env.INSPIRE_TERMINAL_IN_PROCESS === "1") {
       errorName: error instanceof Error ? error.name : typeof error,
     });
     console.error(`Terminal service unavailable: ${message}`);
-    return new UnavailableTerminalService(
-      error instanceof TerminalServiceError &&
-        error.code === "terminal_service_restart_required"
-        ? error.message
-        : "The terminal service is unavailable. Restart the INSΠRE Host to retry.",
+    return new LazyTerminalService(() =>
+      connectExistingTerminalDaemon({ root, host, port }),
     );
   });
 }

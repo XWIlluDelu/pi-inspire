@@ -210,10 +210,9 @@ export async function manageHostService(root, action, options) {
   if (service.kind !== "managed") return service;
 
   const commands = {
-    start: [
-      ["start", TERMINAL_SERVICE_NAME],
-      ["start", HOST_SERVICE_NAME],
-    ],
+    // Host Wants/After starts the installed terminal unit. A duplicate owner
+    // may refuse that start without blocking Host access to a compatible daemon.
+    start: [["start", HOST_SERVICE_NAME]],
     stop: [
       ["stop", HOST_SERVICE_NAME],
       ["stop", TERMINAL_SERVICE_NAME],
@@ -223,7 +222,7 @@ export async function manageHostService(root, action, options) {
     // restart the terminal owner, then start Host after terminal readiness.
     "restart-all": [["restart", TERMINAL_SERVICE_NAME, HOST_SERVICE_NAME]],
     enable: [
-      ["enable", "--now", TERMINAL_SERVICE_NAME],
+      ["enable", TERMINAL_SERVICE_NAME],
       ["enable", "--now", HOST_SERVICE_NAME],
       ["enable", "--now", IDLE_MAINTENANCE_TIMER_NAME],
     ],
@@ -237,10 +236,9 @@ export async function manageHostService(root, action, options) {
   if (!commandsForAction)
     throw new Error(`Unsupported host-service action: ${action}`);
 
-  // Hosts started before the persistent unit was installed may have launched
-  // an installation-scoped transient daemon. Explicit service lifecycle
-  // commands retire it so the named unit can own the same private IPC socket.
-  if (["start", "stop", "enable", "disable"].includes(action))
+  // Starting/enabling must not migrate ownership or end existing terminals.
+  // Only explicit stop/disable includes the installation's transient owner.
+  if (["stop", "disable"].includes(action))
     await (options?.run ?? runSystemctl)(
       ["--user", "stop", transientTerminalServiceName(root)],
       options?.environment,
