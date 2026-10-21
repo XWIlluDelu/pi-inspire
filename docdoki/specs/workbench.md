@@ -363,6 +363,12 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   narrow drawer, works from the start surface, and preserves both active and start drafts. Recent
   session shortcuts remain direct palette actions.
 
+  On a narrow workbench, action dialogs and extension questions share the existing transient
+  inspection history owner. Browser Back cancels the active extension question before closing
+  the surface underneath it. A question awaiting its native response, or a failed cancellation,
+  retains its layer for feedback and retry. Explicit dismissal consumes its entry rather than
+  leaving an empty return stop. Drafts stay with their session; no routes are added.
+
   Existing graphical actions open their own controls. Commands needing prompt review or arguments
   use the transient preparation boundary in [[composer]], not a second persistent editor or queue.
   The palette does not create a second queue-inspection surface for immutable Pi-owned queued input.

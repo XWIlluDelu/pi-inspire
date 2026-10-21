@@ -626,7 +626,15 @@ function ChangesDetail({
           </button>
         </div>
       </div>
-      <div className="changes__content">{content}</div>
+      <div className="changes__content">
+        {diffView?.status === "ready" && diffView.refreshError ? (
+          <p className="changes__projection-note" role="status">
+            Source refresh failed; showing the last known source.{" "}
+            {diffView.refreshError}
+          </p>
+        ) : null}
+        {content}
+      </div>
     </div>
   );
 }

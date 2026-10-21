@@ -176,6 +176,133 @@ async function openExample(page: Page, theme: "light" | "dark") {
   };
 }
 
+test("phone Back cancels the active extension question, not the Settings behind it", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 700 });
+  await page.goto("about:blank#outside-inspire");
+  const demo = await openExample(page, "light");
+  const inspireUrl = page.url();
+  const draft = page.getByRole("textbox", { name: "Message", exact: true });
+  await draft.fill("Keep this draft through the question");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await expect(settings).toBeVisible();
+  demo.question({
+    id: "phone-back-question",
+    method: "confirm",
+    title: "Keep native ownership?",
+    message: "The native extension is waiting.",
+  });
+  const question = page.getByRole("dialog", {
+    name: "Keep native ownership?",
+    exact: true,
+  });
+  await expect(question).toBeVisible();
+  await page.goBack();
+  await expect(question).toHaveCount(0);
+  expect(demo.responses).toEqual([
+    {
+      sessionId: expect.any(String),
+      id: "phone-back-question",
+      cancelled: true,
+    },
+  ]);
+  await expect(page).toHaveURL(inspireUrl);
+  await expect(settings).toBeVisible();
+  await settings
+    .getByRole("button", { name: "Close settings", exact: true })
+    .click();
+  await expect(settings).toHaveCount(0);
+  await expect(draft).toHaveValue("Keep this draft through the question");
+  await expect
+    .poll(() =>
+      page.evaluate(() => history.state?.__inspireWorkbench?.depth ?? 0),
+    )
+    .toBe(0);
+  await page.goBack();
+  await expect(page).toHaveURL("about:blank#outside-inspire");
+});
+
+test("phone Back retains a failed native cancellation and can cancel the next queued question", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 700 });
+  const demo = await openExample(page, "dark");
+  const inspireUrl = page.url();
+  let refuse = true;
+  let releaseCancellation!: () => void;
+  const cancellation = new Promise<void>((resolve) => {
+    releaseCancellation = resolve;
+  });
+  let attempts = 0;
+  await page.route("**/api/extension-ui", async (route) => {
+    attempts++;
+    if (refuse) {
+      await cancellation;
+      await route.fulfill({
+        status: 409,
+        json: { error: "The extension is still waiting. Try again." },
+      });
+    } else await route.fallback();
+  });
+  demo.question({
+    id: "first-back",
+    method: "input",
+    title: "First native question",
+  });
+  demo.question({
+    id: "next-back",
+    method: "input",
+    title: "Next native question",
+  });
+  const first = page.getByRole("dialog", {
+    name: "First native question",
+    exact: true,
+  });
+  await expect(first).toBeVisible();
+  await page.goBack();
+  try {
+    await expect(first).toHaveAttribute("aria-busy", "true");
+    await expect
+      .poll(() => page.evaluate(() => history.state?.__inspireWorkbench?.depth))
+      .toBe(1);
+    await page.goBack();
+    await expect
+      .poll(() => page.evaluate(() => history.state?.__inspireWorkbench?.depth))
+      .toBe(1);
+    await expect(page).toHaveURL(inspireUrl);
+    expect(attempts).toBe(1);
+  } finally {
+    releaseCancellation();
+  }
+  await expect(first.getByRole("alert")).toContainText("Try again");
+  await expect(page).toHaveURL(inspireUrl);
+  expect(demo.responses).toEqual([]);
+  refuse = false;
+  await page.goBack();
+  await expect(first).toHaveCount(0);
+  const next = page.getByRole("dialog", {
+    name: "Next native question",
+    exact: true,
+  });
+  await expect(next).toBeVisible();
+  await page.goBack();
+  await expect(next).toHaveCount(0);
+  await expect(page).toHaveURL(inspireUrl);
+  expect(
+    demo.responses.map(({ id, cancelled }) => ({ id, cancelled })),
+  ).toEqual([
+    { id: "first-back", cancelled: true },
+    { id: "next-back", cancelled: true },
+  ]);
+  await expect
+    .poll(() =>
+      page.evaluate(() => history.state?.__inspireWorkbench?.depth ?? 0),
+    )
+    .toBe(0);
+});
+
 for (const touch of [false, true]) {
   test.describe(`settings interrupted by extension UI · ${touch ? "touch" : "mouse"}`, () => {
     test.use({ hasTouch: touch, deviceScaleFactor: touch ? 2 : 1 });

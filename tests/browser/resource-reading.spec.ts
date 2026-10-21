@@ -6,6 +6,63 @@ import { openMockSession, pairedPage } from "./support/navigation";
 import { firstTextBaseline } from "./support/text-baseline";
 import { textOverflowsInlineBounds } from "./support/text-bounds";
 
+test("Files refresh preserves Source mode and reading offsets", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await pairedPage(page);
+  await openMockSession(page, /Resource virtualization and sandbox fixture/);
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  const pane = page.locator(".ctx");
+  await pane
+    .getByRole("searchbox", { name: "Search workspace files" })
+    .fill("file-previews/document.md");
+  await pane
+    .locator(
+      '[data-workspace-path="tests/browser/fixtures/file-previews/document.md"]',
+    )
+    .click();
+  await pane.getByRole("button", { name: "Source", exact: true }).click();
+  const source = pane.getByRole("region", { name: "File source" });
+  await source.evaluate((element) => {
+    element.scrollTop = 100;
+    element.scrollLeft = 80;
+  });
+  await expect
+    .poll(() => source.evaluate((element) => element.scrollTop))
+    .toBe(100);
+  await expect
+    .poll(() => source.evaluate((element) => element.scrollLeft))
+    .toBe(80);
+
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/resources/resolve", async (route) => {
+    await pending;
+    await route.continue();
+  });
+  try {
+    await pane.getByRole("button", { name: "Refresh context pane" }).click();
+    await expect(
+      pane.getByText("Loading preview", { exact: true }),
+    ).toBeVisible();
+  } finally {
+    release();
+  }
+  await expect(source).toBeVisible();
+  await expect(
+    pane.getByRole("button", { name: "Preview", exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(() => source.evaluate((element) => element.scrollTop))
+    .toBe(100);
+  await expect
+    .poll(() => source.evaluate((element) => element.scrollLeft))
+    .toBe(80);
+});
+
 for (const mode of ["Files", "Changes"] as const) {
   test(`${mode} preview errors scroll inside the reader and keep Retry reachable in short windows`, {
     tag: "@cross-browser",

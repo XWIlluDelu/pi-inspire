@@ -195,7 +195,7 @@ describe("Git inspection ownership and freshness", () => {
     expect(store.getState().gitStatusError).toBe("Git timed out");
   });
 
-  it("preserves a selected diff when status polling retains the same facet", async () => {
+  it("updates the selected source through status and explicit inspection refreshes", async () => {
     let diffCalls = 0;
     installFetch((url, init) => {
       if (url.startsWith("/api/git/status")) return { body: cleanStatus };
@@ -230,17 +230,16 @@ describe("Git inspection ownership and freshness", () => {
     });
 
     await store.refreshGitStatus();
-    expect(diffCalls).toBe(1);
-    expect(store.getState().gitDiff).toMatchObject({
-      status: "ready",
-      result: { lines: [{ text: "+version-1" }] },
-    });
-
-    await store.refreshGitInspection();
-    expect(diffCalls).toBe(2);
     expect(store.getState().gitDiff).toMatchObject({
       status: "ready",
       result: { lines: [{ text: "+version-2" }] },
+    });
+
+    await store.refreshGitInspection();
+    expect(diffCalls).toBe(3);
+    expect(store.getState().gitDiff).toMatchObject({
+      status: "ready",
+      result: { lines: [{ text: "+version-3" }] },
     });
   });
 
@@ -346,7 +345,7 @@ describe("Git inspection ownership and freshness", () => {
     store.setGitSurfaceVisible("resources-pane", false);
   });
 
-  it("does not reload the selected diff on the four-second status poll", async () => {
+  it("keeps visible Changes current on polling without fetching hidden details", async () => {
     vi.useFakeTimers();
     let store: AppStore | null = null;
     try {
@@ -362,7 +361,14 @@ describe("Git inspection ownership and freshness", () => {
               side: "unstaged",
               truncated: false,
               encodingLossy: false,
-              lines: [],
+              lines: [
+                {
+                  kind: "add",
+                  text: `+poll-${diffCalls}`,
+                  oldLine: null,
+                  newLine: 1,
+                },
+              ],
             },
           };
         }
@@ -373,12 +379,15 @@ describe("Git inspection ownership and freshness", () => {
       store.setGitSurfaceVisible("resources-pane", true);
       await vi.advanceTimersByTimeAsync(0);
       await store.openGitDiff(path.id, "unstaged");
-      const selectedDiff = store.getState().gitDiff;
-
       await vi.advanceTimersByTimeAsync(4_001);
+      expect(store.getState().gitDiff).toMatchObject({
+        status: "ready",
+        result: { lines: [{ text: "+poll-2" }] },
+      });
 
-      expect(diffCalls).toBe(1);
-      expect(store.getState().gitDiff).toBe(selectedDiff);
+      store.setContextMode("files");
+      await vi.advanceTimersByTimeAsync(4_001);
+      expect(diffCalls).toBe(2);
     } finally {
       store?.setGitSurfaceVisible("resources-pane", false);
       vi.useRealTimers();
@@ -445,20 +454,42 @@ describe("Git inspection ownership and freshness", () => {
     }
   });
 
-  it("refreshes on a selected tool completion and stops the visible-only completion timer", async () => {
+  it("refreshes the selected source on tool completion and pauses hidden observation", async () => {
     vi.useFakeTimers();
     try {
       let calls = 0;
+      let diffCalls = 0;
       installFetch((url, init) => {
         if (url.startsWith("/api/git/status")) {
           calls += 1;
           return { body: cleanStatus };
+        }
+        if (url.startsWith("/api/git/diff")) {
+          diffCalls += 1;
+          return {
+            body: {
+              kind: "text",
+              path,
+              side: "unstaged",
+              truncated: false,
+              encodingLossy: false,
+              lines: [
+                {
+                  kind: "add",
+                  text: `+tool-${diffCalls}`,
+                  oldLine: null,
+                  newLine: 1,
+                },
+              ],
+            },
+          };
         }
         return baseRoutes(url, init);
       });
       const { store, socket } = await initStore();
       store.setGitSurfaceVisible("test", true);
       await vi.advanceTimersByTimeAsync(0);
+      await store.openGitDiff(path.id, "unstaged");
       expect(calls).toBe(1);
       socket.emit({
         type: "tool_execution_end",
@@ -468,12 +499,16 @@ describe("Git inspection ownership and freshness", () => {
         result: "done",
       });
       await vi.advanceTimersByTimeAsync(0);
-      expect(calls).toBe(2);
+      expect(store.getState().gitDiff).toMatchObject({
+        status: "ready",
+        result: { lines: [{ text: "+tool-2" }] },
+      });
       await vi.advanceTimersByTimeAsync(4_000);
       expect(calls).toBe(3);
       store.setGitSurfaceVisible("test", false);
       await vi.advanceTimersByTimeAsync(8_000);
       expect(calls).toBe(3);
+      expect(diffCalls).toBe(3);
     } finally {
       vi.useRealTimers();
     }
