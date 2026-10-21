@@ -189,7 +189,9 @@ for (const narrow of [false, true]) {
     const log = page.getByRole("log");
     const wrap = page.locator(".transcript-wrap");
     const latest = page.getByRole("button", { name: "Jump to latest" });
-    const search = page.getByRole("searchbox", { name: "Search conversation" });
+    const search = page.getByRole("searchbox", {
+      name: "Search conversation",
+    });
     await expect(
       page.getByRole("heading", { name: "A compact result" }),
     ).toBeVisible();
@@ -327,7 +329,7 @@ for (const narrow of [false, true]) {
     }
     expect(reachedMessages).toBe(true);
     expect(visitedPromptMap).toBe(true);
-    await log.locator("button, a[href]").last().focus();
+    await log.locator("button, a[href]").last().focus({ preventScroll: true });
     await page.keyboard.press("Tab");
     await expect(latest).toBeFocused();
     await page.keyboard.press("Shift+Tab");
@@ -335,6 +337,11 @@ for (const narrow of [false, true]) {
       await log.evaluate((element) => element.contains(document.activeElement)),
     ).toBe(true);
 
+    // Restoring focus to the final message can itself reveal latest. Move back
+    // into history before exercising an affordance that is now geometry-based.
+    await log.hover();
+    await page.mouse.wheel(0, -500);
+    await expect(latest).toBeVisible();
     await latest.click();
     await expect(latest).toBeHidden();
     await expect
@@ -515,7 +522,7 @@ test("prompt map navigates user turns and adapts to the narrow workbench", async
     "Model",
   );
   const matches = page.getByLabel("Transcript search matches");
-  await expect(matches).toHaveText("No matches");
+  await expect(matches).toHaveText("0 matches");
   expect(
     await matches.evaluate(
       (element) => element.scrollWidth - element.clientWidth,

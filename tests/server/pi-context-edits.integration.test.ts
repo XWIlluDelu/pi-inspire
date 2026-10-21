@@ -66,7 +66,6 @@ async function fixture() {
     modified: new Date(2),
     messageCount: 2,
     firstMessage: "original user text",
-    searchText: "original user text",
   };
   return { path, record, manager: SessionManager.open(path, directory) };
 }

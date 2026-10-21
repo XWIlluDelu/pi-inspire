@@ -43,7 +43,6 @@ async function fixture() {
     modified: new Date(0),
     messageCount: 1,
     firstMessage: "before",
-    searchText: "before",
   });
   fixtures.push({ directory, projection });
   // Keep filesystem hints from consuming the observation under test.

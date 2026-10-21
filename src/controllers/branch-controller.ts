@@ -342,14 +342,26 @@ export class BranchController {
     );
   }
 
+  /** Preparation belongs to the original gesture, not a later visit to the
+   * same session. Reuse the read boundary for selection/view/transport fencing. */
+  private async refreshForAction(
+    ownership: "position" | "view",
+  ): Promise<boolean> {
+    return (
+      (await this.read(async () => {
+        await this.loadTree();
+        return true;
+      }, ownership)) === true
+    );
+  }
+
   /** Refreshes the tree before checking the target capability, so a transcript
    * row never supplies a revision or permission by itself. */
   async forkFromEntry(targetId: string): Promise<boolean> {
     const sessionId = this.host.state().sessionId;
     if (!sessionId || !targetId) return false;
-    await this.loadTree();
+    if (!(await this.refreshForAction("view"))) return false;
     const state = this.host.state();
-    if (state.sessionId !== sessionId) return false;
     if (!state.branchTree || state.branchTreeError) {
       this.host.notify(
         "warning",
@@ -357,8 +369,15 @@ export class BranchController {
       );
       return false;
     }
-    const forked = await this.fork(targetId);
-    if (!forked && this.host.state().sessionId === sessionId) {
+    const pending = this.fork(targetId);
+    const ticket = this.viewTicket(this.host.state());
+    const transport = this.host.transportGeneration();
+    const forked = await pending;
+    if (
+      !forked &&
+      this.host.transportGeneration() === transport &&
+      this.ownsView(ticket, "view")
+    ) {
       this.host.notify(
         "warning",
         this.host.state().branchTreeError ?? "Fork failed",
@@ -404,17 +423,11 @@ export class BranchController {
   async clone(targetId?: string): Promise<boolean> {
     const sessionId = this.host.state().sessionId;
     if (!sessionId) return false;
-    await this.loadTree();
+    if (!(await this.refreshForAction("view"))) return false;
     const api = this.host.api();
     const state = this.host.state();
     const tree = state.branchTree;
-    if (
-      !api ||
-      state.sessionId !== sessionId ||
-      !tree ||
-      branchActionsBlocked(state)
-    )
-      return false;
+    if (!api || !tree || branchActionsBlocked(state)) return false;
     const selectionRequest = this.host.beginForkSelection();
     return this.runAction(
       `clone:${targetId ?? "current"}`,
@@ -502,13 +515,9 @@ export class BranchController {
     if (!sessionId || !durableLeafId || durableLeafId === effectiveLeafId) {
       return null;
     }
-    await this.loadTree();
+    if (!(await this.refreshForAction("position"))) return null;
     const current = this.host.state();
-    if (
-      current.sessionId !== sessionId ||
-      current.transcriptDurableLeafId !== durableLeafId ||
-      current.transcriptEffectiveLeafId !== effectiveLeafId
-    ) {
+    if (current.transcriptDurableLeafId !== durableLeafId) {
       return null;
     }
     const tree = current.branchTree;

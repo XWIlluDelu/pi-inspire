@@ -155,7 +155,6 @@ it("executes native root/custom navigation, summary append and cancellation, and
     modified: new Date(),
     messageCount: 5,
     firstMessage: "question one",
-    searchText: "question one",
   };
   const catalog: SessionCatalogLike = {
     refresh: async () => [record],

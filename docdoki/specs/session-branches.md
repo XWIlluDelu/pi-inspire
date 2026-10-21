@@ -98,7 +98,9 @@ Independent copies do not replace the active source worker. Durable trust comes 
   replacement occurs.
   Browser branch-tree and branch-action requests are owned by a bounded `BranchController`; its
   current API, transport generation, selection generation, selection intent and transcript view must
-  still match before it can commit a response through `AppStore`. Tree reads and same-session navigation
+  still match before it can commit a response through `AppStore`. Preparatory History reads retain
+  the original gesture's owner: revisiting the same session cannot revive a pending Fork, Clone or
+  Return to latest action. Tree reads and same-session navigation
   also bind the effective leaf. Independent copies admit an exact source prefix; ordinary source
   append progress must not prevent their destination from opening after publication. A
   bootstrap or selection replacement invalidates pending tree/action requests and clears their
@@ -195,10 +197,15 @@ Independent copies do not replace the active source worker. Durable trust comes 
   model context, not exported raw history. Export never switches the source `SessionManager` or worker.
 - Export captures content available at invocation, including during active work; it does not promise
   a future completed answer or lock later input. JSONL reuses the verified local prefix and reads only
-  the native suffix/effective leaf; an unmaterialized session uses its owning worker's entries.
+  the native suffix/effective leaf when an owned worker is connected; an unmaterialized session uses
+  its owning worker's entries. Otherwise JSONL serializes the verified saved entries and effective
+  leaf without launching Pi, including when the workspace or external owner is unavailable. Read-only
+  controls label this as saved history; native output not yet saved is outside that snapshot.
 - Typed `/export` preserves Pi's one-path parsing, including quoted spaces and `~/`; `.jsonl` selects
   branch JSONL and other destinations use native HTML. It refuses the canonical source session and
-  its symlink/hardlink aliases. Export and reload use writer admission under [[session-persistence]].
+  its symlink/hardlink aliases. HTML and reload use writer admission under [[session-persistence]];
+  saved JSONL needs only a healthy conflict-free reading projection. Read-only menus keep Export
+  available, disable Rename/Clone, and offer JSONL rather than claiming static HTML support.
 - Graphical Export creates a temporary native export, captures a private managed download and removes
   temporary source files on success or failure rather than leaving them in the workspace.
 - Authenticated, session-owned opaque IDs serve captured snapshots, not caller-selected Host paths;

@@ -65,7 +65,6 @@ function session(
     modified: new Date(),
     messageCount: 1,
     firstMessage: "Task",
-    searchText: "Task",
     source: null,
   };
 }

@@ -14,7 +14,9 @@ test("search opens the actual retained summary and can reopen the same match", a
   await pairedPage(page);
   await openFixture(page);
   const toggle = page.locator(".context-checkpoint__toggle");
-  const search = page.getByRole("searchbox", { name: "Search conversation" });
+  const search = page.getByRole("searchbox", {
+    name: "Search conversation",
+  });
   await search.fill("remaining work");
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await search.press("Enter");

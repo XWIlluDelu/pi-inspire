@@ -48,6 +48,11 @@ shared tokens. This spec states the roles, values whose identity matters, and
 component anatomy that must remain stable rather than duplicating every
 declaration.
 
+Interaction labels and feedback describe the user’s task and actual visible state, rather than
+exposing loading paths or substituting internal control flags for those facts. Responsive and local
+repairs preserve established alignment, reading geometry and operation paths outside the affected
+condition; a different interaction needs its own design reason, not just code/spec agreement.
+
 ## Identity and palette
 
 - **Visible lockup:** `INSΠRE`; **natural-language and accessible name:**

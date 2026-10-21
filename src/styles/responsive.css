@@ -292,9 +292,9 @@ body.srail-dragging {
     left: max(var(--space-3), var(--safe-left));
     display: flex;
     width: auto;
-    height: 44px;
+    height: auto;
     min-height: 44px;
-    padding: 3px 5px 3px var(--space-2);
+    padding: 5px var(--space-2);
     justify-content: flex-start;
     border-radius: var(--radius-control);
     background: var(--bg-surface);
@@ -961,4 +961,10 @@ body.srail-dragging {
     animation: none !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+@media (max-width: 900px) {
+  .res__body--files.res__body--split > .res__index { display: none; }
+  .res__body--files.res__body--split { grid-template-rows: minmax(0, 1fr); }
+  .file-preview__back { display: inline-flex; flex: 0 0 auto; align-items: center; gap: var(--space-1); min-height: 44px; border: 0; padding: 0 var(--space-1); background: transparent; color: var(--body); cursor: pointer; }
 }

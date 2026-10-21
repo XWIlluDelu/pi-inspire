@@ -241,7 +241,7 @@ describe("extension context messages", () => {
       fireEvent.click(screen.getByRole("option", { name: scope }));
       expect(
         screen.getByLabelText("Transcript search matches"),
-      ).toHaveTextContent("No matches");
+      ).toHaveTextContent("0 matches");
     }
     expect(
       await screen.findByText("extension", { selector: "strong" }),

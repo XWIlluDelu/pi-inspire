@@ -62,7 +62,7 @@ describe("message actions", () => {
     fireEvent.change(search, { target: { value: "JSON paths" } });
     expect(
       screen.getByLabelText("Transcript search matches"),
-    ).toHaveTextContent("No matches");
+    ).toHaveTextContent("0 matches");
     fireEvent.click(screen.getByRole("button", { name: "Copy message" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(source));
     expect(
@@ -154,7 +154,7 @@ describe("message actions", () => {
       fireEvent.change(search, { target: { value: "Multiply coordinates" } });
       expect(
         screen.getByLabelText("Transcript search matches"),
-      ).toHaveTextContent("No matches");
+      ).toHaveTextContent("0 matches");
       fireEvent.change(search, { target: { value: "inspect" } });
       expect(
         screen.getByLabelText("Transcript search matches"),

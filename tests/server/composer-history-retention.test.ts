@@ -92,7 +92,6 @@ it("recalls retained branch prompts and exact artifacts through live compaction,
     modified: new Date(),
     messageCount: 2,
     firstMessage: "",
-    searchText: "",
   } as SessionRecord;
   let projection = await SessionProjection.open(record);
   const resources = new ResourceStore();

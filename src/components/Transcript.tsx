@@ -267,7 +267,11 @@ export const Transcript = memo(function Transcript({
   const closeMobileTranscriptTool = useCallback(
     (restoreFocus = false) => {
       const closedTool = mobileTranscriptTool;
-      if (closedTool === "search") search.clear();
+      if (
+        closedTool === "search" &&
+        window.matchMedia("(max-width: 900px)").matches
+      )
+        search.clear();
       setMobileTranscriptTool(null);
       if (restoreFocus && closedTool) {
         requestAnimationFrame(() => {
@@ -301,7 +305,11 @@ export const Transcript = memo(function Transcript({
   }, []);
 
   useEffect(() => {
-    if (mobileTranscriptTool === null) return;
+    if (
+      mobileTranscriptTool === null ||
+      !window.matchMedia("(max-width: 900px)").matches
+    )
+      return;
     const closeFromOutside = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
@@ -469,7 +477,6 @@ export const Transcript = memo(function Transcript({
       if (!pending || !scroller) return;
       promptNavigationOverrideRef.current = null;
       search.clearCurrentMatch();
-      viewport.markUserScrollIntent();
       viewport.releaseLatestFollow();
       const topPadding =
         Number.parseFloat(getComputedStyle(scroller).scrollPaddingTop) || 0;
@@ -477,6 +484,7 @@ export const Transcript = memo(function Transcript({
         pending.getBoundingClientRect().top -
         scroller.getBoundingClientRect().top -
         topPadding;
+      viewport.restoreGeometricFollow();
       pending.focus({ preventScroll: true });
     },
   }));
@@ -521,9 +529,8 @@ export const Transcript = memo(function Transcript({
         if (isComposingKeyboardEvent(event.nativeEvent)) return;
         if (event.key === "f" && (event.metaKey || event.ctrlKey)) {
           event.preventDefault();
-          if (window.matchMedia("(max-width: 900px)").matches) {
+          if (window.matchMedia("(max-width: 900px)").matches)
             setMobileTranscriptTool("search");
-          }
           searchInputRef.current?.focus();
           searchInputRef.current?.select();
         } else if (
@@ -693,7 +700,7 @@ export const Transcript = memo(function Transcript({
           ) : null}
         </div>
       </div>
-      {!viewport.pinned ? (
+      {!viewport.atLatest ? (
         <button type="button" className="jump-to-latest" onClick={jumpToLatest}>
           Jump to latest
         </button>

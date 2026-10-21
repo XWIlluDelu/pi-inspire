@@ -61,7 +61,6 @@ async function fixture() {
     modified: new Date(),
     messageCount: 0,
     firstMessage: "",
-    searchText: "",
   });
   // Suppress autonomous watcher timing. Explicit reads still use the ordinary
   // production reconciliation method/FIFO; individual tests trigger hints directly.

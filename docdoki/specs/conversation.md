@@ -139,7 +139,11 @@ custom messages remain independent readable boundaries in this contract.
 
 ## View-local search and Prompt Map
 
-- View-local search performs case-insensitive literal matching over settled conversation text and
+- View-local search covers already-loaded settled messages, not the whole branch; its input tooltip
+  describes that limit without a persistent scope disclaimer or a second History-search action.
+  History retains complete saved-history search across branches and tool activity in its own surface.
+  Do not preload all messages or build a new index merely to make this local utility look exhaustive.
+  View-local search performs case-insensitive literal matching over settled conversation text and
   can scope results to all searchable turns, user input only, or model output only. It wraps
   previous/next navigation and jumps by transcript row through virtualization. The streaming tail
   and hidden thinking/tool payloads are excluded. An active selected match locks out geometric
@@ -154,14 +158,18 @@ custom messages remain independent readable boundaries in this contract.
   Shell output and context summaries use the same display normalization for search and rendering:
   terminal control sequences and removed summary prefixes do not add invisible matches.
 
-  Desktop search floats at the top-right of the reading measure. Its opaque surface fill is subtly
+  Desktop search remains a compact single-row input at the top-right of the reading measure,
+  without a launcher or a Close control. Its opaque surface fill is subtly
   distinct from the reading stage, with a quiet boundary and no elevation at rest. Hover strengthens
   the boundary and adds the existing light elevation; focus or a non-empty query retains the accent
   boundary. These states do not change its geometry or let scrolling text show through.
   Search and narrow navigation surfaces do not reserve layout height; opening controls preserves the scrollport and reading
-  position. Desktop Escape blurs the search input without clearing its query or selected match.
-  When latest-follow is released, a bottom-centered floating text button, `Jump to latest`, restores
-  follow. Search and narrow launchers precede messages in keyboard order; Latest follows them.
+  position. Desktop Escape releases input focus without clearing its query or selected match.
+  A bottom-centered floating text button, `Jump to latest`, appears only when the scrollport is
+  actually away from its latest boundary, independently of automatic-follow or search ownership.
+  It restores follow at the complete Transcript bottom, including Pending and extension content
+  after virtualized message rows. Search and narrow launchers precede messages in keyboard order;
+  Latest follows them.
 
   On a narrow workbench, Search is an explicit 44px launcher in an idle control with no shared
   backdrop that floats over Transcript without reserving layout height; activating it replaces the
@@ -381,7 +389,10 @@ history keep one result per native execution. [[pi-integration]] owns execution 
   reconnect retention and cleanup. Model settlement does not dismiss an independent command's dialog.
 
 - Pending sits at the end of Transcript; the composer-adjacent activity surface provides a compact
-  count and Jump to Pending action. [[composer]] owns previews, visual emphasis, copying, recovery
+  count and Jump to Pending action. That surface keeps the Composer’s full measure and left alignment
+  for Pending, retry and compaction states, including in short windows. Jump to Pending focuses
+  its region and retains latest-follow when the destination is already at the latest boundary.
+  [[composer]] owns previews, visual emphasis, copying, recovery
   and discard. Pending remains a projection of Pi/Host-owned input, not a browser-owned queue.
   Retry/compaction feedback belongs to the activity surface; running and failed tools remain in
   their chronological cards.
