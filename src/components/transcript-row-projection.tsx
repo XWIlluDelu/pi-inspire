@@ -6,6 +6,7 @@ import {
   useLayoutEffect,
   useMemo,
 } from "react";
+import { assistantOutcome } from "../../shared/assistant-outcome";
 import {
   type ActivityFoldVisibilityPreference,
   isBusyRunState,
@@ -29,7 +30,7 @@ import type {
   ActivityMaterializationMode,
   TranscriptActivityRangeState,
 } from "../store";
-import { AssistantError } from "./AssistantError";
+import { AssistantError, AssistantStopped } from "./AssistantError";
 import { BashExecution } from "./BashExecution";
 import { CustomMessage } from "./CustomMessage";
 import { ActivitySegmentBoundary } from "./transcript-activity-visibility";
@@ -640,7 +641,7 @@ export function useTranscriptRows({
         if (
           segments.length === 0 &&
           assistantStreaming &&
-          message.stopReason !== "error"
+          assistantOutcome(message) === null
         ) {
           segments.push({
             kind: "activity",
@@ -761,19 +762,27 @@ export function useTranscriptRows({
           );
         });
 
-        if (message.stopReason === "error") {
-          // The outcome belongs after this message's content, outside activity
-          // disclosure. Even an empty Pi error must survive historical folding.
+        const outcome = assistantOutcome(message);
+        if (outcome) {
+          // Outcomes remain after partial content and outside activity folding,
+          // including a cancellation with no response body.
           flushActivity(true);
-          const errorText =
+          const detail =
             typeof message.errorMessage === "string" &&
             message.errorMessage.trim()
               ? message.errorMessage
-              : "Pi did not provide error details.";
+              : outcome === "error"
+                ? "Pi did not provide error details."
+                : "";
           built.push({
-            key: `error:${projectedKey}`,
-            node: <AssistantError text={errorText} />,
-            searchText: errorText,
+            key: `${outcome}:${projectedKey}`,
+            node:
+              outcome === "stopped" ? (
+                <AssistantStopped />
+              ) : (
+                <AssistantError text={detail} />
+              ),
+            searchText: outcome === "stopped" ? "Stopped" : detail,
             searchScope: "model",
             turnOrdinal: currentTurnOrdinal,
             turnId: currentTurnId,

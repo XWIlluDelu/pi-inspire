@@ -196,6 +196,7 @@ export function snapshotLifecyclePatch(
           ),
         ),
         editorText: null,
+        pendingRetryError: null,
         pendingAction: null,
         windowTitle: null,
         contextMode: "files",
@@ -216,6 +217,7 @@ export function snapshotLifecyclePatch(
       };
     case "view-changed":
       return {
+        pendingRetryError: null,
         branchTreeLoading: false,
         branchTreeError: previous.branchTree
           ? "Branch history is stale — refresh to use branch actions"

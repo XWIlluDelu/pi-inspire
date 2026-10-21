@@ -8,13 +8,60 @@ import {
 } from "../../server/session-projection.js";
 
 import {
-  setup,
   disposeProjectionFixture,
+  setup,
 } from "./fixtures/runtime-projection.js";
 
 afterEach(disposeProjectionFixture);
 
 describe("live and durable transcript reconciliation", () => {
+  it.each(["retry", "completed message"])(
+    "settles a background %s cancellation without completion/failure attention",
+    async (phase) => {
+      const { runtime, workers } = await setup();
+      try {
+        const events: Array<Record<string, unknown>> = [];
+        runtime.on("event", (event) => events.push(event));
+        await runtime.deselectSession();
+        const emit = (event: Record<string, unknown>) =>
+          workers[0]!.emit("event", event);
+        emit({ type: "agent_start" });
+        emit(
+          phase === "retry"
+            ? {
+                type: "auto_retry_end",
+                success: false,
+                finalError: "Retry cancelled",
+              }
+            : {
+                type: "message_end",
+                message: {
+                  role: "assistant",
+                  content: "finished",
+                  stopReason: "stop",
+                  timestamp: 2,
+                },
+              },
+        );
+        emit({ type: "agent_settled", aborted: true });
+        await vi.waitFor(() =>
+          expect(
+            events.findLast((event) => event.type === "agent_settled"),
+          ).toMatchObject({
+            sessionStatus: { runState: "aborted" },
+          }),
+        );
+        const settled = events.findLast(
+          (event) => event.type === "agent_settled",
+        )!;
+        expect(settled.sessionStatus).not.toHaveProperty("indicator");
+        expect((await runtime.snapshot("session-a")).runState).toBe("aborted");
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
+
   it.each(["character", "line"] as const)(
     "keeps the latest output beyond general projection (%s bound)",
     async (bound) => {
@@ -347,6 +394,52 @@ describe("live and durable transcript reconciliation", () => {
             ...failed,
             __inspireEntryId: "a1",
           });
+        });
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
+
+  it.each(["aborted", "error"])(
+    "keeps %s cancellation non-failing across settlement, snapshot and persistence",
+    async (stopReason) => {
+      const { runtime, workers, path } = await setup();
+      try {
+        const forwarded: Array<Record<string, unknown>> = [];
+        runtime.on("event", (event) => {
+          if (event.type === "message_end") forwarded.push(event);
+        });
+        const stopped = {
+          role: "assistant",
+          content: [],
+          stopReason,
+          errorMessage: "This operation was aborted",
+          timestamp: 2,
+        };
+        workers[0]!.emit("event", { type: "agent_start" });
+        workers[0]!.emit("event", {
+          type: "message_start",
+          message: {
+            ...stopped,
+            stopReason: undefined,
+            errorMessage: undefined,
+          },
+        });
+        workers[0]!.emit("event", { type: "message_end", message: stopped });
+        expect(forwarded.at(-1)?.message).toMatchObject(stopped);
+        expect((await runtime.snapshot()).runState).toBe("aborted");
+        await appendFile(
+          path,
+          `${JSON.stringify({ type: "message", id: "stopped", parentId: "u1", timestamp: "2026-08-01T00:00:02.000Z", message: stopped })}\n`,
+        );
+        workers[0]!.emit("event", { type: "agent_settled" });
+        await vi.waitFor(async () => {
+          const snapshot = await runtime.snapshot();
+          expect(snapshot.runState).toBe("aborted");
+          expect(snapshot.active?.transcriptPage.messages.at(-1)).toMatchObject(
+            { ...stopped, __inspireEntryId: "stopped" },
+          );
         });
       } finally {
         await runtime.close();

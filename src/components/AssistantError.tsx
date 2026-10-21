@@ -1,7 +1,23 @@
-import { ChevronDown, CircleAlert } from "lucide-react";
+import { ChevronDown, CircleAlert, Square } from "lucide-react";
 import { useContext, useId, useLayoutEffect, useState } from "react";
 import { CopyAction } from "./CopyAction";
 import { TranscriptSearchReveal } from "./transcript-search";
+
+/** Cancellation keeps the outcome header, without diagnostics or actions. */
+export function AssistantStopped() {
+  return (
+    <div
+      className="assistant-error assistant-error--stopped"
+      role="group"
+      aria-label="Stopped"
+    >
+      <div className="assistant-error__head">
+        <Square size={14} className="assistant-error__icon" aria-hidden />
+        <span className="assistant-error__label">Stopped</span>
+      </div>
+    </div>
+  );
+}
 
 /** Pi's message outcome, not a transient notice or collapsible activity. */
 export function AssistantError({ text }: { text: string }) {

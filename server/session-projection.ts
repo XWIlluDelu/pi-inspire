@@ -13,6 +13,7 @@ import type {
   SessionEntry,
   SessionHeader,
 } from "@earendil-works/pi-coding-agent";
+import { assistantOutcome } from "../shared/assistant-outcome.js";
 import { interruptAssistantToolCalls } from "../shared/assistant-stream.js";
 import {
   type BranchEntryResponse,
@@ -630,13 +631,13 @@ function boundedTranscriptItem(
           ...(stringChars === 2_000
             ? { __inspireProjectionReduced: true }
             : {}),
-          // Error outcomes remain inspectable even when large content forces
+          // Terminal outcomes remain inspectable even when large content forces
           // the reduced or omitted projection. Keep the same string budget.
           ...(sourceRecord?.role === "assistant" &&
-          sourceRecord.stopReason === "error"
+          assistantOutcome(sourceRecord) !== null
             ? {
                 role: "assistant",
-                stopReason: "error",
+                stopReason: sourceRecord.stopReason,
                 ...(typeof sourceRecord.errorMessage === "string"
                   ? {
                       errorMessage: projectSafeValue(
@@ -732,7 +733,7 @@ function isVisibleTranscriptBoundary(value: unknown): boolean {
   // Visible extension messages are context content, not lazily hidden tools.
   if (record.role === "custom") return record.display !== false;
   if (record.role !== "assistant") return false;
-  if (record.stopReason === "error") return true;
+  if (assistantOutcome(record) !== null) return true;
   if (typeof record.content === "string") return record.content.length > 0;
   return (
     Array.isArray(record.content) &&

@@ -1,11 +1,12 @@
+import { assistantOutcome } from "../shared/assistant-outcome.js";
 import {
   applyAssistantMessageDelta,
   assistantStreamTextLength,
 } from "../shared/assistant-stream.js";
 import {
   MODEL_REFRESH_SUFFIX,
-  RETRY_STATE_SUFFIX,
   PENDING_IMAGE_SUFFIX,
+  RETRY_STATE_SUFFIX,
 } from "../shared/branch-bridge-protocol.js";
 import {
   boundedExtensionStatus,
@@ -25,6 +26,12 @@ import {
   structuralMessageIdentity,
 } from "../shared/message-identity.js";
 import { PROVIDER_AUTH_SUFFIX } from "../shared/provider-auth-bridge.js";
+import {
+  childCallFromEvent,
+  codemodeCalls,
+  toolOutputPreview,
+  updateChildActivity,
+} from "../shared/tool-activity.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
 import { parseBridgeResult } from "./runtime-branch-bridge.js";
@@ -35,12 +42,6 @@ import {
 import type { RuntimeSlot } from "./runtime-slot.js";
 import type { ReducedAssistantDelta } from "./runtime-stream-budget.js";
 import { ToolArgumentStream } from "./tool-argument-stream.js";
-import {
-  childCallFromEvent,
-  codemodeCalls,
-  toolOutputPreview,
-  updateChildActivity,
-} from "../shared/tool-activity.js";
 
 const STREAM_REVISION_FIELD = "__inspireStreamRevision";
 const MAX_EXTENSION_DISPLAY_PAYLOAD_BYTES = 128 * 1024;
@@ -618,14 +619,21 @@ export class RuntimeEventController {
         const stopReason = (
           record.message as Record<string, unknown> | undefined
         )?.stopReason;
-        if (stopReason === "aborted") slot.runState = "aborted";
-        if (stopReason === "error" || stopReason === "length")
+        const outcome = assistantOutcome(record.message);
+        if (outcome === "stopped") slot.runState = "aborted";
+        else if (outcome === "error" || stopReason === "length")
           slot.runState = "failed";
         break;
       }
       case "agent_settled": {
         slot.toolActivity = {};
         slot.summarizationRetry = null;
+        if (
+          record.aborted === true &&
+          !slot.conflict &&
+          slot.runState !== "conflict"
+        )
+          slot.runState = "aborted";
         const outcome =
           slot.runState === "failed" || slot.runState === "conflict"
             ? "failed"

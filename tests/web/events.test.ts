@@ -724,11 +724,61 @@ describe("transient tool/retry/queue activity", () => {
       finalError: "overloaded",
     });
     expect(failed.slice.runState).toBe("failed");
-    expect(failed.slice.notices.at(-1)).toMatchObject({
+    expect(failed.slice.notices).toEqual([]);
+    const settled = reduce(failed.slice, new Set(), {
+      type: "agent_settled",
+      aborted: false,
+    });
+    expect(settled.slice.notices.at(-1)).toMatchObject({
       kind: "error",
       text: "Retry failed: overloaded",
     });
   });
+
+  it.each(["retry", "completed message"])(
+    "uses run-level cancellation after %s without erasing diagnostics",
+    (phase) => {
+      let slice = reduce(emptyEventSlice(), new Set(), {
+        type: "agent_start",
+      }).slice;
+      slice = reduce(slice, new Set(), {
+        type: "extension_error",
+        error: "earlier diagnostic",
+      }).slice;
+      const message = {
+        role: "assistant",
+        content: "finished",
+        timestamp: 1,
+        stopReason: "stop",
+      };
+      slice = reduce(
+        slice,
+        new Set(),
+        phase === "retry"
+          ? {
+              type: "auto_retry_end",
+              success: false,
+              finalError: "Retry cancelled",
+            }
+          : { type: "message_end", message },
+      ).slice;
+      slice = reduce(slice, new Set(), {
+        type: "agent_settled",
+        aborted: true,
+      }).slice;
+      expect(slice.runState).toBe("aborted");
+      expect(slice.notices.map(({ text }) => text)).toEqual([
+        "Extension error: earlier diagnostic",
+      ]);
+      if (phase === "completed message")
+        expect(slice.messages[0]?.stopReason).toBe("stop");
+      const conflicted = reduce({ ...slice, runState: "conflict" }, new Set(), {
+        type: "agent_settled",
+        aborted: true,
+      });
+      expect(conflicted.slice.runState).toBe("conflict");
+    },
+  );
 
   it("preserves queued steering and follow-up input in separate source order", () => {
     const pending = pendingQueues(["a"], ["b", "c"], {
