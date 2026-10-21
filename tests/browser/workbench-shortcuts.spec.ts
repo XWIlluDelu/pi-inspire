@@ -56,15 +56,17 @@ for (const platform of ["MacIntel", "Win32"]) {
     await page.route("**/api/models**", (route) =>
       route.fulfill({ json: { models, commonModels: models } }),
     );
-    await page.route("**/api/control/model", async (route) => {
+    // This fixture owns both directions to exercise shortcut delivery; native
+    // Pi's RPC capability refusal is outside this routed UI scenario.
+    await page.route("**/api/control/model-cycle", async (route) => {
       const body = route.request().postDataJSON();
-      const next = models.find(
-        (model) =>
-          model.provider === body.provider && model.id === body.modelId,
-      );
-      expect(next).toBeDefined();
-      selected = next!;
-      await route.fulfill({ json: { ok: true } });
+      expect([1, -1]).toContain(body.direction);
+      selected =
+        models[
+          (models.indexOf(selected) + body.direction + models.length) %
+            models.length
+        ]!;
+      await route.fulfill({ json: { model: selected, thinkingLevel } });
     });
     await page.route("**/api/control/thinking", async (route) => {
       thinkingLevel = route.request().postDataJSON().level;
@@ -74,7 +76,7 @@ for (const platform of ["MacIntel", "Win32"]) {
     page.on("request", (request) => {
       if (
         request.method() === "POST" &&
-        /\/api\/control\/(model|thinking)$/.test(
+        /\/api\/control\/(model-cycle|thinking)$/.test(
           new URL(request.url()).pathname,
         )
       )

@@ -82,7 +82,10 @@ import {
 } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
 import { RuntimeBashController } from "./runtime-bash.js";
-import { newBridgeIdentity } from "./runtime-branch-bridge.js";
+import {
+  branchDeltaMatches,
+  newBridgeIdentity,
+} from "./runtime-branch-bridge.js";
 import {
   assertPromptArtifactBudget,
   readComposerHistoryImages,
@@ -308,6 +311,7 @@ export interface RuntimeLike {
   pendingText(request: PendingReadRequest): Promise<PendingCopyContent>;
   clearPending(sessionId: string): Promise<void>;
   rename(sessionId: string, name: string): Promise<void>;
+  cycleModel(sessionId: string): Promise<unknown>;
   setModel(
     sessionId: string,
     provider: string,
@@ -2628,7 +2632,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         409,
       );
     assertPublicPrompt(slot, entered);
-    const invocation = parseCommandInvocation(entered);
+    const invocation = parseCommandInvocation(entered, (name) =>
+      runtimeResourceOwnsCommand(slot, name),
+    );
     const native = parseNativeCommand(entered);
     if (invocation && !native && slot.process && slot.ready)
       await this.readRuntimeCommands(slot, slot.process);
@@ -3465,25 +3471,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         );
       }
       const delta = verified.entries as SessionEntry[];
-      const summary = delta[0];
-      const summaryAppend = Boolean(
-        request.summarize &&
-          result.summaryId &&
-          summary?.type === "branch_summary" &&
-          summary.id === result.summaryId &&
-          summary.parentId === navigationTarget &&
-          summary.fromId === beforeLeaf,
-      );
-      let parent = navigationTarget;
-      const validDelta = delta.every((entry, index) => {
-        const valid =
-          entry.parentId === parent &&
-          ((index === 0 && summaryAppend) ||
-            entry.type === "label" ||
-            entry.type === "custom");
-        parent = entry.id;
-        return valid;
-      });
+      const validDelta =
+        (!result.summaryId || request.summarize) &&
+        branchDeltaMatches(result, delta, navigationTarget, beforeLeaf);
       await this.reconcileSlot(slot, true);
       if (slot.pendingBranchBridge === pending) slot.pendingBranchBridge = null;
       if (
@@ -3516,10 +3506,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           );
         throw requestError(result.error ?? "Branch navigation failed", 409);
       }
-      if (
-        result.effectiveLeaf !==
-        (delta.length > 0 ? delta.at(-1)!.id : navigationTarget)
-      ) {
+      if (!validDelta) {
         return this.failUnknownBranchOutcome(
           slot,
           "Branch navigation reached an unexpected leaf; the worker was stopped",
@@ -4033,10 +4020,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private async abortInside(sessionId: string): Promise<PendingRecovery> {
     const externalSlot = this.requireSlot(sessionId);
     if (this.externalSessions?.has(externalSlot)) {
-      await this.useSlot(externalSlot, () =>
+      const interruptionScope = await this.useSlot(externalSlot, () =>
         this.externalSessions!.abort(externalSlot),
       );
-      return { steering: [], followUp: [] };
+      return {
+        steering: [],
+        followUp: [],
+        ...(interruptionScope ? { interruptionScope } : {}),
+      };
     }
     const initialSlot = this.requireSlot(sessionId);
     if (initialSlot.conflict) {
@@ -4575,10 +4566,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       await this.ensureProcess(slot);
       if (this.externalSessions.has(slot)) {
         await this.useSlot(slot, () =>
-          this.externalSessions!.command(
-            slot,
-            `/name ${name.trim().slice(0, 160)}`,
-          ),
+          this.externalSessions!.rename(slot, name.trim().slice(0, 160)),
         );
         this.catalog.invalidate();
         return;
@@ -4604,6 +4592,22 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         },
       );
       this.catalog.invalidate();
+    });
+  }
+
+  async cycleModel(sessionId: string): Promise<unknown> {
+    return this.withMaintenanceOperation(async () => {
+      const slot = this.requireSlot(sessionId);
+      return this.mutateSlot(slot, async () => {
+        const ready = await this.ensureFreshWriterInsideGate(slot);
+        return this.withExpectedPersistence(slot, [], async () => {
+          const result = await this.requestPersistence(slot, ready.process, {
+            type: "cycle_model",
+          });
+          await this.reconcileAcceptedPersistence(slot, "the model cycle");
+          return result;
+        });
+      });
     });
   }
 

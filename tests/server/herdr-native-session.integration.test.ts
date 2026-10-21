@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   nativeHerdrAvailable,
@@ -9,6 +10,7 @@ describe.skipIf(!nativeHerdrAvailable)(
   () => {
     it("keeps one interactive Pi usable from Inspire and its terminal across Host reconnects", async () => {
       const f = await nativeHerdrFixture();
+      vi.stubEnv("XDG_CACHE_HOME", join(f.root, "cache"));
       let runtime = f.makeRuntime();
       const { sessionId, sessionFile, pane } = f;
       try {
@@ -117,6 +119,7 @@ describe.skipIf(!nativeHerdrAvailable)(
         expect(JSON.stringify(draftView)).toContain("Unsent terminal draft");
       } finally {
         await f.close();
+        vi.unstubAllEnvs();
       }
     }, 60_000);
   },

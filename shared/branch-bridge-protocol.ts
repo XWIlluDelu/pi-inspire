@@ -27,6 +27,8 @@ export interface BranchBridgeResult {
   cancelled: boolean;
   beforeLeaf: string | null;
   effectiveLeaf: string | null;
+  /** Leaf observed in the native session_tree event, before callback effects. */
+  navigationLeaf?: string | null;
   summaryId?: string;
   error?: string;
 }

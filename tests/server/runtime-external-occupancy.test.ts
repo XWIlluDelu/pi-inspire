@@ -4,11 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  piActivityProcessIdentity,
   type PiActivityRecord,
+  piActivityProcessIdentity,
 } from "../../docs/examples/session-activity.js";
-import { PiSessionOccupancy } from "../../server/pi-session-occupancy.js";
+import { HerdrNativeSession } from "../../server/herdr-native-session.js";
+import { captureHerdrHostIdentity } from "../../server/herdr-process-group.js";
 import type { PiRpcProcess } from "../../server/pi-rpc.js";
+import { PiSessionOccupancy } from "../../server/pi-session-occupancy.js";
 import { requestError } from "../../server/request-error.js";
 import { RuntimeController } from "../../server/runtime.js";
 import {
@@ -61,10 +63,118 @@ async function fixture(activity: PiActivityRecord["activity"] = "idle") {
   )
     .setExternalSessionConnector(async () => null)
     .setExternalSessionGuard(check);
-  return { session, report, file, runtime, create, check, workers };
+  return { session, report, file, runtime, create, check, workers, guard };
 }
 
 describe("writer admission for externally held session files", () => {
+  it.skipIf(process.platform !== "linux")(
+    "retires an established native connection only after its exact reporter completes a rebind",
+    async () => {
+      const f = await fixture();
+      const replacement = await persistedRecord("replacement-session");
+      const identity = await captureHerdrHostIdentity();
+      const agent = {
+        agent: "pi",
+        pane_id: "pane",
+        agent_status: "idle",
+        agent_session: {
+          source: "herdr:pi",
+          agent: "pi",
+          kind: "id",
+          value: f.session.id,
+        },
+      };
+      const read = vi.fn(async () => ({ agent }));
+      const native = new HerdrNativeSession(
+        {
+          nativeAgentRequest: read,
+          inspectPaneProcess: async () => ({
+            paneId: "pane",
+            foregroundProcessGroupId: identity.pid,
+            foregroundProcesses: [
+              { pid: identity.pid, name: "pi", argv: ["pi"] },
+            ],
+          }),
+        },
+        {
+          serverId: "server",
+          paneId: "pane",
+          pid: identity.pid,
+          processIdentity: identity,
+        },
+        f.session.id,
+        f.session.path,
+        await f.guard.observeBinding(
+          identity.pid,
+          f.session.id,
+          f.session.path,
+        ),
+      );
+      const close = vi.spyOn(native, "close");
+      const connector = vi.fn(async () =>
+        agent.agent_session.value === f.session.id ? native : null,
+      );
+      f.runtime.setExternalSessionConnector(connector);
+      try {
+        await f.runtime.openSession(f.session.id);
+        await vi.waitFor(() => expect(read).toHaveBeenCalled());
+        expect(f.create).not.toHaveBeenCalled();
+        agent.agent_session.value = replacement.id;
+        // Herdr's changed session and a live PID are not a completed handoff.
+        await f.runtime.openSession(f.session.id);
+        await vi.waitFor(async () =>
+          expect((await f.runtime.snapshot()).active?.readOnlyReason).toBe(
+            "external-unavailable",
+          ),
+        );
+        expect(f.create).not.toHaveBeenCalled();
+        expect(close).not.toHaveBeenCalled();
+        await rm(f.file);
+        await f.runtime.openSession(f.session.id);
+        expect((await f.runtime.snapshot()).active?.readOnlyReason).toBe(
+          "external-unavailable",
+        );
+        await writeFile(
+          f.file,
+          JSON.stringify({
+            ...f.report,
+            sessionId: replacement.id,
+            sessionFile: replacement.path,
+          }),
+        );
+        // An independent holder of A must still fence normal occupancy admission.
+        const second = join(directory, `${process.pid}-${randomUUID()}.json`);
+        await writeFile(second, JSON.stringify(f.report));
+        await vi.waitFor(async () => {
+          await f.runtime.openSession(f.session.id);
+          expect((await f.runtime.snapshot()).active?.readOnlyReason).toBe(
+            "external-active",
+          );
+        });
+        expect(close).toHaveBeenCalledOnce();
+        expect(f.create).not.toHaveBeenCalled();
+        await writeFile(
+          second,
+          JSON.stringify({
+            ...f.report,
+            sessionId: replacement.id,
+            sessionFile: replacement.path,
+          }),
+        );
+        await vi.waitFor(async () => {
+          await f.runtime.openSession(f.session.id);
+          expect(f.create).toHaveBeenCalledOnce();
+        });
+        await waitForReady(f.runtime, f.session.id);
+        expect(
+          (await f.runtime.snapshot()).active?.readOnlyReason,
+        ).toBeUndefined();
+      } finally {
+        await f.runtime.close();
+      }
+    },
+  );
+
   it.each(["working", "blocked", "idle"] as const)(
     "opens a reported %s Pi read-only without starting another process",
     async (activity) => {

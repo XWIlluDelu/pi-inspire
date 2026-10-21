@@ -1,12 +1,21 @@
 /**
- * Optional, read-only Pi activity and session-presence reporter for Inspire.
+ * Optional Pi activity/presence reporter with native actions in Herdr TUI sessions.
  * Enable explicitly with: pi install /absolute/path/to/this/file.ts
- * No tools, prompts, UI changes, network access or session-file writes.
+ * Reporting adds no tools or model context. No service listener or new credentials.
+ * Native actions use the existing Herdr terminal transport and Pi public APIs,
+ * never user keybindings.
  */
 import { execFile as execFileCallback } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve, win32 } from "node:path";
 import { promisify } from "node:util";
@@ -138,6 +147,44 @@ export interface PiActivityRecord {
   sessionFile: string;
   activity: "working" | "blocked" | "idle";
   updatedAt: number;
+  nativeActions?: {
+    version: 1;
+    receiverId: string;
+    result?: NativeActionResult;
+  };
+}
+
+export type NativeAction =
+  | { type: "prompt"; message: string; behavior?: "steer" | "followUp" }
+  | { type: "abort" }
+  | { type: "rename"; name: string };
+export interface NativeActionRequest {
+  receiverId: string;
+  operationId: string;
+  pid: number;
+  processIdentity: string;
+  sessionId: string;
+  sessionFile: string;
+  action: NativeAction;
+}
+interface NativeActionResult {
+  operationId: string;
+  status: "invoked" | "rejected";
+  code?: string;
+  message?: string;
+}
+const ACTION_PREFIX = "\x1b]777;inspire-native;";
+export function nativeActionFrame(
+  receiverId: string,
+  operationId: string,
+): string {
+  return `${ACTION_PREFIX}${receiverId};${operationId}\x07`;
+}
+export function nativeActionPath(
+  directory: string,
+  operationId: string,
+): string {
+  return join(directory, "actions", operationId + ".json");
 }
 
 const fileKey = Symbol.for("inspire.piSessionPresence.files");
@@ -202,6 +249,10 @@ export default function (pi: ExtensionAPI) {
   let identity: string | undefined;
   let retired = false;
   let lifecycle = 0;
+  let receiverId: string | undefined;
+  let actionResult: NativeActionResult | undefined;
+  let unsubscribe: (() => void) | undefined;
+  const invocations = new Map<string, Promise<void>>();
 
   const write = (record: PiActivityRecord): Promise<void> => {
     if (!file) return writes;
@@ -239,6 +290,9 @@ export default function (pi: ExtensionAPI) {
             ? "working"
             : "idle",
         updatedAt: Date.now(),
+        ...(receiverId
+          ? { nativeActions: { version: 1, receiverId, result: actionResult } }
+          : {}),
       });
     } catch {
       // Invalidated context is not evidence that the owning process exited.
@@ -247,6 +301,11 @@ export default function (pi: ExtensionAPI) {
   };
 
   const stop = async (markInactive: boolean): Promise<void> => {
+    unsubscribe?.();
+    unsubscribe = undefined;
+    receiverId = undefined;
+    actionResult = undefined;
+    invocations.clear();
     if (timer) clearInterval(timer);
     timer = undefined;
     context = undefined;
@@ -261,6 +320,93 @@ export default function (pi: ExtensionAPI) {
         updatedAt: Date.now(),
       });
     }
+  };
+
+  // Payload files are transport data, not a polled execution queue. Only an
+  // explicit frame on the existing Herdr channel invokes a native action.
+  const receive = (data: string): { consume: true } | undefined => {
+    if (data.startsWith("\x1b[200~") && data.endsWith("\x1b[201~"))
+      data = data.slice(6, -6);
+    if (!data.startsWith(ACTION_PREFIX)) return;
+    const match = /^([0-9a-f-]{36});([0-9a-f-]{36})\x07$/.exec(
+      data.slice(ACTION_PREFIX.length),
+    );
+    if (!match || !context || !receiverId) return { consume: true };
+    const receiver = receiverId,
+      ctx = context,
+      generation = lifecycle;
+    const operationId = match[2]!;
+    if (match[1] !== receiver) return { consume: true };
+    if (!invocations.has(operationId)) {
+      const run = async () => {
+        const result: NativeActionResult = { operationId, status: "rejected" };
+        try {
+          const path = nativeActionPath(piActivityDirectory(), operationId);
+          const info = await lstat(path);
+          if (!info.isFile() || info.size > 4 * 1024 * 1024)
+            throw new Error("Invalid action payload");
+          const request: NativeActionRequest = JSON.parse(
+            await readFile(path, "utf8"),
+          );
+          if (
+            generation !== lifecycle ||
+            receiverId !== receiver ||
+            !context ||
+            request.receiverId !== receiver ||
+            request.operationId !== operationId ||
+            request.pid !== process.pid ||
+            request.processIdentity !== identity ||
+            request.sessionId !== ctx.sessionManager.getSessionId() ||
+            request.sessionFile !==
+              resolve(ctx.cwd, ctx.sessionManager.getSessionFile() ?? "")
+          )
+            throw new Error("The native action target changed");
+          const action = request.action;
+          if (action.type === "prompt") {
+            if (
+              typeof action.message !== "string" ||
+              (action.behavior !== undefined &&
+                action.behavior !== "steer" &&
+                action.behavior !== "followUp")
+            )
+              throw new Error("Invalid prompt action");
+            if (waiting) {
+              result.code = "NATIVE_INPUT_BLOCKED";
+              throw new Error(
+                "Pi is waiting for an answer in its terminal. Answer there before sending another message.",
+              );
+            }
+            if (ctx.ui.getEditorText().trim()) {
+              result.code = "NATIVE_EDITOR_NOT_EMPTY";
+              throw new Error(
+                "There is an unsent draft in the Pi terminal. Send or clear it before sending from Inspire.",
+              );
+            }
+            pi.sendUserMessage(action.message, {
+              deliverAs: action.behavior ?? "steer",
+              expandPromptTemplates: true,
+            });
+          } else if (action.type === "abort") ctx.abort();
+          else if (action.type === "rename" && typeof action.name === "string")
+            pi.setSessionName(action.name);
+          else throw new Error("Unsupported native action");
+          // Invocation is not queue admission, completion or persistence.
+          // Pi owns the ensuing work and reports asynchronous native errors.
+          result.status = "invoked";
+        } catch (error) {
+          result.message =
+            error instanceof Error ? error.message : "Native action rejected";
+        }
+        if (generation === lifecycle && receiverId === receiver) {
+          actionResult = result;
+          await publish();
+        }
+      };
+      invocations.set(operationId, run());
+      if (invocations.size > 32)
+        invocations.delete(invocations.keys().next().value!);
+    } else void invocations.get(operationId)!.then(() => publish());
+    return { consume: true };
   };
 
   pi.on("session_start", async (event, ctx) => {
@@ -287,6 +433,16 @@ export default function (pi: ExtensionAPI) {
     identity = birth;
     context = ctx;
     running = !ctx.isIdle();
+    if (
+      ctx.mode === "tui" &&
+      identity &&
+      process.env.HERDR_ENV === "1" &&
+      process.env.HERDR_PANE_ID &&
+      process.env.HERDR_SOCKET_PATH
+    ) {
+      receiverId = randomUUID();
+      unsubscribe = ctx.ui.onTerminalInput(receive);
+    }
     await publish();
     if (lifecycle !== generation) return;
     timer = setInterval(() => {

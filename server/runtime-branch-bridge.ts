@@ -1,3 +1,4 @@
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
   BRANCH_BRIDGE_MAX_RESULT_BYTES,
   BRANCH_BRIDGE_VERSION,
@@ -13,6 +14,46 @@ export function newBridgeIdentity(): BranchBridgeIdentity {
     command: runtimeToken("inspire_branch"),
     statusKey: runtimeToken("inspire_branch_status"),
   };
+}
+
+/** The native anchor may include its summary/label prefix; subsequent entries
+ * are extension effects. Callers separately attest worker identity and disk JSON. */
+export function branchDeltaMatches(
+  result: BranchBridgeResult,
+  delta: readonly SessionEntry[],
+  navigationTarget: string | null,
+  beforeLeaf: string | null,
+): boolean {
+  if (result.navigationLeaf === undefined || result.beforeLeaf !== beforeLeaf)
+    return false;
+  let parent = navigationTarget;
+  let anchorSeen = result.navigationLeaf === parent;
+  for (const [index, entry] of delta.entries()) {
+    if (entry.parentId !== parent) return false;
+    if (
+      !anchorSeen &&
+      entry.type !== "label" &&
+      !(
+        index === 0 &&
+        entry.type === "branch_summary" &&
+        entry.id === result.summaryId &&
+        entry.fromId === beforeLeaf
+      )
+    )
+      return false;
+    if (entry.id === result.navigationLeaf) anchorSeen = true;
+    parent = entry.id;
+  }
+  if (
+    result.summaryId &&
+    !(
+      delta[0]?.type === "branch_summary" &&
+      delta[0].id === result.summaryId &&
+      delta[0].fromId === beforeLeaf
+    )
+  )
+    return false;
+  return anchorSeen && parent === result.effectiveLeaf;
 }
 
 export function parseBridgeResult(text: unknown): BranchBridgeResult {
@@ -39,6 +80,7 @@ export function parseBridgeResult(text: unknown): BranchBridgeResult {
     typeof value.cancelled !== "boolean" ||
     !leaf(value.beforeLeaf) ||
     !leaf(value.effectiveLeaf) ||
+    (value.navigationLeaf !== undefined && !leaf(value.navigationLeaf)) ||
     (value.summaryId !== undefined &&
       (typeof value.summaryId !== "string" || !value.summaryId)) ||
     (value.error !== undefined &&
@@ -54,6 +96,7 @@ export function parseBridgeResult(text: unknown): BranchBridgeResult {
           "cancelled",
           "beforeLeaf",
           "effectiveLeaf",
+          "navigationLeaf",
           "summaryId",
           "error",
         ].includes(key),

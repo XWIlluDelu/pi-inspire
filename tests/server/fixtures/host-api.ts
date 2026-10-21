@@ -108,7 +108,8 @@ export async function hostApiFixture(
       | null;
     websocketHeartbeatIntervalMs?: number;
     promptObservationWindowMs?: number;
-    runtime?: MockRuntime;
+    runtime?: Parameters<typeof createInspireServer>[0]["runtime"] &
+      Pick<MockRuntime, "emit">;
     distDir?: string;
     staticAssetCacheDirs?: string[];
   } = {},

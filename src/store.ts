@@ -20,7 +20,6 @@ import {
   isBusyRunState,
   type LaunchPreference,
   type ModelOption,
-  modelIdentityKey,
   type NewSessionOptions,
   type PalettePreference,
   type PendingRecovery,
@@ -1617,15 +1616,16 @@ export class AppStore {
     input: string,
     behavior?: "steer" | "followUp",
   ): Promise<PromptAcceptedResponse | false> => {
-    const invocation = parseCommandInvocation(input);
+    const inventory = resolveCommandInventory(this.state.commands);
+    const invocation = parseCommandInvocation(input, (name) =>
+      inventory.some((command) => command.name === name),
+    );
     if (!invocation) {
       this.notify("warning", "Enter a slash command to prepare");
       return false;
     }
     if (parseNativeCommand(input)) return this.runPaletteNativeCommand(input);
-    const command = resolveCommandInventory(this.state.commands).find(
-      (item) => item.name === invocation.name,
-    );
+    const command = inventory.find((item) => item.name === invocation.name);
     if (!command || command.source === "builtin") {
       this.notify(
         "warning",
@@ -2024,9 +2024,12 @@ export class AppStore {
 
     if (message.trim().startsWith("!"))
       return this.composer.send(message.trim(), undefined, onHandoff);
-    const invocation = parseCommandInvocation(message);
+    const inventory = resolveCommandInventory(this.state.commands);
+    const invocation = parseCommandInvocation(message, (name) =>
+      inventory.some((command) => command.name === name),
+    );
     if (invocation) {
-      const dynamic = resolveCommandInventory(this.state.commands).find(
+      const dynamic = inventory.find(
         (command) => command.name === invocation.name,
       );
       if (!dynamic) {
@@ -2146,6 +2149,11 @@ export class AppStore {
       this.replaceComposerText(sessionDraft(sessionId));
     }
     if (this.state.sessionId === sessionId) {
+      if (recovered.interruptionScope === "agent")
+        this.notify(
+          "info",
+          "Pi agent interruption requested. Interrupt terminal shell commands in the original Pi terminal.",
+        );
       if (recovered.warning) this.notify("warning", recovered.warning);
       if (recovered.error)
         this.notify("warning", `Pending recovery failed: ${recovered.error}`);
@@ -2592,32 +2600,29 @@ export class AppStore {
 
   cycleModel = (direction: 1 | -1): Promise<void> =>
     this.queueModelCycle(async (owns) => {
-      if (this.state.readOnlyReason) return;
-      const available = this.state.availableModels;
-      const byKey = new Map(
-        available.map((model) => [modelIdentityKey(model), model]),
-      );
-      const common = this.state.commonModels.flatMap((model) => {
-        const match = byKey.get(modelIdentityKey(model));
-        return match ? [match] : [];
-      });
-      const models = common.length ? common : available;
-      if (models.length <= 1) return;
-      const index = Math.max(
-        0,
-        models.findIndex(
-          (model) =>
-            model.provider === this.state.model?.provider &&
-            model.id === this.state.model?.id,
-        ),
-      );
-      const next = models[(index + direction + models.length) % models.length]!;
-      const scoped = this.state.commonModels.find(
-        (model) => modelIdentityKey(model) === modelIdentityKey(next),
-      );
-      if (await this.setModel(next.provider, next.id)) {
-        if (scoped?.thinkingLevel && owns())
-          await this.setThinkingLevel(scoped.thinkingLevel);
+      const api = this.api,
+        sessionId = this.state.sessionId;
+      const selection = this.selectionGeneration;
+      if (!api || !sessionId || this.state.readOnlyReason) return;
+      try {
+        // Pi owns scope order, thinking defaults and model_select effects.
+        await api.cycleModel(sessionId, direction);
+        if (!owns()) return;
+        await this.resync(sessionId, selection);
+        if (owns() && this.state.model)
+          this.preferences.rememberModel({
+            provider: this.state.model.provider,
+            id: this.state.model.id,
+          });
+      } catch (error) {
+        if (!owns()) return;
+        if (error instanceof ApiError && error.status === 401)
+          this.handleAuthFailure();
+        else
+          this.notify(
+            "warning",
+            error instanceof Error ? error.message : "Failed to cycle model",
+          );
       }
     });
 

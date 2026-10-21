@@ -679,6 +679,8 @@ export interface PendingOperationRequest extends PendingOperationIdentity {
 }
 
 export interface PendingRecovery extends PendingInput {
+  /** Native extension interruption does not include terminal user Bash. */
+  interruptionScope?: "agent";
   /** Image-handoff identity shared with the original prompt observers. */
   recoveryId?: string;
   /** Staged handles in Steer/Queue order; recovery never applies send limits. */

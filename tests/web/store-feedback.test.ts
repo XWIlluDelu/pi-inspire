@@ -13,6 +13,26 @@ import { baseRoutes, initStore } from "./store-fixture";
 beforeEach(() => installFakeWebSocket());
 
 describe("feedback scope", () => {
+  it("identifies a native agent interruption without claiming to stop terminal shell work", async () => {
+    installFetch((url, init) => {
+      if (url === "/api/control/abort")
+        return {
+          body: { steering: [], followUp: [], interruptionScope: "agent" },
+        };
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await store.abort();
+    expect(store.getState().notices).toEqual([
+      expect.objectContaining({
+        kind: "info",
+        text: expect.stringContaining(
+          "Interrupt terminal shell commands in the original Pi terminal",
+        ),
+      }),
+    ]);
+  });
+
   it.each(["send", "stop", "clear-pending", "prompt-history"] as const)(
     "keeps %s feedback separate from a current synchronization warning",
     async (action) => {

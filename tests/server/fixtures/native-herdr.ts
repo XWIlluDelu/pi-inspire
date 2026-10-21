@@ -20,6 +20,7 @@ import { HerdrWorkerRegistry } from "../../../server/herdr-worker-registry.js";
 import { getAgentDir, piInstallation } from "../../../server/pi-runtime.js";
 import { RuntimeController } from "../../../server/runtime.js";
 import { SessionCatalog } from "../../../server/session-catalog.js";
+import { isolatedTestEnvironment } from "./isolated-environment.js";
 
 const exec = promisify(execFile);
 const reporter = join(getAgentDir(), "extensions", "herdr-agent-state.ts");
@@ -40,7 +41,12 @@ export async function nativeHerdrFixture(
   const sessionId = randomUUID();
   const sessionFile = join(root, `${sessionId}.jsonl`);
   const agentDir = join(root, "agent");
-  const client = new HerdrClient({ session: sessionName });
+  const environment = isolatedTestEnvironment(root, {
+    PATH: process.env.PATH,
+    XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR,
+    DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS,
+  });
+  const client = new HerdrClient({ session: sessionName, environment });
   const observer = new HerdrWorkerObserver({ client });
   const enhancement = new HerdrEnhancement({
     enabled: true,
@@ -61,12 +67,12 @@ export async function nativeHerdrFixture(
     await store.close();
     await enhancement.close();
     // Only this disposable named server belongs to this fixture.
-    await exec("herdr", ["--session", sessionName, "server", "stop"]).catch(
-      () => undefined,
-    );
-    await exec("herdr", ["session", "delete", sessionName]).catch(
-      () => undefined,
-    );
+    await exec("herdr", ["--session", sessionName, "server", "stop"], {
+      env: environment,
+    }).catch(() => undefined);
+    await exec("herdr", ["session", "delete", sessionName], {
+      env: environment,
+    }).catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   }
   try {
@@ -125,6 +131,8 @@ export async function nativeHerdrFixture(
       "--no-extensions",
       "-e",
       reporter,
+      "-e",
+      resolve("docs/examples/session-activity.ts"),
       "-e",
       resolve("tests/fixtures/pi-model-workflow-extension.ts"),
       "--no-skills",

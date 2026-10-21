@@ -4,6 +4,8 @@ export interface ExternalSessionState {
 }
 
 export interface ExternalSessionConnection {
+  /** A target extension may interrupt agent work but not native TUI shell execution. */
+  readonly interruptionScope?: "agent";
   /** null means this owner is confirmed no longer writing this session.
    * An unavailable endpoint or uncertain ownership MUST reject, never return null. */
   read(): Promise<ExternalSessionState | null>;
@@ -13,6 +15,7 @@ export interface ExternalSessionConnection {
     beforeSend?: () => void,
   ): Promise<void>;
   abort(): Promise<void>;
+  rename?(name: string, beforeSend?: () => void): Promise<void>;
   /** Release Host resources only; never terminate Pi or close its terminal. */
   close(): void;
 }

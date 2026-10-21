@@ -155,6 +155,7 @@ class BranchRpc extends EventEmitter {
       cancelled,
       beforeLeaf,
       effectiveLeaf: this.leafId,
+      ...(!cancelled ? { navigationLeaf: this.leafId } : {}),
     };
     if (this.resultMode === "persist") {
       await appendFile(
