@@ -22,7 +22,7 @@ import {
 } from "./fixtures/native-pi.js";
 import { FakeRpc } from "./fixtures/runtime.js";
 
-it("fences a real independent RPC owner through idle, work and reload, then releases on native session replacement", async () => {
+async function exerciseOwner(connectHerdr: boolean) {
   const workspace = await nativePiWorkspace("inspire-native-occupancy-", {
     defaultProjectTrust: "never",
     compaction: { enabled: false },
@@ -181,49 +181,59 @@ it("fences a real independent RPC owner through idle, work and reload, then rele
       guard.assertWritable(sessionId, sessionFile),
     ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
 
-    const identity = await captureHerdrProcessIdentity(pid!);
-    expect(identity).not.toBeNull();
+    const binding = await guard.observeBinding(pid!, sessionId, sessionFile);
+    expect(binding).toEqual(expect.any(Function));
+    const identity = connectHerdr
+      ? await captureHerdrProcessIdentity(pid!)
+      : null;
+    if (connectHerdr) expect(identity).not.toBeNull();
     let nativeSessionId = sessionId;
-    const native = new HerdrNativeSession(
-      {
-        nativeAgentRequest: async () => ({
-          agent: {
-            agent: "pi",
-            pane_id: "fixture-pane",
-            agent_status: "idle",
-            agent_session: {
-              source: "herdr:pi",
-              agent: "pi",
-              kind: "id",
-              value: nativeSessionId,
-            },
+    const native = connectHerdr
+      ? new HerdrNativeSession(
+          {
+            nativeAgentRequest: async () => ({
+              agent: {
+                agent: "pi",
+                pane_id: "fixture-pane",
+                agent_status: "idle",
+                agent_session: {
+                  source: "herdr:pi",
+                  agent: "pi",
+                  kind: "id",
+                  value: nativeSessionId,
+                },
+              },
+            }),
+            inspectPaneProcess: async () => ({
+              paneId: "fixture-pane",
+              foregroundProcessGroupId: pid!,
+              foregroundProcesses: [{ pid: pid!, name: "pi", argv: ["pi"] }],
+            }),
           },
-        }),
-        inspectPaneProcess: async () => ({
-          paneId: "fixture-pane",
-          foregroundProcessGroupId: pid!,
-          foregroundProcesses: [{ pid: pid!, name: "pi", argv: ["pi"] }],
-        }),
-      },
-      {
-        serverId: "fixture-server",
-        paneId: "fixture-pane",
-        pid: pid!,
-        processIdentity: identity!,
-      },
-      sessionId,
-      sessionFile,
-      await guard.observeBinding(pid!, sessionId, sessionFile),
-    );
-    const closed = vi.spyOn(native, "close");
-    runtime.setExternalSessionConnector(async () =>
-      nativeSessionId === sessionId ? native : null,
-    );
-    await runtime.openSession(sessionId);
-    await vi.waitFor(async () =>
-      expect((await runtime.snapshot()).active?.readOnlyReason).toBeUndefined(),
-    );
-    expect(create).not.toHaveBeenCalled();
+          {
+            serverId: "fixture-server",
+            paneId: "fixture-pane",
+            pid: pid!,
+            processIdentity: identity!,
+          },
+          sessionId,
+          sessionFile,
+          binding,
+        )
+      : null;
+    const closed = native ? vi.spyOn(native, "close") : null;
+    if (native) {
+      runtime.setExternalSessionConnector(async () =>
+        nativeSessionId === sessionId ? native : null,
+      );
+      await runtime.openSession(sessionId);
+      await vi.waitFor(async () =>
+        expect(
+          (await runtime.snapshot()).active?.readOnlyReason,
+        ).toBeUndefined(),
+      );
+      expect(create).not.toHaveBeenCalled();
+    }
     // Herdr can expose the destination before outgoing shutdown has drained.
     nativeSessionId = otherId;
     const switching = external.request({
@@ -239,13 +249,16 @@ it("fences a real independent RPC owner through idle, work and reload, then rele
       await expect(
         guard.assertWritable(sessionId, sessionFile),
       ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
+      await expect(binding!({ kind: "id", value: otherId })).resolves.toBe(
+        false,
+      );
       await runtime.openSession(sessionId);
       await vi.waitFor(async () =>
         expect((await runtime.snapshot()).active?.readOnlyReason).toBe(
-          "external-unavailable",
+          connectHerdr ? "external-unavailable" : "external-active",
         ),
       );
-      expect(closed).not.toHaveBeenCalled();
+      if (closed) expect(closed).not.toHaveBeenCalled();
       expect(create).not.toHaveBeenCalled();
     } finally {
       await writeFile(shutdownProceed, "continue");
@@ -263,6 +276,7 @@ it("fences a real independent RPC owner through idle, work and reload, then rele
     expect(await records()).toMatchObject([
       { name: firstFile, record: { pid, sessionId: otherId } },
     ]);
+    await expect(binding!({ kind: "id", value: otherId })).resolves.toBe(true);
     expect(external.pid).toBe(pid);
     await expect(
       guard.assertWritable(sessionId, sessionFile),
@@ -275,7 +289,7 @@ it("fences a real independent RPC owner through idle, work and reload, then rele
       await runtime.openSession(sessionId);
       expect(create).toHaveBeenCalledOnce();
     });
-    expect(closed).toHaveBeenCalledOnce();
+    if (closed) expect(closed).toHaveBeenCalledOnce();
     expect(occupancy).toHaveBeenCalledWith(sessionId, sessionFile);
     expect(external.pid).toBe(pid);
     await external.stop();
@@ -289,4 +303,16 @@ it("fences a real independent RPC owner through idle, work and reload, then rele
     vi.unstubAllEnvs();
     await rm(workspace.root, { recursive: true, force: true });
   }
-}, 60_000);
+}
+
+it(
+  "fences a real independent RPC owner through idle, work, reload and session replacement",
+  () => exerciseOwner(false),
+  60_000,
+);
+
+it.runIf(process.platform === "linux")(
+  "retires a Herdr binding only after native Pi completes session replacement",
+  () => exerciseOwner(true),
+  60_000,
+);

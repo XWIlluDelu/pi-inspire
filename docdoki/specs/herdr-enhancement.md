@@ -170,7 +170,8 @@ other applications' unreported or later launches remain outside its authority.
   replacement. Gate outgoing shutdown, verify mismatch stays read-only, then retire the old
   connection only after native startup publishes the matching rebind. Cover report loss and Host
   reconstruction after committing the new binding. The occupancy/native integration suites own
-  this combined check.
+  this combined check. Independent RPC presence and replacement run on every supported OS;
+  Linux Herdr binding checks extend the shared native lifecycle fixture.
 - Measure bridge overhead separately from model work, with the environment and sample scope recorded.
 
 Herdr's [socket API](https://herdr.dev/docs/socket-api/) defines the argv layout and metadata interfaces.
