@@ -66,6 +66,76 @@ test("terminal failures use shared error feedback with copy and explicit dismiss
   await expect(error).toBeHidden();
 });
 
+for (const narrow of [false, true]) {
+  test.describe(`terminal quote handoff · ${narrow ? "phone" : "desktop"}`, () => {
+    test.use({
+      viewport: { width: narrow ? 390 : 1280, height: 844 },
+      hasTouch: narrow,
+    });
+    test("returns to the editable draft without submitting or closing a desktop pane", async ({
+      page,
+    }) => {
+      const [terminal] = await terminalTransportFixture(
+        page,
+        browserWorkspace,
+        ["quote-handoff"],
+      );
+      await pairedPage(page);
+      await openMockSession(page, /Review extension event lifecycle/);
+      const composer = page.getByRole("textbox", {
+        name: "Message",
+        exact: true,
+      });
+      await composer.fill("Existing question");
+      const prompts: string[] = [];
+      page.on("request", (request) => {
+        if (
+          request.method() === "POST" &&
+          new URL(request.url()).pathname === "/api/prompt"
+        )
+          prompts.push(request.url());
+      });
+      await page
+        .getByRole("button", { name: "Toggle resources panel" })
+        .click();
+      await page.getByRole("button", { name: "Terminal", exact: true }).click();
+      await expect.poll(() => terminal!.resizes.length).toBeGreaterThan(0);
+      terminal!.write("QUOTE_HANDOFF_CONTENT\r\n");
+      await page.getByLabel("Terminal actions", { exact: true }).click();
+      await page
+        .getByRole("button", { name: "Select text", exact: true })
+        .click();
+      const selection = page.getByRole("dialog", {
+        name: "Select terminal text",
+      });
+      await expect(
+        selection.getByRole("textbox", { name: "Terminal output" }),
+      ).toHaveValue(/QUOTE_HANDOFF_CONTENT/);
+      await selection
+        .getByRole("button", { name: "Select all", exact: true })
+        .click();
+      await selection
+        .getByRole("button", {
+          name: "Send terminal selection to composer",
+          exact: true,
+        })
+        .click();
+
+      await expect(selection).toHaveCount(0);
+      if (narrow) await expect(page.locator(".ctx")).toHaveCount(0);
+      else await expect(page.locator(".ctx")).toBeVisible();
+      await expect(composer).toBeVisible();
+      await expect(composer).toBeFocused();
+      await expect(composer).toHaveValue(
+        /^Existing question\n\n```text\n[\s\S]*QUOTE_HANDOFF_CONTENT[\s\S]*\n```$/,
+      );
+      await page.keyboard.insertText(" Follow-up");
+      await expect(composer).toHaveValue(/Follow-up/);
+      expect(prompts).toEqual([]);
+    });
+  });
+}
+
 for (const touch of [false, true]) {
   test.describe(`foreign-project terminal context · ${touch ? "touch" : "mouse"}`, () => {
     test.use({ hasTouch: touch, deviceScaleFactor: touch ? 2 : 1 });

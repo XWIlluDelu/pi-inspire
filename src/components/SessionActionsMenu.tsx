@@ -22,6 +22,8 @@ export function SessionActionsMenu({
   onRename,
   onClone,
   onExport,
+  onTerminal,
+  terminalDisabled = false,
   onClose,
 }: {
   anchorRef: RefObject<HTMLButtonElement | null>;
@@ -30,6 +32,8 @@ export function SessionActionsMenu({
   onRename: () => void;
   onClone: () => void;
   onExport: () => void;
+  onTerminal?: () => void;
+  terminalDisabled?: boolean;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -132,6 +136,14 @@ export function SessionActionsMenu({
         onClick={onClone}
       >
         Clone current branch
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        onClick={onTerminal}
+        disabled={terminalDisabled || !onTerminal}
+      >
+        Use in terminal…
       </button>
       <button type="button" role="menuitem" onClick={onExport}>
         Export session…

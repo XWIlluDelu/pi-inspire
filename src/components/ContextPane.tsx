@@ -18,7 +18,7 @@ import { gitChangeCount } from "../git-presentation";
 import { resourceRows as toResourceRows } from "../resources";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
-import { recoverModalFocus } from "../use-modal-focus";
+import { hasActiveModal, recoverModalFocus } from "../use-modal-focus";
 import { BranchTree } from "./BranchTree";
 import { ChangesPane, type ChangesReadingPositions } from "./ChangesPane";
 import { selectContextPaneView } from "./context-pane-view";
@@ -159,17 +159,23 @@ export const ContextPane = memo(function ContextPane({
     void store.openResource(reference, "files");
   }, []);
 
-  const handleTerminalSelection = useCallback((text: string) => {
-    const sessionId = store.getState().sessionId;
-    if (!sessionId) return;
-    const current = sessionDraft(sessionId);
-    const next = `${current}${current ? "\n\n" : ""}${fencedMarkdown(text.replace(/\s+$/u, ""), "text")}`;
-    setSessionDraft(sessionId, next);
-    store.replaceComposerText(next);
-    requestAnimationFrame(() =>
-      document.querySelector<HTMLElement>(".composer__input")?.focus(),
-    );
-  }, []);
+  const handleTerminalSelection = useCallback(
+    (text: string) => {
+      const sessionId = store.getState().sessionId;
+      if (!sessionId) return;
+      const current = sessionDraft(sessionId);
+      const next = `${current}${current ? "\n\n" : ""}${fencedMarkdown(text.replace(/\s+$/u, ""), "text")}`;
+      setSessionDraft(sessionId, next);
+      store.replaceComposerText(next);
+      if (isModal) onClose?.();
+      // Both the selection dialog and the drawer release/restore focus first.
+      requestAnimationFrame(() => {
+        if (store.getState().sessionId === sessionId && !hasActiveModal())
+          document.querySelector<HTMLElement>(".composer__input")?.focus();
+      });
+    },
+    [isModal, onClose],
+  );
 
   const handleTerminalCommandComplete = useCallback(
     () => void store.refreshGitInspection(),

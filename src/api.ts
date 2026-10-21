@@ -768,6 +768,16 @@ export function createApi(token: string | null = null) {
         { id },
         { signal },
       ),
+    setSessionExecution: (
+      sessionId: string,
+      target: "terminal" | "inspire",
+      interrupt = false,
+    ) =>
+      post<{ snapshot: ActiveSnapshot; command: string }>(
+        token,
+        "/api/sessions/execution",
+        { sessionId, target, interrupt },
+      ),
     deselectSession: (signal?: AbortSignal) =>
       post<ActiveSnapshot>(token, "/api/sessions/deselect", undefined, {
         signal,

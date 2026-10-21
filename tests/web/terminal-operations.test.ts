@@ -165,6 +165,74 @@ describe("browser terminal operation identity", () => {
     expect(controller.snapshot()).toHaveLength(1);
   });
 
+  it("retires an expired intent only explicitly, without sending work, and allows a new same-content intent after reload", async () => {
+    const identities: Array<{ id: string; epoch: string }> = [];
+    const transport = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async (path, init) => {
+        if (path === "/api/terminal-operations")
+          return Response.json({ epoch: "new-epoch" });
+        const identity = JSON.parse(
+          (init?.headers as Record<string, string>)["X-Terminal-Operation"]!,
+        );
+        identities.push(identity);
+        return identity.id === "saved-id"
+          ? reply(init, { error: "Receipt expired" }, "unknown", 409)
+          : reply(init);
+      });
+    const entry = saved();
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify([entry]));
+    const controller = new TerminalOperationController(transport);
+    await expect(controller.retry(null, entry.key)).rejects.toThrow(
+      "Receipt expired",
+    );
+    controller.stopTracking(entry.key);
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(controller.snapshot()).toEqual([]);
+    const reloaded = new TerminalOperationController(transport);
+    await expect(
+      reloaded.run(null, entry.path, entry.method, JSON.parse(entry.body!)),
+    ).resolves.toEqual({ id: "created" });
+    expect(identities[0]).toEqual(entry.identity);
+    expect(identities[1]!.id).not.toBe(entry.identity.id);
+    expect(identities[1]!.epoch).toBe("new-epoch");
+  });
+
+  it("retains an intent if retirement cannot be saved, and refuses retirement during a check", async () => {
+    const entry = saved();
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify([entry]));
+    const storage = {
+      getItem: (key: string) => sessionStorage.getItem(key),
+      setItem: vi.fn(() => {
+        throw new Error("Storage unavailable");
+      }),
+    } as unknown as Storage;
+    const transport = vi.fn<typeof fetch>();
+    const controller = new TerminalOperationController(
+      transport,
+      () => storage,
+    );
+    controller.restore();
+    expect(() => controller.stopTracking(entry.key)).toThrow(
+      "Storage unavailable",
+    );
+    expect(controller.snapshot()).toHaveLength(1);
+    expect(sessionStorage.getItem(STORAGE_KEY)).toBe(JSON.stringify([entry]));
+    expect(transport).not.toHaveBeenCalled();
+
+    const gate = deferred<Response>();
+    transport.mockReturnValue(gate.promise);
+    const retrying = new TerminalOperationController(transport);
+    const check = retrying.retry(null, entry.key);
+    expect(() => retrying.stopTracking(entry.key)).toThrow("Wait for");
+    gate.resolve(
+      reply({
+        headers: { "X-Terminal-Operation": JSON.stringify(entry.identity) },
+      }),
+    );
+    await check;
+  });
+
   it("releases definitive refusal for a later new intent, but not malformed success", async () => {
     const identities: unknown[] = [];
     const transport = vi
@@ -196,38 +264,58 @@ describe("browser terminal operation identity", () => {
     expect(identities[1]).toEqual(identities[2]);
   });
 
-  it("retains identity if local receipt retirement fails after confirmed commit", async () => {
-    const identities: string[] = [];
-    const transport = vi
-      .fn<typeof fetch>()
-      .mockImplementation(async (path, init) => {
-        if (path === "/api/terminal-operations")
-          return Response.json({ epoch: "epoch-1" });
-        identities.push(
-          (init?.headers as Record<string, string>)["X-Terminal-Operation"]!,
-        );
-        return reply(init);
-      });
-    const storage = {
-      getItem: (key: string) => sessionStorage.getItem(key),
-      setItem: (key: string, value: string) => {
-        if (value === "[]" && identities.length === 1)
-          throw new Error("Synthetic retirement failure");
-        sessionStorage.setItem(key, value);
-      },
-    } as Storage;
-    const controller = new TerminalOperationController(
-      transport,
-      () => storage,
-    );
-    await expect(
-      controller.run(null, "/api/terminals", "POST", {}),
-    ).rejects.toThrow("outcome is unknown");
-    expect(controller.snapshot()).toHaveLength(1);
-    await controller.run(null, "/api/terminals", "POST", {});
-    expect(identities[0]).toBe(identities[1]);
-    expect(controller.snapshot()).toEqual([]);
-  });
+  it.each(["completed", "rejected"])(
+    "keeps the %s result when local receipt cleanup fails",
+    async (outcome) => {
+      const identities: string[] = [];
+      const transport = vi
+        .fn<typeof fetch>()
+        .mockImplementation(async (path, init) => {
+          if (path === "/api/terminal-operations")
+            return Response.json({ epoch: "epoch-1" });
+          identities.push(
+            (init?.headers as Record<string, string>)["X-Terminal-Operation"]!,
+          );
+          return reply(
+            init,
+            outcome === "completed"
+              ? { id: "created" }
+              : { error: "Definite refusal" },
+            outcome,
+            outcome === "completed" ? 200 : 409,
+          );
+        });
+      let storageFailure = true;
+      const storage = {
+        getItem: (key: string) => sessionStorage.getItem(key),
+        setItem: (key: string, value: string) => {
+          if (value === "[]" && storageFailure)
+            throw new Error("Synthetic retirement failure");
+          sessionStorage.setItem(key, value);
+        },
+      } as Storage;
+      const controller = new TerminalOperationController(
+        transport,
+        () => storage,
+      );
+      const result = controller.run(null, "/api/terminals", "POST", {});
+      if (outcome === "completed")
+        await expect(result).resolves.toEqual({ id: "created" });
+      else await expect(result).rejects.toThrow("Definite refusal");
+      expect(controller.snapshot()).toMatchObject([
+        { confirmed: outcome, uncertain: false },
+      ]);
+      const key = controller.snapshot()[0]!.key;
+      await expect(controller.retry(null, key)).rejects.toThrow(
+        "Synthetic retirement failure",
+      );
+      expect(identities).toHaveLength(1);
+      storageFailure = false;
+      await controller.retry(null, key);
+      expect(identities).toHaveLength(1);
+      expect(controller.snapshot()).toEqual([]);
+    },
+  );
 
   it("does not dispatch untracked work when operation storage is unavailable", async () => {
     const transport = vi

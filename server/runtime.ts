@@ -294,6 +294,11 @@ export interface RuntimeLike {
    * the host's current selection. */
   sessionCwd(sessionId: string): string | null;
   openSession(id: string): Promise<ActiveSnapshot>;
+  setSessionExecution(
+    sessionId: string,
+    target: "terminal" | "inspire",
+    interrupt?: boolean,
+  ): Promise<ActiveSnapshot>;
   deselectSession(): Promise<ActiveSnapshot>;
   newSession(
     cwdInput: string,
@@ -434,6 +439,19 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     RuntimeSlot,
     Promise<void>
   >();
+
+  private terminalSessions = new Set<string>();
+  private terminalSessionStore?: {
+    has(sessionId: string): Promise<boolean>;
+    set(sessionId: string, terminal: boolean): Promise<void>;
+  };
+
+  setTerminalSessionStore(
+    store: NonNullable<RuntimeController["terminalSessionStore"]>,
+  ): this {
+    this.terminalSessionStore = store;
+    return this;
+  }
 
   private externalSessions: RuntimeExternalSessions | null = null;
   private externalSessionGuard?: (
@@ -1391,6 +1409,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private requireWorkspace(slot: RuntimeSlot): void {
+    if (this.terminalSessions.has(slot.id))
+      throw requestError(
+        "This session was handed to the terminal. Choose Continue in Inspire to check its owner.",
+        409,
+      );
     if (slot.readOnlyReason)
       throw requestError(
         slot.readOnlyReason === "workspace-unavailable"
@@ -2078,7 +2101,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           if (!root || !slot.readOnlyReason) return;
           await this.catalog.rememberProjectCwds?.([root]);
           slot.cwd = root;
-          slot.readOnlyReason = null;
+          slot.readOnlyReason = this.terminalSessions.has(slot.id)
+            ? "terminal"
+            : null;
           if (slot.preview) slot.preview = { ...slot.preview, cwd: root };
           this.renewView(slot);
         });
@@ -2111,7 +2136,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const loading = (async () => {
       const workspaceRoot = await this.resolveWorkspaceRoot(session.cwd);
       const cwd = workspaceRoot ?? session.cwd;
-      const readOnlyReason = workspaceRoot ? null : "workspace-unavailable";
+      if (await this.terminalSessionStore?.has(session.id))
+        this.terminalSessions.add(session.id);
+      const readOnlyReason = !workspaceRoot
+        ? "workspace-unavailable"
+        : this.terminalSessions.has(session.id)
+          ? "terminal"
+          : null;
       await this.attachments.registerSession(session.path);
       if (workspaceRoot)
         await this.catalog.rememberProjectCwds?.([workspaceRoot]);
@@ -2236,7 +2267,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private async ensureProcess(slot: RuntimeSlot): Promise<RuntimeSlot> {
-    if (slot.readOnlyReason === "workspace-unavailable")
+    if (
+      slot.readOnlyReason === "workspace-unavailable" ||
+      this.terminalSessions.has(slot.id)
+    )
       this.requireWorkspace(slot);
     if (
       slot.process &&
@@ -2294,7 +2328,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         });
         this.scheduleIdleWorkerEviction();
       }
-      if (!ready && slot.readOnlyReason !== "workspace-unavailable")
+      if (
+        !ready &&
+        slot.readOnlyReason !== "workspace-unavailable" &&
+        !this.terminalSessions.has(slot.id)
+      )
         void this.ensureProcess(slot).catch(() => undefined);
       return snapshot;
     } finally {
@@ -2303,6 +2341,74 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       else this.selectionReservations.delete(id);
       this.scheduleIdleWorkerEviction();
     }
+  }
+
+  async setSessionExecution(
+    sessionId: string,
+    target: "terminal" | "inspire",
+    interrupt = false,
+  ): Promise<ActiveSnapshot> {
+    return this.withMaintenanceOperation(async () => {
+      const slot = await this.prepareCatalogSlot(sessionId);
+      return this.mutateSlot(slot, async () => {
+        if (target === "inspire") {
+          await this.terminalSessionStore?.set(sessionId, false);
+          this.terminalSessions.delete(sessionId);
+          if (slot.readOnlyReason === "terminal") slot.readOnlyReason = null;
+          try {
+            if (!slot.process && !(await this.connectExternalSession(slot)))
+              await this.ensureFreshWriterInsideGate(slot, true);
+          } catch (error) {
+            if (!slot.readOnlyReason) throw error;
+          }
+          return this.snapshotSlot(slot);
+        }
+        if (
+          this.externalSessions?.has(slot) ||
+          (slot.readOnlyReason && slot.readOnlyReason !== "terminal")
+        )
+          throw requestError("This session is not owned by Inspire.", 409);
+        if (slot.conflict || slot.navigationLease)
+          throw requestError(
+            "Return to the saved branch and resolve any conflict before using this session in the terminal.",
+            409,
+          );
+        if (
+          slot.pendingQueues.totalCount > 0 ||
+          slot.pendingPrompt ||
+          slot.deferredPrompts.length > 0
+        )
+          throw requestError(
+            "Stop and recover Pending input before handing this session to the terminal.",
+            409,
+          );
+        const busy =
+          isBusyRunState(slot.runState) ||
+          slot.nativeBash ||
+          slot.pendingExtensionUiRequests.size > 0;
+        if (busy && !interrupt)
+          throw requestError(
+            "This session became busy. Stop it before handing it to the terminal.",
+            409,
+          );
+        if (slot.stoppingInput)
+          throw requestError("Stop is still in progress", 409);
+        slot.stoppingInput = true;
+        slot.inputStopEpoch += 1;
+        try {
+          await this.terminalSessionStore?.set(sessionId, true);
+          this.terminalSessions.add(sessionId);
+          slot.readOnlyReason = "terminal";
+          await this.stopWriter(slot);
+          await this.reconcileSlot(slot, true);
+          slot.runState = slot.conflict ? "conflict" : "idle";
+          this.emitSlotEvent(slot, { type: "runtime_ready" });
+          return this.snapshotSlot(slot);
+        } finally {
+          slot.stoppingInput = false;
+        }
+      });
+    });
   }
 
   async deselectSession(): Promise<ActiveSnapshot> {

@@ -2317,6 +2317,24 @@ export class AppStore {
     }
   };
 
+  setSessionExecution = async (
+    sessionId: string,
+    target: "terminal" | "inspire",
+    interrupt = false,
+  ): Promise<string> => {
+    const api = this.api;
+    const generation = this.selectionGeneration;
+    if (!api) throw new Error("The Host is not connected");
+    const result = await api.setSessionExecution(sessionId, target, interrupt);
+    if (
+      this.api === api &&
+      this.state.sessionId === sessionId &&
+      this.selectionGeneration === generation
+    )
+      this.applySnapshot(result.snapshot);
+    return result.command;
+  };
+
   setModel = async (provider: string, modelId: string): Promise<boolean> => {
     const sessionId = this.state.sessionId;
     const selectionGeneration = this.selectionGeneration;

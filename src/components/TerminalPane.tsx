@@ -137,8 +137,8 @@ export const TerminalPane = memo(function TerminalPane({
     terminalOperations.subscribe,
     terminalOperations.snapshot,
   );
-  const uncertainOperations = pendingOperations.filter(
-    (operation) => operation.uncertain,
+  const recoveryOperations = pendingOperations.filter(
+    (operation) => operation.uncertain || operation.confirmed,
   );
   const launchTarget = useMemo(readTerminalLaunchTarget, []);
   const lastSessionCwdRef = useRef(sessionCwd);
@@ -1454,12 +1454,12 @@ export const TerminalPane = memo(function TerminalPane({
           </button>
         </div>
       ) : null}
-      {uncertainOperations.length > 0 ? (
+      {recoveryOperations.length > 0 ? (
         <section
           className="terminal-pending"
-          aria-label="Unconfirmed terminal controls"
+          aria-label="Terminal control recovery"
         >
-          {uncertainOperations.map((operation) => (
+          {recoveryOperations.map((operation) => (
             <div
               className="terminal-pending__row"
               role="status"
@@ -1472,7 +1472,11 @@ export const TerminalPane = memo(function TerminalPane({
                 >
                   {operation.label}
                 </span>
-                <span>Outcome unknown</span>
+                <span>
+                  {operation.confirmed
+                    ? `${operation.confirmed === "completed" ? "Completed" : "Rejected"} · browser recovery record could not be cleared`
+                    : "Outcome unknown"}
+                </span>
               </span>
               <button
                 type="button"
@@ -1495,10 +1499,46 @@ export const TerminalPane = memo(function TerminalPane({
                     });
                 }}
               >
-                <ButtonLabel reserve="Retry same operation">
-                  {operation.busy ? "Checking…" : "Retry same operation"}
+                <ButtonLabel
+                  reserve={
+                    operation.confirmed
+                      ? "Clear recovery record"
+                      : "Retry same operation"
+                  }
+                >
+                  {operation.busy
+                    ? "Checking…"
+                    : operation.confirmed
+                      ? "Clear recovery record"
+                      : "Retry same operation"}
                 </ButtonLabel>
               </button>
+              {!operation.confirmed ? (
+                <button
+                  type="button"
+                  className="button button--quiet"
+                  disabled={operation.busy}
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        `Stop tracking ${operation.label}? Check the current terminals first. The operation may already have completed or still be running. This does not cancel it; your next action will be a new operation.`,
+                      )
+                    )
+                      return;
+                    try {
+                      terminalOperations.stopTracking(operation.key);
+                    } catch (trackingError) {
+                      setError(
+                        trackingError instanceof Error
+                          ? trackingError.message
+                          : "Could not stop tracking this operation",
+                      );
+                    }
+                  }}
+                >
+                  Stop tracking…
+                </button>
+              ) : null}
             </div>
           ))}
         </section>
