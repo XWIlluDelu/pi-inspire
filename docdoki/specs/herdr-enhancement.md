@@ -3,7 +3,8 @@ purpose: Optional Herdr placement and connection to existing Pi terminals preser
 progress: done
 covers:
   - server/herdr-*.ts
-  - server/pi-rpc*.ts
+  - server/pi-{rpc*,native-actions}.ts
+  - docs/examples/session-activity.ts
   - server/{runtime,runtime-worker-lifecycle,runtime-worker-pool,runtime-external-sessions,external-session}.ts
   - server/index.ts
   - server/preferences.ts
@@ -13,7 +14,7 @@ covers:
   - src/components/*Settings*.tsx
   - tests/web/herdr-settings.test.tsx
   - tests/server/herdr-*.test.ts
-  - tests/server/pi-rpc*.test.ts
+  - tests/server/pi-{rpc*,native-actions}*.test.ts
   - tests/server/runtime-{worker-pool,worker-lifecycle,session-deletion,external-sessions}.test.ts
   - tests/browser/native-pi-continuity.spec.ts
   - tests/server/fixtures/native-herdr.ts
@@ -106,7 +107,8 @@ other applications' unreported or later launches remain outside its authority.
 
 - With enhancement enabled, opening a session already running in a Herdr Pi terminal connects
   Inspire to that process. The ordinary composer sends to it, new persisted messages appear in
-  the conversation, and Stop uses the original Pi's interrupt action.
+  the conversation. Stop requests the original Pi's agent interruption; it is not a general
+  terminal Escape action or a guarantee that terminal Bash stopped.
 - Connection discovery matches the native session file or ID, current daemon incarnation and
   live foreground Pi identity. Stale metadata does not establish a connection, and ambiguous live
   matches are not chosen arbitrarily. Sibling Inspire RPC workers retain their existing writer
@@ -121,15 +123,33 @@ other applications' unreported or later launches remain outside its authority.
   Herdr server, missing agent/pane, or vanished session metadata does not establish that Pi exited.
   Keep its history read-only while ownership is unverified; an explicit reselect may connect through
   fresh discovery, never reused pane IDs from an obsolete connection. Original-process retirement
-  releases that connection. Transient transport failures do not establish retirement, and uncertain
-  input is never automatically resent.
-- Use public Herdr agent APIs for native text input, follow-up submission, interruption and status.
-  Read persisted conversation content through the normal session projection. Do not treat terminal
-  output as a transcript or native connections as RPC workers.
+  releases that connection. A completed reporter rebind may also retire it: the same captured
+  producer and process birth must transfer the exact old file/session to the newly observed native
+  target. Commit that verified binding before release so report loss cannot restore an old fence.
+  Then perform ordinary occupancy admission, including any other holder. Metadata mismatch alone
+  keeps the connection unavailable. Transient transport failures do not establish retirement, and
+  uncertain input is never automatically resent.
+- Reuse the installed `docs/examples/session-activity.ts` in Herdr TUI instances. Herdr supplies
+  existing terminal-control authority and status; a consumed, receiver-bound action frame invokes
+  public Pi `sendUserMessage`, `ctx.abort` or `setSessionName` in that same process. Neither user
+  keybindings nor terminal screen geometry establish an action or editor state. The Host transport
+  helper is internal code, not a second extension, listener or execution engine. Presence discovery
+  alone never grants control. Read conversation content through the normal session projection.
+- Bind requests and receipts to the live process birth, session file/id, extension receiver and
+  invocation. Reload/replacement retires the receiver. Stage private payloads in the existing cache
+  and trigger them only through the captured Herdr terminal. Remove transport files after observation;
+  never automatically
+  repeat an uncertain invocation. A receipt means the public function returned, not that input was
+  admitted, a model ran, work stopped or settings persisted. Native asynchronous errors remain native.
 - Preserve terminal drafts and dialogs. A nonempty editor or waiting dialog gets actionable feedback
   without altering its contents. Pi owns its terminal queue and restores interrupted queued input
-  there. Commands/settings requiring an Inspire RPC worker direct the user to the original terminal
-  rather than launching another writer.
+  there. Target-side public editor state and UI-prompt events guard input; Herdr blocked status is
+  an additional prompt admission check, not a substitute for the target guard. Extension commands
+  and templates retain native dispatch. `!`/`!!` and interactive built-ins without public callable
+  actions direct the user to the original terminal instead of becoming model text. Commands/settings
+  requiring an Inspire RPC worker likewise never launch another writer. Native extension `ctx.abort`
+  cannot call TUI `abortBash`; Stop discloses its agent-only scope and directs terminal-shell
+  interruption to the original terminal. This public-interface gap remains in [[pi-capability-gaps]].
 - Attachments and project files retain their normal validation and file lifetimes. A stopped or
   replaced input cannot be delivered after preparation. An uncertain submission is not retried
   automatically, and any referenced files remain available to Pi.
@@ -146,6 +166,12 @@ other applications' unreported or later launches remain outside its authority.
 - Use an isolated native Pi terminal to check browser submission, replies, reconnect, interruption,
   attachment delivery and draft preservation. Verify the same Pi survives Host close and rejects
   delivery after its session identity changes. Check native work does not block Host restart.
+- Keep an established native control connection across a real isolated Pi/report lifecycle
+  replacement. Gate outgoing shutdown, verify mismatch stays read-only, then retire the old
+  connection only after native startup publishes the matching rebind. Cover report loss and Host
+  reconstruction after committing the new binding. The occupancy/native integration suites own
+  this combined check. Independent RPC presence and replacement run on every supported OS;
+  Linux Herdr binding checks extend the shared native lifecycle fixture.
 - Measure bridge overhead separately from model work, with the environment and sample scope recorded.
 
 Herdr's [socket API](https://herdr.dev/docs/socket-api/) defines the argv layout and metadata interfaces.

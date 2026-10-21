@@ -280,6 +280,45 @@ describe("command discovery and preparation", () => {
     expect(prompts).toEqual([]);
   });
 
+  it.each(["audit.inspect", "审阅/检查"])(
+    "runs a prepared native extension command named %s",
+    async (name) => {
+      await savedDraft();
+      act(() =>
+        FakeWebSocket.instances.at(-1)?.emit({
+          type: "snapshot",
+          data: {
+            ...activeSnapshot({
+              commands: [...commands, { name, source: "extension" }],
+            }),
+            runState: "running",
+          },
+        }),
+      );
+      render(<App />);
+      await palette(name);
+      fireEvent.click(
+        screen.getByRole("option", { name: new RegExp(`/${name}`) }),
+      );
+      fireEvent.change(screen.getByLabelText("Prepared command"), {
+        target: { value: `/${name}\tkeep paths\nnext` },
+      });
+      const run = screen.getByRole("button", {
+        name: /Run command|Steer Pi|Queue prompt|Send prepared prompt/,
+      });
+      expect(run).toBeEnabled();
+      fireEvent.click(run);
+      await waitFor(() => expect(prompts).toHaveLength(1));
+      expect(prompts[0]).toMatchObject({
+        message: `/${name} keep paths\nnext`,
+      });
+      expect(prompts[0]).not.toHaveProperty("attachmentIds");
+      expect(prompts[0]).not.toHaveProperty("behavior");
+      expect(sessionDraft("s1")).toBe("UNFINISHED DRAFT");
+      expect(store.getState().attachments[0]?.uploadedId).toBe("upload-a");
+    },
+  );
+
   it("prepares an extension, preserves work on success/failure, and does not promise queues", async () => {
     await savedDraft();
     render(<App />);

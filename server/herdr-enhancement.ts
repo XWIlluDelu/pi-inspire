@@ -1,9 +1,9 @@
 import { join, resolve } from "node:path";
 import type { HerdrEnhancementStatus } from "../shared/herdr.js";
 import { type DiagnosticLogger, nullDiagnosticLogger } from "./diagnostics.js";
+import type { ExternalSessionConnection } from "./external-session.js";
 import { HerdrClient } from "./herdr-client.js";
 import { HerdrNativeSession } from "./herdr-native-session.js";
-import type { ExternalSessionConnection } from "./external-session.js";
 import {
   assertHerdrWorkerScopesAvailable,
   captureHerdrProcessIdentity,
@@ -18,6 +18,7 @@ import {
 import { HerdrWorkerRegistry } from "./herdr-worker-registry.js";
 import { installationKey } from "./installation-key.js";
 import { type PiRpcOptions, PiRpcProcess } from "./pi-rpc.js";
+import type { PiSessionOccupancy } from "./pi-session-occupancy.js";
 import { inspireStateDirectory } from "./platform-paths.mjs";
 import { requestError } from "./request-error.js";
 import type { RuntimeWorkerStatus } from "./runtime.js";
@@ -149,6 +150,7 @@ export class HerdrEnhancement {
   async connectExternalSession(
     sessionId: string,
     sessionFile: string,
+    occupancy?: PiSessionOccupancy,
   ): Promise<ExternalSessionConnection | null> {
     if (
       !this.options.enabled ||
@@ -166,6 +168,7 @@ export class HerdrEnhancement {
       { ...writer, processIdentity },
       sessionId,
       sessionFile,
+      await occupancy?.observeBinding(writer.pid, sessionId, sessionFile),
     );
   }
 

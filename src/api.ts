@@ -1026,6 +1026,11 @@ export function createApi(token: string | null = null) {
       ),
     clearPending: (sessionId: string) =>
       post<{ ok: boolean }>(token, "/api/pending/clear", { sessionId }),
+    cycleModel: (sessionId: string, direction: 1 | -1) =>
+      post<unknown>(token, "/api/control/model-cycle", {
+        sessionId,
+        direction,
+      }),
     setModel: (sessionId: string, provider: string, modelId: string) =>
       post<unknown>(token, "/api/control/model", {
         sessionId,

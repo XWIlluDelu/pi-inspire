@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import {
   lstat,
   mkdir,
-  readFile,
   readdir,
+  readFile,
   realpath,
   rename,
   rm,
@@ -11,9 +11,9 @@ import {
 } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
+  type PiActivityRecord,
   piActivityDirectory,
   piActivityProcessIdentity,
-  type PiActivityRecord,
 } from "../docs/examples/session-activity.js";
 import { isPiActivityRecord } from "./pi-session-activity.js";
 import { requestError } from "./request-error.js";
@@ -93,6 +93,91 @@ export class PiSessionOccupancy {
     } finally {
       await rm(temporary, { force: true });
     }
+  }
+
+  /** Capture a reporter instance while it still names the connected session.
+   * A later binding from that same producer can retire control of the old file. */
+  async observeBinding(
+    pid: number,
+    sessionId: string,
+    sessionFile: string,
+  ): Promise<
+    | ((target: { kind: "id" | "path"; value: string }) => Promise<boolean>)
+    | undefined
+  > {
+    const observe = this.checking.then(async () => {
+      await this.readReports(this.retainedDirectory);
+      await this.readReports(this.directory);
+      const identity = await this.processIdentity(pid);
+      const path = await realpath(sessionFile);
+      const names: string[] = [];
+      for (const [name, holder] of this.holders) {
+        const record = holder.record;
+        if (
+          record.pid !== pid ||
+          record.processIdentity !== identity ||
+          record.sessionId !== sessionId
+        )
+          continue;
+        if (
+          (await realpath(record.sessionFile).catch(() =>
+            resolve(record.sessionFile),
+          )) !== path
+        )
+          continue;
+        holder.identity = identity;
+        await this.retain(name, holder);
+        names.push(name);
+      }
+      if (!names.length) return undefined;
+      return async (target: {
+        kind: "id" | "path";
+        value: string;
+      }): Promise<boolean> => {
+        const check = this.checking.then(async () => {
+          await this.readReports(this.directory);
+          if ((await this.processIdentity(pid)) !== identity) return false;
+          const rebound: Array<[string, Holder]> = [];
+          for (const name of names) {
+            const holder = this.holders.get(name);
+            const record = holder?.record;
+            if (
+              !record ||
+              record.pid !== pid ||
+              record.processIdentity !== identity ||
+              record.sessionId === sessionId
+            )
+              return false;
+            const nextPath = await realpath(record.sessionFile).catch(() =>
+              resolve(record.sessionFile),
+            );
+            if (
+              nextPath === path ||
+              (target.kind === "id"
+                ? record.sessionId !== target.value
+                : nextPath !==
+                  (await realpath(target.value).catch(() =>
+                    resolve(target.value),
+                  )))
+            )
+              return false;
+            rebound.push([name, holder!]);
+          }
+          for (const [name, holder] of rebound) await this.retain(name, holder);
+          return true;
+        });
+        this.checking = check.then(
+          () => {},
+          () => {},
+        );
+        return check.catch(() => false);
+      };
+    });
+    this.checking = observe.then(
+      () => {},
+      () => {},
+    );
+    return observe.catch(() => undefined);
   }
 
   async assertWritable(sessionId: string, sessionFile: string): Promise<void> {

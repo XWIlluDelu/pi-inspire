@@ -32,4 +32,19 @@ describe("Pi native command parsing", () => {
     expect(parseCommandInvocation("explain /compact")).toBeNull();
     expect(parseCommandInvocation("/tmp/project/file")).toBeNull();
   });
+
+  it("uses Pi's inventory for names outside ordinary command syntax", () => {
+    const names = new Set(["audit.inspect", "审阅/检查"]);
+    const known = (name: string) => names.has(name);
+    for (const name of names)
+      expect(
+        parseCommandInvocation(`/${name}\tkeep paths\nnext`, known),
+      ).toEqual({
+        name,
+        argument: "keep paths\nnext",
+        raw: `/${name}\tkeep paths\nnext`,
+      });
+    expect(parseCommandInvocation("/tmp/project/file", known)).toBeNull();
+    expect(parseCommandInvocation("/unknown.command", known)).toBeNull();
+  });
 });

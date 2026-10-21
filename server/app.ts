@@ -1550,6 +1550,22 @@ export function createInspireServer(deps: AppDependencies): {
     await deps.runtime.clearPending(sessionId);
     response.json({ ok: true });
   });
+  app.post("/api/control/model-cycle", async (request, response) => {
+    const { sessionId, direction } = z
+      .object({
+        sessionId: z.string().min(1),
+        direction: z.union([z.literal(1), z.literal(-1)]),
+      })
+      .strict()
+      .parse(request.body);
+    if (direction !== 1)
+      throw requestError(
+        "This Pi version exposes only forward model cycling over RPC. Select a model in the picker instead.",
+        409,
+        { code: "PI_CAPABILITY_UNAVAILABLE" },
+      );
+    response.json((await deps.runtime.cycleModel(sessionId)) ?? null);
+  });
   app.post("/api/control/model", async (request, response) => {
     const value = modelSchema.parse(request.body);
     response.json(

@@ -226,7 +226,7 @@ if (mock) {
   )
     .setModelMetadataCatalog(modelMetadata)
     .setExternalSessionConnector((sessionId, sessionFile) =>
-      herdr.connectExternalSession(sessionId, sessionFile),
+      herdr.connectExternalSession(sessionId, sessionFile, sessionOccupancy),
     )
     .setExternalSessionGuard((sessionId, sessionFile) =>
       sessionOccupancy.assertWritable(sessionId, sessionFile),

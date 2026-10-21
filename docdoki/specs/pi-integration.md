@@ -77,15 +77,19 @@ and errors omit stored or resolved keys/tokens.
 Pi RPC enumerates extension, prompt, and skill commands but not interactive built-ins.
 `shared/commands.ts` reserves the installed interactive built-in vocabulary before resource dispatch,
 matching Pi's interactive client. Within resources, preserve Pi's first wire owner. Namespaced
-extension commands remain available. Names are case-sensitive. First-message completion hides native
-commands needing a session without exposing colliding resources instead. Browser commands reuse
+extension commands remain available. Names are case-sensitive. Exact inventory matches also admit
+Pi-registered Unicode and punctuated names without classifying other filesystem paths as commands.
+First-message completion hides native commands needing a session without exposing colliding resources
+instead. Browser commands reuse
 existing surfaces, including Models settings for `/scoped-models`, `/login` and `/logout`; Host
 commands own compaction, export and reload. Terminal-only commands expose precise copy/open guidance.
 `/bug` neither uploads a report nor sends its description to the model.
 The public command inventory is [Pi commands](../../docs/pi-commands.md).
 
-The Host rejects unknown command-shaped text at the prompt boundary, dispatches direct `!`/`!!`
-input to native Bash, normalizes resource-command separators, and revalidates command ownership
+For owned RPC workers, the Host rejects unknown command-shaped text at the prompt boundary and
+dispatches direct `!`/`!!` input to native Bash. Existing TUI connections instead direct shell input
+and interactive built-ins to the original terminal; `sendUserMessage` is not the TUI shell/built-in
+submit handler. The Host normalizes resource-command separators, and revalidates command ownership
 after reload/worker replacement. Snapshots and slash-command admission/delivery read the worker's
 current loaded inventory. Resource-command completion refreshes browser discovery even during model
 work, without settling that work or Pending. Native in-process reload therefore does not require a

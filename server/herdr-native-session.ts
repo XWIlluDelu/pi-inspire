@@ -1,14 +1,16 @@
 import { realpath } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
+import { parseNativeCommand } from "../shared/commands.js";
 import type {
   ExternalSessionConnection,
   ExternalSessionState,
 } from "./external-session.js";
 import type { HerdrClient } from "./herdr-client.js";
 import { HerdrApiError, HerdrServerChangedError } from "./herdr-control.js";
-import type { HerdrNativeWriter } from "./herdr-worker-observer.js";
-import { requestError } from "./request-error.js";
 import { herdrProcessIsLive } from "./herdr-process-group.js";
+import type { HerdrNativeWriter } from "./herdr-worker-observer.js";
+import { PiNativeActions } from "./pi-native-actions.js";
+import { requestError } from "./request-error.js";
 
 type NativeClient = Pick<
   HerdrClient,
@@ -21,9 +23,10 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-/** Public terminal control for an existing native Pi. No RPC impersonation,
- * process creation, file writes, or terminal ownership is involved. */
+/** Herdr addresses the existing Pi; its installed extension invokes public
+ * native actions. No RPC impersonation or new session writer. */
 export class HerdrNativeSession implements ExternalSessionConnection {
+  readonly interruptionScope = "agent" as const;
   private closed = false;
   private tail: Promise<unknown> = Promise.resolve();
 
@@ -32,6 +35,11 @@ export class HerdrNativeSession implements ExternalSessionConnection {
     private readonly writer: HerdrNativeWriter,
     private readonly sessionId: string,
     private readonly sessionFile: string,
+    private readonly hasCompletedRebind?: (target: {
+      kind: "id" | "path";
+      value: string;
+    }) => Promise<boolean>,
+    private readonly actions?: Pick<PiNativeActions, "invoke">,
   ) {}
 
   async read(): Promise<ExternalSessionState | null> {
@@ -45,6 +53,7 @@ export class HerdrNativeSession implements ExternalSessionConnection {
       const state = await this.readCurrent();
       if (
         !state &&
+        !this.closed &&
         this.writer.processIdentity &&
         (await herdrProcessIsLive(this.writer.processIdentity))
       )
@@ -81,8 +90,12 @@ export class HerdrNativeSession implements ExternalSessionConnection {
     if (!agent.agent_session) return null;
     const ref = record(agent.agent_session);
     if (ref.source !== "herdr:pi" || ref.agent !== "pi") return null;
-    if (ref.kind === "id") {
-      if (ref.value !== this.sessionId) return null;
+    if (ref.kind === "id" && typeof ref.value === "string") {
+      if (ref.value !== this.sessionId) {
+        if (await this.hasCompletedRebind?.({ kind: "id", value: ref.value }))
+          this.closed = true;
+        return null;
+      }
     } else if (
       ref.kind === "path" &&
       typeof ref.value === "string" &&
@@ -93,8 +106,13 @@ export class HerdrNativeSession implements ExternalSessionConnection {
           if (error.code === "ENOENT") return resolve(path);
           throw error;
         });
-      if ((await canonical(ref.value)) !== (await canonical(this.sessionFile)))
+      if (
+        (await canonical(ref.value)) !== (await canonical(this.sessionFile))
+      ) {
+        if (await this.hasCompletedRebind?.({ kind: "path", value: ref.value }))
+          this.closed = true;
         return null;
+      }
     } else return null;
     const process = await this.client.inspectPaneProcess(
       this.writer.serverId,
@@ -121,40 +139,53 @@ export class HerdrNativeSession implements ExternalSessionConnection {
     };
   }
 
-  private async assertEmptyEditor(): Promise<void> {
-    const response = await this.client.nativeAgentRequest(
-      this.writer.serverId,
-      this.writer.paneId,
-      "agent.read",
-      { source: "visible", format: "text" },
-    );
-    const read = record(response.read);
-    if (read.pane_id !== this.writer.paneId || typeof read.text !== "string")
-      throw new Error("Herdr returned an invalid Pi editor view");
-    // Use the live viewport, not the cached detection snapshot. The last two
-    // borders enclose the editor; a running Pi prefixes its top border with
-    // "── ⠸ Working". This only checks input: transcript/state never come from text.
-    const lines = read.text.split("\n");
-    const borders = lines.flatMap((line, index) =>
-      /^\s*─{2,}.*─{3,}\s*$/.test(line) ? [index] : [],
-    );
-    const [start, end] = borders.slice(-2);
-    if (start === undefined || end === undefined)
-      throw requestError(
-        "Pi is not showing its message editor. Return to the conversation in its terminal, then send again.",
-        409,
-      );
-    if (lines.slice(start + 1, end).some((line) => line.trim()))
-      throw requestError(
-        "There is an unsent draft in the Pi terminal. Send or clear that draft before sending from Inspire.",
-        409,
-      );
-  }
-
   private serialize(operation: () => Promise<void>): Promise<void> {
     const pending = this.tail.then(operation);
     this.tail = pending.catch(() => undefined);
     return pending;
+  }
+
+  private action(
+    action: import("../docs/examples/session-activity.js").NativeAction,
+    beforeSend?: () => void,
+  ): Promise<void> {
+    return this.serialize(async () => {
+      const state = await this.read();
+      if (!state || this.closed)
+        throw requestError(
+          "The Pi terminal connection has ended. Reselect the session.",
+          409,
+        );
+      if (action.type === "prompt" && state.status === "blocked")
+        throw requestError(
+          "Pi is waiting for an answer in its terminal. Answer there before sending another message.",
+          409,
+        );
+      const identity = this.writer.processIdentity;
+      const actions =
+        this.actions ??
+        new PiNativeActions(
+          this.writer.pid,
+          this.sessionId,
+          this.sessionFile,
+          identity ? `linux:${identity.boot}:${identity.birth}` : undefined,
+        );
+      await actions.invoke(
+        action,
+        (frame) =>
+          this.client.nativeAgentRequest(
+            this.writer.serverId,
+            this.writer.paneId,
+            "pane.send_text",
+            { text: frame },
+          ),
+        () => {
+          if (this.closed)
+            throw requestError("The Pi terminal connection has ended.", 409);
+          beforeSend?.();
+        },
+      );
+    });
   }
 
   prompt(
@@ -162,86 +193,24 @@ export class HerdrNativeSession implements ExternalSessionConnection {
     behavior?: "steer" | "followUp",
     beforeSend?: () => void,
   ): Promise<void> {
-    return this.serialize(async () => {
-      const state = await this.read();
-      if (!state || this.closed)
-        throw requestError(
-          "This Pi terminal is no longer using this session. Reopen the session to continue.",
+    const entered = message.trim();
+    if (entered.startsWith("!") || parseNativeCommand(entered))
+      return Promise.reject(
+        requestError(
+          "Run terminal shell and built-in commands in the original Pi terminal, or use the matching Inspire command surface.",
           409,
-        );
-      if (state.status === "blocked")
-        throw requestError(
-          "Pi is waiting for an answer in its terminal. Answer there before sending another message.",
-          409,
-        );
-      // Treat C0 terminal controls as data-invalid, never as terminal shortcuts.
-      if (/[\x00-\x08\x0b-\x1f\x7f]/.test(message))
-        throw requestError(
-          "The message contains unsupported terminal control characters.",
-          400,
-        );
-      await this.assertEmptyEditor();
-      beforeSend?.();
-      try {
-        if (behavior === "followUp" && state.status === "working") {
-          await this.client.nativeAgentRequest(
-            this.writer.serverId,
-            this.writer.paneId,
-            "pane.send_text",
-            { text: message },
-          );
-          beforeSend?.();
-          await this.client.nativeAgentRequest(
-            this.writer.serverId,
-            this.writer.paneId,
-            "agent.send_keys",
-            { keys: ["alt+enter"] },
-          );
-        } else {
-          await this.client.nativeAgentRequest(
-            this.writer.serverId,
-            this.writer.paneId,
-            "agent.prompt",
-            { text: message },
-          );
-        }
-      } catch (error) {
-        if (
-          error instanceof HerdrApiError &&
-          [
-            "agent_blocked",
-            "agent_not_found",
-            "pane_not_found",
-            "agent_not_ready",
-          ].includes(error.code) &&
-          behavior !== "followUp"
-        )
-          throw error;
-        throw requestError(
-          "The connection was interrupted while sending. Check the conversation before sending again.",
-          504,
-          {
-            code: "PI_RPC_OUTCOME_UNKNOWN",
-            outcomeUnknown: true,
-          },
-        );
-      }
-    });
+          { code: "NATIVE_ACTION_UNSUPPORTED" },
+        ),
+      );
+    return this.action({ type: "prompt", message, behavior }, beforeSend);
   }
 
   abort(): Promise<void> {
-    return this.serialize(async () => {
-      const state = await this.read();
-      if (!state || this.closed)
-        throw requestError("The Pi terminal connection has ended.", 409);
-      if (state.status === "idle") return;
-      await this.client.nativeAgentRequest(
-        this.writer.serverId,
-        this.writer.paneId,
-        "agent.send_keys",
-        { keys: ["esc"] },
-      );
-    });
+    return this.action({ type: "abort" });
+  }
+
+  rename(name: string, beforeSend?: () => void): Promise<void> {
+    return this.action({ type: "rename", name }, beforeSend);
   }
 
   close(): void {

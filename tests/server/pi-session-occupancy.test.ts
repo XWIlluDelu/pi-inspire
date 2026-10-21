@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import {
   mkdir,
   mkdtemp,
-  readFile,
   readdir,
+  readFile,
   rename,
   rm,
   symlink,
@@ -52,6 +52,53 @@ async function report(overrides: Partial<PiActivityRecord> = {}) {
 const active = { status: 409, code: "EXTERNAL_PI_WRITER_ACTIVE" };
 
 describe("external Pi session presence at writer admission", () => {
+  it("requires the same reporter, process birth and exact old/new files to prove a rebind", async () => {
+    const r = await report();
+    const birth = vi.fn(async () => "birth-one");
+    const guard = new PiSessionOccupancy(directory, birth);
+    const check = (await guard.observeBinding(
+      process.pid,
+      "session",
+      sessionFile,
+    ))!;
+    const other = join(root, "other.jsonl");
+    await writeFile(other, "");
+    const target = { kind: "id" as const, value: "other" };
+    await r.update({ sessionId: "other" }); // same file is not release
+    expect(await check(target)).toBe(false);
+    await r.update({
+      sessionId: "other",
+      sessionFile: other,
+      processIdentity: "wrong-birth",
+    });
+    expect(await check(target)).toBe(false);
+    await r.update({ inactive: true });
+    expect(await check(target)).toBe(false);
+    await rm(r.file);
+    const otherProducer = await report({
+      sessionId: "other",
+      sessionFile: other,
+    });
+    expect(await check(target)).toBe(false);
+    await r.update({ sessionId: "other", sessionFile: other });
+    expect(await check({ kind: "id", value: "wrong-target" })).toBe(false);
+    birth.mockResolvedValue("reused-pid");
+    expect(await check(target)).toBe(false);
+    birth.mockResolvedValue("birth-one");
+    expect(await check(target)).toBe(true);
+    expect(await check({ kind: "path", value: other })).toBe(true);
+    await rm(r.file);
+    await rm(otherProducer.file);
+    for (const reader of [guard, new PiSessionOccupancy(directory, birth)]) {
+      await expect(
+        reader.assertWritable("session", sessionFile),
+      ).resolves.toBeUndefined();
+      await expect(reader.assertWritable("other", other)).rejects.toMatchObject(
+        active,
+      );
+    }
+  });
+
   it.each(["idle", "working", "blocked"] as const)(
     "fences a live %s holder even after activity expires and across Host reconstruction",
     async (activity) => {

@@ -13,6 +13,8 @@ import type {
 } from "../../server/session-catalog.js";
 import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 
+const nativeCommandNames = ["audit.inspect", "审阅/检查"];
+
 it("discovers and admits native in-process reload commands without replacing either worker", async () => {
   const root = await mkdtemp(join(tmpdir(), "inspire-command-refresh-"));
   const agent = join(root, "agent");
@@ -53,6 +55,11 @@ it("discovers and admits native in-process reload commands without replacing eit
   await writeFile(
     extension,
     `export default function (pi) {
+    for (const name of ${JSON.stringify(nativeCommandNames)}) {
+      pi.registerCommand(name, {
+        handler: async (argument, ctx) => { ctx.ui.notify(name + ":" + argument, "info"); }
+      });
+    }
     pi.registerCommand("reload-fixture", {
       handler: async (_argument, ctx) => { await ctx.reload(); }
     });
@@ -163,6 +170,26 @@ it("discovers and admits native in-process reload commands without replacing eit
     }
     const pids = workers.map((worker) => worker.pid);
     const before = await readFile(a.path, "utf8");
+    for (const name of nativeCommandNames) {
+      expect(await names(a.id)).toContain(name);
+      await runtime.prompt({
+        sessionId: a.id,
+        message: `/${name}\tkeep paths\nnext`,
+      });
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          method: "notify",
+          message: `${name}:keep paths\nnext`,
+        }),
+      );
+    }
+    await runtime.prompt({ sessionId: a.id, message: "/tmp/project/file" });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        method: "notify",
+        message: "handled:/tmp/project/file",
+      }),
+    );
     expect(await names(a.id)).toContain("removed");
     await rm(join(prompts, "removed.md"));
     await writeFile(join(prompts, "discovered.md"), "DISCOVERED_TEMPLATE");

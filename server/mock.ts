@@ -1088,6 +1088,19 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       models: this.requireSession(sessionId).availableModels as ModelOption[],
     };
   }
+  async cycleModel(sessionId: string): Promise<unknown> {
+    const session = this.requireSession(sessionId);
+    const models = session.availableModels as ModelOption[];
+    const current = session.model as { provider: string; id: string } | null;
+    if (models.length <= 1) return null;
+    const index = models.findIndex(
+      (model) =>
+        model.provider === current?.provider && model.id === current?.id,
+    );
+    session.model = models[(Math.max(0, index) + 1) % models.length]!;
+    return { model: session.model, thinkingLevel: session.thinkingLevel };
+  }
+
   async setModel(
     sessionId: string,
     provider: string,

@@ -247,6 +247,32 @@ describe("native model controls", () => {
         return { body: snapshot() };
       }
       if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
+      if (url === "/api/control/model-cycle") {
+        const body = jsonBody(init);
+        controls.push(body);
+        if (body.direction === -1)
+          return {
+            status: 409,
+            body: {
+              error:
+                "Only forward model cycling is available; use the model picker",
+            },
+          };
+        if (modelGate) await modelGate;
+        if (body.sessionId === sessionId) {
+          const current = commonModels.findIndex(
+            (item) => item.provider === model.provider && item.id === model.id,
+          );
+          const next =
+            commonModels[(Math.max(0, current) + 1) % commonModels.length]!;
+          model = models.find(
+            (item) => item.provider === next.provider && item.id === next.id,
+          )!;
+          thinkingLevel =
+            next.thinkingLevel ?? (model.reasoning ? "medium" : "off");
+        }
+        return { body: { model, thinkingLevel } };
+      }
       if (url.startsWith("/api/control/model")) {
         const body = jsonBody(init);
         controls.push(body);
@@ -300,15 +326,15 @@ describe("native model controls", () => {
     await store.init("token");
     await Promise.all([
       store.cycleModel(1),
-      store.cycleModel(-1),
+      store.cycleModel(1),
       store.cycleThinking(),
       store.cycleThinking(),
     ]);
     expect(host.controls).toEqual([
-      { sessionId: "s1", provider: "anthropic", modelId: "haiku" },
-      { sessionId: "s1", provider: "openai", modelId: "gpt-5" },
-      { sessionId: "s1", level: "high" },
-      { sessionId: "s1", level: "xhigh" },
+      { sessionId: "s1", direction: 1 },
+      { sessionId: "s1", direction: 1 },
+      { sessionId: "s1", level: "off" },
+      { sessionId: "s1", level: "minimal" },
     ]);
     expect(
       host.fetch.mock.calls.some(([url]) =>
@@ -321,10 +347,8 @@ describe("native model controls", () => {
     });
     expect(store.getState().model).toEqual(current);
     await store.cycleModel(1);
-    expect(host.controls.slice(-2)).toEqual([
-      { sessionId: "s1", provider: "custom", modelId: "local" },
-      { sessionId: "s1", level: "high" },
-    ]);
+    expect(host.controls.at(-1)).toEqual({ sessionId: "s1", direction: 1 });
+    expect(store.getState().model?.id).toBe("haiku");
     expect(
       store.getState().commonModels.map((value) => value.provider),
     ).toEqual(["anthropic", "openai", "custom"]);

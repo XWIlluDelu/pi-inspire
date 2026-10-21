@@ -184,15 +184,21 @@ export function exportArgumentPath(argument?: string): string | undefined {
   return text.split(/\s/u)[0] || undefined;
 }
 
-/** Parse one command-shaped line without deciding who owns the command. */
+/** Parse ordinary command syntax or an exact name from Pi's loaded inventory. */
 export function parseCommandInvocation(
   input: string,
+  isKnownCommand?: (name: string) => boolean,
 ): CommandInvocation | null {
   const raw = input.trim();
-  const match = /^\/([A-Za-z][A-Za-z0-9:_-]*)(?:\s+([\s\S]*))?$/u.exec(raw);
+  const match = /^\/(\S+)(?:\s+([\s\S]*))?$/u.exec(raw);
   if (!match) return null;
+  const name = match[1]!;
+  // Pi owns registered names. Inventory membership distinguishes punctuation
+  // and Unicode commands from ordinary slash-prefixed filesystem paths.
+  if (!/^[A-Za-z][A-Za-z0-9:_-]*$/u.test(name) && !isKnownCommand?.(name))
+    return null;
   return {
-    name: match[1]!,
+    name,
     argument: (match[2] ?? "").trim(),
     raw,
   };
