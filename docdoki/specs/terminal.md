@@ -12,9 +12,9 @@ covers:
   - shared/terminal-*.ts
   - src/{api,App,app-state,store,terminal-*,use-copied}.ts*
   - src/controllers/terminal-operation-controller.ts
-  - src/components/{CommandPalette,ContextPane,RichText,TerminalPane,TerminalSettingsDialog,TerminalTextDialog,TerminalView}.tsx
+  - src/components/{CommandPalette,ContextPane,NoticeCard,Notices,RichText,TerminalPane,TerminalSettingsDialog,TerminalTextDialog,TerminalView}.tsx
   - src/styles.css
-  - src/styles/{terminal,responsive,workbench}.css
+  - src/styles/{terminal,responsive,settings-overlays,workbench}.css
   - tests/{server,shared,web}/**/*terminal*
   - tests/browser/{project-terminals,operation-lifecycles,terminal-settings,terminal-theme}.spec.ts
   - tests/browser/fixtures/terminal-theme.ts
@@ -43,6 +43,11 @@ Windows machine-wide pipe names include the OS account and state-directory ident
 installation. Unix socket addresses stay within the native byte limit, including long and Unicode
 temporary roots; shortening does not relax current-user ownership or private-directory checks.
 A still-listening legacy address blocks automatic replacement rather than stranding its PTYs.
+Wire/authentication compatibility gates data access; implementation version and optional lifecycle
+support do not. A failed startup connection remains recoverable through subsequent requests: one
+shared initialization at a time, no idle retry loop, no automatic daemon creation/replacement and
+no replay of dispatched controls or terminal input. Closing fences late initialization and closes
+its client without reviving the retired service.
 Only the owner that bound a socket removes it; late cleanup must not unlink a successor.
 An existing non-private POSIX parent is rejected rather than chmodded, so a custom socket, token or
 state address cannot change permissions on a shared or system directory.
@@ -66,7 +71,11 @@ systemd ownership; arbitrary enclosing services are never treated as terminal re
 
 Detached daemon fallback removes inherited service notification/socket-activation identity, and
 systemd handoff has a bounded wait. A detached spawn error rejects launch instead of escaping as an
-unhandled process event.
+unhandled process event. A confirmed listening-owner conflict has a distinct error and exit code 78;
+installed and transient systemd units prevent restart for that exit without suppressing retries for
+ordinary crashes. Startup checks a listening owner before creating authority or restoring state.
+Service start/enable do not stop a transient owner; Host Wants/After dependencies preserve installed
+startup ordering without treating a duplicate terminal start as authority to end existing work.
 
 Opening or hiding the pane attaches or detaches views. Explicit close terminates the process tree;
 exited tabs retain output until closed or restarted. Reopening a recently closed tab creates a fresh
@@ -153,13 +162,18 @@ untracked writes. Every control mutation requires an operation identity and rece
 identity is refused before dispatch. Valid identified requests rejected during route validation carry
 the matching operation ID and definite rejected outcome, including nested terminal routes.
 
-The in-process development owner follows the same mutation contract. An incompatible listening daemon
-requires an explicit terminal-service upgrade; ordinary Host launch leaves its PTYs running.
-Recovery guidance names the portable `inspire terminal` controls and explains that Host-only restart
-cannot replace the daemon. Daemons predating lifecycle controls need a one-time upgrade through their
-existing service manager or an inspected manual shutdown; commands never infer authority from an
-unverified listener's claimed PID. Settings → System → Restart all remains limited to installed Linux
-services. Receipt discovery preserves the incompatibility diagnosis.
+The in-process development owner follows the same mutation contract. Ordinary Host launch leaves
+an unverified listening owner's PTYs running. Diagnostics distinguish an absent endpoint from an
+unverified connection, retain the connection error, and never equate missing lifecycle controls with
+incompatible data. Terminal errors reuse the shared notice card, with complete Copy and a separate
+Dismiss action; selecting text does not dismiss them.
+
+A genuinely incompatible owner needs an explicit upgrade after its work is finished. Recovery
+guidance names the portable read-only status control before any replacement decision. An owner
+without verified maintenance controls needs its existing service manager or an inspected manual
+shutdown; commands never infer authority from an unverified listener's claimed PID.
+Settings → System → Host → Restart all remains limited to installed Linux services and is not a
+migration shortcut for an independently owned transient daemon.
 
 Catalog loads, polling, and mutations belong to one pane project/reload generation. Switching projects,
 reloading, or unmounting retires old response/error/loading/selection/rollback writebacks, while completed
@@ -168,6 +182,12 @@ merge by ID within that epoch and do not suppress equal-revision full reconcilia
 a complete catalog, and retired epochs cannot replace it. Optimistic-order rollback applies only to its
 still-current state. Recovery rows retain uncertainty during checks; tab relationships target mounted
 lazy panels.
+
+Palette UI intent binds the originating project before opening a lazy pane. Close, Restart and
+other terminal-targeted actions resolve an active terminal in that scope immediately or end without
+an HTTP request; they never wait for a later project or terminal. Only New, Focus and Settings may
+wait for their matching project surface to mount. `terminal-actions.test.ts` and
+`terminal-pane.test.tsx` cover the pre-request cross-project boundary.
 
 ## Stream, input, and authentication
 

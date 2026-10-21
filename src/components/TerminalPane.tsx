@@ -50,7 +50,7 @@ import {
   hasTerminalInsertion,
   subscribeTerminalActions,
   subscribeTerminalInsertion,
-  type TerminalUiAction,
+  type TerminalActionIntent,
 } from "../terminal-actions";
 import { TerminalCatalogController } from "../terminal-catalog";
 import {
@@ -62,6 +62,7 @@ import {
   loadTerminalUiSettings,
   type TerminalUiSettings,
 } from "../terminal-settings";
+import { NoticeCard } from "./NoticeCard";
 import { PiLoader } from "./PiLoader";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 import { TerminalSettingsDialog } from "./TerminalSettingsDialog";
@@ -184,7 +185,7 @@ export const TerminalPane = memo(function TerminalPane({
   const menuGroupName = useId();
   const renamePendingRef = useRef(false);
   const terminalActionHandlerRef = useRef<
-    (action: TerminalUiAction) => boolean
+    (intent: TerminalActionIntent) => boolean
   >(() => false);
 
   useEffect(() => {
@@ -829,7 +830,13 @@ export const TerminalPane = memo(function TerminalPane({
     void reorder(fromId, targetId, position);
   };
 
-  terminalActionHandlerRef.current = (action) => {
+  terminalActionHandlerRef.current = ({ action, projectCwd }) => {
+    if (
+      projectCwd !== cwd ||
+      !catalogController.active ||
+      (!launchTarget && sessionCwd !== lastSessionCwdRef.current)
+    )
+      return false;
     if (action === "take-control")
       return activeTerminal ? activeTerminal.status !== "running" : false;
     if (action === "new") {
@@ -1492,14 +1499,13 @@ export const TerminalPane = memo(function TerminalPane({
         </section>
       ) : null}
       {error ? (
-        <button
-          type="button"
+        <NoticeCard
+          kind="error"
+          text={error}
           className="terminal-pane__error"
-          onClick={() => setError(null)}
-          title="Dismiss"
-        >
-          {error}
-        </button>
+          onDismiss={() => setError(null)}
+          dismissLabel="Dismiss terminal error"
+        />
       ) : null}
     </div>
   );

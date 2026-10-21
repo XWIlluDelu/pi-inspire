@@ -1,4 +1,4 @@
-import { AlertTriangle, Download, Info, X, XCircle } from "lucide-react";
+import { Download, X } from "lucide-react";
 import { memo, useCallback, useLayoutEffect, useRef } from "react";
 import type { Notice } from "../events";
 import { shallowEqual, store, useAppState } from "../store";
@@ -9,36 +9,7 @@ import {
 } from "../update-availability";
 import { useReadingDwell } from "../use-reading-dwell";
 import { CopyAction } from "./CopyAction";
-
-function parseNoticeText(text: string): { tag: string | null; body: string } {
-  const match = /^\(([^)]+)\):\s*(.+)$/s.exec(text);
-  if (match) {
-    return { tag: match[1]!, body: match[2]! };
-  }
-  return { tag: null, body: text };
-}
-
-function NoticeIcon({ kind }: { kind: Notice["kind"] }) {
-  switch (kind) {
-    case "warning":
-      return <AlertTriangle size={14} aria-hidden />;
-    case "error":
-      return <XCircle size={14} aria-hidden />;
-    default:
-      return <Info size={14} aria-hidden />;
-  }
-}
-
-function noticeDefaultTitle(kind: Notice["kind"]): string {
-  switch (kind) {
-    case "warning":
-      return "Warning";
-    case "error":
-      return "Error";
-    default:
-      return "Notice";
-  }
-}
+import { NoticeCard } from "./NoticeCard";
 
 function NoticeItem({ notice }: { notice: Notice }) {
   const dismiss = useCallback(
@@ -49,47 +20,14 @@ function NoticeItem({ notice }: { notice: Notice }) {
     notice.kind === "info" ? 8_000 : null,
     dismiss,
   );
-  const { tag, body } = parseNoticeText(notice.text);
-  const copyLabel =
-    notice.kind === "warning"
-      ? "Warning"
-      : notice.kind === "error"
-        ? "Error"
-        : "Notice";
-  const title = tag
-    ? `${noticeDefaultTitle(notice.kind)} · ${tag}`
-    : noticeDefaultTitle(notice.kind);
-
   return (
-    <div
+    <NoticeCard
       ref={ref}
-      className={`notice notice--${notice.kind}${leaving ? " feedback--leaving" : ""}`}
-      role={notice.kind === "error" ? "alert" : "status"}
-    >
-      <div className="notice__head">
-        <span className="notice__title">
-          <NoticeIcon kind={notice.kind} />
-          <span>{title}</span>
-        </span>
-        <div className="notice__actions">
-          <CopyAction
-            text={notice.text}
-            label={copyLabel}
-            className="notice__copy"
-          />
-          <button
-            type="button"
-            className="notice__dismiss"
-            onClick={dismiss}
-            aria-label="Dismiss notification"
-            title="Dismiss"
-          >
-            <X size={13} aria-hidden />
-          </button>
-        </div>
-      </div>
-      <div className="notice__text">{body}</div>
-    </div>
+      kind={notice.kind}
+      text={notice.text}
+      onDismiss={dismiss}
+      className={leaving ? "feedback--leaving" : ""}
+    />
   );
 }
 
