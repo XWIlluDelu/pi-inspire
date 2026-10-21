@@ -93,9 +93,20 @@ export async function assistantOutcomeScenario(
     });
   }
   await page.route("**/api/control/abort", async (route) => {
+    const identity = route.request().postDataJSON();
     await route.fulfill(
       refuseStop
-        ? { status: 503, json: { error: "Stop is temporarily unavailable" } }
+        ? {
+            status: 503,
+            // A terminal refusal permits a new Stop intent. A bare 503 would
+            // retain an unknown operation that this fixture never executed.
+            headers: {
+              "X-Inspire-Authority": identity.authorityId,
+              "X-Inspire-Pending-Operation": identity.operationId,
+              "X-Inspire-Pending-Outcome": "failed",
+            },
+            json: { error: "Stop is temporarily unavailable" },
+          }
         : { json: { steering: [], followUp: [] } },
     );
   });

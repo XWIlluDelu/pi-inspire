@@ -1,0 +1,59 @@
+---
+scope:
+  - server/**
+  - shared/**
+  - src/**
+  - connections/**
+  - tests/**
+  - docdoki/**
+---
+
+# Project quality review
+
+## Objective
+
+Review high-value workflows across the project against [[northstar]], preserving the user's native
+Pi settings, sessions and extensions. Fix demonstrated problems with clear repair directions,
+retain useful regressions, and ask before changing product semantics or adding capabilities.
+
+## Current state
+
+- Resource preview observations now share the bounded transfer/cancellation boundary with uploads
+  (`f1c9169`). Loaded Pi command names, including Unicode and punctuation, remain executable through
+  preparation and normalized delivery (`1ff7a1e`). Their new tests pass in the Linux, macOS and
+  Windows jobs of [CI run 39532239217](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39532239217).
+- That run still fails on older platform assumptions and browser fixtures also present at
+  `0740654`. SSH CLI entry detection now follows filesystem aliases. Native RPC presence/rebind
+  runs portably, with Linux Herdr ownership as an additional scenario rather than a prerequisite.
+- Browser fixtures now route the native `model-cycle` action, recognize addressed unchanged
+  snapshot confirmations, and identify an explicit Stop refusal with its failed Host receipt.
+  A bare server failure represents uncertainty and cannot stand in for that terminal refusal.
+- Local targeted checks pass: 16 SSH/native lifecycle cases, Chromium/Firefox model and layout
+  cases, Stop presentation/receipt cases, types, formatting and lint. Local WebKit cannot start
+  because a system library is missing; updated CI must supply its cross-engine/platform evidence.
+- No Pi runtime source or native cancellation behavior changes belong to these repairs. The
+  initial review retained existing bounded/incremental read paths rather than adding another cache
+  without evidence of material cost. [[performance]] owns the maintained measurement procedures.
+
+## Next actions
+
+- [ ] Check the new CI run for these repairs. Distinguish actual failures, environment startup
+  failures and flaky attempts; do not weaken assertions or skip whole portable scenarios.
+- [ ] Investigate further only from concrete, high-value workflow or cost evidence. Keep each
+  review round's confirmed findings, exclusions and next direction concise.
+- [ ] Implement and verify clear fixes as semantic commits; preserve unrelated work and shared
+  history. Keep project design choices explicit instead of inferring them from missing APIs.
+
+## Decisions
+
+- Pi owns model-cycle order and extension effects. The shortcut fixture grants both directions to
+  test key delivery; this does not claim that the installed Pi RPC supports reverse cycling.
+- Snapshot synchronization can confirm an unchanged digest without repeating snapshot data. A
+  fixture needing the selected subscription must check its addressed owner rather than require data.
+- Independent RPC presence is portable; Linux process-group identity is a Herdr-specific boundary.
+
+## Handoff
+
+Read [[northstar]], [[spec_abstract]] and the relevant contracts before continuing from Next actions.
+Use the current tree and CI results, not the old failed run, as the next review baseline. Do not
+repeat whole suites merely to increase coverage counts, or turn a test fixture into a second runtime.
