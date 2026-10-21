@@ -22,6 +22,9 @@ test("continue the same native Pi in the browser without closing its terminal", 
   );
   test.setTimeout(60_000);
   const f = await nativeHerdrFixture({ streamDelayMs: 3000 });
+  // Host action discovery and the isolated Pi must share the same report cache.
+  const previousCacheHome = process.env.XDG_CACHE_HOME;
+  process.env.XDG_CACHE_HOME = join(f.root, "cache");
   const createApplication = () => {
     // A new Host owns new stores; application.close() retired the old lease.
     const attachments = new AttachmentStore(
@@ -164,7 +167,12 @@ test("continue the same native Pi in the browser without closing its terminal", 
       (await f.observer.findNativeWriter(f.sessionId, f.sessionFile))?.pid,
     ).toBe(f.originalPid);
   } finally {
-    await application.close();
-    await f.close();
+    try {
+      await application.close();
+      await f.close();
+    } finally {
+      if (previousCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
+      else process.env.XDG_CACHE_HOME = previousCacheHome;
+    }
   }
 });

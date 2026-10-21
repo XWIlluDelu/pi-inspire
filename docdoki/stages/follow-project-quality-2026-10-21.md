@@ -46,6 +46,11 @@ addressing; do not expand into cosmetic changes or classify an isolated flake as
   twice, shell Stop uses `abort_bash`, hook dialogs remain answerable, and unexpected worker exit
   retains an unknown outcome without fabricated terminal metadata. These test the existing owned-RPC
   contract; they do not add shell control to native TUI connections.
+- Real Herdr/browser continuity passes with a disposable native Pi: prompt and follow-up, page reload,
+  isolated Host replacement without page refresh, retained browser draft, stable transcript view,
+  resumed input and agent Stop all preserve the original Pi process. The browser fixture now gives
+  its Host the same isolated report cache as Pi, matching the native Runtime fixture; a wrong test
+  cache previously produced the correct missing-receiver refusal instead of exercising control.
 - Transport/history/resources: addressed snapshot barriers, heartbeat/backlog bounds, retained-content
   search/cancellation, incremental catalog summaries, byte ranges and disconnect-time file release
   pass their focused suites. Existing projection measurements and bounded/incremental paths do not
@@ -55,8 +60,12 @@ addressing; do not expand into cosmetic changes or classify an isolated flake as
   skipping `init` through a directory junction. Entry detection now uses Node's `import.meta.main`
   (available before the supported Node 22.19 baseline); both real CLI assertions remain unchanged,
   and the targeted SSH package/lifecycle suites pass locally. Windows Chromium's one successful
-  layout retry is a separate flake, not evidence of a major product defect. Linux quality remains
-  in progress; the revised entry path still needs native Windows CI confirmation.
+  layout retry is a separate flake, not evidence of a major product defect. Linux unit/integration
+  and launcher checks pass; its 426-case, single-worker browser run was still progressing when the
+  35-minute aggregate job ceiling cancelled it, with no failed-test artifacts. The Linux budget
+  now allows 50 minutes for build, core and three browser engines; individual deadlines, assertions
+  and scenario coverage are unchanged. The revised entry path still needs native Windows CI
+  confirmation, and the complete Linux browser tail must finish under the corrected aggregate.
 
 ## Next actions
 

@@ -17,7 +17,9 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    # Build, native/core checks and all three browser engines run serially.
+    # Bound their aggregate without cancelling a still-progressing browser tail.
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
