@@ -2,7 +2,7 @@ import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { store } from "../store";
 import { useModalFocus } from "../use-modal-focus";
-import { PiLoader } from "./PiLoader";
+import { ButtonLabel } from "./ButtonLabel";
 
 export function ExportDialog({
   sessionId,
@@ -129,8 +129,9 @@ export function ExportDialog({
             disabled={busy}
             aria-busy={busy}
           >
-            {busy ? <PiLoader size={14} aria-hidden /> : null}
-            {busy ? "Exporting…" : "Download"}
+            <ButtonLabel reserve={["Download", "Exporting…"]}>
+              {busy ? "Exporting…" : "Download"}
+            </ButtonLabel>
           </button>
         </footer>
       </form>

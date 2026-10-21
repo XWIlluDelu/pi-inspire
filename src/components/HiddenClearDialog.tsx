@@ -2,6 +2,7 @@ import { AlertTriangle, Trash2, X } from "lucide-react";
 import { projectNameFromCwd } from "../../shared/contracts";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
+import { ButtonLabel } from "./ButtonLabel";
 import { PiLoader } from "./PiLoader";
 
 export function HiddenClearDialog({
@@ -124,11 +125,17 @@ export function HiddenClearDialog({
             ) : !reviewRequired ? (
               <Trash2 size={14} aria-hidden />
             ) : null}
-            {deleting
-              ? "Clearing…"
-              : reviewRequired
-                ? "Review Hidden"
-                : `Delete ${sessionsLabel}`}
+            <ButtonLabel
+              reserve={
+                reviewRequired ? "Review Hidden" : `Delete ${sessionsLabel}`
+              }
+            >
+              {deleting
+                ? "Clearing…"
+                : reviewRequired
+                  ? "Review Hidden"
+                  : `Delete ${sessionsLabel}`}
+            </ButtonLabel>
           </button>
         </footer>
       </div>

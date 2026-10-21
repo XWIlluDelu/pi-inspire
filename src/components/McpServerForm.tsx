@@ -8,6 +8,7 @@ import {
   type McpConfigValues,
   type McpExposure,
 } from "../../shared/mcp";
+import { ButtonLabel } from "./ButtonLabel";
 import { Dropdown } from "./Dropdown";
 import { SettingsSwitch } from "./SettingsControls";
 
@@ -759,7 +760,9 @@ export function McpServerForm({
           className="button button--primary"
           disabled={busy || Boolean(file.error)}
         >
-          {busy ? "Saving…" : "Save configuration"}
+          <ButtonLabel reserve="Save configuration">
+            {busy ? "Saving…" : "Save configuration"}
+          </ButtonLabel>
         </button>
         <button
           type="button"

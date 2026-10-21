@@ -488,6 +488,11 @@ keep their existing behavior. Embedded documents retain their own styles.
   values, section titles, and custom-message attribution. Button height and icon geometry stay
   unchanged; prose and mixed-font field descriptions retain their normal line boxes. Custom-message
   icons and Copy center against the attribution group, including when the sender wraps.
+- Button sizing follows local visual balance, not a shared equal-width rule. Stateful actions
+  reserve only their own relevant labels where feedback would otherwise disturb the action row;
+  different actions and command delivery modes retain content-sized widths. Preparation keeps
+  the submitted action's label footprint while awaiting acceptance. Export stays a text action
+  in both states, without inserting a new icon only while busy.
 - Searchable menus use the same accent tint for pointer hover and keyboard candidates. Pointer
   movement and arrow navigation select one highlight mode; leaving a row removes its hover without
   dismissing the panel or blurring its search field. Checkmarks and `aria-selected` identify committed

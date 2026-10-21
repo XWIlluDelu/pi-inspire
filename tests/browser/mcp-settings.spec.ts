@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { McpConfigService } from "../../server/mcp-config";
 import type { McpConfigEdit } from "../../shared/mcp";
+import { actionGeometry } from "./support/action-geometry";
 import { pairAndOpen } from "./support/navigation";
 
 async function scenario(page: Page) {
@@ -397,7 +398,27 @@ test("narrow MCP form adds and removes scoped stdio definitions and focuses inhe
       name: "Save configuration",
       exact: true,
     });
+    let releaseSave!: () => void;
+    const saveReady = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    await page.route("**/api/mcp-config**", async (route) => {
+      if (route.request().method() === "PATCH") await saveReady;
+      await route.fallback();
+    });
+    await save.scrollIntoViewIfNeeded();
+    await page.evaluate(() => document.fonts.ready);
+    const actions = settings.locator(".models-form__actions");
+    const geometry = await actionGeometry(actions);
     await save.click();
+    try {
+      await expect(
+        settings.getByRole("button", { name: "Saving…", exact: true }),
+      ).toBeDisabled();
+      expect(await actionGeometry(actions)).toEqual(geometry);
+    } finally {
+      releaseSave();
+    }
     await expect(
       settings.getByRole("button", {
         name: "Edit project server project-tools",

@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { test as base, expect, type Page } from "@playwright/test";
 import type { ActiveSnapshot, ModelOption } from "../../shared/contracts";
+import { actionGeometry } from "./support/action-geometry";
 import { routeMockSnapshots } from "./support/mock-host";
 import { moveCaretToEnd } from "./support/native-input";
 import {
@@ -49,7 +50,22 @@ const test = base.extend<{ commandSession: CommandSession }>({
       snapshot = structuredClone(value);
       return value;
     };
-    const transport = await routeMockSnapshots(page, { snapshot: addCommands });
+    const transport = await routeMockSnapshots(page, {
+      snapshot: addCommands,
+      event: (event) => {
+        if (
+          event.type === "snapshot" &&
+          snapshot?.active &&
+          (event.detailSessionId ?? event.data?.active?.sessionId) ===
+            snapshot.active.sessionId
+        ) {
+          // Unchanged confirmations still project this fixture's current run state.
+          event.data ??= structuredClone(snapshot);
+          event.data.runState = busy ? "running" : "idle";
+          if (event.data.active) event.data.active.isStreaming = busy;
+        }
+      },
+    });
     await page.route("**/api/prompt", async (route) => {
       prompts.push(route.request().postDataJSON());
       await route.fulfill({
@@ -98,7 +114,7 @@ const test = base.extend<{ commandSession: CommandSession }>({
       setBusy: (value) => {
         busy = value;
         transport.send({
-          type: value ? "agent_start" : "agent_end",
+          type: value ? "agent_start" : "agent_settled",
           sessionId: snapshot.active!.sessionId,
         });
       },
@@ -409,6 +425,79 @@ test("types and runs prepared arguments without consuming the draft", {
   expect(prompts[0]).not.toHaveProperty("attachmentIds");
   expect(prompts[0]).not.toHaveProperty("behavior");
   await assertDraft();
+});
+
+test("preparation sizes each action locally and holds it through pending run-state changes", async ({
+  page,
+  commandSession,
+}) => {
+  let release!: () => void;
+  let responseReady: Promise<void>;
+  await page.route("**/api/prompt", async (route) => {
+    await responseReady;
+    await route.fallback();
+  });
+  for (const width of [1280, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    const widths: number[] = [];
+    for (const [command, label, busy, queue] of [
+      ["review", "Run command", false, false],
+      ["plan", "Send prepared prompt", false, false],
+      ["plan", "Steer Pi", true, false],
+      ["plan", "Queue prompt", true, true],
+    ] as const) {
+      commandSession.setBusy(busy);
+      const palette = await openPalette(page, command);
+      await palette
+        .getByRole("option", { name: new RegExp("/" + command) })
+        .click();
+      if (queue)
+        await palette
+          .getByRole("button", { name: "Queue", exact: true })
+          .click();
+      const action = palette.getByRole("button", { name: label, exact: true });
+      await expect(action).toBeVisible();
+      await page.evaluate(() => document.fonts.ready);
+      await palette.evaluate((el) =>
+        Promise.allSettled(el.getAnimations().map((a) => a.finished)),
+      );
+      const row = palette.locator(".palette__prepare-actions");
+      const before = await actionGeometry(row);
+      widths.push(before[1]!.width);
+      responseReady = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await action.click();
+      try {
+        await expect(
+          palette.getByRole("button", { name: "Sending…", exact: true }),
+        ).toBeDisabled();
+        expect(await actionGeometry(row)).toEqual(before);
+        // Agent events may arrive before the HTTP acceptance. They must not
+        // resize the already-submitted action to another delivery mode.
+        commandSession.setBusy(!busy);
+        await expect
+          .poll(() =>
+            page
+              .locator(".composer")
+              .evaluate((el) => el.classList.contains("composer--running")),
+          )
+          .toBe(!busy);
+        // The delivery controls legitimately change the row's vertical position.
+        const horizontal = (boxes: typeof before) =>
+          boxes.map(({ x, width, height }) => ({ x, width, height }));
+        expect(horizontal(await actionGeometry(row))).toEqual(
+          horizontal(before),
+        );
+      } finally {
+        release();
+      }
+      await expect(palette).toHaveCount(0);
+    }
+    expect(widths[0]).toBeLessThan(widths[1]!);
+    expect(widths[2]).toBeLessThan(widths[3]!);
+  }
+  await commandSession.assertDraft();
 });
 
 test.describe("touch commands", () => {
