@@ -19,6 +19,7 @@ and untracked.
 | Workbench and layout | [[workbench]], [[workspace-layout]] |
 | Visual system and preferences | [[visual-language]], [[design-system]], [[interface-preferences]] |
 | Conversation and activity | [[conversation]], [[activity-presentation]] |
+| Task notifications | [[notifications]] |
 | Rich content and custom presentations | [[rich-rendering]], [[tool-presentations]] |
 | Input, models and MCP | [[composer]], [[model-settings]], [[mcp]] |
 | Session discovery and persistence | [[session-continuity]], [[session-persistence]] |
@@ -33,6 +34,7 @@ and untracked.
 
 | State | Work |
 | --- | --- |
+| Implemented; phone acceptance open | Host-owned task outcomes, device-local alert settings, worker display and Web Push. Linux Chrome delivery and installed-PWA refresh continuity are verified. [[notifications]] defines the contract; [[follow-notifications-2026-10-22]] records remaining Android/iOS acceptance and separate manual activation. |
 | Tagged | Annotated tag v0.6.0 points to f67d6ee, which passes complete Linux/macOS/Windows CI and three installed-package checks. [[follow-project-quality-2026-10-21]] records verified repairs; [[follow-release-0-6-0-2026-10-21]] records the tag, documentation and eight screenshots. There is no GitHub Release or uploaded release-asset distribution. Production activation is a separate operator action. |
 | Implemented | Native image delivery, draft-preserving connected-terminal sends and real dialog cancellation; saved-only JSONL export, loaded-range search/History handoff and mobile inspection Back; explicit per-session terminal handoff and narrow terminal quoting back to the editable draft. See [[pi-integration]], [[composer]], [[session-branches]], [[workbench]] and [[session-continuity]]. |
 | Implemented | Store-independent extension dialog content and a complete source-DIY task-board example, keeping behavior and commands in Pi. [[pi-integration]] and [the extension guide](../docs/extensions.md#choose-the-smallest-integration) describe the reusable boundary; no runtime React plugin or scheduler is added. |

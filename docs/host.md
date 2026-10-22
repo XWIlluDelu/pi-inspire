@@ -13,6 +13,37 @@ In Windows PowerShell with script execution disabled, spell these commands `npm.
 without changing user or machine execution policy. For example: `inspire.cmd terminal status`
 or `npm.cmd run inspire -- restart`.
 
+## Task notifications
+
+In **Settings → Behavior → Task alerts**, choose **System notification** on each device that
+should receive alerts. Normal completion and errors notify you when you are away from the
+conversation; confirmed Stop does not. **Mark tab** stays local to open pages.
+
+Allow the browser permission, then check for **Background notifications enabled**. **Send test
+notification** exercises the configured delivery channel, including Web Push when enrolled.
+A sent/display-accepted status is separate from a visible system banner; browser and OS
+notification policies still apply. If setup fails, granted notifications continue while Inspire
+is open, and the setting explains the background failure.
+
+The Host must stay running and reach the browser's HTTPS push service. It uses `HTTPS_PROXY`
+when configured; do not put credentials in project files. Push does not need public inbound
+access to the Host. Opening the conversation still requires access to its normal URL, including
+VPN or reverse-SSH connectivity when applicable. Remote phones need trusted HTTPS; iPhone/iPad
+users must add Inspire to the Home Screen and enable notifications in that app. Fully exiting or
+force-stopping the browser can prevent delivery.
+
+Alert choices are device-local. A new browser starts Off. Existing paired browsers retain their
+old alert choice, but must explicitly enable background delivery. Reset preferences affects alerts
+only on the current device. Protected notification state sits beside the Host preferences file as
+`<preferences-path>.notifications-<authority-namespace>.json`; it contains VAPID/subscription
+secrets and must not be published. Pending alerts expire after 15 minutes rather than becoming
+an inbox.
+
+Connected native Pi uses the updated [session-activity extension](extensions.md#control-the-same-herdr-pi-terminal)
+to distinguish completion, failure and cancellation. Reload it in the original idle terminal after
+updating; a Host restart does not reload an external Pi. Older integrations can report **Task ended**
+without claiming a successful result.
+
 ## Lifecycle
 
 | Command | Effect |

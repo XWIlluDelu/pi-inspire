@@ -180,10 +180,23 @@ function downloadFileUrl(url: string, fileName: string): void {
   anchor.click();
 }
 
+import { TaskNotificationController } from "./notifications";
+
 export class AppStore {
   private state: AppState = createInitialAppState();
   private listeners = new Set<() => void>();
   private api: Api | null = null;
+  private readonly notifications = new TaskNotificationController({
+    state: () => this.state,
+    patch: (patch) => this.set(patch),
+    api: () => this.api,
+    mark: (event) => {
+      if (event.sessionId)
+        this.runtimeEvents.markTaskAttention(event.sessionId);
+    },
+    clear: () => this.runtimeEvents.clearTitleAttention(),
+    openSession: (id) => this.selection.open(id),
+  });
   private readonly hostCommandRuns = new Map<string, number>();
   /** Both Files surfaces consume this one tree/search projection. */
   private readonly workspace = new WorkspaceController({
@@ -348,7 +361,6 @@ export class AppStore {
     state: () => this.state,
     patch: (patch) => this.set(patch),
     notify: (kind, text) => this.notify(kind, text),
-    openSession: (sessionId) => this.openSession(sessionId),
     applySnapshot: (snapshot) => this.applySnapshot(snapshot),
     invalidateSelection: () => this.selection.invalidateForReplacement(),
     ensureSessionVisible: (sessionId) => this.ensureSessionVisible(sessionId),
@@ -453,9 +465,24 @@ export class AppStore {
     }),
     patch: (patch) => {
       this.set(patch);
-      if (patch.connection === "open") this.pendingRecovery.resume();
+      if (patch.connection === "open") {
+        this.pendingRecovery.resume();
+        void this.notifications.openTarget();
+      }
     },
     applyEvent: (event) => {
+      if (event.type === "task_alert_settings") {
+        this.notifications.applySettings(
+          event.settings as import("../shared/notifications").TaskAlertSettings,
+        );
+        return;
+      }
+      if (event.type === "task_notification") {
+        void this.notifications.receive(
+          event.notification as import("../shared/notifications").TaskNotification,
+        );
+        return;
+      }
       if (event.type === "agent_start" && typeof event.sessionId === "string")
         this.pendingRecovery.startRun(event.sessionId);
       if (
@@ -806,6 +833,8 @@ export class AppStore {
         this.notify("warning", boot.preferencesWarning);
       if (boot.toolPresentationsWarning)
         this.notify("warning", boot.toolPresentationsWarning);
+      await this.notifications.initialize(preferences.completionAttention);
+      if (!ownsBootstrap()) return;
       void this.connectionController.connect(reconnectToken);
       void this.loadSessions(this.state.sessionQuery).then(() => {
         if (!ownsBootstrap()) return;
@@ -938,7 +967,7 @@ export class AppStore {
     const sessionStatuses = snapshot.sessionStatuses;
     const extensionStatuses =
       parseExtensionStatuses(snapshot.extensionStatuses) ?? {};
-    this.runtimeEvents.reconcileAttentionArms(sessionStatuses);
+    this.runtimeEvents.reconcileObservedRuns(sessionStatuses);
     const lifecyclePatch = snapshotLifecyclePatch(
       this.state,
       transition,
@@ -1217,7 +1246,9 @@ export class AppStore {
     this.catalog.ensureVisible(id);
   }
 
-  openSession = (id: string): Promise<void> => this.selection.open(id);
+  openSession = async (id: string): Promise<void> => {
+    await this.selection.open(id);
+  };
 
   deselectSession = (): Promise<boolean> => this.selection.deselect();
 
@@ -2963,7 +2994,11 @@ export class AppStore {
     this.preferences.setDesktopSendKey(value);
   setCompletionAttention = (
     value: CompletionAttentionPreference,
-  ): Promise<boolean> => this.preferences.setCompletionAttention(value);
+  ): Promise<boolean> => this.notifications.setMode(value);
+  refreshTaskAlerts = (): Promise<void> =>
+    this.notifications.initialize(this.state.prefs.completionAttention);
+  testTaskNotification = (): Promise<void> => this.notifications.test();
+  captureNotificationTarget = (): void => this.notifications.captureTarget();
   setProjectDisplay = (value: ProjectDisplayPreference): void =>
     this.preferences.setProjectDisplay(value);
   setThinkingVisibility = (value: VisibilityPreference): void =>
@@ -2972,7 +3007,10 @@ export class AppStore {
     this.preferences.setToolVisibility(value);
   setActivityFoldVisibility = (value: ActivityFoldVisibilityPreference): void =>
     this.preferences.setActivityFoldVisibility(value);
-  restoreDefaultSettings = (): void => this.preferences.restoreDefaults();
+  restoreDefaultSettings = (): void => {
+    this.preferences.restoreDefaults();
+    void this.notifications.setMode("off");
+  };
   toggleNavGroup = (cwd: string): void => this.preferences.toggleNavGroup(cwd);
   toggleSessionPin = (id: string): void =>
     this.preferences.toggleSessionPin(id);

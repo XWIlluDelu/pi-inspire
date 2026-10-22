@@ -32,11 +32,12 @@ const accessSchema = z
     origin: z.string().max(512),
     expiresAt: z.number().int(),
     nonce: z.string(),
+    browserId: z.string().optional(),
   })
   .strict();
 export const registrationSchema = z
   .object({
-    token: z.string().min(1).max(256).optional(),
+    token: z.string().min(1).max(2_048).optional(),
     bootstrap: z.string().max(128).optional(),
     publicKey: publicKeySchema,
   })
@@ -133,6 +134,7 @@ export class BrowserAuth {
     {
       origin: string;
       audience: "events" | "terminal";
+      browserId?: string;
       expiresAt: number;
     }
   >();
@@ -287,6 +289,10 @@ export class BrowserAuth {
         origin,
         expiresAt,
         nonce: randomBytes(16).toString("base64url"),
+        browserId: this.mac(
+          "installation",
+          `${origin}\n${entry.publicKey.x}\n${entry.publicKey.y}`,
+        ),
       }),
       expiresAt,
     };
@@ -307,14 +313,28 @@ export class BrowserAuth {
     }
   }
 
+  installation(
+    bearer: string | undefined,
+    origin: string,
+  ): { id: string; origin: string } | null {
+    if (!this.accepts(bearer, origin)) return null;
+    const data = accessSchema.parse(this.unseal("access", bearer!));
+    return data.browserId ? { id: data.browserId, origin } : null;
+  }
+
+  notificationNamespace(): string {
+    return this.mac("notification-store", "").slice(0, 22);
+  }
+
   ticket(
     origin: string,
     audience: "events" | "terminal",
+    browserId?: string,
   ): { ticket: string; expiresAt: number } {
     this.admit(this.tickets);
     const ticket = randomBytes(32).toString("base64url");
     const expiresAt = this.now() + BROWSER_TICKET_TTL_MS;
-    this.tickets.set(ticket, { origin, audience, expiresAt });
+    this.tickets.set(ticket, { origin, audience, expiresAt, browserId });
     return { ticket, expiresAt };
   }
 
@@ -349,14 +369,22 @@ export class BrowserAuth {
     origin: string,
     audience: string,
   ): boolean {
-    if (!ticket) return false;
+    return this.consumeTicketGrant(ticket, origin, audience) !== null;
+  }
+
+  consumeTicketGrant(
+    ticket: string | null,
+    origin: string,
+    audience: string,
+  ): { origin: string; browserId?: string } | null {
+    if (!ticket) return null;
     const grant = this.tickets.get(ticket);
     this.tickets.delete(ticket);
-    return Boolean(
-      grant &&
-        grant.origin === origin &&
-        grant.audience === audience &&
-        grant.expiresAt > this.now(),
-    );
+    return grant &&
+      grant.origin === origin &&
+      grant.audience === audience &&
+      grant.expiresAt > this.now()
+      ? grant
+      : null;
   }
 }

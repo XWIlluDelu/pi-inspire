@@ -65,6 +65,11 @@ import { installedPiChangelog } from "./pi-changelog.js";
 import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
 import type { PreferencesStore } from "./preferences.js";
 import {
+  TaskNotifications,
+  pushSubscriptionSchema,
+  type NotificationPrincipal,
+} from "./task-notifications.js";
+import {
   invalidateProjectFiles,
   listProjectDirectory,
   searchProjectFiles,
@@ -769,6 +774,10 @@ export function createInspireServer(deps: AppDependencies): {
   });
   app.use(express.json({ limit: "2mb" }));
   const browserAuth = new BrowserAuth(deps.token);
+  const taskNotifications = new TaskNotifications(
+    `${deps.preferences.path}.notifications-${browserAuth.notificationNamespace()}.json`,
+  );
+  deps.runtime.on("event", taskNotifications.observe);
   const launchUrl = (origin: string): string =>
     `${origin}/#inspire-bootstrap=${browserAuth.bootstrap(origin)}`;
   const htmlPreviews = new HtmlPreviewStore(deps.resources, (sessionId) =>
@@ -915,8 +924,72 @@ export function createInspireServer(deps: AppDependencies): {
   });
   app.post("/api/auth/socket-ticket", (request, response) => {
     const { audience } = socketTicketSchema.parse(request.body);
-    response.json(browserAuth.ticket(requestOrigin(request), audience));
+    const origin = requestOrigin(request);
+    response.json(
+      browserAuth.ticket(
+        origin,
+        audience,
+        browserAuth.installation(bearerToken(request), origin)?.id,
+      ),
+    );
   });
+
+  const notificationPrincipal = (request: Request): NotificationPrincipal => {
+    const origin = requestOrigin(request);
+    if (
+      !downloadOriginAllowed(origin, {
+        origin: request.get("origin"),
+        fetchSite: request.get("sec-fetch-site"),
+        referer: request.get("referer"),
+      })
+    )
+      throw requestError("An exact browser origin is required", 403);
+    const principal = browserAuth.installation(bearerToken(request), origin);
+    if (!principal)
+      throw requestError(
+        "Refresh browser authentication to configure notifications",
+        401,
+      );
+    return principal;
+  };
+  app.get("/api/notifications", async (request, response) =>
+    response.json(
+      await taskNotifications.settings(notificationPrincipal(request)),
+    ),
+  );
+  app.put("/api/notifications", async (request, response) => {
+    const principal = notificationPrincipal(request);
+    const body = z
+      .object({
+        mode: z.enum(["off", "title", "desktop"]).optional(),
+        subscription: pushSubscriptionSchema.nullable().optional(),
+      })
+      .strict()
+      .refine(
+        (body) => body.mode !== undefined || body.subscription !== undefined,
+        "Provide a mode or subscription update",
+      )
+      .parse(request.body);
+    response.json(
+      await taskNotifications.configure(
+        principal,
+        body.mode,
+        body.subscription,
+      ),
+    );
+  });
+  app.post("/api/notifications/ack", async (request, response) => {
+    const principal = notificationPrincipal(request);
+    const { id } = z
+      .object({ id: z.string().min(1).max(256) })
+      .strict()
+      .parse(request.body);
+    await taskNotifications.acknowledge(principal, id);
+    response.json({ ok: true });
+  });
+  app.post("/api/notifications/test", async (request, response) =>
+    response.json(await taskNotifications.test(notificationPrincipal(request))),
+  );
 
   app.get("/api/health", (_request, response) => {
     response.json({ appName: "inspire", mock: deps.mock });
@@ -2007,6 +2080,7 @@ export function createInspireServer(deps: AppDependencies): {
     updateCoordinator,
     authorityId,
     heartbeatIntervalMs,
+    taskNotifications,
   });
 
   server.on("upgrade", (request, socket, head) => {
@@ -2033,7 +2107,7 @@ export function createInspireServer(deps: AppDependencies): {
     const audience = url.pathname.slice(1);
     const browserAuthenticated =
       request.headers.origin === origin &&
-      browserAuth.consumeTicket(
+      browserAuth.consumeTicketGrant(
         url.searchParams.get("ticket"),
         origin,
         audience,
@@ -2056,7 +2130,15 @@ export function createInspireServer(deps: AppDependencies): {
       url.pathname === "/events" &&
       (browserAuthenticated || explicitAuthenticated)
     ) {
-      runtimeEvents.upgrade(request, socket, head, url);
+      runtimeEvents.upgrade(
+        request,
+        socket,
+        head,
+        url,
+        browserAuthenticated && browserAuthenticated.browserId
+          ? { id: browserAuthenticated.browserId, origin }
+          : undefined,
+      );
       return;
     }
     socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
@@ -2079,6 +2161,8 @@ export function createInspireServer(deps: AppDependencies): {
           })
         : Promise.resolve();
       runtimeEvents.close();
+      deps.runtime.off("event", taskNotifications.observe);
+      await taskNotifications.close();
       terminalGateway.close();
       const runtimeResult = await deps.runtime.close().then(
         () => ({ status: "fulfilled" as const }),

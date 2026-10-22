@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { accessCookieName } from "../../server/app.js";
 import {
@@ -38,6 +38,86 @@ describe("Host browser authentication and asset access", () => {
     fixture = await hostApiFixture();
   });
   afterEach(async () => closeHostApiFixture(fixture));
+
+  it("binds notification settings and event routing to the proved browser key", async () => {
+    const { application, baseUrl, runtime } = fixture;
+    const first = await pairedBrowser(application.server, baseUrl);
+    const second = await pairedBrowser(application.server, baseUrl);
+    const settings = (bearer: string) =>
+      request(application.server)
+        .get("/api/notifications")
+        .set("Origin", baseUrl)
+        .set("Authorization", `Bearer ${bearer}`);
+    const configure = (bearer: string) =>
+      request(application.server)
+        .put("/api/notifications")
+        .set("Origin", baseUrl)
+        .set("Authorization", `Bearer ${bearer}`)
+        .send({ mode: "title" });
+    await configure(first.bearer).expect(200);
+    expect((await settings(first.bearer).expect(200)).body.mode).toBe("title");
+    expect((await settings(second.bearer).expect(200)).body.mode).toBeNull();
+    await request(application.server)
+      .put("/api/notifications")
+      .set("Origin", baseUrl)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ mode: "desktop" })
+      .expect(401);
+    await request(application.server)
+      .put("/api/notifications")
+      .set("Origin", "https://other.test")
+      .set("Authorization", `Bearer ${first.bearer}`)
+      .send({ mode: "off" })
+      .expect(403);
+
+    const ticket = await socketAdmission(
+      application.server,
+      baseUrl,
+      first.bearer,
+    );
+    const socket = new WebSocket(
+      `${baseUrl.replace("http", "ws")}/events?ticket=${ticket}`,
+      { origin: baseUrl },
+    );
+    const received: Record<string, unknown>[] = [];
+    socket.on("message", (message) =>
+      received.push(JSON.parse(String(message))),
+    );
+    try {
+      await new Promise<void>((resolve) => socket.once("open", resolve));
+      await vi.waitFor(() => expect(received[0]?.type).toBe("snapshot"));
+      runtime.emit("event", { type: "agent_start", sessionId: "background" });
+      runtime.emit("event", {
+        type: "agent_settled",
+        sessionId: "background",
+        sessionStatus: { runState: "failed" },
+      });
+      await vi.waitFor(() =>
+        expect(received.some((item) => item.type === "task_notification")).toBe(
+          true,
+        ),
+      );
+      expect(
+        received.find((item) => item.type === "task_alert_settings")?.settings,
+      ).toMatchObject({ mode: "title" });
+      await request(application.server)
+        .put("/api/notifications")
+        .set("Origin", baseUrl)
+        .set("Authorization", `Bearer ${first.bearer}`)
+        .send({ subscription: null })
+        .expect(200);
+      expect((await settings(first.bearer).expect(200)).body.mode).toBe(
+        "title",
+      );
+      const frame = received.find((item) => item.type === "task_notification")!;
+      expect(frame.notification).toMatchObject({
+        sessionId: "background",
+        outcome: "failed",
+      });
+    } finally {
+      socket.close();
+    }
+  });
 
   it("preserves explicit bearer clients, rejects cookie/query authority and foreign origins", async () => {
     const { application, api, baseUrl } = fixture;

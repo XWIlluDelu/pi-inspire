@@ -1,602 +1,502 @@
 // @vitest-environment jsdom
+import { MessageChannel } from "node:worker_threads";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { TaskNotificationController } from "../../src/notifications";
 import { AppStore } from "../../src/store";
 import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
+  deferred,
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
   jsonBody,
+  type RouteResponse,
   sessionSummary,
 } from "./helpers";
 
-class FakeNotification {
+class Permission {
   static permission: NotificationPermission = "granted";
   static requestPermission = vi.fn(
-    async (): Promise<NotificationPermission> => FakeNotification.permission,
+    async (): Promise<NotificationPermission> => "granted",
   );
-  static instances: FakeNotification[] = [];
-  onclick: ((event: Event) => void) | null = null;
-  close = vi.fn();
-  constructor(
-    public title: string,
-    public options?: NotificationOptions,
-  ) {
-    FakeNotification.instances.push(this);
-  }
 }
+let workerMessages: Record<string, unknown>[];
+let subscription: {
+  toJSON(): object;
+  unsubscribe(): Promise<boolean>;
+  options: object;
+} | null;
+let worker: EventTarget;
+const publicKey =
+  "BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const subscribe = vi.fn(async () => subscription!);
+let mode: "off" | "title" | "desktop";
+let subscribed: boolean;
+let subscriptionEndpoint: string;
+let mutations: Record<string, unknown>[];
+let acknowledgments: string[];
 
-function attentionRoutes(
-  preference: "off" | "title" | "desktop",
-  onPatch?: (value: Record<string, unknown>) => void,
-  background = sessionSummary({
-    id: "bg",
-    title: "Background work",
-    cwd: "/safe/project",
-    project: "project",
-  }),
-) {
-  return (url: string, init: RequestInit) => {
-    if (url.startsWith("/api/bootstrap")) {
-      return {
-        body: bootstrapPayload({
-          preferences: {
-            ...bootstrapPayload().preferences,
-            completionAttention: preference,
-          },
-          snapshot: activeSnapshot(),
-        }),
-      };
-    }
-    if (url.startsWith("/api/sessions/open")) {
-      return {
-        body: activeSnapshot({
-          sessionId: String(jsonBody(init).id),
-          sessionName: "Background work",
-        }),
-      };
-    }
-    if (url.startsWith("/api/sessions")) {
-      return {
-        body: sessionPage([background], 1),
-      };
-    }
-    if (url.startsWith("/api/preferences")) {
-      const patch = jsonBody(init);
-      onPatch?.(patch);
-      return {
-        body: {
-          ...bootstrapPayload().preferences,
-          completionAttention: preference,
-          ...patch,
-        },
-      };
-    }
-    return undefined;
-  };
-}
-
-async function initialized(preference: "off" | "title" | "desktop") {
-  installFetch(attentionRoutes(preference));
-  const store = new AppStore();
-  await store.init("token");
-  const socket = FakeWebSocket.instances.at(-1)!;
-  socket.open();
-  await vi.waitFor(() =>
-    expect(
-      store.getState().sessions.some((session) => session.id === "bg"),
-    ).toBe(true),
-  );
-  return { store, socket };
-}
-
-function visibleFocused(value: boolean): void {
+function visibleFocused(value: boolean) {
   Object.defineProperty(document, "visibilityState", {
     configurable: true,
     value: value ? "visible" : "hidden",
   });
   Object.defineProperty(document, "hasFocus", {
     configurable: true,
-    value: vi.fn(() => value),
+    value: () => value,
+  });
+}
+async function initialized(
+  choice: typeof mode = "desktop",
+  open?: (id: string) => RouteResponse | Promise<RouteResponse>,
+  existingStore?: AppStore,
+) {
+  mode = choice;
+  installFetch((url, init) => {
+    if (url === "/api/notifications") {
+      if (init.method === "PUT") {
+        const body = jsonBody(init);
+        mutations.push(body);
+        if (body.mode !== undefined) mode = body.mode as typeof mode;
+        if (body.subscription !== undefined)
+          subscribed = mode === "desktop" && Boolean(body.subscription);
+        if (body.subscription)
+          subscriptionEndpoint = (body.subscription as { endpoint: string })
+            .endpoint;
+      }
+      return {
+        body: {
+          installationId: "device-one",
+          mode,
+          subscribed,
+          endpoint: subscribed ? subscriptionEndpoint : null,
+          publicKey,
+          error: null,
+        },
+      };
+    }
+    if (url === "/api/notifications/ack") {
+      acknowledgments.push(String(jsonBody(init).id));
+      return { body: { ok: true } };
+    }
+    if (url === "/api/notifications/test")
+      return { body: { transport: subscribed ? "push" : "page" } };
+    if (url.startsWith("/api/bootstrap"))
+      return {
+        body: bootstrapPayload({
+          snapshot: activeSnapshot(),
+          preferences: {
+            ...bootstrapPayload().preferences,
+            completionAttention: "off",
+          },
+        }),
+      };
+    if (url.startsWith("/api/sessions/open"))
+      return open
+        ? open(String(jsonBody(init).id))
+        : { body: activeSnapshot({ sessionId: String(jsonBody(init).id) }) };
+    if (url.startsWith("/api/sessions"))
+      return {
+        body: sessionPage(
+          [
+            sessionSummary({
+              id: "bg",
+              title: "PRIVATE FIRST PROMPT",
+              project: "research-project",
+              cwd: "/safe/research-project",
+            }),
+          ],
+          1,
+        ),
+      };
+    return undefined;
+  });
+  const store = existingStore ?? new AppStore();
+  await store.init("token");
+  const socket = FakeWebSocket.instances.at(-1)!;
+  socket.open();
+  return { store, socket };
+}
+function outcome(socket: FakeWebSocket, id = "outcome-one", sessionId = "bg") {
+  socket.emit({
+    type: "task_notification",
+    notification: {
+      id,
+      sessionId,
+      outcome: "failed",
+      project: "research-project",
+      createdAt: Date.now(),
+    },
   });
 }
 
-describe("completion attention", () => {
-  beforeEach(() => {
-    installFakeWebSocket();
-    FakeNotification.instances = [];
-    FakeNotification.permission = "granted";
-    FakeNotification.requestPermission.mockClear();
-    vi.stubGlobal("Notification", FakeNotification);
-    visibleFocused(true);
+beforeEach(() => {
+  installFakeWebSocket();
+  vi.stubGlobal("Notification", Permission);
+  vi.stubGlobal("MessageChannel", MessageChannel);
+  Permission.permission = "granted";
+  Permission.requestPermission.mockReset().mockResolvedValue("granted");
+  workerMessages = [];
+  mutations = [];
+  acknowledgments = [];
+  subscribed = false;
+  subscriptionEndpoint = "https://fcm.googleapis.com/endpoint";
+  subscription = {
+    toJSON: () => ({
+      expirationTime: null,
+      endpoint: "https://fcm.googleapis.com/endpoint",
+      keys: { auth: "key", p256dh: "key" },
+    }),
+    unsubscribe: vi.fn(async () => true),
+    options: {},
+  };
+  worker = new EventTarget();
+  const registration = {
+    active: {
+      postMessage: (message: Record<string, unknown>, ports: MessagePort[]) => {
+        workerMessages.push(message);
+        ports[0]!.postMessage({ ok: true });
+        ports[0]!.close();
+      },
+    },
+    pushManager: { getSubscription: async () => null, subscribe },
+  };
+  subscribe.mockClear();
+  Object.defineProperty(navigator, "serviceWorker", {
+    configurable: true,
+    value: Object.assign(worker, {
+      ready: Promise.resolve(registration),
+      getRegistration: async () => registration,
+    }),
   });
+  sessionStorage.clear();
+  visibleFocused(true);
+});
 
-  it("never notifies visible selected work and ignores duplicate or historical settles", async () => {
-    const { socket } = await initialized("desktop");
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "bg",
-      sessionStatus: { runState: "idle" },
-    });
-    socket.emit({
-      type: "agent_start",
-      sessionId: "s1",
-      sessionStatus: { runState: "running", indicator: "running" },
-    });
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "s1",
-      sessionStatus: { runState: "idle" },
-    });
-    expect(FakeNotification.instances).toHaveLength(0);
-
-    socket.emit({
-      type: "agent_start",
-      sessionId: "bg",
-      sessionStatus: { runState: "running", indicator: "running" },
-    });
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "bg",
-      sessionStatus: { runState: "failed", indicator: "failed" },
-    });
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "bg",
-      sessionStatus: { runState: "failed", indicator: "failed" },
-    });
-    expect(FakeNotification.instances).toHaveLength(1);
-    expect(FakeNotification.instances[0]).toMatchObject({
-      title: "Task failed",
-    });
-    expect(FakeNotification.instances[0]!.options?.body).toBe(
-      "Project: project",
-    );
-    expect(FakeNotification.instances[0]!.options?.body).not.toContain(
-      "prompt",
-    );
-  });
-
-  it("never projects a catalog fallback title derived from the first prompt into OS fields", async () => {
-    const secret = "SECRET_PROMPT_DO_NOT_NOTIFY";
-    // session-catalog.test.ts proves the real unnamed-record projection uses
-    // firstMessage here; this browser boundary must still treat it as secret.
-    const summary = sessionSummary({
-      id: "bg",
-      cwd: "/safe/research-project",
-      project: "research-project",
-      title: secret,
-    });
-    expect(summary.title).toBe(secret);
-
-    installFetch(attentionRoutes("desktop", undefined, summary));
-    const store = new AppStore();
-    await store.init("token");
-    const socket = FakeWebSocket.instances.at(-1)!;
-    socket.open();
-    await vi.waitFor(() =>
-      expect(store.getState().sessions).toContainEqual(summary),
-    );
-    socket.emit({
-      type: "agent_start",
-      sessionId: "bg",
-      sessionStatus: { runState: "running", indicator: "running" },
-    });
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "bg",
-      sessionStatus: { runState: "idle", indicator: "completed" },
-    });
-
-    expect(FakeNotification.instances).toHaveLength(1);
-    const notification = FakeNotification.instances[0]!;
-    expect(notification.title).toBe("Task completed");
-    expect(notification.options).toMatchObject({
-      body: "Project: research-project",
-      tag: "inspire-task:bg:completed",
-    });
-    expect(
-      JSON.stringify({
-        title: notification.title,
-        options: notification.options,
-      }),
-    ).not.toContain(secret);
-  });
-
-  it("keeps automatic compaction inside its agent arm and notifies only on settle", async () => {
-    const { socket } = await initialized("desktop");
-    socket.emit({
-      type: "agent_start",
-      sessionId: "bg",
-      sessionStatus: { runState: "running", indicator: "running" },
-    });
-    socket.emit({
-      type: "compaction_start",
-      sessionId: "bg",
-      reason: "threshold",
-      sessionStatus: { runState: "compacting", indicator: "running" },
-    });
-    socket.emit({
-      type: "compaction_end",
-      sessionId: "bg",
-      reason: "threshold",
-      result: { tokensBefore: 100 },
-      aborted: false,
-      willRetry: false,
-      sessionStatus: { runState: "running", indicator: "running" },
-    });
-    // Even a manual compaction event nested in the observed run remains owned
-    // by that agent operation rather than creating a second terminal arm.
-    socket.emit({
-      type: "compaction_start",
-      sessionId: "bg",
-      reason: "manual",
-      sessionStatus: { runState: "compacting", indicator: "running" },
-    });
-    socket.emit({
-      type: "compaction_end",
-      sessionId: "bg",
-      reason: "manual",
-      result: { tokensBefore: 80 },
-      aborted: false,
-      willRetry: false,
-      sessionStatus: { runState: "running", indicator: "running" },
-    });
-    expect(FakeNotification.instances).toHaveLength(0);
-
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "bg",
-      sessionStatus: { runState: "idle", indicator: "completed" },
-    });
-    socket.emit({
-      type: "compaction_end",
-      sessionId: "bg",
-      reason: "threshold",
-      result: { tokensBefore: 100 },
-      aborted: false,
-      willRetry: false,
-      sessionStatus: { runState: "idle" },
-    });
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "bg",
-      sessionStatus: { runState: "idle", indicator: "completed" },
-    });
-    expect(FakeNotification.instances).toHaveLength(1);
-    expect(FakeNotification.instances[0]!.title).toBe("Task completed");
-  });
-
-  it("notifies a standalone manual compaction exactly once and does not misattribute a later settle", async () => {
-    const { socket } = await initialized("desktop");
-    socket.emit({
-      type: "compaction_start",
-      sessionId: "bg",
-      reason: "manual",
-      sessionStatus: { runState: "compacting", indicator: "running" },
-    });
-    socket.emit({
-      type: "compaction_end",
-      sessionId: "bg",
-      reason: "manual",
-      result: { tokensBefore: 100 },
-      aborted: false,
-      willRetry: false,
-      sessionStatus: { runState: "idle", indicator: "completed" },
-    });
-    socket.emit({
-      type: "compaction_end",
-      sessionId: "bg",
-      reason: "manual",
-      result: { tokensBefore: 100 },
-      aborted: false,
-      willRetry: false,
-      sessionStatus: { runState: "idle", indicator: "completed" },
-    });
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "bg",
-      sessionStatus: { runState: "idle", indicator: "completed" },
-    });
-    expect(FakeNotification.instances).toHaveLength(1);
-    expect(FakeNotification.instances[0]!.title).toBe("Task completed");
-  });
-
-  it("clears a lost-stream agent arm before a later standalone compaction", async () => {
-    const { store, socket } = await initialized("desktop");
-    vi.useFakeTimers();
-    try {
-      socket.emit({
-        type: "agent_start",
-        sessionId: "bg",
-        sessionStatus: { runState: "running", indicator: "running" },
-      });
-      socket.onclose?.();
-      expect(store.getState().connection).toBe("reconnecting");
-
-      // Model the reconnect immediately; init applies its authoritative idle
-      // bootstrap before attaching the replacement event stream.
-      await store.init("token");
-      const reconnected = FakeWebSocket.instances.at(-1)!;
-      expect(reconnected).not.toBe(socket);
-      reconnected.open();
-      reconnected.emit({
-        type: "compaction_start",
-        sessionId: "bg",
-        reason: "manual",
-        sessionStatus: { runState: "compacting", indicator: "running" },
-      });
-      reconnected.emit({
-        type: "compaction_end",
-        sessionId: "bg",
-        reason: "manual",
-        result: { tokensBefore: 100 },
-        aborted: false,
-        willRetry: false,
-        sessionStatus: { runState: "idle", indicator: "completed" },
-      });
-      reconnected.emit({
-        type: "agent_settled",
-        sessionId: "bg",
-        sessionStatus: { runState: "idle", indicator: "completed" },
-      });
-      expect(FakeNotification.instances).toHaveLength(1);
-      expect(FakeNotification.instances[0]!.title).toBe("Task completed");
-    } finally {
-      vi.clearAllTimers();
-      vi.useRealTimers();
-    }
-  });
-
-  it("lets an authoritative selected idle snapshot retire a missing settle without suppressing later compaction", async () => {
-    const { socket } = await initialized("desktop");
-    visibleFocused(false);
-    socket.emit({
-      type: "agent_start",
-      sessionId: "s1",
-      sessionStatus: { runState: "running", indicator: "running" },
-    });
-    socket.emit({ type: "snapshot", data: activeSnapshot() });
-
-    socket.emit({
-      type: "compaction_start",
-      sessionId: "s1",
-      reason: "manual",
-      sessionStatus: { runState: "compacting", indicator: "running" },
-    });
-    socket.emit({
-      type: "compaction_end",
-      sessionId: "s1",
-      reason: "manual",
-      result: { tokensBefore: 100 },
-      aborted: false,
-      willRetry: false,
-      sessionStatus: { runState: "idle", indicator: "completed" },
-    });
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "s1",
-      sessionStatus: { runState: "idle", indicator: "completed" },
-    });
-    expect(FakeNotification.instances).toHaveLength(1);
-    expect(FakeNotification.instances[0]!.title).toBe("Task completed");
-  });
-
-  it("retains an observed agent arm across a matching active authoritative snapshot", async () => {
-    const { socket } = await initialized("desktop");
-    socket.emit({
-      type: "agent_start",
-      sessionId: "bg",
-      sessionStatus: { runState: "running", indicator: "running" },
-    });
-    const snapshot = activeSnapshot();
-    snapshot.sessionStatuses.bg = { runState: "running", indicator: "running" };
-    socket.emit({ type: "snapshot", data: snapshot });
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "bg",
-      sessionStatus: { runState: "idle", indicator: "completed" },
-    });
-    expect(FakeNotification.instances).toHaveLength(1);
-    expect(FakeNotification.instances[0]!.title).toBe("Task completed");
-  });
-
-  it("reports a standalone compaction failure from its terminal event fields", async () => {
-    const { socket } = await initialized("desktop");
-    socket.emit({
-      type: "compaction_start",
-      sessionId: "bg",
-      reason: "manual",
-      sessionStatus: { runState: "compacting", indicator: "running" },
-    });
-    socket.emit({
-      type: "compaction_end",
-      sessionId: "bg",
-      reason: "manual",
-      aborted: false,
-      willRetry: false,
-      errorMessage: "compaction failed",
-      sessionStatus: { runState: "idle", indicator: "failed" },
-    });
-    expect(FakeNotification.instances).toHaveLength(1);
-    expect(FakeNotification.instances[0]!.title).toBe("Task failed");
-  });
-
-  it("does not infer attention from bootstrap or resync run status", async () => {
-    installFetch((url) => {
-      if (url.startsWith("/api/bootstrap")) {
-        const snapshot = activeSnapshot();
-        snapshot.runState = "running";
-        snapshot.sessionStatuses.s1 = {
-          runState: "running",
-          indicator: "running",
-        };
-        return {
-          body: bootstrapPayload({
-            preferences: {
-              ...bootstrapPayload().preferences,
-              completionAttention: "desktop",
-            },
-            snapshot,
-          }),
-        };
-      }
-      if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
-      return undefined;
-    });
-    const store = new AppStore();
-    await store.init("token");
-    const socket = FakeWebSocket.instances.at(-1)!;
-    socket.open();
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "s1",
-      sessionStatus: { runState: "idle" },
-    });
-    expect(FakeNotification.instances).toHaveLength(0);
-  });
-
-  it("notifies selected work only when its tab is hidden", async () => {
-    const { socket } = await initialized("desktop");
-    visibleFocused(false);
-    socket.emit({
-      type: "agent_start",
-      sessionId: "s1",
-      sessionStatus: { runState: "running", indicator: "running" },
-    });
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "s1",
-      sessionStatus: { runState: "aborted" },
-    });
-    expect(FakeNotification.instances).toHaveLength(1);
-    expect(FakeNotification.instances[0]!.title).toBe("Task aborted");
-  });
-
-  it("marks unseen title attention and clears it on the owning view", async () => {
-    const { store, socket } = await initialized("title");
-    socket.emit({
-      type: "agent_start",
-      sessionId: "bg",
-      sessionStatus: { runState: "running", indicator: "running" },
-    });
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "bg",
-      sessionStatus: { runState: "idle", indicator: "completed" },
-    });
+describe("device-local task alerts", () => {
+  it("delivers Host outcomes without a browser start event, including after transport replacement", async () => {
+    const { store, socket } = await initialized();
+    outcome(socket);
+    await vi.waitFor(() => expect(acknowledgments).toEqual(["outcome-one"]));
+    expect(workerMessages).toHaveLength(1);
     expect(store.getState().attentionSessionIds).toEqual(["bg"]);
+    expect(JSON.stringify(workerMessages)).not.toContain(
+      "PRIVATE FIRST PROMPT",
+    );
+    expect(workerMessages[0]).toMatchObject({
+      type: "inspire-notification-display",
+      notification: { outcome: "failed", project: "research-project" },
+    });
+    await store.init("token");
+    const replacement = FakeWebSocket.instances.at(-1)!;
+    replacement.open();
+    outcome(replacement, "outcome-two");
+    await vi.waitFor(() => expect(acknowledgments).toContain("outcome-two"));
+    expect(workerMessages).toHaveLength(2);
+  });
 
+  it("acknowledges viewed work without display and keeps title-only attention local", async () => {
+    const { store, socket } = await initialized("title");
+    outcome(socket, "viewed", "s1");
+    outcome(socket, "unseen");
+    await vi.waitFor(() => expect(acknowledgments).toHaveLength(2));
+    expect(workerMessages).toEqual([]);
+    expect(store.getState().attentionSessionIds).toEqual(["bg"]);
     await store.openSession("bg");
     store.acknowledgeVisibleSession();
     expect(store.getState().attentionSessionIds).toEqual([]);
   });
 
-  it("focuses and selects the owning session from a notification click", async () => {
-    const { store, socket } = await initialized("desktop");
-    const focus = vi.fn();
-    Object.defineProperty(window, "focus", {
-      configurable: true,
-      value: focus,
-    });
-    socket.emit({
-      type: "agent_start",
-      sessionId: "bg",
-      sessionStatus: { runState: "running", indicator: "running" },
-    });
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "bg",
-      sessionStatus: { runState: "idle", indicator: "completed" },
-    });
-    expect(store.getState().attentionSessionIds).toEqual(["bg"]);
-    FakeNotification.instances[0]!.onclick?.(new Event("click"));
-    expect(focus).toHaveBeenCalledOnce();
+  it("opens the owning conversation from worker clicks and retains a cold-launch target", async () => {
+    const { store } = await initialized();
+    worker.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "inspire-notification-open", sessionId: "bg" },
+      }),
+    );
     await vi.waitFor(() => expect(store.getState().sessionId).toBe("bg"));
-    expect(store.getState().attentionSessionIds).toEqual([]);
-    expect(FakeNotification.instances[0]!.close).toHaveBeenCalledOnce();
+    expect(sessionStorage.getItem("inspire-notification-target")).toBeNull();
+
+    history.replaceState(null, "", "/#inspire-session=s1");
+    store.captureNotificationTarget();
+    expect(location.hash).toBe("");
+    expect(sessionStorage.getItem("inspire-notification-target")).toBe("s1");
+    await store.init("token");
+    FakeWebSocket.instances.at(-1)!.open();
+    await vi.waitFor(() => expect(store.getState().sessionId).toBe("s1"));
   });
 
-  it("requests desktop permission only from the explicit setting action and preserves intent on denial", async () => {
-    const patches: Record<string, unknown>[] = [];
-    installFetch(attentionRoutes("off", (patch) => patches.push(patch)));
-    const store = new AppStore();
-    await store.init("token");
-    expect(FakeNotification.requestPermission).not.toHaveBeenCalled();
-
-    FakeNotification.permission = "denied";
-    expect(await store.setCompletionAttention("desktop")).toBe(false);
-    expect(FakeNotification.requestPermission).toHaveBeenCalledOnce();
-    expect(store.getState().prefs.completionAttention).toBe("off");
-    expect(patches).toEqual([]);
-    expect(store.getState().error).toBeNull();
-    expect(
-      store
-        .getState()
-        .notices.some(
-          (notice) => notice.kind === "warning" && /denied/.test(notice.text),
-        ),
-    ).toBe(true);
-  });
-
-  it("persists desktop intent after permission is granted", async () => {
-    const patches: Record<string, unknown>[] = [];
-    installFetch(attentionRoutes("off", (patch) => patches.push(patch)));
-    const store = new AppStore();
-    await store.init("token");
-    FakeNotification.permission = "default";
-    FakeNotification.requestPermission.mockResolvedValueOnce("granted");
-    expect(await store.setCompletionAttention("desktop")).toBe(true);
-    await vi.waitFor(() =>
-      expect(patches).toContainEqual({ completionAttention: "desktop" }),
-    );
-    expect(store.getState().prefs.completionAttention).toBe("desktop");
-  });
-
-  it("does not let a delayed desktop permission result overwrite newer intent", async () => {
-    const patches: Record<string, unknown>[] = [];
-    installFetch(attentionRoutes("off", (patch) => patches.push(patch)));
-    const store = new AppStore();
-    await store.init("token");
-    let resolvePermission!: (permission: NotificationPermission) => void;
-    FakeNotification.permission = "default";
-    FakeNotification.requestPermission.mockImplementationOnce(
-      () =>
-        new Promise<NotificationPermission>((resolve) => {
-          resolvePermission = resolve;
+  it("keeps an unavailable click target, supersedes slow clicks, and explains a deleted target", async () => {
+    const slow = deferred<RouteResponse>();
+    const opened: string[] = [];
+    let unavailable = true;
+    const { store } = await initialized("desktop", async (id) => {
+      opened.push(id);
+      if (id === "slow") return slow.promise;
+      if (id === "bg" && unavailable)
+        return { status: 503, body: { error: "Host temporarily unavailable" } };
+      if (id === "deleted")
+        return {
+          status: 404,
+          body: {
+            code: "SESSION_NOT_FOUND",
+            error: "This session was deleted",
+          },
+        };
+      return { body: activeSnapshot({ sessionId: id }) };
+    });
+    const click = (id: string) =>
+      worker.dispatchEvent(
+        new MessageEvent("message", {
+          data: { type: "inspire-notification-open", sessionId: id },
         }),
-    );
-
-    const desktop = store.setCompletionAttention("desktop");
+      );
+    click("bg");
     await vi.waitFor(() =>
-      expect(FakeNotification.requestPermission).toHaveBeenCalledOnce(),
+      expect(store.getState().sessionActionError).toContain(
+        "temporarily unavailable",
+      ),
     );
-    await expect(store.setCompletionAttention("title")).resolves.toBe(true);
-    resolvePermission("granted");
-    await expect(desktop).resolves.toBe(false);
-    await vi.waitFor(() =>
-      expect(patches).toContainEqual({ completionAttention: "title" }),
-    );
+    expect(sessionStorage.getItem("inspire-notification-target")).toBe("bg");
+    unavailable = false;
+    await store.init("token");
+    FakeWebSocket.instances.at(-1)!.open();
+    await vi.waitFor(() => expect(store.getState().sessionId).toBe("bg"));
 
-    expect(patches).not.toContainEqual({ completionAttention: "desktop" });
-    expect(store.getState().prefs.completionAttention).toBe("title");
+    click("slow");
+    await vi.waitFor(() => expect(opened).toContain("slow"));
+    click("latest");
+    await vi.waitFor(() => expect(store.getState().sessionId).toBe("latest"));
+    slow.resolve({ body: activeSnapshot({ sessionId: "slow" }) });
+    await vi.waitFor(() =>
+      expect(sessionStorage.getItem("inspire-notification-target")).toBeNull(),
+    );
+    expect(store.getState().sessionId).toBe("latest");
+    click("deleted");
+    await vi.waitFor(() =>
+      expect(store.getState().sessionActionError).toBe(
+        "This session was deleted",
+      ),
+    );
+    expect(sessionStorage.getItem("inspire-notification-target")).toBeNull();
+    expect(store.getState().sessionId).toBe("latest");
   });
 
-  it("reports an unsupported Notification API without changing the preference", async () => {
+  it("retains a worker click received on the pairing screen", async () => {
+    const store = new AppStore();
+    store.captureNotificationTarget();
+    worker.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "inspire-notification-open", sessionId: "bg" },
+      }),
+    );
+    expect(sessionStorage.getItem("inspire-notification-target")).toBe("bg");
+    await initialized("desktop", undefined, store);
+    await vi.waitFor(() => expect(store.getState().sessionId).toBe("bg"));
+  });
+
+  it("applies this installation's shared setting before consuming an outcome", async () => {
+    const { store, socket } = await initialized("off");
+    socket.emit({
+      type: "task_alert_settings",
+      settings: {
+        installationId: "device-one",
+        mode: "desktop",
+        subscribed: true,
+        publicKey,
+        error: null,
+      },
+    });
+    outcome(socket);
+    await vi.waitFor(() => expect(workerMessages).toHaveLength(1));
+    socket.emit({
+      type: "task_alert_settings",
+      settings: {
+        installationId: "device-one",
+        mode: "off",
+        subscribed: false,
+        publicKey,
+        error: null,
+      },
+    });
+    expect(store.getState().taskAlerts.mode).toBe("off");
+    expect(store.getState().attentionSessionIds).toEqual([]);
+  });
+
+  it("requests permission only on a gesture, stores this device's intent, and keeps denial visible", async () => {
     const { store } = await initialized("off");
-    vi.stubGlobal("Notification", undefined);
-    expect(await store.setCompletionAttention("desktop")).toBe(false);
+    expect(Permission.requestPermission).not.toHaveBeenCalled();
+    Permission.permission = "default";
+    Permission.requestPermission.mockResolvedValueOnce("denied");
+    await expect(store.setCompletionAttention("desktop")).resolves.toBe(false);
+    expect(store.getState().taskAlerts).toMatchObject({
+      mode: "desktop",
+      permission: "denied",
+      busy: false,
+    });
     expect(store.getState().prefs.completionAttention).toBe("off");
-    expect(store.getState().error).toBeNull();
-    expect(
-      store
-        .getState()
-        .notices.some(
-          (notice) =>
-            notice.kind === "warning" && /not supported/.test(notice.text),
-        ),
-    ).toBe(true);
+    expect(mutations).toEqual([{ mode: "desktop", subscription: null }]);
+    expect(subscribe).not.toHaveBeenCalled();
+  });
+
+  it("enrolls for background delivery and tests the actual configured transport", async () => {
+    const { store } = await initialized("off");
+    Permission.permission = "default";
+    await expect(store.setCompletionAttention("desktop")).resolves.toBe(true);
+    expect(Permission.requestPermission).toHaveBeenCalledOnce();
+    expect(subscribe).toHaveBeenCalledWith(
+      expect.objectContaining({ userVisibleOnly: true }),
+    );
+    expect(store.getState().taskAlerts.subscribed).toBe(true);
+    expect(mutations.at(-1)?.subscription).not.toHaveProperty("expirationTime");
+    await store.testTaskNotification();
+    expect(store.getState().taskAlerts.testResult).toContain(
+      "Sent to the browser push service",
+    );
+  });
+
+  it.each(["resolves", "rejects"] as const)(
+    "keeps another window's Off choice when pending enrollment %s",
+    async (settlement) => {
+      const { store, socket } = await initialized("off");
+      const pending = deferred<NonNullable<typeof subscription>>();
+      subscribe.mockReturnValueOnce(pending.promise);
+      const enabling = store.setCompletionAttention("desktop");
+      await vi.waitFor(() => expect(subscribe).toHaveBeenCalledOnce());
+
+      // Another window writes Off while this one waits on the push service.
+      mode = "off";
+      subscribed = false;
+      socket.emit({
+        type: "task_alert_settings",
+        settings: {
+          installationId: "device-one",
+          mode,
+          subscribed,
+          publicKey,
+          error: null,
+        },
+      });
+      if (settlement === "resolves") pending.resolve(subscription!);
+      else pending.reject(new Error("Push setup failed"));
+      await expect(enabling).resolves.toBe(false);
+
+      expect(mode).toBe("off");
+      expect(subscribed).toBe(false);
+      expect(store.getState().taskAlerts).toMatchObject({
+        mode: "off",
+        subscribed: false,
+        busy: false,
+        error: null,
+      });
+      if (settlement === "resolves")
+        expect(subscription!.unsubscribe).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("leaves a healthy subscription alone and repairs rotation without rewriting intent", async () => {
+    const { store } = await initialized();
+    subscribed = true;
+    const local = {
+      endpoint: subscriptionEndpoint,
+      expirationTime: null,
+      getKey: () => null,
+      unsubscribe: async () => true,
+      options: {
+        userVisibleOnly: true,
+        applicationServerKey: Uint8Array.from(atob(publicKey), (ch) =>
+          ch.charCodeAt(0),
+        ).buffer,
+      },
+      toJSON: () => ({
+        endpoint: local.endpoint,
+        keys: { p256dh: "B".repeat(87), auth: "A".repeat(22) },
+      }),
+    };
+    const registration = (await navigator.serviceWorker.getRegistration())!;
+    vi.spyOn(registration.pushManager, "getSubscription").mockResolvedValue(
+      local,
+    );
+    await store.refreshTaskAlerts();
+    expect(mutations).toEqual([]);
+    local.endpoint += "-rotated";
+    await store.refreshTaskAlerts();
+    expect(mutations).toEqual([{ subscription: local.toJSON() }]);
+    expect(store.getState().taskAlerts).toMatchObject({
+      mode: "desktop",
+      subscribed: true,
+    });
+  });
+
+  it("refreshes enrollment health when the browser has lost its subscription", async () => {
+    const { store } = await initialized("desktop");
+    await store.setCompletionAttention("desktop");
+    expect(store.getState().taskAlerts.subscribed).toBe(true);
+    await store.refreshTaskAlerts();
+    expect(store.getState().taskAlerts.subscribed).toBe(false);
+    expect(mutations.at(-1)).toEqual({ subscription: null });
+  });
+
+  it("does not let delayed permission overwrite a newer Off choice", async () => {
+    const { store } = await initialized("off");
+    const permission = deferred<NotificationPermission>();
+    Permission.permission = "default";
+    Permission.requestPermission.mockReturnValueOnce(permission.promise);
+    const old = store.setCompletionAttention("desktop");
+    await store.setCompletionAttention("off");
+    permission.resolve("granted");
+    await expect(old).resolves.toBe(false);
+    expect(store.getState().taskAlerts.mode).toBe("off");
+    expect(mutations).toEqual([{ mode: "off", subscription: null }]);
+    expect(subscribe).not.toHaveBeenCalled();
+  });
+
+  it.each(["resolves", "rejects"] as const)(
+    "retires a pending page display when alerts are disabled before worker readiness %s",
+    async (settlement) => {
+      const { store, socket } = await initialized();
+      const registration = await navigator.serviceWorker.ready;
+      const ready = deferred<ServiceWorkerRegistration>();
+      const waiting = vi.fn(() => ready.promise);
+      Object.defineProperty(navigator.serviceWorker, "ready", {
+        configurable: true,
+        get: waiting,
+      });
+      const receive = vi.spyOn(TaskNotificationController.prototype, "receive");
+      outcome(socket, "before-disable");
+      expect(waiting).toHaveBeenCalledOnce();
+      const pending = receive.mock.results[0]!.value as Promise<void>;
+
+      await store.setCompletionAttention("off");
+      if (settlement === "resolves") ready.resolve(registration);
+      else ready.reject(new Error("Worker startup failed"));
+      await pending;
+
+      expect(workerMessages).toEqual([]);
+      expect(store.getState().taskAlerts).toMatchObject({
+        mode: "off",
+        error: null,
+      });
+    },
+  );
+
+  it("leaves a failed display unacknowledged for Host push fallback", async () => {
+    const { store, socket } = await initialized();
+    const registration = await navigator.serviceWorker.ready;
+    vi.spyOn(registration.active!, "postMessage").mockImplementation(
+      (_data, transfer) => {
+        const port = (transfer as MessagePort[])[0]!;
+        port.postMessage({ error: "Display refused" });
+        port.close();
+      },
+    );
+    visibleFocused(false);
+    outcome(socket, "display-failed", "s1");
+    await vi.waitFor(() =>
+      expect(store.getState().taskAlerts.error).toBe("Display refused"),
+    );
+    expect(acknowledgments).toEqual([]);
   });
 });

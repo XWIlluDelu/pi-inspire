@@ -9,6 +9,10 @@ import {
   MAX_SESSION_ID_CHARS,
 } from "../shared/contracts.js";
 import type { RuntimeLike } from "./runtime.js";
+import type {
+  NotificationPrincipal,
+  TaskNotifications,
+} from "./task-notifications.js";
 import { compactToolArgumentEvents } from "./tool-argument-batches.js";
 import type { UpdateCoordinatorLike } from "./update-coordinator.js";
 
@@ -23,6 +27,7 @@ interface RuntimeEventSocketOptions {
   updateCoordinator: Pick<UpdateCoordinatorLike, "status" | "subscribe">;
   authorityId: string;
   heartbeatIntervalMs: number;
+  taskNotifications?: Pick<TaskNotifications, "attach">;
 }
 
 /** Owns /events projection and socket lifetimes, not HTTP authentication or
@@ -32,6 +37,7 @@ export function createRuntimeEventSockets({
   updateCoordinator,
   authorityId,
   heartbeatIntervalMs,
+  taskNotifications,
 }: RuntimeEventSocketOptions) {
   const websocket = new WebSocketServer({
     noServer: true,
@@ -44,6 +50,11 @@ export function createRuntimeEventSockets({
     },
   });
   const sockets = new Set<WebSocket>();
+  const notificationPrincipals = new WeakMap<
+    WebSocket,
+    NotificationPrincipal
+  >();
+  const notificationSubscriptions = new WeakMap<WebSocket, () => void>();
   /** Sockets still waiting for their snapshot; live events queue here so the
    * first frame a client processes is always the authoritative snapshot,
    * with the queued events flushed after it in arrival order. */
@@ -88,6 +99,8 @@ export function createRuntimeEventSockets({
   let streamBatchTimer: ReturnType<typeof setTimeout> | null = null;
   const forgetSocket = (socket: WebSocket): void => {
     sockets.delete(socket);
+    notificationSubscriptions.get(socket)?.();
+    notificationSubscriptions.delete(socket);
     joining.delete(socket);
     responsiveSockets.delete(socket);
     detailInterests.delete(socket);
@@ -513,6 +526,19 @@ export function createRuntimeEventSockets({
             return;
           }
           if (!sendBounded(socket, message)) return;
+          const principal = notificationPrincipals.get(socket);
+          if (
+            principal &&
+            taskNotifications &&
+            !notificationSubscriptions.has(socket)
+          ) {
+            notificationSubscriptions.set(
+              socket,
+              taskNotifications.attach(principal, (event) =>
+                sendBounded(socket, JSON.stringify(event)),
+              ),
+            );
+          }
           for (const message of queued.messages) {
             // A superseded read may have queued detail for the previous owner.
             // Retain its global lifecycle evidence, never replay its body.
@@ -580,6 +606,7 @@ export function createRuntimeEventSockets({
       socket: Duplex,
       head: Buffer,
       url: URL,
+      notificationPrincipal?: NotificationPrincipal,
     ): void {
       const detail = url.searchParams.get("detail");
       if (
@@ -591,6 +618,8 @@ export function createRuntimeEventSockets({
         return;
       }
       websocket.handleUpgrade(request, socket, head, (client) => {
+        if (notificationPrincipal)
+          notificationPrincipals.set(client, notificationPrincipal);
         setDetailInterest(client, { sessionId: detail || null, revision: 0 });
         const requestedDigest = url.searchParams.get("snapshot");
         requestedSnapshotDigests.set(

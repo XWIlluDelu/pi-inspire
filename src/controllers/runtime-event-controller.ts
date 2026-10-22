@@ -21,7 +21,6 @@ interface RuntimeEventHost {
   state(): AppState;
   patch(patch: Partial<AppState>): void;
   notify(kind: Notice["kind"], text: string): void;
-  openSession(sessionId: string): Promise<void>;
   applySnapshot(snapshot: ActiveSnapshot): void;
   invalidateSelection(): void;
   ensureSessionVisible(sessionId: string): void;
@@ -45,10 +44,7 @@ interface RuntimeEventHost {
  * without giving event producers a second browser-state authority. */
 export class RuntimeEventController {
   private settledKeys = new Set<string>();
-  private readonly attentionArms = new Map<
-    string,
-    Set<"agent" | "compaction">
-  >();
+  private readonly observedRuns = new Set<string>();
   private readonly titleAttention = new Set<string>();
   private resyncTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingResync: {
@@ -88,34 +84,10 @@ export class RuntimeEventController {
       this.clearAttentionFor(this.host.state().sessionId);
   }
 
-  private armAttention(sessionId: string, kind: "agent" | "compaction"): void {
-    const arms =
-      this.attentionArms.get(sessionId) ?? new Set<"agent" | "compaction">();
-    arms.add(kind);
-    this.attentionArms.set(sessionId, arms);
-  }
-
-  private hasAttentionArm(
-    sessionId: string,
-    kind: "agent" | "compaction",
-  ): boolean {
-    return this.attentionArms.get(sessionId)?.has(kind) ?? false;
-  }
-
-  private consumeAttentionArm(
-    sessionId: string,
-    kind: "agent" | "compaction",
-  ): boolean {
-    const arms = this.attentionArms.get(sessionId);
-    if (!arms?.delete(kind)) return false;
-    if (arms.size === 0) this.attentionArms.delete(sessionId);
-    return true;
-  }
-
-  /** Snapshots never create attention ownership, but they are authoritative
-   * evidence that an observed live operation either still exists or ended
-   * outside this socket's event stream. */
-  reconcileAttentionArms(
+  /** Track live runs only for the selected conversation's completion UI.
+   * Task notification identity and standalone compaction belong to the Host.
+   * Snapshots retire observations but never manufacture a completed run. */
+  reconcileObservedRuns(
     sessionStatuses: Readonly<Record<string, SessionRuntimeStatus>>,
   ): void {
     const liveAgentStates = new Set([
@@ -124,17 +96,10 @@ export class RuntimeEventController {
       "queued",
       "compacting",
     ]);
-    for (const [sessionId, arms] of this.attentionArms) {
+    for (const sessionId of this.observedRuns) {
       const runState = sessionStatuses[sessionId]?.runState;
-      if (!runState) {
-        this.attentionArms.delete(sessionId);
-        continue;
-      }
-      if (arms.has("agent") && !liveAgentStates.has(runState))
-        arms.delete("agent");
-      if (arms.has("compaction") && runState !== "compacting")
-        arms.delete("compaction");
-      if (arms.size === 0) this.attentionArms.delete(sessionId);
+      if (!runState || !liveAgentStates.has(runState))
+        this.observedRuns.delete(sessionId);
     }
   }
 
@@ -142,79 +107,24 @@ export class RuntimeEventController {
     const status = event.sessionStatus as
       | Partial<SessionRuntimeStatus>
       | undefined;
-    if (
-      event.type === "runtime_error" ||
-      status?.runState === "failed" ||
-      status?.runState === "conflict"
-    )
+    if (status?.runState === "failed" || status?.runState === "conflict")
       return "failed";
     if (status?.runState === "aborted") return "aborted";
     return "completed";
   }
 
-  private compactionOutcome(
-    event: WireEvent,
-  ): "completed" | "failed" | "aborted" {
-    if (event.aborted === true) return "aborted";
-    if (typeof event.errorMessage === "string" && event.errorMessage.trim())
-      return "failed";
-    if (event.result === undefined || event.result === null) return "failed";
-    return this.statusOutcome(event);
-  }
-
-  private attendToOutcome(
-    sessionId: string,
-    outcome: "completed" | "failed" | "aborted",
-  ): void {
-    const foregroundOwner =
-      sessionId === this.host.state().sessionId && this.isForeground();
+  markTaskAttention(sessionId: string): void {
     if (
-      foregroundOwner ||
-      this.host.state().prefs.completionAttention === "off"
+      this.host.state().taskAlerts.mode === "off" ||
+      (sessionId === this.host.state().sessionId && this.isForeground())
     )
       return;
-    // Desktop attention is progressive: the durable tab marker remains after
-    // the transient OS notification disappears or cannot be delivered.
     this.titleAttention.add(sessionId);
     this.publishTitleAttention();
-    if (this.host.state().prefs.completionAttention === "title") return;
-    if (this.host.state().prefs.completionAttention !== "desktop") return;
-    const NotificationApi = window.Notification;
-    if (!NotificationApi || NotificationApi.permission !== "granted") return;
-    const project = this.host
-      .state()
-      .sessions.find((candidate) => candidate.id === sessionId)?.project;
-    const title =
-      outcome === "completed"
-        ? "Task completed"
-        : outcome === "aborted"
-          ? "Task aborted"
-          : "Task failed";
-    // A catalog title can be the first prompt. OS-visible fields therefore use
-    // only fixed copy, opaque session identity, and cwd-derived project data.
-    const body = project ? `Project: ${project}` : "Pi task";
-    try {
-      const notification = new NotificationApi(title, {
-        body,
-        tag: `inspire-task:${sessionId}:${outcome}`,
-      });
-      notification.onclick = () => {
-        window.focus();
-        if (this.host.state().sessionId !== sessionId)
-          void this.host.openSession(sessionId);
-        else this.acknowledgeVisibleSession();
-        notification.close();
-      };
-    } catch {
-      this.host.notify(
-        "warning",
-        "Desktop notifications are unavailable in this browser context",
-      );
-    }
   }
 
   invalidateTransport(): void {
-    this.attentionArms.clear();
+    this.observedRuns.clear();
     this.cancelScheduledResync();
   }
 
@@ -265,7 +175,7 @@ export class RuntimeEventController {
 
   forgetAttention(sessionIds: ReadonlySet<string>): void {
     for (const sessionId of sessionIds) {
-      this.attentionArms.delete(sessionId);
+      this.observedRuns.delete(sessionId);
       this.titleAttention.delete(sessionId);
     }
     this.publishTitleAttention();
@@ -341,30 +251,15 @@ export class RuntimeEventController {
     const eventSessionId =
       typeof event.sessionId === "string" ? event.sessionId : null;
     if (eventSessionId) this.host.ensureSessionVisible(eventSessionId);
-    const priorRunState = eventSessionId
-      ? this.host.state().sessionStatuses[eventSessionId]?.runState
-      : undefined;
     const sessionStatuses = this.mergeSessionStatus(
       eventSessionId,
       event.sessionStatus,
     );
     if (eventSessionId) {
       if (event.type === "agent_start" || event.type === "auto_retry_start") {
-        this.armAttention(eventSessionId, "agent");
-      } else if (event.type === "compaction_start") {
-        const nestedInAgent =
-          this.hasAttentionArm(eventSessionId, "agent") ||
-          priorRunState === "running" ||
-          priorRunState === "retrying" ||
-          priorRunState === "queued";
-        if (event.reason === "manual" && !nestedInAgent)
-          this.armAttention(eventSessionId, "compaction");
-      } else if (event.type === "compaction_end") {
-        if (this.consumeAttentionArm(eventSessionId, "compaction")) {
-          this.attendToOutcome(eventSessionId, this.compactionOutcome(event));
-        }
+        this.observedRuns.add(eventSessionId);
       } else if (event.type === "agent_settled") {
-        if (this.consumeAttentionArm(eventSessionId, "agent")) {
+        if (this.observedRuns.delete(eventSessionId)) {
           const outcome = this.statusOutcome(event);
           if (
             outcome === "completed" &&
@@ -374,15 +269,11 @@ export class RuntimeEventController {
               completedRunSequence: this.host.state().completedRunSequence + 1,
             });
           }
-          this.attendToOutcome(eventSessionId, outcome);
+          // System/title attention arrives independently from the Host.
         }
       } else if (event.type === "runtime_error") {
-        const armed =
-          this.consumeAttentionArm(eventSessionId, "agent") ||
-          this.consumeAttentionArm(eventSessionId, "compaction");
         // Runtime death terminates every operation owned by this worker.
-        this.attentionArms.delete(eventSessionId);
-        if (armed) this.attendToOutcome(eventSessionId, "failed");
+        this.observedRuns.delete(eventSessionId);
       }
     }
 

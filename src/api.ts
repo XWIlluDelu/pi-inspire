@@ -571,6 +571,48 @@ async function deliverPrompt(
 
 export function createApi(token: string | null = null) {
   return {
+    taskAlertSettings: () =>
+      request<import("../shared/notifications").TaskAlertSettings>(
+        token,
+        "/api/notifications",
+        { signal: AbortSignal.timeout(10_000) },
+      ),
+    configureTaskAlerts: (
+      mode:
+        | import("../shared/contracts").CompletionAttentionPreference
+        | undefined,
+      subscription?: PushSubscriptionJSON | null,
+    ) =>
+      request<import("../shared/notifications").TaskAlertSettings>(
+        token,
+        "/api/notifications",
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            mode,
+            subscription: subscription
+              ? { endpoint: subscription.endpoint, keys: subscription.keys }
+              : subscription,
+          }),
+          signal: AbortSignal.timeout(10_000),
+        },
+      ),
+    acknowledgeTaskAlert: (id: string) =>
+      request<{ ok: true }>(token, "/api/notifications/ack", {
+        method: "POST",
+        body: JSON.stringify({ id }),
+        signal: AbortSignal.timeout(10_000),
+      }),
+    testTaskAlert: () =>
+      request<{ transport: "push" | "page" }>(
+        token,
+        "/api/notifications/test",
+        {
+          method: "POST",
+          body: "{}",
+          signal: AbortSignal.timeout(15_000),
+        },
+      ),
     herdrStatus: () =>
       request<HerdrEnhancementStatus>(token, "/api/host/herdr", {
         signal: AbortSignal.timeout(10_000),
