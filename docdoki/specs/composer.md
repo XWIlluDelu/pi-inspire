@@ -371,6 +371,10 @@ direct-shell input reject staged artifacts without discarding them. Palette-nati
 draft; Fork/Clone behavior follows [[session-branches]]. Graphical Export opens the same standalone
 format/download dialog from title menu or palette, with no command editor or draft mutation. Failure
 retains its chosen format; an extension question keeps foreground ownership without discarding it.
+Pending exports belong to application state, not the dialog: Close, Escape and the backdrop remain
+available without cancelling the operation. Reopening observes the same task and prevents duplicate
+submission. Completion downloads the file and reports the result even while the dialog is closed;
+replacing the Host connection retires the old task's UI ownership.
 
 Resource commands use one transient `ComposerInput` preparation step with review and explicit submit.
 It does not replace or consume message partitions. Initial caret follows `/command ` without resetting
