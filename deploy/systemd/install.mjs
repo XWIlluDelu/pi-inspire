@@ -1,5 +1,12 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,10 +33,14 @@ async function writeUnit(path, content) {
 
 function run(command, arguments_) {
   return new Promise((resolveRun) => {
-    const child = spawn(command, arguments_, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, arguments_, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let stderr = "";
     child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
-    child.once("error", (error) => resolveRun({ code: 1, stderr: error.message }));
+    child.once("error", (error) =>
+      resolveRun({ code: 1, stderr: error.message }),
+    );
     child.once("exit", (code) => resolveRun({ code: code ?? 1, stderr }));
   });
 }
@@ -65,12 +76,17 @@ async function main() {
         "utf8",
       ),
     ]);
-  const configHome = process.env.XDG_CONFIG_HOME || join(process.env.HOME || homedir(), ".config");
+  const configHome =
+    process.env.XDG_CONFIG_HOME ||
+    join(process.env.HOME || homedir(), ".config");
   const unitDirectory = join(configHome, "systemd", "user");
   const paths = {
     host: join(unitDirectory, "inspire-host.service"),
     terminal: join(unitDirectory, "inspire-terminal.service"),
-    maintenance: join(unitDirectory, "inspire-idle-maintenance-restart.service"),
+    maintenance: join(
+      unitDirectory,
+      "inspire-idle-maintenance-restart.service",
+    ),
     timer: join(unitDirectory, "inspire-idle-maintenance-restart.timer"),
   };
   await Promise.all([
@@ -87,7 +103,7 @@ async function main() {
   console.log(`Installed ${paths.host} and ${paths.terminal}.`);
   console.log(`Installed ${paths.maintenance} and ${paths.timer}.`);
   console.log(
-    "Enable the host and its daily idle maintenance timer with: ./inspire service enable-host",
+    "Enable the host with: ./inspire service enable-host. Scheduled maintenance requires separate opt-in.",
   );
 }
 
