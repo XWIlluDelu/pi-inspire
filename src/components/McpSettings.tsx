@@ -27,7 +27,11 @@ import { McpServerForm } from "./McpServerForm";
 import { SettingsSection } from "./SettingsSection";
 
 type Owner = { sessionId?: string; cwd?: string };
-type Editor = { scope: McpConfigScope; entry: McpConfigEntry | null };
+type Editor = {
+  scope: McpConfigScope;
+  entry: McpConfigEntry | null;
+  policyName?: string;
+};
 const messageOf = (error: unknown) =>
   error instanceof Error ? error.message : "MCP configuration is unavailable";
 export function McpSettings({
@@ -139,6 +143,7 @@ function McpConfiguration({
       if (alive.current) setBusy(false);
     }
   }
+  const projectFile = snapshot?.files.find((file) => file.scope === "project");
   function submit(
     scope: McpConfigScope,
     name: string,
@@ -159,7 +164,13 @@ function McpConfiguration({
       {editor && snapshot ? (
         <section
           className="models-editor models-settings"
-          aria-label={editor.entry ? "Edit MCP server" : "Add MCP server"}
+          aria-label={
+            editor.policyName
+              ? "Customize MCP server for project"
+              : editor.entry
+                ? "Edit MCP server"
+                : "Add MCP server"
+          }
         >
           <header className="models-editor__header">
             <button
@@ -173,7 +184,11 @@ function McpConfiguration({
             </button>
             <div className="models-subheading">
               <h3>
-                {editor.entry ? `Edit ${editor.entry.name}` : "Add MCP server"}
+                {editor.policyName
+                  ? `Customize ${editor.policyName}`
+                  : editor.entry
+                    ? `Edit ${editor.entry.name}`
+                    : "Add MCP server"}
               </h3>
               <button
                 type="button"
@@ -189,6 +204,7 @@ function McpConfiguration({
           </header>
           <McpServerForm
             entry={editor.entry}
+            policyName={editor.policyName}
             initialScope={editor.scope}
             snapshot={snapshot}
             busy={busy}
@@ -379,6 +395,32 @@ function McpConfiguration({
                               ? " · project override exists"
                               : ""}
                           </span>
+                          {file.scope === "user" &&
+                          entry.transport &&
+                          projectFile &&
+                          !projectFile.error &&
+                          !projectFile.entries.some(
+                            (project) => project.name === entry.name,
+                          ) ? (
+                            <button
+                              type="button"
+                              className="models-text-button"
+                              aria-label={`Customize for this project: ${entry.name}`}
+                              disabled={busy}
+                              onClick={(event) => {
+                                opener.current = event.currentTarget;
+                                setError(null);
+                                setConfirmReload(false);
+                                setEditor({
+                                  scope: "project",
+                                  entry: null,
+                                  policyName: entry.name,
+                                });
+                              }}
+                            >
+                              Customize for this project
+                            </button>
+                          ) : null}
                         </div>
                         <div className="models-actions">
                           <button
@@ -422,8 +464,12 @@ function McpConfiguration({
                         >
                           <p>
                             Remove {removing.entry.name} from the{" "}
-                            {removing.scope} file? Stored OAuth credentials and
-                            running connections are unchanged.
+                            {removing.scope} file?{" "}
+                            {removing.entry.policyOnly
+                              ? "This project will inherit the user configuration again. "
+                              : ""}
+                            Stored OAuth credentials and running connections are
+                            unchanged.
                           </p>
                           <div className="models-actions">
                             <button

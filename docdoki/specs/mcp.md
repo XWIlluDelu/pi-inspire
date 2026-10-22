@@ -42,6 +42,15 @@ with Save/Cancel reachable while the form body scrolls. Policy-only Edit enters 
 control (Tool exposure) without opening its menu; ordinary edits still enter the URL or program.
 Project trust is explained briefly in the project editor, not repeated as a policy/status block in each group.
 
+A user server with no same-name project entry offers **Customize for this project** when the selected
+project file is editable. This opens the existing policy form with a fixed name/project target and
+inherited defaults, not a copied server definition. Save becomes available after choosing a policy
+override; only explicitly overridden `enabled`, `exposure` and `toolExposure` fields are stored.
+The Host validates a new policy entry against the same-name user configuration, just as for edits,
+without copying its URL, program, environment or credentials. Existing project entries retain their
+ordinary Edit/Remove actions. Removing a policy override restores user inheritance; saving or removing
+still affects files only, with the existing new-session/explicit Reload boundary.
+
 The Host derives the user file from public `getAgentDir()/mcp.json`. The project file is
 `<cwd>/.pi/mcp.json`; an addressed session's Host-resolved directory wins over a supplied directory.
 The start surface uses its selected directory. Clients cannot supply arbitrary configuration paths.
@@ -59,15 +68,21 @@ trusted. Reading or saving a project file grants no trust and loads no project c
 The form supports stdio command, argument rows, working directory and environment; streamable HTTP
 URL, headers and OAuth client fields; description, request timeout in seconds, file-enabled state,
 server exposure and ordered exact/pattern tool exposure. OAuth discovery remains Pi's default.
+The OAuth editor displays the saved registration method: client ID/dynamic registration (default),
+or Pi's client metadata document (CIMD). CIMD disallows `clientId` and `clientName`; switching methods
+never silently removes those fields. The form detects conflicting stored-field presence and edited
+values, while the Host validates the complete merged OAuth object under Pi's current rules. Custom
+CIMD callbacks use HTTP on `localhost` or `127.0.0.1` with `/callback`; port consistency and the native
+metadata-URL rules also apply. An invalid merged object is rejected before publication.
 Unknown fields, top-level settings, other entries and unedited nested values remain intact.
 Transport and identity of an existing entry stay fixed; remove/add replaces them deliberately.
 While adding a server, switching transport retains its visible header/environment draft; submission
 uses the selected transport's displayed edits, never an invisible discarded value.
 
-Stored URLs, argument contents, environment/header values and OAuth values stay on the Host.
-The browser receives presence/keys/counts, never secret values or masked replacements that could
-overwrite them. Blank protected inputs retain stored values; removal is explicit. Replacing
-arguments replaces the entire list. Exposure rule editing replaces that ordered map in displayed
+Stored URLs, argument contents, environment/header values and OAuth values other than the
+registration method stay on the Host. The browser receives presence/keys/counts, never secret
+values or masked replacements that could overwrite them. Blank protected inputs retain stored
+values; removal is explicit. Replacing arguments replaces the entire list. Exposure rule editing replaces that ordered map in displayed
 order, including removed/re-added patterns; other edits leave it untouched. Configuration removal
 does not delete Pi's separate OAuth credential store.
 
@@ -76,10 +91,10 @@ replacement, and preserve legitimate user-file symlinks. Regular files lock thei
 target once, including case/normalization aliases. Final symlinks retain both lexical and target
 authorities; publishing rechecks the target and revision. Project symlinks cannot escape their project.
 Added names are checked across user/project files for Pi's hyphen/underscore namespace collisions;
-exact same-name overrides remain legal. Invalid files and conflicting edits are reported rather
-than overwritten. A conflict keeps the form
-draft; Refresh reads the new revision without clearing edits, and another explicit Save merges only
-the edited subset. Drafts survive category changes but are withdrawn on session/directory/Host
+exact same-name overrides remain legal. Concurrent user/project additions cannot both publish
+conflicting names. Invalid files and conflicting edits are reported rather than overwritten.
+A conflict keeps the form draft; Refresh reads the new revision without clearing edits, and another
+explicit Save merges only the edited subset. Drafts survive category changes but are withdrawn on session/directory/Host
 ownership changes; stale asynchronous results cannot populate the new owner.
 
 A successful write reports saved-to-file, not applied. The optional, confirmed **Reload selected
@@ -115,15 +130,18 @@ Configured MCP tools and Codemode composition continue through Pi.
 ## Checks
 
 - `tests/server/mcp-config.test.ts`: secret-safe projections, unexecuted hooks, source-preserving
-  edits, policy-only inheritance, namespace collisions, invalid files, conflicts, path authority and
-  user-file independence from missing or unselected projects.
+  edits, policy-only inheritance, sequential/concurrent namespace collisions, invalid files, conflicts,
+  path authority, user-file independence from missing or unselected projects, and merged OAuth
+  registration validation.
 - `tests/server/mcp-native.integration.test.ts`: native file consumption, trusted precedence,
-  Pi 1.1 policy inheritance without credential duplication, and file/loaded-worker separation.
+  policy creation from an absent override, editing and removal back to user inheritance without
+  credential duplication, file/loaded-worker separation, and native
+  loading of saved CIMD, dynamic and pre-registered OAuth combinations.
 - `tests/web/mcp-settings.test.tsx`: stale-owner withdrawal, HTTP add, duplicate keys, displayed
-  rule order and policy-only controls.
+  rule order, inherited policy creation/editing and explicit OAuth registration changes with incompatible-field removal.
 - `tests/browser/mcp-settings.spec.ts`: desktop and narrow Chromium with isolated real file
   service, scoped edits, protected values, draft/category continuity, conflict refresh, explicit
-  Reload, stdio arguments, removal and narrow policy editing.
+  Reload, stdio arguments, and narrow policy creation, editing and removal.
 Use isolated configuration and local fixtures, not personal credentials or external accounts.
 
 ## Related interfaces
