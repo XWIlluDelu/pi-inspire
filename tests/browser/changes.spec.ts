@@ -294,10 +294,29 @@ for (const touch of [false, true]) {
         : { width: 1280, height: 900 },
       hasTouch: touch,
     });
-    test("aligns tree siblings and retains diff reading after first-change landing", async ({
+    test("refreshes visible source in place and retains reading after first-change landing", async ({
       page,
     }) => {
+      await page.clock.install();
       await pairedPage(page);
+      let latest = false;
+      let diffReads = 0;
+      let gate: Promise<void> | null = null;
+      await page.route("**/api/git/diff", async (route) => {
+        diffReads += 1;
+        const response = await route.fetch();
+        const diff = (await response.json()) as GitDiffResponse;
+        if (latest && diff.kind === "text") {
+          if (gate) await gate;
+          diff.lines = diff.lines.map((line) =>
+            line.kind === "add"
+              ? { ...line, text: "+LATEST_VISIBLE_SOURCE" }
+              : line,
+          );
+          delete diff.source;
+        }
+        await route.fulfill({ response, json: diff });
+      });
       const navigation = page.getByRole("button", {
         name: /^(Toggle|Expand|Collapse) navigation$/,
         exact: true,
@@ -344,12 +363,38 @@ for (const touch of [false, true]) {
       const position = () =>
         source.evaluate((node) => [node.scrollTop, node.scrollLeft]);
       const saved = await position();
+      const oldAddition = await source
+        .locator(".source-diff__line--add code")
+        .innerText();
+      const readsBeforePoll = diffReads;
+      latest = true;
+      let release!: () => void;
+      gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await page.clock.fastForward(4_001);
+      await expect.poll(() => diffReads).toBeGreaterThan(readsBeforePoll);
+      await expect(source.locator(".source-diff__line--add code")).toHaveText(
+        oldAddition,
+      );
+      await expect(
+        pane.getByText("Loading source", { exact: true }),
+      ).toHaveCount(0);
+      expect(await position()).toEqual(saved);
+      release();
+      gate = null;
+      await expect(source.locator(".source-diff__line--add code")).toHaveText(
+        "LATEST_VISIBLE_SOURCE",
+      );
+      await expect.poll(position).toEqual(saved);
+      const readsBeforeExplicit = diffReads;
       const refreshed = page.waitForResponse(
         (response) => new URL(response.url()).pathname === "/api/git/diff",
       );
       await pane.getByRole("button", { name: "Refresh context pane" }).click();
       await refreshed;
       await expect.poll(position).toEqual(saved);
+      expect(diffReads).toBe(readsBeforeExplicit + 1);
       await pane.getByRole("button", { name: "Files", exact: true }).click();
       await pane.getByRole("button", { name: "Changes", exact: true }).click();
       await expect.poll(position).toEqual(saved);

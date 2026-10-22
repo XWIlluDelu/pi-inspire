@@ -33,6 +33,8 @@ Select uses ArrowUp/ArrowDown to move the visible choice and Enter to choose; cl
 chooses directly. Confirm shows No and Yes, with Escape cancelling. Input submits with Enter;
 multiline editor text is saved with Save. Timed dialogs quietly show remaining time from the retained
 deadline, so reopening or reconnecting does not restart it. Untimed dialogs show no countdown.
+On phones, browser Back cancels the active question before closing the panel behind it. A pending
+or failed cancellation stays visible; a failed request can be retried.
 
 Dialog timeouts dismiss the browser request, as do Inspire's Stop and worker cleanup. An extension's
 own `AbortSignal` resolves the dialog in Pi 1.0/1.1 without sending a browser-dismissal event, so that

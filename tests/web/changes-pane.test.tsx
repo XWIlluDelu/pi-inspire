@@ -139,16 +139,36 @@ describe("Changes reading continuity", () => {
     source().scrollLeft = 20;
     fireEvent.scroll(source());
     fireEvent.click(screen.getByRole("button", { name: "Next change" }));
+    const updated = {
+      ...state,
+      gitDiff: {
+        status: "ready" as const,
+        result: {
+          ...result,
+          lines: result.lines.map((line) =>
+            line.kind === "add" ? { ...line, text: "+latest" } : line,
+          ),
+        },
+      },
+    };
+    view.rerender(<ChangesPane state={updated} readingPositions={positions} />);
+    expect(source()).toHaveTextContent("latest");
+    expect(source().scrollTop).toBe(300);
     view.rerender(
       <ChangesPane
         state={{
-          ...state,
-          gitDiff: { status: "loading", pathId: "notes", side: "unstaged" },
+          ...updated,
+          gitDiff: { ...updated.gitDiff, refreshError: "Repository busy" },
         }}
         readingPositions={positions}
       />,
     );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Source refresh failed; showing the last known source. Repository busy",
+    );
+    expect(source()).toHaveTextContent("latest");
     view.rerender(<ChangesPane state={state} readingPositions={positions} />);
+    expect(screen.queryByRole("status")).toBeNull();
     expect(source().scrollTop).toBe(300);
     expect(source().scrollLeft).toBe(20);
     expect(

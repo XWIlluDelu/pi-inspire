@@ -6,7 +6,7 @@ import {
   FileText,
   RotateCw,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ResourceDescriptor } from "../../shared/contracts";
 import {
   resourceReferenceLabel,
@@ -67,15 +67,21 @@ interface LineJump {
   request: number;
 }
 
+interface SourceReadingPosition {
+  current: { top: number; left: number } | null;
+}
+
 function SourceCodePreview({
   text,
   language,
   jump,
+  readingPosition,
   truncated = false,
 }: {
   text: string;
   language: string;
   jump: LineJump | null;
+  readingPosition?: SourceReadingPosition;
   truncated?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -88,9 +94,18 @@ function SourceCodePreview({
     () => highlightSource(text, language),
     [language, text],
   );
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = rootRef.current;
-    if (!jump || !root) return;
+    if (!root) return;
+    const saved = readingPosition?.current;
+    if (saved) {
+      root.scrollTop = saved.top;
+      root.scrollLeft = saved.left;
+      return;
+    }
+    root.scrollTop = 0;
+    root.scrollLeft = 0;
+    if (!jump) return;
     const lineHeight = Number.parseFloat(getComputedStyle(root).lineHeight);
     const source = root.querySelector<HTMLElement>(".source-view__pre");
     const paddingTop = source
@@ -103,11 +118,18 @@ function SourceCodePreview({
         (Number.isFinite(paddingTop) ? paddingTop : 0) -
         root.clientHeight / 3,
     );
-  }, [jump]);
+  }, [jump, readingPosition]);
   return (
     <div
       className="source-view source-reader"
       ref={rootRef}
+      onScroll={(event) => {
+        if (readingPosition)
+          readingPosition.current = {
+            top: event.currentTarget.scrollTop,
+            left: event.currentTarget.scrollLeft,
+          };
+      }}
       tabIndex={0}
       role="region"
       data-pane-scroll-active="true"
@@ -171,11 +193,13 @@ function ReadyResource({
   state,
   jump,
   viewMode,
+  readingPosition,
   interactiveUrl,
 }: {
   state: ContextPaneView;
   jump: LineJump | null;
   viewMode: FileViewMode;
+  readingPosition?: SourceReadingPosition;
   interactiveUrl?: string;
 }) {
   const preview = state.resourcePreview;
@@ -187,6 +211,7 @@ function ReadyResource({
         text={preview.text!}
         language={sourceLanguage(descriptor)}
         jump={jump}
+        readingPosition={readingPosition}
         truncated={preview.truncated}
       />
     );
@@ -204,6 +229,7 @@ function ReadyResource({
         text={preview.text}
         language={languageForFile(descriptor.name)}
         jump={jump}
+        readingPosition={readingPosition}
         truncated={preview.truncated}
       />
     );
@@ -292,11 +318,13 @@ export function ResourcePreviewContent({
   state,
   jump = null,
   viewMode = "preview",
+  readingPosition,
   interactiveUrl,
 }: {
   state: ContextPaneView;
   jump?: LineJump | null;
   viewMode?: FileViewMode;
+  readingPosition?: SourceReadingPosition;
   interactiveUrl?: string;
 }) {
   const preview = state.resourcePreview;
@@ -370,6 +398,7 @@ export function ResourcePreviewContent({
       state={state}
       jump={jump}
       viewMode={viewMode}
+      readingPosition={readingPosition}
       interactiveUrl={interactiveUrl}
     />
   );
@@ -387,8 +416,19 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
       ? reference
       : resourceReferenceLabel(reference));
   const [jump, setJump] = useState<LineJump | null>(null);
+  // Reading choices belong to the selected file, not its renewable handle.
+  // A new selection lifetime also prevents A -> B -> A from reviving offsets.
+  const readingPosition = useMemo<SourceReadingPosition>(
+    () => ({ current: null }),
+    [
+      state.transportGeneration,
+      state.sessionId,
+      state.cwd,
+      state.selectedResourceReference,
+    ],
+  );
   const [fileView, setFileView] = useState<{
-    resourceId: string;
+    owner: SourceReadingPosition;
     mode: FileViewMode;
   } | null>(null);
   const canToggle = Boolean(
@@ -411,7 +451,7 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
   const defaultView: FileViewMode =
     sourceOnly || (canToggle && referencedLine) ? "source" : "preview";
   const viewMode =
-    descriptor && fileView?.resourceId === descriptor.id
+    descriptor && fileView?.owner === readingPosition
       ? fileView.mode
       : defaultView;
   const htmlScope = [
@@ -577,8 +617,7 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
             <FileViewControl
               mode={viewMode}
               onChange={(mode) => {
-                if (descriptor)
-                  setFileView({ resourceId: descriptor.id, mode });
+                if (descriptor) setFileView({ owner: readingPosition, mode });
               }}
             />
           ) : null}
@@ -599,6 +638,7 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
           state={state}
           jump={jump}
           viewMode={viewMode}
+          readingPosition={readingPosition}
           interactiveUrl={currentInteraction?.url}
         />
       </div>

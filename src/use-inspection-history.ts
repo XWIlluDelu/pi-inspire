@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useReducer, useRef } from "react";
 
 let nextOwner = 0;
 
@@ -11,6 +11,7 @@ export function useInspectionHistory(
 ) {
   const owner = useRef(0);
   if (!owner.current) owner.current = ++nextOwner;
+  const [, reconcile] = useReducer((value: number) => value + 1, 0);
   const current = useRef(0);
   const back = useRef(onBack);
   back.current = onBack;
@@ -23,6 +24,8 @@ export function useInspectionHistory(
       if (remaining >= current.current) return;
       current.current = remaining;
       back.current(remaining);
+      // Async dismissal can leave a question mounted until its native reply.
+      reconcile();
     };
     window.addEventListener("popstate", pop);
     return () => {
@@ -52,5 +55,5 @@ export function useInspectionHistory(
       // Embedded browsers can forbid history writes. Explicit controls still work.
       current.current = 0;
     }
-  }, [depth, key]);
+  });
 }
