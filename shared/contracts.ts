@@ -1332,7 +1332,10 @@ export type PiExtensionUpdateStatus =
   | { kind: "unavailable" };
 
 export interface PiUpdateCheckResponse {
+  /** Pi version loaded when this Host started, not every session's runtime. */
   currentVersion: string;
+  /** Fresh installation identity. Null means unreadable; absent on older Hosts. */
+  installedVersion?: string | null;
   pi: PiVersionUpdateStatus;
   extensions: PiExtensionUpdateStatus;
 }

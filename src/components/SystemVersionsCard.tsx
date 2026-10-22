@@ -68,12 +68,16 @@ function VersionRow({
 
 function VersionValue({
   version,
+  versionTitle,
+  restartRequired = false,
   activity,
   status,
   update,
   command,
 }: {
-  version: string;
+  version: string | null;
+  versionTitle?: string;
+  restartRequired?: boolean;
   activity: string | null;
   status: string;
   update?: { version: string; url: string };
@@ -81,7 +85,7 @@ function VersionValue({
 }) {
   return (
     <div className="system-versions__value">
-      <span className="system-versions__version">
+      <span className="system-versions__version" title={versionTitle}>
         {version ? `v${version}` : "Version unavailable"}
       </span>
       <span aria-hidden>·</span>
@@ -91,9 +95,12 @@ function VersionValue({
             v{update.version} available ↗
           </a>
           {command ? <UpdateCommand command={command} /> : null}
+          {restartRequired ? <span>Restart Host to apply</span> : null}
         </>
       ) : (
-        <span>{activity || status}</span>
+        <span>
+          {activity || (restartRequired ? "Restart Host to apply" : status)}
+        </span>
       )}
     </div>
   );
@@ -116,7 +123,16 @@ export function SystemVersionsCard() {
   );
   const updates = availableUpdates(state);
   const details = updates ? updateDetailsText(updates) : null;
-  const pi = state.piUpdateCheck?.pi;
+  const piCheck = state.piUpdateCheck;
+  const installedPiVersion =
+    piCheck?.installedVersion === undefined
+      ? piCheck?.currentVersion || state.piVersion
+      : piCheck.installedVersion;
+  const piRestartRequired =
+    Boolean(installedPiVersion) &&
+    Boolean(piCheck) &&
+    installedPiVersion !== piCheck?.currentVersion;
+  const pi = piCheck?.pi;
   const extensions = state.piUpdateCheck?.extensions;
   const inspire = state.inspireUpdateCheck;
   const pending =
@@ -217,7 +233,13 @@ export function SystemVersionsCard() {
           }
         >
           <VersionValue
-            version={state.piUpdateCheck?.currentVersion || state.piVersion}
+            version={installedPiVersion}
+            versionTitle={
+              piRestartRequired
+                ? `Installed Pi version; Host loaded v${piCheck?.currentVersion}.`
+                : undefined
+            }
+            restartRequired={piRestartRequired}
             activity={piActivity}
             status={
               pi?.kind === "current"
