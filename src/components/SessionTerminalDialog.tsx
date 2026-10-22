@@ -141,7 +141,7 @@ export function TerminalSessionNotice({ sessionId }: { sessionId: string }) {
     }
   };
   return (
-    <div className="composer-readonly" role="status">
+    <div role="status">
       <p>Handed to the terminal. History and your draft are kept here.</p>
       <button
         type="button"

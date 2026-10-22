@@ -22,6 +22,10 @@ import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { supportedThinkingLevels } from "../model-options";
 import {
+  modelControlsSupported,
+  NATIVE_MODEL_GUIDANCE,
+} from "../session-controls";
+import {
   sessionDraft,
   sessionDraftRevision,
   setSessionDraft,
@@ -167,6 +171,8 @@ export const Composer = memo(function Composer() {
   const state = useAppState(
     (source) => ({
       sessionId: source.sessionId,
+      sessionStatuses: source.sessionStatuses,
+      readOnlyReason: source.readOnlyReason,
       transcriptViewId: source.transcriptViewId,
       transcriptIncarnation: source.transcriptIncarnation,
       transcriptEffectiveLeafId: source.transcriptEffectiveLeafId,
@@ -436,6 +442,7 @@ export const Composer = memo(function Composer() {
           model.id === state.model?.id,
       ) ?? state.model)
     : null;
+  const modelControls = modelControlsSupported(state);
   const thinkingSupported = activeModel?.reasoning !== false;
   const thinkingLevels = supportedThinkingLevels(activeModel);
 
@@ -564,7 +571,10 @@ export const Composer = memo(function Composer() {
             recent={state.recentModelIds}
             common={state.commonModels}
             onManageModels={store.openModelSettings}
-            disabled={sessionOpening}
+            disabled={
+              sessionOpening || Boolean(state.readOnlyReason) || !modelControls
+            }
+            title={!modelControls ? NATIVE_MODEL_GUIDANCE : undefined}
             openRequest={
               state.nativeCommandUiRequest?.sessionId === state.sessionId &&
               state.nativeCommandUiRequest.action === "model"
@@ -579,14 +589,21 @@ export const Composer = memo(function Composer() {
             key={`thinking-${sessionId ?? "none"}`}
             label="Thinking level"
             title={
-              thinkingSupported
-                ? "Thinking level"
-                : "The active model does not support thinking"
+              !modelControls
+                ? NATIVE_MODEL_GUIDANCE
+                : thinkingSupported
+                  ? "Thinking level"
+                  : "The active model does not support thinking"
             }
             direction="up"
             value={state.thinkingLevel}
             display={thinkingSupported ? state.thinkingLevel : "unavailable"}
-            disabled={!thinkingSupported || sessionOpening}
+            disabled={
+              Boolean(state.readOnlyReason) ||
+              !modelControls ||
+              !thinkingSupported ||
+              sessionOpening
+            }
             openRequest={
               state.nativeCommandUiRequest?.sessionId === state.sessionId &&
               state.nativeCommandUiRequest.action === "thinking"

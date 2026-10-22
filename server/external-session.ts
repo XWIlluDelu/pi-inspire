@@ -1,9 +1,16 @@
-import type { NativeTaskRuns } from "../docs/examples/session-activity.js";
+import type {
+  NativeImageReference,
+  NativeModelCatalog,
+  NativeModelSelection,
+  NativeTaskRuns,
+} from "../docs/examples/session-activity.js";
 
 /** A connection to an externally owned Pi, not an Inspire-owned worker. */
 export interface ExternalSessionState {
   status: "idle" | "working" | "blocked" | "unknown";
   taskRuns?: NativeTaskRuns;
+  modelControls?: boolean;
+  modelSelection?: NativeModelSelection;
   outcome?: "failed";
 }
 
@@ -18,9 +25,20 @@ export interface ExternalSessionConnection {
     message: string,
     behavior?: "steer" | "followUp",
     beforeSend?: () => void,
+    images?: NativeImageReference[],
   ): Promise<void>;
   abort(): Promise<void>;
   rename?(name: string, beforeSend?: () => void): Promise<void>;
+  models?(): Promise<NativeModelCatalog>;
+  setModel?(
+    provider: string,
+    modelId: string,
+    beforeSend?: () => void,
+  ): Promise<NativeModelSelection>;
+  setThinkingLevel?(
+    level: NativeModelCatalog["thinkingLevel"],
+    beforeSend?: () => void,
+  ): Promise<NativeModelSelection>;
   /** Release Host resources only; never terminate Pi or close its terminal. */
   close(): void;
 }

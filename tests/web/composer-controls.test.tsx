@@ -397,6 +397,43 @@ describe("composer meta row", () => {
     );
   });
 
+  it("uses advertised native model controls independently of Pi activity and model reasoning", () => {
+    const socket = FakeWebSocket.instances.at(-1)!;
+    const snapshot = activeSnapshot();
+    snapshot.runState = "running";
+    snapshot.sessionStatuses.s1 = {
+      runState: "running",
+      external: true,
+      nativeModelControls: false,
+    };
+    act(() => socket.emit({ type: "snapshot", data: snapshot }));
+    render(<Composer />);
+    expect(screen.getByRole("button", { name: "Model" })).toBeDisabled();
+    expect(
+      screen.getByRole("combobox", { name: "Thinking level" }),
+    ).toBeDisabled();
+    expect(screen.getByLabelText("Message")).toBeEnabled();
+    snapshot.sessionStatuses.s1 = {
+      ...snapshot.sessionStatuses.s1!,
+      nativeModelControls: true,
+    };
+    act(() => socket.emit({ type: "snapshot", data: snapshot }));
+    expect(screen.getByRole("button", { name: "Model" })).toBeEnabled();
+    expect(
+      screen.getByRole("combobox", { name: "Thinking level" }),
+    ).toBeEnabled();
+    snapshot.active!.model = {
+      provider: "native",
+      id: "plain",
+      reasoning: false,
+    };
+    act(() => socket.emit({ type: "snapshot", data: snapshot }));
+    expect(screen.getByRole("button", { name: "Model" })).toBeEnabled();
+    expect(
+      screen.getByRole("combobox", { name: "Thinking level" }),
+    ).toBeDisabled();
+  });
+
   it("opens the thinking picker with keyboard focus for /thinking", async () => {
     render(<Composer />);
 

@@ -30,22 +30,38 @@ and untracked.
 | Terminals, Files and Changes | [[terminal]], [[resource-preview]] |
 | Remote connections | [[connection-modules]] |
 
+## Implemented capabilities
+
+- **Native Pi workflow:** conversations, rich input, model/thinking selection, native configuration and
+  authentication, compaction, History, Fork/Clone and exports. Saved history remains readable when
+  execution is unavailable, including saved-only JSONL export. [[pi-integration]], [[model-settings]],
+  [[mcp]] and [[session-branches]] define the boundaries.
+- **Session continuity:** background work, draft-preserving Pending recovery, independent copies and
+  explicit terminal handoff. With Herdr, browser input, images, agent Stop and model/thinking selection
+  reuse the existing native Pi process. Reload, Compact and model cycling stay in that terminal.
+  [[composer]], [[session-continuity]] and [[herdr-enhancement]] own the contracts;
+  [[follow-session-execution-2026-10-19]] records native continuity evidence and the separate Host/Pi
+  activation boundary.
+- **Reading and workspace tools:** rich conversation/activity readers, source-backed Copy, Files and
+  Changes with in-place refresh, previews and persistent project terminals. Responsive inspection
+  preserves the reading context and supports terminal quoting back to the draft.
+  See [[conversation]], [[workspace-layout]], [[resource-preview]], [[terminal]] and [[workbench]].
+- **Extension adaptation:** standard RPC dialogs, status and text widgets, declarative presentations
+  and a source-DIY task-board example. [[pi-integration]] and
+  [the extension guide](../docs/extensions.md#choose-the-smallest-integration) describe reuse while
+  Pi retains behavior and commands.
+- **Host operation:** authenticated local/remote browser access, per-instance lifecycle controls,
+  isolated development pairing and Host-only restart that preserves independent terminals on
+  Linux, macOS and Windows. [[host-lifecycle]] defines ownership and restart scopes;
+  [[platform-compatibility]] records platform evidence and limits.
+
 ## Work state
 
 | State | Work |
 | --- | --- |
-| Implemented; phone acceptance open | Host-owned task outcomes, device-local alert settings, worker display and Web Push. Linux Chrome delivery and installed-PWA refresh continuity are verified. [[notifications]] defines the contract; [[follow-notifications-2026-10-22]] records remaining Android/iOS acceptance and separate manual activation. |
-| Tagged | Annotated tag v0.6.0 points to f67d6ee, which passes complete Linux/macOS/Windows CI and three installed-package checks. [[follow-project-quality-2026-10-21]] records verified repairs; [[follow-release-0-6-0-2026-10-21]] records the tag, documentation and eight screenshots. There is no GitHub Release or uploaded release-asset distribution. Production activation is a separate operator action. |
-| Implemented | Native image delivery, draft-preserving connected-terminal sends and real dialog cancellation; saved-only JSONL export, loaded-range search/History handoff and mobile inspection Back; explicit per-session terminal handoff and narrow terminal quoting back to the editable draft. See [[pi-integration]], [[composer]], [[session-branches]], [[workbench]] and [[session-continuity]]. |
-| Implemented | Store-independent extension dialog content and a complete source-DIY task-board example, keeping behavior and commands in Pi. [[pi-integration]] and [the extension guide](../docs/extensions.md#choose-the-smallest-integration) describe the reusable boundary; no runtime React plugin or scheduler is added. |
-| Implemented | Changes refreshes its selected source in place while preserving reading position. Bounded Git source projection keeps edits reachable beyond long unchanged prefixes, with independent syntax context and explicit context limits. [[workspace-layout]] records the contract and checks. |
-| Implemented | Run-scoped reclaimable Pending handoffs with Host-held image transfer that preserves later draft actions, project-bound terminal intent, verified native-connection rebind retirement, run-level cancellation, scope-bound digest confirmation and view-bound Prompt Map navigation. Contracts and regression evidence are in [[composer]], [[terminal]], [[herdr-enhancement]], [[conversation]] and [[session-transport]]. |
-| Implemented | Native Herdr continuity and process-bound external-session presence fencing, with independent busy/input activity reporting. [[follow-session-execution-2026-10-19]] records verification and the separate Host/Pi activation boundary. |
-| Implemented | Ready-owned development pairing, native terminal clipboard/interrupt modifiers and focus entry/exit through existing controls. [[platform-compatibility#Development launch and terminal input]] records native startup and browser coverage. |
-| Implemented | Scoped read-only Git, distinct native/URL file identity, native terminal alternate-character input, current-runtime shell/filesystem support, per-instance lifecycle controls, local peer authentication and one-use launch links. Windows/macOS/Linux evidence and capability limits are in [[platform-compatibility]]. |
-| Implemented | Ordinary page restart for launcher-owned Hosts preserves independent terminals on Windows, macOS and Linux. Ownership, cleanup and restart-scope contracts are in [[host-lifecycle]]. |
-| Implemented | Native session, input, model/authentication, compaction and branch workflows; MCP file configuration; rich conversation readers; Files/Changes; project terminals; responsive layouts and theme families. See [README](../README.md) for the capability overview. |
-| Blocked on Pi | Worker-owned settings-save results, resource omission diagnostics, request-attributed dialog cancellation, complete loaded-extension inventory, generic argument completion and structured current-worker MCP management. [[pi-capability-gaps]] identifies the missing interfaces. |
+| Implemented; phone acceptance open | Host-owned task outcomes, device-local alert settings and Web Push. Linux Chrome delivery and installed-PWA refresh continuity are verified. [[notifications]] defines the contract; [[follow-notifications-2026-10-22]] records remaining Android/iOS acceptance and separate manual activation. |
+| Tagged | Annotated tag v0.6.0 points to f67d6ee, which passes complete Linux/macOS/Windows CI and three installed-package checks. [[follow-project-quality-2026-10-21]] and [[follow-release-0-6-0-2026-10-21]] retain that evidence and release documentation. There is no GitHub Release or uploaded release-asset distribution; activation is a separate operator action. |
+| Blocked on Pi | Backward model cycling, native TUI shell interruption, worker-owned settings-save results, resource omission diagnostics, request-attributed dialog cancellation, complete loaded-extension inventory, generic argument completion and structured current-worker MCP management. [[pi-capability-gaps]] identifies the missing interfaces. |
 | Deferred | Holistic Files layout work in [[file-browsing]]. The current layout remains the implemented contract. |
 | Undecided | Additional History, usage, configuration and palette enhancements in [[pi-capability-gaps]]. Source-level extension UI reuse follows [[northstar]]; further framework-level expansion has no decided requirement. |
 

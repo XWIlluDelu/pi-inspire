@@ -1,6 +1,6 @@
 # Custom presentations
 
-Local JSON declarations customize tool cards, Thinking, and displayed custom messages without changing Inspire or the Pi extension. Tool and Thinking rules define a collapsed summary and typed body blocks; custom-message declarations select a reading title and exact Markdown body. Inspire owns layout, disclosure, copy, and resource actions, plus lifecycle/status for activity cards.
+Local JSON declarations customize tool cards, Thinking, and displayed custom messages without changing Inspire or the Pi extension. Tool and Thinking rules define a collapsed summary and typed body blocks; custom-message declarations select a reading title and Markdown body from the bounded message preview. Inspire owns layout, disclosure, copy, and resource actions, plus lifecycle/status for activity cards.
 
 ## Configuration
 
@@ -184,7 +184,6 @@ shows `customType`, `content`, and `details` from the same bounded preview. Copy
 message on demand to include its complete original content and details. Presentation does not change
 Pi's message or model context.
 
-Existing version-1 profiles remain valid without `customMessages`. Older Inspire releases reject
-this added field; remove it when sharing a profile with those releases.
+`customMessages` is optional in version-1 profiles.
 
 Declarations select data; they cannot execute code, inject HTML/CSS, or access the filesystem/network. For commands, widgets, or dedicated GUI controls, see [Extension adaptation](extensions.md).

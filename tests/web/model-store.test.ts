@@ -284,13 +284,13 @@ describe("native model controls", () => {
           )!;
           thinkingLevel = model.reasoning ? "medium" : "off";
         }
-        return { body: { ok: true } };
+        return { body: { model, thinkingLevel } };
       }
       if (url.startsWith("/api/control/thinking")) {
         const body = jsonBody(init);
         controls.push(body);
         thinkingLevel = String(body.level);
-        return { body: { ok: true } };
+        return { body: { model, thinkingLevel } };
       }
       if (url.startsWith("/api/model-settings")) {
         commonModels = [
@@ -402,7 +402,7 @@ describe("recent model preference", () => {
           provider: String(body.provider),
           id: String(body.modelId),
         };
-        return { body: { ok: true } };
+        return { body: { model: selected, thinkingLevel: "medium" } };
       }
       if (url.startsWith("/api/snapshot"))
         return { body: activeSnapshot({ model: selected }) };
@@ -456,8 +456,12 @@ describe("recent model preference", () => {
         return { body: bootstrapPayload({ snapshot: activeSnapshot() }) };
       if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
       if (url.startsWith("/api/control/model")) {
-        selected = jsonBody(init) as typeof selected;
-        return { body: { ok: true } };
+        const body = jsonBody(init);
+        selected = {
+          provider: String(body.provider),
+          id: String(body.modelId),
+        };
+        return { body: { model: selected, thinkingLevel: "medium" } };
       }
       if (url.startsWith("/api/snapshot"))
         return { body: activeSnapshot({ model: selected }) };
@@ -518,6 +522,26 @@ describe("recent model preference", () => {
 describe("thinking level control", () => {
   beforeEach(() => installFakeWebSocket());
 
+  it("adopts the actual model and clamped effort returned by Pi", async () => {
+    const actual = {
+      provider: "native",
+      id: "extension-choice",
+      reasoning: true,
+    };
+    installFetch((url, init) => {
+      if (url === "/api/control/thinking")
+        return { body: { model: actual, thinkingLevel: "low" } };
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    await store.sendPrompt("/thinking high");
+    await vi.waitFor(() => expect(store.getState().thinkingLevel).toBe("low"));
+    expect(store.getState().model).toEqual(actual);
+    expect(store.getState().notices.at(-1)?.text).toBe(
+      "Thinking level is now low.",
+    );
+  });
+
   it("rolls back to the truthful level and resyncs when the API rejects the change", async () => {
     let snapshotCalls = 0;
     installFetch((url, init) => {
@@ -563,7 +587,9 @@ describe("thinking level control", () => {
     expect(store.getState().thinkingLevel).toBe("xhigh");
     const newer = store.setThinkingLevel("low");
     expect(store.getState().thinkingLevel).toBe("low");
-    low.resolve({ body: { ok: true } });
+    low.resolve({
+      body: { model: store.getState().model, thinkingLevel: "low" },
+    });
     await expect(newer).resolves.toBe(true);
     expect(store.getState().thinkingLevel).toBe("low");
     xhigh.resolve({ status: 500, body: { error: "unsupported level" } });

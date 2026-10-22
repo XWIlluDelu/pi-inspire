@@ -186,6 +186,45 @@ it.each([
   },
 );
 
+it("retains session settings through terminal handoff until explicit continuation", async () => {
+  let terminal = true;
+  const snapshot = () =>
+    activeSnapshot({
+      readOnlyReason: terminal ? "terminal" : undefined,
+      model: { provider: "example", id: "terminal-model", reasoning: true },
+      thinkingLevel: "high",
+    });
+  installFakeWebSocket();
+  const fetch = installFetch((url) => {
+    if (url.startsWith("/api/bootstrap"))
+      return { body: bootstrapPayload({ snapshot: snapshot() }) };
+    if (url.startsWith("/api/sessions/execution")) {
+      terminal = false;
+      return { body: { snapshot: snapshot(), command: "" } };
+    }
+    if (url.startsWith("/api/sessions"))
+      return { body: sessionPage([sessionSummary()], 1) };
+    return undefined;
+  });
+  await act(async () => store.init("token"));
+  FakeWebSocket.instances.at(-1)?.open();
+  render(<App />);
+
+  const settings = within(await screen.findByLabelText("Session settings"));
+  expect(settings.getByText("example/terminal-model")).toBeVisible();
+  expect(settings.getByText("high")).toBeVisible();
+  expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+  expect(
+    fetch.mock.calls.some(([url]) => url === "/api/sessions/execution"),
+  ).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Continue in Inspire" }));
+  expect(await screen.findByRole("textbox", { name: "Message" })).toBeVisible();
+  expect(screen.queryByLabelText("Session settings")).toBeNull();
+  expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
+    "terminal-model",
+  );
+});
+
 it("does not substitute a catalog model when read-only selection is unknown", async () => {
   installFakeWebSocket();
   installFetch((url) => {

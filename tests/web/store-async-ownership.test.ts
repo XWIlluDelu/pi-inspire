@@ -328,7 +328,13 @@ describe("bootstrap snapshot ownership", () => {
     installFetch((url, init) => {
       if (reconnecting && url.startsWith("/api/bootstrap"))
         return bootstrap.promise;
-      if (url === "/api/control/model") return { body: { ok: true } };
+      if (url === "/api/control/model")
+        return {
+          body: {
+            model: { provider: "provider", id: "new-model" },
+            thinkingLevel: "medium",
+          },
+        };
       if (url.startsWith("/api/snapshot"))
         return {
           body: activeSnapshot({
@@ -395,6 +401,71 @@ describe("bootstrap snapshot ownership", () => {
 });
 
 describe("runtime control completion ownership", () => {
+  it.each(["return-to-session", "same-session-view"] as const)(
+    "keeps the current refresh when a native command completes after %s",
+    async (transition) => {
+      const command = deferred<RouteResponse>();
+      const snapshot = deferred<RouteResponse>();
+      let snapshotReads = 0;
+      installFetch((url, init) => {
+        if (url === "/api/control/native-command") return command.promise;
+        if (url.startsWith("/api/snapshot")) {
+          snapshotReads += 1;
+          return snapshotReads === 1
+            ? snapshot.promise
+            : { status: 503, body: { error: "Redundant refresh failed" } };
+        }
+        if (url === "/api/sessions/open")
+          return {
+            body: activeSnapshot({ sessionId: String(jsonBody(init).id) }),
+          };
+        return baseRoutes(url, init);
+      });
+      const { store, socket } = await initStore();
+      await store.sendPrompt("/compact");
+      if (transition === "return-to-session") {
+        await store.openSession("s2");
+        await store.openSession("s1");
+      } else {
+        socket.emit({
+          type: "snapshot",
+          detailSessionId: "s1",
+          detailRevision: 0,
+          data: activeSnapshot({ transcriptPage: { viewId: "next-view" } }),
+        });
+      }
+      const viewId = store.getState().transcriptViewId!;
+      socket.emit({ type: "runtime_ready", sessionId: "s1" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(snapshotReads).toBe(1);
+
+      command.resolve({
+        body: {
+          command: "compact",
+          outcome: "completed",
+          message: "Context compacted.",
+        },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      snapshot.resolve({
+        body: activeSnapshot({
+          sessionName: "Fresh session",
+          transcriptPage: { viewId },
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(store.getState()).toMatchObject({
+        sessionName: "Fresh session",
+        transcriptViewId: viewId,
+        error: null,
+      });
+      expect(snapshotReads).toBe(1);
+      expect(store.getState().commandActivities.s1).toBeUndefined();
+      expect(store.getState().notices.at(-1)?.text).toBe("Context compacted.");
+    },
+  );
+
   it.each(["other-session", "return-to-session", "same-session-view"] as const)(
     "does not display an obsolete abort error after %s",
     async (transition) => {
@@ -482,7 +553,12 @@ describe("runtime control completion ownership", () => {
     await store.openSession("s2");
     socket.emit({ type: "runtime_ready", sessionId: "s2" });
     await vi.advanceTimersByTimeAsync(0);
-    model.resolve({ body: { ok: true } });
+    model.resolve({
+      body: {
+        model: { provider: "provider", id: "model" },
+        thinkingLevel: "medium",
+      },
+    });
     await vi.advanceTimersByTimeAsync(0);
     snapshot.resolve({
       body: activeSnapshot({ sessionId: "s2", sessionName: "Fresh session" }),

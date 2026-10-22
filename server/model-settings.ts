@@ -20,14 +20,15 @@ import type {
   PiModelPreferences,
   ProviderDeclaration,
 } from "../shared/model-settings.js";
+import { configurationEditLockPaths } from "./configuration-edit-locks.js";
+import { modelSettings } from "./model-catalog.js";
+import { validateModelConfig } from "./model-metadata.js";
 import {
   getAgentDir,
   ModelRuntime,
   resolveModelScopeWithDiagnostics,
   SettingsManager,
 } from "./pi-runtime.js";
-import { configurationEditLockPaths } from "./configuration-edit-locks.js";
-import { modelSettings } from "./model-catalog.js";
 import { requestError } from "./request-error.js";
 
 type JsonObject = Record<string, unknown>;
@@ -380,7 +381,11 @@ export class ModelSettingsService {
       },
     );
   }
-  async saveConfig(expected: string, edit: ModelConfigEdit): Promise<void> {
+  async saveConfig(
+    cwd: string,
+    expected: string,
+    edit: ModelConfigEdit,
+  ): Promise<void> {
     await editFile(
       join(this.agentDir, "models.json"),
       expected,
@@ -461,8 +466,8 @@ export class ModelSettingsService {
             writable: true,
           });
         }
-        // Validate with the installed Pi's native loader without resolving secrets,
-        // loading extensions, networking, or writing the real config.
+        // Bind the same trusted provider registrations as Pi before validating.
+        // The disposable metadata worker never starts a turn or persistent session.
         const validationPath = join(
           this.agentDir,
           `.inspire-validate-${randomUUID()}.json`,
@@ -471,16 +476,14 @@ export class ModelSettingsService {
           await writeFile(validationPath, JSON.stringify(current), {
             mode: 0o600,
           });
-          const runtime = await ModelRuntime.create({
-            modelsPath: validationPath,
-            authPath: join(this.agentDir, "auth.json"),
-            refreshOnCreate: false,
-          });
-          if (runtime.getError())
+          try {
+            await validateModelConfig(cwd, this.agentDir, validationPath);
+          } catch {
             throw requestError(
-              "Pi rejected this declaration. Check its endpoint, API and model fields.",
+              "Pi rejected this declaration. Check its endpoint, API, model fields and extensions.",
               400,
             );
+          }
         } finally {
           await rm(validationPath, { force: true });
         }

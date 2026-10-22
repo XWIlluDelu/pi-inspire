@@ -410,10 +410,15 @@ Toolbar order is model, thinking, project files and attachments, then context, o
 rightmost Send (with conflict recovery following the exception above).
 [[design-system]] owns sizing; project identity is in the topbar under [[workbench]].
 
-Read-only history retains a static readout of the viewed session's selected provider/model identity
-and thinking effort above its read-only notice, sharing a left edge and the normal toolbar's
-Model/Thinking terminology. It uses the session snapshot, not Host defaults or physical response identity. An unknown model stays unavailable rather than borrowing a catalog choice.
-These readouts neither expose selection controls nor initiate discovery, writes or ownership acquisition.
+Read-only history, including sessions handed to the terminal, retains a static readout of the viewed
+session's selected provider/model identity and thinking effort above its read-only notice, sharing
+a left edge and the normal toolbar's Model/Thinking terminology. The readout and notice form a
+content-width group centered in the composer dock, with left-aligned text inside. The group stays
+within the normal composer width and available viewport space, wrapping on narrow screens without
+adding a card or changing the dock's vertical spacing. It uses the session snapshot, not
+Host defaults or physical response identity. An unknown model stays unavailable rather than borrowing
+a catalog choice. These readouts neither expose selection controls nor initiate discovery, writes
+or ownership acquisition.
 
 The model picker groups/searches Pi choices by provider/ID/display name, with Common first and a
 bounded successful-only provider-local MRU; unavailable MRU stays saved but hidden. Only the catalog

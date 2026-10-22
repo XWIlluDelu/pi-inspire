@@ -11,8 +11,8 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import express from "express";
-import request from "supertest";
 import lockfile from "proper-lockfile";
+import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { modelOption } from "../../server/model-catalog.js";
 import {
@@ -95,7 +95,7 @@ const readJson = async (path: string) =>
   JSON.parse(await readFile(path, "utf8"));
 const snapshot = () => service.read(cwd, models);
 async function editConfig(edit: ModelConfigEdit) {
-  await service.saveConfig((await snapshot()).configRevision, edit);
+  await service.saveConfig(cwd, (await snapshot()).configRevision, edit);
 }
 function routes(
   overrides: Partial<Parameters<typeof registerModelSettingsRoutes>[1]> = {},
@@ -451,7 +451,7 @@ describe("native configuration round trips", () => {
       "headers",
       "modelOverrides",
     ]);
-    await service.saveConfig(before.configRevision, {
+    await service.saveConfig(cwd, before.configRevision, {
       kind: "model",
       provider: "fixture",
       originalId: "first",
@@ -555,7 +555,7 @@ describe("native configuration round trips", () => {
         },
       );
       await expect(
-        service.saveConfig(before.configRevision, {
+        service.saveConfig(cwd, before.configRevision, {
           kind: "model",
           provider: "fixture",
           originalId: "first",
@@ -601,7 +601,7 @@ describe("native configuration round trips", () => {
     await service.savePreferences(before.settingsRevision, {
       defaultThinkingLevel: "medium",
     });
-    await service.saveConfig(before.configRevision, {
+    await service.saveConfig(cwd, before.configRevision, {
       kind: "model",
       provider: "fixture",
       originalId: "first",
@@ -674,7 +674,7 @@ describe("native configuration round trips", () => {
     const malformed = await snapshot();
     expect(malformed.configError).toMatch(/invalid/);
     await expect(
-      service.saveConfig(malformed.configRevision, {
+      service.saveConfig(cwd, malformed.configRevision, {
         kind: "provider",
         id: "new",
         values: {},
@@ -684,7 +684,7 @@ describe("native configuration round trips", () => {
     await writeFile(join(agent, "models.json"), JSON.stringify(initialConfig));
     const valid = await snapshot();
     await expect(
-      service.saveConfig(valid.configRevision, {
+      service.saveConfig(cwd, valid.configRevision, {
         kind: "model",
         provider: "fixture",
         values: { id: "invalid", maxTokens: -1 },

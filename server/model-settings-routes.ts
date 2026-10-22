@@ -150,6 +150,7 @@ export function registerModelSettingsRoutes(
     const owner = await context(request.query);
     let models = await modelsFor(owner);
     await deps.modelSettings.saveConfig(
+      owner.cwd,
       body.revision,
       body.edit as ModelConfigEdit,
     );
