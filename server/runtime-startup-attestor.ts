@@ -1,6 +1,5 @@
 import { requestError } from "./request-error.js";
 import { resolve } from "node:path";
-import { isDeepStrictEqual } from "node:util";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { MAX_RPC_LINE_BYTES, type PiRpcProcess } from "./pi-rpc.js";
 import { samePersistedJson } from "./persisted-json.js";
@@ -10,9 +9,6 @@ import type {
   ProjectionReconcileResult,
   SessionProjectionView,
 } from "./session-projection.js";
-
-const STARTUP_DELTA_MAX_BYTES = 16 * 1024;
-const STARTUP_DELTA_MAX_ENTRIES = 16;
 
 interface StartupProjectionBaseline {
   revision: number;
@@ -24,12 +20,11 @@ interface StartupProjectionBaseline {
   uncommittedFingerprint: string | null;
   tailEntryId: string | null;
   leafId: string | null;
-  missingThinkingLevel: boolean;
 }
 
 /**
  * The startup boundary proves that the suspended projection and Pi's initial
- * RPC state still describe one tightly bounded, contiguous session lineage.
+ * RPC state still describe one contiguous session lineage.
  * It does not claim causal authorship; the one-writer operating rule remains
  * the authority outside this fail-closed attestation.
  */
@@ -55,9 +50,6 @@ export class RuntimeStartupAttestor {
       uncommittedFingerprint: projection.uncommittedFingerprint,
       tailEntryId: projection.tailEntryId,
       leafId: projection.leafId,
-      missingThinkingLevel: !projection.hasActiveEntryType(
-        "thinking_level_change",
-      ),
     };
   }
 
@@ -123,8 +115,7 @@ export class RuntimeStartupAttestor {
       try {
         return parseRpcEntryChain(rpcEntries, {
           expectedParentId: baseline.tailEntryId,
-          maxEntries: STARTUP_DELTA_MAX_ENTRIES,
-          maxBytes: STARTUP_DELTA_MAX_BYTES,
+          maxBytes: MAX_RPC_LINE_BYTES,
           label: "startup",
         });
       } catch {
@@ -167,9 +158,8 @@ export class RuntimeStartupAttestor {
     }
 
     const appendedEntries = reconciled.appendedEntries;
-    // Pi core may initialize a missing thinking level, and installed extensions
-    // may persist their own custom state from session_start. Accept only a
-    // small, contiguous append reported byte-for-byte by this worker.
+    // Pi and its extensions own session_start persistence. Verify the worker's
+    // complete append against disk, without imposing an entry-type policy.
     if (
       reconciled.kind !== "append" ||
       reconciled.healthChanged ||
@@ -178,15 +168,12 @@ export class RuntimeStartupAttestor {
       reconciled.previousLeafId !== baseline.leafId ||
       projection.revision !== baseline.revision + 1 ||
       projection.committedBytes <= baseline.committedBytes ||
-      projection.committedBytes >
-        baseline.committedBytes + STARTUP_DELTA_MAX_BYTES ||
       !Array.isArray(appendedEntries) ||
       appendedEntries.length !== delta.length ||
       delta.length === 0
     )
       fail();
 
-    let sawThinkingInitializer = false;
     for (let index = 0; index < delta.length; index += 1) {
       const rpcEntry = delta[index]!;
       const projectedEntry = (appendedEntries as readonly SessionEntry[])[
@@ -194,41 +181,6 @@ export class RuntimeStartupAttestor {
       ];
       if (!projectedEntry || !samePersistedJson(projectedEntry, rpcEntry))
         fail();
-      const record = rpcEntry as unknown as Record<string, unknown>;
-      const keys = Object.keys(record).sort();
-      if (record.type === "custom") {
-        if (
-          typeof record.customType !== "string" ||
-          record.customType.length === 0 ||
-          record.customType.length > 200 ||
-          !isDeepStrictEqual(keys, [
-            "customType",
-            "data",
-            "id",
-            "parentId",
-            "timestamp",
-            "type",
-          ])
-        )
-          fail();
-      } else if (record.type === "thinking_level_change") {
-        if (
-          !baseline.missingThinkingLevel ||
-          sawThinkingInitializer ||
-          record.thinkingLevel !== state.thinkingLevel ||
-          !isDeepStrictEqual(keys, [
-            "id",
-            "parentId",
-            "thinkingLevel",
-            "timestamp",
-            "type",
-          ])
-        )
-          fail();
-        sawThinkingInitializer = true;
-      } else {
-        fail();
-      }
     }
 
     if (
