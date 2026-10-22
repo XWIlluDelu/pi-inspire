@@ -5,10 +5,10 @@ covers:
   - server/{preferences,update-checker,pi-update-checker,update-coordinator}.ts
   - src/controllers/{preference,update,runtime-event}-controller.ts
   - src/{visual-preferences,update-availability,use-modal-focus}.ts
-  - src/components/{Settings,SettingsControls,SettingsDialog,SettingsSection}.tsx
+  - src/components/{Settings,SettingsControls,SettingsDialog,SettingsSection,SystemVersionsCard}.tsx
   - src/styles/{settings-overlays,responsive}.css
   - tests/server/{preferences,update-checker,pi-update-checker,update-coordinator}.test.ts
-  - tests/web/{settings-navigation,settings-loading,notices,update-controller,attention,modal-focus}.test.ts*
+  - tests/web/{settings-navigation,settings-loading,system-versions,notices,update-controller,attention,modal-focus}.test.ts*
   - tests/browser/{settings-layout,loading-states}.spec.ts
 ---
 
@@ -138,8 +138,17 @@ read, including command-free extensions. Package update results remain separate 
   the update notice is snoozed. It shares the notice's exact report: available version transitions,
   sorted extension package names, update commands and release links. A check in progress disables
   copying the previous observation; clipboard failures stay in this section and can be retried.
-- Explicit checks bypass the cache. Results offer commands or release links; Host/Restart all use
-  the confirmation and execution rules in [[host-lifecycle]].
+- Explicit checks bypass the cache and reread the installed Pi identity without importing its SDK.
+  Pi availability and copied version transitions compare that installation with the latest release,
+  not the version recorded at Host startup. The main row shows the installed version. When it differs
+  from the Host-loaded version, show only `Restart Host to apply`; keep the loaded version in the
+  version's tooltip, not an additional permanent explanation. A still-newer release keeps its update
+  action alongside the restart status. An unreadable installation is unknown, never the startup
+  version presented as a fresh observation. Local identity remains observable when remote checks fail
+  or Pi is offline. Installed updates leave the available-update notice; pending activation alone
+  does not create one. Restart behavior remains under [[host-lifecycle]].
+- Extension results describe installed packages, not what any current session has loaded. Do not infer
+  activation or manufacture a reload requirement from the package update list.
 - The first accepted prompt after 08:00 Host-local time each day invokes cache-aware checks. The
   deployment persists this daily gate across restarts. Page startup, visibility, and timers do not
   initiate checks.

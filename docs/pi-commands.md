@@ -245,6 +245,14 @@ prompts and context files, resetting worker-local extension state. Other session
 unchanged. A Host restart replaces all Inspire-owned workers and applies changed Host configuration;
 connected external Pi sessions keep their original processes.
 
+## Update checks
+
+Settings → System checks the installed Pi version and global/user extension packages. After installing
+updates, **Check again** refreshes the result without restarting Inspire. If the Host still has an
+older Pi version loaded, the row shows **Restart Host to apply** instead of another update command.
+Extension **No updates** describes installation only; use `/reload` in an idle session to load changed
+resources. Connected external Pi sessions keep their own reload/restart lifecycle.
+
 ## Sessions and terminal use
 
 The History pane handles same-file navigation and independent Fork/Clone copies. Both copy actions
