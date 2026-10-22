@@ -444,15 +444,38 @@ test("narrow MCP form adds and removes scoped stdio definitions and focuses inhe
     expect(
       (await fixture.json(fixture.projectFile)).mcpServers.docs.env,
     ).toEqual({ TOKEN: "stored-env-secret" });
-    // Pi 1.1 can save a project policy without duplicating the user connection.
     const userBefore = await fixture.json(fixture.userFile);
-    await writeFile(
-      fixture.projectFile,
-      JSON.stringify({ mcpServers: { docs: { enabled: false } } }),
-    );
+    // Start without a project entry, then create a policy from the user server.
     await settings
-      .getByRole("button", { name: "Refresh MCP files", exact: true })
+      .getByRole("button", { name: "Remove project server docs" })
       .click();
+    await settings
+      .getByRole("button", { name: "Remove configuration", exact: true })
+      .click();
+    await settings
+      .getByRole("button", { name: "Customize for this project: docs" })
+      .click();
+    await expect(
+      settings.getByRole("combobox", { name: "Tool exposure" }),
+    ).toBeFocused();
+    await expect(
+      settings.getByRole("combobox", { name: "Tool exposure" }),
+    ).toHaveText("Inherit from user");
+    await expect(
+      settings.getByRole("combobox", { name: "Enabled in this project" }),
+    ).toHaveText("Inherit from user");
+    await expect(save).toBeDisabled();
+    await settings
+      .getByRole("combobox", { name: "Enabled in this project" })
+      .click();
+    await page.getByRole("option", { name: "Disabled", exact: true }).click();
+    await save.click();
+    await expect(
+      settings.getByRole("button", { name: "Edit project server docs" }),
+    ).toBeVisible();
+    expect((await fixture.json(fixture.projectFile)).mcpServers.docs).toEqual({
+      enabled: false,
+    });
     const policyEdit = settings.getByRole("button", {
       name: "Edit project server docs",
     });
@@ -498,6 +521,23 @@ test("narrow MCP form adds and removes scoped stdio definitions and focuses inhe
     expect((await fixture.json(fixture.projectFile)).mcpServers.docs).toEqual({
       exposure: "hidden",
     });
+    await settings
+      .getByRole("button", { name: "Remove project server docs" })
+      .click();
+    await expect(
+      settings.getByText(
+        /This project will inherit the user configuration again/,
+      ),
+    ).toBeVisible();
+    await settings
+      .getByRole("button", { name: "Remove configuration", exact: true })
+      .click();
+    await expect(
+      settings.getByRole("button", {
+        name: "Customize for this project: docs",
+      }),
+    ).toBeVisible();
+    expect((await fixture.json(fixture.projectFile)).mcpServers).toEqual({});
     expect(await fixture.json(fixture.userFile)).toEqual(userBefore);
     expect(fixture.errors).toEqual([]);
   } finally {

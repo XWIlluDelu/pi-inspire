@@ -18,6 +18,13 @@ user definition. Pi 1.1 also supports policy-only project entries, which inherit
 and override enabled state, exposure or per-tool rules. Their editor offers **Inherit from user**
 for enabled/exposure and keeps connection settings and credentials in the user file.
 
+To customize an existing user server for the current project, choose **Customize for this project**
+on its User row. The name and project are fixed; settings start at **Inherit from user**. Choose only
+the policy you want to override, such as **Enabled in this project → Disabled**, then save. Inspire
+writes just that policy, not a second copy of the connection or credentials. Edit the resulting
+Project row to change the policy; remove that row to restore user inheritance. The shortcut is shown
+only when the project file is editable and has no same-name entry yet.
+
 Saving does not grant project trust; use Pi's native trust workflow. Keep personal servers and
 credentials in the user file.
 
@@ -40,7 +47,15 @@ Environment/header values and OAuth client secrets can use Pi's `${NAME}` refere
 `!command` syntax. Inspire stores these literally; it does not execute or resolve them when opening
 Settings. Pi may resolve them when loading/connecting the server.
 
-Stored URLs, arguments, environment/header values and OAuth values are not sent to the browser.
+The OAuth **Client registration** field shows the saved method. Use **Client ID or dynamic
+registration** for a supplied client ID or dynamic registration, or **Pi metadata document (CIMD)**
+when the server requires Pi's published client metadata. CIMD cannot be combined with a client ID
+or client name; switching to it requires explicitly removing any stored values in those fields.
+A custom CIMD callback must use `http://localhost` or `http://127.0.0.1` with the path `/callback`.
+Invalid combinations are rejected without changing the file.
+
+Stored URLs, arguments, environment/header values and OAuth values other than the registration
+method are not sent to the browser.
 Leave a protected input blank to keep its value. Type a replacement or use the explicit removal
 control. **Replace arguments** replaces the complete stored list. Other fields and native metadata
 that you do not edit remain intact.

@@ -569,6 +569,13 @@ async function deliverPrompt(
   }
 }
 
+function settingsQuery(owner: { sessionId?: string; cwd?: string }): string {
+  return new URLSearchParams({
+    ...(owner.sessionId !== undefined ? { sessionId: owner.sessionId } : {}),
+    ...(owner.cwd !== undefined ? { cwd: owner.cwd } : {}),
+  }).toString();
+}
+
 export function createApi(token: string | null = null) {
   return {
     taskAlertSettings: () =>
@@ -851,7 +858,7 @@ export function createApi(token: string | null = null) {
     mcpConfig: (owner: { sessionId?: string; cwd?: string }) =>
       request<McpConfigSnapshot>(
         token,
-        `/api/mcp-config?${new URLSearchParams(owner)}`,
+        `/api/mcp-config?${settingsQuery(owner)}`,
       ),
     editMcpConfig: (
       owner: { sessionId?: string; cwd?: string },
@@ -859,14 +866,14 @@ export function createApi(token: string | null = null) {
     ) =>
       request<McpConfigWriteResult>(
         token,
-        `/api/mcp-config?${new URLSearchParams(owner)}`,
+        `/api/mcp-config?${settingsQuery(owner)}`,
         { method: "PATCH", body: JSON.stringify(edit) },
         { mutation: true },
       ),
     modelSettings: (owner: { sessionId?: string; cwd?: string }) =>
       request<ModelSettingsSnapshot>(
         token,
-        `/api/model-settings?${new URLSearchParams(owner)}`,
+        `/api/model-settings?${settingsQuery(owner)}`,
       ),
     saveModelPreferences: (
       owner: { sessionId?: string; cwd?: string },
@@ -875,7 +882,7 @@ export function createApi(token: string | null = null) {
     ) =>
       request<ModelSettingsWriteResult>(
         token,
-        `/api/model-settings?${new URLSearchParams(owner)}`,
+        `/api/model-settings?${settingsQuery(owner)}`,
         { method: "PATCH", body: JSON.stringify({ revision, patch }) },
         { mutation: true },
       ),
@@ -886,7 +893,7 @@ export function createApi(token: string | null = null) {
     ) =>
       request<ModelSettingsWriteResult>(
         token,
-        `/api/model-settings/config?${new URLSearchParams(owner)}`,
+        `/api/model-settings/config?${settingsQuery(owner)}`,
         { method: "PATCH", body: JSON.stringify({ revision, edit }) },
         { mutation: true },
       ),
@@ -896,7 +903,7 @@ export function createApi(token: string | null = null) {
     ) =>
       post<{ result: ProviderAuthResult }>(
         token,
-        `/api/provider-auth?${new URLSearchParams(owner)}`,
+        `/api/provider-auth?${settingsQuery(owner)}`,
         operation,
         {},
         {
