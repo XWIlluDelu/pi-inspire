@@ -340,9 +340,11 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   request, selection, or transport replacement cannot inherit it.
 - Expected lifecycle transitions do not report obsolete background reads as failures.
   [[session-deletion]] owns the deletion boundary; real deletion failure and authentication loss
-  remain visible. Notifications remain bottom-right on desktop. On phones they stay below the
-  workspace header, clear of any current multiline banner and its controls, rather than moving
-  over the editor. [[design-system]] owns their visual treatment and dwell.
+  remain visible. General notifications use one floating stack across welcome and conversation
+  views; they do not become full-width welcome-page content. They stay top-right at every width,
+  below the workspace header, current banners and horizontally overlapping transcript search/tools.
+  An overflowing stack remains scrollable above the editor rather than moving the anchor with
+  editor height. [[design-system]] owns their compact visual treatment and dwell.
 
 ## Session-owned controls and command palette
 

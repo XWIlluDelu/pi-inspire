@@ -760,6 +760,72 @@ test("native dialog keyboard/pointer flow, deadline reconnect and content-first 
   expect(errors).toEqual([]);
 });
 
+test.describe("short touch workbench", () => {
+  test.use({ hasTouch: true });
+  test("short windows share space between the transcript, draft and both widget placements", async ({
+    page,
+  }) => {
+    const fixture = await openExample(page, "light");
+    publishDisplays(fixture, "Review ready");
+    const draft =
+      "Review the change\nCheck the layout\nPreserve the draft\nCheck the controls\nContinue";
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await input.fill(draft);
+    for (const [width, height] of [
+      [901, 390],
+      [568, 320],
+    ]) {
+      await page.setViewportSize({ width, height });
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const bounds = (selector: string) =>
+              document.querySelector(selector)!.getBoundingClientRect();
+            const stage = bounds(".reading-stage");
+            const transcript = bounds(".transcript");
+            const above = bounds(".extension-dock--above");
+            const composer = bounds(".composer");
+            const below = bounds(".extension-dock--below");
+            return (
+              transcript.bottom <= above.top &&
+              above.bottom <= composer.top &&
+              composer.bottom <= below.top &&
+              below.bottom <= stage.bottom &&
+              transcript.height >= 48 &&
+              above.height >= 20 &&
+              below.height >= 20
+            );
+          }),
+        )
+        .toBe(true);
+      await expect(input).toHaveValue(draft);
+      await page
+        .getByRole("button", { name: "Send message", exact: true })
+        .click({ trial: true });
+      for (const placement of ["above", "below"]) {
+        const widget = page.getByRole("region", {
+          name: `Extension content ${placement} composer`,
+        });
+        await widget.focus();
+        await widget.press("End");
+        await expect
+          .poll(() => widget.evaluate((el) => el.scrollTop))
+          .toBeGreaterThan(0);
+        const lineHeight = await widget
+          .locator("pre")
+          .evaluate((el) => getComputedStyle(el).lineHeight);
+        expect(Number.parseFloat(lineHeight)).toBeGreaterThanOrEqual(18);
+      }
+    }
+    // Larger windows restore the complete headings and natural content heights.
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await expect(
+      page.locator(".extension-display__head > span").first(),
+    ).toBeVisible();
+    await expect(input).toHaveValue(draft);
+  });
+});
+
 test.describe("narrow touch reading", () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
   test("chooses directly and reads complete topbar status on touch", async ({

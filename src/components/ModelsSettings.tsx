@@ -35,6 +35,7 @@ import type {
   ProviderLoginOption,
 } from "../../shared/model-settings";
 import { shallowEqual, store, useAppState } from "../store";
+import { DetailSummary } from "./DetailSummary";
 import { Dropdown } from "./Dropdown";
 import { ModelForm, ProviderForm } from "./ModelDeclarationForms";
 import { ModelList, type ModelListHandle } from "./ModelList";
@@ -573,22 +574,21 @@ export function ModelsSettings({
     [snapshot],
   );
   const customConfiguration = snapshot ? (
-    <div className="models-advanced-providers">
-      <div className="models-advanced-providers__summary">
+    <details
+      className="models-advanced-providers"
+      open={declarationsOpen}
+      onToggle={(event) => setDeclarationsOpen(event.currentTarget.open)}
+    >
+      <DetailSummary
+        className="models-advanced-providers__summary"
+        aria-label="Custom provider declarations"
+      >
         <span>
           {snapshot.providers.length}{" "}
           {snapshot.providers.length === 1 ? "provider" : "providers"} ·{" "}
           {totalModels} {totalModels === 1 ? "model" : "models"}
         </span>
-        <button
-          type="button"
-          className="models-text-button"
-          aria-expanded={declarationsOpen}
-          onClick={() => setDeclarationsOpen((open) => !open)}
-        >
-          {declarationsOpen ? "Hide" : "Show"}
-        </button>
-      </div>
+      </DetailSummary>
       {declarationsOpen ? (
         <div className="models-declarations">
           <p className="settings__field-help">
@@ -615,7 +615,8 @@ export function ModelsSettings({
                   <div className="models-actions">
                     <button
                       type="button"
-                      className="models-text-button"
+                      className="models-icon-button"
+                      title="Edit provider"
                       aria-label={`Edit provider ${provider.id}`}
                       disabled={busy}
                       onClick={(event) =>
@@ -625,11 +626,12 @@ export function ModelsSettings({
                         )
                       }
                     >
-                      Edit
+                      <Pencil size={14} aria-hidden />
                     </button>
                     <button
                       type="button"
-                      className="models-text-button"
+                      className="models-icon-button"
+                      title="Remove provider"
                       aria-label={`Remove provider configuration ${provider.id}`}
                       disabled={busy}
                       onClick={(event) => {
@@ -640,13 +642,15 @@ export function ModelsSettings({
                         });
                       }}
                     >
-                      Remove
+                      <Trash2 size={14} aria-hidden />
                     </button>
                   </div>
                 </div>
                 <div className="models-provider-models">
                   <details className="models-provider-models__disclosure">
-                    <summary>Models ({provider.models.length})</summary>
+                    <DetailSummary>
+                      Models ({provider.models.length})
+                    </DetailSummary>
                     <div className="models-declared-models">
                       {provider.models.map((model) => (
                         <div
@@ -664,7 +668,8 @@ export function ModelsSettings({
                           <div className="models-actions">
                             <button
                               type="button"
-                              className="models-text-button"
+                              className="models-icon-button"
+                              title="Edit model"
                               aria-label={`Edit declared model ${provider.id}/${model.id}${model.type && model.type !== "chat" ? ` (${model.type})` : ""}`}
                               disabled={busy}
                               onClick={(event) =>
@@ -678,11 +683,12 @@ export function ModelsSettings({
                                 )
                               }
                             >
-                              Edit
+                              <Pencil size={14} aria-hidden />
                             </button>
                             <button
                               type="button"
-                              className="models-text-button"
+                              className="models-icon-button"
+                              title="Remove model"
                               aria-label={`Remove model configuration ${provider.id}/${model.id}${model.type && model.type !== "chat" ? ` (${model.type})` : ""}`}
                               disabled={busy}
                               onClick={(event) => {
@@ -695,7 +701,7 @@ export function ModelsSettings({
                                 });
                               }}
                             >
-                              Remove
+                              <Trash2 size={14} aria-hidden />
                             </button>
                           </div>
                         </div>
@@ -769,7 +775,7 @@ export function ModelsSettings({
           ) : null}
         </div>
       ) : null}
-    </div>
+    </details>
   ) : null;
   return (
     <div className="models-settings-layout" ref={rootRef}>
@@ -1129,10 +1135,10 @@ export function ModelsSettings({
                     ref={savedEntriesRef}
                     className="models-saved-entries"
                   >
-                    <summary>
+                    <DetailSummary>
                       Common order and rules (
                       {snapshot.saved.enabledModels.length})
-                    </summary>
+                    </DetailSummary>
                     <p
                       className="settings__field-help"
                       style={{ paddingTop: "var(--space-2)" }}
@@ -1339,7 +1345,7 @@ export function ModelsSettings({
                   )
                 }
               >
-                <Plus size={13} aria-hidden /> Add provider
+                <Plus size={14} aria-hidden /> Add provider
               </button>
             }
           >

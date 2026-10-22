@@ -443,10 +443,10 @@ test.describe("touch model editor", () => {
       name: "Custom providers",
       exact: true,
     });
-    await expect(
-      providers.getByRole("button", { name: "Show", exact: true }),
-    ).toBeVisible();
-    await providers.getByRole("button", { name: "Show", exact: true }).click();
+    const declarations = providers.getByLabel("Custom provider declarations");
+    await expect(declarations).toBeVisible();
+    await declarations.focus();
+    await page.keyboard.press("Enter");
     const declaration = providers.getByRole("region", {
       name: "Custom provider custom",
       exact: true,
@@ -508,7 +508,7 @@ test("provider -> model -> common/default retains row focus, current model and c
   });
   await settings
     .getByRole("region", { name: "Custom providers" })
-    .getByRole("button", { name: "Show", exact: true })
+    .getByLabel("Custom provider declarations")
     .click();
   const customProvider = settings.getByRole("region", {
     name: "Custom provider custom",

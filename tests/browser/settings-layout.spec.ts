@@ -297,8 +297,13 @@ test("Settings headings sit outside their cards and nested fills follow the bord
       });
     expect(offsets).toHaveLength(1);
     expect(Math.abs(offsets[0]!)).toBeLessThanOrEqual(0.5);
-    const show = providers.getByRole("button", { name: "Show", exact: true });
-    if (await show.isVisible()) await show.click();
+    const declarations = providers.getByLabel("Custom provider declarations");
+    if (
+      !(await declarations.evaluate(
+        (el) => (el.parentElement as HTMLDetailsElement).open,
+      ))
+    )
+      await declarations.click();
     const provider = settings.locator(".models-provider-config").first();
     await expect(provider).toBeVisible();
     const corner = await provider.evaluate((el) => {

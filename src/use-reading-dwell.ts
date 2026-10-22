@@ -3,6 +3,15 @@ import { type RefObject, useEffect, useRef, useState } from "react";
 const RESUME_GRACE_MS = 3_000;
 // Matches the shared --dur-standard opacity exit.
 const EXIT_MS = 150;
+const words = new Intl.Segmenter(undefined, { granularity: "word" });
+
+/** Coarse reading bands, including text without spaces; not a reading-speed estimate. */
+export function readingDwellMs(text: string): number {
+  const count = Array.from(words.segment(text)).filter(
+    (part) => part.isWordLike,
+  ).length;
+  return count <= 10 ? 3_000 : count <= 30 ? 5_000 : 8_000;
+}
 
 /** Spend the reading budget only while visible and not being inspected. */
 export function useReadingDwell<T extends HTMLElement>(
@@ -24,6 +33,7 @@ export function useReadingDwell<T extends HTMLElement>(
     let remaining = durationMs;
     let startedAt = 0;
     let paused = true;
+    let inView = false;
     const pointer = (interaction.current ??= {
       hovered: node.matches(":hover"),
       pressed: false,
@@ -39,7 +49,11 @@ export function useReadingDwell<T extends HTMLElement>(
     };
     const reconcile = () => {
       const nextPaused =
-        pointer.hovered || pointer.pressed || focused || document.hidden;
+        !inView ||
+        pointer.hovered ||
+        pointer.pressed ||
+        focused ||
+        document.hidden;
       if (nextPaused === paused) return;
       paused = nextPaused;
       if (paused) {
@@ -93,9 +107,18 @@ export function useReadingDwell<T extends HTMLElement>(
     focusRoot.addEventListener("focusin", focus);
     focusRoot.addEventListener("focusout", blur);
     document.addEventListener("visibilitychange", reconcile);
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        inView = entry.isIntersecting && entry.intersectionRatio >= 0.5;
+        reconcile();
+      },
+      { threshold: 0.5 },
+    );
+    observer.observe(node);
     reconcile();
     return () => {
       clear();
+      observer.disconnect();
       node.removeEventListener("pointerenter", enter);
       node.removeEventListener("pointerleave", leave);
       node.removeEventListener("pointerdown", press);

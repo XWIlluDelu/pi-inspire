@@ -275,9 +275,9 @@ body.srail-dragging {
   }
 
   .transcript {
-    padding: calc(var(--space-2) + 44px + var(--space-3))
-      max(var(--space-4), var(--safe-right)) var(--space-6)
-      max(var(--space-4), var(--safe-left));
+    --transcript-padding-top: calc(var(--space-2) + 44px + var(--space-3));
+    --transcript-padding-bottom: var(--space-6);
+    padding-inline: max(var(--space-4), var(--safe-left)) max(var(--space-4), var(--safe-right));
   }
 
   .transcript-search {
@@ -444,6 +444,7 @@ body.srail-dragging {
   }
 
   .notices {
+    --notice-anchor: top;
     top: calc(var(--notice-header-bottom) + var(--space-2));
     right: max(var(--space-3), var(--safe-right));
     bottom: auto;

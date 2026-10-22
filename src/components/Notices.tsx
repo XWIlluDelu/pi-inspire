@@ -7,7 +7,7 @@ import {
   availableUpdates,
   updateDetailsText,
 } from "../update-availability";
-import { useReadingDwell } from "../use-reading-dwell";
+import { readingDwellMs, useReadingDwell } from "../use-reading-dwell";
 import { CopyAction } from "./CopyAction";
 import { NoticeCard } from "./NoticeCard";
 
@@ -17,12 +17,13 @@ function NoticeItem({ notice }: { notice: Notice }) {
     [notice.id],
   );
   const { ref, leaving } = useReadingDwell<HTMLDivElement>(
-    notice.kind === "info" ? 8_000 : null,
+    notice.kind === "info" ? readingDwellMs(notice.text) : null,
     dismiss,
   );
   return (
     <NoticeCard
       ref={ref}
+      compact
       kind={notice.kind}
       text={notice.text}
       onDismiss={dismiss}
@@ -99,6 +100,7 @@ export const Notices = memo(function Notices({
 }) {
   const state = useAppState(
     (source) => ({
+      sessionId: source.sessionId,
       notices: source.notices,
       error: source.error,
       connection: source.connection,
@@ -118,7 +120,7 @@ export const Notices = memo(function Notices({
       ? availableUpdates(state)
       : null;
   const ref = useRef<HTMLDivElement>(null);
-  // Both anchors respect the current header and multiline banners. Rebind
+  // Keep one top-right anchor below the visible workspace controls. Rebind
   // after feedback changes can replace those nodes.
   useLayoutEffect(() => {
     const element = ref.current;
@@ -128,12 +130,43 @@ export const Notices = memo(function Notices({
         "main > .topbar, main > .banner",
       ),
     ];
+    const tools = [
+      ...document.querySelectorAll<HTMLElement>(
+        "main .transcript-search, main .transcript-mobile-toolbar",
+      ),
+    ];
+    const composer = document.querySelector<HTMLElement>(
+      "main .composer, main .composer-readonly",
+    );
     const measure = () => {
-      if (boundaries.length > 0) {
-        const bottom = Math.max(
-          ...boundaries.map((node) => node.getBoundingClientRect().bottom),
+      const stackBounds = element.getBoundingClientRect();
+      const overlapsHorizontally = (bounds: DOMRect) =>
+        bounds.width > 0 &&
+        stackBounds.left < bounds.right &&
+        stackBounds.right > bounds.left;
+      let headerBottom = Math.max(
+        0,
+        ...boundaries.map((node) => node.getBoundingClientRect().bottom),
+      );
+      for (const tool of tools) {
+        const bounds = tool.getBoundingClientRect();
+        if (bounds.height > 0 && overlapsHorizontally(bounds))
+          headerBottom = Math.max(headerBottom, bounds.bottom);
+      }
+      element.style.setProperty("--notice-header-bottom", `${headerBottom}px`);
+      // The editor limits an overflowing stack; it never moves the top anchor.
+      const composerBounds = composer?.getBoundingClientRect();
+      if (
+        composerBounds &&
+        overlapsHorizontally(composerBounds) &&
+        composerBounds.top > headerBottom + 8
+      ) {
+        element.style.setProperty(
+          "--notice-bottom-inset",
+          `max(var(--space-4), var(--safe-bottom), ${window.innerHeight - composerBounds.top + 8}px)`,
         );
-        element.style.setProperty("--notice-header-bottom", `${bottom}px`);
+      } else {
+        element.style.removeProperty("--notice-bottom-inset");
       }
       // Measure at the full card width, without a previous scrollbar. Normal
       // stacks keep their floating shadows; only overflowing ones need clipping.
@@ -156,9 +189,17 @@ export const Notices = memo(function Notices({
       typeof ResizeObserver === "undefined"
         ? null
         : new ResizeObserver(measure);
-    [...boundaries, element, ...element.children].forEach((node) =>
-      observer?.observe(node),
-    );
+    [
+      ...boundaries,
+      ...tools,
+      element,
+      ...element.children,
+      composer,
+      composer?.closest(".composer-dock"),
+      document.querySelector("main"),
+    ].forEach((node) => {
+      if (node) observer?.observe(node);
+    });
     window.addEventListener("resize", measure);
     return () => {
       observer?.disconnect();
