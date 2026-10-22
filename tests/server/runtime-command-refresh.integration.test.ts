@@ -109,7 +109,6 @@ it("discovers and admits native in-process reload commands without replacing eit
       modified: new Date(timestamp),
       messageCount: 1,
       firstMessage: "Retained conversation",
-      searchText: "Retained conversation",
     });
   }
   const catalog: SessionCatalogLike = {

@@ -189,7 +189,13 @@ for (const narrow of [false, true]) {
     const log = page.getByRole("log");
     const wrap = page.locator(".transcript-wrap");
     const latest = page.getByRole("button", { name: "Jump to latest" });
-    const search = page.getByRole("searchbox", { name: "Search conversation" });
+    if (!narrow)
+      await page
+        .getByRole("button", { name: "Open conversation search" })
+        .click();
+    const search = page.getByRole("searchbox", {
+      name: "Search loaded messages",
+    });
     await expect(
       page.getByRole("heading", { name: "A compact result" }),
     ).toBeVisible();
@@ -498,7 +504,7 @@ test("prompt map navigates user turns and adapts to the narrow workbench", async
 
   await searchLauncher.click();
   const mobileSearch = page.getByRole("searchbox", {
-    name: "Search conversation",
+    name: "Search loaded messages",
   });
   await expect(mobileSearch).toBeVisible();
   await expect(mobileSearch).toBeFocused();
@@ -515,7 +521,7 @@ test("prompt map navigates user turns and adapts to the narrow workbench", async
     "Model",
   );
   const matches = page.getByLabel("Transcript search matches");
-  await expect(matches).toHaveText("No matches");
+  await expect(matches).toHaveText("0 matches");
   expect(
     await matches.evaluate(
       (element) => element.scrollWidth - element.clientWidth,

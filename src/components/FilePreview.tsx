@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  ArrowLeft,
   Check,
   Download,
   FileText,
@@ -517,6 +518,15 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
     <div className="file-preview">
       <div className="file-detail-header">
         <div className="file-detail-header__path">
+          <button
+            type="button"
+            className="file-preview__back"
+            onClick={() => store.showFileBrowser()}
+            aria-label="Back to Files"
+          >
+            <ArrowLeft size={15} aria-hidden />
+            <span>Files</span>
+          </button>
           <PathCopyButton path={displayPath} />
         </div>
         <div className="file-detail-header__actions">

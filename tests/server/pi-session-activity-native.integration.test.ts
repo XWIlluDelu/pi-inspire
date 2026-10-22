@@ -99,7 +99,6 @@ it.each([false, true])(
       modified: new Date(),
       messageCount: 0,
       firstMessage: "",
-      searchText: "",
       source: null,
     };
     const publish = vi.fn();

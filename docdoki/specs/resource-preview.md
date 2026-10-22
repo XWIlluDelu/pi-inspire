@@ -45,11 +45,14 @@ use weight 600 with inherited foreground and no background. Matching follows Hos
 whitespace-separated substring terms on the full path; ranges project into the filename and
 parent-directory fields, including path-spanning terms, without changing titles or bidi isolation.
 
-Selecting a recent, search, or tree entry opens a fixed index/detail stack: the workspace tree stays
+On desktop, selecting a recent, search, or tree entry opens a fixed index/detail stack: the workspace tree stays
 above the preview, while Search and Recent yield space. **← project-folder** returns to Browse with
 its query, expansions, and scroll retained. The default upper boundary matches Browse after Search
 and Recent, keeping the file-content boundary stable. Files and Changes share that height, divider,
-headers, and narrow drawer layout, with no internal splitter. The index header stays on the browser's
+headers, with no internal splitter. On narrow screens, Files instead gives the selected file the
+full detail height and provides Back to Files alongside its filename and actions. Both that control
+and browser Back restore Browse with query, expansions and scroll retained. A second Back closes
+Context. Changes keeps its existing narrow split. The index header stays on the browser's
 `--bg-context` surface; the current file's path/actions bar uses `--bg-surface` to distinguish the
 reading area below. Both Files and Changes use these roles without an extra shadow or raised frame.
 

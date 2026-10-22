@@ -34,17 +34,17 @@ describe("settled transcript search", () => {
       />,
     );
     const search = screen.getByRole("searchbox", {
-      name: "Search conversation",
+      name: "Search loaded messages",
     });
     for (const query of ["31m", "Magic Context compacted"]) {
       fireEvent.change(search, { target: { value: query } });
       expect(
-        screen.getByRole("search", { name: "Search settled transcript" }),
-      ).toHaveTextContent("No matches");
+        screen.getByRole("search", { name: "Search loaded messages" }),
+      ).toHaveTextContent("0 matches");
     }
     fireEvent.change(search, { target: { value: "Visible status" } });
     expect(
-      screen.getByRole("search", { name: "Search settled transcript" }),
+      screen.getByRole("search", { name: "Search loaded messages" }),
     ).toHaveTextContent("1");
     fireEvent.change(search, { target: { value: "retained decisions" } });
     fireEvent.click(
@@ -73,7 +73,7 @@ describe("settled transcript search", () => {
       const { rerender } = render(<Transcript {...props} />);
       const toggle = screen.getByRole("button", { name: title });
       const input = screen.getByRole("searchbox", {
-        name: "Search conversation",
+        name: "Search loaded messages",
       });
       const next = screen.getByRole("button", {
         name: "Next transcript match",
@@ -117,10 +117,10 @@ describe("settled transcript search", () => {
     );
 
     const search = screen.getByRole("search", {
-      name: "Search settled transcript",
+      name: "Search loaded messages",
     });
     const input = screen.getByRole("searchbox", {
-      name: "Search conversation",
+      name: "Search loaded messages",
     });
     expect(search).not.toHaveClass("transcript-search--active");
 
@@ -142,12 +142,12 @@ describe("settled transcript search", () => {
       screen.getByLabelText("Transcript search matches"),
     ).toHaveTextContent("1 match");
     fireEvent.change(
-      screen.getByRole("searchbox", { name: "Search conversation" }),
+      screen.getByRole("searchbox", { name: "Search loaded messages" }),
       { target: { value: "user" } },
     );
     expect(
       screen.getByLabelText("Transcript search matches"),
-    ).toHaveTextContent("No matches");
+    ).toHaveTextContent("0 matches");
 
     fireEvent.click(screen.getByRole("combobox", { name: "Search scope" }));
     fireEvent.click(screen.getByRole("option", { name: "All" }));
@@ -170,7 +170,7 @@ describe("settled transcript search", () => {
       />,
     );
     const input = screen.getByRole("searchbox", {
-      name: "Search conversation",
+      name: "Search loaded messages",
     });
     fireEvent.change(input, { target: { value: "find" } });
     fireEvent.click(
@@ -206,7 +206,7 @@ describe("settled transcript search", () => {
         />,
       );
       const input = screen.getByRole("searchbox", {
-        name: "Search conversation",
+        name: "Search loaded messages",
       });
       const result = screen.getByLabelText("Transcript search matches");
       fireEvent.change(input, { target: { value: "find" } });
@@ -230,6 +230,11 @@ describe("settled transcript search", () => {
   );
 
   it("opens and closes mobile search explicitly without hiding an active query", async () => {
+    const matchMedia = window.matchMedia;
+    vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+      ...matchMedia(query),
+      matches: query === "(max-width: 900px)",
+    }));
     const { container } = render(
       <Transcript
         sessionId="mobile-search"
@@ -247,14 +252,14 @@ describe("settled transcript search", () => {
       screen.getByRole("button", { name: "Open conversation search" }),
     );
     const input = screen.getByRole("searchbox", {
-      name: "Search conversation",
+      name: "Search loaded messages",
     });
     await waitFor(() => expect(input).toHaveFocus());
     expect(container.querySelector(".transcript-wrap")).toHaveClass(
       "transcript-wrap--mobile-search",
     );
     expect(
-      screen.getByRole("search", { name: "Search settled transcript" }),
+      screen.getByRole("search", { name: "Search loaded messages" }),
     ).toHaveClass("transcript-search--mobile-open");
 
     fireEvent.change(input, { target: { value: "find" } });
@@ -320,7 +325,7 @@ describe("settled transcript search", () => {
       />,
     );
     const input = screen.getByRole("searchbox", {
-      name: "Search conversation",
+      name: "Search loaded messages",
     });
 
     fireEvent.change(input, { target: { value: "beta" } });
@@ -346,7 +351,7 @@ describe("settled transcript search", () => {
     fireEvent.change(input, { target: { value: "needle" } });
     expect(
       screen.getByLabelText("Transcript search matches"),
-    ).toHaveTextContent("No matches");
+    ).toHaveTextContent("0 matches");
 
     fireEvent.change(input, { target: { value: "beta" } });
     rerender(
@@ -381,7 +386,7 @@ describe("settled transcript search", () => {
       />,
     );
     expect(
-      screen.getByRole("searchbox", { name: "Search conversation" }),
+      screen.getByRole("searchbox", { name: "Search loaded messages" }),
     ).toHaveValue("");
   });
 });

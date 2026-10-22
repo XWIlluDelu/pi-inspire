@@ -267,7 +267,11 @@ export const Transcript = memo(function Transcript({
   const closeMobileTranscriptTool = useCallback(
     (restoreFocus = false) => {
       const closedTool = mobileTranscriptTool;
-      if (closedTool === "search") search.clear();
+      if (
+        closedTool === "search" &&
+        window.matchMedia("(max-width: 900px)").matches
+      )
+        search.clear();
       setMobileTranscriptTool(null);
       if (restoreFocus && closedTool) {
         requestAnimationFrame(() => {
@@ -301,7 +305,11 @@ export const Transcript = memo(function Transcript({
   }, []);
 
   useEffect(() => {
-    if (mobileTranscriptTool === null) return;
+    if (
+      mobileTranscriptTool === null ||
+      !window.matchMedia("(max-width: 900px)").matches
+    )
+      return;
     const closeFromOutside = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
@@ -521,9 +529,7 @@ export const Transcript = memo(function Transcript({
         if (isComposingKeyboardEvent(event.nativeEvent)) return;
         if (event.key === "f" && (event.metaKey || event.ctrlKey)) {
           event.preventDefault();
-          if (window.matchMedia("(max-width: 900px)").matches) {
-            setMobileTranscriptTool("search");
-          }
+          setMobileTranscriptTool("search");
           searchInputRef.current?.focus();
           searchInputRef.current?.select();
         } else if (
@@ -552,6 +558,10 @@ export const Transcript = memo(function Transcript({
         mobileTool={mobileTranscriptTool}
         onOpenMobile={setMobileTranscriptTool}
         onClose={closeMobileTranscriptTool}
+        onSearchHistory={() => {
+          store.searchHistory(search.query);
+          closeMobileTranscriptTool();
+        }}
       />
       <PromptMap
         key={`prompt-map:${sessionId}\u0000${projectionViewKey}`}

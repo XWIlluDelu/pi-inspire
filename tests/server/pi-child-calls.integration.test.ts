@@ -227,7 +227,6 @@ it("projects native raw-JS Codemode and generic descendants live and after reope
       modified: new Date(),
       messageCount: 4,
       firstMessage: "Run the fixture",
-      searchText: "fixture",
     });
     const messages = projection.latestPage().messages as Array<
       Record<string, unknown>

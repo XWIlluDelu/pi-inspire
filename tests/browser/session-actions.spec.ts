@@ -140,6 +140,7 @@ for (const touch of [false, true]) {
       await expect(menu.getByRole("menuitem")).toHaveText([
         "Rename session",
         "Clone current branch",
+        "Use in terminal…",
         "Export session…",
       ]);
       const input = page.getByRole("textbox", { name: "Session name" });

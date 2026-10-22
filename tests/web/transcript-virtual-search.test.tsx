@@ -31,7 +31,7 @@ describe("virtualized transcript search navigation", () => {
     };
     const { rerender } = render(<Transcript {...props} viewId="branch-a" />);
     const search = screen.getByRole("searchbox", {
-      name: "Search conversation",
+      name: "Search loaded messages",
     });
     fireEvent.change(search, { target: { value: "answer" } });
     expect(search).toHaveValue("answer");
@@ -171,7 +171,7 @@ describe("virtualized transcript search navigation", () => {
     );
 
     fireEvent.change(
-      screen.getByRole("searchbox", { name: "Search conversation" }),
+      screen.getByRole("searchbox", { name: "Search loaded messages" }),
       { target: { value: "TARGET" } },
     );
     expect(
@@ -248,7 +248,7 @@ describe("virtualized transcript search navigation", () => {
     render(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Prepend older" }));
     fireEvent.change(
-      screen.getByRole("searchbox", { name: "Search conversation" }),
+      screen.getByRole("searchbox", { name: "Search loaded messages" }),
       { target: { value: "anchored" } },
     );
     fireEvent.click(

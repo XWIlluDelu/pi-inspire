@@ -18,6 +18,7 @@ const CONSTRAINTS: FloatingMenuConstraints = {
 export function SessionActionsMenu({
   anchorRef,
   cloneDisabled,
+  renameDisabled = false,
   onRename,
   onClone,
   onExport,
@@ -25,6 +26,7 @@ export function SessionActionsMenu({
 }: {
   anchorRef: RefObject<HTMLButtonElement | null>;
   cloneDisabled: boolean;
+  renameDisabled?: boolean;
   onRename: () => void;
   onClone: () => void;
   onExport: () => void;
@@ -45,7 +47,7 @@ export function SessionActionsMenu({
   const attachMenu = useCallback((node: HTMLDivElement | null) => {
     menuRef.current = node;
     node
-      ?.querySelector<HTMLButtonElement>("button")
+      ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
       ?.focus({ preventScroll: true });
   }, []);
 
@@ -115,7 +117,12 @@ export function SessionActionsMenu({
         }
       }}
     >
-      <button type="button" role="menuitem" onClick={onRename}>
+      <button
+        type="button"
+        role="menuitem"
+        disabled={renameDisabled}
+        onClick={onRename}
+      >
         Rename session
       </button>
       <button

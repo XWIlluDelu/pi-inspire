@@ -15,6 +15,23 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("keeps saved JSONL available for read-only history without offering HTML", async () => {
+  const exportSession = vi.spyOn(store, "exportSession").mockResolvedValue();
+  render(
+    <ExportDialog sessionId="read-only" readOnly active onClose={() => {}} />,
+  );
+  expect(
+    screen.getByRole("radio", { name: "HTML Whole session" }),
+  ).toBeDisabled();
+  expect(
+    screen.getByRole("radio", { name: "JSONL Saved branch" }),
+  ).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "Download" }));
+  await waitFor(() =>
+    expect(exportSession).toHaveBeenCalledWith("read-only", "jsonl"),
+  );
+});
+
 it("retains the selected format on failure and downloads for the captured session on retry", async () => {
   const exportSession = vi
     .spyOn(store, "exportSession")

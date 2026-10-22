@@ -883,7 +883,7 @@ describe("welcome flow", () => {
         screen.getByRole("button", { name: "Open conversation search" }),
       );
       const search = screen.getByRole("searchbox", {
-        name: "Search conversation",
+        name: "Search loaded messages",
       });
       fireEvent.keyDown(search, { key: "Escape" });
       await waitFor(() =>

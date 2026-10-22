@@ -314,8 +314,7 @@ const SessionIdent = memo(function SessionIdent({
             onBlur={() => setRestoredTitleFocus(false)}
             aria-label={`Session actions: ${heading}`}
             aria-haspopup="menu"
-            aria-expanded={menuOpen && !readOnlyReason}
-            disabled={Boolean(readOnlyReason)}
+            aria-expanded={menuOpen}
             title={heading}
             onClick={() => setMenuOpen((open) => !open)}
             onKeyDown={(event) => {
@@ -333,10 +332,11 @@ const SessionIdent = memo(function SessionIdent({
           </button>
         </h1>
 
-        {menuOpen && !readOnlyReason ? (
+        {menuOpen ? (
           <SessionActionsMenu
             anchorRef={titleRef}
             cloneDisabled={cloneDisabled}
+            renameDisabled={Boolean(readOnlyReason)}
             onClose={closeMenu}
             onRename={startRename}
             onClone={() => {

@@ -65,14 +65,14 @@ describe("Stopped assistant outcomes", () => {
       expect(screen.queryByText("This operation was aborted")).toBeNull();
 
       const search = screen.getByRole("searchbox", {
-        name: "Search conversation",
+        name: "Search loaded messages",
       });
       fireEvent.change(search, {
         target: { value: "This operation was aborted" },
       });
       expect(
         screen.getByLabelText("Transcript search matches"),
-      ).toHaveTextContent("No matches");
+      ).toHaveTextContent("0 matches");
       fireEvent.change(search, { target: { value: "Stopped" } });
       fireEvent.keyDown(search, { key: "Enter" });
       expect(

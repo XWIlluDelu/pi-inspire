@@ -61,7 +61,6 @@ async function exerciseOwner(connectHerdr: boolean) {
     source: null,
     messageCount: 0,
     firstMessage: "",
-    searchText: "",
   };
   const catalog: SessionCatalogLike = {
     refresh: async () => [session],

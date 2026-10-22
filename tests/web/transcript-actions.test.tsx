@@ -53,7 +53,7 @@ describe("message actions", () => {
       screen.queryByText(ATTACHMENT_CONTEXT_HEADING),
     ).not.toBeInTheDocument();
     const search = screen.getByRole("searchbox", {
-      name: "Search conversation",
+      name: "Search loaded messages",
     });
     fireEvent.change(search, { target: { value: "AGENTS" } });
     expect(
@@ -62,7 +62,7 @@ describe("message actions", () => {
     fireEvent.change(search, { target: { value: "JSON paths" } });
     expect(
       screen.getByLabelText("Transcript search matches"),
-    ).toHaveTextContent("No matches");
+    ).toHaveTextContent("0 matches");
     fireEvent.click(screen.getByRole("button", { name: "Copy message" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(source));
     expect(
@@ -149,12 +149,12 @@ describe("message actions", () => {
         screen.getByRole("group", { name: "Attached images" }),
       ).toBeInTheDocument();
       const search = screen.getByRole("searchbox", {
-        name: "Search conversation",
+        name: "Search loaded messages",
       });
       fireEvent.change(search, { target: { value: "Multiply coordinates" } });
       expect(
         screen.getByLabelText("Transcript search matches"),
-      ).toHaveTextContent("No matches");
+      ).toHaveTextContent("0 matches");
       fireEvent.change(search, { target: { value: "inspect" } });
       expect(
         screen.getByLabelText("Transcript search matches"),

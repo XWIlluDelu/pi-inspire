@@ -2,6 +2,7 @@
 purpose: "The conversation retains usable reading geometry while session identity, Git observation, and responsive contextual panes keep independent presentation ownership."
 covers:
   - src/App.tsx
+  - src/use-inspection-history.ts
   - src/store.ts
   - src/controllers/{git,workspace}-controller.ts
   - src/components/{AppTopbar,SessionActionsMenu,Composer,ExtensionDisplays,ContextPane,ContextPaneShell,ContextSplitBody,FilesPane,ChangesPane,WorkspaceBrowser,BranchTree,PaneResizeHandle}.tsx
@@ -33,7 +34,7 @@ independent project shells in [[terminal]].
   gutter and rail position before paint, so the rail never covers conversation content or retains an
   earlier-width position.
 
-  Desktop search floats at the top-right of the reading measure. On both desktop and narrow
+  Desktop search rests as a compact launcher at the top-right of the reading measure and opens on demand. On both desktop and narrow
   screens, search/navigation controls preserve vertical reading space rather than reserve a toolbar
   row. The floating `Jump to latest` text button remains bottom-centered within the transcript.
   The transcript scroll thumb is separate from Prompt Map: its complete grab band fits the
@@ -164,11 +165,18 @@ independent project shells in [[terminal]].
 - The contextual region primarily hosts Files, Changes, History, and Terminal through equal-width
   mode controls that preserve every label at the pane's minimum width. Files uses the complete
   search/Recent/Workspace browser until a file is selected, then keeps a fixed bounded Workspace
-  index above the file detail so related files remain one step away. Changes uses that same upper
+  index above the file detail on desktop so related files remain one step away. Narrow Files uses
+  full-height detail with Back to Files, the filename and existing necessary actions; returning to
+  Browse preserves its query, expansions and scroll. Changes uses that same desktop upper
   height, divider, and lower-header geometry without an internal resize control: repository identity
   and grouped changed paths stay above complete selected-file Source with inline Git changes and
-  navigation. The same vertical hierarchy fills the contextual drawer on narrow screens rather than
-  becoming a second component arrangement.
+  navigation. Changes retains its existing index/detail hierarchy on narrow screens.
+
+  Narrow Context, navigation and Settings participate in transient browser history. Files detail
+  adds one nested level: Back returns to the list, then closes the panel, then leaves the application.
+  Same-level tabs reuse their entry and explicit close consumes the owned levels without an empty
+  Back stop. Image inspection uses the same small history owner, independently of panel depth;
+  this is not a URL router or a second navigation model.
 
   History is a conversation outline for inspecting and deliberately continuing Pi history, not a
   graph editor, duplicate Transcript, or raw audit log. User prompts lead its compact default view;

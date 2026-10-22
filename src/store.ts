@@ -2997,6 +2997,17 @@ export class AppStore {
     if (contextMode === "branches") void this.loadBranchTree();
   };
 
+  searchHistory = (query: string): void => {
+    if (!this.state.sessionId) return;
+    this.set({
+      historySearchRequest: { sessionId: this.state.sessionId, query },
+      resourcesOpen: true,
+    });
+    this.setContextMode("branches");
+  };
+
+  clearHistorySearch = (): void => this.set({ historySearchRequest: null });
+
   loadBranchTree = (): Promise<void> => this.branches.loadTree();
 
   readBranchTree = (query: BranchTreeQuery, signal?: AbortSignal) =>

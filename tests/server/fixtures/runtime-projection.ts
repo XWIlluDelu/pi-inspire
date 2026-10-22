@@ -311,7 +311,6 @@ export async function setup(
     modified: new Date(),
     messageCount: includeUser ? 1 : 0,
     firstMessage: "original",
-    searchText: "original",
   };
   const source = catalog([record]);
   const attachments = workerAttachmentStore(

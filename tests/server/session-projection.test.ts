@@ -65,7 +65,6 @@ async function fixture(
     modified: new Date(),
     messageCount: lines.length,
     firstMessage: "",
-    searchText: "",
   };
   return {
     directory,
@@ -207,7 +206,6 @@ describe("SessionProjection framing and last-good state", () => {
       modified: new Date(),
       messageCount: 0,
       firstMessage: "",
-      searchText: "",
     };
 
     const projection = await SessionProjection.openPending(record);
@@ -233,7 +231,6 @@ describe("SessionProjection framing and last-good state", () => {
       modified: new Date(),
       messageCount: 0,
       firstMessage: "",
-      searchText: "",
     };
     const projection = await SessionProjection.openPending(record);
     try {
@@ -301,7 +298,6 @@ describe("SessionProjection framing and last-good state", () => {
       modified: new Date(),
       messageCount: 0,
       firstMessage: "",
-      searchText: "",
     };
     const projection = await SessionProjection.openPending(record);
     await projection.suspendReconciliation();
@@ -348,7 +344,6 @@ describe("SessionProjection framing and last-good state", () => {
       modified: new Date(),
       messageCount: 1,
       firstMessage: "missing",
-      searchText: "missing",
     };
     await expect(SessionProjection.open(record)).rejects.toThrow(
       /ENOENT|no such file/i,

@@ -44,7 +44,6 @@ describe("loadSessionPreview", () => {
       modified: new Date(),
       messageCount: 1,
       firstMessage: "legacy",
-      searchText: "legacy",
     };
     const loaded = await loadSessionPreview(record);
     expect(loaded.transcriptPage.messages[0]).toMatchObject({
@@ -115,7 +114,6 @@ describe("loadSessionPreview", () => {
       modified: new Date("2026-07-22T00:00:04.000Z"),
       messageCount: 2,
       firstMessage: "hello",
-      searchText: "hello",
     };
 
     const preview = await loadSessionPreview(record);
