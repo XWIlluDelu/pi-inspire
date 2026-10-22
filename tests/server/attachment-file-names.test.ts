@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import {
-  access,
   mkdir,
   mkdtemp,
   readFile,
@@ -52,14 +51,12 @@ async function fixture() {
   await mkdir(sessions);
   const open = () => {
     const store = new AttachmentStore(uploads, null, {
-      sessionDirectories: [sessions],
-      trashDirectories: [],
       sweepIntervalMs: 0,
     });
     stores.push(store);
     return store;
   };
-  const session = async (store: AttachmentStore, path: string) => {
+  const session = async (path: string) => {
     const file = join(sessions, "retained.jsonl");
     await writeFile(
       file,
@@ -76,7 +73,6 @@ async function fixture() {
         .map((entry) => JSON.stringify(entry))
         .join("\n") + "\n",
     );
-    await store.registerSession(file);
     return file;
   };
   return { root, uploads, open, session, store: open() };
@@ -89,7 +85,6 @@ function expectPortable(path: string) {
   expect(name).not.toMatch(/[. ]$/u);
 }
 
-// Persistence/GC cases perform several native volume proofs, not just string work.
 describe("portable attachment cache components", { timeout: 30_000 }, () => {
   it("keeps the full readable Chinese display name while bounding the actual UUID-prefixed file", async () => {
     const f = await fixture(),
@@ -107,7 +102,8 @@ describe("portable attachment cache components", { timeout: 30_000 }, () => {
       await readFile(join(f.uploads, doc.id + ".json"), "utf8"),
     );
     expect(record).toMatchObject({
-      version: 2,
+      version: 3,
+      delivery: "possible",
       fileName: name,
       path: file.path,
     });
@@ -149,11 +145,8 @@ describe("portable attachment cache components", { timeout: 30_000 }, () => {
       expectPortable(files[0]!.path);
       if (name.endsWith(".txt") || name.endsWith(".pdf"))
         expect(files[0]!.path.slice(-4)).toBe(name.slice(-4));
-      await f.session(f.store, files[0]!.path);
-      await f.store.releaseConsumed(
-        [doc.id],
-        join(f.root, "sessions", "retained.jsonl"),
-      );
+      await f.session(files[0]!.path);
+      await f.store.releaseConsumed([doc.id]);
       await f.store.close();
       const reopened = f.open();
       await reopened.ready();
@@ -173,27 +166,21 @@ describe("portable attachment cache components", { timeout: 30_000 }, () => {
     },
   );
 
-  it("retains and reclaims a byte-bounded file after restart using its unchanged persisted reference and display name", async () => {
+  it("keeps a byte-bounded delivered file recallable after restart and session deletion", async () => {
     const f = await fixture(),
       name = "文".repeat(100) + ".txt",
       doc = await f.store.add(upload(name));
     const { files } = await f.store.resolveForPrompt([doc.id]),
       path = files[0]!.path;
-    const session = await f.session(f.store, path);
-    await f.store.releaseConsumed([doc.id], session);
-    expect(await f.store.collectUnreferenced()).toEqual({ reclaimed: [] });
+    const session = await f.session(path);
+    await f.store.releaseConsumed([doc.id]);
     await f.store.close();
+    await rm(session);
     const reopened = f.open();
-    expect(await reopened.collectUnreferenced()).toEqual({ reclaimed: [] });
+    expect(await reopened.collectStaged()).toEqual({ reclaimed: [] });
     expect(reopened.ownsPromptFile(path)).toBe(true);
     expect(reopened.promptFileName(path)).toBe(name);
     expect(await readFile(path, "utf8")).toBe("readable payload");
-    await rm(session);
-    expect(await reopened.collectUnreferenced()).toEqual({ reclaimed: [path] });
-    await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(
-      access(join(f.uploads, doc.id + ".json")),
-    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("keeps different uploads distinct when their readable physical suffixes truncate identically", async () => {
@@ -211,13 +198,12 @@ describe("portable attachment cache components", { timeout: 30_000 }, () => {
     expect(await readFile(files[1]!.path, "utf8")).toBe("second");
   });
 
-  it("continues to recall and collect an existing unversioned ownership record without migrating its path", async () => {
+  it("recalls an unversioned ownership record without migrating its path or deleting its asset", async () => {
     const f = await fixture(),
       doc = await f.store.add(upload("legacy.txt"));
     const { files } = await f.store.resolveForPrompt([doc.id]),
       path = files[0]!.path;
-    const session = await f.session(f.store, path);
-    await f.store.releaseConsumed([doc.id], session);
+    await f.store.releaseConsumed([doc.id]);
     await f.store.close();
     const metadata = join(f.uploads, doc.id + ".json");
     const record = JSON.parse(await readFile(metadata, "utf8"));
@@ -228,9 +214,8 @@ describe("portable attachment cache components", { timeout: 30_000 }, () => {
     await reopened.ready();
     expect(await readFile(metadata, "utf8")).toBe(legacy);
     expect(reopened.promptFileName(path)).toBe("legacy.txt");
-    expect(await reopened.collectUnreferenced()).toEqual({ reclaimed: [] });
-    await rm(session);
-    expect(await reopened.collectUnreferenced()).toEqual({ reclaimed: [path] });
+    expect(await reopened.collectStaged()).toEqual({ reclaimed: [] });
+    expect(await readFile(path, "utf8")).toBe("readable payload");
   });
 
   it("validates legacy NTFS-length authority without applying the new UTF-8 rule or rewriting its reference", async () => {
@@ -265,7 +250,7 @@ describe("portable attachment cache components", { timeout: 30_000 }, () => {
   });
 
   it.each(["unknown-version", "legacy-path-for-v2", "unowned-path"] as const)(
-    "still defers collection for mismatched ownership: %s",
+    "does not authorize recall or deletion from mismatched ownership: %s",
     async (kind) => {
       const f = await fixture(),
         doc = await f.store.add(upload("valid.txt"));
@@ -284,9 +269,10 @@ describe("portable attachment cache components", { timeout: 30_000 }, () => {
               }
             : { ...record, path: unrelated };
       await writeFile(metadata, JSON.stringify(invalid));
-      expect((await f.store.collectUnreferenced()).deferred).toContain(
-        "Invalid attachment ownership",
-      );
+      const reopened = f.open();
+      await reopened.ready();
+      expect(reopened.ownsPromptFile(record.path)).toBe(false);
+      expect(await reopened.collectStaged()).toEqual({ reclaimed: [] });
       expect(await readFile(unrelated, "utf8")).toBe("keep");
       await writeFile(metadata, JSON.stringify(record));
     },

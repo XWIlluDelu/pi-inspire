@@ -28,11 +28,9 @@ boundary. Catalog and navigation obligations remain in [[session-continuity]]; b
 
 - Opening an unopened session first projects its active branch through Pi’s read-only parser and
   context builder, without waiting for extensions or writing the JSONL; transcript virtualization
-  avoids mounting every entry in a large history at once. Upload-retention and project-discovery
-  registry writes are not prerequisites for this preview. Observed session directories enter
-  in-memory retention discovery; GC must register them before it can reclaim uploads. Cold writer
-  admission still requires durable registration and reports its own failure without discarding
-  readable history.
+  avoids mounting every entry in a large history at once. Auxiliary project-discovery writes are
+  not prerequisites for this preview. Upload lifetime is independent of session-directory
+  registration; neither history reads nor writer admission need an upload-retention registry.
 
 - History readability does not depend on the original project directory. If that directory is
   missing, is not a directory, or cannot be resolved, a valid retained JSONL still opens through the

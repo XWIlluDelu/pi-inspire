@@ -1,599 +1,200 @@
-import { execFile } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import {
   access,
-  lstat,
   mkdir,
   mkdtemp,
   readFile,
-  realpath,
-  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { sessionAttachmentReferences } from "../../server/attachment-references.js";
-import {
-  AttachmentStore,
-  addAttachmentContext,
-} from "../../server/attachments.js";
-import { moveToDesktopTrash } from "../../server/desktop-trash.js";
-import { macosSessionTrashDirectories } from "../../server/macos-trash.js";
-import { piInstallation } from "../../server/pi-installation.js";
-import { resolveComposerHistoryArtifacts } from "../../server/runtime-composer-artifacts.js";
-import { createRuntimeSlot } from "../../server/runtime-slot.js";
-import { deleteSessionFile } from "../../server/session-delete.js";
-import { SessionMetadataIndex } from "../../server/session-metadata.js";
-import { SessionProjection } from "../../server/session-projection.js";
-import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, it } from "vitest";
+import { AttachmentStore } from "../../server/attachments.js";
+import type { UploadedAttachment } from "../../shared/contracts.js";
 
-const upload = (name = "notes with spaces.txt") =>
-  ({
-    originalname: name,
-    mimetype: "text/plain",
-    size: 7,
-    buffer: Buffer.from("payload"),
-  }) as Express.Multer.File;
-
-let root: string;
-let sessions: string;
-let trash: string;
-let store: AttachmentStore;
+const roots: string[] = [];
 const stores: AttachmentStore[] = [];
-const processCleanups: Array<() => Promise<void>> = [];
-function openStore(directory = join(root, "uploads")) {
-  const value = new AttachmentStore(directory, null, {
-    sessionDirectories: [sessions],
-    trashDirectories: [trash],
-    sweepIntervalMs: 0,
-  });
-  stores.push(value);
-  return value;
-}
-async function session(name: string, path: string) {
-  const file = join(sessions, `${name}.jsonl`);
-  await writeFile(
-    file,
-    [
-      {
-        type: "session",
-        version: 3,
-        id: name,
-        cwd: root,
-        timestamp: "2026-10-02T00:00:00Z",
-      },
-      {
-        type: "message",
-        id: "u1",
-        parentId: null,
-        timestamp: "2026-10-02T00:00:01Z",
-        message: {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: addAttachmentContext(
-                "Read this",
-                [{ kind: "file", path }],
-                [],
-              ),
-            },
-          ],
-          timestamp: 1,
-        },
-      },
-    ]
-      .map((entry) => JSON.stringify(entry))
-      .join("\n") + "\n",
-  );
-  await store.registerSession(file);
-  return file;
-}
-async function sent(name = "original") {
-  const doc = await store.add(upload());
-  const { files } = await store.resolveForPrompt([doc.id]);
-  const path = files[0]!.path;
-  const file = await session(name, path);
-  await store.releaseConsumed([doc.id], file);
-  expect((await store.collectUnreferenced()).deferred).toBeUndefined();
-  return { doc, path, file };
-}
-
-beforeEach(async () => {
-  root = await realpath(
-    await mkdtemp(join(tmpdir(), "inspire-attachment-retention-")),
-  );
-  sessions = join(root, "sessions");
-  trash = join(root, "data", "Trash", "files");
-  await mkdir(sessions);
-  store = openStore();
-});
+const children: ChildProcess[] = [];
 afterEach(async () => {
-  for (const close of processCleanups.splice(0)) await close();
-  for (const value of stores.splice(0)) await value.close();
-  await rm(root, { recursive: true, force: true });
+  for (const child of children.splice(0)) await stop(child);
+  for (const store of stores.splice(0)) await store.close().catch(() => {});
+  for (const root of roots.splice(0))
+    await rm(root, { recursive: true, force: true });
 });
-
-// Multiple native before/after volume proofs per scenario are integration I/O,
-// not a five-second unit operation (especially cold PowerShell on Windows).
-describe("durable owned upload references", { timeout: 30_000 }, () => {
-  // Three independent Node/tsx + SDK boots, not a five-second unit operation.
-  it("retains default-store copies across fresh processes and reclaims their last reference", async ({
-    signal,
-  }) => {
-    const environment = isolatedTestEnvironment(root, {
-      INSPIRE_PI_COMMAND: piInstallation.cliPath,
-    });
-    const phase = async (name: string) => {
-      let child!: ReturnType<typeof execFile>;
-      const output = new Promise<string>((resolveOutput, reject) => {
-        child = execFile(
-          process.execPath,
-          [
-            "--import",
-            "tsx",
-            resolve("tests/fixtures/attachment-retention-process.ts"),
-            name,
-            root,
-          ],
-          { env: environment, signal, timeout: 30_000, killSignal: "SIGKILL" },
-          (error, stdout, stderr) => {
-            if (error)
-              reject(
-                new Error(
-                  `Retention phase ${name} failed (code=${error.code}, signal=${error.signal}, killed=${error.killed}): ${stderr || error.message}`,
-                  { cause: error },
-                ),
-              );
-            else resolveOutput(stdout);
-          },
-        );
-      });
-      const closed = new Promise<void>((resolveClose) =>
-        child.once("close", () => resolveClose()),
-      );
-      processCleanups.push(async () => {
-        child.kill("SIGKILL");
-        await closed;
-      });
-      return JSON.parse((await output).trim());
-    };
-    const first = await phase("send");
-    const resumed = await phase("read");
-    expect(resumed.pid).not.toBe(first.pid);
-    expect(resumed).toMatchObject({
-      owns: true,
-      name: "report with spaces.txt",
-      bytes: "payload",
-      reclaimed: [],
-    });
-    expect(resumed.deferred).toBeUndefined();
-    expect((await phase("delete")).reclaimed).toEqual([first.path]);
-    await expect(access(first.path)).rejects.toMatchObject({ code: "ENOENT" });
-  }, 90_000);
-
-  it("survives normal Host close/reopen and recalls the original name and readable bytes", async () => {
-    const { doc, path, file } = await sent();
-    await store.close();
-    store = openStore();
-    await store.ready();
-    expect(store.ownsPromptFile(path)).toBe(true);
-    expect(store.promptFileName(path)).toBe(doc.fileName);
-    const record = (await new SessionMetadataIndex().list([sessions]))[0]!;
-    const projection = await SessionProjection.open(record);
-    const slot = createRuntimeSlot({
-      id: record.id,
-      cwd: root,
-      sessionPath: file,
-      process: null,
-      preview: null,
-      projection,
-      bridge: null,
-      branchRevision: projection.revision,
-      incarnationId: "test",
-      viewId: "view",
-    });
-    const entry = projection.composerHistoryPage(
-      0,
-      projection.leafId,
-      slot.viewId,
+async function stop(child: ChildProcess) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = once(child, "exit");
+  child.kill("SIGKILL");
+  await exited;
+}
+async function fixture() {
+  const parent = await mkdtemp(join(tmpdir(), "inspire-attachment-lifecycle-"));
+  roots.push(parent);
+  const root = join(parent, "1-1-current");
+  const store = new AttachmentStore(root, parent, { sweepIntervalMs: 0 });
+  stores.push(store);
+  await store.ready();
+  return { parent, root, store };
+}
+function upload(): Express.Multer.File {
+  return {
+    originalname: "notes.txt",
+    mimetype: "text/plain",
+    buffer: Buffer.from("notes"),
+    size: 5,
+  } as Express.Multer.File;
+}
+async function owner(parent: string, mode: "staged" | "prepared") {
+  const root = join(parent, "2-2-child");
+  const child = spawn(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      fileURLToPath(
+        new URL("../fixtures/attachment-lifecycle.ts", import.meta.url),
+      ),
       root,
-      (path) => store.promptFileName(path),
-    ).entries[0]!;
-    expect(entry.files[0]!.fileName).toBe(doc.fileName);
-    const recalled = await resolveComposerHistoryArtifacts(
-      slot,
-      {
-        sessionId: record.id,
-        message: entry.text,
-        historyArtifacts: {
-          viewId: slot.viewId,
-          incarnation: projection.incarnation,
-          effectiveLeafId: projection.leafId,
-          imageReferences: [],
-          fileReferences: entry.files.map((file) => file.reference),
-        },
-      },
-      store,
-    );
-    expect(recalled.files).toEqual([{ kind: "file", path }]);
-    expect(await readFile(path, "utf8")).toBe("payload");
-    await projection.close();
-  });
-
-  it("retains JSON-escaped upload paths across restart and reclaims the last reference", async () => {
-    await store.close();
-    // Backslashes are ordinary filename characters on Unix and separators on
-    // Windows; both require escaping inside the generated JSON path literal.
-    store = openStore(join(root, "uploads\\encoded"));
-    const { path, file } = await sent("encoded");
-    const text = addAttachmentContext(
-      "Return this",
-      [{ kind: "file", path }],
-      [],
-    );
-    expect(store.referencedPromptFiles(text)).toEqual([path]);
-    await store.close();
-    store = openStore(join(root, "uploads\\encoded"));
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-    expect(await readFile(path, "utf8")).toBe("payload");
-    await rm(file);
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([path]);
-    await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  it("recognizes JSON-encoded Windows-shaped references on every platform", async () => {
-    const path = String.raw`C:\Users\Someone\AppData\Local\inspire\attachments\notes.txt`;
-    await session("windows-path", path);
-    const references = await sessionAttachmentReferences(
-      new Set([path]),
-      [sessions],
-      [],
-      new Map(),
-    );
-    expect([...references.paths]).toEqual([path]);
-  });
-
-  it("keeps shared forks and every retained branch; reclaims only the last reference", async () => {
-    const { path, file } = await sent();
-    const fork = await session("fork", path);
-    // A reference in an old, non-current branch still owns the upload.
-    await writeFile(
-      fork,
-      JSON.stringify({
-        type: "message",
-        id: "new-root",
-        parentId: null,
-        message: { role: "user", content: "unrelated current branch" },
-      }) + "\n",
-      { flag: "a" },
-    );
-    await rm(file);
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-    await expect(access(path)).resolves.toBeUndefined();
-    await rm(fork);
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([path]);
-    await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  it("keeps recoverable Trash references across restart, restores, then releases after emptying Trash", async () => {
-    const { path, file } = await sent();
-    const records = await new SessionMetadataIndex().list([sessions]);
-    const linux = {
-      uid: (await lstat(root)).uid,
-      mounts: async () => [
-        {
-          id: 1,
-          root,
-          mountPoint: root,
-          filesystem: "fixture",
-          source: "fixture",
-        },
-      ],
-    };
-    expect(
-      await deleteSessionFile(records[0]!, (payload, original) =>
-        moveToDesktopTrash(payload, original, {
-          platform: "linux",
-          environment: { XDG_DATA_HOME: join(root, "data") },
-          home: root,
-          linux,
-        }),
-      ),
-    ).toBe("trashed");
-    expect((await store.sessionDeleted(file)).reclaimed).toEqual([]);
-    await store.close();
-    store = openStore();
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-    const { readdir } = await import("node:fs/promises");
-    const trashed = join(trash, (await readdir(trash))[0]!);
-    await rename(trashed, file);
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-    await moveToDesktopTrash(file, file, {
-      platform: "linux",
-      environment: { XDG_DATA_HOME: join(root, "data") },
-      home: root,
-      linux,
+      mode,
+    ],
+    { stdio: ["pipe", "pipe", "pipe"] },
+  );
+  children.push(child);
+  const uploads = await new Promise<UploadedAttachment[]>((resolve, reject) => {
+    let output = "",
+      errors = "";
+    child.stderr!.on("data", (data) => {
+      errors += data;
     });
-    await rm(trash, { recursive: true });
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([path]);
+    child.once("error", reject);
+    child.once("exit", () =>
+      reject(new Error(errors || "Attachment owner exited before ready")),
+    );
+    child.stdout!.on("data", (data) => {
+      output += data;
+      if (output.includes("\n")) {
+        try {
+          resolve(JSON.parse(output.slice(0, output.indexOf("\n"))));
+        } catch (error) {
+          reject(error);
+        }
+      }
+    });
   });
+  const records = await Promise.all(
+    uploads.map(async (upload) =>
+      JSON.parse(await readFile(join(root, upload.id + ".json"), "utf8")),
+    ),
+  );
+  return { child, records, root };
+}
 
-  it.each(["darwin", "win32"] as const)(
-    "retains uploads referenced inside a complete %s recovery bundle until Trash is emptied",
-    async (platform) => {
-      const { path, file } = await sent();
-      const bundle = join(trash, "Inspire session recovery");
-      const recycle = async (directory: string) => {
-        await mkdir(trash, { recursive: true });
-        await rename(directory, bundle);
-      };
-      const record = (await new SessionMetadataIndex().list([sessions]))[0]!;
+describe("temporary uploads and durable delivered assets", () => {
+  it("reclaims abandoned staging only after its real owner exits, across shared Hosts", async () => {
+    const { parent, store } = await fixture();
+    const f = await owner(parent, "staged");
+    expect(await store.collectStaged()).toEqual({ reclaimed: [] });
+    await stop(f.child);
+    expect((await store.collectStaged()).reclaimed.sort()).toEqual(
+      f.records.map((record) => record.path).sort(),
+    );
+    for (const record of f.records) {
+      await expect(access(record.path)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
       await expect(
-        deleteSessionFile(record, (payload, original) =>
-          moveToDesktopTrash(payload, original, {
-            platform,
-            environment: {},
-            home: root,
-            windowsRecycle: recycle,
-            macosRecycle: recycle,
-          }),
-        ),
-      ).resolves.toBe("trashed");
-      expect((await store.sessionDeleted(file)).reclaimed).toEqual([]);
-      await store.close();
-      store = openStore();
-      expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-      await expect(access(path)).resolves.toBeUndefined();
-      await rm(bundle, { recursive: true });
-      expect((await store.collectUnreferenced()).reclaimed).toEqual([path]);
-    },
-  );
-
-  it("finds recovery-bundle references in macOS per-volume current-user Trash", async () => {
-    const { path, file } = await sent();
-    const home = join(root, "home");
-    const externalVolume = join(root, "Volumes", "Project disk");
-    const roots = await macosSessionTrashDirectories([sessions], {
-      home,
-      uid: 501,
-      volumeRoots: async () => [root, externalVolume],
-    });
-    const volumeTrash = join(externalVolume, ".Trashes", "501");
-    const bundle = join(volumeTrash, "Inspire session recovery");
-    await mkdir(volumeTrash, { recursive: true });
-    const record = (await new SessionMetadataIndex().list([sessions]))[0]!;
-    await deleteSessionFile(record, (payload, original) =>
-      moveToDesktopTrash(payload, original, {
-        platform: "darwin",
-        environment: {},
-        home,
-        macosRecycle: async (directory) => rename(directory, bundle),
-      }),
-    );
-    const before = await sessionAttachmentReferences(
-      new Set([path]),
-      [sessions],
-      roots,
-      new Map(),
-    );
-    expect(before.paths.has(path)).toBe(true);
-    await rm(bundle, { recursive: true });
-    const after = await sessionAttachmentReferences(
-      new Set([path]),
-      [sessions],
-      roots,
-      new Map(),
-    );
-    expect(after.paths.has(path)).toBe(false);
-    await expect(access(path)).resolves.toBeUndefined();
-    expect(file).not.toBe(bundle);
+        access(join(f.root, record.id + ".json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    }
   });
 
-  it("reclaims after permanent deletion without touching source/project/unregistered files", async () => {
-    const { path, file } = await sent();
-    const unrelated = join(root, "source.txt");
-    const unknownUpload = join(root, "uploads", "not-owned.txt");
-    await writeFile(unrelated, "original");
-    await writeFile(unknownUpload, "unregistered");
-    const record = (await new SessionMetadataIndex().list([sessions]))[0]!;
-    expect(
-      await deleteSessionFile(record, async () => {
-        throw new Error("Trash unavailable");
-      }),
-    ).toBe("deleted");
-    expect((await store.sessionDeleted(file)).reclaimed).toEqual([path]);
-    expect(await readFile(unrelated, "utf8")).toBe("original");
-    expect(await readFile(unknownUpload, "utf8")).toBe("unregistered");
-    expect(store.ownsPromptFile(unrelated)).toBe(false);
-  });
-
-  it("protects staged/in-flight uploads and recalled resends during last-session removal", async () => {
-    const staged = await store.add(upload("staged.txt"));
-    const { files } = await store.resolveForPrompt([staged.id]);
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-    store.restage([staged.id]);
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-    await expect(access(files[0]!.path)).resolves.toBeUndefined();
-    const { path, file } = await sent();
-    const release = store.leasePromptFiles([path]);
-    await rm(file);
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-    release();
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([path]);
-    await store.remove(staged.id);
-  });
-
-  it("does not confuse an old retained reference with a queued resend's persistence", async () => {
-    const { path, file } = await sent();
-    const destination = join(sessions, "destination.jsonl");
-    await store.registerSession(destination);
-    store.retainPromptFiles([path], destination);
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-    await rm(file);
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-    await session("destination", path);
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-    await rm(destination);
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([path]);
-  });
-
-  it("observes history without writes and defers GC if its registration fails", async () => {
-    const { path, file } = await sent();
-    const custom = join(root, "observed");
-    await mkdir(custom);
-    const observed = join(custom, "history.jsonl");
-    await rename(file, observed);
-    const registry = join(
-      await store.uploadDirectory(),
-      ".session-directories.json",
-    );
-    const saved = await readFile(registry);
-    await rm(registry);
-    await mkdir(registry);
-    store.observeSession(observed);
-    const result = await store.collectUnreferenced();
-    expect(result.reclaimed).toEqual([]);
-    expect(result.deferred).toBeTruthy();
-    expect(await readFile(path, "utf8")).toBe("payload");
-    await rm(registry, { recursive: true });
-    await writeFile(registry, saved);
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-    expect(JSON.parse(await readFile(registry, "utf8")).directories).toContain(
-      custom,
-    );
-    await rm(observed);
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([path]);
-  });
-
-  it("retries failed custom-directory registration before accepting it as durable", async () => {
-    await store.ready();
-    const registry = join(
-      await store.uploadDirectory(),
-      ".session-directories.json",
-    );
-    const custom = join(root, "custom");
-    const file = join(custom, "retained.jsonl");
-    await mkdir(custom);
-    // A failed atomic rename must not turn a later retry into a no-op.
-    await mkdir(registry);
-    await expect(store.registerSession(file)).rejects.toThrow();
-    await rm(registry, { recursive: true });
-    await Promise.all([
-      store.registerSession(file),
-      store.registerSession(file),
+  it("preserves a possible delivery after an owner crash, without requiring a visible session reference", async () => {
+    const { parent, store } = await fixture();
+    const f = await owner(parent, "prepared");
+    expect(f.records.map((record) => record.delivery)).toEqual([
+      "possible",
+      "possible",
     ]);
-    expect(JSON.parse(await readFile(registry, "utf8")).directories).toContain(
-      custom,
-    );
+    await stop(f.child);
+    expect(await store.collectStaged()).toEqual({ reclaimed: [] });
+    for (const record of f.records)
+      await expect(access(record.path)).resolves.toBeUndefined();
+    expect(store.ownsPromptFile(f.records[0].path)).toBe(true);
+    expect(store.ownsPromptFile(f.records[1].path)).toBe(false);
   });
 
-  it("remembers custom storage independently of catalog/curation after restart", async () => {
-    const { path, file } = await sent();
-    const custom = join(root, "custom");
-    await mkdir(custom);
-    const customFile = join(custom, "retained.jsonl");
-    await rename(file, customFile);
-    store.discoverSessionDirectories(async () => [custom]);
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-    await store.registerSession(customFile);
-    await store.close();
-    store = openStore();
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-    await rm(customFile);
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([path]);
-  });
-
-  it("retains private deletion-recovery and Recycle Bin payloads without reading binary restore metadata", async () => {
-    const { path, file } = await sent();
-    const recovery = join(sessions, ".inspire-delete-fixture");
-    await mkdir(recovery);
-    await rename(file, join(recovery, "payload"));
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-    await mkdir(trash, { recursive: true });
-    await rename(join(recovery, "payload"), join(trash, "$Rfixture.jsonl"));
-    await writeFile(join(trash, "$Ifixture.jsonl"), Buffer.from([0, 1, 2, 3]));
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-    await rm(trash, { recursive: true });
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([path]);
-  });
-
-  it("includes configured catalog storage roots without a paginated/curated session list", async () => {
-    const { path, file } = await sent();
-    const configured = join(root, "configured");
-    await mkdir(configured);
-    await rename(file, join(configured, "external-fork.jsonl"));
-    store.discoverSessionDirectories(async () => [configured]);
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
-    await rm(join(configured, "external-fork.jsonl"));
-    expect((await store.collectUnreferenced()).reclaimed).toEqual([path]);
-  });
-
-  it("ignores unrelated valid JSONL Trash while reclaiming only orphaned owned copies", async () => {
-    const { path, file } = await sent();
-    await rm(file);
-    await mkdir(trash, { recursive: true });
-    const unrelated = join(trash, "application-log.jsonl");
-    const contents = '{"event":"application_started","level":"info"}\n';
-    await writeFile(unrelated, contents);
-    await expect(
-      sessionAttachmentReferences(
-        new Set([path]),
-        [sessions],
-        [trash],
-        new Map(),
-      ),
-    ).resolves.toEqual({ paths: new Set(), sessions: new Map() });
-    await expect(store.collectUnreferenced()).resolves.toEqual({
-      reclaimed: [path],
-    });
-    await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(await readFile(unrelated, "utf8")).toBe(contents);
-  });
-
-  it.each([
-    '{"type":"session","id":"broken"}\nnot-json\n',
-    '{"type":"session","id":"broken"}\n{"type":"message"',
-    '{"type":"session"}\n',
-    '{"type":"session","id":"broken"',
-    '{"type":"message","id":"u1","parentId":null,"message":{"role":"user","content":"lost header"}}\n',
-  ])(
-    "still defers orphan reclamation for corrupt Pi Trash: %s",
-    async (contents) => {
-      const { path, file } = await sent();
-      await rm(file);
-      await mkdir(trash, { recursive: true });
-      await writeFile(
-        join(trash, "application-log.jsonl"),
-        '{"event":"application_started"}\n',
-      );
-      await writeFile(join(trash, "broken-session.jsonl"), contents);
-      const result = await store.collectUnreferenced();
-      expect(result.reclaimed).toEqual([]);
-      expect(result.deferred).toMatch(/Incomplete|invalid|malformed/);
-      await expect(access(path)).resolves.toBeUndefined();
+  it.each([undefined, 2])(
+    "keeps existing version %s assets recallable and unchanged",
+    async (version) => {
+      const { parent, store } = await fixture();
+      const root = join(parent, "3-3-existing");
+      await mkdir(root);
+      const id = randomUUID(),
+        path = join(root, id + "-legacy.txt");
+      const record = {
+        version,
+        id,
+        fileName: "legacy.txt",
+        mimeType: "text/plain",
+        kind: "file",
+        size: 4,
+        path,
+        ownerPid: 0,
+      };
+      const metadata = JSON.stringify(record);
+      await writeFile(path, "keep");
+      await writeFile(join(root, id + ".json"), metadata);
+      expect(await store.collectStaged()).toEqual({ reclaimed: [] });
+      expect(store.promptFileName(path)).toBe("legacy.txt");
+      expect(await readFile(path, "utf8")).toBe("keep");
+      expect(await readFile(join(root, id + ".json"), "utf8")).toBe(metadata);
     },
   );
 
-  it("defers destructive cleanup when a retained session is malformed or incomplete", async () => {
-    const { path, file } = await sent();
-    await rm(file);
-    await writeFile(
-      join(sessions, "broken.jsonl"),
-      '{"type":"session","id":"broken"}\n{"type":"message"',
-    );
-    const result = await store.collectUnreferenced();
-    expect(result.reclaimed).toEqual([]);
-    expect(result.deferred).toMatch(/Incomplete Pi session/);
-    await expect(access(path)).resolves.toBeUndefined();
-    await writeFile(
-      join(sessions, "broken.jsonl"),
-      '{"type":"session","id":"broken"}\nnot-json\n',
-    );
-    expect((await store.collectUnreferenced()).deferred).toMatch(
-      /malformed complete JSONL/,
-    );
-    await expect(access(path)).resolves.toBeUndefined();
+  it("removes withdrawn staging but preserves a file handed off before shutdown", async () => {
+    const { root, store } = await fixture();
+    const abandoned = await store.add(upload());
+    const delivered = await store.add(upload());
+    const { files } = await store.resolveForPrompt([delivered.id]);
+    expect(
+      JSON.parse(await readFile(join(root, delivered.id + ".json"), "utf8"))
+        .delivery,
+    ).toBe("possible");
+    await store.releaseConsumed([delivered.id]);
+    await store.close();
+    await expect(
+      access(join(root, abandoned.id + "-notes.txt")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(files[0]!.path, "utf8")).toBe("notes");
+  });
+
+  it("does not hand a file to Pi when its durable handoff cannot be recorded", async () => {
+    const { root, store } = await fixture();
+    const doc = await store.add(upload());
+    const metadata = join(root, doc.id + ".json");
+    await rm(metadata);
+    await mkdir(metadata);
+    await expect(store.resolveForPrompt([doc.id])).rejects.toThrow();
+    await rm(metadata, { recursive: true });
+    expect((await store.resolveForPrompt([doc.id])).files).toHaveLength(1);
+  });
+
+  it("retries initialization on the same store after a temporary storage failure is repaired", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "inspire-upload-retry-"));
+    roots.push(parent);
+    const root = join(parent, "uploads");
+    await writeFile(root, "blocked");
+    const store = new AttachmentStore(root, null, { sweepIntervalMs: 0 });
+    stores.push(store);
+    const failed = await Promise.allSettled([store.ready(), store.ready()]);
+    expect(failed.every((result) => result.status === "rejected")).toBe(true);
+    await rm(root);
+    await expect(store.add(upload())).resolves.toMatchObject({
+      fileName: "notes.txt",
+    });
   });
 });

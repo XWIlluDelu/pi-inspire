@@ -123,7 +123,7 @@ async function exerciseOwner(connectHerdr: boolean) {
   const attachments = new AttachmentStore(
     join(workspace.root, "uploads"),
     null,
-    { sessionDirectories: [workspace.sessions], sweepIntervalMs: 0 },
+    { sweepIntervalMs: 0 },
   );
   const runtime = new RuntimeController(catalog, attachments, create)
     .setExternalSessionConnector(async () => null)

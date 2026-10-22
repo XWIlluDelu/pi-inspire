@@ -1,7 +1,7 @@
 ---
 purpose: One composer owns editing, drafts, prompt artifacts, input handoff, Pending recovery, and command feedback.
 covers:
-  - server/{attachments,attachment-references,composer-history,runtime-composer-artifacts,runtime-pending*,project-files,image-content,assistant-text}.ts
+  - server/{attachments,composer-history,runtime-composer-artifacts,runtime-pending*,project-files,image-content,assistant-text}.ts
   - shared/{contracts,pending-preview,composer-artifact-references,resource-references,image-dimension-notes,attachment-context}.ts
   - src/{App,api,store,app-state,clipboard-files,keyboard-input,composer-*,session-drafts,model-options}.ts*
   - src/controllers/{composer,pending-recovery}-controller.ts
@@ -231,18 +231,27 @@ with remove/re-add guidance, without resending. Late handles are reclaimed even 
 ignored. Switching sessions preserves the upload owner. Inspire never silently uploads elsewhere.
 
 Withdrawing staging deletes its owned copy. Delivered images remain in Pi and release upload copies;
-sent ordinary files and ownership metadata survive Host restart. Shutdown drains uploads/runtime work
-before withdrawing staging and preserves accepted ordinary files.
+ordinary files become durable assets rather than reference-counted caches. They survive Host restart,
+session deletion, forks, native Trash and offline backups, including native `handled` inputs whose
+extension may keep a path outside Pi history. Shutdown drains uploads/runtime work, removes known
+staging and preserves possible deliveries.
 
-Collection follows references across all entries/branches in default, configured and remembered
-custom Pi storage, recoverable desktop Trash and private deletion recovery. Shared forks retain an
-upload until the last reference disappears. Confirmed deletion triggers background collection without
-delaying the deletion response or later targets in a Hidden batch; periodic sweeps also trigger it.
-Incomplete, unreadable or changing Pi sources defer it; unrelated valid non-Pi JSONL in Trash does not
-block it. Staged, in-flight, accepted-but-unpersisted and recalled resend owners stay protected.
-Native `handled` input adds no future-reference hold, but persisted hook references still count.
-Scanning/resend leases recognize literal paths and Inspire's exact JSON-string form. Only
-ownership-recorded upload copies can be removed, never original user/project files.
+Version-3 ownership records begin as `unsubmitted`. Resolution atomically marks each copy as
+`possible` delivery before returning it to a caller that can send it to Pi. A lost receipt or crash
+therefore cannot authorize automatic deletion. Failure to record this handoff refuses dispatch and
+restores the staging handles. Existing unversioned/version-2 records remain durable and recallable
+without changing paths or metadata.
+
+Periodic cleanup is limited to explicitly unsubmitted copies whose process-birth-bound owner is
+confirmed retired. It re-reads the record after retirement to observe a final handoff. Live or
+unverified owners, unknown metadata and possible deliveries are not deletion evidence. Only recorded
+private upload copies can be removed, never original user/project files. Initial storage failures
+may be retried on the same Host after repair.
+
+There is no session/Trash reference scan, directory registration, volume continuity proof or offline
+trust migration. Ordinary session reads, startup, sending and deletion do not depend on these former
+maintenance writes. Delivered-file reclamation is an explicit operator choice with a warning that
+all surviving references will break; see [cleanup operations](../../docs/host.md#uploaded-file-retention-and-cleanup).
 
 Preview failure does not invalidate an otherwise current staging handle. Ready handles survive
 same-Host reconnect. Changed Host authority invalidates them in every partition,
