@@ -10,10 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { DiagnosticLogger } from "../../server/diagnostics.js";
 import { PiRpcOutcomeUnknownError } from "../../server/pi-rpc.js";
-import {
-  PARTIAL_PERSISTENCE_TIMEOUT_MS,
-  RuntimeController,
-} from "../../server/runtime.js";
+import { RuntimeController } from "../../server/runtime.js";
 import type { RuntimePersistenceOwnershipController } from "../../server/runtime-persistence-ownership.js";
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
 import { deferredSignal, waitForReady } from "./fixtures/runtime.js";
@@ -1245,14 +1242,12 @@ describe("writer persistence ownership", () => {
         expect(slot.persistenceExpectations).toEqual([]);
         await internals.reconcileSlot(slot, true);
         expect(slot.pendingPartialPersistence?.bytes).toBe(firstCut);
-        const deadline = slot.pendingPartialPersistence!.deadline;
         expect(slot.conflict).toBeNull();
         expect(worker.stops).toBe(0);
 
         await appendFile(path, line.slice(firstCut, secondCut));
         await internals.reconcileSlot(slot, true);
         expect(slot.pendingPartialPersistence?.bytes).toBe(secondCut);
-        expect(slot.pendingPartialPersistence?.deadline).toBe(deadline);
         expect(slot.workerProjectionSourceVersion).toBe(
           slot.projection!.sourceVersion,
         );
@@ -1320,27 +1315,6 @@ describe("writer persistence ownership", () => {
       }
     },
   );
-
-  it("fails closed when an owned partial append never completes", async () => {
-    const { runtime, workers, path } = await setup();
-    try {
-      const worker = workers[0]!;
-      await runtime.snapshot();
-      await vi.waitFor(() =>
-        expect(
-          worker.commands.some((command) => command.type === "get_commands"),
-        ).toBe(true),
-      );
-      worker.emit("event", { type: "agent_start" });
-      await appendFile(path, '{"type":"message"');
-      await vi.waitFor(() => expect(worker.stops).toBe(1), {
-        timeout: PARTIAL_PERSISTENCE_TIMEOUT_MS + 2_000,
-      });
-      expect((await runtime.snapshot()).runState).toBe("conflict");
-    } finally {
-      await runtime.close();
-    }
-  });
 
   it.each(["truncate", "rewrite"] as const)(
     "fails an owned partial append closed when its tail is %s",

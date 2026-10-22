@@ -6,6 +6,7 @@ import { nullDiagnosticLogger } from "../../server/diagnostics.js";
 import { type PiRpcProcess } from "../../server/pi-rpc.js";
 
 import { RuntimeController } from "../../server/runtime.js";
+import { SessionCatalog } from "../../server/session-catalog.js";
 
 import {
   catalog,
@@ -25,6 +26,37 @@ beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
 
 describe("runtime session deletion", () => {
+  it("requires a complete catalog for Hidden clearing, not for a specific validated deletion", async () => {
+    const session = await persistedRecord("a");
+    const source = new SessionCatalog(session.cwd, {
+      list: async (_directories, issues) => {
+        issues!.push({ path: "/offline", message: "Storage unavailable" });
+        return [session];
+      },
+    });
+    const remove = vi.fn(async () => "trashed" as const);
+    const runtime = new RuntimeController(
+      source,
+      trackedAttachmentStore(),
+      undefined,
+      preview,
+      15_000,
+      undefined,
+      remove,
+    );
+    try {
+      expect((await source.list()).sessions).toHaveLength(1);
+      await expect(
+        runtime.clearHiddenSessions(["a"], ["a"], []),
+      ).rejects.toMatchObject({ code: "SESSION_CATALOG_INCOMPLETE" });
+      expect(remove).not.toHaveBeenCalled();
+      await expect(runtime.deleteSession("a")).resolves.toMatchObject({
+        disposition: "trashed",
+      });
+    } finally {
+      await runtime.close();
+    }
+  });
   it("deletes an unopened catalog session through the injected destructive boundary", async () => {
     const store = trackedAttachmentStore();
     const source = catalog([record("a", "/tmp")]);

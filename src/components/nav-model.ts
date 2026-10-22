@@ -17,7 +17,8 @@ type HiddenDeletionState = Pick<
   | "sessionListError"
   | "clearingHidden"
   | "deletingSessionId"
->;
+> &
+  Partial<Pick<AppState, "sessionListIssues">>;
 
 /** The drawer and each complete folder apply the same rules to their own set.
  * Activity in a different folder must not block an otherwise idle selection. */
@@ -39,6 +40,8 @@ export function hiddenDeletionBlockReason(
   ) {
     return "Wait for Hidden sessions to finish loading";
   }
+  if (state.sessionListIssues?.length)
+    return "Restore unavailable session sources and refresh before clearing Hidden";
   if (sessions.some((session) => session.id === state.openingSessionId))
     return "Wait for these sessions to finish opening";
   if (

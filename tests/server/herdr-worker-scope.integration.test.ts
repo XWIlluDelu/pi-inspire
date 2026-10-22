@@ -246,7 +246,7 @@ describe.skipIf(!supported)("Herdr real Pi detached Bash ownership", () => {
       });
       try {
         await enhancement.initialize();
-        expect(enhancement.createProcess({ cwd: root }).pid).toBeNull();
+        expect((await enhancement.createProcess({ cwd: root })).pid).toBeNull();
         await assertStopped(root, piPid, bridgePid, toolPid);
         expect(await registry.list()).toEqual([]);
       } finally {

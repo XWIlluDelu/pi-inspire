@@ -6,8 +6,11 @@ import {
   readdir,
   realpath,
 } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
-import { MAX_SESSION_ID_CHARS } from "../shared/contracts.js";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  MAX_SESSION_ID_CHARS,
+  type SessionCatalogIssue,
+} from "../shared/contracts.js";
 import { stripImageDimensionNotes } from "../shared/image-dimension-notes.js";
 import { JsonlObjectDecoder, PersistedJsonlError } from "./session-jsonl.js";
 
@@ -346,7 +349,24 @@ async function pathAddressesPrefix(
   }
 }
 
-async function sessionFiles(root: string, nested: boolean): Promise<string[]> {
+function readFailure(
+  issues: SessionCatalogIssue[] | undefined,
+  path: string,
+  error: unknown,
+): void {
+  if (!issues) throw error;
+  issues.push({
+    path,
+    message:
+      error instanceof Error ? error.message : "Session source is unavailable",
+  });
+}
+
+async function sessionFiles(
+  root: string,
+  nested: boolean,
+  issues?: SessionCatalogIssue[],
+): Promise<string[]> {
   let entries: Dirent[];
   try {
     entries = await readdir(root, { withFileTypes: true });
@@ -364,10 +384,12 @@ async function sessionFiles(root: string, nested: boolean): Promise<string[]> {
     // tree. Otherwise a linked directory or JSONL could promote an unrelated
     // file into open/delete operations.
     if (!entry.isDirectory()) continue;
-    // A concurrently removed project contributes no sessions. Other read
-    // failures abort the scan rather than publishing a partial catalog that
-    // could make still-present sessions look deleted.
-    files.push(...(await sessionFiles(join(root, entry.name), false)));
+    const path = join(root, entry.name);
+    try {
+      files.push(...(await sessionFiles(path, false, issues)));
+    } catch (error) {
+      readFailure(issues, path, error);
+    }
   }
   return files;
 }
@@ -378,26 +400,36 @@ export class SessionMetadataIndex {
 
   async list(
     directories: string | readonly (string | undefined)[] = [undefined],
+    issues?: SessionCatalogIssue[],
   ): Promise<SessionRecord[]> {
     const roots = typeof directories === "string" ? [directories] : directories;
     const pathsByCanonical = new Map<string, string>();
-    // Enumerate every selected root before pruning metadata or publishing rows.
-    // One failing root must not make another project's sessions look deleted.
+    // Browse healthy roots independently. Callers requiring a complete set can
+    // omit the issue collector or reject an incomplete result at their own boundary.
+    const failedRoots: string[] = [];
     for (const customSessionDir of new Set(roots)) {
       const configuredRoot = resolve(
         customSessionDir ??
           join((await import("./pi-runtime.js")).getAgentDir(), "sessions"),
       );
       let canonicalRoot: string;
+      let files: string[];
+      const issuesBefore = issues?.length ?? 0;
       try {
         canonicalRoot = await realpath(configuredRoot);
+        files = await sessionFiles(
+          configuredRoot,
+          customSessionDir === undefined,
+          issues,
+        );
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw error;
+        readFailure(issues, configuredRoot, error);
+        failedRoots.push(configuredRoot);
+        continue;
       }
-      const files = await sessionFiles(
-        configuredRoot,
-        customSessionDir === undefined,
+      failedRoots.push(
+        ...(issues?.slice(issuesBefore).map((issue) => issue.path) ?? []),
       );
       for (const path of files) {
         const canonical = resolve(
@@ -415,8 +447,18 @@ export class SessionMetadataIndex {
       path,
     }));
     const present = new Set(pathsByCanonical.values());
-    for (const path of this.cache.keys()) {
-      if (!present.has(path)) this.cache.delete(path);
+    const retained: SessionRecord[] = [];
+    for (const [path, cached] of this.cache) {
+      if (present.has(path)) continue;
+      const unavailable = failedRoots.some((root) => {
+        const child = relative(root, path);
+        return (
+          !isAbsolute(child) && child !== ".." && !child.startsWith(`..${sep}`)
+        );
+      });
+      if (unavailable) {
+        if (cached.record) retained.push(cached.record);
+      } else this.cache.delete(path);
     }
 
     const records: Array<SessionRecord | null> = new Array(files.length).fill(
@@ -427,7 +469,12 @@ export class SessionMetadataIndex {
       while (next < files.length) {
         const index = next++;
         const file = files[index]!;
-        records[index] = await this.read(file.path, file.canonical);
+        try {
+          records[index] = await this.read(file.path, file.canonical);
+        } catch (error) {
+          readFailure(issues, file.path, error);
+          records[index] = this.cache.get(file.path)?.record ?? null;
+        }
       }
     };
     await Promise.all(
@@ -436,7 +483,10 @@ export class SessionMetadataIndex {
         worker,
       ),
     );
-    return records.filter((record): record is SessionRecord => record !== null);
+    return [
+      ...records.filter((record): record is SessionRecord => record !== null),
+      ...retained,
+    ];
   }
 
   /** Worker-only scan: one complete session at a time, never cached. */
@@ -444,6 +494,7 @@ export class SessionMetadataIndex {
     sessions: readonly SessionRecord[],
     query: string,
     nativeSearchPath: string,
+    issues?: SessionCatalogIssue[],
   ): Promise<SessionRecord[]> {
     // This internal Pi dependency is deliberately loaded only inside search.
     // The parsed object remains opaque; Pi owns both parsing and matching.
@@ -465,11 +516,12 @@ export class SessionMetadataIndex {
     if (parsed.error) return [];
     const matches: SessionRecord[] = [];
     for (const session of sessions) {
-      const handle = await open(
-        session.path,
-        constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
-      );
+      let handle: FileHandle | undefined;
       try {
+        handle = await open(
+          session.path,
+          constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+        );
         const before = await handle.stat({ bigint: true });
         const canonical = await realpath(session.path);
         const source = session.source;
@@ -526,8 +578,10 @@ export class SessionMetadataIndex {
           ).matches
         )
           matches.push(session);
+      } catch (error) {
+        readFailure(issues, session.path, error);
       } finally {
-        await handle.close();
+        await handle?.close();
       }
     }
     return matches;
@@ -642,8 +696,8 @@ export class SessionMetadataIndex {
       // A pathname that disappeared or became a symlink after enumeration may
       // retain its last complete UI record; every operation consuming it
       // revalidates the path and source identity. Read failures on a still
-      // addressed regular file abort the scan so an incomplete catalog can
-      // never authorize a reviewed batch operation.
+      // addressed regular file are reported to the scan caller. Browsing can
+      // retain this summary; destructive callers still require a complete set.
       if (!isDisappearedPath(error)) throw error;
     }
     if (authorityMismatch) {

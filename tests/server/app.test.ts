@@ -844,33 +844,53 @@ describe("typed Host API", () => {
     await request(application.server)
       .post("/api/branches/fork")
       .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId: "mock-active", revision: 3, targetId: "u1" })
+      .send({ sessionId: "mock-active", viewId: "source-view", targetId: "u1" })
       .expect(200);
     expect(fork).toHaveBeenCalledWith({
       sessionId: "mock-active",
-      revision: 3,
+      viewId: "source-view",
       targetId: "u1",
     });
     await request(application.server)
       .post("/api/branches/clone")
-      .send({ sessionId: "mock-active", revision: 3 })
+      .send({ sessionId: "mock-active", viewId: "source-view", targetId: null })
       .expect(401);
     expect(clone).not.toHaveBeenCalled();
     await request(application.server)
       .post("/api/branches/clone")
       .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId: "mock-active", revision: 3, rawPath: "/forged" })
+      .send({
+        sessionId: "mock-active",
+        viewId: "source-view",
+        targetId: null,
+        rawPath: "/forged",
+      })
       .expect(400);
     await request(application.server)
       .post("/api/branches/clone")
       .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId: "mock-active", revision: 3, targetId: "a1" })
+      .send({ sessionId: "mock-active", viewId: "source-view", targetId: "a1" })
       .expect(200)
       .expect((response) => expect(response.body.editorText).toBe(""));
     expect(clone).toHaveBeenLastCalledWith({
       sessionId: "mock-active",
-      revision: 3,
+      viewId: "source-view",
       targetId: "a1",
+    });
+    await request(application.server)
+      .post("/api/branches/clone")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", viewId: "source-view" })
+      .expect(400);
+    await request(application.server)
+      .post("/api/branches/clone")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ sessionId: "mock-active", viewId: "source-view", targetId: null })
+      .expect(200);
+    expect(clone).toHaveBeenLastCalledWith({
+      sessionId: "mock-active",
+      viewId: "source-view",
+      targetId: null,
     });
   });
 

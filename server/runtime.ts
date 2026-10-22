@@ -47,8 +47,6 @@ import {
   MAX_SESSION_ID_CHARS,
   type ModelOption,
   type ModelSelectionResponse,
-  THINKING_LEVELS,
-  type ThinkingLevel,
   type NewSessionDefaults,
   type NewSessionOptions,
   type PendingCopyContent,
@@ -59,6 +57,8 @@ import {
   type PromptRequest,
   type SessionDeleteResponse,
   type SessionRuntimeStatus,
+  THINKING_LEVELS,
+  type ThinkingLevel,
   type TranscriptActivityPage,
   type TranscriptPage,
   type UploadedAttachment,
@@ -67,6 +67,11 @@ import {
 } from "../shared/contracts.js";
 import type { ModelCatalogResponse } from "../shared/model-settings.js";
 import {
+  PROVIDER_AUTH_SUFFIX,
+  type ProviderAuthOperation,
+  type ProviderAuthResult,
+} from "../shared/provider-auth-bridge.js";
+import {
   type AttachmentContextFile,
   AttachmentStore,
   addAttachmentContext,
@@ -74,6 +79,10 @@ import {
 } from "./attachments.js";
 import { type DiagnosticLogger, nullDiagnosticLogger } from "./diagnostics.js";
 import type { ConnectExternalSession } from "./external-session.js";
+import { modelOption, modelSettings } from "./model-catalog.js";
+import { refreshWorkerCatalog } from "./model-catalog-refresh.js";
+import type { ModelMetadata, ModelMetadataCatalog } from "./model-metadata.js";
+import { commonModelOptions } from "./model-settings.js";
 import { createProjectDirectory, resolveProjectDirectory } from "./paths.js";
 import {
   isPiRpcOutcomeUnknown,
@@ -83,6 +92,8 @@ import {
   PiRpcProcess,
   type PiRpcResponseFence,
 } from "./pi-rpc.js";
+import { getAgentDir, SettingsManager } from "./pi-runtime.js";
+import { requestWorkerAuth } from "./provider-auth-bridge.js";
 import { requestError } from "./request-error.js";
 import { RuntimeBashController } from "./runtime-bash.js";
 import {
@@ -99,6 +110,17 @@ import { RuntimeEventController } from "./runtime-events.js";
 import { RuntimeExtensionUiController } from "./runtime-extension-ui.js";
 import { RuntimeExternalSessions } from "./runtime-external-sessions.js";
 import {
+  exactPendingInput,
+  mergePendingQueues,
+  pendingContentFromTexts,
+  pendingQueuesFromContent,
+} from "./runtime-pending.js";
+import { readPendingImageEvidence } from "./runtime-pending-image-evidence.js";
+import {
+  type PendingImageDelivery,
+  PendingImageRecovery,
+} from "./runtime-pending-images.js";
+import {
   compactionMatcher,
   deferredExpectation,
   knownExpectation,
@@ -109,6 +131,10 @@ import { RuntimeProjectionCoordinator } from "./runtime-projection-coordinator.j
 import { RuntimeReadController } from "./runtime-reads.js";
 import { readWorkerRetryState } from "./runtime-retry-state.js";
 import { RuntimeSessionDeletionController } from "./runtime-session-deletion.js";
+import { RuntimeStartupAttestor } from "./runtime-startup-attestor.js";
+import { runtimeToken as bridgeToken } from "./runtime-token.js";
+import { RuntimeWorkerLifecycle } from "./runtime-worker-lifecycle.js";
+import { RuntimeWorkerPool } from "./runtime-worker-pool.js";
 import type { SessionCatalogLike, SessionRecord } from "./session-catalog.js";
 import {
   type DeleteSessionRecord,
@@ -132,35 +158,6 @@ import {
   type ActiveSessionSnapshot,
   sessionProjectionSnapshot,
 } from "./session-preview.js";
-
-export { PARTIAL_PERSISTENCE_TIMEOUT_MS } from "./runtime-projection-coordinator.js";
-
-import {
-  PROVIDER_AUTH_SUFFIX,
-  type ProviderAuthOperation,
-  type ProviderAuthResult,
-} from "../shared/provider-auth-bridge.js";
-import { modelOption, modelSettings } from "./model-catalog.js";
-import { refreshWorkerCatalog } from "./model-catalog-refresh.js";
-import type { ModelMetadata, ModelMetadataCatalog } from "./model-metadata.js";
-import { commonModelOptions } from "./model-settings.js";
-import { getAgentDir, SettingsManager } from "./pi-runtime.js";
-import { requestWorkerAuth } from "./provider-auth-bridge.js";
-import {
-  exactPendingInput,
-  mergePendingQueues,
-  pendingContentFromTexts,
-  pendingQueuesFromContent,
-} from "./runtime-pending.js";
-import { readPendingImageEvidence } from "./runtime-pending-image-evidence.js";
-import {
-  type PendingImageDelivery,
-  PendingImageRecovery,
-} from "./runtime-pending-images.js";
-import { RuntimeStartupAttestor } from "./runtime-startup-attestor.js";
-import { runtimeToken as bridgeToken } from "./runtime-token.js";
-import { RuntimeWorkerLifecycle } from "./runtime-worker-lifecycle.js";
-import { RuntimeWorkerPool } from "./runtime-worker-pool.js";
 
 export { MAX_IDLE_WORKERS } from "./runtime-worker-pool.js";
 
@@ -353,7 +350,7 @@ export interface RuntimeLike {
   ): Promise<HostNativeCommandResponse>;
   extensionUiResponse(response: Record<string, unknown>): Promise<void>;
   snapshot(sessionId?: string | null): Promise<ActiveSnapshot>;
-  /** Retain a subscribed view without selecting it or starting a worker. */
+  /** Retain a view and resume its external-session recovery without selecting it. */
   retainSessionView?(sessionId: string): () => void;
   lastAssistantText(
     sessionId: string,
@@ -417,6 +414,7 @@ interface ForkReservation {
 export class RuntimeController extends EventEmitter implements RuntimeLike {
   private readonly slots = new Map<string, RuntimeSlot>();
   private readonly sessionViewObservers = new Map<string, number>();
+  private externalRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly workerStatuses = new WeakMap<
     PiRpcProcess,
     RuntimeWorkerStatus
@@ -477,6 +475,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         current: (slot) => !this.closing && this.slots.get(slot.id) === slot,
         emit: (slot, event) => this.emitSlotEvent(slot, event),
         reconcile: (slot, force) => this.reconcileSlot(slot, force),
+        released: (slot) => this.recoverExternalSession(slot),
         assertUsable: (slot) => {
           if (this.deletions.isDeleting(slot.id))
             throw requestError("That session is being deleted", 409);
@@ -534,9 +533,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   constructor(
     private readonly catalog: SessionCatalogLike,
     private readonly attachments: AttachmentStore,
-    private readonly createProcess: (options: PiRpcOptions) => PiRpcProcess = (
-      options,
-    ) => new PiRpcProcess(options),
+    private readonly createProcess: (
+      options: PiRpcOptions,
+    ) => PiRpcProcess | Promise<PiRpcProcess> = (options) =>
+      new PiRpcProcess(options),
     private readonly openSessionProjection: (
       session: SessionRecord,
     ) => Promise<SessionProjectionView> = SessionProjection.open,
@@ -598,7 +598,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       mutateSlot: (slot, operation) => this.mutateSlot(slot, operation),
       stopWriter: (slot) => this.stopWriter(slot),
       catalogGet: (sessionId) => this.catalog.get(sessionId),
-      catalogRefresh: (force) => this.catalog.refresh(force),
+      catalogRefresh: (force) =>
+        this.catalog.refresh(force, { requireComplete: true }),
       invalidateCatalog: () => this.catalog.invalidate(),
       validateSessionRecord: (session) => this.validateSessionRecord(session),
       deleteSessionRecord: async (session, version) => {
@@ -741,9 +742,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.workerLifecycle = new RuntimeWorkerLifecycle(
       {
         selectedSessionId: () => this.selectedSessionId,
+        assertNotClosing: () => this.assertNotClosing(),
         createProcess: (options) => this.createProcess(options),
-        assertWriterAvailable: (slot) =>
-          this.assertExternalWriterAvailable(slot),
+        assertWriterAvailable: async (slot) => {
+          // Maintenance writes belong to writer admission, not history preview.
+          if (slot.sessionPath)
+            await this.attachments.registerSession(slot.sessionPath);
+          this.rememberProjectCwd(slot.cwd);
+          await this.assertExternalWriterAvailable(slot);
+        },
         workerOptions: (cwd, args, bridge) =>
           this.workerOptions(cwd, args, bridge),
         newBridgeIdentity,
@@ -1411,19 +1418,26 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return this.workerLifecycle.stop(slot, cancelledCommand);
   }
 
-  private requireWorkspace(slot: RuntimeSlot): void {
+  private requireWorkspace(slot: RuntimeSlot, externalChecked = false): void {
     if (this.terminalSessions.has(slot.id))
       throw requestError(
         "This session was handed to the terminal. Choose Continue in Inspire to check its owner.",
         409,
       );
-    if (slot.readOnlyReason)
+    if (
+      slot.readOnlyReason &&
+      !(
+        externalChecked &&
+        (slot.readOnlyReason === "external-active" ||
+          slot.readOnlyReason === "external-unavailable")
+      )
+    )
       throw requestError(
         slot.readOnlyReason === "workspace-unavailable"
           ? "This session is read-only because its project folder is unavailable"
           : slot.readOnlyReason === "external-active"
-            ? "This session is open in another Pi. Reopen it after the other Pi releases the session."
-            : "The external Pi owner could not be reached. Reopen the session to check its connection.",
+            ? "This session is open in another Pi. Writing is unavailable until it releases the session."
+            : "The external Pi owner is unavailable; its release has not been confirmed.",
         409,
         {
           code:
@@ -1440,7 +1454,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot: RuntimeSlot,
     externalChecked = false,
   ): Promise<RuntimeSlot & { process: PiRpcProcess }> {
-    this.requireWorkspace(slot);
+    this.requireWorkspace(slot, externalChecked);
     // Every cold writer admission, including settings and branch commands,
     // must discover an external owner. Selection warmup is not an authority.
     if (!slot.process && !externalChecked)
@@ -1713,6 +1727,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       projected && typeof projected === "object" && !Array.isArray(projected)
         ? (projected as Record<string, unknown>)
         : { type: "runtime_event", data: projected };
+    if (body.type === "runtime_ready") this.scheduleExternalSessionRecovery();
     this.emit("event", {
       ...body,
       sessionId: slot.id,
@@ -2138,7 +2153,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         await this.mutateSlot(slot, async () => {
           const root = await this.resolveWorkspaceRoot(session.cwd);
           if (!root || !slot.readOnlyReason) return;
-          await this.catalog.rememberProjectCwds?.([root]);
           slot.cwd = root;
           slot.readOnlyReason = this.terminalSessions.has(slot.id)
             ? "terminal"
@@ -2182,9 +2196,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         : this.terminalSessions.has(session.id)
           ? "terminal"
           : null;
-      await this.attachments.registerSession(session.path);
-      if (workspaceRoot)
-        await this.catalog.rememberProjectCwds?.([workspaceRoot]);
+      this.attachments.observeSession(session.path);
       const { projection, preview } = await this.openProjection(session, cwd);
       if (this.closing) {
         await projection.close();
@@ -2265,6 +2277,69 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
+  private needsExternalSessionRecovery(slot: RuntimeSlot): boolean {
+    return (
+      !this.closing &&
+      this.slots.get(slot.id) === slot &&
+      this.sessionViewObservers.has(slot.id) &&
+      !slot.process &&
+      !slot.conflict &&
+      // An established native connection already observes its owner, including
+      // temporary outages. Once it confirms retirement it detaches and hands
+      // recovery back to ordinary writer admission.
+      !this.externalSessions?.has(slot) &&
+      (slot.readOnlyReason === "external-active" ||
+        slot.readOnlyReason === "external-unavailable")
+    );
+  }
+
+  private recoverExternalSession(slot: RuntimeSlot): void {
+    if (
+      !this.needsExternalSessionRecovery(slot) ||
+      this.deletions.isDeleting(slot.id) ||
+      this.opening.has(slot.id)
+    )
+      return;
+    // Observation failures retain the read-only boundary. Startup uses the
+    // same slot FIFO and admission checks as an explicit open, never input.
+    void this.withMaintenanceOperation(() =>
+      this.ensureProcess(slot, true),
+    ).catch(() => undefined);
+  }
+
+  private scheduleExternalSessionRecovery(): void {
+    const needed = [...this.sessionViewObservers.keys()].some((id) => {
+      const slot = this.slots.get(id);
+      return slot && this.needsExternalSessionRecovery(slot);
+    });
+    if (!needed) {
+      if (this.externalRecoveryTimer !== null)
+        clearTimeout(this.externalRecoveryTimer);
+      this.externalRecoveryTimer = null;
+      return;
+    }
+    if (this.externalRecoveryTimer !== null) return;
+    this.externalRecoveryTimer = setTimeout(() => {
+      this.externalRecoveryTimer = null;
+      for (const id of this.sessionViewObservers.keys()) {
+        const slot = this.slots.get(id);
+        if (slot) this.recoverExternalSession(slot);
+      }
+      this.scheduleExternalSessionRecovery();
+    }, 2_000);
+    this.externalRecoveryTimer.unref?.();
+  }
+
+  private markExternalUnavailable(slot: RuntimeSlot, error: unknown): void {
+    const reason =
+      (error as { code?: string }).code === "EXTERNAL_PI_WRITER_ACTIVE"
+        ? "external-active"
+        : "external-unavailable";
+    if (slot.readOnlyReason === reason) return;
+    slot.readOnlyReason = reason;
+    this.emitSlotEvent(slot, { type: "runtime_ready" });
+  }
+
   private async assertExternalWriterAvailable(
     slot: RuntimeSlot,
   ): Promise<void> {
@@ -2272,11 +2347,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (slot.sessionPath)
         await this.externalSessionGuard?.(slot.id, slot.sessionPath);
     } catch (error) {
-      slot.readOnlyReason =
-        (error as { code?: string }).code === "EXTERNAL_PI_WRITER_ACTIVE"
-          ? "external-active"
-          : "external-unavailable";
-      this.emitSlotEvent(slot, { type: "runtime_ready" });
+      this.markExternalUnavailable(slot, error);
       throw error;
     }
   }
@@ -2285,27 +2356,21 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     try {
       const connected = (await this.externalSessions?.connect(slot)) === true;
       if (!connected) await this.assertExternalWriterAvailable(slot);
-      if (
-        slot.readOnlyReason === "external-unavailable" ||
-        slot.readOnlyReason === "external-active"
-      ) {
-        slot.readOnlyReason = null;
-        this.emitSlotEvent(slot, { type: "runtime_ready" });
-      }
+      // A free occupancy check admits startup without yet clearing the
+      // read-only boundary.
       return connected;
     } catch (error) {
       // An unavailable observer is not evidence that nobody owns this file.
       // Keep history usable and make the execution boundary visible.
-      slot.readOnlyReason =
-        (error as { code?: string }).code === "EXTERNAL_PI_WRITER_ACTIVE"
-          ? "external-active"
-          : "external-unavailable";
-      this.emitSlotEvent(slot, { type: "runtime_ready" });
+      this.markExternalUnavailable(slot, error);
       throw error;
     }
   }
 
-  private async ensureProcess(slot: RuntimeSlot): Promise<RuntimeSlot> {
+  private async ensureProcess(
+    slot: RuntimeSlot,
+    observedOnly = false,
+  ): Promise<RuntimeSlot> {
     if (
       slot.readOnlyReason === "workspace-unavailable" ||
       this.terminalSessions.has(slot.id)
@@ -2321,7 +2386,22 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (pending) return pending;
 
     const opening = this.mutateSlot(slot, async () => {
+      if (
+        observedOnly &&
+        (!this.needsExternalSessionRecovery(slot) ||
+          this.deletions.isDeleting(slot.id))
+      )
+        return slot;
       if (!slot.process && (await this.connectExternalSession(slot)))
+        return slot;
+      // A slow observation must not warm an abandoned or replaced view.
+      if (
+        observedOnly &&
+        (this.closing ||
+          !this.sessionViewObservers.has(slot.id) ||
+          this.slots.get(slot.id) !== slot ||
+          this.deletions.isDeleting(slot.id))
+      )
         return slot;
       return this.ensureFreshWriterInsideGate(slot, true);
     });
@@ -2330,6 +2410,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       return await opening;
     } finally {
       this.opening.delete(slot.id);
+      this.scheduleExternalSessionRecovery();
       this.scheduleIdleWorkerEviction();
     }
   }
@@ -2490,6 +2571,19 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     );
   }
 
+  private rememberProjectCwd(cwd: string): void {
+    // The catalog retains this hint in memory immediately. Its optional disk
+    // index is not a prerequisite for starting or using a native session.
+    void this.catalog.rememberProjectCwds?.([cwd]).catch((error) => {
+      this.diagnostics.record("warning", "project_discovery_not_saved", {
+        cwd,
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorCode: (error as NodeJS.ErrnoException | null)?.code,
+      });
+      console.warn("Project discovery hints could not be saved", error);
+    });
+  }
+
   async newSession(
     cwdInput: string,
     options: NewSessionOptions = {},
@@ -2508,9 +2602,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const cwd = options.createDirectory
       ? await createProjectDirectory(cwdInput)
       : await resolveProjectDirectory(cwdInput);
-    // Persist discovery before constructing/starting Pi: even a failed startup
-    // response may leave a successfully created native session behind.
-    await this.catalog.rememberProjectCwds?.([cwd]);
+    this.rememberProjectCwd(cwd);
     this.assertNotClosing();
 
     const name = options.name?.trim().slice(0, 160) || undefined;
@@ -2520,7 +2612,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       args.push("--model", `${options.model.provider}/${options.model.id}`);
     if (options.thinkingLevel) args.push("--thinking", options.thinkingLevel);
     const bridge = newBridgeIdentity();
-    const rpc = this.createProcess(this.workerOptions(cwd, args, bridge));
+    const rpc = await this.createProcess(this.workerOptions(cwd, args, bridge));
+    if (this.closing) {
+      await rpc.stop();
+      this.assertNotClosing();
+    }
     const slot = createRuntimeSlot({
       id: `pending-${++this.provisionalSequence}`,
       cwd,
@@ -3702,18 +3798,26 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const source = this.requireSlot(request.sessionId);
     const selectionAtDispatch = this.selectionSequence;
     return this.mutateSlot(source, async () => {
-      this.requireWorkspace(source);
-      // The addressed source and its fresh revision authorize this copy;
-      // another browser's Host selection does not own this source view.
+      // A copy writes a new session; the source may belong to another Pi.
+      // The destination still inherits this project and must be runnable there.
+      if (
+        source.readOnlyReason === "workspace-unavailable" ||
+        !(await this.resolveWorkspaceRoot(source.cwd))
+      )
+        throw requestError("The project folder is unavailable", 409, {
+          code: "SESSION_WORKSPACE_UNAVAILABLE",
+        });
+      // Bind the selected source view and endpoint, not its advancing tail.
+      // Reconciliation still rejects replacements, rewrites and conflicts.
       await this.reconcileSlot(source, true);
       this.throwIfConflicted(source);
-      this.requireFreshBranchRevision(source, request.revision);
+      this.requireHistoryView(source, request.viewId);
       const projection = source.projection;
       const sourcePath = source.sessionPath;
       if (!projection || !sourcePath) {
         throw requestError("Fork requires a materialized source Session", 409);
       }
-      const targetId = request.targetId ?? this.effectiveLeaf(source);
+      const targetId = request.targetId;
       const node = targetId === null ? null : projection.entry(targetId);
       if (
         (targetId !== null && !node) ||
@@ -5215,6 +5319,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       sessionId,
       (this.sessionViewObservers.get(sessionId) ?? 0) + 1,
     );
+    this.scheduleExternalSessionRecovery();
     let released = false;
     return () => {
       if (released) return;
@@ -5223,6 +5328,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (remaining > 0) this.sessionViewObservers.set(sessionId, remaining);
       else {
         this.sessionViewObservers.delete(sessionId);
+        this.scheduleExternalSessionRecovery();
         this.scheduleIdleWorkerEviction();
       }
     };
@@ -5294,6 +5400,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.maintenanceRestartTimer = null;
     this.maintenanceRestart = null;
     this.closing = true;
+    if (this.externalRecoveryTimer !== null)
+      clearTimeout(this.externalRecoveryTimer);
+    this.externalRecoveryTimer = null;
     this.externalSessions?.close();
     this.selectionSequence += 1;
     this.closePromise = this.closeInside();

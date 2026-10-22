@@ -23,6 +23,17 @@ interface Holder {
   record: PiActivityRecord;
   identity?: string;
   retained?: boolean;
+  persistedBinding?: string;
+}
+
+/** Only a binding change needs another durable presence write, not a heartbeat. */
+function bindingIdentity(holder: Holder): string {
+  return JSON.stringify([
+    holder.record.pid,
+    holder.identity,
+    holder.record.sessionId,
+    holder.record.sessionFile,
+  ]);
 }
 
 /** Presence vetoes a new local writer; it never authorizes control of another Pi.
@@ -48,6 +59,9 @@ export class PiSessionOccupancy {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       names = [];
     }
+    if (directory === this.retainedDirectory)
+      for (const holder of this.holders.values())
+        holder.persistedBinding = undefined;
     // Keep an already observed holder on missing, unreadable or malformed reports.
     // A completed producer rebind or confirmed process retirement clears it.
     await Promise.all(
@@ -65,12 +79,16 @@ export class PiSessionOccupancy {
             )
               return;
             const previous = this.holders.get(name);
-            this.holders.set(name, {
+            const holder: Holder = {
               record,
               identity: record.processIdentity ?? previous?.identity,
               retained:
                 previous?.retained || directory === this.retainedDirectory,
-            });
+              persistedBinding: previous?.persistedBinding,
+            };
+            if (directory === this.retainedDirectory)
+              holder.persistedBinding = bindingIdentity(holder);
+            this.holders.set(name, holder);
           } catch {
             /* retain prior evidence */
           }
@@ -79,6 +97,8 @@ export class PiSessionOccupancy {
   }
 
   private async retain(name: string, holder: Holder): Promise<void> {
+    const binding = bindingIdentity(holder);
+    if (holder.persistedBinding === binding) return;
     await mkdir(this.retainedDirectory, { recursive: true, mode: 0o700 });
     const target = join(this.retainedDirectory, name);
     const temporary = `${target}.${randomUUID()}.tmp`;
@@ -90,6 +110,7 @@ export class PiSessionOccupancy {
       );
       await rename(temporary, target);
       holder.retained = true;
+      holder.persistedBinding = binding;
     } finally {
       await rm(temporary, { force: true });
     }
@@ -191,11 +212,9 @@ export class PiSessionOccupancy {
       await checking;
     } catch (error) {
       if ((error as { status?: number }).status === 409) throw error;
-      throw requestError(
-        "External Pi presence could not be verified. Reopen this session to retry.",
-        409,
-        { code: "SESSION_OWNER_UNAVAILABLE" },
-      );
+      throw requestError("External Pi presence could not be verified.", 409, {
+        code: "SESSION_OWNER_UNAVAILABLE",
+      });
     }
   }
 
@@ -209,11 +228,9 @@ export class PiSessionOccupancy {
       await this.readReports(this.retainedDirectory);
       await this.readReports(this.directory);
     } catch {
-      throw requestError(
-        "External Pi presence could not be checked. Reopen this session to retry.",
-        409,
-        { code: "SESSION_OWNER_UNAVAILABLE" },
-      );
+      throw requestError("External Pi presence could not be checked.", 409, {
+        code: "SESSION_OWNER_UNAVAILABLE",
+      });
     }
     const target = await realpath(sessionFile);
     const matching = await Promise.all(
@@ -264,7 +281,7 @@ export class PiSessionOccupancy {
     );
     if (matching.some(Boolean))
       throw requestError(
-        "This session is open in another Pi. History is read-only until that Pi releases the session; reopen it to check again.",
+        "This session is open in another Pi. History remains read-only until that Pi releases the session.",
         409,
         { code: "EXTERNAL_PI_WRITER_ACTIVE" },
       );

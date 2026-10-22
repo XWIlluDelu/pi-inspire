@@ -175,10 +175,7 @@ export class HerdrNativeSession implements ExternalSessionConnection {
     const invoke = async () => {
       const state = await this.read();
       if (!state || this.closed)
-        throw requestError(
-          "The Pi terminal connection has ended. Reselect the session.",
-          409,
-        );
+        throw requestError("The Pi terminal connection has ended.", 409);
       if (action.type === "prompt" && state.status === "blocked")
         throw requestError(
           "Pi is waiting for an answer in its terminal. Answer there before sending another message.",

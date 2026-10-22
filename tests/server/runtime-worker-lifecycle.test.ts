@@ -30,6 +30,81 @@ beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
 
 describe("worker startup and retirement", () => {
+  it("keeps existing and new sessions usable when project discovery cannot be saved", async () => {
+    const attachments = trackedAttachmentStore();
+    const source = catalog([record("a", TEST_CWD)]);
+    const registrationError = new Error("Maintenance storage is unavailable");
+    const remember = vi.fn(async () => {});
+    source.rememberProjectCwds = remember;
+    remember.mockRejectedValue(registrationError);
+    const workers: FakeRpc[] = [];
+    const runtime = new RuntimeController(
+      source,
+      attachments,
+      (options) => {
+        const worker = new FakeRpc(options);
+        workers.push(worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    try {
+      const opened = await runtime.openSession("a");
+      expect(opened.active?.sessionId).toBe("a");
+      expect(opened.active?.transcriptPage.messages).toEqual([
+        { role: "user", content: "preview:a", timestamp: 1 },
+      ]);
+      await waitForReady(runtime, "a");
+      expect(workers[0]?.starts).toBe(1);
+      expect(workers[0]?.stops).toBe(0);
+      await expect(
+        runtime.prompt({ sessionId: "a", message: "ordinary text" }),
+      ).resolves.toBeDefined();
+      const created = await runtime.newSession(TEST_CWD);
+      expect(created.active?.sessionId).toBe("new-id");
+      expect(workers[1]?.starts).toBe(1);
+      expect(remember).toHaveBeenCalledWith([TEST_CWD]);
+    } finally {
+      await runtime.close();
+    }
+  });
+  it.each(["existing", "new"] as const)(
+    "does not start a %s writer after shutdown while its factory is preparing",
+    async (kind) => {
+      const gate = deferredSignal();
+      let worker: FakeRpc | undefined;
+      const runtime = new RuntimeController(
+        catalog([record("a", TEST_CWD)]),
+        trackedAttachmentStore(),
+        async (options) => {
+          worker = new FakeRpc(options);
+          await gate.promise;
+          return worker as unknown as PiRpcProcess;
+        },
+        preview,
+      );
+      const opening =
+        kind === "existing"
+          ? runtime.openSession("a")
+          : runtime.newSession(TEST_CWD);
+      const outcome = opening.catch((error: unknown) => error);
+      try {
+        await vi.waitFor(() => expect(worker).toBeDefined());
+        const closing = runtime.close();
+        gate.resolve();
+        await closing;
+        const result = await outcome;
+        if (kind === "new") expect(result).toBeInstanceOf(Error);
+        expect(worker!.starts).toBe(0);
+        expect(worker!.stops).toBe(1);
+      } finally {
+        gate.resolve();
+        await outcome;
+        await runtime.close();
+      }
+    },
+  );
+
   it("waits for a busy session's confirmed handoff without stopping other sessions", async () => {
     const f = schedulingRuntime({
       sessions: [record("a", TEST_CWD), record("b", TEST_CWD)],

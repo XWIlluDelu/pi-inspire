@@ -1017,6 +1017,30 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
   padding: 0 var(--space-2);
 }
 
+.nav__source-issues {
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.nav__source-issues summary {
+  cursor: pointer;
+}
+
+.nav__source-issues p,
+.nav__source-issues ul {
+  margin: var(--space-2) 0;
+}
+
+.nav__source-issues ul {
+  padding-left: var(--space-4);
+}
+
+.nav__source-issues li + li {
+  margin-top: var(--space-2);
+}
+
 .nav__pagination-status {
   min-height: 16px;
   color: var(--faint);

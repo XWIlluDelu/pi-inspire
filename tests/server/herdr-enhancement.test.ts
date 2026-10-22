@@ -72,7 +72,7 @@ describe.skipIf(process.platform !== "linux")(
       const { enhancement, root, probe, restore, closePane, checkScopes } =
         await harness();
       await enhancement.initialize();
-      expect(enhancement.createProcess({ cwd: root }).pid).toBeNull();
+      expect((await enhancement.createProcess({ cwd: root })).pid).toBeNull();
       expect(probe).not.toHaveBeenCalled();
       expect(restore).not.toHaveBeenCalled();
       expect(closePane).not.toHaveBeenCalled();
@@ -103,7 +103,7 @@ describe.skipIf(process.platform !== "linux")(
         expect(recovered.ready).toBe(true);
         expect(recovered.issue).toBeUndefined();
         for (let i = 0; i < 2; i++) {
-          const worker = enhancement.createProcess({ cwd: root });
+          const worker = await enhancement.createProcess({ cwd: root });
           await expect(worker.start()).rejects.toThrow(
             "Test stops at pane allocation",
           );
@@ -170,7 +170,7 @@ describe.skipIf(process.platform !== "linux")(
         .mockReturnValue(projection);
       try {
         await enhancement.initialize();
-        const rpc = enhancement.createProcess({ cwd: root });
+        const rpc = await enhancement.createProcess({ cwd: root });
         const status = {
           sessionId: "session-one",
           runState: "running",
@@ -192,7 +192,7 @@ describe.skipIf(process.platform !== "linux")(
         await harness();
       const owned = await lease();
       await enhancement.initialize();
-      expect(() => enhancement.createProcess({ cwd: root })).toThrow(
+      await expect(enhancement.createProcess({ cwd: root })).rejects.toThrow(
         "Another Inspire Host",
       );
       expect(restore).not.toHaveBeenCalled();
@@ -211,18 +211,33 @@ describe.skipIf(process.platform !== "linux")(
         join(registry.directory, `${old.id}.json`),
         JSON.stringify(old),
       );
-      const recovering = enhancement.initialize();
-      expect(() => enhancement.createProcess({ cwd: root })).toThrow(
-        "still stopping",
+      let finishCleanup!: () => void;
+      closePane.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishCleanup = resolve;
+          }),
       );
+      const recovering = enhancement.initialize();
+      let created = false;
+      const creating = enhancement
+        .createProcess({ cwd: root })
+        .then((worker) => {
+          created = true;
+          return worker;
+        });
+      await vi.waitFor(() => expect(closePane).toHaveBeenCalledOnce());
+      expect(created).toBe(false);
+      finishCleanup();
       await recovering;
+      expect((await creating).pid).toBeNull();
       expect(restore).toHaveBeenCalledWith({ ...old.pane, cwd: root });
       expect(closePane).toHaveBeenCalledWith(old.pane);
       expect(await registry.list()).toEqual([]);
       await expect(
         readFile(join(owned.launchDirectory, "launch.json")),
       ).rejects.toMatchObject({ code: "ENOENT" });
-      expect(enhancement.createProcess({ cwd: root }).pid).toBeNull();
+      expect((await enhancement.createProcess({ cwd: root })).pid).toBeNull();
     });
 
     it("retains legacy granted leases rather than claiming detached tools exited", async () => {
@@ -238,7 +253,7 @@ describe.skipIf(process.platform !== "linux")(
         JSON.stringify(legacy),
       );
       await enhancement.initialize();
-      expect(() => enhancement.createProcess({ cwd: root })).toThrow(
+      await expect(enhancement.createProcess({ cwd: root })).rejects.toThrow(
         "Previous-version Herdr workers have no retained tool scope",
       );
       expect(await enhancement.status()).toMatchObject({
@@ -254,7 +269,7 @@ describe.skipIf(process.platform !== "linux")(
       await lease();
       await chmod(registry.directory, 0o755);
       await enhancement.initialize();
-      expect(() => enhancement.createProcess({ cwd: root })).toThrow(
+      await expect(enhancement.createProcess({ cwd: root })).rejects.toThrow(
         "could not be verified",
       );
       expect(closePane).not.toHaveBeenCalled();
@@ -263,6 +278,27 @@ describe.skipIf(process.platform !== "linux")(
         ready: false,
         issue: expect.stringContaining("could not be verified"),
       });
+    });
+
+    it("retries failed ownership recovery on the next start and shares concurrent retries", async () => {
+      const { enhancement, root, registry, lease } = await harness();
+      const list = vi
+        .spyOn(registry, "list")
+        .mockRejectedValueOnce(new Error("Temporary storage failure"));
+      await enhancement.initialize();
+      expect((await enhancement.status()).ready).toBe(false);
+      expect(list).toHaveBeenCalledOnce();
+      const workers = await Promise.all([
+        enhancement.createProcess({ cwd: root }),
+        enhancement.createProcess({ cwd: root }),
+      ]);
+      expect(workers.every((worker) => worker.pid === null)).toBe(true);
+      expect(list).toHaveBeenCalledTimes(2);
+      expect((await enhancement.status()).issue).toBeUndefined();
+      // Once admitted, new ownership belongs to this Host, not startup recovery.
+      await lease();
+      expect((await enhancement.createProcess({ cwd: root })).pid).toBeNull();
+      expect(list).toHaveBeenCalledTimes(2);
     });
 
     it("does not inspect or recover real ownership in mock mode", async () => {
@@ -276,7 +312,7 @@ describe.skipIf(process.platform !== "linux")(
         ready: false,
         supported: false,
       });
-      expect(enhancement.createProcess({ cwd: root }).pid).toBeNull();
+      expect((await enhancement.createProcess({ cwd: root })).pid).toBeNull();
       expect(list).not.toHaveBeenCalled();
       expect(probe).not.toHaveBeenCalled();
       expect(restore).not.toHaveBeenCalled();

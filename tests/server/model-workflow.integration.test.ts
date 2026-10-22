@@ -48,7 +48,7 @@ afterEach(async () => {
   );
 });
 
-it("keeps healthy retained transcript and History readable when startup extension discovery fails, without guessing the selected model", async () => {
+it("keeps retained history and known models available when one startup extension cannot load", async () => {
   const f = await modelWorkflowFixture();
   roots.push(f.root);
   const manager = retainedRouter(f.trusted, f.sessions);
@@ -94,14 +94,20 @@ it("keeps healthy retained transcript and History readable when startup extensio
       ]),
     );
     expect(await readFile(path, "utf8")).toBe(original);
-    await expect(metadata.read(f.trusted)).rejects.toThrow(
-      "Pi model extensions could not load",
-    );
+    await expect(metadata.read(f.trusted)).resolves.toMatchObject({
+      warning:
+        "Some Pi extensions could not load; their models may be unavailable.",
+      models: expect.arrayContaining([
+        expect.objectContaining({ provider: "global-native", id: "a" }),
+      ]),
+    });
     expect(
       (await runtime.snapshot(manager.getSessionId())).active,
     ).toMatchObject({
-      model: null,
-      modelDiscovery: "unavailable",
+      model: { provider: "project-native", id: "a" },
+      availableModels: expect.arrayContaining([
+        expect.objectContaining({ provider: "global-native", id: "a" }),
+      ]),
       projectionHealth: { status: "ok" },
     });
   } finally {
@@ -275,7 +281,6 @@ it("keeps native virtual selection/effort across replies, real navigation, copie
       contextUsage: { contextWindow: 64_000 },
     });
 
-    const copyTree = await runtime.branchTree(id);
     const retained = (await readFile(path, "utf8"))
       .trim()
       .split("\n")
@@ -285,7 +290,7 @@ it("keeps native virtual selection/effort across replies, real navigation, copie
       .at(-1);
     const fork = await runtime.forkBranch({
       sessionId: id,
-      revision: copyTree.revision,
+      viewId: (await runtime.snapshot(id)).active!.transcriptPage.viewId,
       targetId: latestUser.id,
     });
     // The file-backed copy opens before registration discovery; resolve its
@@ -298,10 +303,9 @@ it("keeps native virtual selection/effort across replies, real navigation, copie
       message: fork.editorText!,
     });
     expect((await settle(fork.sessionId)).model).toMatchObject(selected);
-    const latestTree = await runtime.branchTree(id);
     const clone = await runtime.cloneBranch({
       sessionId: id,
-      revision: latestTree.revision,
+      viewId: (await runtime.snapshot(id)).active!.transcriptPage.viewId,
       targetId: continued.effectiveLeafId!,
     });
     expect(clone.snapshot.active?.model).toMatchObject(selected);

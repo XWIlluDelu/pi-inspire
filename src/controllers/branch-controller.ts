@@ -26,16 +26,27 @@ export interface BranchControllerState {
   readOnlyReason?: SessionReadOnlyReason | null;
 }
 
-/** Shared readiness for history actions and their entry points. */
+/** Independent copies need a readable source, not control of its writer. */
+function branchCopyBlockReason(state: BranchControllerState): string | null {
+  if (state.readOnlyReason === "workspace-unavailable")
+    return "The project folder is unavailable";
+  if (state.branchActionId) return "A history action is in progress";
+  if (state.projectionHealth.status === "error" || state.projectionConflict)
+    return "Recover this session before continuing";
+  return null;
+}
+
+export function branchCopiesBlocked(state: BranchControllerState): boolean {
+  return branchCopyBlockReason(state) !== null;
+}
+
 export function branchActionsBlocked(state: BranchControllerState): boolean {
   return Boolean(
     state.readOnlyReason ||
-      state.branchActionId ||
+      branchCopiesBlocked(state) ||
       state.branchTreeLoading ||
       state.branchTreeError ||
-      state.branchTree?.health.status === "error" ||
-      state.projectionHealth.status === "error" ||
-      state.projectionConflict,
+      state.branchTree?.health.status === "error",
   );
 }
 
@@ -344,31 +355,20 @@ export class BranchController {
 
   /** Preparation belongs to the original gesture, not a later visit to the
    * same session. Reuse the read boundary for selection/view/transport fencing. */
-  private async refreshForAction(
-    ownership: "position" | "view",
-  ): Promise<boolean> {
+  private async refreshForNavigation(): Promise<boolean> {
     return (
       (await this.read(async () => {
         await this.loadTree();
         return true;
-      }, ownership)) === true
+      }, "position")) === true
     );
   }
 
-  /** Refreshes the tree before checking the target capability, so a transcript
-   * row never supplies a revision or permission by itself. */
+  /** The server validates this retained target in the captured source view;
+   * no preparatory tree refresh is needed. */
   async forkFromEntry(targetId: string): Promise<boolean> {
     const sessionId = this.host.state().sessionId;
     if (!sessionId || !targetId) return false;
-    if (!(await this.refreshForAction("view"))) return false;
-    const state = this.host.state();
-    if (!state.branchTree || state.branchTreeError) {
-      this.host.notify(
-        "warning",
-        state.branchTreeError ?? "That input is no longer available to fork",
-      );
-      return false;
-    }
     const pending = this.fork(targetId);
     const ticket = this.viewTicket(this.host.state());
     const transport = this.host.transportGeneration();
@@ -390,8 +390,8 @@ export class BranchController {
     const api = this.host.api();
     const state = this.host.state();
     const sessionId = state.sessionId;
-    const tree = state.branchTree;
-    if (!api || !sessionId || !tree || branchActionsBlocked(state))
+    const viewId = state.transcriptViewId;
+    if (!api || !sessionId || !viewId || branchCopiesBlocked(state))
       return false;
     const selectionRequest = this.host.beginForkSelection();
     return this.runAction(
@@ -401,7 +401,7 @@ export class BranchController {
       () =>
         api.forkBranch({
           sessionId,
-          revision: tree.revision,
+          viewId,
           targetId,
         }),
       (response) => {
@@ -420,14 +420,18 @@ export class BranchController {
     );
   }
 
-  async clone(targetId?: string): Promise<boolean> {
-    const sessionId = this.host.state().sessionId;
-    if (!sessionId) return false;
-    if (!(await this.refreshForAction("view"))) return false;
+  async clone(targetId?: string, onFailure?: (message: string) => void): Promise<boolean> {
     const api = this.host.api();
     const state = this.host.state();
-    const tree = state.branchTree;
-    if (!api || !tree || branchActionsBlocked(state)) return false;
+    const sessionId = state.sessionId;
+    const viewId = state.transcriptViewId;
+    if (!api || !sessionId || !viewId) return false;
+    const blocked = branchCopyBlockReason(state);
+    if (blocked) {
+      onFailure?.(blocked);
+      return false;
+    }
+    const endpoint = targetId ?? state.transcriptEffectiveLeafId;
     const selectionRequest = this.host.beginForkSelection();
     return this.runAction(
       `clone:${targetId ?? "current"}`,
@@ -436,8 +440,8 @@ export class BranchController {
       () =>
         api.cloneBranch({
           sessionId,
-          revision: tree.revision,
-          ...(targetId ? { targetId } : {}),
+          viewId,
+          targetId: endpoint,
         }),
       (response) => {
         this.host.applyFork(response);
@@ -445,6 +449,8 @@ export class BranchController {
       },
       "Clone failed",
       "view",
+      undefined,
+      onFailure,
     );
   }
 
@@ -457,6 +463,7 @@ export class BranchController {
     fallbackError: string,
     ownership: "position" | "view" = "position",
     discard?: (response: T) => Promise<void>,
+    onFailure?: (message: string) => void,
   ): Promise<boolean> {
     const actionRequest = ++this.actionRequest;
     const transportGeneration = this.host.transportGeneration();
@@ -487,9 +494,9 @@ export class BranchController {
         return false;
       }
       if (!owns()) return false;
-      this.host.patch({
-        branchTreeError: error instanceof Error ? error.message : fallbackError,
-      });
+      const message = error instanceof Error ? error.message : fallbackError;
+      this.host.patch({ branchTreeError: message });
+      onFailure?.(message);
       return false;
     } finally {
       if (ownsRequest() && this.host.state().branchActionId === actionId)
@@ -515,7 +522,7 @@ export class BranchController {
     if (!sessionId || !durableLeafId || durableLeafId === effectiveLeafId) {
       return null;
     }
-    if (!(await this.refreshForAction("position"))) return null;
+    if (!(await this.refreshForNavigation())) return null;
     const current = this.host.state();
     if (current.transcriptDurableLeafId !== durableLeafId) {
       return null;

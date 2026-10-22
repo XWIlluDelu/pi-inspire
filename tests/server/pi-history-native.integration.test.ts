@@ -222,7 +222,8 @@ it("executes native root/custom navigation, summary append and cancellation, and
     const emptyTree = await runtime.branchTree(sessionId);
     const emptyClone = await runtime.cloneBranch({
       sessionId,
-      revision: emptyTree.revision,
+      viewId: (await runtime.snapshot(sessionId)).active!.transcriptPage.viewId,
+      targetId: emptyTree.effectiveLeafId,
     });
     expect(emptyClone.editorText).toBe("");
     expect(emptyClone.snapshot.active?.transcriptPage.messages).toEqual([]);
@@ -270,7 +271,8 @@ it("executes native root/custom navigation, summary append and cancellation, and
     const tree = await runtime.branchTree(sessionId);
     const cloned = await runtime.cloneBranch({
       sessionId,
-      revision: tree.revision,
+      viewId: (await runtime.snapshot(sessionId)).active!.transcriptPage.viewId,
+      targetId: tree.effectiveLeafId,
     });
     expect(cloned.editorText).toBe("");
     const clonedEntries = (

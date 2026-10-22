@@ -274,16 +274,18 @@ describe("Host project discovery continuity", () => {
         .set("Authorization", "Bearer test")
         .send({ id: "existing" })
         .expect(200);
-      expect(
-        await new PreferencesStore(preferencesPath).projectDirectories.read(),
-      ).toContain(project);
+      await vi.waitFor(async () =>
+        expect(
+          await new PreferencesStore(preferencesPath).projectDirectories.read(),
+        ).toContain(project),
+      );
       expect((await current.preferences.read()).pinnedProjectCwds).toEqual([]);
     } finally {
       await current.application.close();
     }
   });
 
-  it("saves the cwd before a failed/uncertain worker start and blocks creation if saving fails", async () => {
+  it("remembers an uncertain start without making the index a launch gate", async () => {
     const { root, startup, project, preferencesPath } = await fixture();
     vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", "sessions");
     const preferences = new PreferencesStore(preferencesPath);
@@ -292,10 +294,7 @@ describe("Host project discovery continuity", () => {
     const create = vi.fn((options) => {
       const rpc = new PiRpcProcess(options);
       vi.spyOn(rpc, "start").mockImplementation(async () => {
-        expect(
-          await new PreferencesStore(preferencesPath).projectDirectories.read(),
-        ).toContain(project);
-        await mkdir(join(project, "sessions"));
+        await mkdir(join(project, "sessions"), { recursive: true });
         await writeFile(
           join(project, "sessions", "uncertain.jsonl"),
           `${JSON.stringify({ type: "session", version: 3, id: "uncertain", cwd: project, timestamp: new Date().toISOString() })}\n`,
@@ -309,6 +308,11 @@ describe("Host project discovery continuity", () => {
       await expect(runtime.newSession(project)).rejects.toThrow(
         "startup response lost",
       );
+      await vi.waitFor(async () =>
+        expect(
+          await new PreferencesStore(preferencesPath).projectDirectories.read(),
+        ).toContain(project),
+      );
       expect(
         (
           await createHostSessionCatalog(
@@ -318,8 +322,10 @@ describe("Host project discovery continuity", () => {
         ).sessions.map((row) => row.id),
       ).toEqual(["uncertain"]);
       await writeFile(preferences.projectDirectories.path, "invalid json");
-      await expect(runtime.newSession(project)).rejects.toThrow();
-      expect(create).toHaveBeenCalledTimes(1);
+      await expect(runtime.newSession(project)).rejects.toThrow(
+        "startup response lost",
+      );
+      expect(create).toHaveBeenCalledTimes(2);
     } finally {
       await runtime.close();
       await attachments.close();

@@ -310,7 +310,7 @@ describe("SessionProjection framing and last-good state", () => {
         sourceChanged: true,
         committedBytes: 0,
         uncommittedBytes: Buffer.byteLength(serialized) - 1,
-        health: { status: "ok" },
+        health: { status: "pending" },
       });
       expect(projection.attestInitialMaterialization([])).toBe("partial");
 

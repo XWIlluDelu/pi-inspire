@@ -1,11 +1,4 @@
-import {
-  ArrowDown,
-  ArrowDownToLine,
-  ArrowUp,
-  ArrowUpToLine,
-  GripVertical,
-  ListOrdered,
-} from "lucide-react";
+import { ArrowDown, ArrowUp, GripVertical, ListOrdered } from "lucide-react";
 import {
   Fragment,
   useCallback,
@@ -35,7 +28,7 @@ const POPOVER_CONSTRAINTS: FloatingMenuConstraints = {
   horizontalMargin: 8,
   verticalMargin: 8,
   maxWidth: 220,
-  maxHeight: 240,
+  maxHeight: 120,
   preferredDirection: "down",
 };
 
@@ -340,34 +333,6 @@ export function SessionActionsSettings({
                 <ArrowDown size={14} aria-hidden />
                 <span>Move down</span>
                 <kbd className="session-action-order__kbd">Alt+↓</kbd>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="session-action-order__popover-item"
-                aria-label={`Move ${SESSION_ACTION_LABELS[activeMenu]} to top`}
-                disabled={activeIndex <= 0}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  executeMove(activeMenu, -activeIndex);
-                }}
-              >
-                <ArrowUpToLine size={14} aria-hidden />
-                <span>Move to top</span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="session-action-order__popover-item"
-                aria-label={`Move ${SESSION_ACTION_LABELS[activeMenu]} to bottom`}
-                disabled={activeIndex >= order.length - 1}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  executeMove(activeMenu, order.length - 1 - activeIndex);
-                }}
-              >
-                <ArrowDownToLine size={14} aria-hidden />
-                <span>Move to bottom</span>
               </button>
             </div>,
             document.body,

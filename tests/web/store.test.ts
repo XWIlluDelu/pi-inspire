@@ -1215,6 +1215,32 @@ describe("multi-session event routing", () => {
     },
   );
 
+  it("shows unfinished persistence as a warning without claiming a runtime conflict", async () => {
+    installFetch((url, init) => baseRoutes(url, init));
+    const { store, socket } = await initStore();
+    socket.emit({
+      type: "session_projection_changed",
+      sessionId: "s1",
+      revision: 1,
+      health: {
+        status: "pending",
+        message: "Waiting for Pi to complete its write.",
+      },
+      conflict: null,
+      sessionStatus: { runState: "running" },
+    });
+    expect(store.getState().projectionHealth.status).toBe("pending");
+    expect(store.getState().errorSeverity).toBe("warning");
+    expect(store.getState().projectionConflict).toBeNull();
+    expect(store.getState().error).toBe(
+      "Waiting for Pi to complete its write.",
+    );
+    await vi.waitFor(() =>
+      expect(store.getState().projectionHealth.status).toBe("ok"),
+    );
+    expect(store.getState().projectionError).toBeNull();
+  });
+
   it("surfaces projection health immediately and retains it when non-auth resync fails", async () => {
     let snapshots = 0;
     installFetch((url, init) => {
