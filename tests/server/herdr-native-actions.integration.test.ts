@@ -7,9 +7,12 @@ import {
   nativeActionFrame,
   piActivityDirectory,
 } from "../../docs/examples/session-activity.js";
+import { AttachmentStore } from "../../server/attachments.js";
 import type { HerdrClient } from "../../server/herdr-client.js";
 import { HerdrNativeSession } from "../../server/herdr-native-session.js";
 import { piInstallation } from "../../server/pi-runtime.js";
+import { RuntimeController } from "../../server/runtime.js";
+import { SessionCatalog } from "../../server/session-catalog.js";
 import {
   nativePiWorkspace,
   stubNativePiEnvironment,
@@ -20,6 +23,7 @@ it.skipIf(process.platform !== "linux")(
   async () => {
     const f = await nativePiWorkspace("inspire-native-actions-", {
       defaultProjectTrust: "never",
+      defaultThinkingLevel: "high",
       packages: [],
       extensions: [],
       compaction: { enabled: false },
@@ -61,12 +65,42 @@ it.skipIf(process.platform !== "linux")(
       `
     import { renameSync, writeFileSync } from "node:fs";
     export default pi => {
-      let ctx, timer, aborted = false, commands = 0, handled = 0;
+      let ctx, timer, aborted = false, commands = 0, handled = 0, images = [], redirect = false;
+      let slowArmed = false, slowStarted = false, slowCancelled = false;
+      pi.registerProvider("native-plain", {
+        api: "openai-completions", baseUrl: "http://127.0.0.1:1", apiKey: "synthetic",
+        models: Array.from({length: 300}, (_, n) => ({id: "plain-" + n, name: "Native-only " + n + " " + "name".repeat(24), reasoning: false})),
+      });
+      pi.on("model_select", async (event, context) => {
+        ctx = context;
+        if (event.source === "set" && event.model.provider === "global-native") {
+          if (event.model.id === "a" && redirect)
+            await pi.setModel(ctx.modelRegistry.find("global-native", "b"));
+          if (event.model.id === "b") pi.setThinkingLevel("low");
+        }
+        publish();
+      });
+      pi.registerCommand("fixture-redirect", {handler: async () => {redirect = true;}});
+      pi.registerCommand("fixture-slow-catalog", {handler: async () => {
+        const refresh = ctx.modelRegistry.refresh.bind(ctx.modelRegistry);
+        ctx.modelRegistry.refresh = async ({signal}) => {
+          ctx.modelRegistry.refresh = refresh;
+          slowStarted = true; publish();
+          return new Promise((_, reject) => {
+            const cancel = () => { slowCancelled = true; publish(); reject(signal.reason); };
+            signal.addEventListener("abort", cancel, {once: true});
+            if (signal.aborted) cancel();
+          });
+        };
+        slowArmed = true; publish();
+      }});
       const publish = () => {
         if (!ctx) return;
         writeFileSync(${JSON.stringify(probe + ".tmp")}, JSON.stringify({
           id: ctx.sessionManager.getSessionId(), idle: ctx.isIdle(),
-          pending: ctx.hasPendingMessages(), editor: ctx.ui.getEditorText(), aborted, commands, handled,
+          pending: ctx.hasPendingMessages(), editor: ctx.ui.getEditorText(), aborted, commands, handled, images,
+          slowArmed, slowStarted, slowCancelled,
+          model: ctx.model ? {provider: ctx.model.provider, id: ctx.model.id} : null, thinkingLevel: pi.getThinkingLevel(),
         }));
         renameSync(${JSON.stringify(probe + ".tmp")}, ${JSON.stringify(probe)});
       };
@@ -81,6 +115,7 @@ it.skipIf(process.platform !== "linux")(
       pi.registerCommand("fixture-command", { handler: async () => { commands++; publish(); } });
       pi.registerCommand("fixture-dialog", { handler: async (_, context) => { await context.ui.confirm("Native question", "Answer in the original terminal"); } });
       pi.on("input", event => { if (event.text === "Handled native input") { handled++; publish(); return { action: "handled" }; } });
+      pi.on("before_agent_start", event => { images = event.images ?? []; publish(); });
       pi.on("agent_settled", (event, context) => { ctx = context; aborted = event.aborted; publish(); });
       pi.on("session_shutdown", () => clearInterval(timer));
     }
@@ -143,6 +178,12 @@ it.skipIf(process.platform !== "linux")(
       aborted: boolean;
       commands: number;
       handled: number;
+      slowArmed: boolean;
+      slowStarted: boolean;
+      slowCancelled: boolean;
+      images: Array<{ type: string; data: string; mimeType: string }>;
+      model: { provider: string; id: string } | null;
+      thinkingLevel: string;
     };
     const state = async () =>
       JSON.parse(await readFile(probe, "utf8")) as State;
@@ -197,6 +238,14 @@ it.skipIf(process.platform !== "linux")(
       sessionId,
       sessionFile,
     );
+    const attachments = new AttachmentStore(join(f.root, "uploads"));
+    const runtime = new RuntimeController(
+      new SessionCatalog(f.cwd),
+      attachments,
+      () => {
+        throw new Error("Must not start another Pi");
+      },
+    ).setExternalSessionConnector(async () => native);
     try {
       await vi.waitFor(
         async () => {
@@ -217,6 +266,71 @@ it.skipIf(process.platform !== "linux")(
           code: "NATIVE_ACTION_UNSUPPORTED",
         });
       expect(await state()).toMatchObject({ idle: true, commands: 0 });
+      await runtime.openSession(sessionId);
+      const catalog = await runtime.refreshModels(sessionId);
+      expect(catalog.models).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ provider: "global-native", id: "b" }),
+          expect.objectContaining({
+            provider: "global-router",
+            id: "auto",
+            virtual: true,
+          }),
+          expect.objectContaining({
+            provider: "native-plain",
+            id: "plain-299",
+          }),
+        ]),
+      );
+      expect(JSON.stringify(catalog.models).length).toBeGreaterThan(16_384);
+      expect(JSON.stringify(catalog.models)).not.toMatch(
+        /baseUrl|apiKey|headers/u,
+      );
+      expect(
+        (await runtime.snapshot(sessionId)).sessionStatuses[sessionId],
+      ).toMatchObject({
+        external: true,
+        nativeModelControls: true,
+      });
+      const switched = await runtime.setModel(sessionId, "global-native", "b");
+      expect(switched).toMatchObject({
+        model: { provider: "global-native", id: "b" },
+        thinkingLevel: "low",
+      });
+      await native.prompt("/fixture-redirect");
+      expect(
+        await runtime.setModel(sessionId, "global-native", "a"),
+      ).toMatchObject({
+        model: { provider: "global-native", id: "b" },
+        thinkingLevel: "low",
+      });
+      await runtime.setModel(sessionId, "global-router", "auto");
+      expect(await runtime.setThinkingLevel(sessionId, "max")).toMatchObject({
+        thinkingLevel: "high",
+      });
+      expect(
+        await runtime.setModel(sessionId, "native-plain", "plain-0"),
+      ).toMatchObject({
+        model: { provider: "native-plain", id: "plain-0", reasoning: false },
+        thinkingLevel: "off",
+      });
+      await runtime.setModel(sessionId, "global-native", "b");
+      const nativeSnapshot = await runtime.snapshot(sessionId);
+      expect(nativeSnapshot.active).toMatchObject({
+        model: { provider: "global-native", id: "b" },
+        thinkingLevel: "low",
+        availableModels: expect.arrayContaining([
+          expect.objectContaining({
+            provider: "native-plain",
+            id: "plain-299",
+          }),
+        ]),
+      });
+      expect((await state()).thinkingLevel).toBe("low");
+      expect(
+        JSON.parse(await readFile(join(f.agent, "settings.json"), "utf8"))
+          .defaultThinkingLevel,
+      ).toBe("high");
       await native.prompt("/fixture-command");
       await vi.waitFor(async () => expect((await state()).commands).toBe(1));
       await native.prompt("/fixture-dialog");
@@ -231,10 +345,29 @@ it.skipIf(process.platform !== "linux")(
       await vi.waitFor(async () =>
         expect((await report()).activity).toBe("idle"),
       );
+      await native.prompt("/fixture-slow-catalog");
+      await vi.waitFor(async () =>
+        expect((await state()).slowArmed).toBe(true),
+      );
       await native.prompt("First browser instruction");
       await vi.waitFor(async () => expect((await state()).idle).toBe(false), {
         timeout: 10000,
       });
+      await expect(
+        runtime.nativeCommand({ sessionId, command: "reload" }),
+      ).rejects.toMatchObject({
+        code: "NATIVE_ACTION_UNSUPPORTED",
+        message: "Run /reload in the original Pi terminal.",
+      });
+      expect((await runtime.snapshot(sessionId)).runState).toBe("running");
+      // These public native controls stay supported during model work.
+      expect(await runtime.setThinkingLevel(sessionId, "medium")).toMatchObject(
+        { thinkingLevel: "medium" },
+      );
+      expect(
+        await runtime.setModel(sessionId, "global-native", "b"),
+      ).toMatchObject({ thinkingLevel: "high" });
+      expect((await state()).idle).toBe(false);
       await native.prompt("Follow up, not a terminal draft", "followUp");
       await vi.waitFor(async () =>
         expect(await state()).toMatchObject({
@@ -243,7 +376,16 @@ it.skipIf(process.platform !== "linux")(
           editor: "",
         }),
       );
-      await native.abort();
+      // A pending directory read must not delay Stop or steal its receipt.
+      const slowCatalog = runtime.refreshModels(sessionId);
+      const cancelled =
+        expect(slowCatalog).rejects.toThrow("cancelled by Stop");
+      await vi.waitFor(async () =>
+        expect((await state()).slowStarted).toBe(true),
+      );
+      await runtime.abort(sessionId);
+      await cancelled;
+      expect((await state()).slowCancelled).toBe(true);
       await vi.waitFor(
         async () =>
           expect(await state()).toMatchObject({
@@ -261,6 +403,12 @@ it.skipIf(process.platform !== "linux")(
       expect((await state()).editor).toContain(
         "Follow up, not a terminal draft",
       );
+      const restoredDraft = (await state()).editor;
+      await native.prompt("Browser input after Stop");
+      await vi.waitFor(async () => expect((await state()).idle).toBe(false));
+      expect((await state()).editor).toBe(restoredDraft);
+      await native.abort();
+      await vi.waitFor(async () => expect((await state()).idle).toBe(true));
       terminal.write("\x15");
       await vi.waitFor(async () => expect((await state()).editor).toBe(""));
       paste("/fixture-draft");
@@ -268,15 +416,81 @@ it.skipIf(process.platform !== "linux")(
       await vi.waitFor(async () =>
         expect((await state()).editor).toBe("Keep this real terminal draft"),
       );
-      await expect(
-        native.prompt("Must not alter the draft"),
-      ).rejects.toMatchObject({ status: 409, code: "NATIVE_EDITOR_NOT_EMPTY" });
+      await native.prompt("Must not alter the draft");
+      await vi.waitFor(async () => expect((await state()).idle).toBe(false));
       expect((await state()).editor).toBe("Keep this real terminal draft");
-      expect(await readFile(sessionFile, "utf8")).not.toContain(
+      expect(await readFile(sessionFile, "utf8")).toContain(
         "Must not alter the draft",
       );
+      await native.abort();
+      await vi.waitFor(async () => expect((await state()).idle).toBe(true));
+      // Exercise the complete Host attachment path, not just a path in prompt text.
+      const image = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
+        "base64",
+      );
+      const uploaded = await attachments.add({
+        originalname: "pixel.png",
+        mimetype: "image/png",
+        size: image.length,
+        buffer: image,
+      } as Express.Multer.File);
+      await runtime.openSession(sessionId);
+      await runtime.prompt({
+        sessionId,
+        message: "Inspect this image",
+        attachmentIds: [uploaded.id],
+      });
+      await vi.waitFor(async () => {
+        expect((await state()).images).toEqual([
+          {
+            type: "image",
+            data: image.toString("base64"),
+            mimeType: "image/png",
+          },
+        ]);
+      });
+      expect((await state()).editor).toBe("Keep this real terminal draft");
+      await expect(attachments.imagePreview(uploaded.id)).rejects.toMatchObject(
+        { status: 404 },
+      );
+      await native.abort();
+      await vi.waitFor(async () => expect((await state()).idle).toBe(true));
       terminal.write("\x15");
       await vi.waitFor(async () => expect((await state()).editor).toBe(""));
+      await vi.waitFor(async () =>
+        expect(await readFile(sessionFile, "utf8")).toContain(
+          image.toString("base64"),
+        ),
+      );
+      const history = await runtime.composerHistory(sessionId, 0);
+      const recalled = history.entries.find(
+        (entry) => entry.images.length > 0,
+      )!;
+      expect(recalled.images).toHaveLength(1);
+      await runtime.prompt({
+        sessionId,
+        message: "",
+        historyArtifacts: {
+          viewId: history.viewId,
+          incarnation: history.incarnation ?? null,
+          effectiveLeafId: history.effectiveLeafId ?? null,
+          imageReferences: recalled.images.map((image) => image.reference),
+          fileReferences: [],
+        },
+      });
+      await vi.waitFor(async () => {
+        expect((await state()).idle).toBe(false);
+        expect((await state()).images).toEqual([
+          {
+            type: "image",
+            data: image.toString("base64"),
+            mimeType: "image/png",
+          },
+        ]);
+      });
+      await native.abort();
+      await vi.waitFor(async () => expect((await state()).idle).toBe(true));
       // Native reload replaces the action context, not the process or session.
       const reportFile = join(
         piActivityDirectory(),
@@ -295,6 +509,9 @@ it.skipIf(process.platform !== "linux")(
               .receiverId,
           ).not.toBe(oldReceiver),
         { timeout: 15000 },
+      );
+      expect(await runtime.setThinkingLevel(sessionId, "medium")).toMatchObject(
+        { thinkingLevel: "medium" },
       );
       paste(nativeActionFrame(oldReceiver, randomUUID()));
       // The old frame is consumed, not inserted into the current editor.
@@ -327,7 +544,6 @@ it.skipIf(process.platform !== "linux")(
       );
       await native.prompt("Handled native input");
       await vi.waitFor(async () => expect((await state()).handled).toBe(1));
-      expect((await report()).nativeActions.result.status).toBe("invoked");
       expect(await state()).toMatchObject({ idle: true, pending: false });
       expect(await readFile(sessionFile, "utf8")).not.toContain(
         "Handled native input",
@@ -358,6 +574,8 @@ it.skipIf(process.platform !== "linux")(
       ).toBe(true);
       expect(exited).toBe(false);
     } finally {
+      await runtime.close();
+      await attachments.close();
       native.close();
       await writeFile(shellGate, "").catch(() => undefined);
       if (!exited) terminal.kill();

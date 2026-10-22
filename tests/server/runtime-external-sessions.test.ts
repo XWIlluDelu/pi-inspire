@@ -121,7 +121,7 @@ describe("continue an externally owned Pi", () => {
       await runtime.snapshot("a");
       expect(connect).not.toHaveBeenCalled();
       await expect(runtime.setModel("a", "test", "model")).rejects.toThrow(
-        "original Pi host",
+        "session-activity extension",
       );
       expect(connect).toHaveBeenCalledOnce();
       expect(create).not.toHaveBeenCalled();
@@ -187,6 +187,7 @@ describe("continue an externally owned Pi", () => {
         "Continue here",
         undefined,
         expect.any(Function),
+        undefined,
       );
       expect(create).not.toHaveBeenCalled();
       await vi.waitFor(
@@ -268,6 +269,7 @@ describe("continue an externally owned Pi", () => {
         "For A only",
         undefined,
         expect.any(Function),
+        undefined,
       );
     } finally {
       gate.resolve();
@@ -347,6 +349,54 @@ describe("continue an externally owned Pi", () => {
       const paths = store.referencedPromptFiles(text);
       expect(paths).toHaveLength(1);
       expect(await readFile(paths[0]!, "utf8")).toBe("notes");
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("leases real image references, restores rejected staging, and releases consumed images", async () => {
+    const f = nativeFixture(),
+      store = trackedAttachmentStore();
+    const uploaded = await store.add({
+      originalname: "image.png",
+      mimetype: "image/png",
+      size: 6,
+      buffer: Buffer.from("pixels"),
+    } as Express.Multer.File);
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      () => {
+        throw new Error("must not launch Pi");
+      },
+      preview,
+    ).setExternalSessionConnector(async () => f.native);
+    vi.mocked(f.native.prompt).mockImplementationOnce(
+      async (_text, _behavior, _beforeSend, images) => {
+        expect(images).toHaveLength(1);
+        expect(await readFile(images![0]!.path, "utf8")).toBe("pixels");
+        throw new Error("Native question is waiting");
+      },
+    );
+    try {
+      await runtime.openSession("a");
+      const request = {
+        sessionId: "a",
+        message: "",
+        attachmentIds: [uploaded.id],
+      };
+      await expect(runtime.prompt(request)).rejects.toThrow("Native question");
+      expect((await store.imagePreview(uploaded.id)).bytes.toString()).toBe(
+        "pixels",
+      );
+      await runtime.prompt(request);
+      expect(vi.mocked(f.native.prompt).mock.lastCall?.[0]).toBe("");
+      expect(vi.mocked(f.native.prompt).mock.lastCall?.[3]).toEqual([
+        expect.objectContaining({ mimeType: "image/png" }),
+      ]);
+      await expect(store.imagePreview(uploaded.id)).rejects.toMatchObject({
+        status: 404,
+      });
     } finally {
       await runtime.close();
     }
@@ -583,6 +633,132 @@ describe("continue an externally owned Pi", () => {
     },
   );
 
+  it("preserves completed model/thinking changes when an older catalog reply arrives last", async () => {
+    const f = nativeFixture();
+    const gate = deferredSignal();
+    const old = {
+      model: { provider: "native", id: "old" },
+      thinkingLevel: "off" as const,
+    };
+    const selected = {
+      model: { provider: "native", id: "selected" },
+      thinkingLevel: "low" as const,
+    };
+    const models = [old.model, selected.model];
+    f.setState({ status: "idle", modelControls: true, modelSelection: old });
+    f.native.models = vi.fn(async () => {
+      await gate.promise;
+      return { ...old, models };
+    });
+    f.native.setModel = vi.fn(async () => ({
+      ...selected,
+      thinkingLevel: "off" as const,
+    }));
+    f.native.setThinkingLevel = vi.fn(async () => selected);
+    const slot = createRuntimeSlot({
+      id: "a",
+      cwd: "/tmp",
+      sessionPath: "/sessions/a.jsonl",
+      process: null,
+      preview: null,
+      projection: await preview(record("a", "/tmp")),
+      bridge: null,
+      branchRevision: 1,
+      incarnationId: "slot-a",
+      viewId: "view-a",
+    });
+    const external = new RuntimeExternalSessions(
+      async () => f.native,
+      {
+        current: () => true,
+        emit: vi.fn(),
+        assertUsable: vi.fn(),
+        log: vi.fn(),
+        reconcile: async () => {},
+      },
+      trackedAttachmentStore(),
+    );
+    try {
+      await external.connect(slot);
+      const reading = external.models(slot);
+      await external.setModel(slot, "native", "selected");
+      await external.setThinkingLevel(slot, "low");
+      gate.resolve();
+      // Both the catalog HTTP reply and subsequent snapshots retain the newer choice.
+      expect(await reading).toEqual({ ...selected, models });
+      expect(external.modelSelection(slot)).toEqual(selected);
+      expect(slot.availableModels).toEqual(models);
+    } finally {
+      gate.resolve();
+      external.close();
+    }
+  });
+
+  it("rejects a retired catalog before changing the replacement owner's models or selection", async () => {
+    const old = nativeFixture(),
+      fresh = nativeFixture();
+    const gate = deferredSignal();
+    const catalogFor = (provider: string) => ({
+      models: [{ provider, id: "model" }],
+      model: { provider, id: "model" },
+      thinkingLevel: "low" as const,
+    });
+    for (const f of [old, fresh]) {
+      f.setState({ status: "idle", modelControls: true });
+      f.native.setModel = vi.fn();
+      f.native.setThinkingLevel = vi.fn();
+    }
+    old.native.models = vi.fn(async () => {
+      await gate.promise;
+      return catalogFor("old");
+    });
+    fresh.native.models = vi.fn(async () => catalogFor("fresh"));
+    const slot = createRuntimeSlot({
+      id: "a",
+      cwd: "/tmp",
+      sessionPath: "/sessions/a.jsonl",
+      process: null,
+      preview: null,
+      projection: await preview(record("a", "/tmp")),
+      bridge: null,
+      branchRevision: 1,
+      incarnationId: "slot-a",
+      viewId: "view-a",
+    });
+    const emit = vi.fn();
+    const external = new RuntimeExternalSessions(
+      vi.fn().mockResolvedValueOnce(old.native).mockResolvedValue(fresh.native),
+      {
+        current: () => true,
+        emit,
+        assertUsable: vi.fn(),
+        log: vi.fn(),
+        reconcile: async () => {},
+      },
+      trackedAttachmentStore(),
+    );
+    try {
+      await external.connect(slot);
+      const pending = external.models(slot);
+      const rejected = expect(pending).rejects.toThrow("connection has ended");
+      external.detach(slot);
+      await external.connect(slot);
+      await external.models(slot);
+      const events = emit.mock.calls.length;
+      gate.resolve();
+      await rejected;
+      expect(slot.availableModels).toEqual(catalogFor("fresh").models);
+      expect(external.modelSelection(slot)).toEqual({
+        model: catalogFor("fresh").model,
+        thinkingLevel: "low",
+      });
+      expect(emit).toHaveBeenCalledTimes(events);
+    } finally {
+      gate.resolve();
+      external.close();
+    }
+  });
+
   it("coalesces failed native polls until one complete observation succeeds", async () => {
     const f = nativeFixture();
     const slot = createRuntimeSlot({
@@ -663,6 +839,7 @@ describe("continue an externally owned Pi", () => {
         "Fresh",
         undefined,
         expect.any(Function),
+        undefined,
       );
     } finally {
       await runtime.close();

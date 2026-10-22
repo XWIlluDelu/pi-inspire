@@ -69,6 +69,19 @@ export class RuntimeExtensionUiController {
     this.host.scheduleIdleWorkerEviction();
   }
 
+  /** Cancel only this snapshot. A response can start another independent
+   * question; that new request must remain answerable. */
+  async cancel(slot: RuntimeSlot, process: PiRpcProcess): Promise<void> {
+    const requests = [...slot.pendingExtensionUiRequests.values()].filter(
+      (request) => slot.pendingExtensionUiOwners.get(request.id) === process,
+    );
+    for (const request of requests)
+      await this.respondInside(
+        { sessionId: slot.id, id: request.id, cancelled: true },
+        { slot, request, process },
+      );
+  }
+
   respond(response: Record<string, unknown>): Promise<void> {
     return this.host.withMaintenance(() => this.respondInside(response));
   }
@@ -108,6 +121,11 @@ export class RuntimeExtensionUiController {
 
   private async respondInside(
     response: Record<string, unknown>,
+    expected?: {
+      slot: RuntimeSlot;
+      request: ExtensionUiRequest;
+      process: PiRpcProcess;
+    },
   ): Promise<void> {
     const sessionId =
       typeof response.sessionId === "string" ? response.sessionId : "";
@@ -119,7 +137,15 @@ export class RuntimeExtensionUiController {
         409,
       );
     const { sessionId: _owner, ...wireResponse } = response;
+    const stillExpected = () =>
+      !expected ||
+      (slot === expected.slot &&
+        slot.process === expected.process &&
+        slot.pendingExtensionUiRequests.get(requestId) === expected.request &&
+        slot.pendingExtensionUiOwners.get(requestId) === expected.process);
     await this.host.extensionResponseSlot(slot, async () => {
+      // An explicit answer, expiry or worker retirement may win this FIFO.
+      if (!stillExpected()) return;
       if (
         !this.host.ownsSlot(sessionId, slot) ||
         slot.conflict ||
@@ -133,6 +159,7 @@ export class RuntimeExtensionUiController {
         );
       }
       await this.host.reconcileSlot(slot, true);
+      if (!stillExpected()) return;
       if (!this.host.ownsSlot(sessionId, slot))
         throw requestError("The extension request owner changed", 409);
       this.host.throwIfConflicted(slot);
@@ -153,6 +180,7 @@ export class RuntimeExtensionUiController {
       }
       if (request.expiresAt !== undefined && request.expiresAt <= Date.now()) {
         this.remove(slot, requestId, "expired");
+        if (expected) return;
         throw requestError(
           "The extension request expired before the response",
           409,

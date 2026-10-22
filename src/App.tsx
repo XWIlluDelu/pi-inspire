@@ -401,12 +401,7 @@ const ConversationStage = memo(function ConversationStage() {
         displays={state.extensionDisplays}
         placement="aboveEditor"
       />
-      {state.readOnlyReason === "terminal" && state.sessionId ? (
-        <TerminalSessionNotice
-          key={state.sessionId}
-          sessionId={state.sessionId}
-        />
-      ) : state.readOnlyReason ? (
+      {state.readOnlyReason ? (
         <div className="composer-readonly">
           <dl
             className="composer-readonly__settings"
@@ -429,13 +424,20 @@ const ConversationStage = memo(function ConversationStage() {
               <dd>{state.thinkingLevel}</dd>
             </div>
           </dl>
-          <p role="status">
-            {state.readOnlyReason === "workspace-unavailable"
-              ? "Project folder unavailable. This session is read-only."
-              : state.readOnlyReason === "external-active"
-                ? "Open in another Pi. Read-only here; reopen after it releases the session."
-                : "Pi connection unavailable. History remains readable; reopen this session to check its connection."}
-          </p>
+          {state.readOnlyReason === "terminal" ? (
+            <TerminalSessionNotice
+              key={state.sessionId}
+              sessionId={state.sessionId}
+            />
+          ) : (
+            <p role="status">
+              {state.readOnlyReason === "workspace-unavailable"
+                ? "Project folder unavailable. This session is read-only."
+                : state.readOnlyReason === "external-active"
+                  ? "Open in another Pi. Read-only here; reopen after it releases the session."
+                  : "Pi connection unavailable. History remains readable; reopen this session to check its connection."}
+            </p>
+          )}
         </div>
       ) : (
         <Composer />

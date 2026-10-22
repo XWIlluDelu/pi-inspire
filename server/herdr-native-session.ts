@@ -1,5 +1,11 @@
 import { realpath } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
+import type {
+  NativeAction,
+  NativeImageReference,
+  NativeModelCatalog,
+  NativeModelSelection,
+} from "../docs/examples/session-activity.js";
 import { parseNativeCommand } from "../shared/commands.js";
 import type {
   ExternalSessionConnection,
@@ -30,6 +36,7 @@ export class HerdrNativeSession implements ExternalSessionConnection {
   retirementReason?: "process-exit";
   private closed = false;
   private tail: Promise<unknown> = Promise.resolve();
+  private readonly catalogLifetime = new AbortController();
 
   constructor(
     private readonly client: NativeClient,
@@ -41,7 +48,7 @@ export class HerdrNativeSession implements ExternalSessionConnection {
       value: string;
     }) => Promise<boolean>,
     private readonly actions?: Pick<PiNativeActions, "invoke"> &
-      Partial<Pick<PiNativeActions, "taskRuns">>,
+      Partial<Pick<PiNativeActions, "readState">>,
   ) {}
 
   async read(): Promise<ExternalSessionState | null> {
@@ -97,7 +104,7 @@ export class HerdrNativeSession implements ExternalSessionConnection {
     if (ref.kind === "id" && typeof ref.value === "string") {
       if (ref.value !== this.sessionId) {
         if (await this.hasCompletedRebind?.({ kind: "id", value: ref.value }))
-          this.closed = true;
+          this.close();
         return null;
       }
     } else if (
@@ -114,7 +121,7 @@ export class HerdrNativeSession implements ExternalSessionConnection {
         (await canonical(ref.value)) !== (await canonical(this.sessionFile))
       ) {
         if (await this.hasCompletedRebind?.({ kind: "path", value: ref.value }))
-          this.closed = true;
+          this.close();
         return null;
       }
     } else return null;
@@ -142,9 +149,9 @@ export class HerdrNativeSession implements ExternalSessionConnection {
         this.sessionFile,
         identity ? `linux:${identity.boot}:${identity.birth}` : undefined,
       );
-    const taskRuns = await actions.taskRuns?.().catch(() => undefined);
+    const observed = await actions.readState?.().catch(() => undefined);
     return {
-      ...(taskRuns ? { taskRuns } : {}),
+      ...observed,
       ...(status === "error" ? { outcome: "failed" as const } : {}),
       status:
         status === "working" || status === "blocked"
@@ -155,17 +162,17 @@ export class HerdrNativeSession implements ExternalSessionConnection {
     };
   }
 
-  private serialize(operation: () => Promise<void>): Promise<void> {
+  private serialize<T>(operation: () => Promise<T>): Promise<T> {
     const pending = this.tail.then(operation);
     this.tail = pending.catch(() => undefined);
     return pending;
   }
 
   private action(
-    action: import("../docs/examples/session-activity.js").NativeAction,
+    action: NativeAction,
     beforeSend?: () => void,
-  ): Promise<void> {
-    return this.serialize(async () => {
+  ): Promise<NativeModelSelection | NativeModelCatalog | undefined> {
+    const invoke = async () => {
       const state = await this.read();
       if (!state || this.closed)
         throw requestError(
@@ -186,7 +193,7 @@ export class HerdrNativeSession implements ExternalSessionConnection {
           this.sessionFile,
           identity ? `linux:${identity.boot}:${identity.birth}` : undefined,
         );
-      await actions.invoke(
+      return actions.invoke(
         action,
         (frame) =>
           this.client.nativeAgentRequest(
@@ -200,14 +207,18 @@ export class HerdrNativeSession implements ExternalSessionConnection {
             throw requestError("The Pi terminal connection has ended.", 409);
           beforeSend?.();
         },
+        action.type === "get_models" ? this.catalogLifetime.signal : undefined,
       );
-    });
+    };
+    // Read-only discovery must not hold up prompt delivery or Stop.
+    return action.type === "get_models" ? invoke() : this.serialize(invoke);
   }
 
   prompt(
     message: string,
     behavior?: "steer" | "followUp",
     beforeSend?: () => void,
+    images?: NativeImageReference[],
   ): Promise<void> {
     const entered = message.trim();
     if (entered.startsWith("!") || parseNativeCommand(entered))
@@ -218,18 +229,67 @@ export class HerdrNativeSession implements ExternalSessionConnection {
           { code: "NATIVE_ACTION_UNSUPPORTED" },
         ),
       );
-    return this.action({ type: "prompt", message, behavior }, beforeSend);
+    return this.action(
+      {
+        type: "prompt",
+        message,
+        behavior,
+        ...(images?.length ? { images } : {}),
+      },
+      beforeSend,
+    ).then(() => undefined);
   }
 
   abort(): Promise<void> {
-    return this.action({ type: "abort" });
+    return this.action({ type: "abort" }).then(() => undefined);
   }
 
   rename(name: string, beforeSend?: () => void): Promise<void> {
-    return this.action({ type: "rename", name }, beforeSend);
+    return this.action({ type: "rename", name }, beforeSend).then(
+      () => undefined,
+    );
+  }
+
+  private async modelAction(
+    action: NativeAction,
+    beforeSend?: () => void,
+  ): Promise<NativeModelSelection | NativeModelCatalog> {
+    const result = await this.action(action, beforeSend);
+    if (!result) throw new Error("Native Pi did not return its model state");
+    return result;
+  }
+
+  async models(): Promise<NativeModelCatalog> {
+    const state = await this.modelAction({ type: "get_models" });
+    if (!("models" in state) || !Array.isArray(state.models))
+      throw new Error("Native Pi did not return its model catalog");
+    return {
+      model: state.model,
+      thinkingLevel: state.thinkingLevel,
+      models: state.models,
+    };
+  }
+  setModel(
+    provider: string,
+    modelId: string,
+    beforeSend?: () => void,
+  ): Promise<NativeModelSelection> {
+    return this.modelAction(
+      { type: "set_model", provider, modelId },
+      beforeSend,
+    );
+  }
+  setThinkingLevel(
+    level: NativeModelCatalog["thinkingLevel"],
+    beforeSend?: () => void,
+  ): Promise<NativeModelSelection> {
+    return this.modelAction({ type: "set_thinking", level }, beforeSend);
   }
 
   close(): void {
     this.closed = true;
+    this.catalogLifetime.abort(
+      new Error("The Pi terminal connection has ended."),
+    );
   }
 }

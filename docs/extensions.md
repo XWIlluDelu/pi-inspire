@@ -36,8 +36,11 @@ deadline, so reopening or reconnecting does not restart it. Untimed dialogs show
 On phones, browser Back cancels the active question before closing the panel behind it. A pending
 or failed cancellation stays visible; a failed request can be retried.
 
-Dialog timeouts dismiss the browser request, as do Inspire's Stop and worker cleanup. An extension's
-own `AbortSignal` resolves the dialog in Pi 1.0/1.1 without sending a browser-dismissal event, so that
+Dialog timeouts dismiss the browser request. When Stop retains the worker, Inspire sends native
+`cancelled: true` responses to the pending questions before removing them; cancelling is not merely
+hiding a dialog. A new independent question created during cancellation stays answerable. Worker
+retirement clears its remaining browser requests. An extension's own `AbortSignal` can resolve a
+dialog without sending a browser-dismissal event (also observed in Pi 1.3.0), so that
 request can remain visible until answered or cleared by Inspire. The public `ui_prompt_end` callback
 reports aggregate waiting and has no dialog ID; it cannot safely dismiss one of several concurrent
 dialogs. Inspire does not infer cancellation from idle state or command completion.
@@ -61,12 +64,15 @@ or a persistent session. Register capabilities there; start processes, watchers 
 
 ## Session lifecycle
 
-GUI navigation uses independent workers rather than switching one TUI process between every conversation:
+Inspire-owned sessions use independent workers rather than switching one TUI process between every
+conversation. Connected external Pi retains its original process; see [native terminal control](#control-the-same-herdr-pi-terminal).
 
 | GUI action | Extension lifecycle |
 | --- | --- |
 | Select a conversation | Changes the browser view. A cached worker keeps running; selection does not call its `session_before_switch` or rerun `session_start`. Starting or restoring a worker runs normal startup. |
 | New session | Starts an independent worker. |
+| Browser `/reload` | Replaces only the selected idle Inspire-owned worker; the replacement runs normal extension startup. |
+| Extension-triggered native reload | Keeps the RPC worker. At Pi's reload startup boundary, Inspire clears prior statuses and text widgets, including shutdown updates, before retaining the new startup values. |
 | Navigate within a session tree | Uses Pi's `navigateTree` operation and native hooks through the internal command bridge. |
 | Fork / Clone | Copies a verified snapshot through Pi's `SessionManager` into a separate session. Fork excludes the selected input; Clone includes its endpoint. Source `session_before_fork` / `session_fork` hooks do not run and cannot veto either copy. Persisted extension entries follow Pi branch semantics; process memory and pending dialogs stay with the source. The destination loads extensions during startup. |
 
@@ -76,7 +82,11 @@ Keep state scoped to its Pi session and reconstruct it from persisted entries du
 
 The optional [session activity extension](examples/session-activity.ts) lets Inspire show busy,
 waiting-for-input and idle state for local external Pi sessions, including independent RPC hosts
-and terminal, JSON or print modes. Herdr and external execution connectors are not required:
+and terminal, JSON or print modes. Waiting follows Pi’s aggregate `ui_prompt_start/end` events,
+so concurrent native dialogs keep the reporter blocked until all settle. Pi’s TUI dialog stack
+and Inspire’s browser RPC dialogs are separate implementations.
+
+Herdr and external execution connectors are not required:
 observing activity alone does not attach a controller or grant execution authority. The same extension
 reports process-bound session presence so Inspire can open an already-held session read-only
 instead of starting a second writer, even when the other Pi is idle.
@@ -122,8 +132,8 @@ live-holder warning. Once the other Pi releases the session, reselect it in Insp
 
 ### Control the same Herdr Pi terminal
 
-In a Herdr TUI, this same extension also handles Inspire input, Steer, Follow-up, agent Stop and rename
-through Pi's public functions. No additional extension is needed. It reuses Herdr's existing terminal
+In a Herdr TUI, this same extension also handles Inspire input, Steer, Follow-up, agent Stop, rename,
+and model/thinking selection through Pi's public functions. No additional extension is needed. It reuses Herdr's existing terminal
 control permission, not your shortcut bindings or screen layout; it adds no service listener or
 credentials. Temporary action payloads use the same private cache. Presence reports by themselves
 are not a control channel, and an ordinary Pi outside Herdr remains observation-only.
@@ -134,9 +144,23 @@ The reporter also retains bounded, receiver-bound task results so Inspire can di
 completion, errors and confirmed cancellation, including a short run between polls. It does not
 replay old results when the Host first attaches. Older reporters may show **Task ended** rather
 than claim success; reload the updated extension for precise task notifications.
-An unsent terminal draft or unanswered dialog prevents new browser input without altering either.
+The Composer's model picker reads this Pi's own available catalog, including its extension-defined
+models. Model changes await Pi's model-select callbacks; both setters return the effective model and
+thinking they read afterward, and leave saved startup defaults unchanged. If the installed reporter does
+not advertise these controls, Inspire disables them and asks you to load the updated file with native
+`/reload`. Configuration and credential editing in Settings remain available. Reload and Compact for
+an existing TUI are guided back to that terminal, not attempted through an Inspire-owned worker.
+
+Browser input preserves an unsent terminal draft, including queued input Pi restores there after Stop.
+An unanswered native dialog still blocks new browser input until answered in the original terminal.
 A call receipt means Pi's public function returned, not that a message ran or work completed;
 extensions can handle input without a model turn, and native asynchronous errors remain in Pi.
+
+Images are delivered as Pi image content, not paths appended to prompt text. The Host validates the
+usual attachment budgets and passes managed file references through the small action payload; the
+updated receiver loads those bytes before calling `sendUserMessage`. Reload the original terminal
+extension after updating Inspire to enable image delivery. Ordinary files and project references
+remain textual file context.
 
 Shell `!`/`!!` and interactive built-ins must run in the original terminal or their existing Inspire
 command surface, not as model prompts. Extension commands and prompt templates still use native

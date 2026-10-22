@@ -70,7 +70,7 @@ for (const platform of ["MacIntel", "Win32"]) {
     });
     await page.route("**/api/control/thinking", async (route) => {
       thinkingLevel = route.request().postDataJSON().level;
-      await route.fulfill({ json: { ok: true } });
+      await route.fulfill({ json: { model: selected, thinkingLevel } });
     });
     const changes: string[] = [];
     page.on("request", (request) => {

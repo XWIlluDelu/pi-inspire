@@ -207,6 +207,73 @@ it("discovers native global/trusted-project registrations and resolves defaults 
   // including invalidation and cold startup in multiple project directories.
 }, 120_000);
 
+it("validates model edits over extension providers in the selected trusted workspace and explicit agent directory", async () => {
+  const f = await modelWorkflowFixture();
+  roots.push(f.root);
+  const service = new ModelSettingsService(f.agent);
+  const path = join(f.agent, "models.json");
+  await writeFile(
+    path,
+    JSON.stringify({
+      providers: {
+        "global-native": { models: [{ id: "a", name: "Native override" }] },
+        "global-legacy": {
+          modelOverrides: { legacy: { name: "Legacy override" } },
+        },
+        "project-native": { models: [{ id: "a", name: "Project override" }] },
+      },
+    }),
+  );
+  // An explicit configuration authority must not inherit a different Host agent dir.
+  vi.stubEnv("PI_CODING_AGENT_DIR", join(f.root, "other-agent"));
+  const revision = async () =>
+    (await service.read(f.trusted, [])).configRevision;
+  await service.saveConfig(f.trusted, await revision(), {
+    kind: "provider",
+    id: "anthropic",
+    values: { baseUrl: "https://proxy.example.invalid" },
+  });
+  await service.saveConfig(f.trusted, await revision(), {
+    kind: "model",
+    provider: "global-native",
+    originalId: "a",
+    values: { id: "a", name: "Edited native model" },
+  });
+  const saved = await readFile(path, "utf8");
+  expect(JSON.parse(saved).providers["global-native"].models).toEqual([
+    { id: "a", name: "Edited native model" },
+  ]);
+  await expect(
+    service.saveConfig(f.untrusted, await revision(), {
+      kind: "provider",
+      id: "anthropic",
+      values: { baseUrl: "https://other.example.invalid" },
+    }),
+  ).rejects.toMatchObject({ status: 400 });
+  expect(await readFile(path, "utf8")).toBe(saved);
+  vi.stubEnv("PI_CODING_AGENT_DIR", f.agent);
+  const metadata = await queryModelMetadata(f.trusted);
+  expect(metadata.models).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        provider: "global-native",
+        id: "a",
+        name: "Edited native model",
+      }),
+      expect.objectContaining({ provider: "global-legacy", id: "legacy" }),
+      expect.objectContaining({
+        provider: "project-native",
+        id: "a",
+        name: "Project override",
+      }),
+    ]),
+  );
+  expect(await readdir(f.sessions)).toEqual([]);
+  expect(await readFile(f.events, "utf8")).not.toMatch(
+    /session_start|agent_start|request|route/,
+  );
+}, 30_000);
+
 it.each([false, true])(
   "retires factory descendants when a metadata query fails=%s",
   async (fail) => {

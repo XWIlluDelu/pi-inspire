@@ -6,7 +6,8 @@
 }
 
 .composer-readonly {
-  max-width: var(--composer-max);
+  width: fit-content;
+  max-width: min(100%, var(--composer-max));
   margin: 0 auto;
   padding: var(--space-2) 0;
   color: var(--muted);

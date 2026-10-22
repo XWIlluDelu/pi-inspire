@@ -1118,10 +1118,12 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   ): Promise<unknown> {
     const session = this.requireSession(sessionId);
     session.model = { provider, id: modelId };
-    return session.model;
+    return { model: session.model, thinkingLevel: session.thinkingLevel };
   }
-  async setThinkingLevel(sessionId: string, level: string): Promise<void> {
-    this.requireSession(sessionId).thinkingLevel = level;
+  async setThinkingLevel(sessionId: string, level: string) {
+    const session = this.requireSession(sessionId);
+    session.thinkingLevel = level;
+    return { model: session.model, thinkingLevel: session.thinkingLevel };
   }
   async setAutoCompaction(sessionId: string, enabled: boolean): Promise<void> {
     const session = this.requireSession(sessionId);

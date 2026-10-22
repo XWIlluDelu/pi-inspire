@@ -131,7 +131,7 @@ other applications' unreported or later launches remain outside its authority.
   uncertain input is never automatically resent.
 - Reuse the installed `docs/examples/session-activity.ts` in Herdr TUI instances. Herdr supplies
   existing terminal-control authority and status; a consumed, receiver-bound action frame invokes
-  public Pi `sendUserMessage`, `ctx.abort` or `setSessionName` in that same process. Neither user
+  public Pi `sendUserMessage`, `ctx.abort`, `setSessionName`, `setModel` or `setThinkingLevel` in that same process. Neither user
   keybindings nor terminal screen geometry establish an action or editor state. The Host transport
   helper is internal code, not a second extension, listener or execution engine. Presence discovery
   alone never grants control. Read conversation content through the normal session projection.
@@ -141,16 +141,34 @@ other applications' unreported or later launches remain outside its authority.
   never automatically
   repeat an uncertain invocation. A receipt means the public function returned, not that input was
   admitted, a model ran, work stopped or settings persisted. Native asynchronous errors remain native.
-- Preserve terminal drafts and dialogs. A nonempty editor or waiting dialog gets actionable feedback
-  without altering its contents. Pi owns its terminal queue and restores interrupted queued input
-  there. Target-side public editor state and UI-prompt events guard input; Herdr blocked status is
+- Preserve terminal drafts and dialogs. Ordinary nonempty editor text does not block browser input:
+  public `sendUserMessage` leaves it intact. Pi owns its terminal queue and restores interrupted
+  queued input there; a subsequent browser send remains available. Unanswered native dialogs block
+  input without changing their contents. Target-side UI-prompt events guard input; Herdr blocked status is
   an additional prompt admission check, not a substitute for the target guard. Extension commands
   and templates retain native dispatch. `!`/`!!` and interactive built-ins without public callable
   actions direct the user to the original terminal instead of becoming model text. Commands/settings
   requiring an Inspire RPC worker likewise never launch another writer. Native extension `ctx.abort`
   cannot call TUI `abortBash`; Stop discloses its agent-only scope and directs terminal-shell
   interruption to the original terminal. This public-interface gap remains in [[pi-capability-gaps]].
-- Attachments and project files retain their normal validation and file lifetimes. A stopped or
+- Model candidates come from the identified receiver's public `modelRegistry.refresh/getAvailable`,
+  never another metadata runtime. The same private invocation payload returns the catalog outside the
+  small presence record; regular observation carries only current selection and explicit support.
+  Directory reads run independently of session controls, so slow discovery never queues Stop or input.
+  Each invocation retains its own receipt in its private payload. Discovery has a 15-second cancellation
+  budget and is cancelled on Stop, receiver retirement or removal of an abandoned Host request.
+  Closing a connection abandons its reads, not the native Pi. Retired results cannot modify a replacement
+  connection's catalog or selection. A delayed catalog reply may update candidates, but cannot roll
+  back a selection completed or observed since that read began.
+  Model selection invokes `setModel` once, then reads actual `ctx.model/getThinkingLevel`. No second
+  thinking write overrides native defaults or extension decisions. Thinking selection likewise returns
+  the adjusted native value. Availability/ownership and activity remain separate from API support.
+  Composer, palette and typed commands share support checks. Unsupported Reload/Compact offer native
+  terminal guidance before busy checks; saved configuration and credential controls remain available.
+- Images cross the bounded action payload as managed file references, then become real Pi
+  `ImageContent` in the receiver before invocation. A receiver without image support requires native
+  reload rather than silently sending text alone. Ordinary file/project references remain text.
+  Attachments retain their normal budgets, preparation leases and release behavior. A stopped or
   replaced input cannot be delivered after preparation. An uncertain submission is not retried
   automatically, and any referenced files remain available to Pi.
 

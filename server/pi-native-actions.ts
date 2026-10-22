@@ -13,6 +13,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
   type NativeAction,
   type NativeActionRequest,
+  type NativeModelCatalog,
+  type NativeModelSelection,
   nativeActionFrame,
   nativeActionPath,
   type PiActivityRecord,
@@ -59,7 +61,7 @@ export class PiNativeActions {
           record.processIdentity !== identity ||
           record.sessionId !== this.sessionId ||
           (await realpath(record.sessionFile)) !== path ||
-          record.nativeActions?.version !== 1 ||
+          record.nativeActions?.version !== 2 ||
           !/^[0-9a-f-]{36}$/.test(record.nativeActions.receiverId)
         )
           continue;
@@ -77,10 +79,8 @@ export class PiNativeActions {
     return matches[0]!;
   }
 
-  /** Read-only outcome evidence bound to the same validated receiver as actions. */
-  async taskRuns(): Promise<
-    import("../docs/examples/session-activity.js").NativeTaskRuns | undefined
-  > {
+  /** Read-only state bound to the same validated receiver as actions. */
+  async readState() {
     const { record } = await this.target();
     const runs = record.taskRuns;
     if (
@@ -102,16 +102,44 @@ export class PiNativeActions {
           item.settledAt > 0,
       )
     )
-      return undefined;
-    return runs;
+      return {
+        modelControls: record.nativeActions?.models === true,
+        modelSelection: record.nativeActions?.modelSelection,
+      };
+    return {
+      taskRuns: runs,
+      modelControls: record.nativeActions?.models === true,
+      modelSelection: record.nativeActions?.modelSelection,
+    };
   }
 
   async invoke(
     action: NativeAction,
     send: (frame: string) => Promise<unknown>,
     beforeSend?: () => void,
-  ): Promise<void> {
+    signal?: AbortSignal,
+  ): Promise<NativeModelSelection | NativeModelCatalog | undefined> {
+    signal?.throwIfAborted();
     const { file, record } = await this.target();
+    if (
+      action.type === "prompt" &&
+      action.images?.length &&
+      !record.nativeActions?.images
+    )
+      throw requestError(
+        "Reload the session-activity extension in the original Pi terminal before sending images.",
+        409,
+        { code: "NATIVE_ACTIONS_UNAVAILABLE" },
+      );
+    const modelAction = ["get_models", "set_model", "set_thinking"].includes(
+      action.type,
+    );
+    if (modelAction && record.nativeActions?.models !== true)
+      throw requestError(
+        "Reload the updated session-activity extension in the original Pi terminal before changing its model or thinking level.",
+        409,
+        { code: "NATIVE_ACTIONS_UNAVAILABLE" },
+      );
     const receiverId = record.nativeActions!.receiverId;
     const operationId = randomUUID();
     const request: NativeActionRequest = {
@@ -133,11 +161,12 @@ export class PiNativeActions {
         mode: 0o600,
         flag: "wx",
       });
+      signal?.throwIfAborted();
       beforeSend?.();
       try {
         await send(nativeActionFrame(receiverId, operationId));
         // This bounds receipt observation, not native model work. Never resend.
-        const until = Date.now() + 5_000;
+        const until = Date.now() + (modelAction ? 30_000 : 5_000);
         do {
           const latest: PiActivityRecord = JSON.parse(
             await readFile(file, "utf8"),
@@ -150,9 +179,34 @@ export class PiNativeActions {
             latest.processIdentity !== request.processIdentity
           )
             throw new Error("The native action receiver changed");
-          const result = latest.nativeActions.result;
+          signal?.throwIfAborted();
+          if ((await lstat(path)).size > 4 * 1024 * 1024)
+            throw new Error("Native result exceeds the action payload limit");
+          // The receiver updates the existing request with r+, so removal
+          // cannot recreate an abandoned read. A partial write is not a receipt.
+          let response: NativeActionRequest | undefined;
+          try {
+            response = JSON.parse(await readFile(path, "utf8"));
+          } catch (error) {
+            if (!(error instanceof SyntaxError)) throw error;
+          }
+          if (
+            response &&
+            (response.operationId !== operationId ||
+              response.receiverId !== receiverId ||
+              response.sessionId !== request.sessionId ||
+              response.sessionFile !== request.sessionFile ||
+              response.processIdentity !== request.processIdentity)
+          )
+            throw new Error("The native action response target changed");
+          const result = response?.result;
           if (result?.operationId === operationId) {
-            if (result.status === "invoked") return;
+            if (result.status === "invoked") {
+              if (!modelAction) return;
+              if (!response?.modelState)
+                throw new Error("Native model result unavailable");
+              return response.modelState;
+            }
             throw requestError(
               result.message ?? "Native Pi rejected the action",
               409,
@@ -161,10 +215,11 @@ export class PiNativeActions {
               },
             );
           }
-          await delay(25);
+          await delay(25, undefined, { signal });
         } while (Date.now() < until);
         throw new Error("Native action receipt unavailable");
       } catch (error) {
+        signal?.throwIfAborted();
         if ((error as { status?: number }).status === 409) throw error;
         throw requestError(
           "The native Pi action could not be confirmed. Check the original terminal before trying again.",

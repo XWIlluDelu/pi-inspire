@@ -15,9 +15,9 @@ Graphical actions open their existing controls. Selecting an extension, template
 | `/clone` | Open an independent copy of the current recorded conversation path, with an empty draft and no model turn. |
 | `/name [name]` | Show or set the session name. |
 | `/copy` | Copy the complete last settled assistant response. |
-| `/compact [instructions]` | Compact the session through Pi. |
+| `/compact [instructions]` | Compact an Inspire-owned session through Pi; for a connected native Pi, offer its terminal and command. |
 | `/export [path.html\|path.jsonl]` | Export native HTML by default, or the current branch as native-compatible JSONL when the path ends in `.jsonl`. |
-| `/reload` | Restart the selected session's idle worker and reload Pi resources. |
+| `/reload` | Restart the selected idle Inspire-owned worker; for an existing native Pi, offer its terminal and the `/reload` command. |
 | `/session`, `/hotkeys`, `/quit` | Show session information, browser shortcuts, or guidance for leaving the client. |
 | `/share`, `/trust`, `/import`, `/bug` | Offer a copyable command and terminal guidance. |
 
@@ -52,8 +52,9 @@ position. **Current conversation** returns to the active conversation's outline,
   the earlier-conversation notice offers **Clone from here**.
 
 Click the session title to open Rename, Clone and Export. Rename appears over the title, so another
-click at the same point opens the editor. Fork and Clone leave the source task, Pending input and
-saved draft intact. Neither sends a prompt.
+click at the same point opens the editor. Same-session continuation requires idle work and no pending
+input or dialogs. Fork and Clone can copy recorded history while the source runs; they leave its task,
+Pending input and saved draft intact. Neither sends a prompt.
 
 ## Models and thinking
 
@@ -61,6 +62,12 @@ Opening the model picker shows cached choices immediately, then refreshes availa
 background without restarting Pi or interrupting its task and extension dialogs. Refresh keeps your
 current model and thinking level. If discovery fails, the picker keeps cached choices and reports
 that locally; `/reload` is not needed just to refresh model catalogs.
+
+Connected native Pi sessions use their own catalog and public model/thinking functions through the
+updated session-activity extension. The returned selection, including extension changes and supported
+effort adjustment, is authoritative. Busy state does not itself remove these capabilities. Native
+model cycling remains a terminal operation; use the model picker for explicit selection in Inspire.
+Settings for model files, defaults and credentials remain independent of live-control support.
 
 New sessions inherit the visible model and effort when available; otherwise Inspire reads Pi's
 startup defaults for the chosen workspace. Switching the model on that surface uses Pi's configured
@@ -86,10 +93,16 @@ Inspire's interface settings, not Pi model configuration or credentials.
 Common models use Pi's `enabledModels` patterns and optional thinking suffixes. Add, remove and
 reorder those entries in Settings; the picker shows their resolved choices first while keeping other
 models searchable. With no common configuration there is no extra group or empty prompt.
-**Next model**, **Previous model**, and **Cycle thinking level** are searchable palette actions:
-`Alt+Shift+M`, `Alt+Shift+P`, and `Alt+Shift+R`. They use cached choices without a discovery wait and
-work from a message draft. Open completions/menus, other editors, modals and IME retain shortcut
-ownership; `/hotkeys` lists the same bindings.
+**Next model**, **Previous model**, and **Cycle thinking level** are searchable palette actions.
+Their shortcuts are `Ctrl+⌘+M/P/R` on macOS and `Alt+Shift+M/P/R` elsewhere, respectively.
+Next model uses the Inspire-owned worker's native cycle order and effort defaults; Pi's public RPC
+does not currently support Previous model, so that action reports the limitation without changing
+selection. Connected native Pi keeps both model-cycle actions in its original terminal. Explicit
+model selection and supported thinking controls remain available in the picker.
+
+Cycling does not wait for catalog discovery. Shortcuts work from a message draft; open
+completions/menus, other editors, modals and IME retain shortcut ownership. Character-producing
+Option/AltGraph input is preserved. `/hotkeys` lists the current platform's bindings.
 
 Provider/model declaration controls edit Pi's native `models.json`, not an Inspire catalog. Common
 fields are graphical; unedited metadata, headers, costs, compatibility overrides and other advanced
@@ -111,7 +124,7 @@ Configuration remains usable independently of login availability.
 ## Runtime behavior settings
 
 Settings → Behavior applies Pi delivery, automatic-compaction and retry changes to the selected
-session's worker and request a global settings save, subject to project overrides; other running
+Inspire-owned worker and requests a global settings save, subject to project overrides; other running
 workers keep their own loaded values. The scope note beside these controls distinguishes the applied
 value from a confirmed settings-file save. Pi currently does not provide that save result to Inspire.
 An invalid-settings startup warning identifies the file to repair before Reload. These controls are
@@ -119,8 +132,8 @@ separate from Inspire's interface preferences.
 
 ## Direct shell input
 
-Send `!command` to run a shell command through the selected Pi session and include its result in
-subsequent model context. Use `!!command` to record and display the result without including it in
+In an Inspire-owned session, send `!command` to run a shell command through Pi and include its result
+in subsequent model context. Use `!!command` to record and display the result without including it in
 model context. Neither form starts a model reply. For example:
 
 ```sh
@@ -140,6 +153,9 @@ without recovering/dequeuing Pending input. When a model task or compaction also
 ownership of Stop; use Stop again for a remaining shell. Open dialogs and completion menus retain
 Escape ownership. A blocked extension Bash hook may require retiring only that session's worker;
 an unconfirmed command outcome is reported rather than automatically retried.
+
+For a connected native Pi, run `!`/`!!` in its original terminal. Browser Stop requests agent
+interruption, not shell interruption.
 
 ## Files in a prompt
 
@@ -191,8 +207,13 @@ Settings → System checks Pi, Inspire and Pi's globally installed extension pac
 
 Choose **Export** in the session-title menu, or **Export session** in the command palette. Both open
 the same dialog: select **HTML** for the whole session or **JSONL** for the current branch, then
-**Download**. JSONL preserves native entries, embedded images and extension metadata. Neither format
-changes the source session.
+**Download**. Export remains available during a run and captures content available at invocation,
+not a future completed answer. JSONL preserves native entries, embedded images and extension
+metadata. Neither format changes the source session.
+
+A read-only session offers **JSONL** from saved history without starting Pi, including when its
+project directory or external owner is unavailable. Unsaved native output is not part of that export;
+HTML requires an available Inspire-owned worker.
 
 Typed `/export [path]` remains available separately. It accepts one destination, including quoted
 paths with spaces and `~/` paths; a `.jsonl` suffix selects JSONL, otherwise Pi exports HTML. Its
@@ -224,8 +245,6 @@ prompts and context files, resetting worker-local extension state. Other session
 unchanged. A Host restart replaces all Inspire-owned workers and applies changed Host configuration;
 connected external Pi sessions keep their original processes.
 
-`/export` remains available during a run and captures the Pi content available at invocation, not a future completed answer.
-
 ## Update checks
 
 Settings → System checks the installed Pi version and global/user extension packages. After installing
@@ -236,7 +255,9 @@ resources. Connected external Pi sessions keep their own reload/restart lifecycl
 
 ## Sessions and terminal use
 
-The History pane handles same-file navigation and independent Fork/Clone copies. Both copy actions leave the source session running and open a separate worker; extension authors should check the [lifecycle differences](extensions.md#session-lifecycle).
+The History pane handles same-file navigation and independent Fork/Clone copies. Both copy actions
+create a separate session without replacing the source worker; extension authors should check the
+[lifecycle differences](extensions.md#session-lifecycle).
 
 Keep one writer per Pi session. Choose **Session actions → Use in terminal…** to release only
 this session's Inspire worker. If busy, **Stop and use in terminal** first restores Pending input
@@ -247,8 +268,9 @@ browser draft remain available. Merely switching conversations does not release 
 This handoff survives Host restart. Selecting the conversation does not start another Pi;
 **Continue in Inspire** explicitly checks the current owner. An observed native Pi can keep the
 session read-only until it exits or completes a verified replacement. With Herdr enhancement,
-Inspire can instead connect to that same native process: Composer and Stop reuse it; Reload and
-worker settings stay in its terminal. Project terminal tabs remain separate shells.
+Inspire can instead connect to that same native process: Composer, agent Stop and supported
+model/thinking controls reuse it; Reload, Compact and runtime behavior settings stay in its terminal.
+Project terminal tabs remain separate shells.
 
 Terminal appearance and interaction preferences are saved in this browser for this origin, not in
 Pi settings. On macOS, **Option as Meta** is off by default to preserve native characters and accents;

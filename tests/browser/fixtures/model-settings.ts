@@ -58,8 +58,14 @@ export async function modelSettingsScenario(page: Page, theme = "light") {
     }),
   );
   await page.route("**/api/control/model", (route) => {
-    modelChanges.push(route.request().postDataJSON());
-    return route.fulfill({ json: { ok: true } });
+    const body = route.request().postDataJSON();
+    modelChanges.push(body);
+    return route.fulfill({
+      json: {
+        model: { provider: body.provider, id: body.modelId },
+        thinkingLevel: "medium",
+      },
+    });
   });
   await page.route("**/api/model-settings**", async (route) => {
     if (route.request().method() !== "PATCH")
