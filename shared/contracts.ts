@@ -257,6 +257,8 @@ export interface InspirePreferences {
    * only: nothing in Pi's session storage changes. */
   hiddenSessionIds: string[];
   navCollapsedGroups: string[];
+  /** Explicit terminal handoffs; ordinary selection must not reacquire these writers. */
+  terminalSessionIds: string[];
 }
 
 /** The complete user-facing Settings surface. Navigation curation and MRU
@@ -300,6 +302,7 @@ export const defaultPreferences: InspirePreferences = {
   hiddenProjectCwds: [],
   hiddenSessionIds: [],
   navCollapsedGroups: [],
+  terminalSessionIds: [],
 };
 
 export function projectNameFromCwd(cwd: string): string {
@@ -1202,7 +1205,8 @@ export function parseRetryInfo(value: unknown): RetryInfo | null {
 export type SessionReadOnlyReason =
   | "workspace-unavailable"
   | "external-unavailable"
-  | "external-active";
+  | "external-active"
+  | "terminal";
 
 export interface ActiveSnapshot {
   active: null | {

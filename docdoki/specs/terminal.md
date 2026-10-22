@@ -328,7 +328,9 @@ focus from the dismissed menu while respecting a newer focus choice.
 ## Selection and output
 
 Selection actions appear with selected text, without a permanent toolbar row. Copy uses that selection;
-quote sends inert fenced text to the current Composer. A Composer code block can be inserted into the
+quote appends inert fenced text to the current Composer without submitting or replacing its draft.
+Successful quoting closes a narrow Context drawer and focuses the editable Composer after modal
+focus restoration. Desktop Context stays open. A Composer code block can be inserted into the
 controlled terminal without submitting it.
 
 More exposes Copy all and Select text independently of shell integration. Copy all reads retained

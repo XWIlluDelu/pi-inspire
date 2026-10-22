@@ -66,6 +66,9 @@ const preferenceFields = {
     .array(z.string().min(1).max(MAX_SESSION_ID_CHARS))
     .max(500),
   navCollapsedGroups: z.array(z.string().min(1).max(4_096)).max(500),
+  terminalSessionIds: z
+    .array(z.string().min(1).max(MAX_SESSION_ID_CHARS))
+    .max(500),
 };
 
 const preferencesSchema = z.object(preferenceFields).strict();
@@ -261,6 +264,18 @@ export class PreferencesStore {
     );
   }
 
+  async setTerminalSession(
+    sessionId: string,
+    terminal: boolean,
+  ): Promise<void> {
+    await this.mutate((current) => ({
+      ...current,
+      terminalSessionIds: terminal
+        ? [...new Set([...current.terminalSessionIds, sessionId])]
+        : current.terminalSessionIds.filter((id) => id !== sessionId),
+    }));
+  }
+
   async patch(value: unknown): Promise<InspirePreferences> {
     const patch = preferencesPatchSchema.parse(value);
     return this.mutate((current) => ({ ...current, ...patch }));
@@ -278,6 +293,9 @@ export class PreferencesStore {
     const clearedProjects = new Set(clearedProjectCwds);
     return this.mutate((current) => ({
       ...current,
+      terminalSessionIds: current.terminalSessionIds.filter(
+        (id) => !deleted.has(id),
+      ),
       pinnedSessionIds: current.pinnedSessionIds.filter(
         (id) => !deleted.has(id),
       ),
