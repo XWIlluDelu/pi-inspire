@@ -351,7 +351,11 @@ Marker eviction, buffer replacement/reset, or column reflow invalidates that ran
 preserve it. Other copy paths remain independent.
 
 Shell completion coalesces Git refresh. Optional, user-gesture-authorized bell and long-task notifications
-describe the outcome without exposing output content.
+describe the outcome without exposing output content. They share browser permission discovery,
+requests and permission messages with task alerts, while keeping terminal delivery and preferences
+independent. A denied, dismissed or unavailable permission leaves long-task alerts off or falls back
+to a tab-marking bell, with an explanation beside the initiating setting. A delayed permission result
+updates only its setting, preserving newer browser preference edits.
 
 ## Persistence and installation
 

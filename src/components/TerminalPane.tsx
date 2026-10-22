@@ -44,6 +44,7 @@ import {
   type TerminalServerControlMessage,
 } from "../../shared/terminal-contracts";
 import { createApi } from "../api";
+import { browserNotificationPermission } from "../browser-notifications";
 import { terminalOperations } from "../controllers/terminal-operation-controller";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
@@ -573,8 +574,7 @@ export const TerminalPane = memo(function TerminalPane({
       if (
         background &&
         uiSettings.bell === "desktop" &&
-        "Notification" in window &&
-        Notification.permission === "granted"
+        browserNotificationPermission() === "granted"
       )
         new Notification(`Terminal · ${notificationTerminalLabel(terminal)}`, {
           body: "Terminal bell",
@@ -598,8 +598,7 @@ export const TerminalPane = memo(function TerminalPane({
         message.durationMs === null ||
         message.durationMs < uiSettings.longTaskThresholdSeconds * 1_000 ||
         (terminal.id === activeId && !document.hidden) ||
-        !("Notification" in window) ||
-        Notification.permission !== "granted"
+        browserNotificationPermission() !== "granted"
       )
         return;
       const seconds = Math.max(1, Math.round(message.durationMs / 1_000));

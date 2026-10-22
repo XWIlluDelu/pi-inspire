@@ -253,6 +253,11 @@ it.skipIf(process.platform !== "linux")(
           }),
         { timeout: 10000 },
       );
+      await vi.waitFor(async () =>
+        expect((await native.read())?.taskRuns?.settled.at(-1)?.outcome).toBe(
+          "aborted",
+        ),
+      );
       expect((await state()).editor).toContain(
         "Follow up, not a terminal draft",
       );

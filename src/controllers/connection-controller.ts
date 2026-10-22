@@ -384,7 +384,9 @@ export class ConnectionController {
       // this stream but are not part of the runtime snapshot digest.
       if (
         event.type !== "update_status" &&
-        event.type !== "external_session_activity"
+        event.type !== "external_session_activity" &&
+        event.type !== "task_notification" &&
+        event.type !== "task_alert_settings"
       ) {
         if (
           typeof event.sessionId !== "string" ||

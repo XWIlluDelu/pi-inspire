@@ -9,6 +9,7 @@ import "./styles.css";
 
 // Strip a one-use launch transfer before render. Ordinary PWA launches use the
 // origin-stored non-extractable browser key, never a persistent bearer/cookie.
+store.captureNotificationTarget();
 const initialization = store.init(resolveToken());
 
 // Browser freezes and network changes can strand an apparently open socket
@@ -40,8 +41,8 @@ window.addEventListener(
   { once: true },
 );
 
-// The service worker owns only the static shell. Session APIs and the event
-// stream stay network-only because Pi and the local host remain authoritative.
+// The worker owns the static shell and persistent notification display.
+// Session APIs and the event stream remain network-only.
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener(
     "load",

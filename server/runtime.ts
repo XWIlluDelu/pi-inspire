@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { realpath, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
@@ -1709,6 +1709,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       ...body,
       sessionId: slot.id,
       sessionStatus,
+      taskProject: basename(slot.cwd),
     });
   }
 
