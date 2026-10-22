@@ -382,12 +382,6 @@ describe("native Pending recovery", () => {
             textTruncated: false,
           },
         ]);
-        const nativeQueue = eventsOf(f.piEvents, "queue_update").at(-1)!;
-        expect(nativeQueue[mode === "steer" ? "steering" : "followUp"]).toEqual(
-          caption
-            ? [caption, "later exact text"]
-            : ["", "", "later exact text"],
-        );
         const read = {
           sessionId: f.sessionId,
           viewId: snapshot.active!.transcriptPage.viewId,
@@ -430,7 +424,7 @@ describe("native Pending recovery", () => {
     30_000,
   );
 
-  it("keeps consumed image-only captions hidden after settlement and the next native queue update", async () => {
+  it("keeps consumed image-only input out of Pending after settlement and later admissions", async () => {
     const releases: Array<() => void> = [];
     const gates = Array.from(
       { length: 3 },
@@ -465,11 +459,6 @@ describe("native Pending recovery", () => {
       releases[1]!();
       await settled(f, 1);
       expect((await f.runtime.snapshot()).pendingQueues!.totalCount).toBe(0);
-      // No recovery or clear has removed Pi's stale native caption.
-      expect(eventsOf(f.piEvents, "queue_update").at(-1)).toMatchObject({
-        steering: [""],
-        followUp: [],
-      });
       await f.api.prompt(f.delivery("Second synthetic task."));
       await vi.waitFor(() => expect(f.modelRequests).toHaveLength(3));
       const pending = await add("pending.png");
@@ -477,9 +466,6 @@ describe("native Pending recovery", () => {
         ...f.delivery(""),
         behavior: "steer",
         attachmentIds: [pending.id],
-      });
-      expect(eventsOf(f.piEvents, "queue_update").at(-1)).toMatchObject({
-        steering: ["", ""],
       });
       expect((await f.runtime.snapshot()).pendingQueues).toMatchObject({
         totalCount: 1,

@@ -30,7 +30,7 @@ interface SessionManagementHost {
 }
 
 export type CommandChangeResult =
-  | { status: "success" }
+  | { status: "success"; message?: string }
   | { status: "error"; message: string }
   | { status: "stale" };
 

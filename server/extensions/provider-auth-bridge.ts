@@ -21,11 +21,13 @@ export function registerProviderAuthBridge(
   pi: ExtensionAPI,
   owner: { command: string; statusKey: string; workerId: string },
 ): void {
+  let closed = false;
   let service: ProviderAuthService | undefined;
   let initializing: Promise<ProviderAuthService> | undefined;
   async function getService(
     ctx: ExtensionCommandContext,
   ): Promise<ProviderAuthService> {
+    if (closed) throw new Error("Provider authentication owner retired");
     if (service) return service;
     initializing ??= (async () => {
       // The same installed public SDK as the worker. A separate auth operation
@@ -54,11 +56,14 @@ export function registerProviderAuthBridge(
         },
       };
       const settings = SettingsManager.create(ctx.cwd, getAgentDir());
+      const descriptors = await nativeOAuthDescriptors(entry);
+      // Reload may retire this extension while its lazy SDK work is pending.
+      if (closed) throw new Error("Provider authentication owner retired");
       service = new ProviderAuthService(
         runtime,
         () => settings.getOrCreateDeviceId(),
         source,
-        await nativeOAuthDescriptors(entry),
+        descriptors,
       );
       return service;
     })().finally(() => {
@@ -67,6 +72,7 @@ export function registerProviderAuthBridge(
     return initializing;
   }
   pi.on("session_shutdown", () => {
+    closed = true;
     service?.close();
   });
   pi.registerCommand(`${owner.command}${PROVIDER_AUTH_SUFFIX}`, {
@@ -92,6 +98,7 @@ export function registerProviderAuthBridge(
       let error: string | undefined;
       try {
         const auth = await getService(ctx);
+        if (closed) throw new Error("Provider authentication owner retired");
         result = await auth.request(value);
       } catch {
         error =

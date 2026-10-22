@@ -93,6 +93,11 @@ import { WorkspaceController } from "./controllers/workspace-controller";
 import { appendNotice, type Notice, parseExtensionDisplays } from "./events";
 import { supportedThinkingLevels } from "./model-options";
 import {
+  isExternalSession,
+  modelControlsSupported,
+  NATIVE_MODEL_GUIDANCE,
+} from "./session-controls";
+import {
   sessionDraft,
   sessionDraftRevision,
   setSessionDraft,
@@ -1358,7 +1363,8 @@ export class AppStore {
   ): void {
     if (result.status === "success") {
       this.dismissCommandActivity(sessionId, id);
-      if (this.state.sessionId === sessionId) this.notify("info", confirmation);
+      if (this.state.sessionId === sessionId)
+        this.notify("info", result.message ?? confirmation);
     } else {
       this.updateCommandActivity(
         sessionId,
@@ -1494,6 +1500,7 @@ export class AppStore {
       "",
     );
     this.hostCommandRuns.set(sessionId, id);
+    const selectionGeneration = this.selectionGeneration;
     const transportGeneration = this.transportGeneration;
     void api
       .nativeCommand({
@@ -1544,8 +1551,9 @@ export class AppStore {
               : {}),
           });
         }
-        if (this.state.sessionId === sessionId)
-          void this.resync(sessionId, this.selectionGeneration);
+        // Keep the command result in its session, but do not let an old
+        // completion supersede a newer selection/view's pending refresh.
+        void this.resync(sessionId, selectionGeneration);
       })
       .catch((error: unknown) => {
         if (
@@ -1704,6 +1712,41 @@ export class AppStore {
         command.name,
         "error",
         `/${command.name} does not accept arguments.`,
+      );
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+
+    if (
+      (command.name === "model" || command.name === "thinking") &&
+      !modelControlsSupported(this.state)
+    ) {
+      this.presentCommandActivity(
+        sessionId,
+        input,
+        command.name,
+        "warning",
+        NATIVE_MODEL_GUIDANCE,
+      );
+      return ACCEPTED_NATIVE_COMMAND;
+    }
+    if (
+      (command.name === "compact" || command.name === "reload") &&
+      isExternalSession(this.state)
+    ) {
+      this.presentCommandActivity(
+        sessionId,
+        input,
+        command.name,
+        "info",
+        `Run /${command.name} in the original Pi terminal.`,
+        {
+          details: [{ label: "Run in Pi", value: input }],
+          action: {
+            kind: "open-terminal",
+            label: "Open terminal & copy command",
+            value: input,
+          },
+        },
       );
       return ACCEPTED_NATIVE_COMMAND;
     }
@@ -2391,13 +2434,20 @@ export class AppStore {
       this.api === api && this.transportGeneration === transportGeneration;
     if (!api || !sessionId) return { status: "stale" };
     try {
-      await api.setModel(sessionId, provider, modelId);
+      if (!modelControlsSupported(this.state))
+        return { status: "error", message: NATIVE_MODEL_GUIDANCE };
+      const selection = await api.setModel(sessionId, provider, modelId);
       if (!ownsTransport()) return { status: "stale" };
       // Recency records only successful runtime changes. Keep unavailable
       // identities in the source preference; the picker filters its display.
-      this.preferences.rememberModel({ provider, id: modelId });
+      if (selection.model) this.preferences.rememberModel(selection.model);
       await this.resync(sessionId, selectionGeneration);
-      return { status: "success" };
+      return {
+        status: "success",
+        message: selection.model
+          ? `Active model is now ${selection.model.provider}/${selection.model.id}; thinking ${selection.thinkingLevel}.`
+          : "Pi has no active model.",
+      };
     } catch (error) {
       if (!ownsTransport()) return { status: "stale" };
       if (error instanceof ApiError && error.status === 401)
@@ -2432,14 +2482,27 @@ export class AppStore {
     const ownsTransport = (): boolean =>
       this.api === api && this.transportGeneration === transportGeneration;
     if (!api || !sessionId) return { status: "stale" };
+    if (!modelControlsSupported(this.state))
+      return { status: "error", message: NATIVE_MODEL_GUIDANCE };
     const previous = this.state.thinkingLevel;
     const request = ++this.thinkingLevelRequest;
     this.set({ thinkingLevel: level });
     try {
-      await api.setThinkingLevel(sessionId, level);
-      return ownsTransport() && request === this.thinkingLevelRequest
-        ? { status: "success" }
-        : { status: "stale" };
+      const selection = await api.setThinkingLevel(sessionId, level);
+      if (!ownsTransport() || request !== this.thinkingLevelRequest)
+        return { status: "stale" };
+      if (
+        this.state.sessionId === sessionId &&
+        this.selectionGeneration === selectionGeneration
+      )
+        this.set({
+          model: selection.model,
+          thinkingLevel: selection.thinkingLevel,
+        });
+      return {
+        status: "success",
+        message: `Thinking level is now ${selection.thinkingLevel}.`,
+      };
     } catch (error) {
       if (!ownsTransport()) return { status: "stale" };
       if (error instanceof ApiError && error.status === 401)
@@ -2653,6 +2716,13 @@ export class AppStore {
         sessionId = this.state.sessionId;
       const selection = this.selectionGeneration;
       if (!api || !sessionId || this.state.readOnlyReason) return;
+      if (isExternalSession(this.state)) {
+        this.notify(
+          "info",
+          "Cycle models in the original Pi terminal. Choose a model here with /model.",
+        );
+        return;
+      }
       try {
         // Pi owns scope order, thinking defaults and model_select effects.
         await api.cycleModel(sessionId, direction);

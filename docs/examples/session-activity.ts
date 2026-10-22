@@ -11,6 +11,7 @@ import { statSync } from "node:fs";
 import {
   lstat,
   mkdir,
+  open,
   readFile,
   rename,
   rm,
@@ -27,6 +28,7 @@ import type {
 
 export const ACTIVITY_HEARTBEAT_MS = 2_000;
 export const ACTIVITY_STALE_MS = 8_000;
+export const NATIVE_MODEL_READ_TIMEOUT_MS = 15_000;
 const execFile = promisify(execFileCallback);
 
 /** Shared by the reporter and its reader; a PID alone can be recycled.
@@ -145,6 +147,39 @@ export interface NativeTaskRuns {
   settled: NativeTaskResult[];
 }
 
+/** Picker metadata only: no provider endpoints, headers or credentials. */
+export interface NativeModelOption {
+  provider: string;
+  id: string;
+  name?: string;
+  reasoning?: boolean;
+  virtual?: boolean;
+  thinkingLevelMap?: Partial<
+    Record<ReturnType<ExtensionAPI["getThinkingLevel"]>, string | null>
+  >;
+}
+export interface NativeModelSelection {
+  model: NativeModelOption | null;
+  thinkingLevel: ReturnType<ExtensionAPI["getThinkingLevel"]>;
+}
+export interface NativeModelCatalog extends NativeModelSelection {
+  models: NativeModelOption[];
+}
+function modelOption(
+  model: NonNullable<ExtensionContext["model"]>,
+): NativeModelOption {
+  return {
+    provider: model.provider,
+    id: model.id,
+    name: model.name,
+    reasoning: model.reasoning,
+    ...(model.api === "pi-virtual" ? { virtual: true } : {}),
+    ...(model.thinkingLevelMap
+      ? { thinkingLevelMap: model.thinkingLevelMap }
+      : {}),
+  };
+}
+
 export interface PiActivityRecord {
   version: 1;
   pid: number;
@@ -160,16 +195,35 @@ export interface PiActivityRecord {
   updatedAt: number;
   taskRuns?: NativeTaskRuns;
   nativeActions?: {
-    version: 1;
+    version: 2;
     receiverId: string;
-    result?: NativeActionResult;
+    images?: true;
+    models?: true;
+    modelSelection?: NativeModelSelection;
   };
 }
 
+/** Host-managed image files; bytes stay outside the bounded action envelope. */
+export interface NativeImageReference {
+  path: string;
+  mimeType: string;
+}
+
 export type NativeAction =
-  | { type: "prompt"; message: string; behavior?: "steer" | "followUp" }
+  | {
+      type: "prompt";
+      message: string;
+      behavior?: "steer" | "followUp";
+      images?: NativeImageReference[];
+    }
   | { type: "abort" }
-  | { type: "rename"; name: string };
+  | { type: "rename"; name: string }
+  | { type: "get_models" }
+  | { type: "set_model"; provider: string; modelId: string }
+  | {
+      type: "set_thinking";
+      level: ReturnType<ExtensionAPI["getThinkingLevel"]>;
+    };
 export interface NativeActionRequest {
   receiverId: string;
   operationId: string;
@@ -178,6 +232,8 @@ export interface NativeActionRequest {
   sessionId: string;
   sessionFile: string;
   action: NativeAction;
+  modelState?: NativeModelSelection | NativeModelCatalog;
+  result?: NativeActionResult;
 }
 interface NativeActionResult {
   operationId: string;
@@ -262,7 +318,8 @@ export default function (pi: ExtensionAPI) {
   let retired = false;
   let lifecycle = 0;
   let receiverId: string | undefined;
-  let actionResult: NativeActionResult | undefined;
+  const catalogReads = new Set<AbortController>();
+  let catalogEpoch = 0;
   let activeRunId: string | null = null;
   let taskOutcome: NativeTaskResult["outcome"] = "completed";
   let settledTasks: NativeTaskResult[] = [];
@@ -288,6 +345,11 @@ export default function (pi: ExtensionAPI) {
     return writes;
   };
 
+  const selection = (ctx: ExtensionContext): NativeModelSelection => ({
+    model: ctx.model ? modelOption(ctx.model) : null,
+    thinkingLevel: pi.getThinkingLevel(),
+  });
+
   const publish = (): Promise<void> => {
     if (!context) return writes;
     try {
@@ -308,7 +370,13 @@ export default function (pi: ExtensionAPI) {
         ...(receiverId
           ? {
               taskRuns: { receiverId, activeRunId, settled: settledTasks },
-              nativeActions: { version: 1, receiverId, result: actionResult },
+              nativeActions: {
+                version: 2,
+                receiverId,
+                images: true,
+                models: true,
+                modelSelection: selection(context),
+              },
             }
           : {}),
       });
@@ -322,7 +390,9 @@ export default function (pi: ExtensionAPI) {
     unsubscribe?.();
     unsubscribe = undefined;
     receiverId = undefined;
-    actionResult = undefined;
+    for (const read of catalogReads)
+      read.abort(new Error("The native action receiver changed"));
+    catalogReads.clear();
     activeRunId = null;
     settledTasks = [];
     invocations.clear();
@@ -342,6 +412,51 @@ export default function (pi: ExtensionAPI) {
     }
   };
 
+  const readModels = async (
+    ctx: ExtensionContext,
+    path: string,
+    epoch: number,
+  ) => {
+    if (epoch !== catalogEpoch)
+      throw new Error("Model discovery cancelled by Stop");
+    const controller = new AbortController();
+    const { signal } = controller;
+    catalogReads.add(controller);
+    const deadline = setTimeout(
+      () => controller.abort(new Error("Native model discovery timed out")),
+      NATIVE_MODEL_READ_TIMEOUT_MS,
+    );
+    // Removing the private request cancels an abandoned Host read. This never
+    // admits work: only the terminal frame above can start discovery.
+    const abandoned = setInterval(() => {
+      void lstat(path).catch(() =>
+        controller.abort(new Error("Native model discovery was cancelled")),
+      );
+    }, 250);
+    let onAbort!: () => void;
+    try {
+      return await Promise.race([
+        (async () => {
+          await ctx.modelRegistry.refresh({ signal });
+          signal.throwIfAborted();
+          const models = await ctx.modelRegistry.getAvailable();
+          signal.throwIfAborted();
+          return models.map(modelOption);
+        })(),
+        new Promise<never>((_, reject) => {
+          onAbort = () => reject(signal.reason);
+          signal.addEventListener("abort", onAbort, { once: true });
+          if (signal.aborted) onAbort();
+        }),
+      ]);
+    } finally {
+      clearTimeout(deadline);
+      clearInterval(abandoned);
+      signal.removeEventListener("abort", onAbort);
+      catalogReads.delete(controller);
+    }
+  };
+
   // Payload files are transport data, not a polled execution queue. Only an
   // explicit frame on the existing Herdr channel invokes a native action.
   const receive = (data: string): { consume: true } | undefined => {
@@ -356,22 +471,23 @@ export default function (pi: ExtensionAPI) {
       ctx = context,
       generation = lifecycle;
     const operationId = match[2]!;
+    const readEpoch = catalogEpoch;
     if (match[1] !== receiver) return { consume: true };
     if (!invocations.has(operationId)) {
       const run = async () => {
         const result: NativeActionResult = { operationId, status: "rejected" };
+        const path = nativeActionPath(piActivityDirectory(), operationId);
+        let request: NativeActionRequest | undefined;
         try {
-          const path = nativeActionPath(piActivityDirectory(), operationId);
           const info = await lstat(path);
           if (!info.isFile() || info.size > 4 * 1024 * 1024)
             throw new Error("Invalid action payload");
-          const request: NativeActionRequest = JSON.parse(
-            await readFile(path, "utf8"),
-          );
+          request = JSON.parse(await readFile(path, "utf8"));
           if (
             generation !== lifecycle ||
             receiverId !== receiver ||
             !context ||
+            !request ||
             request.receiverId !== receiver ||
             request.operationId !== operationId ||
             request.pid !== process.pid ||
@@ -396,20 +512,110 @@ export default function (pi: ExtensionAPI) {
                 "Pi is waiting for an answer in its terminal. Answer there before sending another message.",
               );
             }
-            if (ctx.ui.getEditorText().trim()) {
-              result.code = "NATIVE_EDITOR_NOT_EMPTY";
+            const images = action.images ?? [];
+            if (!Array.isArray(images) || images.length > 8)
+              throw new Error("Invalid image references");
+            let imageBytes = 0;
+            const content: Parameters<ExtensionAPI["sendUserMessage"]>[0] = [
+              { type: "text", text: action.message },
+            ];
+            for (const image of images) {
+              if (
+                !image ||
+                typeof image.path !== "string" ||
+                !isAbsolute(image.path) ||
+                ![
+                  "image/png",
+                  "image/jpeg",
+                  "image/gif",
+                  "image/webp",
+                ].includes(image.mimeType)
+              )
+                throw new Error("Invalid image reference");
+              const info = await lstat(image.path);
+              imageBytes += info.size;
+              if (
+                !info.isFile() ||
+                info.size > 16 * 1024 * 1024 ||
+                imageBytes > 20 * 1024 * 1024
+              )
+                throw new Error("Image references exceed the prompt budget");
+              content.push({
+                type: "image",
+                mimeType: image.mimeType,
+                data: (await readFile(image.path)).toString("base64"),
+              });
+            }
+            // Loading images is asynchronous: recheck the captured receiver and
+            // native dialog before invoking Pi. Ordinary editor drafts stay intact.
+            if (generation !== lifecycle || receiverId !== receiver)
+              throw new Error("The native action target changed");
+            if (waiting) {
+              result.code = "NATIVE_INPUT_BLOCKED";
               throw new Error(
-                "There is an unsent draft in the Pi terminal. Send or clear it before sending from Inspire.",
+                "Pi is waiting for an answer in its terminal. Answer there before sending another message.",
               );
             }
-            pi.sendUserMessage(action.message, {
+            pi.sendUserMessage(images.length ? content : action.message, {
               deliverAs: action.behavior ?? "steer",
               expandPromptTemplates: true,
             });
-          } else if (action.type === "abort") ctx.abort();
-          else if (action.type === "rename" && typeof action.name === "string")
+          } else if (action.type === "abort") {
+            catalogEpoch++;
+            for (const read of catalogReads)
+              read.abort(new Error("Model discovery cancelled by Stop"));
+            ctx.abort();
+          } else if (
+            action.type === "rename" &&
+            typeof action.name === "string"
+          )
             pi.setSessionName(action.name);
-          else throw new Error("Unsupported native action");
+          else if (
+            action.type === "get_models" ||
+            action.type === "set_model" ||
+            action.type === "set_thinking"
+          ) {
+            if (action.type === "set_model") {
+              const model = ctx.modelRegistry.find(
+                action.provider,
+                action.modelId,
+              );
+              if (!model)
+                throw new Error("That model is not registered in this Pi.");
+              if (!(await pi.setModel(model)))
+                throw new Error(
+                  "Authentication is not configured for that model's provider.",
+                );
+            } else if (action.type === "set_thinking") {
+              if (
+                ![
+                  "off",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max",
+                ].includes(action.level)
+              )
+                throw new Error("Invalid thinking level");
+              pi.setThinkingLevel(action.level);
+            }
+            // Setters report their result without re-running unrelated provider
+            // discovery. Catalog refresh is a separate, read-only action.
+            const models =
+              action.type === "get_models"
+                ? await readModels(ctx, path, readEpoch)
+                : undefined;
+            if (generation !== lifecycle || receiverId !== receiver)
+              throw new Error("The native action target changed");
+            // Keep catalog data outside the small presence record. Reuse this
+            // invocation's private payload; r+ cannot recreate a retired request.
+            request.modelState = {
+              ...selection(ctx),
+              ...(models ? { models } : {}),
+            };
+          } else throw new Error("Unsupported native action");
           // Invocation is not queue admission, completion or persistence.
           // Pi owns the ensuing work and reports asynchronous native errors.
           result.status = "invoked";
@@ -417,8 +623,32 @@ export default function (pi: ExtensionAPI) {
           result.message =
             error instanceof Error ? error.message : "Native action rejected";
         }
-        if (generation === lifecycle && receiverId === receiver) {
-          actionResult = result;
+        if (generation === lifecycle && receiverId === receiver && request) {
+          // Each invocation owns its receipt; concurrent Stop and discovery
+          // cannot overwrite one another in the presence record.
+          request.result = result;
+          let response = JSON.stringify(request);
+          if (Buffer.byteLength(response) > 4 * 1024 * 1024) {
+            delete request.modelState;
+            request.result = {
+              operationId,
+              status: "rejected",
+              message:
+                "The native model catalog exceeds the action payload limit",
+            };
+            response = JSON.stringify(request);
+          }
+          try {
+            const payload = await open(path, "r+");
+            try {
+              await payload.truncate(0);
+              await payload.writeFile(response);
+            } finally {
+              await payload.close();
+            }
+          } catch {
+            // The Host may have retired this request. Never recreate it.
+          }
           await publish();
         }
       };

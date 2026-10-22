@@ -7,7 +7,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import type { RunState } from "../../shared/contracts";
+import type { RunState, SessionRuntimeStatus } from "../../shared/contracts";
 import type { McpConfigSnapshot } from "../../shared/mcp";
 import { McpServerForm } from "../../src/components/McpServerForm";
 import { McpSettings } from "../../src/components/McpSettings";
@@ -20,6 +20,7 @@ const fixture = vi.hoisted(() => ({
     transportGeneration: 1,
     runState: "idle" as RunState,
     readOnlyReason: null as string | null,
+    sessionStatuses: {} as Record<string, SessionRuntimeStatus>,
   },
   host: {
     readMcpConfig: vi.fn(),
@@ -77,6 +78,7 @@ beforeEach(() => {
     transportGeneration: 1,
     runState: "idle",
     readOnlyReason: null,
+    sessionStatuses: {},
   };
   fixture.host.getState.mockImplementation(() => fixture.state);
   fixture.host.readMcpConfig.mockResolvedValue(snapshot());
@@ -117,6 +119,24 @@ it("keeps reload unavailable while the selected session owns a running operation
   expect(screen.getByText(/Wait for the current Pi operation/)).toBeVisible();
   expect(fixture.host.runPaletteNativeCommand).not.toHaveBeenCalled();
   expect(screen.queryByText(/Reload requested/)).toBeNull();
+});
+
+it("keeps MCP file editing available for an external owner and directs reload to its terminal", async () => {
+  fixture.state.sessionStatuses = {
+    one: { runState: "running", external: true, nativeModelControls: true },
+  };
+  fixture.state.runState = "running";
+  await savedPanel();
+  expect(
+    screen.queryByRole("button", { name: "Reload selected session…" }),
+  ).toBeNull();
+  expect(
+    screen.getByText(
+      "Run /reload in the original Pi terminal to apply the saved configuration.",
+    ),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Add server" })).toBeEnabled();
+  expect(fixture.host.runPaletteNativeCommand).not.toHaveBeenCalled();
 });
 
 it("reports reload rejection locally instead of claiming it was requested", async () => {

@@ -44,6 +44,13 @@ it.each([
         sessionName: summary.title,
         cwd: summary.cwd,
         readOnlyReason: folderAvailable ? undefined : reason,
+        model: {
+          provider: "example",
+          id: "session-model",
+          name: "Saved session model",
+          reasoning: true,
+        },
+        thinkingLevel: "xhigh",
         runtimeSettings: undefined,
         stats: undefined,
         pageMessages: [
@@ -80,9 +87,17 @@ it.each([
       reason === "workspace-unavailable"
         ? "Project folder unavailable. This session is read-only."
         : reason === "external-active"
-          ? "Open in another Pi. History is read-only; reopen this session after the other Pi releases it."
+          ? "Open in another Pi. Read-only here; reopen after it releases the session."
           : "Pi connection unavailable. History remains readable; reopen this session to check its connection.";
     expect(screen.getByText(notice)).toBeInTheDocument();
+    const settings = within(screen.getByLabelText("Session settings"));
+    expect(settings.getByText("example/session-model")).toBeInTheDocument();
+    expect(settings.getByText("Thinking")).toBeInTheDocument();
+    expect(settings.getByText("xhigh")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Model" })).toBeNull();
+    expect(
+      screen.queryByRole("combobox", { name: "Thinking level" }),
+    ).toBeNull();
     expect(
       screen.queryByRole("textbox", { name: "Message" }),
     ).not.toBeInTheDocument();
@@ -148,6 +163,10 @@ it.each([
       await screen.findByRole("textbox", { name: "Message" }),
     ).toBeInTheDocument();
     expect(screen.queryByText(notice)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Session settings")).toBeNull();
+    expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
+      "Saved session model",
+    );
     expect(store.getState().readOnlyReason).toBeNull();
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     const restoredPalette = await screen.findByRole("dialog", {
@@ -166,3 +185,69 @@ it.each([
     ).toBeInTheDocument();
   },
 );
+
+it("retains session settings through terminal handoff until explicit continuation", async () => {
+  let terminal = true;
+  const snapshot = () =>
+    activeSnapshot({
+      readOnlyReason: terminal ? "terminal" : undefined,
+      model: { provider: "example", id: "terminal-model", reasoning: true },
+      thinkingLevel: "high",
+    });
+  installFakeWebSocket();
+  const fetch = installFetch((url) => {
+    if (url.startsWith("/api/bootstrap"))
+      return { body: bootstrapPayload({ snapshot: snapshot() }) };
+    if (url.startsWith("/api/sessions/execution")) {
+      terminal = false;
+      return { body: { snapshot: snapshot(), command: "" } };
+    }
+    if (url.startsWith("/api/sessions"))
+      return { body: sessionPage([sessionSummary()], 1) };
+    return undefined;
+  });
+  await act(async () => store.init("token"));
+  FakeWebSocket.instances.at(-1)?.open();
+  render(<App />);
+
+  const settings = within(await screen.findByLabelText("Session settings"));
+  expect(settings.getByText("example/terminal-model")).toBeVisible();
+  expect(settings.getByText("high")).toBeVisible();
+  expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+  expect(
+    fetch.mock.calls.some(([url]) => url === "/api/sessions/execution"),
+  ).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Continue in Inspire" }));
+  expect(await screen.findByRole("textbox", { name: "Message" })).toBeVisible();
+  expect(screen.queryByLabelText("Session settings")).toBeNull();
+  expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
+    "terminal-model",
+  );
+});
+
+it("does not substitute a catalog model when read-only selection is unknown", async () => {
+  installFakeWebSocket();
+  installFetch((url) => {
+    if (url.startsWith("/api/bootstrap"))
+      return {
+        body: bootstrapPayload({
+          snapshot: activeSnapshot({
+            readOnlyReason: "external-active",
+            model: null,
+            thinkingLevel: "off",
+          }),
+        }),
+      };
+    if (url.startsWith("/api/sessions"))
+      return { body: sessionPage([sessionSummary()], 1) };
+    return undefined;
+  });
+  await act(async () => store.init("token"));
+  FakeWebSocket.instances.at(-1)?.open();
+  render(<App />);
+
+  const settings = within(await screen.findByLabelText("Session settings"));
+  expect(settings.getByText("Model unavailable")).toBeInTheDocument();
+  expect(settings.getByText("off")).toBeInTheDocument();
+  expect(settings.queryByText("Kimi K3")).toBeNull();
+});

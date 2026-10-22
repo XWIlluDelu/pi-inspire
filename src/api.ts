@@ -23,6 +23,7 @@ import type {
   InspirePreferences,
   InspireUpdateCheckResult,
   NewSessionOptions,
+  ModelSelectionResponse,
   PendingCopyContent,
   PendingOperationIdentity,
   PendingOperationRequest,
@@ -1102,13 +1103,13 @@ export function createApi(token: string | null = null) {
         direction,
       }),
     setModel: (sessionId: string, provider: string, modelId: string) =>
-      post<unknown>(token, "/api/control/model", {
+      post<ModelSelectionResponse>(token, "/api/control/model", {
         sessionId,
         provider,
         modelId,
       }),
     setThinkingLevel: (sessionId: string, level: string) =>
-      post<{ ok: boolean }>(token, "/api/control/thinking", {
+      post<ModelSelectionResponse>(token, "/api/control/thinking", {
         sessionId,
         level,
       }),

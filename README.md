@@ -105,7 +105,15 @@ Tools, prompts, models, credentials, and extensions remain configured in Pi. Too
 
 [Reverse SSH](docs/ssh-reverse.md) connects a Linux Host to a user-controlled HTTPS edge. The browser and terminal use the same tunnel; Pi, session files, and project processes stay on the Host.
 
-Optional **Settings → System → Host → Herdr enhancement** places Pi workers in Herdr panes while retaining the same GUI. It requires Linux, Herdr, a systemd user manager, and writable cgroup v2 scopes with `cgroup.kill`. The saved choice takes effect after a Host restart. With it enabled, sessions already running in a Herdr Pi terminal can also be continued from Inspire: send messages, read replies, and stop generation without closing that terminal. Closing or restarting Inspire leaves those external Pi sessions running.
+Optional **Settings → System → Host → Herdr enhancement** places Pi workers in Herdr panes while
+retaining the same GUI. It requires Linux, Herdr, a systemd user manager, and writable cgroup v2 scopes
+with `cgroup.kill`. The saved choice takes effect after a Host restart.
+
+With it enabled, Inspire connects to sessions already running in a Herdr Pi terminal: send text and
+images, read replies, select models/thinking, and stop agent generation in the same process. Install
+the matching [session-activity extension](docs/extensions.md#control-the-same-herdr-pi-terminal) in
+that Pi. Reload, Compact, model cycling and shell interruption remain in its terminal. Closing or
+restarting Inspire leaves those external Pi sessions running.
 
 ### Access and trust
 

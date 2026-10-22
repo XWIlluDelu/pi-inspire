@@ -1675,8 +1675,7 @@ export function createInspireServer(deps: AppDependencies): {
   });
   app.post("/api/control/thinking", async (request, response) => {
     const { sessionId, level } = thinkingSchema.parse(request.body);
-    await deps.runtime.setThinkingLevel(sessionId, level);
-    response.json({ ok: true });
+    response.json(await deps.runtime.setThinkingLevel(sessionId, level));
   });
   app.post("/api/control/auto-compaction", async (request, response) => {
     const { sessionId, enabled } = runtimeBooleanSchema.parse(request.body);

@@ -46,6 +46,9 @@ import {
   MAX_PROMPT_CHARS,
   MAX_SESSION_ID_CHARS,
   type ModelOption,
+  type ModelSelectionResponse,
+  THINKING_LEVELS,
+  type ThinkingLevel,
   type NewSessionDefaults,
   type NewSessionOptions,
   type PendingCopyContent,
@@ -334,7 +337,7 @@ export interface RuntimeLike {
   providerAuthOwner?(
     sessionId: string,
   ): { id: string; cancelLogin(id: string): Promise<void> } | null;
-  setThinkingLevel(sessionId: string, level: string): Promise<void>;
+  setThinkingLevel(sessionId: string, level: string): Promise<unknown>;
   setAutoCompaction(sessionId: string, enabled: boolean): Promise<void>;
   setAutoRetry(sessionId: string, enabled: boolean): Promise<void>;
   setSteeringMode(
@@ -1661,7 +1664,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       runState: slot.runState,
       ...(indicator ? { indicator } : {}),
       ...(needsInput ? { needsInput: true } : {}),
-      ...(this.externalSessions?.has(slot) ? { external: true } : {}),
+      ...(this.externalSessions?.has(slot)
+        ? {
+            external: true,
+            nativeModelControls: this.externalSessions.supportsModels(slot),
+          }
+        : {}),
     };
   }
 
@@ -1887,6 +1895,24 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private readPreviewModels(slot: RuntimeSlot): Promise<void> {
+    if (this.externalSessions?.has(slot)) {
+      if (
+        !this.closing &&
+        !slot.readOnlyReason &&
+        slot.availableModels === null &&
+        this.externalSessions.supportsModels(slot)
+      )
+        return this.externalSessions.models(slot).then(
+          () => undefined,
+          (error) =>
+            this.logRuntimeError(
+              slot.id,
+              error,
+              "native_model_catalog_unavailable",
+            ),
+        );
+      return Promise.resolve();
+    }
     const catalog = this.modelMetadata;
     if (!catalog || this.closing || slot.readOnlyReason)
       return Promise.resolve();
@@ -1948,13 +1974,16 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       slot.viewId,
     );
     const live = Boolean(slot.process && slot.ready);
+    const external = this.externalSessions?.has(slot) === true;
+    const nativeSelection = this.externalSessions?.modelSelection(slot);
     const known = this.previewModels.get(slot);
     const metadata =
-      !live && known?.revision === this.modelMetadata?.revision
+      !live && !external && known?.revision === this.modelMetadata?.revision
         ? known?.data
         : undefined;
     const unresolved =
       !live &&
+      !external &&
       !slot.readOnlyReason &&
       this.modelMetadata &&
       metadata === undefined;
@@ -1962,24 +1991,33 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       active: {
         ...slot.preview,
         readOnlyReason: slot.readOnlyReason ?? undefined,
-        model: live
-          ? slot.preview.model
-          : metadata === null || unresolved
-            ? null
-            : (slot.projection.selectedModel(metadata?.virtualModels ?? []) ??
-              slot.preview.model),
-        ...(metadata !== undefined
-          ? { availableModels: metadata?.models ?? [] }
-          : {}),
-        modelDiscovery: unresolved
-          ? "loading"
-          : metadata === null
+        model: external
+          ? (nativeSelection?.model ?? null)
+          : live
+            ? slot.preview.model
+            : metadata === null || unresolved
+              ? null
+              : (slot.projection.selectedModel(metadata?.virtualModels ?? []) ??
+                slot.preview.model),
+        ...(external
+          ? { availableModels: slot.availableModels ?? [] }
+          : metadata !== undefined
+            ? { availableModels: metadata?.models ?? [] }
+            : {}),
+        modelDiscovery:
+          external && !nativeSelection
             ? "unavailable"
-            : undefined,
-        thinkingLevel: this.effectiveThinkingLevel(
-          slot,
-          live ? slot.preview.thinkingLevel : undefined,
-        ),
+            : unresolved
+              ? "loading"
+              : metadata === null
+                ? "unavailable"
+                : undefined,
+        thinkingLevel:
+          nativeSelection?.thinkingLevel ??
+          this.effectiveThinkingLevel(
+            slot,
+            live ? slot.preview.thinkingLevel : undefined,
+          ),
         transcriptPage: page,
         projectionHealth: slot.projection.health,
         projectionConflict: slot.conflict,
@@ -4280,7 +4318,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           } finally {
             clearTimeout(timer);
           }
-          this.extensionUi.clear(slot, "aborted");
+          if (slot.process === rpc) await this.extensionUi.cancel(slot, rpc);
+          else this.extensionUi.clear(slot, "aborted");
           return;
         }
         if (
@@ -4333,7 +4372,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             this.emitSlotEvent(slot, { type: "prompt_cancelled" });
           }
         }
-        this.extensionUi.clear(slot, "aborted");
+        if (slot.process === rpc) await this.extensionUi.cancel(slot, rpc);
+        else this.extensionUi.clear(slot, "aborted");
       });
       return recovered!;
     } catch (error) {
@@ -4423,6 +4463,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return this.withMaintenanceOperation(async () => {
       const slot = this.requireSlot(request.sessionId);
       const argument = request.argument?.trim() || undefined;
+      if (request.command === "reload" || request.command === "compact") {
+        this.requireWorkspace(slot);
+        if (!slot.process && this.externalSessions)
+          await this.connectExternalSession(slot);
+        if (this.externalSessions?.has(slot))
+          throw requestError(
+            `Run /${request.command} in the original Pi terminal.`,
+            409,
+            { code: "NATIVE_ACTION_UNSUPPORTED" },
+          );
+      }
       if (request.command === "compact") {
         const result = await this.mutateSlot(slot, () =>
           this.compactSlot(slot, argument),
@@ -4728,7 +4779,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     sessionId: string,
     provider: string,
     modelId: string,
-  ): Promise<unknown> {
+  ): Promise<ModelSelectionResponse> {
     return this.withMaintenanceOperation(() =>
       this.setModelInside(sessionId, provider, modelId),
     );
@@ -4738,8 +4789,16 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     sessionId: string,
     provider: string,
     modelId: string,
-  ): Promise<unknown> {
+  ): Promise<ModelSelectionResponse> {
     const slot = this.requireSlot(sessionId);
+    if (this.externalSessions && !slot.process) {
+      this.requireWorkspace(slot);
+      await this.ensureProcess(slot);
+      if (this.externalSessions.has(slot))
+        return this.useSlot(slot, () =>
+          this.externalSessions!.setModel(slot, provider, modelId),
+        );
+    }
     return this.mutateSlot(slot, async () => {
       const ready = await this.ensureFreshWriterInsideGate(slot);
       return this.withExpectedPersistence(
@@ -4753,16 +4812,29 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           ),
         ],
         async () => {
-          const result = await this.requestPersistence(slot, ready.process, {
+          await this.requestPersistence(slot, ready.process, {
             type: "set_model",
             provider,
             modelId,
           });
           await this.reconcileAcceptedPersistence(slot, "the model change");
-          return result;
+          return this.readModelSelection(ready.process);
         },
       );
     });
+  }
+
+  private async readModelSelection(
+    rpc: PiRpcProcess,
+  ): Promise<ModelSelectionResponse> {
+    const state = await rpc.request<{
+      model?: ModelOption;
+      thinkingLevel: string;
+    }>({ type: "get_state" });
+    return {
+      model: state.model ? modelOption(state.model) : null,
+      thinkingLevel: state.thinkingLevel,
+    };
   }
 
   async refreshModels(
@@ -4777,6 +4849,23 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         : await this.prepareCatalogSlot(sessionId);
     return this.useSlot(slot, async () => {
       this.requireWorkspace(slot);
+      if (!slot.process && this.externalSessions)
+        await this.connectExternalSession(slot);
+      if (this.externalSessions?.has(slot)) {
+        const native = await this.externalSessions.models(slot);
+        return {
+          models: native.models,
+          ...(inherit
+            ? {
+                selection: {
+                  cwd: slot.cwd,
+                  model: native.model,
+                  thinkingLevel: native.thinkingLevel,
+                },
+              }
+            : {}),
+        };
+      }
       // An already-warming Pi owns the source's actual startup selection.
       const warming = inherit ? this.opening.get(slot.id) : undefined;
       if (warming) await warming.catch(() => undefined);
@@ -4893,7 +4982,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
-  async setThinkingLevel(sessionId: string, level: string): Promise<void> {
+  async setThinkingLevel(
+    sessionId: string,
+    level: string,
+  ): Promise<ModelSelectionResponse> {
     return this.withMaintenanceOperation(() =>
       this.setThinkingLevelInside(sessionId, level),
     );
@@ -4902,11 +4994,21 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private async setThinkingLevelInside(
     sessionId: string,
     level: string,
-  ): Promise<void> {
+  ): Promise<ModelSelectionResponse> {
+    if (!(THINKING_LEVELS as readonly string[]).includes(level))
+      throw requestError("Invalid thinking level", 400);
     const slot = this.requireSlot(sessionId);
-    await this.mutateSlot(slot, async () => {
+    if (this.externalSessions && !slot.process) {
+      this.requireWorkspace(slot);
+      await this.ensureProcess(slot);
+      if (this.externalSessions.has(slot))
+        return this.useSlot(slot, () =>
+          this.externalSessions!.setThinkingLevel(slot, level as ThinkingLevel),
+        );
+    }
+    return this.mutateSlot(slot, async () => {
       const ready = await this.ensureFreshWriterInsideGate(slot);
-      await this.withExpectedPersistence(
+      return this.withExpectedPersistence(
         slot,
         [
           knownExpectation(
@@ -4924,6 +5026,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             slot,
             "the thinking-level change",
           );
+          return this.readModelSelection(ready.process);
         },
       );
     });

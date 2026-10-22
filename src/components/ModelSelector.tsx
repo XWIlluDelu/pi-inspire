@@ -29,6 +29,7 @@ export function ModelSelector({
   onChange,
   emptyLabel = "Model unavailable",
   disabled = false,
+  title,
   openRequest,
   onOpenRequestHandled,
   refreshModels,
@@ -42,6 +43,7 @@ export function ModelSelector({
   onChange: (provider: string, id: string) => void | Promise<unknown>;
   emptyLabel?: string;
   disabled?: boolean;
+  title?: string;
   openRequest?: { id: number; query?: string };
   onOpenRequestHandled?: (id: number) => void;
   refreshModels?: () => Promise<string | undefined>;
@@ -180,9 +182,10 @@ export function ModelSelector({
         aria-expanded={open}
         disabled={isDisabled}
         title={
-          value?.reasoning === false
+          title ??
+          (value?.reasoning === false
             ? `${display} — thinking is not supported`
-            : `${display} — ${value?.provider ?? "no provider"}`
+            : `${display} — ${value?.provider ?? "no provider"}`)
         }
         onClick={() => (open ? setOpen(false) : show())}
         onKeyDown={(event) => {

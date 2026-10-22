@@ -32,6 +32,7 @@ function fixture() {
   const invoke = vi.fn<PiNativeActions["invoke"]>(
     async (_action, _send, beforeSend) => {
       beforeSend?.();
+      return undefined;
     },
   );
   const native = new HerdrNativeSession(
@@ -90,6 +91,7 @@ describe("existing native Pi action adapter", () => {
       },
       expect.any(Function),
       expect.any(Function),
+      undefined,
     );
     f.native.close();
     await expect(f.native.read()).resolves.toBeNull();
@@ -107,18 +109,21 @@ describe("existing native Pi action adapter", () => {
       { type: "prompt", message: "Next task", behavior: "followUp" },
       expect.any(Function),
       expect.any(Function),
+      undefined,
     );
     await f.native.abort();
     expect(f.invoke).toHaveBeenLastCalledWith(
       { type: "abort" },
       expect.any(Function),
       expect.any(Function),
+      undefined,
     );
     await f.native.rename("Native title");
     expect(f.invoke).toHaveBeenLastCalledWith(
       { type: "rename", name: "Native title" },
       expect.any(Function),
       expect.any(Function),
+      undefined,
     );
     expect(
       f.nativeAgentRequest.mock.calls.every(
@@ -162,6 +167,7 @@ describe("existing native Pi action adapter", () => {
       { type: "prompt", message: "literal\x1b[13~", behavior: undefined },
       expect.any(Function),
       expect.any(Function),
+      undefined,
     );
   });
 

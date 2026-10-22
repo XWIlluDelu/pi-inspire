@@ -117,7 +117,10 @@ command/status pair is worker/session/nonce-owned, hidden from user command/stat
 coalesced per worker, and independent of the persistence/branch mutation lane. A 15-second abort
 budget bounds catalog discovery without stopping Pi. Pi retains extension registrations, credentials,
 offline/network policy and usable cached catalogs.
-The active worker supplies its own model list, and model changes use native RPC. [[model-settings]]
+The owning RPC worker supplies its model list and accepts native RPC model changes. Connected TUI
+owners instead use the existing activity receiver and public model/thinking functions, as specified in
+[[herdr-enhancement]]. Both return effective model and thinking values rather than echoed arguments.
+[[model-settings]]
 owns selection/discovery semantics; [[composer]] owns cached-first controls and feedback.
 Export content, source protection and
 managed downloads belong to [[session-branches]], with controls/receipts in [[composer]].
@@ -267,8 +270,11 @@ the public session identity is finalized. Independent fork leaves the source wor
 Standard dialogs use browser modals. Each request belongs to its session and originating worker.
 Responses travel through a per-slot FIFO separate from persistence mutations; the Host rechecks
 request ID, session, process instance, expiry, and conflict state before sending once and removing it.
-Expiry and explicit abort, replacement, stop, or close also remove pending requests. Model settlement
-leaves them intact because independent extension commands may still await an answer. Fork leaves source
+When Stop retains the worker, cancel the captured pending requests through the same process-bound
+response FIFO as explicit Cancel, sending `cancelled: true` before removing each handled ID. Questions
+created during cancellation remain answerable. Worker retirement/replacement or close clears its
+remaining requests; expiry removes timed-out requests. Model settlement leaves requests intact
+because independent extension commands may still await an answer. Fork leaves source
 requests with their worker. Startup restrictions follow [[session-persistence]] and the
 [adaptation guide](../../docs/extensions.md#startup).
 
@@ -313,5 +319,9 @@ The installed-Pi integration tests exercise read-only preview, real RPC state/qu
 incremental entries, tree/model/command/statistics APIs, dialog and one-way UI methods, offline
 extension-supplied compaction, session-directory replacement, switch, and native fork. Runtime tests
 cover same-file navigation and independent SessionManager fork with an active source worker.
+Native PTY coverage checks actual image content at `before_agent_start`, browser input preserving
+ordinary and Stop-restored terminal drafts, native dialog blocking and agent-only Stop. Its Herdr
+terminal transport is a fixture, not a full Herdr installation check. The native RPC UI integration
+checks that retained-worker Stop resolves the Pi dialog promise and preserves a new independent question.
 [[dependency-boundaries]] explains runtime and development ownership;
 [[native-command-compatibility]] describes dispatch and native regression setup.

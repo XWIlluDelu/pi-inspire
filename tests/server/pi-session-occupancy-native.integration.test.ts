@@ -288,7 +288,7 @@ async function exerciseOwner(connectHerdr: boolean) {
       await runtime.openSession(sessionId);
       expect(create).toHaveBeenCalledOnce();
     });
-    if (closed) expect(closed).toHaveBeenCalledOnce();
+    if (native) await expect(native.read()).resolves.toBeNull();
     expect(occupancy).toHaveBeenCalledWith(sessionId, sessionFile);
     expect(external.pid).toBe(pid);
     await external.stop();

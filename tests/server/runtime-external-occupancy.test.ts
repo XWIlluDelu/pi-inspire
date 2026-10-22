@@ -151,7 +151,11 @@ describe("writer admission for externally held session files", () => {
             "external-active",
           );
         });
-        expect(close).toHaveBeenCalledOnce();
+        // Retirement is observable without prescribing how many cleanup
+        // layers call the idempotent close method.
+        const readsBeforeRetiredCheck = read.mock.calls.length;
+        await expect(native.read()).resolves.toBeNull();
+        expect(read).toHaveBeenCalledTimes(readsBeforeRetiredCheck);
         expect(f.create).not.toHaveBeenCalled();
         await writeFile(
           second,

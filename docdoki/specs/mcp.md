@@ -62,7 +62,7 @@ selected, Settings shows only user configuration and a short project-selection h
 project reports its own file error without blocking the user file. An addressed session still has to
 exist; its directory cannot silently fall back to another client-supplied directory. Project writes
 require an existing verified project directory and never create a missing project.
-Full project definitions replace same-name user definitions. Pi 1.1 policy-only project entries
+Full project definitions replace same-name user definitions. Policy-only project entries
 inherit the user connection and override `enabled`, `exposure`, and `toolExposure`; their editor
 preserves that shape. Absent enabled/exposure fields display **Inherit from user**, and choosing it
 removes the corresponding project field. Pi applies project configuration only when the project is
@@ -107,11 +107,13 @@ A conflict keeps the form draft; Refresh reads the new revision without clearing
 explicit Save merges only the edited subset. Drafts survive category changes but are withdrawn on session/directory/Host
 ownership changes; stale asynchronous results cannot populate the new owner.
 
-A successful write reports saved-to-file, not applied. The optional, confirmed **Reload selected
-session** uses Inspire's existing idle-worker Reload path. Busy, unready or read-only targets are
-unavailable with an explanation; a declined dispatch is not reported as sent. Other workers are unchanged; new workers
-read the saved configuration. Save failure retains the draft. A successful save followed by a read
-failure still reports the successful commit and asks for Refresh.
+A successful write reports saved-to-file, not applied. For an Inspire-owned session, the optional,
+confirmed **Reload selected session** uses the existing idle-worker Reload path. Busy, unready or
+read-only targets are unavailable with an explanation; a declined dispatch is not reported as sent.
+A connected native Pi instead receives guidance to run `/reload` in its original terminal, without
+starting a second writer. Other workers are unchanged; new workers read the saved configuration.
+Save failure retains the draft. A successful save followed by a read failure still reports the
+successful commit and asks for Refresh.
 
 User guide: [MCP configuration](../../docs/mcp.md).
 
