@@ -685,6 +685,7 @@ export interface GenericExtensionDisplay extends ExtensionDisplayBase {
 
 export type ExtensionDisplay = ExtensionWidgetDisplay | GenericExtensionDisplay;
 
+/** Length/truncation describe readable preview text, not the exact PendingInput source. */
 export interface PendingMessageSummary {
   id: string;
   textPreview: string;
@@ -1120,6 +1121,8 @@ export interface BranchEntryRequest {
   viewId: string;
   targetId: string;
   offset?: number;
+  /** Original copyable message fields as paged JSON, not History display text. */
+  format?: "message";
 }
 
 export interface BranchEntryResponse {

@@ -16,6 +16,7 @@ import {
 } from "../../shared/contracts";
 import { messageFallbackCorrelation } from "../../shared/message-identity";
 import { stripTerminalSequences } from "../ansi";
+import { messageCopyLoader } from "../message-copy";
 import {
   type ActivityTool,
   asMessage,
@@ -682,6 +683,15 @@ export function useTranscriptRows({
               dynamicActive={assistantDynamicActive}
               thinkingVisibility={thinkingVisibility}
               toolVisibility={toolVisibility}
+              responseCopyContent={
+                segment.kind === "response" && segmentIndex === lastResponse
+                  ? messageCopyLoader(message, fullResponseText, {
+                      sessionId,
+                      viewId,
+                      projectionKey: projectionViewKey,
+                    })
+                  : undefined
+              }
               responseCopyText={
                 segment.kind === "response" && segmentIndex === lastResponse
                   ? fullResponseText

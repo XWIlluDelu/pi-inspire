@@ -1,8 +1,5 @@
-import {
-  fileReferenceName,
-  parseAttachmentContext,
-} from "./attachment-context.js";
 import type { UserTurnAnchor } from "./contracts.js";
+import { userMessageContent } from "./user-message.js";
 
 const USER_TURN_SNIPPET_CHARS = 180;
 
@@ -13,24 +10,11 @@ export function userTurnSummary(value: unknown): UserTurnSummary {
   if (!value || typeof value !== "object" || Array.isArray(value))
     return { snippet: "User message", attachmentCount: 0 };
   const record = value as Record<string, unknown>;
-  const text: string[] = [];
-  let attachmentCount = 0;
-  if (typeof record.content === "string") text.push(record.content);
-  else if (Array.isArray(record.content)) {
-    for (const part of record.content) {
-      if (!part || typeof part !== "object" || Array.isArray(part)) continue;
-      const item = part as Record<string, unknown>;
-      if (item.type === "text" && typeof item.text === "string")
-        text.push(item.text);
-      else if (item.type === "image") attachmentCount += 1;
-    }
-  }
-  const parsed = parseAttachmentContext(text.join("\n\n"), attachmentCount);
-  const normalized = (
-    parsed.text.trim() || parsed.references.map(fileReferenceName).join(", ")
-  )
-    .replace(/\s+/g, " ")
-    .trim();
+  const {
+    caption: normalized,
+    references,
+    imageCount: attachmentCount,
+  } = userMessageContent(record.content);
   const snippet = Array.from(normalized.slice(0, USER_TURN_SNIPPET_CHARS * 2))
     .slice(0, USER_TURN_SNIPPET_CHARS)
     .join("");
@@ -42,7 +26,7 @@ export function userTurnSummary(value: unknown): UserTurnSummary {
           ? "Image attachment"
           : `${attachmentCount} image attachments`
         : "User message"),
-    attachmentCount: attachmentCount + parsed.references.length,
+    attachmentCount: attachmentCount + references.length,
   };
 }
 

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PiRpcProcess } from "../../server/pi-rpc.js";
+import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context.js";
 import { RuntimeController } from "../../server/runtime.js";
 import { PreviewProjection } from "./fixtures/preview-projection.js";
 import {
@@ -769,7 +770,7 @@ describe("RuntimeController Pending input and recovery", () => {
     try {
       await runtime.openSession("a");
       await waitForReady(runtime);
-      const longText = `${"x".repeat(70_000)}END\n`;
+      const longText = `${"x".repeat(70_000)}END\n\n${ATTACHMENT_CONTEXT_HEADING}\n- "/demo/report.csv"`;
       const steering = [
         longText,
         ...Array.from({ length: 1001 }, (_, index) => `steer-${index}`),
@@ -786,6 +787,12 @@ describe("RuntimeController Pending input and recovery", () => {
         revision: snapshot.pendingQueues!.revision,
       };
       expect(snapshot.pendingQueues!.steering).toHaveLength(1000);
+      expect(snapshot.pendingQueues!.steering[0]!.textPreview).toContain(
+        "report.csv",
+      );
+      expect(snapshot.pendingQueues!.steering[0]!.textPreview).not.toContain(
+        "/demo/",
+      );
       await expect(
         runtime.pendingText({ ...request, itemId: "text-steer-0" }),
       ).resolves.toEqual({ text: longText });

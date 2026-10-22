@@ -12,6 +12,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SessionMetadataIndex } from "../../server/session-metadata.js";
+import { SessionCatalog } from "../../server/session-catalog.js";
+import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context.js";
 import type { SessionCatalogIssue } from "../../shared/contracts.js";
 
 const directories: string[] = [];
@@ -242,6 +244,43 @@ describe("SessionMetadataIndex", () => {
       firstMessage: "inspect",
     });
   });
+
+  it.each(["text", "files only", "split blocks"])(
+    "keeps %s titles readable while retaining attachment paths in search",
+    async (mode) => {
+      const root = await directory();
+      const trailer = `${ATTACHMENT_CONTEXT_HEADING}\n- "/demo/report.csv"`;
+      const content =
+        mode === "text"
+          ? `Review this report\n\n${trailer}`
+          : [
+              ...(mode === "split blocks"
+                ? [{ type: "text", text: "Review this report" }]
+                : []),
+              { type: "text", text: trailer },
+            ];
+      const entry = message("u1", "user", "", 1_767_225_602_000);
+      await writeFile(
+        join(root, "session.jsonl"),
+        [header(), { ...entry, message: { ...entry.message, content } }]
+          .map((value) => JSON.stringify(value))
+          .join("\n") + "\n",
+      );
+      const index = new SessionMetadataIndex();
+      const records = await index.list(root);
+      const record = records[0]!;
+      const catalog = new SessionCatalog("/unused");
+      expect(catalog.project(record).title).toBe(
+        mode === "files only" ? "report.csv" : "Review this report",
+      );
+      expect(
+        (await index.scanSearch(records, "report.csv")).map((row) => row.id),
+      ).toEqual([record.id]);
+      expect(catalog.project({ ...record, name: "Named report" }).title).toBe(
+        "Named report",
+      );
+    },
+  );
 
   it("reuses unchanged summaries and rescans only a changed file", async () => {
     const root = await directory();

@@ -14,6 +14,8 @@ import {
   SESSION_ACTION_IDS,
   type SessionActionId,
 } from "../../shared/contracts";
+import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context";
+import { sessionHeading } from "../../src/components/AppTopbar";
 import { SessionActionsMenu } from "../../src/components/SessionActionsMenu";
 import { SessionActionsSettings } from "../../src/components/SessionActionsSettings";
 
@@ -57,6 +59,31 @@ function Harness({
     </>
   );
 }
+
+describe("Session headings", () => {
+  it.each(["Review this report", ""])(
+    "uses the same file-aware title before and after catalog refresh for %j",
+    (text) => {
+      const trailer = `${ATTACHMENT_CONTEXT_HEADING}\n- "/demo/report.csv"`;
+      const messages = [
+        {
+          role: "user" as const,
+          content: text ? `${text}\n\n${trailer}` : trailer,
+        },
+        { role: "user" as const, content: "A later question" },
+      ];
+      const title = text || "report.csv";
+      expect(sessionHeading("", undefined, messages, true)).toBe(title);
+      expect(sessionHeading("", title, messages, false)).toBe(title);
+      expect(sessionHeading("Named report", title, messages, true)).toBe(
+        "Named report",
+      );
+      expect(sessionHeading("", undefined, messages, false)).toBe(
+        "New session",
+      );
+    },
+  );
+});
 
 describe("Session actions", () => {
   it("copies the complete ID in read-only sessions and reports clipboard failure before retry", async () => {

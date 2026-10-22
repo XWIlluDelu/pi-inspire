@@ -375,6 +375,7 @@ const branchEntrySchema = z
     viewId: z.string().min(1).max(200),
     targetId: z.string().min(1).max(200),
     offset: z.coerce.number().int().min(0).optional(),
+    format: z.literal("message").optional(),
   })
   .strict();
 const branchNavigateSchema = z

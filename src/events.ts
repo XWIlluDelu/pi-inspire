@@ -5,10 +5,8 @@ import {
   interruptAssistantToolCalls,
   MAX_ASSISTANT_STREAM_BATCH_EVENTS,
 } from "../shared/assistant-stream";
-import {
-  fileReferenceName,
-  parseAttachmentContext,
-} from "../shared/attachment-context";
+import { fileReferenceName } from "../shared/attachment-context";
+import { userMessageContent } from "../shared/user-message";
 import {
   EXTENSION_ONE_WAY_METHODS,
   type ExtensionDisplay,
@@ -144,10 +142,7 @@ export function messageText(message: ChatMessage): string {
 }
 
 export function userMessageDisplayContent(message: ChatMessage) {
-  return parseAttachmentContext(
-    messageText(message),
-    contentItems(message).filter((item) => item.type === "image").length,
-  );
+  return userMessageContent(message.content);
 }
 
 export function userMessageDisplayText(message: ChatMessage): string {

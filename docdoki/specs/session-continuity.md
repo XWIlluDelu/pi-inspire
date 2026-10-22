@@ -3,6 +3,7 @@ purpose: Existing Pi JSONL session trees remain the single conversation authorit
 covers:
   - shared/contracts.ts
   - shared/session-activity.ts
+  - shared/user-message.ts
   - server/pi-session-activity.ts
   - server/pi-session-occupancy.ts
   - docs/examples/session-activity.ts
@@ -14,6 +15,7 @@ covers:
   - server/project-directories.ts
   - server/session-metadata.ts
   - server/session-search.ts
+  - server/session-search-query.ts
   - server/session-search-worker.ts
   - server/session-jsonl.ts
   - server/session-preview.ts
@@ -140,7 +142,12 @@ Let the user move between existing terminal Pi and inspire without losing histor
   connection recovers. The current reading surface and unsent input remain in place;
   [[session-persistence]] owns observation and writer admission.
 
-- Session listing retains only bounded name, first-user-text, working-directory, count, and
+- Automatic titles use the same user-content projection as the transcript and live header fallback.
+  Model-facing file trailers and image-dimension notes do not become titles. A first message with
+  only file references uses their readable filenames; explicit session names retain precedence.
+  Title extraction does not change persisted messages or remove file paths from full-text search.
+
+- Session listing retains only bounded name, first-user-caption, working-directory, count, and
   timestamp metadata. The host keys each rebuildable JSONL summary by filesystem identity and stat
   version: unchanged files reuse their bounded summary, same-inode growth under the one-writer rule
   scans only the prior incomplete tail and new bytes, and other detected changes rebuild that file
@@ -150,8 +157,9 @@ Let the user move between existing terminal Pi and inspire without losing histor
   Nonempty catalog queries separately search Pi session name, cwd, session ID, and complete retained
   user/assistant text, including retained branches and text beyond the bounded first-message
   summary. Tool output, thinking blocks, and non-text content do not enter this text corpus. Queries
-  use the installed Pi selector's multi-keyword/fuzzy tokens, whitespace-normalized quoted phrases,
-  and case-insensitive `re:` regex; invalid or empty regex yields no matches. Results remain in
+  AND case-insensitive fuzzy tokens (each a character subsequence within one field) and
+  whitespace-normalized quoted phrases. A leading `re:` selects a case-insensitive regex over
+  the combined fields; invalid/empty regex and unclosed quotes yield no matches. Results remain in
   chronological catalog order with authoritative totals and explicit pagination, not a filter over
   the browser's already-loaded rows.
 
@@ -162,11 +170,10 @@ Let the user move between existing terminal Pi and inspire without losing histor
   Pi's one-writer rule; equal-size observations require an unchanged stat version, and truncation,
   replaced/rebound paths, or changed header identity exclude that source and report it as unavailable
   rather than searching a cached or replacement conversation. Other admitted sources still contribute
-  matches; displayed totals cover only the sources successfully searched. An isolated worker loads the installed selector's internal
-  parser/matcher only for search, keeping synchronous parsing/fuzzy/regex work off the Host event
-  loop. Request cancellation retires obsolete workers; a 30-second deadline makes an expensive
-  query retryable with a simpler expression. Missing/incompatible selector internals fail search,
-  not ordinary listing or Host startup.
+  matches; displayed totals cover only the sources successfully searched. An isolated worker uses
+  Inspire's query matcher, keeping synchronous parsing/fuzzy/regex work off the Host event loop
+  without private Pi dependencies. Request cancellation retires obsolete workers; a 30-second
+  deadline makes an expensive query retryable with a simpler expression.
 
   Directory and individual-file read failures are isolated: healthy sources still publish, and
   known rows under unavailable sources retain their last complete summaries. Pages include bounded

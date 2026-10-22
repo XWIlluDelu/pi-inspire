@@ -3142,8 +3142,11 @@ export class AppStore {
     this.branches.readTree(query, signal);
   readBranchEntry = (targetId: string, offset = 0, signal?: AbortSignal) =>
     this.branches.readEntry(targetId, offset, signal);
-  branchCopyContent = (targetId: string, signal: AbortSignal) =>
-    this.branches.copyContent(targetId, signal);
+  branchCopyContent = (
+    targetId: string,
+    signal: AbortSignal,
+    format?: "message",
+  ) => this.branches.copyContent(targetId, signal, format);
 
   readBranchImage = (targetId: string, index: number, signal?: AbortSignal) =>
     this.branches.readImage(targetId, index, signal);
