@@ -1,6 +1,5 @@
 /* Activity items are disclosure rows, not stacked outer cards. Type/status
-   colors stay on icons; expanded data keeps its local reading surfaces.
-   The original framed skin is preserved in legacy-activity.css. */
+   colors stay on icons; expanded data keeps its local reading surfaces. */
 
 .card {
   min-width: 0;
