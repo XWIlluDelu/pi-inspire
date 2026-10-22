@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
+import type { SessionCatalogIssue } from "../shared/contracts.js";
 import { piInstallation } from "./pi-installation.js";
 import type { SessionRecord } from "./session-metadata.js";
 
@@ -9,6 +10,7 @@ export function searchSessionRecords(
   sessions: readonly SessionRecord[],
   query: string,
   signal?: AbortSignal,
+  issues?: SessionCatalogIssue[],
 ): Promise<SessionRecord[]> {
   signal?.throwIfAborted();
   const source = import.meta.url.endsWith(".ts");
@@ -25,6 +27,7 @@ export function searchSessionRecords(
       workerData: {
         sessions,
         query,
+        partial: Boolean(issues),
         nativeSearchPath: pathToFileURL(
           join(
             piInstallation.packageRoot,
@@ -57,7 +60,13 @@ export function searchSessionRecords(
       }
     };
     signal?.addEventListener("abort", cancel, { once: true });
-    worker.once("message", (ids: string[]) => finish(undefined, ids));
+    worker.once(
+      "message",
+      (result: { ids: string[]; issues: SessionCatalogIssue[] }) => {
+        issues?.push(...result.issues);
+        finish(undefined, result.ids);
+      },
+    );
     worker.once("error", (error) => finish(error));
     worker.once("exit", (code) =>
       finish(

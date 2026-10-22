@@ -309,9 +309,9 @@ export class RuntimeEventController {
     if (event.type === "session_projection_changed") {
       const rawHealth = event.health as Partial<ProjectionHealth> | undefined;
       const health: ProjectionHealth =
-        rawHealth?.status === "error"
+        rawHealth?.status === "error" || rawHealth?.status === "pending"
           ? {
-              status: "error",
+              status: rawHealth.status,
               ...(typeof rawHealth.message === "string"
                 ? { message: rawHealth.message }
                 : {}),
@@ -327,11 +327,12 @@ export class RuntimeEventController {
             : this.host.state().projectionConflict;
       const projectionError =
         conflict?.message ??
-        (health.status === "error"
-          ? (health.message ?? "Session projection failed")
+        (health.status !== "ok"
+          ? (health.message ?? "Session persistence is not yet confirmed")
           : null);
       const projectionSeverity =
-        projectionConflictSeverity(conflict) === "attention"
+        projectionConflictSeverity(conflict) === "attention" ||
+        (!conflict && health.status === "pending")
           ? "warning"
           : "error";
       const clearedProjectionError =

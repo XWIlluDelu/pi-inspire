@@ -107,9 +107,11 @@ Let the user move between existing terminal Pi and inspire without losing histor
   directories the Host has created or opened sessions in, including after Host reconstruction.
   A private, lock-merged, atomically replaced cwd-only index beside the preferences file retains
   these discovery roots independently of navigation curation. It stores no session identities,
-  storage paths, or history. New-session creation saves the resolved cwd before constructing Pi;
-  a failed or uncertain startup cannot orphan a possibly created session, and a failed index
-  write prevents creation. Opening an existing session also remembers its resolved cwd.
+  storage paths, or history. Creating or opening a session retains its resolved cwd in the current
+  Host before attempting to save this discovery hint. Failure to save does not reject creation,
+  writer startup, input, or history reads. The Host logs the failed save, continues discovering
+  in-memory roots, and retries them during later catalog refreshes. Until a save succeeds, those
+  additional roots cannot survive Host reconstruction through this index alone.
   Legacy saved project folders seed the index, including before their first Unpin/Unhide or
   deletion-cleanup mutation. Removing curation never removes discovery knowledge.
 
@@ -134,7 +136,9 @@ Let the user move between existing terminal Pi and inspire without losing histor
 
 - An unavailable external execution route also preserves readable history, with a distinct neutral
   explanation in place of the composer. It must not be reported as a missing project folder.
-  Reselect requests fresh external discovery; [[session-persistence]] owns the execution fence.
+  A viewed external read-only session automatically recovers when its owner releases it or its
+  connection recovers. The current reading surface and unsent input remain in place;
+  [[session-persistence]] owns observation and writer admission.
 
 - Session listing retains only bounded name, first-user-text, working-directory, count, and
   timestamp metadata. The host keys each rebuildable JSONL summary by filesystem identity and stat
@@ -156,17 +160,24 @@ Let the user move between existing terminal Pi and inspire without losing histor
   Search reads one session's complete admitted JSONL prefix at a time without retaining a
   whole-catalog conversation cache. Same-inode append may continue while that prefix is read under
   Pi's one-writer rule; equal-size observations require an unchanged stat version, and truncation,
-  replaced/rebound paths, or changed header identity fail the query rather than searching a cached
-  or replacement conversation. An isolated worker loads the installed selector's internal
+  replaced/rebound paths, or changed header identity exclude that source and report it as unavailable
+  rather than searching a cached or replacement conversation. Other admitted sources still contribute
+  matches; displayed totals cover only the sources successfully searched. An isolated worker loads the installed selector's internal
   parser/matcher only for search, keeping synchronous parsing/fuzzy/regex work off the Host event
   loop. Request cancellation retires obsolete workers; a 30-second deadline makes an expensive
   query retryable with a simpler expression. Missing/incompatible selector internals fail search,
   not ordinary listing or Host startup.
 
-  A root scan failure aborts the refresh instead of publishing a partial catalog, and a present
-  session that becomes temporarily unreadable or malformed retains its last complete summary; open
-  and delete consumers revalidate the current path, source identity, and header before acting on
-  that retained record. Duplicate Pi session ids are omitted from navigation and every id-addressed
+  Directory and individual-file read failures are isolated: healthy sources still publish, and
+  known rows under unavailable sources retain their last complete summaries. Pages include bounded
+  `issues` diagnostics (the first 20 unavailable paths and explanations); the browser shows an
+  expandable source notice and a refresh action without replacing available history with an error
+  or empty state. Counts on incomplete pages are not a complete catalog count. Successful refresh
+  clears the notice. Missing roots remain distinct from roots whose contents could not be read.
+  Ordinary open and single delete revalidate their addressed path, source identity, and header;
+  an unknown id in an incomplete catalog is not reported as a confirmed absence. Reviewed Hidden
+  clearing explicitly requires a fresh complete scan before authorizing any destructive step.
+  A present malformed session may retain its last complete summary for inspection. Duplicate Pi session ids are omitted from navigation and every id-addressed
   operation rejects the ambiguity instead of selecting a path. The browser's bounded
   `SessionCatalogController` owns list request generations, chronology pagination, curation/live
   hydration, and retry presentation through the `AppStore` facade; it does not own a second catalog

@@ -72,8 +72,8 @@ Independent copies do not replace the active source worker. Durable trust comes 
   pointer/keyboard opening, fit/zoom, close and focus return. Retiring a read also retires its progress,
   while an older completion cannot clear a newer read's progress. Entry/image reads bind to their
   immutable entry and current transcript view, not the advancing branch revision: ordinary appends
-  remain readable, while navigation and source/worker/view replacement retire the read. Mutating
-  actions still require a fresh revision. A failed image offers Retry;
+  remain readable, while navigation and source/worker/view replacement retire the read. Same-file
+  mutations still require a fresh revision. A failed image offers Retry;
   contextual Refresh retries failed selected resources. History text uses the same authorized file
   preview actions as Transcript. Structured images render separately from descriptive placeholders;
   user-written placeholder-like text remains unchanged. A failed selected detail has a local
@@ -88,19 +88,22 @@ Independent copies do not replace the active source worker. Durable trust comes 
 
 - Same-file branch navigation requires an idle, fresh, conflict-free worker with no queued input or
   pre-existing dialog. Native shell requests are rejected while navigation is pending, including while
-  its extension hook awaits a dialog response. Fork addresses its source by session id and requires that source's fresh
-  branch revision, materialized current-format JSONL, conflict-free projection, and retained user
-  target; that input need not already be on the active path. Clone includes its addressed endpoint
-  rather than requiring an editable user input. An explicitly empty effective path clones to a native
+  its extension hook awaits a dialog response. Fork addresses a retained user target by session id
+  and transcript view; that input need not already be on the active path. Fork and Clone require
+  materialized current-format JSONL and a conflict-free reading projection, not a matching branch
+  revision or a preparatory History refresh. The Host validates the captured view and target after
+  reconciliation; normal tail appends do not invalidate either. Clone explicitly captures its
+  addressed endpoint when invoked rather than reading whichever leaf is latest on arrival. An explicitly empty effective path clones to a native
   header-only destination. The Host's global selection is not an admission condition: another browser
   may select a different session or deselect without disabling copies in this browser's source view. Source run
-  state, Pending queues, and extension dialogs are not preconditions because no source command or
-  replacement occurs.
+  state, writer ownership, Pending queues, and extension dialogs are not preconditions because no
+  source command or replacement occurs. External-owner and terminal-handoff read-only sessions may
+  be copied. The inherited project folder must be available for the independent destination.
   Browser branch-tree and branch-action requests are owned by a bounded `BranchController`; its
   current API, transport generation, selection generation, selection intent and transcript view must
-  still match before it can commit a response through `AppStore`. Preparatory History reads retain
-  the original gesture's owner: revisiting the same session cannot revive a pending Fork, Clone or
-  Return to latest action. Tree reads and same-session navigation
+  still match before it can commit a response through `AppStore`. Revisiting the same session
+  cannot revive a pending Fork, Clone or Return to latest action. Preparatory History reads for
+  navigation retain the original gesture's owner. Tree reads and same-session navigation
   also bind the effective leaf. Independent copies admit an exact source prefix; ordinary source
   append progress must not prevent their destination from opening after publication. A
   bootstrap or selection replacement invalidates pending tree/action requests and clears their
@@ -205,7 +208,11 @@ Independent copies do not replace the active source worker. Durable trust comes 
   branch JSONL and other destinations use native HTML. It refuses the canonical source session and
   its symlink/hardlink aliases. HTML and reload use writer admission under [[session-persistence]];
   saved JSONL needs only a healthy conflict-free reading projection. Read-only menus keep Export
-  available, disable Rename/Clone, and offer JSONL rather than claiming static HTML support.
+  available, disable Rename, and offer JSONL rather than claiming static HTML support. Fork and
+  Clone use independent-copy admission, not the source writer restriction. The title menu,
+  command palette, and direct current-branch action share that admission rule. Failures of a
+  current-branch Clone reach the visible notification stack instead of requiring History to be
+  open; node-specific History actions keep their local retry/error surface.
 - Graphical Export creates a temporary native export, captures a private managed download and removes
   temporary source files on success or failure rather than leaving them in the workspace.
 - Authenticated, session-owned opaque IDs serve captured snapshots, not caller-selected Host paths;
@@ -220,9 +227,10 @@ content, active/empty branches, source protection and managed downloads.
 
 - When the current view is a leased earlier branch, the center conversation surface projects a
   persistent `Continuing from earlier history` notice above the transcript with explicit return-to-latest
-  and endpoint-inclusive `Clone from here` actions, independent of whether the History pane is open. Each action
-  refreshes the runtime-owned branch projection before acting; the notice is derived from the
-  runtime-owned durable/effective leaf pair and does not introduce browser branch authority.
+  and endpoint-inclusive `Clone from here` actions, independent of whether the History pane is open.
+  Return to latest refreshes the runtime-owned branch projection before acting; Clone captures the
+  displayed endpoint without waiting for History refresh. The notice is derived from the runtime-owned
+  durable/effective leaf pair and does not introduce browser branch authority.
   Its layout follows the reading stage's width, including a narrow desktop center between side panes.
   The branch mark follows the title's first line, independently of wrapped diagnostics. Initial reading
   space and native scroll-target insets retain their existing minimum spacing and grow with the

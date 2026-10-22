@@ -20,6 +20,16 @@ addressing; do not expand into cosmetic changes or classify an isolated flake as
 
 ## Current state
 
+- The authorized operation-boundary follow-up now allows independent Fork/Clone from externally
+  read-only history, isolates unavailable catalog/search sources with visible diagnostics, and
+  keeps maintenance-registry writes outside history preview. Reviewed Hidden clearing still requires
+  a complete catalog; GC registers observed history roots before reclamation. Unresolved terminal
+  intents can be retired explicitly without replay, and confirmed outcomes survive browser-storage
+  cleanup failures. MCP offers opt-in viewing/editing of saved URL and argument values.
+  Source-writer exclusion and same-intent deduplication remain intact. Focused server/web regressions,
+  types and an isolated web build pass; browser checks cover available history and source diagnostics
+  at desktop/phone widths. These repairs do not deploy or operate production services.
+
 - The notification/settings follow-up now uses native cancellation evidence rather than diagnostic
   wording, keeps saved model configuration editable during discovery failures, and restores inherited
   MCP policy after draft rule changes are undone. Focused native Pi 1.4, Runtime, form and Chromium

@@ -42,6 +42,7 @@ interface ExternalSessionHost {
   reconcile(slot: RuntimeSlot, force: boolean): Promise<unknown>;
   assertUsable(slot: RuntimeSlot): void;
   log(slot: RuntimeSlot, error: unknown): void;
+  released(slot: RuntimeSlot): void;
 }
 
 /** Conversation access to externally owned sessions, deliberately outside the
@@ -100,13 +101,13 @@ export class RuntimeExternalSessions {
     const c = this.connections.get(slot);
     if (!c || c.interrupted)
       throw requestError(
-        "The original Pi connection is unavailable. Reopen this session to check its owner.",
+        "The original Pi connection is unavailable. Inspire is checking for recovery.",
         409,
         { code: "SESSION_OWNER_UNAVAILABLE" },
       );
     if (!this.supportsModels(slot))
       throw requestError(
-        "Load the updated session-activity extension with /reload in the original Pi terminal, then reselect this session.",
+        "Load the updated session-activity extension with /reload in the original Pi terminal.",
         409,
         { code: "NATIVE_ACTIONS_UNAVAILABLE" },
       );
@@ -190,20 +191,26 @@ export class RuntimeExternalSessions {
     if (this.closed || slot.process || !slot.sessionPath) return false;
     const previous = this.connections.get(slot);
     if (previous) {
+      let state: ExternalSessionState | null | undefined;
       try {
-        const state = await previous.native.read();
-        if (this.closed || !this.host.current(slot) || slot.process)
-          return false;
+        state = await previous.native.read();
+      } catch {
+        // An interrupted current connection stays fenced during rediscovery.
+      }
+      if (this.closed || !this.host.current(slot) || slot.process) return false;
+      // The owner poll may have retired this connection during the read.
+      if (this.connections.get(slot) === previous) {
         if (state) {
           previous.interrupted = false;
           this.setUnavailable(slot, false);
           this.applyState(slot, previous, state);
           return true;
         }
-        this.detach(slot);
-      } catch {
-        previous.interrupted = true;
-        this.setUnavailable(slot, true);
+        if (state === null) this.detach(slot);
+        else {
+          previous.interrupted = true;
+          this.setUnavailable(slot, true);
+        }
       }
     }
     const ownerUnavailable = () =>
@@ -265,12 +272,13 @@ export class RuntimeExternalSessions {
     return true;
   }
 
-  private setUnavailable(slot: RuntimeSlot, unavailable: boolean): void {
-    if (slot.readOnlyReason === "workspace-unavailable") return;
+  private setUnavailable(slot: RuntimeSlot, unavailable: boolean): boolean {
+    if (slot.readOnlyReason === "workspace-unavailable") return false;
     const reason = unavailable ? "external-unavailable" : null;
-    if (slot.readOnlyReason === reason) return;
+    if (slot.readOnlyReason === reason) return false;
     slot.readOnlyReason = reason;
     this.host.emit(slot, { type: "runtime_ready" });
+    return true;
   }
 
   private applyState(
@@ -378,10 +386,11 @@ export class RuntimeExternalSessions {
           });
         }
         this.detach(slot);
-        this.setUnavailable(slot, true);
         if (slot.runState !== "failed")
           slot.runState = slot.conflict ? "conflict" : "idle";
-        this.host.emit(slot, { type: "runtime_ready" });
+        if (!this.setUnavailable(slot, true))
+          this.host.emit(slot, { type: "runtime_ready" });
+        this.host.released(slot);
         return;
       }
       this.setUnavailable(slot, false);
@@ -409,7 +418,7 @@ export class RuntimeExternalSessions {
       throw requestError("The external Pi connection has ended.", 409);
     if (slot.readOnlyReason)
       throw requestError(
-        "The external Pi connection is unavailable. Reopen this session to check its connection.",
+        "The external Pi connection is unavailable. Inspire is checking for recovery.",
         409,
       );
     const message = request.message.trim();

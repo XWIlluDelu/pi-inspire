@@ -1658,7 +1658,14 @@ export class SessionProjection
       this.currentIdentity = candidate.identity;
       this.currentUncommittedBytes = candidate.uncommittedBytes;
       this.currentUncommittedFingerprint = candidate.uncommittedFingerprint;
-      this.currentHealth = { status: "ok" };
+      this.currentHealth =
+        candidate.uncommittedBytes > 0
+          ? {
+              status: "pending",
+              message:
+                "Session persistence is not yet confirmed. Waiting for Pi to complete its write.",
+            }
+          : { status: "ok" };
       this.currentFailureStatus = null;
       this.currentFailureCode = undefined;
       const sourceChanged =

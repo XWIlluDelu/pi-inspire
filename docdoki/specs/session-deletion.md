@@ -28,7 +28,7 @@ files, and newer browser preferences. Navigation curation remains in [[session-c
   single-line title treatment, does not repeat unlabeled project metadata already established by the
   navigation context, and separates the Trash outcome, permanent-delete fallback, and non-cascading
   fork/project-file scope into three explicit lines. The browser sends only the bounded session id;
-  the host resolves it from its last complete catalog projection and keeps a catalog-wide scan out
+  the host resolves it from its last known catalog projection and keeps a catalog-wide scan out
   of the normal individual interaction path, then relies on the deletion adapter's path-local
   inode/version/header revalidation immediately before its Trash-first operation.
 
@@ -93,8 +93,9 @@ files, and newer browser preferences. Navigation curation remains in [[session-c
   individually hidden sessions and every catalog session whose exact cwd is curated as a hidden
   folder.
 
-  At route admission the host reads the current curation, then takes one authoritative catalog
-  snapshot and reconstructs that union itself; changed membership rejects before any move rather
+  At route admission the host reads the current curation, then takes a fresh complete catalog
+  snapshot and reconstructs that union itself. Unavailable sources reject this complete-set operation
+  before any move, even though ordinary browsing and path-local single deletion remain available; changed membership rejects before any move rather
   than omitting an off-page target or silently expanding the confirmation. It reserves every target
   identity and rejects the entire batch before any move if a target is opening, running, queued,
   dialog-blocked, persistence-unknown, branch-leased, forking, or conflicted. Once admitted,
@@ -170,6 +171,11 @@ promptly: an arbitrary external folder is not a retention root.
 Negative reference evidence requires both the registered session namespace and its native Trash
 volume to remain identifiable across Host restarts. Path existence, a valid current Pi header,
 device numbers, inode numbers and Linux mount topology alone do not establish that continuity.
+
+Read-only history opening observes its directory in memory without requiring retention storage
+writes. Before collection, the Host registers any such observed directory; registration failure
+defers collection rather than blocking history. Writer admission and new retained references keep
+their durable-registration requirement.
 
 Each registered long-lived session directory has a non-secret
 `.inspire-upload-retention-root.json` UUID sidecar. Inspire never changes Pi JSONL to establish

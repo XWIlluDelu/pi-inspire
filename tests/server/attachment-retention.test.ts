@@ -439,6 +439,34 @@ describe("durable owned upload references", { timeout: 30_000 }, () => {
     expect((await store.collectUnreferenced()).reclaimed).toEqual([path]);
   });
 
+  it("observes history without writes and defers GC if its registration fails", async () => {
+    const { path, file } = await sent();
+    const custom = join(root, "observed");
+    await mkdir(custom);
+    const observed = join(custom, "history.jsonl");
+    await rename(file, observed);
+    const registry = join(
+      await store.uploadDirectory(),
+      ".session-directories.json",
+    );
+    const saved = await readFile(registry);
+    await rm(registry);
+    await mkdir(registry);
+    store.observeSession(observed);
+    const result = await store.collectUnreferenced();
+    expect(result.reclaimed).toEqual([]);
+    expect(result.deferred).toBeTruthy();
+    expect(await readFile(path, "utf8")).toBe("payload");
+    await rm(registry, { recursive: true });
+    await writeFile(registry, saved);
+    expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
+    expect(JSON.parse(await readFile(registry, "utf8")).directories).toContain(
+      custom,
+    );
+    await rm(observed);
+    expect((await store.collectUnreferenced()).reclaimed).toEqual([path]);
+  });
+
   it("retries failed custom-directory registration before accepting it as durable", async () => {
     await store.ready();
     const registry = join(

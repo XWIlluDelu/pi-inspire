@@ -68,7 +68,8 @@ describe("MockRuntime History reads", () => {
       expect(page.hasOlder).toBe(false);
       const cloned = await runtime.cloneBranch({
         sessionId: HISTORY_FIXTURE_SESSION_ID,
-        revision: page.revision,
+        viewId: (await runtime.snapshot()).active!.transcriptPage.viewId,
+        targetId: page.effectiveLeafId ?? null,
       });
       cloneId = cloned.sessionId;
       expect(cloned.snapshot.active!.transcriptPage.messages).toEqual(

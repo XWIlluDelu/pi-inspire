@@ -963,11 +963,13 @@ export class AppStore {
     const projectionConflict = active?.projectionConflict ?? null;
     const projectionError =
       projectionConflict?.message ??
-      (projectionHealth.status === "error"
-        ? (projectionHealth.message ?? "Session projection failed")
+      (projectionHealth.status !== "ok"
+        ? (projectionHealth.message ??
+          "Session persistence is not yet confirmed")
         : null);
     const projectionSeverity =
-      projectionConflictSeverity(projectionConflict) === "attention"
+      projectionConflictSeverity(projectionConflict) === "attention" ||
+      (!projectionConflict && projectionHealth.status === "pending")
         ? "warning"
         : "error";
     const sessionStatuses = snapshot.sessionStatuses;
@@ -3165,7 +3167,8 @@ export class AppStore {
 
   cloneBranch = (targetId: string): Promise<boolean> =>
     this.branches.clone(targetId);
-  cloneCurrentBranch = (): Promise<boolean> => this.branches.clone();
+  cloneCurrentBranch = (): Promise<boolean> =>
+    this.branches.clone(undefined, (message) => this.notify("warning", message));
 
   setGitSurfaceVisible = (surface: string, visible: boolean): void => {
     this.git.setSurfaceVisible(surface, visible);

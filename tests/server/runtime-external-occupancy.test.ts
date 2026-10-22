@@ -15,6 +15,7 @@ import { requestError } from "../../server/request-error.js";
 import { RuntimeController } from "../../server/runtime.js";
 import {
   catalog,
+  deferredSignal,
   disposeRuntimeFixture,
   FakeRpc,
   initializeRuntimeFixture,
@@ -56,14 +57,25 @@ async function fixture(activity: PiActivityRecord["activity"] = "idle") {
   const check = vi.fn((id: string, path: string) =>
     guard.assertWritable(id, path),
   );
+  const source = catalog([session]);
   const runtime = new RuntimeController(
-    catalog([session]),
+    source,
     trackedAttachmentStore(),
     create,
   )
     .setExternalSessionConnector(async () => null)
     .setExternalSessionGuard(check);
-  return { session, report, file, runtime, create, check, workers, guard };
+  return {
+    session,
+    report,
+    file,
+    runtime,
+    create,
+    check,
+    workers,
+    guard,
+    source,
+  };
 }
 
 describe("writer admission for externally held session files", () => {
@@ -116,12 +128,12 @@ describe("writer admission for externally held session files", () => {
       );
       f.runtime.setExternalSessionConnector(connector);
       try {
+        f.runtime.retainSessionView(f.session.id);
         await f.runtime.openSession(f.session.id);
         await vi.waitFor(() => expect(read).toHaveBeenCalled());
         expect(f.create).not.toHaveBeenCalled();
         agent.agent_session.value = replacement.id;
         // Herdr's changed session and a live PID are not a completed handoff.
-        await f.runtime.openSession(f.session.id);
         await vi.waitFor(async () =>
           expect((await f.runtime.snapshot()).active?.readOnlyReason).toBe(
             "external-unavailable",
@@ -130,7 +142,6 @@ describe("writer admission for externally held session files", () => {
         expect(f.create).not.toHaveBeenCalled();
         expect(close).not.toHaveBeenCalled();
         await rm(f.file);
-        await f.runtime.openSession(f.session.id);
         expect((await f.runtime.snapshot()).active?.readOnlyReason).toBe(
           "external-unavailable",
         );
@@ -145,12 +156,14 @@ describe("writer admission for externally held session files", () => {
         // An independent holder of A must still fence normal occupancy admission.
         const second = join(directory, `${process.pid}-${randomUUID()}.json`);
         await writeFile(second, JSON.stringify(f.report));
-        await vi.waitFor(async () => {
-          await f.runtime.openSession(f.session.id);
-          expect((await f.runtime.snapshot()).active?.readOnlyReason).toBe(
-            "external-active",
-          );
-        });
+        await vi.waitFor(
+          async () => {
+            expect((await f.runtime.snapshot()).active?.readOnlyReason).toBe(
+              "external-active",
+            );
+          },
+          { timeout: 5_000 },
+        );
         // Retirement is observable without prescribing how many cleanup
         // layers call the idempotent close method.
         const readsBeforeRetiredCheck = read.mock.calls.length;
@@ -165,9 +178,8 @@ describe("writer admission for externally held session files", () => {
             sessionFile: replacement.path,
           }),
         );
-        await vi.waitFor(async () => {
-          await f.runtime.openSession(f.session.id);
-          expect(f.create).toHaveBeenCalledOnce();
+        await vi.waitFor(() => expect(f.create).toHaveBeenCalledOnce(), {
+          timeout: 5_000,
         });
         await waitForReady(f.runtime, f.session.id);
         expect(
@@ -177,6 +189,7 @@ describe("writer admission for externally held session files", () => {
         await f.runtime.close();
       }
     },
+    15_000,
   );
 
   it.each(["working", "blocked", "idle"] as const)(
@@ -222,8 +235,9 @@ describe("writer admission for externally held session files", () => {
     }
   });
 
-  it("retains the fence on report loss and teardown hints, allowing reopen after completed rebind", async () => {
+  it("retains report-loss and teardown fences, then automatically recovers the viewed session after rebind", async () => {
     const f = await fixture();
+    f.runtime.retainSessionView(f.session.id);
     try {
       await f.runtime.openSession(f.session.id);
       await vi.waitFor(async () =>
@@ -244,6 +258,9 @@ describe("writer admission for externally held session files", () => {
         "external-active",
       );
       expect(f.create).not.toHaveBeenCalled();
+      // A browser still viewing this session does not depend on the Host's
+      // global selection (another browser may have left it).
+      await f.runtime.deselectSession();
       await writeFile(
         f.file,
         JSON.stringify({
@@ -252,22 +269,198 @@ describe("writer admission for externally held session files", () => {
           sessionFile: join(directory, "replacement.jsonl"),
         }),
       );
-      // A previous selection's background check may still be unwinding.
-      // Explicit reselection must eventually observe the completed rebind.
-      await vi.waitFor(async () => {
-        await f.runtime.openSession(f.session.id);
-        expect(
-          (await f.runtime.snapshot()).active?.readOnlyReason,
-        ).toBeUndefined();
+      await vi.waitFor(() => expect(f.create).toHaveBeenCalledOnce(), {
+        timeout: 5_000,
       });
       await waitForReady(f.runtime, f.session.id);
       expect(
-        (await f.runtime.snapshot()).active?.readOnlyReason,
+        (await f.runtime.snapshot(f.session.id)).active?.readOnlyReason,
       ).toBeUndefined();
+      expect(f.runtime.activeSessionId).toBeNull();
       expect(f.create).toHaveBeenCalledOnce();
       expect(f.workers[0]!.starts).toBe(1);
     } finally {
       await f.runtime.close();
+    }
+  });
+
+  it("shares quiet observation retries and resumes when an abandoned view is subscribed again", async () => {
+    const f = await fixture();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const release = f.runtime.retainSessionView(f.session.id);
+    const stillViewed = f.runtime.retainSessionView(f.session.id);
+    const events: unknown[] = [];
+    f.runtime.on("event", (event) => events.push(event));
+    const entered = deferredSignal();
+    const proceed = deferredSignal();
+    try {
+      await f.runtime.openSession(f.session.id);
+      await vi.waitFor(async () =>
+        expect((await f.runtime.snapshot()).active?.readOnlyReason).toBe(
+          "external-active",
+        ),
+      );
+      release(); // Another browser still owns the same observation.
+      f.check.mockRejectedValue(new Error("Presence temporarily unavailable"));
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect((await f.runtime.snapshot()).active?.readOnlyReason).toBe(
+        "external-unavailable",
+      );
+      const before = events.length;
+      const checks = f.check.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(f.check.mock.calls.length).toBeGreaterThan(checks);
+      expect(events).toHaveLength(before);
+      expect(f.create).not.toHaveBeenCalled();
+      f.check.mockImplementationOnce(async () => {
+        entered.resolve();
+        await proceed.promise;
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+      await entered.promise;
+      stillViewed();
+      proceed.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.create).not.toHaveBeenCalled();
+      expect((await f.runtime.snapshot()).active?.readOnlyReason).toBe(
+        "external-unavailable",
+      );
+      const abandonedChecks = f.check.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(f.check).toHaveBeenCalledTimes(abandonedChecks);
+
+      f.check.mockResolvedValue();
+      f.runtime.retainSessionView(f.session.id);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await waitForReady(f.runtime, f.session.id);
+      expect(f.create).toHaveBeenCalledOnce();
+      expect(
+        (await f.runtime.snapshot()).active?.readOnlyReason,
+      ).toBeUndefined();
+    } finally {
+      proceed.resolve();
+      stillViewed();
+      await f.runtime.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it("retains recovery through failed preparation until the writer is ready", async () => {
+    const f = await fixture();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    f.runtime.retainSessionView(f.session.id);
+    f.create.mockImplementationOnce(() => {
+      throw new Error("Worker preparation temporarily unavailable");
+    });
+    try {
+      await f.runtime.openSession(f.session.id);
+      await vi.waitFor(async () =>
+        expect((await f.runtime.snapshot()).active?.readOnlyReason).toBe(
+          "external-active",
+        ),
+      );
+      const before = (await f.runtime.snapshot()).active!;
+      f.check.mockResolvedValue();
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.waitFor(() => expect(f.create).toHaveBeenCalledOnce());
+      expect((await f.runtime.snapshot()).active?.readOnlyReason).toBe(
+        "external-active",
+      );
+      await vi.advanceTimersByTimeAsync(2_000);
+      await waitForReady(f.runtime, f.session.id);
+      const recovered = (await f.runtime.snapshot()).active!;
+      expect(recovered.readOnlyReason).toBeUndefined();
+      expect(recovered.transcriptPage.viewId).toBe(
+        before.transcriptPage.viewId,
+      );
+      expect(
+        f.workers[0]!.commands.some((command) => command.type === "prompt"),
+      ).toBe(false);
+    } finally {
+      await f.runtime.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports an actual Pi startup failure without automatically restarting it", async () => {
+    const f = await fixture();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    f.runtime.retainSessionView(f.session.id);
+    f.create.mockImplementationOnce((options) => {
+      const worker = new FakeRpc(options);
+      vi.spyOn(worker, "start").mockRejectedValue(
+        new Error("Pi failed during session_start"),
+      );
+      f.workers.push(worker);
+      return worker as unknown as PiRpcProcess;
+    });
+    try {
+      await f.runtime.openSession(f.session.id);
+      await vi.waitFor(async () =>
+        expect((await f.runtime.snapshot()).active?.readOnlyReason).toBe(
+          "external-active",
+        ),
+      );
+      f.check.mockResolvedValue();
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.waitFor(() => expect(f.workers[0]?.stops).toBe(1));
+      const failed = await f.runtime.snapshot();
+      expect(failed.runState).toBe("failed");
+      expect(failed.active?.readOnlyReason).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(f.create).toHaveBeenCalledOnce();
+
+      await f.runtime.openSession(f.session.id);
+      await waitForReady(f.runtime, f.session.id);
+      expect(f.workers[1]!.starts).toBe(1);
+    } finally {
+      await f.runtime.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it("pauses admission during deletion and resumes observation if deletion fails", async () => {
+    const f = await fixture();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    f.runtime.retainSessionView(f.session.id);
+    const entered = deferredSignal();
+    const proceed = deferredSignal();
+    try {
+      await f.runtime.openSession(f.session.id);
+      await vi.waitFor(async () =>
+        expect((await f.runtime.snapshot()).active?.readOnlyReason).toBe(
+          "external-active",
+        ),
+      );
+      vi.spyOn(f.source, "get").mockImplementationOnce(async () => {
+        entered.resolve();
+        await proceed.promise;
+        throw new Error("Catalog temporarily unavailable");
+      });
+      const deleting = f.runtime
+        .deleteSession(f.session.id)
+        .catch((error: unknown) => error);
+      await entered.promise;
+      f.check.mockResolvedValue();
+      const checks = f.check.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(f.check).toHaveBeenCalledTimes(checks);
+      expect(f.create).not.toHaveBeenCalled();
+      proceed.resolve();
+      expect(await deleting).toMatchObject({
+        message: "Catalog temporarily unavailable",
+      });
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      await waitForReady(f.runtime, f.session.id);
+      expect(f.create).toHaveBeenCalledOnce();
+      expect(
+        (await f.runtime.snapshot()).active?.readOnlyReason,
+      ).toBeUndefined();
+    } finally {
+      proceed.resolve();
+      await f.runtime.close();
+      vi.useRealTimers();
     }
   });
 
@@ -294,25 +487,45 @@ describe("writer admission for externally held session files", () => {
     }
   });
 
-  it("rechecks after asynchronous startup preparation before starting Pi", async () => {
+  it("preserves the reading view when pre-start admission is refused and later recovers", async () => {
     const f = await fixture();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     f.check.mockResolvedValueOnce();
     f.check.mockRejectedValue(
       requestError("External Pi acquired the session", 409, {
         code: "EXTERNAL_PI_WRITER_ACTIVE",
       }),
     );
+    const events: Array<{ type: string }> = [];
+    f.runtime.on("event", (event) => events.push(event));
     try {
+      f.runtime.retainSessionView(f.session.id);
+      const before = (await f.runtime.snapshot(f.session.id)).active!;
       await f.runtime.openSession(f.session.id);
-      await vi.waitFor(() => expect(f.create).toHaveBeenCalledOnce());
-      await vi.waitFor(async () =>
-        expect((await f.runtime.snapshot()).active?.readOnlyReason).toBe(
-          "external-active",
-        ),
-      );
+      await vi.waitFor(() => expect(f.workers[0]?.stops).toBe(1));
+      const blocked = (await f.runtime.snapshot()).active!;
+      expect(blocked.readOnlyReason).toBe("external-active");
       expect(f.workers[0]!.starts).toBe(0);
+      expect(blocked.transcriptPage.viewId).toBe(before.transcriptPage.viewId);
+      expect(blocked.transcriptPage.messages).toEqual(
+        before.transcriptPage.messages,
+      );
+      expect(events.some((event) => event.type === "runtime_error")).toBe(
+        false,
+      );
+
+      f.check.mockResolvedValue();
+      await vi.advanceTimersByTimeAsync(2_000);
+      await waitForReady(f.runtime, f.session.id);
+      expect(f.workers[1]!.starts).toBe(1);
+      const recovered = (await f.runtime.snapshot()).active!;
+      expect(recovered.readOnlyReason).toBeUndefined();
+      expect(recovered.transcriptPage.viewId).toBe(
+        before.transcriptPage.viewId,
+      );
     } finally {
       await f.runtime.close();
+      vi.useRealTimers();
     }
   });
 });

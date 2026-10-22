@@ -1468,11 +1468,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     };
   }
   async cloneBranch(request: BranchCloneRequest): Promise<BranchForkResponse> {
-    const tree = await this.branchTree(request.sessionId);
-    return this.copyMockBranch(
-      request,
-      request.targetId === undefined ? tree.effectiveLeafId : request.targetId,
-    );
+    return this.copyMockBranch(request, request.targetId);
   }
   private mockBranchProjection(sessionId: string, leafId: string | null) {
     const byId = new Map(
@@ -1504,8 +1500,15 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     targetId: string | null,
   ): Promise<BranchForkResponse> {
     const source = this.requireSession(request.sessionId);
-    if (request.revision !== source.transcriptPage.revision)
-      throw requestError("History changed; refresh it before cloning", 409);
+    if (request.viewId !== source.transcriptPage.viewId)
+      throw requestError("The branch changed; reopen this History point", 409);
+    if (
+      targetId !== null &&
+      !this.mockEntries(request.sessionId).some(
+        (entry) => entry.id === targetId,
+      )
+    )
+      throw requestError("That History point no longer exists", 409);
     const projection = this.mockBranchProjection(request.sessionId, targetId);
     const sessionId = `mock-branch-clone-${++this.nextSession}`;
     const destination = structuredClone(source);
@@ -1568,10 +1571,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     };
   }
   async forkBranch(request: BranchForkRequest): Promise<BranchForkResponse> {
-    const detail = await this.branchEntry({
-      ...request,
-      viewId: this.requireSession(request.sessionId).transcriptPage.viewId,
-    });
+    const detail = await this.branchEntry(request);
     if (!detail.node.canFork)
       throw requestError("Fork requires a user input", 409);
     const entry = this.mockEntries(request.sessionId).find(

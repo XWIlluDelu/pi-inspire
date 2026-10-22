@@ -444,26 +444,27 @@ export function BranchTree({
     );
   }
 
-  const blocked = state.readOnlyReason
-    ? "This session is read-only"
-    : state.actionId
-      ? "A history action is in progress"
-      : state.loading || state.error
-        ? "Refresh History before continuing"
-        : state.conflict ||
-            state.health.status !== "ok" ||
-            tree?.health.status !== "ok"
+  const blocked =
+    state.readOnlyReason === "workspace-unavailable"
+      ? "The project folder is unavailable"
+      : state.actionId
+        ? "A history action is in progress"
+        : state.conflict || state.health.status !== "ok"
           ? "Recover this session before continuing"
           : null;
   const sameSessionBlocked =
     blocked ??
-    (state.runState !== "idle" || state.bashRunning
-      ? "Wait until the current task finishes before changing this conversation"
-      : state.pendingCount
-        ? "Send or clear Pending input before changing this conversation"
-        : state.dialogCount
-          ? "Answer the open dialog before changing this conversation"
-          : null);
+    (state.loading || state.error || tree?.health.status !== "ok"
+      ? "Refresh History before continuing"
+      : state.readOnlyReason
+        ? "This session is read-only"
+        : state.runState !== "idle" || state.bashRunning
+          ? "Wait until the current task finishes before changing this conversation"
+          : state.pendingCount
+            ? "Send or clear Pending input before changing this conversation"
+            : state.dialogCount
+              ? "Answer the open dialog before changing this conversation"
+              : null);
 
   async function navigate(summarize: boolean) {
     if (!selected || sameSessionBlocked) return;

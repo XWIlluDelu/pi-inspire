@@ -466,7 +466,11 @@ describe("ordinary HTTP observation", () => {
       const result = (
         operation === "create"
           ? api.newSession("/workspace")
-          : api.forkBranch({ sessionId: "s1", revision: 1, targetId: "t1" })
+          : api.forkBranch({
+              sessionId: "s1",
+              viewId: "view-1",
+              targetId: "t1",
+            })
       ).catch((error: unknown) => error);
       await vi.advanceTimersByTimeAsync(LONG_HTTP_OBSERVATION_TIMEOUT_MS);
       expect(await result).toMatchObject({

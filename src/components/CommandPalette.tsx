@@ -23,12 +23,13 @@ import {
   resolveCommandInventory,
 } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
+import { branchCopiesBlocked } from "../controllers/branch-controller";
 import { isTouchFirstDevice } from "../input-device";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { paletteTextMatchRanges, rankPaletteItems } from "../palette-search";
 import { PALETTE_LABELS, preferenceChoiceLabel } from "../preference-labels";
-import { shallowEqual, store, useAppState } from "../store";
 import { modelControlsSupported } from "../session-controls";
+import { shallowEqual, store, useAppState } from "../store";
 import {
   queueTerminalAction,
   type TerminalUiAction,
@@ -105,9 +106,10 @@ export const CommandPalette = memo(function CommandPalette({
       sessionId: appState.sessionId,
       readOnlyReason: appState.readOnlyReason,
       modelControls: modelControlsSupported(appState),
+      copiesBlocked: branchCopiesBlocked(appState),
       external: Boolean(
         appState.sessionId &&
-          appState.sessionStatuses[appState.sessionId]?.external,
+        appState.sessionStatuses[appState.sessionId]?.external,
       ),
       heading: sessionHeading(
         appState.sessionName,
@@ -187,8 +189,8 @@ export const CommandPalette = memo(function CommandPalette({
   const abortable = isAbortableRunState(state.runState) || state.bashRunning;
   const hasEarlierBranch = Boolean(
     state.transcriptDurableLeafId &&
-      state.transcriptEffectiveLeafId &&
-      state.transcriptDurableLeafId !== state.transcriptEffectiveLeafId,
+    state.transcriptEffectiveLeafId &&
+    state.transcriptDurableLeafId !== state.transcriptEffectiveLeafId,
   );
 
   useSearchFocus(active && !preparation && !renaming, inputRef, dialogRef);
@@ -407,7 +409,7 @@ export const CommandPalette = memo(function CommandPalette({
         });
       }
     }
-    if (state.sessionId && !state.readOnlyReason) {
+    if (state.sessionId && !state.copiesBlocked) {
       actions.push({
         id: "clone",
         group: "Workspace",
@@ -415,6 +417,8 @@ export const CommandPalette = memo(function CommandPalette({
         aliases: ["/clone"],
         run: () => void store.cloneCurrentBranch(),
       });
+    }
+    if (state.sessionId && !state.readOnlyReason) {
       actions.push({
         id: "rename",
         group: "Actions",

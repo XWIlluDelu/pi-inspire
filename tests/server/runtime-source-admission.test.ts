@@ -182,7 +182,11 @@ describe("runtime source admission", () => {
           () => runtime.prompt({ sessionId: "a", message: "do not execute" }),
           () => runtime.rename("a", "do not write"),
           () =>
-            runtime.cloneBranch({ sessionId: "a", revision: tree.revision }),
+            runtime.cloneBranch({
+              sessionId: "a",
+              viewId: opened.active!.transcriptPage.viewId,
+              targetId: tree.effectiveLeafId,
+            }),
           () => runtime.nativeCommand({ sessionId: "a", command: "reload" }),
           () => runtime.refreshModels("a"),
         ]) {

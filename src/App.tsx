@@ -30,14 +30,14 @@ import {
   type ExtensionUiDialogHandle,
 } from "./components/ExtensionUiDialog";
 import { Nav } from "./components/Nav";
-import {
-  SessionTerminalDialog,
-  TerminalSessionNotice,
-} from "./components/SessionTerminalDialog";
 import { Notices } from "./components/Notices";
 import { PaneResizeHandle } from "./components/PaneResizeHandle";
 import { PiLoader } from "./components/PiLoader";
 import { RenderErrorBoundary } from "./components/RenderErrorBoundary";
+import {
+  SessionTerminalDialog,
+  TerminalSessionNotice,
+} from "./components/SessionTerminalDialog";
 import type { SettingsCategoryId } from "./components/Settings";
 import { SettingsDialog, SettingsLoading } from "./components/SettingsDialog";
 import { Transcript, type TranscriptNavigation } from "./components/Transcript";
@@ -434,8 +434,8 @@ const ConversationStage = memo(function ConversationStage() {
               {state.readOnlyReason === "workspace-unavailable"
                 ? "Project folder unavailable. This session is read-only."
                 : state.readOnlyReason === "external-active"
-                  ? "Open in another Pi. Read-only here; reopen after it releases the session."
-                  : "Pi connection unavailable. History remains readable; reopen this session to check its connection."}
+                  ? "Open in another Pi. Writing will resume automatically when it releases the session."
+                  : "Pi connection unavailable. History remains readable while Inspire checks for recovery."}
             </p>
           )}
         </div>

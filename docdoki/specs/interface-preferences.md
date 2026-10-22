@@ -94,7 +94,7 @@ from selected, available controls.
 Behavior includes an ordered list of the session title menu's actions, with a drag handle on
 the right of each row. Mouse and touch dragging and Alt+Up/Down shortcuts preserve the focused
 action while it moves. Clicking or keyboard-activating a Settings handle opens move options
-(up, down, top and bottom); Escape closes those options and restores the handle without closing
+(up and down); Escape closes those options and restores the handle without closing
 Settings. Starting a drag dismisses the move options.
 A disclosure boundary separates the first four actions, shown immediately in the compact menu,
 from the remainder revealed by More actions. Both surfaces edit the same saved order.

@@ -54,6 +54,15 @@ describe("hidden deletion eligibility", () => {
     },
   );
 
+  it("keeps complete-set deletion unavailable while some catalog sources are unknown", () => {
+    expect(
+      hiddenDeletionBlockReason(targets, {
+        ...idle(),
+        sessionListIssues: [{ path: "/offline", message: "Access denied" }],
+      }),
+    ).toMatch(/unavailable session sources/);
+  });
+
   it("ignores active work outside the target folder", () => {
     expect(
       hiddenDeletionBlockReason(targets, {

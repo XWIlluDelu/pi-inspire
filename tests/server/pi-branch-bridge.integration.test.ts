@@ -330,7 +330,8 @@ export default function (pi) {
       const sourcePid = workers[0]?.pid;
       const forked = await runtime.forkBranch({
         sessionId: SESSION_ID,
-        revision: tree.revision,
+        viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
+          .viewId,
         targetId: "u2",
       });
       expect(forked.snapshot.active?.sessionName).toBe("Named source");
@@ -444,10 +445,10 @@ export default function (pi) {
           expect((await runtime.snapshot()).active?.commands).toBeDefined(),
         { timeout: 10_000 },
       );
-      const tree = await runtime.branchTree(SESSION_ID);
       const forked = await runtime.forkBranch({
         sessionId: SESSION_ID,
-        revision: tree.revision,
+        viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
+          .viewId,
         targetId: "u1",
       });
       expect(forked.editorText).toBe("question one");
@@ -636,7 +637,8 @@ export default function (pi) {
       expect(activePrompt).toMatchObject({ active: true, canFork: true });
       const forked = await runtime.forkBranch({
         sessionId: SESSION_ID,
-        revision: tree.revision,
+        viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
+          .viewId,
         targetId: activePrompt!.id,
       });
       expect(forked.editorText).toBe("active question");

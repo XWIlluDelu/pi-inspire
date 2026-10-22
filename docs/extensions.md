@@ -128,7 +128,8 @@ To activate an updated implementation, update/restart the Inspire Host **and** r
 restart each external Pi through its own host. They load code independently. An external Pi that
 never loaded the reporter has no presence record to inspect; the extension does not discover
 arbitrary uninstrumented processes or take control of them. Do not clear the cache to bypass a
-live-holder warning. Once the other Pi releases the session, reselect it in Inspire to retry.
+live-holder warning. A session being viewed in Inspire automatically becomes writable after
+confirmed release; switching sessions or reloading the page is not required.
 
 ### Control the same Herdr Pi terminal
 
