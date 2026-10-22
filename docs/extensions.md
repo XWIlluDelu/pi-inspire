@@ -230,6 +230,22 @@ function publishUsage(ctx: ExtensionContext, usage: Usage) {
 
 Register `/usage` to toggle `usageDetailsOpen`. Fetching, caching, and calculations stay in the extension.
 
+## Choose the smallest integration
+
+There are three distinct levels:
+
+1. **Native RPC, no frontend changes:** commands, standard dialogs, notices, status and text widgets.
+2. **Declarative presentation:** map stable tool/custom-message data to existing typed blocks and
+   nested properties. These are display rules, not a general subagent manager.
+3. **Source DIY:** add purpose-built React controls and a small adapter in a checkout. Pi extensions
+   still own state and behavior; Inspire does not supply a scheduler or permission policy.
+
+The complete [source task-board example](examples/task-board/README.md) includes the Pi extension,
+shared data/actions, props-only list/detail UI, adapter, styles, mounting instructions, build/reload
+steps and session-cleanup checks. It uses cancellable demonstration timers rather than launching
+agents. Its Stop/Retry/Open notes actions require both extension-declared capability and the current
+loaded command inventory, and prepared commands preserve the browser's draft and attachments.
+
 ## Custom cards and source changes
 
 A [tool-presentation rule](tool-presentations.md#example) maps an exact tool name to a summary and typed blocks. It can also replace a native-name mapping when an extension overrides that tool. Rules customize content within the existing card; they cannot inject React, HTML, CSS, or JavaScript.
@@ -249,6 +265,13 @@ For interactions that need a dedicated control, modify the relevant source owner
 | Styling | Tokens in `src/styles/foundation.css` and the relevant `src/styles/*.css` component sheet |
 
 A pinned command button should use `store.sendPreparedCommand("/goal")`, which dispatches independently of the Composer's draft, attachments, and project-file references. Disable the button when the command is absent. Put occasional or argument-taking actions in the palette/Composer instead of adding permanent controls.
+
+`src/components/ExtensionDialogContent.tsx` exports the existing standard dialog body without a
+store or transport dependency. It accepts `request`, controlled `value`, `pending`, `error`,
+`onValueChange`, `onRespond` and `onCancel`. `ExtensionUiDialog.tsx` keeps session/request ownership,
+form state, communication, deadlines and modal focus. A source-owned dialog can reuse the body and
+its normal styles; supply its own outer dialog/focus owner. Permission prompts should normally use
+Pi's native `ctx.ui.confirm`, without introducing a persistent permission-list panel.
 
 Reuse existing icons, tokens, modal focus, and responsive drawers. Keep runtime widgets near the Composer, tool results in their cards, and project details in Resources. Settings is for persisted preferences. Follow neighboring controls' accessible labels, keyboard behavior, and pointer/touch target sizes, and respect reduced motion.
 

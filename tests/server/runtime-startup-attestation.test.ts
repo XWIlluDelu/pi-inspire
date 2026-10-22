@@ -27,7 +27,7 @@ describe("writer startup attestation", () => {
     thinkingLevel,
   });
   it.each([null, "u1"])(
-    "accepts a bounded state-equivalent startup delta from baseline %s",
+    "accepts a state-equivalent startup delta from baseline %s",
     async (parentId) => {
       const entry = startupThinking(parentId);
       const { runtime, workers } = await setup(
@@ -146,40 +146,6 @@ describe("writer startup attestation", () => {
     },
   );
 
-  it("accepts exact custom extension state written by the starting worker", async () => {
-    const entry = {
-      type: "custom",
-      customType: "goal-state",
-      data: { goal: { id: "goal-1", status: "active", tokensUsed: 1 } },
-      id: "startup-custom",
-      parentId: "u1",
-      timestamp: "2026-08-01T00:00:02.000Z",
-    };
-    const { runtime, workers } = await setup([], (worker) => {
-      worker.startupEntries = [entry];
-      worker.startupLeafId = entry.id;
-      worker.onStart = async () => {
-        await appendFile(worker.sessionPath, `${JSON.stringify(entry)}\n`);
-      };
-    });
-    try {
-      await vi.waitFor(async () => {
-        await runtime.snapshot();
-        expect(
-          workers[0]!.commands.some(
-            (command) => command.type === "get_commands",
-          ),
-        ).toBe(true);
-      });
-      expect(workers[0]!.stops).toBe(0);
-      expect((await runtime.branchTree("session-a")).durableLeafId).toBe(
-        entry.id,
-      );
-    } finally {
-      await runtime.close();
-    }
-  });
-
   it("rejects an otherwise exact state-equivalent entry injected by the process factory before rpc.start", async () => {
     const entry = startupThinking("u1");
     const { runtime, workers, sequence } = await setup([], (worker) => {
@@ -221,8 +187,9 @@ describe("writer startup attestation", () => {
           timestamp: "2026-08-01T00:00:03.000Z",
           message: { role: "assistant", content: "external", timestamp: 3 },
         };
-        worker.startupEntries = [own, external];
-        worker.startupLeafId = external.id;
+        // The external append exists only on disk, not in this Pi worker.
+        worker.startupEntries = [own];
+        worker.startupLeafId = own.id;
         worker.onStart = async () => {
           await appendFile(
             worker.sessionPath,

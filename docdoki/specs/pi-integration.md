@@ -9,7 +9,10 @@ covers:
   - server/extensions/**
   - shared/{contracts,commands}.ts
   - src/{api,store,events}.ts
-  - src/components/{AppTopbar,ExportDialog,ExtensionDisplays,ExtensionUiDialog}.tsx
+  - src/components/{AppTopbar,ExportDialog,ExtensionDisplays,ExtensionUiDialog,ExtensionDialogContent}.tsx
+  - docs/examples/task-board/**
+  - tests/server/task-board-example.integration.test.ts
+  - tests/web/extension-dialog-content.test.tsx
   - tests/server/pi-*.test.ts
   - tests/server/runtime*.test.ts
   - tests/web/{app,extension-displays,overlay-and-palette}.test.tsx
@@ -127,6 +130,32 @@ accepts `getArgumentCompletions`, but both RPC `get_commands` and public `Extens
 return `SlashCommandInfo` metadata without callable completion hooks. `addAutocompleteProvider()`
 is a no-op in RPC. Generic completion needs a public current-worker command-completion invocation
 (name/prefix to completion items); package-specific guesses and private runner access are excluded.
+
+## Extension UI reuse and source DIY
+
+The standard dialog content has a controlled props-only boundary: request/value, pending/error,
+value change, respond and cancel callbacks. The connected wrapper owns session/request identity,
+communication, form lifetime, deadlines and modal focus. Reusing the body does not import the global
+store or grant runtime control. Existing select/input/editor/confirm behavior remains unchanged.
+
+Prefer native RPC primitives when they meet the use case, then declarative typed display rules.
+Nested-property display is not a general subagent-management API. A purpose-built interaction can
+use source DIY: a Pi extension owns state and namespaced commands, a small adapter maps admitted data
+and available actions, and a React component renders list/detail UI. Actions require declared
+capability plus current inventory and use `sendPreparedCommand` to preserve drafts/artifacts.
+
+The task-board example demonstrates this complete path with cancellable local timers and editable
+notes, persisted as native custom messages. Startup and native tree navigation cancel its local
+demo timers and restore only the selected branch’s saved task state; returning does not resume
+process-local work. Its adapter resets local selection/pending/errors per
+session/view/transport owner. A missing loaded snapshot has an explicit Show tasks command, not a
+new full-history index or automatic selection-side command. The same view can be mounted in the
+responsive Context pane; the stock frontend adds no Tasks panel. Pi authors retain scheduling and
+permission choices. Native confirmation is the first permission-request surface; there is no new
+permission-list panel, runtime React SDK or agent scheduler.
+
+[The extension guide](../../docs/extensions.md#choose-the-smallest-integration) links the files,
+data/action flow, source mounting and build/load/reload verification instructions.
 
 ## Startup and resource diagnostics
 
@@ -251,7 +280,10 @@ clients. Aggregate `ui_prompt_start/end` callbacks carry kind/title but no RPC r
 same-title dialogs cannot be distinguished. A request-ID-bearing dismissal event is still needed.
 
 Keyed status text is bounded at Host retention, restored on reconnect, ordered in a compact topbar
-trigger at every viewport width, and cleared with its worker. Click, tap or keyboard activation opens
+trigger at every viewport width, and cleared with its worker. Native in-process reload also clears
+prior statuses/widgets, including shutdown updates, before the configured extensions publish startup
+UI. The first-loaded internal bridge signals Pi’s public reload startup boundary without replacing
+its worker or branch view; subsequent startup values remain current. Click, tap or keyboard activation opens
 full status text; absent status takes no space. String-array widgets
 preserve their key and above/below-Composer placement, replacing or clearing by key. Their supplied
 text and Copy are primary; internal keys and paths are not manufactured headings. Oversized keys are

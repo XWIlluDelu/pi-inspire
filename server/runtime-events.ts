@@ -4,9 +4,13 @@ import {
   assistantStreamTextLength,
 } from "../shared/assistant-stream.js";
 import {
+  BRANCH_BRIDGE_MAX_RESULT_BYTES,
+  BRANCH_BRIDGE_VERSION,
+  decodeBranchBridgeJson,
   MODEL_REFRESH_SUFFIX,
   PENDING_IMAGE_SUFFIX,
   RETRY_STATE_SUFFIX,
+  UI_RELOAD_SUFFIX,
 } from "../shared/branch-bridge-protocol.js";
 import {
   boundedExtensionStatus,
@@ -507,6 +511,38 @@ export class RuntimeEventController {
         this.host.updateBash(slot, record);
         return;
       case "extension_ui_request": {
+        if (
+          slot.bridge &&
+          record.method === "setStatus" &&
+          record.statusKey === `${slot.bridge.statusKey}${UI_RELOAD_SUFFIX}`
+        ) {
+          let owner: Record<string, unknown> | null;
+          try {
+            owner = decodeBranchBridgeJson(
+              record.statusText,
+              BRANCH_BRIDGE_MAX_RESULT_BYTES,
+            ) as Record<string, unknown> | null;
+          } catch {
+            return;
+          }
+          if (
+            owner?.v !== BRANCH_BRIDGE_VERSION ||
+            owner.workerId !== slot.bridge.workerId ||
+            owner.sessionId !== slot.id
+          )
+            return;
+          slot.extensionStatuses = {};
+          slot.extensionDisplays = [];
+          forwardedEvent = {
+            type: "extension_ui_request",
+            id: record.id,
+            method: "setStatus",
+            responseRequired: false,
+            extensionStatuses: slot.extensionStatuses,
+            extensionDisplays: slot.extensionDisplays,
+          };
+          break;
+        }
         const owned = { ...record, sessionId: slot.id };
         const pending = this.host.addPendingExtensionUi(slot, owned, rpc);
         const statusMethod = record.method === "setStatus";

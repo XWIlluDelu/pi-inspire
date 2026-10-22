@@ -2,6 +2,7 @@ export const BRANCH_BRIDGE_VERSION = 1 as const;
 export const MODEL_REFRESH_SUFFIX = "_models";
 export const RETRY_STATE_SUFFIX = "_retry";
 export const PENDING_IMAGE_SUFFIX = "_pending_images";
+export const UI_RELOAD_SUFFIX = "_ui_reload";
 export const MODEL_REFRESH_TIMEOUT_MS = 15_000;
 /** Maximum UTF-8 JSON bytes and, independently, encoded base64url characters. */
 export const BRANCH_BRIDGE_MAX_ARGUMENT_BYTES = 16_384;
