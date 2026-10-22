@@ -123,6 +123,10 @@ Provider credentials stay on the Host. Conversation Markdown is sanitized. HTML 
 
 ## Development
 
+Develop and run the maintained source deployment from `auto-dev`, without routine work branches.
+Fine-grained commits and intermediate states belong there; `main` holds reviewed, polished and
+consolidated results. Keep everyday development history rather than repeatedly rewriting it for tidiness.
+
 ```bash
 npm run dev       # Host and Vite development servers
 npm run check     # Formatting, lint, types, build, unit and launcher tests
