@@ -18,8 +18,7 @@ import {
 afterEach(disposeOperationFixture);
 
 describe("native prompt admission and extension dialogs", () => {
-  // Real Pi startup and native before/after volume proofs for last-reference GC.
-  it("settles handled input without agent events or an immortal upload reference", async () => {
+  it("settles handled input without agent events and preserves its delivered file", async () => {
     const f = await fixture(false);
     const file = await f.attachments.add({
       originalname: "handled.txt",
@@ -41,10 +40,8 @@ describe("native prompt admission and extension dialogs", () => {
       `${file.id}-${file.fileName}`,
     );
     expect((await readFile(f.sessionFile, "utf8")).includes(path)).toBe(false);
-    expect((await f.attachments.collectUnreferenced()).reclaimed).toEqual([
-      path,
-    ]);
-    await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await f.attachments.collectStaged()).reclaimed).toEqual([]);
+    expect(await readFile(path, "utf8")).toBe("payload");
 
     await expect(
       f.api.prompt(f.delivery("Continue with an ordinary prompt.")),

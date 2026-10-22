@@ -84,18 +84,6 @@ export async function linuxMounts(
     : parseLinuxMountInfo(await readFile("/proc/self/mountinfo", "utf8"));
 }
 
-export function sameLinuxMount(
-  a: LinuxMountAuthority,
-  b: LinuxMountAuthority,
-): boolean {
-  return (
-    a.mountPoint === b.mountPoint &&
-    a.root === b.root &&
-    a.filesystem === b.filesystem &&
-    a.source === b.source
-  );
-}
-
 function contains(parent: string, path: string): boolean {
   const part = relative(parent, path);
   return (
@@ -312,37 +300,4 @@ export async function selectLinuxTrash(
   const root = join(topdir, ".Trash-" + uid);
   await prepare(root);
   return { root, restorePath };
-}
-
-/** Read-only enumeration of both standard layouts on known session volumes.
- * Do not create global Trash, traverse other users, or use unsafe symlinks. */
-export async function linuxSessionTrashDirectories(
-  volumes: readonly LinuxMountAuthority[],
-  options: LinuxTrashOptions = {},
-): Promise<string[]> {
-  const uid = userId(options);
-  const home = linuxHomeTrash(options);
-  const result: string[] = [];
-  const add = async (root: string) => {
-    await privateDirectory(root, uid, false);
-    const files = join(root, "files");
-    // A malformed existing root is not reliable negative-reference evidence.
-    await privateDirectory(join(root, "info"), uid, false);
-    await privateDirectory(files, uid, false);
-    // Keep absent candidates: the reference reader watches their membership.
-    // Trash may be created between root discovery and the source scan.
-    result.push(files);
-  };
-  await add(home);
-  for (const topdir of new Set(volumes.map((mount) => mount.mountPoint))) {
-    const shared = join(topdir, ".Trash");
-    if (await validSharedTrash(shared)) await add(join(shared, String(uid)));
-    else if (await optionalStats(shared))
-      throw new Error(
-        "Unsafe shared Linux Trash prevents attachment reclamation",
-      );
-    else result.push(join(shared, String(uid), "files"));
-    await add(join(topdir, ".Trash-" + uid));
-  }
-  return [...new Set(result)];
 }

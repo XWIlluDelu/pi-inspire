@@ -360,46 +360,15 @@ routine file-move checksum. See [[session-deletion]] and
 
 Linux home Trash is only valid on the source mount. `server/linux-trash.ts` reads mountinfo plus
 the opened directory's fdinfo mount ID, including bind/overmounted paths; longest-prefix and dev-only
-guesses are insufficient. Both volume-local Freedesktop layouts are candidates for upload retention.
-An absent candidate still participates in membership watching, so a Trash created during discovery
-cannot hide a recoverable reference.
+guesses are insufficient. The native deletion adapter chooses validated home or volume-local
+Freedesktop Trash while preserving its normal original-path restoration metadata.
 
-The v3 `.session-directories.json` registry retains each path with a directory-continuity marker
-and independent volume/Trash proof. A current valid Pi header or existing pathname cannot establish
-historical continuity. Legacy v1/v2 paths remain unverified until explicit offline trust; first-time
-registration records an unknown path durably before optional marker creation so failure pauses
-collection rather than ordinary session use. Missing or conflicting markers never silently rebind.
-
-A directory marker alone is insufficient: copying a whole session folder can leave recoverable
-references in the old volume's native Trash. `server/storage-volume.ts` separately binds Windows volume
-GUID plus filesystem serial (including mounted folders and reformat detection), macOS Foundation
-volume UUID, or a Linux independent random volume anchor. Linux anchors live outside the session
-subtree, preferably in same-filesystem private Inspire metadata, otherwise a safe private source-volume
-location. Device numbers only check current placement; they are not persisted identity. Bind-mount
-Trash scope remains separate from physical-filesystem continuity. No safe anchor/known native ID
-means deferred collection, not weaker negative evidence. A full cloned namespace with all its
-markers and Trash has the same clone semantics as duplicated filesystem UUIDs.
-
-Native identity checks use before/after logical batches and bounded subprocess input/output, not one
-PowerShell/osascript process per JSONL. Registered roots, volume proofs, source directories and reference
-membership are checked again after scanning. Observed catalog/default references establish durable
-long-lived source roots, never temporary Trash/recovery directories. Emptying Trash must still permit
-later collection.
-
-Explicit `inspire uploads trust-session-directory` previews without writes; confirmation requires
-all affected Hosts offline and complete original session/Trash evidence. Replacement needs the stronger
-acceptance flag and changes registry expectations without overwriting valid markers. Current-version
-startup/writers coordinate through the maintenance gate and live ownership leases; legacy Hosts must
-be stopped by the operator because they do not participate in that protocol. See [[session-deletion]]
-and [retention operations](../../docs/host.md#uploaded-file-retention-and-storage-migration).
-`tests/server/{attachment-retention-identity,storage-volume,linux-attachment-retention}.test.ts`
-covers copied-root/old-Trash counterexamples, restart, offline/reused roots, migration and scan races.
-Real cross-volume fixtures stay inside owned temporary storage.
-
-An unused missing default root stays optional; known roots and unreadable Trash remain strict.
-macOS resolves only home/known session volumes, without arbitrary volume crawling. Windows chooses
-Recycle Bin roots from native mounted-volume paths rather than assuming every volume starts at a
-drive letter. Neither temporary inaccessibility nor replacement at the same path is negative evidence.
+Uploaded ordinary files are durable assets. Their retention does not require enumerating Trash,
+identifying remote volumes, registering session directories or migrating continuity markers.
+Automatic cleanup covers only explicitly unsubmitted copies after their owner retires; process-birth
+identity prevents a recycled PID from being mistaken for that owner. Legacy and possibly delivered
+copies remain intact. See [[composer]] and
+[cleanup operations](../../docs/host.md#uploaded-file-retention-and-cleanup).
 
 ## Clipboard activation and native lookup
 

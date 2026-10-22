@@ -439,8 +439,6 @@ export class RuntimeExternalSessions {
     );
     const copied: string[] = [];
     let delivered = false;
-    let references: string[] = [];
-    let releaseReferences: (() => void) | undefined;
     try {
       const history = await resolveComposerHistoryArtifacts(
         slot,
@@ -478,13 +476,6 @@ export class RuntimeExternalSessions {
       const fullMessage = addAttachmentContext(message, files, projectFiles);
       if (!fullMessage && images.length === 0)
         throw requestError("Message or attachment is required", 400);
-      references = [
-        ...history.files.map((file) => file.path),
-        ...this.attachments.referencedPromptFiles(message),
-      ];
-      releaseReferences = this.attachments.leasePromptFiles(references);
-      if (slot.sessionPath)
-        await this.attachments.registerSession(slot.sessionPath);
       const beforeSend = () => {
         if (
           this.connections.get(slot) !== connection ||
@@ -536,15 +527,13 @@ export class RuntimeExternalSessions {
     } finally {
       const ids = [...(request.attachmentIds ?? []), ...copied];
       if (delivered) {
-        await this.attachments.releaseConsumed(ids, slot.sessionPath);
-        this.attachments.retainPromptFiles(references, slot.sessionPath);
+        await this.attachments.releaseConsumed(ids);
       } else {
         this.attachments.restage(ids);
         await Promise.allSettled(
           copied.map((id) => this.attachments.remove(id)),
         );
       }
-      releaseReferences?.();
     }
   }
 
