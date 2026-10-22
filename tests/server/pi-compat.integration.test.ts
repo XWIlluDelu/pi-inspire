@@ -226,7 +226,6 @@ describe("installed Pi compatibility boundary", () => {
       modified: new Date(0),
       messageCount: entries.length,
       firstMessage: "first compatibility question",
-      searchText: "compatibility",
     });
     expect(preview.sessionId).toBe(SOURCE_ID);
     expect(preview.transcriptPage.messages).toHaveLength(entries.length);

@@ -555,7 +555,6 @@ export class MockCatalog implements SessionCatalogLike {
       modified: new Date(summary.modified),
       messageCount: summary.messageCount,
       firstMessage: summary.title,
-      searchText: `${summary.title}\n${summary.cwd}`.toLowerCase(),
       source: null,
     };
   }

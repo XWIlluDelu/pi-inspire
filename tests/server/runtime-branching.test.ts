@@ -330,7 +330,6 @@ async function setup(
     modified: new Date(),
     messageCount: 4,
     firstMessage: "root",
-    searchText: "root",
   };
   const records = new Map([[record.id, record]]);
   const catalog: SessionCatalogLike = {

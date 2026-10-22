@@ -360,7 +360,6 @@ export async function fixture(
     modified: new Date(timestamp),
     messageCount: 8,
     firstMessage: "Synthetic seed 0.",
-    searchText: "Synthetic seed",
   };
   const catalog: SessionCatalogLike = {
     refresh: async () => [record],

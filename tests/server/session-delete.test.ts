@@ -65,7 +65,6 @@ async function fixture(
       modified: new Date("2026-08-01T00:00:00.000Z"),
       messageCount: 0,
       firstMessage: "",
-      searchText: dir.toLowerCase(),
       source: await source(path),
     },
   };
@@ -343,7 +342,6 @@ describe("session file deletion", () => {
         modified: new Date(),
         messageCount: 0,
         firstMessage: "",
-        searchText: "",
         source: await source(path),
       };
 

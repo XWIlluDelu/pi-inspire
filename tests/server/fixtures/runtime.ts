@@ -208,7 +208,6 @@ export function record(id: string, cwd: string): SessionRecord {
     modified: new Date("2026-07-22T00:00:00Z"),
     messageCount: 1,
     firstMessage: id,
-    searchText: id,
   };
 }
 

@@ -127,7 +127,10 @@ test("sent file prompts show filenames, survive reload and recall, and retain co
       }
     }
   await page.setViewportSize({ width: 1440, height: 900 });
-  const search = page.getByRole("searchbox", { name: "Search conversation" });
+  await page.getByRole("button", { name: "Open conversation search" }).click();
+  const search = page.getByRole("searchbox", {
+    name: "Search loaded messages",
+  });
   await page.getByRole("combobox", { name: "Search scope" }).click();
   await page.getByRole("option", { name: "User", exact: true }).click();
   await search.fill(names[0]!);
@@ -152,7 +155,7 @@ test("sent file prompts show filenames, survive reload and recall, and retain co
     .toBe(names[0]);
   await search.fill("JSON paths");
   await expect(page.getByLabel("Transcript search matches")).toHaveText(
-    "No matches",
+    "0 matches",
   );
   await search.fill("");
   await bubble.locator("..").hover();
@@ -264,7 +267,10 @@ test("mixed attachments stay above prose with shared spacing, including attachme
     }
   }
   await page.setViewportSize({ width: 1440, height: 900 });
-  const search = page.getByRole("searchbox", { name: "Search conversation" });
+  await page.getByRole("button", { name: "Open conversation search" }).click();
+  const search = page.getByRole("searchbox", {
+    name: "Search loaded messages",
+  });
   await search.fill("report.md");
   await expect(page.getByLabel("Transcript search matches")).toHaveText(
     "3 matches",

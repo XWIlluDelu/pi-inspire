@@ -25,6 +25,7 @@ export function TranscriptUtilities({
   mobileTool,
   onOpenMobile,
   onClose,
+  onSearchHistory,
 }: {
   search: ReturnType<typeof useTranscriptSearch>;
   inputRef: RefObject<HTMLInputElement | null>;
@@ -33,6 +34,7 @@ export function TranscriptUtilities({
   mobileTool: MobileTranscriptTool;
   onOpenMobile: (tool: MobileTranscriptTool) => void;
   onClose: (restoreFocus?: boolean) => void;
+  onSearchHistory: () => void;
 }) {
   return (
     <>
@@ -46,7 +48,7 @@ export function TranscriptUtilities({
             <button
               ref={promptLauncherRef}
               type="button"
-              className="transcript-mobile-toolbar__button"
+              className="transcript-mobile-toolbar__button transcript-mobile-toolbar__button--prompt"
               aria-label="Open prompt navigation"
               title="Open prompt navigation"
               onClick={() => onOpenMobile("prompt")}
@@ -58,7 +60,7 @@ export function TranscriptUtilities({
               type="button"
               className="transcript-mobile-toolbar__button"
               aria-label="Open conversation search"
-              title="Search conversation"
+              title="Search loaded messages"
               onClick={() => onOpenMobile("search")}
             >
               <Search size={18} aria-hidden />
@@ -69,7 +71,7 @@ export function TranscriptUtilities({
       <div
         className={`transcript-search ${search.query ? "transcript-search--active" : ""} ${mobileTool === "search" ? "transcript-search--mobile-open" : ""}`}
         role="search"
-        aria-label="Search settled transcript"
+        aria-label="Search loaded messages"
         onClick={(event) => {
           if (
             event.target === event.currentTarget ||
@@ -106,8 +108,8 @@ export function TranscriptUtilities({
               if (!mobileSearch) inputRef.current?.blur();
             }
           }}
-          placeholder="Search conversation"
-          aria-label="Search conversation"
+          placeholder="Loaded messages"
+          aria-label="Search loaded messages"
         />
         <output aria-live="polite" aria-label="Transcript search matches">
           {search.query
@@ -115,7 +117,7 @@ export function TranscriptUtilities({
               ? search.currentMatch >= 0
                 ? `${search.currentMatch + 1} of ${search.matches.length}`
                 : `${search.matches.length} ${search.matches.length === 1 ? "match" : "matches"}`
-              : "No matches"
+              : "0 matches"
             : ""}
         </output>
         <button
@@ -143,6 +145,12 @@ export function TranscriptUtilities({
         >
           <X size={14} aria-hidden />
         </button>
+        <div className="transcript-search__details">
+          <span>Loaded messages only</span>
+          <button type="button" onClick={onSearchHistory}>
+            Search full History
+          </button>
+        </div>
       </div>
     </>
   );

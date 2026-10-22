@@ -101,9 +101,22 @@ it.each([
     expect(
       screen.queryByRole("textbox", { name: "Message" }),
     ).not.toBeInTheDocument();
+    const sessionMenu = screen.getByRole("button", {
+      name: "Session actions: Archived project",
+    });
+    expect(sessionMenu).toBeEnabled();
+    fireEvent.click(sessionMenu);
     expect(
-      screen.getByRole("button", { name: "Session actions: Archived project" }),
+      await screen.findByRole("menuitem", { name: "Rename session" }),
     ).toBeDisabled();
+    expect(
+      screen.getByRole("menuitem", { name: "Clone current branch" }),
+    ).toBeDisabled();
+    const exportItem = screen.getByRole("menuitem", {
+      name: "Export session…",
+    });
+    expect(exportItem).toBeEnabled();
+    fireEvent.keyDown(exportItem, { key: "Escape" });
 
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     const palette = await screen.findByRole("dialog", {

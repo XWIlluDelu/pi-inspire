@@ -519,7 +519,8 @@ export const CommandPalette = memo(function CommandPalette({
             (command) =>
               (!state.readOnlyReason ||
                 (command.source === "builtin" &&
-                  nativeCommand(command.name)?.availableWithoutWorkspace)) &&
+                  (command.name === "export" ||
+                    nativeCommand(command.name)?.availableWithoutWorkspace))) &&
               !actions.some((action) =>
                 action.aliases?.includes(`/${command.name}`),
               ),

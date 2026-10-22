@@ -139,7 +139,11 @@ custom messages remain independent readable boundaries in this contract.
 
 ## View-local search and Prompt Map
 
-- View-local search performs case-insensitive literal matching over settled conversation text and
+- View-local search explicitly covers only already-loaded settled messages, not the whole branch.
+  A full-History action carries its query to the existing complete saved-history search, whose
+  scope includes other branches and tool activity. Do not preload all messages or build a new index
+  merely to make this local utility look exhaustive.
+  View-local search performs case-insensitive literal matching over settled conversation text and
   can scope results to all searchable turns, user input only, or model output only. It wraps
   previous/next navigation and jumps by transcript row through virtualization. The streaming tail
   and hidden thinking/tool payloads are excluded. An active selected match locks out geometric
@@ -154,12 +158,14 @@ custom messages remain independent readable boundaries in this contract.
   Shell output and context summaries use the same display normalization for search and rendering:
   terminal control sequences and removed summary prefixes do not add invisible matches.
 
-  Desktop search floats at the top-right of the reading measure. Its opaque surface fill is subtly
+  Desktop search rests as an explicit compact launcher at the top-right of the reading measure,
+  rather than covering the first message with an always-open input. Its open opaque surface fill is subtly
   distinct from the reading stage, with a quiet boundary and no elevation at rest. Hover strengthens
   the boundary and adds the existing light elevation; focus or a non-empty query retains the accent
   boundary. These states do not change its geometry or let scrolling text show through.
   Search and narrow navigation surfaces do not reserve layout height; opening controls preserves the scrollport and reading
-  position. Desktop Escape blurs the search input without clearing its query or selected match.
+  position. Desktop Escape collapses search without clearing its query or selected match; reopening
+  restores the query. The local scope note remains beside the full-History action.
   When latest-follow is released, a bottom-centered floating text button, `Jump to latest`, restores
   follow. Search and narrow launchers precede messages in keyboard order; Latest follows them.
 

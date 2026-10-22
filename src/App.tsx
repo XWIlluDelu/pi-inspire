@@ -38,6 +38,7 @@ import { Welcome, type WelcomeInheritance } from "./components/Welcome";
 import { BrandLogo, Wordmark } from "./components/Wordmark";
 import { isComposingKeyboardEvent } from "./keyboard-input";
 import { shallowEqual, store, useAppState } from "./store";
+import { useInspectionHistory } from "./use-inspection-history";
 import { hasActiveModal } from "./use-modal-focus";
 import {
   applyBrowserTheme,
@@ -469,6 +470,8 @@ export function App() {
       errorSeverity: source.errorSeverity,
       projectionConflict: source.projectionConflict,
       nativeCommandUiRequest: source.nativeCommandUiRequest,
+      readOnlyReason: source.readOnlyReason,
+      fileBrowserView: source.fileBrowserView,
     }),
     shallowEqual,
   );
@@ -561,6 +564,31 @@ export function App() {
   }, []);
   const closeCommandPalette = useCallback(() => setPaletteOpen(false), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const inspectionLayers = [
+    ...(state.resourcesOpen
+      ? [
+          "context",
+          ...(state.contextMode === "files" &&
+          state.fileBrowserView === "preview"
+            ? ["file"]
+            : []),
+        ]
+      : []),
+    ...(mobileNavOpen ? ["navigation"] : []),
+    ...(settingsOpen ? ["settings"] : []),
+  ];
+  useInspectionHistory(
+    narrowViewport ? inspectionLayers.length : 0,
+    (depth) => {
+      const remaining = inspectionLayers.slice(0, depth);
+      if (!remaining.includes("settings")) setSettingsOpen(false);
+      if (!remaining.includes("navigation")) setMobileNavOpen(false);
+      if (!remaining.includes("context")) store.setResourcesOpen(false);
+      else if (!remaining.includes("file") && state.contextMode === "files")
+        store.showFileBrowser();
+    },
+    "__inspireWorkbench",
+  );
   const openSessionSearch = useCallback(() => {
     setPaletteOpen(false);
     setSettingsOpen(false);
@@ -1000,6 +1028,7 @@ export function App() {
         <ExportDialog
           key={exportSessionId}
           sessionId={exportSessionId}
+          readOnly={Boolean(state.readOnlyReason)}
           active={!extensionOverlayOpen}
           onClose={closeExport}
         />

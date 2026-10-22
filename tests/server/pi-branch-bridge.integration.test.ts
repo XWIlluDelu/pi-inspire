@@ -210,7 +210,6 @@ export default function (pi) {
       modified: new Date(),
       messageCount: entries.length,
       firstMessage: "question one",
-      searchText: "question one",
     };
     const catalog: SessionCatalogLike = {
       refresh: async () => [record],
@@ -408,7 +407,6 @@ export default function (pi) {
       modified: new Date(),
       messageCount: entries.length,
       firstMessage: "question one",
-      searchText: "question one",
     };
     const catalog: SessionCatalogLike = {
       refresh: async () => [record],
@@ -579,7 +577,6 @@ export default function (pi) {
       modified: new Date(),
       messageCount: entries.length,
       firstMessage: "question one",
-      searchText: "question one",
     };
     const catalog: SessionCatalogLike = {
       refresh: async () => [catalogRecord],

@@ -55,7 +55,6 @@ it("runs the portable UI example through native Pi and preserves Host request/di
     modified: new Date(),
     messageCount: 1,
     firstMessage: "Native UI example",
-    searchText: "Native UI example",
   };
   const catalog: SessionCatalogLike = {
     refresh: async () => [record],

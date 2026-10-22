@@ -75,6 +75,10 @@ test("authorized audio and video previews play from local blobs", async ({
       ["audio.wav", "audio"],
       ["video.webm", "video"],
     ]) {
+      if (width <= 900 && (await pane.locator(".file-preview").isVisible()))
+        await pane
+          .getByRole("button", { name: "Back to Files", exact: true })
+          .click();
       await tree.getByRole("button", { name: file, exact: true }).click();
       const media = pane.locator(`.file-preview ${tag}`);
       await expect
@@ -183,16 +187,25 @@ for (const narrow of [false, true]) {
     await expect(
       pane.getByText("Synthetic hidden configuration", { exact: true }),
     ).toBeVisible();
-    await pane
-      .getByRole("button", { name: "Show hidden files", exact: true })
-      .click();
-    // Filtering the tree cannot revoke an already selected file's preview.
-    await expect(
-      pane.getByText("Synthetic hidden configuration", { exact: true }),
-    ).toBeVisible();
-    await pane
-      .getByRole("button", { name: /Back to file browser for/ })
-      .click();
+    if (narrow) {
+      await pane
+        .getByRole("button", { name: "Back to Files", exact: true })
+        .click();
+      await pane
+        .getByRole("button", { name: "Show hidden files", exact: true })
+        .click();
+    } else {
+      await pane
+        .getByRole("button", { name: "Show hidden files", exact: true })
+        .click();
+      // Desktop filtering cannot revoke an already selected preview.
+      await expect(
+        pane.getByText("Synthetic hidden configuration", { exact: true }),
+      ).toBeVisible();
+      await pane
+        .getByRole("button", { name: /Back to file browser for/ })
+        .click();
+    }
     await tree.getByRole("button", { name: "dist", exact: true }).click();
     await tree.locator('[data-workspace-path="dist/report.md"]').click();
     await expect(
@@ -214,7 +227,10 @@ for (const narrow of [false, true]) {
     );
 
     await pane
-      .getByRole("button", { name: /Back to file browser for/ })
+      .getByRole("button", {
+        name: narrow ? "Back to Files" : /Back to file browser for/,
+        exact: narrow,
+      })
       .click();
     await pane
       .getByRole("searchbox", { name: "Search workspace files" })
@@ -427,7 +443,9 @@ test("files navigation preserves context across desktop and narrow workspaces", 
   await page.setViewportSize({ width: 390, height: 844 });
   const drawer = page.getByRole("dialog", { name: "Context panel" });
   await expect(drawer).toBeVisible();
-  await drawer.getByRole("button", { name: "Back to file browser" }).click();
+  await drawer
+    .getByRole("button", { name: "Back to Files", exact: true })
+    .click();
   await expect(
     drawer.getByRole("searchbox", { name: "Search workspace files" }),
   ).toHaveValue("WorkspaceBrowser.tsx");
@@ -444,7 +462,7 @@ test("files navigation preserves context across desktop and narrow workspaces", 
   await expect(
     page
       .getByRole("dialog", { name: "Context panel" })
-      .getByRole("button", { name: "Back to file browser" }),
+      .getByRole("button", { name: "Back to Files", exact: true }),
   ).toBeVisible();
 });
 

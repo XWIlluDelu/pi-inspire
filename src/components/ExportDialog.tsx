@@ -7,13 +7,16 @@ import { ButtonLabel } from "./ButtonLabel";
 export function ExportDialog({
   sessionId,
   active,
+  readOnly = false,
   onClose,
 }: {
   sessionId: string;
   active: boolean;
+  readOnly?: boolean;
   onClose: () => void;
 }) {
   const [format, setFormat] = useState<"html" | "jsonl">("html");
+  const selectedFormat = readOnly ? "jsonl" : format;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(false);
@@ -31,7 +34,7 @@ export function ExportDialog({
     setError(null);
     let failure: string | null = null;
     try {
-      await store.exportSession(sessionId, format);
+      await store.exportSession(sessionId, selectedFormat);
     } catch (error) {
       failure = error instanceof Error ? error.message : "Export failed";
     }
@@ -86,8 +89,9 @@ export function ExportDialog({
               className="choice-input"
               name="export-format"
               value="html"
-              checked={format === "html"}
-              data-modal-autofocus={format === "html" || undefined}
+              checked={selectedFormat === "html"}
+              disabled={readOnly}
+              data-modal-autofocus={selectedFormat === "html" || undefined}
               onChange={() => setFormat("html")}
             />
             <span className="export-dialog__format-copy">
@@ -100,15 +104,22 @@ export function ExportDialog({
               className="choice-input"
               name="export-format"
               value="jsonl"
-              checked={format === "jsonl"}
-              data-modal-autofocus={format === "jsonl" || undefined}
+              checked={selectedFormat === "jsonl"}
+              data-modal-autofocus={selectedFormat === "jsonl" || undefined}
               onChange={() => setFormat("jsonl")}
             />
             <span className="export-dialog__format-copy">
-              <span>JSONL</span> <small>Current branch</small>
+              <span>JSONL</span>{" "}
+              <small>{readOnly ? "Saved branch" : "Current branch"}</small>
             </span>
           </label>
         </fieldset>
+        {readOnly ? (
+          <p className="export-dialog__hint">
+            Exports saved history. Unsaved Pi output is not included; HTML needs
+            a writable session.
+          </p>
+        ) : null}
         {error !== null ? (
           <p className="export-dialog__error" role="alert">
             {error}
