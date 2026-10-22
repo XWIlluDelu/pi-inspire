@@ -66,6 +66,7 @@ and untracked.
 
 | State | Work |
 | --- | --- |
+| Integrated; local activation separate | Repairable settings, independently readable/copyable history, staging-only attachment cleanup, explicit operation recovery and responsive workbench improvements are implemented and verified. [[follow-project-quality-2026-10-21]] records the integration and the separate Host/frontend activation boundary. |
 | Implemented; device acceptance partial | Host-owned task outcomes, device-local alert settings and Web Push. Linux Chrome delivery, installed-PWA refresh continuity and Android system display of a manual test are verified. [[notifications]] defines the contract; [[follow-notifications-2026-10-22]] records remaining Android background-task/click and iOS acceptance, plus separate manual activation. |
 | Tagged | Annotated tag v0.6.0 points to f67d6ee, which passes complete Linux/macOS/Windows CI and three installed-package checks. [[follow-project-quality-2026-10-21]] and [[follow-release-0-6-0-2026-10-21]] retain that evidence and release documentation. There is no GitHub Release or uploaded release-asset distribution; activation is a separate operator action. |
 | Blocked on Pi | Backward model cycling, native TUI shell interruption, worker-owned settings-save results, resource omission diagnostics, request-attributed dialog cancellation, complete loaded-extension inventory, generic argument completion and structured current-worker MCP management. [[pi-capability-gaps]] identifies the missing interfaces. |
