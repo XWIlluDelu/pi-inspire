@@ -43,9 +43,9 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-const filler = "Ordinary paragraph.\n\n".repeat(1_700);
+const filler = "Ordinary paragraph.\n\n".repeat(600);
 
-describe("large Markdown reader", () => {
+describe("worker-parsed Markdown", () => {
   it("shows source immediately, preserves a parsed prefix, and resolves forward definitions", () => {
     worker();
     const source = "[Forward][later] and a footnote[^value].\n\n" + filler;

@@ -63,7 +63,7 @@ thinking, documents, and extension Markdown share one rendering authority with d
 ## Parsing and update ownership
 
 `rich-text-parser.ts` owns the whole-document remark/rehype pipeline: Markdown, GFM/math,
-source-safety, conversion, and sanitization. Sources below 32,000 characters parse synchronously;
+source-safety, conversion, and sanitization. Sources below 8,000 characters parse synchronously;
 at or above that threshold, one shared worker returns sanitized HAST without unused source positions.
 Both paths use the same DOM-independent named-entity decoder. `RichText` converts their HAST to React
 on the main thread.

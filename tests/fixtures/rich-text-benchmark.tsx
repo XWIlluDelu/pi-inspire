@@ -134,9 +134,12 @@ Object.assign(window, {
     const richLatency: number[] = [];
     const frameGaps: number[] = [];
     let text = prefix;
-    flushSync(() => root.render(createElement(RichText, { text })));
     await document.fonts.ready;
-    await rendered(host);
+    const initialStarted = performance.now();
+    flushSync(() => root.render(createElement(RichText, { text })));
+    const initialCommitMs = performance.now() - initialStarted;
+    await rendered(host, initialStarted);
+    const initialRichLatencyMs = performance.now() - initialStarted;
     for (let index = 0; index < 12; index++) {
       await frame();
       text = prefix + "\n\nStreaming tail " + "token ".repeat(index + 1);
@@ -166,8 +169,10 @@ Object.assign(window, {
       [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
     return {
       kind,
-      bytes: prefix.length,
+      sourceChars: prefix.length,
       equivalent,
+      initialCommitMs,
+      initialRichLatencyMs,
       commitMedianMs: median(commit),
       layoutMedianMs: median(layout),
       richLatencyMedianMs: median(richLatency),
