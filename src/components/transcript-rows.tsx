@@ -228,7 +228,7 @@ export const UserBubble = memo(function UserBubble({
       <MessageActions
         text={sourceText}
         getContent={
-          images.length
+          sourceText || images.length
             ? messageCopyLoader(message, sourceText, {
                 sessionId,
                 viewId,
@@ -267,6 +267,7 @@ export const AssistantTurn = memo(function AssistantTurn({
   thinkingVisibility,
   toolVisibility,
   responseCopyText,
+  responseCopyContent,
 }: {
   message: ChatMessage;
   toolResults: Map<string, ChatMessage>;
@@ -279,6 +280,7 @@ export const AssistantTurn = memo(function AssistantTurn({
   /** Empty suppresses actions; a full-message value keeps the existing one-copy
    * affordance on the message's final visible response fragment. */
   responseCopyText?: string;
+  responseCopyContent?: CopyLoader;
 }) {
   const items = contentItems(message);
   const hasVisibleContent = hasRenderableAssistantContent(
@@ -441,6 +443,7 @@ export const AssistantTurn = memo(function AssistantTurn({
       </div>
       <MessageActions
         text={responseCopyText ?? messageText(message)}
+        getContent={responseCopyContent}
         copyLabel="Response"
         className="turn__actions--response"
       />

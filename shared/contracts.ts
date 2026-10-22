@@ -1089,6 +1089,8 @@ export interface BranchEntryRequest {
   viewId: string;
   targetId: string;
   offset?: number;
+  /** Original copyable message fields as paged JSON, not History display text. */
+  format?: "message";
 }
 
 export interface BranchEntryResponse {

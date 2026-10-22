@@ -89,6 +89,9 @@ for (const touch of [false, true]) {
           ),
         )
         .toBe(true);
+      await pane
+        .getByRole("button", { name: "Back to Files", exact: true })
+        .click();
       await open("native-shell.log");
       await page.evaluate(() => {
         const state = window as unknown as {

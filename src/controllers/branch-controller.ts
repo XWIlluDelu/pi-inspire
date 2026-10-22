@@ -239,6 +239,7 @@ export class BranchController {
   async copyContent(
     targetId: string,
     signal: AbortSignal,
+    format?: "message",
   ): Promise<CopyContent | null> {
     const viewId = this.host.state().transcriptViewId;
     if (!viewId) return null;
@@ -249,7 +250,7 @@ export class BranchController {
       do {
         signal.throwIfAborted();
         const page = await api.branchEntry(
-          { sessionId, viewId, targetId, offset },
+          { sessionId, viewId, targetId, offset, format },
           signal,
         );
         chunks.push(page.text);

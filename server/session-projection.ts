@@ -63,6 +63,7 @@ import {
   boundedUserText,
   branchEntryContent,
   branchEntryText,
+  branchMessageSource,
   branchNode,
   projectSessionTree,
 } from "./session-tree.js";
@@ -238,6 +239,7 @@ export interface SessionProjectionView {
     id: string,
     offset: number,
     effectiveLeafId: string | null,
+    format?: "message",
   ): BranchEntryResponse;
   branchImage(id: string, index: number): { data: Buffer; mimeType: string };
   editableText(id: string, maxChars: number): string;
@@ -1257,10 +1259,14 @@ export class SessionProjection
     id: string,
     offset: number,
     effectiveLeafId: string | null,
+    format?: "message",
   ): BranchEntryResponse {
     const entry = this.currentEntriesById.get(id);
     if (!entry) throw requestError("History point no longer exists", 404);
-    const text = branchEntryText(entry, "separate");
+    const text =
+      format === "message"
+        ? branchMessageSource(entry)
+        : branchEntryText(entry, "separate");
     if (offset > text.length)
       throw requestError("History content offset is invalid", 400);
     const end = Math.min(text.length, offset + BRANCH_CONTENT_PAGE_CHARS);
