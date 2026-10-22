@@ -780,6 +780,15 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     return this.state;
   }
 
+  async setSessionExecution(
+    sessionId: string,
+    target: "terminal" | "inspire",
+  ): Promise<ActiveSnapshot> {
+    const active = this.requireSession(sessionId);
+    active.readOnlyReason = target === "terminal" ? "terminal" : undefined;
+    return this.snapshot(sessionId);
+  }
+
   async openSession(id: string): Promise<ActiveSnapshot> {
     return this.activate(
       id,

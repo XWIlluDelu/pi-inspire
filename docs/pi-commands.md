@@ -238,10 +238,17 @@ resources. Connected external Pi sessions keep their own reload/restart lifecycl
 
 The History pane handles same-file navigation and independent Fork/Clone copies. Both copy actions leave the source session running and open a separate worker; extension authors should check the [lifecycle differences](extensions.md#session-lifecycle).
 
-Keep one writer per Pi session. Stop the Host before continuing one of its owned sessions in a native
-Pi terminal; switching conversations alone does not release a cached worker. With Herdr enhancement,
-Inspire can instead connect to an already running native Pi: Composer and Stop use that same process;
-Reload and worker settings stay in its terminal. Project terminal tabs remain separate shells.
+Keep one writer per Pi session. Choose **Session actions → Use in terminal…** to release only
+this session's Inspire worker. If busy, **Stop and use in terminal** first restores Pending input
+to your browser draft. The command appears only after the worker has stopped; copy it into your
+terminal to resume in the original project. Other sessions keep running, and history and your
+browser draft remain available. Merely switching conversations does not release a cached worker.
+
+This handoff survives Host restart. Selecting the conversation does not start another Pi;
+**Continue in Inspire** explicitly checks the current owner. An observed native Pi can keep the
+session read-only until it exits or completes a verified replacement. With Herdr enhancement,
+Inspire can instead connect to that same native process: Composer and Stop reuse it; Reload and
+worker settings stay in its terminal. Project terminal tabs remain separate shells.
 
 Terminal appearance and interaction preferences are saved in this browser for this origin, not in
 Pi settings. On macOS, **Option as Meta** is off by default to preserve native characters and accents;
