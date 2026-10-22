@@ -3,16 +3,16 @@
 /* Navigation and Transcript retain their established boundary rails. Files
    and Changes deliberately use native scrollbars so their dense code/list
    surfaces remain dependable beside the pane resize boundary. */
+.nav,
 .nav__list,
 .nav__hidden-content,
-.explorer__tree,
 .transcript {
   scrollbar-width: none;
 }
 
+.nav::-webkit-scrollbar,
 .nav__list::-webkit-scrollbar,
 .nav__hidden-content::-webkit-scrollbar,
-.explorer__tree::-webkit-scrollbar,
 .transcript::-webkit-scrollbar {
   display: none;
 }
@@ -945,7 +945,6 @@ body.srail-dragging {
 .transcript,
 .nav__list,
 .nav__hidden-content,
-.explorer__tree,
 .palette__list,
 .picker__list,
 .ctx {

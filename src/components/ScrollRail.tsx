@@ -70,10 +70,12 @@ export function ScrollRail({
     } => {
       const rect = el!.getBoundingClientRect();
       if (variant === "nav") {
+        const bounds = root.getBoundingClientRect();
+        const top = Math.max(rect.top, bounds.top) + 6;
         return {
-          x: root.getBoundingClientRect().right,
-          top: rect.top + 6,
-          height: rect.height - 12,
+          x: bounds.right,
+          top,
+          height: Math.min(rect.bottom, bounds.bottom) - 6 - top,
         };
       }
       if (variant === "ctx") {
@@ -168,6 +170,9 @@ export function ScrollRail({
       if (event.target === el) {
         schedule();
         reveal();
+      } else if (event.target === root) {
+        // A short navigation can scroll around its independent list bodies.
+        schedule();
       }
     };
     const onThumbDown = (event: MouseEvent) => {

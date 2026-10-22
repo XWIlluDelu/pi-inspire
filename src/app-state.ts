@@ -275,7 +275,6 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   fileBrowserView: "browse" | "preview";
   /** The compact nav disclosure is store-owned so drawer remounts and
    * responsive transitions retain it. */
-  workspaceExplorerOpen: boolean;
   branchTree: BranchTreeResponse | null;
   branchTreeLoading: boolean;
   branchTreeError: string | null;
@@ -413,7 +412,6 @@ export function createInitialAppState(): AppState {
     resourcesOpen: false,
     contextMode: "files",
     ...emptyResourceInspectionState(),
-    workspaceExplorerOpen: false,
     branchTree: null,
     branchTreeLoading: false,
     branchTreeError: null,

@@ -327,12 +327,8 @@ export const Transcript = memo(function Transcript({
         return;
       closeMobileTranscriptTool();
     };
-    const timer = window.setTimeout(
-      () => document.addEventListener("pointerdown", closeFromOutside, true),
-      0,
-    );
+    document.addEventListener("pointerdown", closeFromOutside, true);
     return () => {
-      window.clearTimeout(timer);
       document.removeEventListener("pointerdown", closeFromOutside, true);
     };
   }, [closeMobileTranscriptTool, mobileTranscriptTool]);

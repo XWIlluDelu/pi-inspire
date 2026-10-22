@@ -168,7 +168,7 @@
 }
 
 /* Identity degradation tiers, in discard order: the project location yields
-   first (navigation and the workspace explorer already carry it), the Git
+   first (session navigation and Files already carry it), the Git
    branch text yields next (glyph + count keep the state, the accessible name
    and tooltip keep the branch), and only then may the session title
    ellipsize. Proportional truncation of everything at once produced useless

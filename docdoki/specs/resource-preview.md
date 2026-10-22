@@ -34,7 +34,7 @@ With no file selected, Files shows up to five deduplicated **Recent in this chat
 one 16-reference Host page, followed by the workspace filesystem tree. Search replaces both sections
 while a query is present. Recent rows use an icon, filename, subdued parent path, and fixed trailing
 Git state on one line. Recent, workspace-tree and search file rows reuse Changes' filename-based
-monochrome Lucide icon mapping at 13px, including the shared lower-left explorer. Directory icons,
+monochrome Lucide icon mapping at 13px. Directory icons,
 Git decorations, file labels and row geometry are unchanged. Search results show the filename above
 its parent directory, without repeating the filename; root-level files have no directory caption.
 Both the row and directory caption keep the full file path in their hover title, while the row's
@@ -56,11 +56,10 @@ Context. Changes keeps its existing narrow split. The index header stays on the 
 `--bg-context` surface; the current file's path/actions bar uses `--bg-surface` to distinguish the
 reading area below. Both Files and Changes use these roles without an extra shadow or raised frame.
 
-The lower-left explorer shares the same lazy tree, expansion, selection, hidden visibility, and Git
-decoration state, but omits search. Both trees use the project basename as their heading. Opening a
-workspace file expands its ancestors and emits one reveal request; unrelated updates do not scroll it.
-Leaf rows reserve the folder disclosure slot, aligning sibling file/folder icons and names in Files
-and Explorer. Recent and flat search results retain their existing alignment.
+The Files tree uses the project basename as its heading. Opening a workspace file expands its
+ancestors and emits one reveal request; unrelated updates do not scroll it. Leaf rows reserve the
+folder disclosure slot, aligning sibling file/folder icons and names. Recent and flat search results
+retain their existing alignment.
 
 Filesystem membership is independent of Git. Browse includes ignored non-hidden files and empty
 directories. **Show hidden files** defaults off and covers dot names plus native filesystem hidden
