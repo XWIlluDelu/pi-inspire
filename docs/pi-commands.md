@@ -226,6 +226,14 @@ connected external Pi sessions keep their original processes.
 
 `/export` remains available during a run and captures the Pi content available at invocation, not a future completed answer.
 
+## Update checks
+
+Settings → System checks the installed Pi version and global/user extension packages. After installing
+updates, **Check again** refreshes the result without restarting Inspire. If the Host still has an
+older Pi version loaded, the row shows **Restart Host to apply** instead of another update command.
+Extension **No updates** describes installation only; use `/reload` in an idle session to load changed
+resources. Connected external Pi sessions keep their own reload/restart lifecycle.
+
 ## Sessions and terminal use
 
 The History pane handles same-file navigation and independent Fork/Clone copies. Both copy actions leave the source session running and open a separate worker; extension authors should check the [lifecycle differences](extensions.md#session-lifecycle).

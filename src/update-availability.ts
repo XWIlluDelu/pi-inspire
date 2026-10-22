@@ -62,7 +62,7 @@ export function availableUpdates(
   const pi: AvailablePiUpdate | null =
     piCheck && piStatus?.kind === "available"
       ? {
-          currentVersion: piCheck.currentVersion,
+          currentVersion: piCheck.installedVersion ?? piCheck.currentVersion,
           latestVersion: piStatus.latestVersion,
           releaseUrl: piStatus.releaseUrl,
         }

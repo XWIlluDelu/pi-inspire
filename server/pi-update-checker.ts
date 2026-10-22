@@ -1,9 +1,9 @@
 import {
-  UPDATE_CHECK_INTERVAL_MS,
   type PiExtensionUpdate,
   type PiExtensionUpdateStatus,
   type PiUpdateCheckResponse,
   type PiVersionUpdateStatus,
+  UPDATE_CHECK_INTERVAL_MS,
 } from "../shared/contracts.js";
 import {
   isNewerStableRelease,
@@ -33,6 +33,7 @@ export interface PiUpdateCheckerLike {
 
 interface PiUpdateCheckerOptions {
   currentVersion: string;
+  readInstalledVersion: () => Promise<string>;
   checkExtensions: () => Promise<PackageUpdateCandidate[]>;
   fetchLatest?: FetchLatest;
   now?: () => number;
@@ -81,23 +82,30 @@ export class PiUpdateChecker implements PiUpdateCheckerLike {
   }
 
   private async checkLatest(): Promise<PiUpdateCheckResponse> {
-    if (this.offline()) return this.unavailable();
-    const [pi, extensions] = await Promise.all([
-      this.checkPiVersion(),
-      this.checkExtensionPackages(),
-    ]);
-    return { currentVersion: this.options.currentVersion, pi, extensions };
-  }
-
-  private unavailable(): PiUpdateCheckResponse {
+    const installedVersion = await this.options
+      .readInstalledVersion()
+      .then((version) =>
+        parseSemanticVersion(version, false) ? version : null,
+      )
+      .catch(() => null);
+    const [pi, extensions] = this.offline()
+      ? ([{ kind: "unavailable" }, { kind: "unavailable" }] as const)
+      : await Promise.all([
+          this.checkPiVersion(installedVersion),
+          this.checkExtensionPackages(),
+        ]);
     return {
       currentVersion: this.options.currentVersion,
-      pi: { kind: "unavailable" },
-      extensions: { kind: "unavailable" },
+      installedVersion,
+      pi,
+      extensions,
     };
   }
 
-  private async checkPiVersion(): Promise<PiVersionUpdateStatus> {
+  private async checkPiVersion(
+    installedVersion: string | null,
+  ): Promise<PiVersionUpdateStatus> {
+    if (!installedVersion) return { kind: "unavailable" };
     try {
       const response = await this.fetchLatest(LATEST_PI_VERSION_URL, {
         headers: {
@@ -110,7 +118,7 @@ export class PiUpdateChecker implements PiUpdateCheckerLike {
       const payload = (await response.json()) as { version?: unknown };
       if (typeof payload.version !== "string") return { kind: "unavailable" };
       const latest = parseSemanticVersion(payload.version, true);
-      const current = parseSemanticVersion(this.options.currentVersion, false);
+      const current = parseSemanticVersion(installedVersion, false);
       if (!latest || !current) return { kind: "unavailable" };
       const latestVersion = normalizedVersion(latest);
       return isNewerStableRelease(latest, current)

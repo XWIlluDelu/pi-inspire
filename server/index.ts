@@ -43,6 +43,7 @@ import {
 } from "./mock.js";
 import { ModelMetadataCatalog } from "./model-metadata.js";
 import { ModelSettingsService } from "./model-settings.js";
+import { resolvePiInstallationIdentity } from "./pi-installation.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
 import {
   DefaultPackageManager,
@@ -134,6 +135,9 @@ const piUpdateChecker = mock
   ? undefined
   : new PiUpdateChecker({
       currentVersion: piInstallation.version,
+      readInstalledVersion: async () =>
+        (await resolvePiInstallationIdentity({ installationRoot: root }))
+          .version,
       checkExtensions: async () => {
         const agentDir = getAgentDir();
         const settingsManager = SettingsManager.create(root, agentDir, {
