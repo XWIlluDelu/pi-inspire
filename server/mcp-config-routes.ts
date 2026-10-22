@@ -1,6 +1,10 @@
 import type { Express } from "express";
 import { z } from "zod";
-import { type McpConfigService, mcpConfigEditSchema } from "./mcp-config.js";
+import {
+  type McpConfigService,
+  mcpConfigEditSchema,
+  mcpConnectionReadSchema,
+} from "./mcp-config.js";
 import { resolveUserPath } from "./paths.js";
 import { requestError } from "./request-error.js";
 import type { RuntimeLike } from "./runtime.js";
@@ -34,6 +38,16 @@ export function registerMcpConfigRoutes(
     if (!deps.mcpConfig)
       throw requestError("MCP configuration is unavailable on this Host", 503);
     response.json(await deps.mcpConfig.read(context(request.query)));
+  });
+  app.post("/api/mcp-config/connection", async (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    if (!deps.mcpConfig)
+      throw requestError("MCP configuration is unavailable on this Host", 503);
+    const input = mcpConnectionReadSchema.safeParse(request.body);
+    if (!input.success) throw requestError("Invalid MCP connection read", 400);
+    response.json(
+      await deps.mcpConfig.readConnection(context(request.query), input.data),
+    );
   });
   app.patch("/api/mcp-config", async (request, response) => {
     response.setHeader("Cache-Control", "no-store");

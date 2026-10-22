@@ -20,6 +20,11 @@ addressing; do not expand into cosmetic changes or classify an isolated flake as
 
 ## Current state
 
+- The notification/settings follow-up now uses native cancellation evidence rather than diagnostic
+  wording, keeps saved model configuration editable during discovery failures, and restores inherited
+  MCP policy after draft rule changes are undone. Focused native Pi 1.4, Runtime, form and Chromium
+  checks pass, as do types, static checks and isolated builds. Implementation stays on
+  `fix/notification-settings-contracts` for user-managed integration; production is unchanged.
 - The reviewed source `f67d6eef659ca4500bf39167c8460813d5d2a85d` passes all seven jobs in
   [CI run 39574685523](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39574685523), including
   Linux/macOS/Windows workflows and three installed-package checks. Annotated tag

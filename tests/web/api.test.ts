@@ -756,6 +756,52 @@ describe("host directory browsing", () => {
   });
 });
 
+describe("settings scope", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("omits absent owners across configuration reads and writes", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({}));
+    vi.stubGlobal("fetch", fetch);
+    const api = createApi("token");
+    const owner = { sessionId: undefined, cwd: undefined };
+    await Promise.all([
+      api.mcpConfig(owner),
+      api.editMcpConfig(owner, {
+        scope: "user",
+        revision: "revision",
+        name: "server",
+        operation: "remove",
+      }),
+      api.modelSettings(owner),
+      api.saveModelPreferences(owner, "revision", { defaultModel: null }),
+      api.editModelConfig(owner, "revision", {
+        kind: "remove-provider",
+        id: "provider",
+      }),
+      api.providerAuth(owner, { operation: "providers" }),
+    ]);
+    for (const [url] of fetch.mock.calls) {
+      expect(new URL(String(url), "http://localhost").search).toBe("");
+    }
+  });
+
+  it("preserves explicit host-native paths and session identities", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({}));
+    vi.stubGlobal("fetch", fetch);
+    const api = createApi("token");
+    const cwd = "C:\\Users\\中文 & demo\\project";
+    await api.mcpConfig({ cwd, sessionId: undefined });
+    await api.modelSettings({ sessionId: "session & one", cwd: undefined });
+    expect(
+      fetch.mock.calls.map(([url]) =>
+        Object.fromEntries(
+          new URL(String(url), "http://localhost").searchParams,
+        ),
+      ),
+    ).toEqual([{ cwd }, { sessionId: "session & one" }]);
+  });
+});
+
 describe("Pending clear contract", () => {
   afterEach(() => vi.unstubAllGlobals());
 

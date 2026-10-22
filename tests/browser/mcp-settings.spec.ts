@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { McpConfigService } from "../../server/mcp-config";
-import type { McpConfigEdit } from "../../shared/mcp";
+import type { McpConfigEdit, McpConnectionRead } from "../../shared/mcp";
 import { actionGeometry } from "./support/action-geometry";
 import { pairAndOpen } from "./support/navigation";
 
@@ -58,7 +58,14 @@ async function scenario(page: Page) {
   await page.route("**/api/mcp-config**", async (route) => {
     try {
       let payload: unknown;
-      if (route.request().method() === "PATCH") {
+      if (
+        new URL(route.request().url()).pathname === "/api/mcp-config/connection"
+      ) {
+        payload = await service.readConnection(
+          cwd,
+          route.request().postDataJSON() as McpConnectionRead,
+        );
+      } else if (route.request().method() === "PATCH") {
         const edit = route.request().postDataJSON() as McpConfigEdit;
         edits.push(edit);
         await service.save(cwd, edit);
@@ -103,6 +110,72 @@ async function scenario(page: Page) {
     json: async (path: string) => JSON.parse(await readFile(path, "utf8")),
   };
 }
+test("MCP connection values reveal on request and support partial edits at desktop and phone widths", async ({
+  page,
+}) => {
+  const fixture = await scenario(page);
+  const { settings } = fixture;
+  try {
+    await settings
+      .getByRole("button", { name: "Edit user server docs" })
+      .click();
+    const url = settings.getByLabel("Server URL", { exact: true });
+    await expect(url).toHaveValue("");
+    expect(fixture.wire.join("\n")).not.toContain("stored-url-secret");
+    await settings.getByRole("button", { name: "Show saved URL" }).click();
+    await expect(url).toHaveValue(/stored-url-secret/);
+    await url.fill("https://docs.example.invalid/updated");
+    await settings.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(
+      settings.getByRole("button", { name: "Edit user server docs" }),
+    ).toBeVisible();
+    expect(
+      (await fixture.json(fixture.userFile)).mcpServers.docs,
+    ).toMatchObject({
+      url: "https://docs.example.invalid/updated",
+      headers: { Authorization: "Bearer stored-header-secret" },
+      oauth: { clientSecret: "stored-oauth-secret" },
+    });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await settings
+      .getByRole("button", { name: "Edit project server docs" })
+      .click();
+    await expect(
+      settings.getByLabel("Argument 1", { exact: true }),
+    ).toHaveCount(0);
+    await settings
+      .getByRole("button", { name: "Show saved arguments" })
+      .click();
+    await expect(
+      settings.getByLabel("Argument 1", { exact: true }),
+    ).toHaveValue("server.js");
+    await expect(
+      settings.getByLabel("Argument 2", { exact: true }),
+    ).toHaveValue("--secret=stored-argument");
+    await settings
+      .getByLabel("Argument 1", { exact: true })
+      .fill("updated-server.js");
+    expect(
+      await settings.evaluate((el) => el.scrollWidth <= el.clientWidth),
+    ).toBe(true);
+    await settings.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(
+      settings.getByRole("button", { name: "Edit project server docs" }),
+    ).toBeVisible();
+    expect(
+      (await fixture.json(fixture.projectFile)).mcpServers.docs,
+    ).toMatchObject({
+      command: "node",
+      args: ["updated-server.js", "--secret=stored-argument"],
+      env: { TOKEN: "stored-env-secret" },
+    });
+    expect(fixture.errors).toEqual([]);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("MCP configuration failures share the existing card inset", async ({
   page,
 }) => {
@@ -444,15 +517,38 @@ test("narrow MCP form adds and removes scoped stdio definitions and focuses inhe
     expect(
       (await fixture.json(fixture.projectFile)).mcpServers.docs.env,
     ).toEqual({ TOKEN: "stored-env-secret" });
-    // Pi 1.1 can save a project policy without duplicating the user connection.
     const userBefore = await fixture.json(fixture.userFile);
-    await writeFile(
-      fixture.projectFile,
-      JSON.stringify({ mcpServers: { docs: { enabled: false } } }),
-    );
+    // Start without a project entry, then create a policy from the user server.
     await settings
-      .getByRole("button", { name: "Refresh MCP files", exact: true })
+      .getByRole("button", { name: "Remove project server docs" })
       .click();
+    await settings
+      .getByRole("button", { name: "Remove configuration", exact: true })
+      .click();
+    await settings
+      .getByRole("button", { name: "Customize for this project: docs" })
+      .click();
+    await expect(
+      settings.getByRole("combobox", { name: "Tool exposure" }),
+    ).toBeFocused();
+    await expect(
+      settings.getByRole("combobox", { name: "Tool exposure" }),
+    ).toHaveText("Inherit from user");
+    await expect(
+      settings.getByRole("combobox", { name: "Enabled in this project" }),
+    ).toHaveText("Inherit from user");
+    await expect(save).toBeDisabled();
+    await settings
+      .getByRole("combobox", { name: "Enabled in this project" })
+      .click();
+    await page.getByRole("option", { name: "Disabled", exact: true }).click();
+    await save.click();
+    await expect(
+      settings.getByRole("button", { name: "Edit project server docs" }),
+    ).toBeVisible();
+    expect((await fixture.json(fixture.projectFile)).mcpServers.docs).toEqual({
+      enabled: false,
+    });
     const policyEdit = settings.getByRole("button", {
       name: "Edit project server docs",
     });
@@ -498,6 +594,23 @@ test("narrow MCP form adds and removes scoped stdio definitions and focuses inhe
     expect((await fixture.json(fixture.projectFile)).mcpServers.docs).toEqual({
       exposure: "hidden",
     });
+    await settings
+      .getByRole("button", { name: "Remove project server docs" })
+      .click();
+    await expect(
+      settings.getByText(
+        /This project will inherit the user configuration again/,
+      ),
+    ).toBeVisible();
+    await settings
+      .getByRole("button", { name: "Remove configuration", exact: true })
+      .click();
+    await expect(
+      settings.getByRole("button", {
+        name: "Customize for this project: docs",
+      }),
+    ).toBeVisible();
+    expect((await fixture.json(fixture.projectFile)).mcpServers).toEqual({});
     expect(await fixture.json(fixture.userFile)).toEqual(userBefore);
     expect(fixture.errors).toEqual([]);
   } finally {

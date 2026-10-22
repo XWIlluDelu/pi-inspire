@@ -18,6 +18,9 @@ import {
   type McpConfigScope,
   type McpConfigSnapshot,
   type McpConfigValues,
+  type McpConnectionRead,
+  type McpConnectionValues,
+  mcpOAuthError,
 } from "../shared/mcp.js";
 import { configurationEditLockPaths } from "./configuration-edit-locks.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
@@ -35,6 +38,7 @@ const changes = <T extends z.ZodType>(schema: T) =>
 const stringMap = z.record(z.string().min(1).max(256), text.nullable());
 const oauthSchema = z
   .object({
+    clientRegistration: changes(z.enum(["dcr", "cimd"])),
     clientId: changes(text),
     clientSecret: changes(text),
     callbackPort: changes(z.number().int().min(1).max(65535)),
@@ -62,15 +66,17 @@ const valuesSchema = z
     oauth: oauthSchema.optional(),
   })
   .strict();
-export const mcpConfigEditSchema = z
+export const mcpConnectionReadSchema = z
   .object({
     scope: z.enum(["user", "project"]),
     revision: z.string().regex(/^[a-f0-9]{64}$/),
     name: z.string().min(1).max(256),
-    operation: z.enum(["add", "update", "remove"]),
-    values: valuesSchema.optional(),
   })
   .strict();
+export const mcpConfigEditSchema = mcpConnectionReadSchema.extend({
+  operation: z.enum(["add", "update", "remove"]),
+  values: valuesSchema.optional(),
+});
 const normalExposure = (value: unknown) =>
   value === "codemode-deferred" ? "codemode" : exposure.safeParse(value).data;
 const strings = (value: unknown) => (isObject(value) ? Object.keys(value) : []);
@@ -134,6 +140,14 @@ function projectEntry(
     envKeys: strings(value.env),
     headerKeys: strings(value.headers),
     oauthFields: strings(value.oauth),
+    ...(isObject(value.oauth) &&
+    ["dcr", "cimd"].includes(value.oauth.clientRegistration as string)
+      ? {
+          oauthClientRegistration: value.oauth.clientRegistration as
+            | "dcr"
+            | "cimd",
+        }
+      : {}),
     toolExposure: Object.fromEntries(
       isObject(value.toolExposure)
         ? Object.entries(value.toolExposure).flatMap(([key, val]) => {
@@ -287,7 +301,7 @@ function validate(
   // Validate supported fields without returning the submitted or stored secret in errors.
   const known = Object.fromEntries(
     Object.entries(value).filter(
-      ([key]) => fieldNames.has(key) && key !== "type",
+      ([key]) => fieldNames.has(key) && key !== "type" && key !== "oauth",
     ),
   );
   if (known.exposure === "codemode-deferred") known.exposure = "codemode";
@@ -298,56 +312,13 @@ function validate(
         mode === "codemode-deferred" ? "codemode" : mode,
       ]),
     );
-  // Native extension-specific OAuth fields remain untouched.
-  if (isObject(known.oauth))
-    known.oauth = Object.fromEntries(
-      Object.entries(known.oauth).filter(([key]) =>
-        Object.hasOwn(oauthSchema.shape, key),
-      ),
-    );
+  const oauthError = mcpOAuthError(value.oauth);
+  if (oauthError) throw requestError(oauthError, 400);
   if (!valuesSchema.safeParse(known).success)
     throw requestError(
       "MCP configuration has invalid field values; check the server configuration",
       400,
     );
-  if (isObject(value.oauth)) {
-    const { callbackUrl, callbackPort, authServerMetadataUrl } = value.oauth;
-    const loopback = (url: URL) =>
-      ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-    if (callbackUrl !== undefined) {
-      const url = URL.canParse(String(callbackUrl))
-        ? new URL(String(callbackUrl))
-        : null;
-      if (
-        !url ||
-        url.protocol !== "http:" ||
-        !loopback(url) ||
-        url.search ||
-        url.hash ||
-        (url.port &&
-          callbackPort !== undefined &&
-          Number(url.port) !== callbackPort)
-      )
-        throw requestError(
-          "OAuth callback must use loopback HTTP and match the callback port",
-          400,
-        );
-    }
-    if (authServerMetadataUrl !== undefined) {
-      const url = URL.canParse(String(authServerMetadataUrl))
-        ? new URL(String(authServerMetadataUrl))
-        : null;
-      if (
-        !url ||
-        (url.protocol !== "https:" &&
-          !(url.protocol === "http:" && loopback(url)))
-      )
-        throw requestError(
-          "OAuth metadata must use HTTPS, or HTTP on loopback",
-          400,
-        );
-    }
-  }
 }
 
 export class McpConfigService {
@@ -411,12 +382,62 @@ export class McpConfigService {
     );
     return { cwd, files };
   }
+  async readConnection(
+    cwd: string | null,
+    input: McpConnectionRead,
+  ): Promise<McpConnectionValues> {
+    const request = mcpConnectionReadSchema.parse(input);
+    const target = await this.target(cwd, request.scope);
+    const source = await readText(target);
+    if (revisionOf(target, source) !== request.revision)
+      throw requestError(
+        "MCP configuration changed elsewhere. Refresh files before viewing saved values.",
+        409,
+      );
+    const parsed = parse(source);
+    const servers = isObject(parsed.mcpServers) ? parsed.mcpServers : {};
+    const entry = Object.hasOwn(servers, request.name)
+      ? servers[request.name]
+      : undefined;
+    if (!isObject(entry))
+      throw requestError(
+        "That server is no longer available in this file",
+        409,
+      );
+    // Return only literal connection values, never execute hooks or include credentials
+    // from unrelated fields. URL/arguments themselves may contain user-saved secrets.
+    return {
+      ...(typeof entry.url === "string" ? { url: entry.url } : {}),
+      ...(Array.isArray(entry.args) &&
+      entry.args.every((arg) => typeof arg === "string")
+        ? { args: entry.args as string[] }
+        : {}),
+    };
+  }
+
   async save(cwd: string | null, input: McpConfigEdit): Promise<void> {
     const edit = mcpConfigEditSchema.parse(input);
     const path = this.path(cwd, edit.scope);
     const target = await this.target(cwd, edit.scope);
     await mkdir(dirname(target), { recursive: true, mode: 0o700 });
     const lexical = join(await realpath(dirname(path)), basename(path));
+    const lockPaths = await configurationEditLockPaths(lexical, target);
+    // Add validates one namespace across both files. Share the user authority
+    // with user-file edits so simultaneous additions cannot each pass against
+    // the other file's old contents. Updates cannot rename an existing entry.
+    let userTarget: string | undefined;
+    if (edit.scope === "project" && edit.operation === "add") {
+      const userPath = this.path(cwd, "user");
+      userTarget = await this.target(cwd, "user");
+      await mkdir(dirname(userTarget), { recursive: true, mode: 0o700 });
+      const userLexical = join(
+        await realpath(dirname(userPath)),
+        basename(userPath),
+      );
+      lockPaths.push(
+        ...(await configurationEditLockPaths(userLexical, userTarget)),
+      );
+    }
     const releases: Array<() => Promise<void>> = [];
     let compromised = false;
     const temporary = join(
@@ -424,10 +445,7 @@ export class McpConfigService {
       `.inspire-mcp-${randomUUID()}.json`,
     );
     try {
-      for (const authority of await configurationEditLockPaths(
-        lexical,
-        target,
-      )) {
+      for (const authority of [...new Set(lockPaths)].sort()) {
         try {
           releases.push(
             await lockfile.lock(authority, {
@@ -476,7 +494,12 @@ export class McpConfigService {
           );
         const values = edit.values ?? {};
         const value = mergeValues(current, values);
-        if (edit.operation === "update" && isPolicyOnly(current, edit.scope)) {
+        if (
+          isPolicyOnly(
+            edit.operation === "update" ? current : value,
+            edit.scope,
+          )
+        ) {
           if (Object.keys(values).some((key) => !policyFields.has(key)))
             throw requestError(
               "Project policy overrides can only edit enabled, exposure and toolExposure",
@@ -528,6 +551,8 @@ export class McpConfigService {
       if (
         compromised ||
         (await this.target(cwd, edit.scope)) !== target ||
+        (userTarget !== undefined &&
+          (await this.target(cwd, "user")) !== userTarget) ||
         revisionOf(target, await readText(path)) !== edit.revision
       )
         throw requestError(
