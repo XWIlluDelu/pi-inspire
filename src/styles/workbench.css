@@ -691,9 +691,15 @@ button.res__index-header--back:hover svg {
 }
 
 .file-detail-header__path {
+  display: flex;
+  align-items: center;
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
+}
+
+.file-detail-header__path > .file-path-action {
+  min-width: 0;
 }
 
 .file-path-action {

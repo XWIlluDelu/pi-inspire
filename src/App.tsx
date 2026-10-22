@@ -25,7 +25,10 @@ import {
 } from "./components/ContextPaneShell";
 import { ExportDialog } from "./components/ExportDialog";
 import { ExtensionDisplayDock } from "./components/ExtensionDisplays";
-import { ExtensionUiDialog } from "./components/ExtensionUiDialog";
+import {
+  ExtensionUiDialog,
+  type ExtensionUiDialogHandle,
+} from "./components/ExtensionUiDialog";
 import { Nav } from "./components/Nav";
 import {
   SessionTerminalDialog,
@@ -521,6 +524,7 @@ export function App() {
     [openSettings],
   );
   const extensionOverlayOpen = state.extensionOverlayOpen;
+  const extensionDialogRef = useRef<ExtensionUiDialogHandle>(null);
   const [welcomeInheritance, setWelcomeInheritance] =
     useState<WelcomeInheritance | null>(null);
   const [prospectiveDirectory, setProspectiveDirectory] = useState("");
@@ -589,11 +593,20 @@ export function App() {
       : []),
     ...(mobileNavOpen ? ["navigation"] : []),
     ...(settingsOpen ? ["settings"] : []),
+    ...(paletteOpen ? ["palette"] : []),
+    ...(exportSessionId ? ["export"] : []),
+    ...(terminalSessionId ? ["terminal-handoff"] : []),
+    ...(extensionOverlayOpen ? ["extension"] : []),
   ];
   useInspectionHistory(
     narrowViewport ? inspectionLayers.length : 0,
     (depth) => {
       const remaining = inspectionLayers.slice(0, depth);
+      if (!remaining.includes("extension"))
+        extensionDialogRef.current?.cancel();
+      if (!remaining.includes("terminal-handoff")) setTerminalSessionId(null);
+      if (!remaining.includes("export")) setExportSessionId(null);
+      if (!remaining.includes("palette")) setPaletteOpen(false);
       if (!remaining.includes("settings")) setSettingsOpen(false);
       if (!remaining.includes("navigation")) setMobileNavOpen(false);
       if (!remaining.includes("context")) store.setResourcesOpen(false);
@@ -1076,7 +1089,7 @@ export function App() {
           onClose={closeCommandHelp}
         />
       ) : null}
-      <ExtensionUiDialog />
+      <ExtensionUiDialog ref={extensionDialogRef} />
       <Notices onViewUpdates={openUpdateSettings} />
     </div>
   );

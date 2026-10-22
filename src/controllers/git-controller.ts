@@ -19,7 +19,7 @@ function changeHasSide(change: GitFileChange, side: GitDiffSide): boolean {
 export type GitDiffView =
   | { status: "loading"; pathId: string; side: GitDiffSide }
   | { status: "error"; pathId: string; side: GitDiffSide; message: string }
-  | { status: "ready"; result: GitDiffResponse };
+  | { status: "ready"; result: GitDiffResponse; refreshError?: string };
 
 export interface GitControllerState {
   sessionId: string | null;
@@ -76,6 +76,10 @@ export class GitController {
   private statusEpoch = 0;
   private refreshQueued = false;
   private diffRequest: AbortController | null = null;
+  private diffRead: {
+    selection: GitChangeSelection;
+    promise: Promise<void>;
+  } | null = null;
   private surfaces = new Set<string>();
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private observingVisibility = false;
@@ -176,25 +180,50 @@ export class GitController {
       : null;
   }
 
-  private async openResolvedDiff({
-    api,
-    sessionId,
-    selectionGeneration,
-    transportGeneration,
-    change,
-    side,
-  }: GitChangeSelection): Promise<void> {
+  private openResolvedDiff(
+    selection: GitChangeSelection,
+    reveal = true,
+  ): Promise<void> {
+    const {
+      api,
+      sessionId,
+      selectionGeneration,
+      transportGeneration,
+      change,
+      side,
+    } = selection;
     const pathId = change.path.id;
+    const pending = this.diffRead;
+    if (
+      pending &&
+      pending.selection.api === api &&
+      pending.selection.sessionId === sessionId &&
+      pending.selection.selectionGeneration === selectionGeneration &&
+      pending.selection.transportGeneration === transportGeneration &&
+      pending.selection.change.path.id === pathId &&
+      pending.selection.side === side
+    )
+      return pending.promise;
+
     this.selectedWorkspacePath = change.path.workspacePath ?? null;
     this.cancelDiff();
     const request = new AbortController();
     this.diffRequest = request;
+    const previous = this.host.state().gitDiff;
+    const retained =
+      previous?.status === "ready" &&
+      previous.result.path.id === pathId &&
+      previous.result.side === side
+        ? previous
+        : null;
     this.host.patch({
-      resourcesOpen: true,
-      contextMode: "changes",
+      ...(reveal
+        ? { resourcesOpen: true, contextMode: "changes" as const }
+        : {}),
       selectedGitPathId: pathId,
       selectedGitSide: side,
-      gitDiff: { status: "loading", pathId, side },
+      // Refresh in place; a new selection still gets ordinary loading feedback.
+      ...(!retained ? { gitDiff: { status: "loading", pathId, side } } : {}),
     });
     const current = (): boolean => {
       const currentState = this.host.state();
@@ -209,29 +238,49 @@ export class GitController {
         currentState.selectedGitSide === side
       );
     };
-    try {
-      const result = await api.gitDiff(sessionId, pathId, side, request.signal);
-      if (!current()) return;
-      if (result.path.id !== pathId || result.side !== side)
-        throw new Error("The Host returned a diff for another selection");
-      this.host.patch({ gitDiff: { status: "ready", result } });
-    } catch (error) {
-      if (!current()) return;
-      if (error instanceof ApiError && error.status === 401) {
-        this.host.handleAuthFailure();
-        return;
-      }
-      this.host.patch({
-        gitDiff: {
-          status: "error",
+    const promise = (async () => {
+      try {
+        const result = await api.gitDiff(
+          sessionId,
           pathId,
           side,
-          message: error instanceof Error ? error.message : "Diff failed",
-        },
-      });
-    } finally {
-      if (this.diffRequest === request) this.diffRequest = null;
-    }
+          request.signal,
+        );
+        if (!current()) return;
+        if (result.path.id !== pathId || result.side !== side)
+          throw new Error("The Host returned a diff for another selection");
+        // Unchanged polls must not rebuild source highlighting or reader geometry.
+        const unchanged =
+          retained &&
+          JSON.stringify(retained.result) === JSON.stringify(result);
+        if (!unchanged || retained.refreshError)
+          this.host.patch({
+            gitDiff: {
+              status: "ready",
+              result: unchanged ? retained.result : result,
+            },
+          });
+      } catch (error) {
+        if (!current()) return;
+        if (error instanceof ApiError && error.status === 401) {
+          this.host.handleAuthFailure();
+          return;
+        }
+        const message = error instanceof Error ? error.message : "Diff failed";
+        this.host.patch({
+          gitDiff: retained
+            ? { ...retained, refreshError: message }
+            : { status: "error", pathId, side, message },
+        });
+      } finally {
+        if (this.diffRequest === request) {
+          this.diffRequest = null;
+          this.diffRead = null;
+        }
+      }
+    })();
+    this.diffRead = { selection, promise };
+    return promise;
   }
 
   async openDiff(pathId: string, requestedSide?: GitDiffSide): Promise<void> {
@@ -348,23 +397,10 @@ export class GitController {
     });
   }
 
-  /** Revalidate retained status after bootstrap and restore an open Changes
-   * detail exactly once. Ordinary polling deliberately leaves a stable diff
-   * alone so reader scroll is not reset. */
+  /** Status and the selected visible diff share the same refresh boundary. */
   async resumeAfterTransportReplacement(): Promise<void> {
     if (!this.hasVisibleSurface() || !this.pageVisible()) return;
     await this.refreshStatus();
-    const state = this.host.state();
-    if (
-      state.resourcesOpen &&
-      state.contextMode === "changes" &&
-      state.gitStatusError === null &&
-      state.gitDiff === null &&
-      state.selectedGitPathId &&
-      state.selectedGitSide
-    ) {
-      await this.openDiff(state.selectedGitPathId, state.selectedGitSide);
-    }
   }
 
   cancelAll(): void {
@@ -450,6 +486,7 @@ export class GitController {
         const selectionChanged =
           selectedPathId !== currentState.selectedGitPathId ||
           selectedSide !== currentState.selectedGitSide;
+        if (selectionChanged) this.cancelDiff();
         this.host.patch({
           gitStatus: status,
           gitStatusError: null,
@@ -462,13 +499,29 @@ export class GitController {
             : {}),
         });
         if (
-          selectionChanged &&
           selectedPathId &&
           selectedSide &&
           currentState.resourcesOpen &&
           currentState.contextMode === "changes"
         ) {
-          void this.openDiff(selectedPathId, selectedSide);
+          // Await the selected read so hints coalesce behind the complete
+          // inspection, and slow diffs cannot create an overlapping poll loop.
+          const change =
+            status.kind === "repository"
+              ? status.files.find((file) => file.path.id === selectedPathId)
+              : undefined;
+          if (change)
+            await this.openResolvedDiff(
+              {
+                api,
+                sessionId,
+                selectionGeneration,
+                transportGeneration,
+                change,
+                side: selectedSide,
+              },
+              false,
+            );
         }
       } catch (error) {
         if (!current()) continue;
@@ -510,6 +563,7 @@ export class GitController {
   private cancelDiff(): void {
     this.diffRequest?.abort();
     this.diffRequest = null;
+    this.diffRead = null;
   }
 
   private clearRefreshTimer(): void {

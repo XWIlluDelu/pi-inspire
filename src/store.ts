@@ -3065,18 +3065,7 @@ export class AppStore {
 
   refreshGitStatus = (): Promise<void> => this.git.refreshStatus();
 
-  refreshGitInspection = async (): Promise<void> => {
-    const { selectedGitPathId: pathId, selectedGitSide: side } = this.state;
-    await this.git.refreshStatus();
-    const current = this.state;
-    if (
-      pathId &&
-      side &&
-      current.selectedGitPathId === pathId &&
-      current.selectedGitSide === side
-    )
-      await this.git.openDiff(pathId, side);
-  };
+  refreshGitInspection = (): Promise<void> => this.git.refreshStatus();
 
   openGitDiff = (pathId: string, requestedSide?: GitDiffSide): Promise<void> =>
     this.git.openChange(pathId, requestedSide);

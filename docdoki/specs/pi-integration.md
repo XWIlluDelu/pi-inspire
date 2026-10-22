@@ -273,7 +273,9 @@ requests with their worker. Startup restrictions follow [[session-persistence]] 
 [adaptation guide](../../docs/extensions.md#startup).
 
 Select dialogs support arrow-key choice and Enter, alongside direct pointer/touch selection.
-Confirmation has two visible choices, No and Yes; Escape cancels. Input and multiline dialogs retain
+Confirmation has two visible choices, No and Yes; Escape cancels. On narrow viewports, browser Back
+uses the same cancellation path, preserving any suspended Settings or Context surface. Pending or
+failed cancellation keeps the question visible and its return layer usable. Input and multiline dialogs retain
 Submit and Save. A request with a deadline shows its remaining time without restarting the expiry on
 reopen or reconnect. Pi 1.3.0 does not send request-attributed extension cancellation to RPC
 clients. Aggregate `ui_prompt_start/end` callbacks carry kind/title but no RPC request ID; concurrent
