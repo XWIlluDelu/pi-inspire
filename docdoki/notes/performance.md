@@ -9,12 +9,16 @@ purpose: Reproduce representative rendering and projection measurements and dist
 - `node scripts/benchmark-rich-text.mjs 3` builds the real RichText component with production React,
   project CSS and headless Chromium. `--baseline=<revision>` compares that revision's component
   against the same dependencies, styles and fixture.
+- Add `--phone --cpu-rate=4` to use a 390×844 viewport and Chrome CPU throttling. Output records
+  viewport, actual reader width and CPU rate. This is an emulated browser profile, not a physical phone.
 - `npm run benchmark:projection` compares forced and version-checked Host projection reads.
 
 The rich-text fixture mounts a completed prefix, waits for fonts and appends a short tail across
 twelve updates: three warmups and nine measured samples per round. It measures immediate React
 render/commit, forced layout, full formatting availability and animation-frame gaps separately.
-Each case compares the streamed DOM with a fresh complete-source render.
+Each case compares the streamed DOM with a fresh complete-source render. First-mount commit and
+full-format latency are recorded separately from the update samples. `sourceChars` counts JavaScript
+string units, matching the renderer threshold.
 
 ## Rendering work
 
@@ -35,6 +39,30 @@ medians of round medians, comparing the synchronous leaf-reuse renderer with wor
 
 Worker parsing reduces input-thread blocking while full formatting still scales with source size.
 [[rich-rendering]] owns the behavior and failure path.
+
+### Medium-response input blocking
+
+The former 32,000-character threshold left medium technical answers on the main thread. The same
+worker now starts at 8,000 characters. Compare the earlier renderer with current code using:
+
+```sh
+node scripts/benchmark-rich-text.mjs 1 --phone --cpu-rate=4 --baseline=7d386cc
+node scripts/benchmark-rich-text.mjs 1 --phone --cpu-rate=4
+```
+
+One paired run used Chromium 151.0.7922.34, a 390px reader and 4× CPU throttling. Each row below gives
+medians over nine streaming updates after three warmups; both versions passed the semantic cases and
+streamed/fresh DOM comparison.
+
+| Mixed source characters | Immediate commit, 32k → 8k threshold | Largest frame gap, 32k → 8k threshold | Full formatting, 32k → 8k threshold |
+| --- | ---: | ---: | ---: |
+| 8,037 | 26.4 → 0.2 ms | 32.5 → 18.8 ms | 33.0 → 19.1 ms |
+| 16,074 | 45.7 → 0.6 ms | 55.6 → 20.8 ms | 56.4 → 22.0 ms |
+
+The 16,074-character first mount also kept source commit short: 195.3 → 1.0 ms; complete formatting
+was available at 288.7 → 206.4 ms in that observation. Larger trees still pay React conversion,
+math/code rendering and layout costs. The change moves existing parsing work earlier, without a
+second parser, document index or incremental Markdown semantics.
 
 ## Stream work and serialized volume
 

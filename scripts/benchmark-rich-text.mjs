@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// node scripts/benchmark-rich-text.mjs [rounds=3] [--baseline=<git-ref>]
+// node scripts/benchmark-rich-text.mjs [rounds=3] [--baseline=<git-ref>] [--phone] [--cpu-rate=4]
 // --baseline compiles that revision of RichText.tsx against current dependencies,
 // without checking out or editing files (for a focused before/after comparison).
 // Builds this worktree's real RichText with production React, then measures
@@ -14,9 +14,18 @@ import { build } from "vite";
 const rounds = Number(process.argv[2] ?? 3);
 if (!Number.isInteger(rounds) || rounds < 1)
   throw new Error("Expected positive rounds");
-const baseline = process.argv[3]?.match(/^--baseline=([\w./-]+)$/)?.[1];
-if (process.argv[3] && !baseline)
-  throw new Error("Expected --baseline=<git-ref>");
+let baseline;
+let phone = false;
+let cpuRate = 1;
+for (const flag of process.argv.slice(3)) {
+  if (flag === "--phone") phone = true;
+  else if (/^--baseline=[\w./-]+$/.test(flag)) baseline = flag.slice(11);
+  else if (/^--cpu-rate=\d+(?:\.\d+)?$/.test(flag)) {
+    cpuRate = Number(flag.slice(11));
+    if (!Number.isFinite(cpuRate) || cpuRate < 1)
+      throw new Error("CPU rate must be at least 1");
+  } else throw new Error(`Unknown benchmark option: ${flag}`);
+}
 const richTextPath = resolve("src/components/RichText.tsx");
 const baselineSource = baseline
   ? execFileSync("git", ["show", `${baseline}:src/components/RichText.tsx`], {
@@ -54,16 +63,21 @@ const styles = (await readdir(resolve(outDir, "assets")))
 await mkdir(outDir, { recursive: true });
 await writeFile(
   resolve(outDir, "index.html"),
-  `<!doctype html><html><head>${styles}</head><body><div id="root" style="width:800px"></div><script type="module" src="/bench.js"></script></body></html>`,
+  `<!doctype html><html><head>${styles}</head><body><div id="root" style="width:min(800px,100%)"></div><script type="module" src="/bench.js"></script></body></html>`,
 );
 const server = express().use(express.static(outDir)).listen(0, "127.0.0.1");
 await new Promise((resolve) => server.once("listening", resolve));
 let browser;
 try {
   browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({
-    viewport: { width: 1100, height: 900 },
-  });
+  const viewport = phone
+    ? { width: 390, height: 844 }
+    : { width: 1100, height: 900 };
+  const page = await browser.newPage({ viewport });
+  if (cpuRate > 1) {
+    const session = await page.context().newCDPSession(page);
+    await session.send("Emulation.setCPUThrottlingRate", { rate: cpuRate });
+  }
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
   await page.goto(`http://127.0.0.1:${server.address().port}`);
@@ -78,6 +92,7 @@ try {
   const results = [];
   for (let round = 1; round <= rounds; round++) {
     for (const [kind, size] of [
+      ["mixed", 8_000],
       ["mixed", 16_000],
       ["mixed", 32_000],
       ["mixed", 64_000],
@@ -100,6 +115,11 @@ try {
       {
         browser: browser.version(),
         richTextRevision: baseline ?? "working-tree",
+        viewport,
+        readerWidth: await page
+          .locator("#root")
+          .evaluate((node) => node.clientWidth),
+        cpuRate,
         warmups: 3,
         samples: 9,
         semantics,

@@ -7,9 +7,7 @@ covers:
   - src/components/Transcript.tsx
   - src/components/ActivityMatrix.tsx
   - tests/browser/activity-presentation.spec.ts
-  - src/styles/{transcript,activity-cards,legacy-activity}.css
-  - src/components/legacy-activity-fold.tsx
-  - tests/web/legacy-activity-fold.test.tsx
+  - src/styles/{transcript,activity-cards}.css
   - server/session-projection.ts
   - tests/web/transcript-{fold,paging}.test.tsx
   - tests/web/activity-visibility.test.tsx
@@ -88,13 +86,9 @@ Open activity bodies share one outer rhythm; no redundant trailing card margin i
 fold gap. Thinking paragraphs retain reading line-height with a compact paragraph gap and align
 with their header text. Empty status slots do not consume header space or push Copy away.
 
-### Legacy presentation
-
-`LegacyDualLineFold` in `src/components/legacy-activity-fold.tsx` preserves the original paired
-tracks, sampling, glyphs and disclosure behavior. Its scoped skin in
-`src/styles/legacy-activity.css` also retains the original framed item presentation. The legacy
-module is not imported by the current transcript. The PWA titlebar needles commemorate the old
-design while using the active theme's Tool/Thinking identity roles; [[design-system]] owns their presentation.
+The PWA titlebar needles retain the paired-track motif independently of the transcript folds,
+using the active theme's Tool/Thinking identity roles; [[design-system]] owns their presentation.
+The unused legacy fold and its isolated stylesheet are not product components to preserve.
 
 Fold-local choice overrides the default and survives pagination, virtualization, pairing changes,
 and deferred materialization within the branch view. Manual disclosure stops automatic collapse.

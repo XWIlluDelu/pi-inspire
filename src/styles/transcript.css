@@ -732,8 +732,7 @@
   }
 }
 
-/* Lightweight activity groups. The preserved paired-track skin lives in
-   legacy-activity.css and is not loaded by the transcript. */
+/* Lightweight activity groups. */
 .activity-fold {
   display: flex;
   min-width: 0;

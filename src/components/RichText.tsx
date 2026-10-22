@@ -36,7 +36,7 @@ import { ImageLinkContext } from "./ImagePreview";
 import { RichTextMath } from "./RichTextMath";
 
 export type RichTextVariant = "assistant" | "user" | "thinking" | "extension";
-const ASYNC_MARKDOWN_MIN_CHARS = 32_000;
+const ASYNC_MARKDOWN_MIN_CHARS = 8_000;
 
 const CodeBlock = memo(function CodeBlock({
   language,
