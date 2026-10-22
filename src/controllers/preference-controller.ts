@@ -1,6 +1,5 @@
 import {
   type ActivityFoldVisibilityPreference,
-  type CompletionAttentionPreference,
   type ContentTextSizePreference,
   type DesktopSendKeyPreference,
   defaultInterfaceSettings,
@@ -41,7 +40,6 @@ export class PreferenceController {
   private fieldOwners = new Map<keyof InspirePreferences, number>();
   private pendingFieldOwners = new Map<keyof InspirePreferences, number>();
   private confirmedFieldOwners = new Map<keyof InspirePreferences, number>();
-  private completionAttentionRequest = 0;
   private confirmedPrefs: InspirePreferences = defaultPreferences;
 
   constructor(private readonly host: PreferenceControllerHost) {}
@@ -326,49 +324,6 @@ export class PreferenceController {
     this.save({ desktopSendKey });
   }
 
-  async setCompletionAttention(
-    completionAttention: CompletionAttentionPreference,
-  ): Promise<boolean> {
-    const request = ++this.completionAttentionRequest;
-    if (completionAttention === "desktop") {
-      const NotificationApi = window.Notification;
-      if (!NotificationApi) {
-        this.host.notify(
-          "warning",
-          "Desktop notifications are not supported by this browser",
-        );
-        return false;
-      }
-      let permission = NotificationApi.permission;
-      if (permission !== "granted") {
-        try {
-          permission = await NotificationApi.requestPermission();
-        } catch {
-          if (request !== this.completionAttentionRequest) return false;
-          this.host.notify(
-            "warning",
-            "The browser could not request notification permission",
-          );
-          return false;
-        }
-      }
-      if (request !== this.completionAttentionRequest) return false;
-      if (permission !== "granted") {
-        this.host.notify(
-          "warning",
-          permission === "denied"
-            ? "Desktop notification permission was denied"
-            : "Desktop notification permission was not granted",
-        );
-        return false;
-      }
-    }
-    if (request !== this.completionAttentionRequest) return false;
-    if (completionAttention === "off") this.host.clearCompletionAttention();
-    this.save({ completionAttention });
-    return true;
-  }
-
   setProjectDisplay(projectDisplay: ProjectDisplayPreference): void {
     this.save({ projectDisplay });
   }
@@ -388,9 +343,10 @@ export class PreferenceController {
   }
 
   restoreDefaults(): void {
-    this.completionAttentionRequest += 1;
     this.host.clearCompletionAttention();
-    this.save({ ...defaultInterfaceSettings });
+    const { completionAttention: _legacy, ...defaults } =
+      defaultInterfaceSettings;
+    this.save(defaults);
   }
 
   toggleNavGroup(cwd: string): void {

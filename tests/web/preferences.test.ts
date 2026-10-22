@@ -139,9 +139,13 @@ describe("settings reset", () => {
 
     appStore.restoreDefaultSettings();
     await vi.waitFor(() => expect(patches).toHaveLength(1));
-    expect(patches[0]).toEqual(defaultInterfaceSettings);
+    const { completionAttention: _legacy, ...hostDefaults } =
+      defaultInterfaceSettings;
+    expect(patches[0]).toEqual(hostDefaults);
+    expect(appStore.getState().taskAlerts.mode).toBe("off");
     expect(appStore.getState().prefs).toMatchObject({
-      ...defaultInterfaceSettings,
+      ...hostDefaults,
+      completionAttention: "title",
       recentModelIds: [{ provider: "provider", id: "model" }],
       navCollapsedGroups: ["/kept"],
     });

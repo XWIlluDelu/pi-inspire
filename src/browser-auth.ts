@@ -3,6 +3,7 @@
 interface BrowserIdentity {
   privateKey: CryptoKey;
   certificate: string;
+  taskAlertsVersion?: 1;
 }
 interface Access {
   bearer: string;
@@ -122,7 +123,11 @@ export async function pairBrowser(token?: string): Promise<void> {
       publicKey: { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y },
     },
   );
-  await identityStorage({ privateKey: keys.privateKey, certificate });
+  await identityStorage({
+    privateKey: keys.privateKey,
+    certificate,
+    taskAlertsVersion: 1,
+  });
 }
 
 function base64url(bytes: ArrayBuffer): string {
@@ -158,6 +163,13 @@ async function exchange(identity: BrowserIdentity): Promise<Access> {
     challenge,
     signature: base64url(signature),
   });
+}
+
+export async function migrateTaskAlertIntent(
+  legacy: import("../shared/contracts").CompletionAttentionPreference,
+) {
+  const identity = await identityStorage();
+  return identity?.taskAlertsVersion === 1 ? ("off" as const) : legacy;
 }
 
 async function renew(): Promise<Access> {

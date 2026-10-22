@@ -27,6 +27,7 @@ function record(value: unknown): Record<string, unknown> {
  * native actions. No RPC impersonation or new session writer. */
 export class HerdrNativeSession implements ExternalSessionConnection {
   readonly interruptionScope = "agent" as const;
+  retirementReason?: "process-exit";
   private closed = false;
   private tail: Promise<unknown> = Promise.resolve();
 
@@ -39,7 +40,8 @@ export class HerdrNativeSession implements ExternalSessionConnection {
       kind: "id" | "path";
       value: string;
     }) => Promise<boolean>,
-    private readonly actions?: Pick<PiNativeActions, "invoke">,
+    private readonly actions?: Pick<PiNativeActions, "invoke"> &
+      Partial<Pick<PiNativeActions, "taskRuns">>,
   ) {}
 
   async read(): Promise<ExternalSessionState | null> {
@@ -47,8 +49,10 @@ export class HerdrNativeSession implements ExternalSessionConnection {
     if (
       this.writer.processIdentity &&
       !(await herdrProcessIsLive(this.writer.processIdentity))
-    )
+    ) {
+      this.retirementReason = "process-exit";
       return null;
+    }
     try {
       const state = await this.readCurrent();
       if (
@@ -129,7 +133,19 @@ export class HerdrNativeSession implements ExternalSessionConnection {
     )
       return null;
     const status = agent.agent_status;
+    const identity = this.writer.processIdentity;
+    const actions =
+      this.actions ??
+      new PiNativeActions(
+        this.writer.pid,
+        this.sessionId,
+        this.sessionFile,
+        identity ? `linux:${identity.boot}:${identity.birth}` : undefined,
+      );
+    const taskRuns = await actions.taskRuns?.().catch(() => undefined);
     return {
+      ...(taskRuns ? { taskRuns } : {}),
+      ...(status === "error" ? { outcome: "failed" as const } : {}),
       status:
         status === "working" || status === "blocked"
           ? status

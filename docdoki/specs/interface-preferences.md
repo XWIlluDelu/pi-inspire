@@ -1,5 +1,5 @@
 ---
-purpose: Settings organization, field-owned persistence, shared update observations, and completion attention.
+purpose: Settings organization, field-owned persistence, shared update observations, and task-alert controls.
 covers:
   - shared/contracts.ts
   - server/{preferences,update-checker,pi-update-checker,update-coordinator}.ts
@@ -12,7 +12,7 @@ covers:
   - tests/browser/{settings-layout,loading-states}.spec.ts
 ---
 
-# Interface preferences and completion attention
+# Interface preferences and task alerts
 
 The retired `assistantRoundDisplay` field is ignored when reading existing preferences and omitted
 on the next successful write. Its Details/Divider UI and command-palette actions are removed.
@@ -40,7 +40,7 @@ selected-state markers. These are presentation choices, not changes to preferenc
 | --- | --- |
 | Display | One field group: `Theme`, `Color palette`, `Content text size`, `Reading width`, `Project location`, then `Titlebar needles`. The workbench header and installed-window title bar have distinct scopes, explained beside their controls rather than combined under a location-based heading. |
 | Conversation | One field group: activity visibility (`Reasoning detail`, `Tool activity`, `Activity groups`), then `Send key`. |
-| Behavior | App behavior (`On launch`, `Completion alerts`) and `Pi session settings` (`Steering delivery`, `Follow-up delivery`, `Automatic context compaction`, `Automatic retry`). |
+| Behavior | App behavior (`On launch`, `Task alerts`) and `Pi session settings` (`Steering delivery`, `Follow-up delivery`, `Automatic context compaction`, `Automatic retry`). |
 | Models | Pi defaults, common scope/cycling, graphical model/provider configuration, and nearby login/logout under [[model-settings]]. |
 | MCP | Scoped native-file configuration, protected-value edits and explicit selected-worker Reload under [[mcp]]; not a connection inventory. |
 | System | Component versions, Docs/Changelog release references and unified update check; then `Host`, with `Herdr enhancement` followed by Host restart under [[host-lifecycle]]. |
@@ -181,29 +181,24 @@ Option help describes materialization: Expanded loads every card; Compact presen
 24 behind the existing expansion entry; Collapsed shows only the group entry while retaining already
 materialized children and local state. A per-card override leaves its saved default unchanged.
 
-## Completion attention
+## Task alerts
 
-Completion alerts are Off, Mark tab, or Desktop notification (`off | title | desktop`), defaulting to
-Off. Desktop also records the tab marker, preserving attention after a notification disappears or
-cannot be delivered.
+[[notifications]] owns task outcomes, device-local intent, delivery, permission/status feedback,
+test notifications and click-through. Keep its Off / Mark tab / System notification control in
+Behavior, using the existing field-card layout with contextual status and actions below the choice.
 
-- Only browser-observed live completion qualifies. An agent run owns its settlement; nested
-  compaction cannot consume it. Standalone manual compaction owns its own end. Socket loss clears
-  observed ownership.
-- Snapshots preserve an existing arm only while the matching operation remains live; they never
-  create one. Foreground selected work, bootstrap/history, and duplicate terminal events do not
-  generate attention.
-- The marker composes with an extension-set title. Viewing its session in a focused, visible tab or
-  selecting Off clears it.
-- A Settings gesture requests desktop permission. The result applies only while Desktop remains the
-  latest choice; denial or an unavailable API warns without changing saved intent.
-- OS notifications contain fixed outcome text, opaque session identity, and cwd-derived project
-  metadata. Catalog titles are excluded because unnamed-session titles can contain first-message
-  text. Clicking focuses the window and selects the owning session.
+Notification permission and enrollment are installation-local, unlike ordinary Host preferences.
+Reset preferences also resets alerts on this installation, not other devices. Legacy
+`completionAttention` values supply migration intent; they do not establish permission or push
+enrollment. The earlier browser-start-event-only design is superseded: page refresh and reconnect
+must not discard a Host-observed run's notification eligibility.
+
+The Host-owned coordinator, device-local settings and worker display are implemented.
+[[follow-notifications-2026-10-22]] records verification and remaining platform acceptance.
 
 ## Checks
 
 Preference tests cover field ownership, refusal rollback, migrations, and invalid-file protection.
 Settings and modal tests cover navigation, loading, menu dismissal, and focus restoration; Chromium
-checks menu reachability and persistence. Update and attention tests cover their separate observation
-lifecycles.
+checks menu reachability and persistence. Update tests cover their observation lifecycle; task-alert
+conformance follows the checks in [[notifications]].

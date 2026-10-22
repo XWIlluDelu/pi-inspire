@@ -50,6 +50,61 @@ function nativeFixture() {
 }
 
 describe("continue an externally owned Pi", () => {
+  it("observes short native run outcomes without replaying the initial report or claiming idle means success", async () => {
+    const f = nativeFixture();
+    const old = {
+      id: "old",
+      outcome: "completed" as const,
+      settledAt: Date.now(),
+    };
+    const runs = { receiverId: "receiver", activeRunId: null, settled: [old] };
+    f.setState({ status: "idle", taskRuns: runs });
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      trackedAttachmentStore(),
+      () => {
+        throw new Error("must not launch Pi");
+      },
+      preview,
+    ).setExternalSessionConnector(async () => f.native);
+    const events: Record<string, unknown>[] = [];
+    runtime.on("event", (event) =>
+      events.push(event as Record<string, unknown>),
+    );
+    try {
+      await runtime.openSession("a");
+      expect(
+        events.filter((event) => event.type === "native_task_outcome"),
+      ).toEqual([]);
+      const failed = {
+        id: "new",
+        outcome: "failed" as const,
+        settledAt: Date.now(),
+      };
+      f.setState({
+        status: "idle",
+        taskRuns: { ...runs, settled: [old, failed] },
+      });
+      await vi.waitFor(
+        () =>
+          expect(
+            events.filter((event) => event.type === "native_task_outcome"),
+          ).toEqual([
+            expect.objectContaining({
+              outcome: "failed",
+              outcomeId: "receiver:new",
+            }),
+          ]),
+        { timeout: 2_000 },
+      );
+      expect((await runtime.snapshot("a")).sessionStatuses.a?.runState).toBe(
+        "failed",
+      );
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("checks external ownership for a cold settings mutation without selection warmup", async () => {
     const f = nativeFixture();
     const create = vi.fn(() => {

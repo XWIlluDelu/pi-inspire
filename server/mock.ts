@@ -904,6 +904,7 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       ...event,
       sessionId: id,
       sessionStatus: this.state.sessionStatuses[id],
+      taskProject: basename(this.sessions.get(id)?.cwd ?? ""),
     });
   }
 

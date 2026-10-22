@@ -1,11 +1,16 @@
+import type { NativeTaskRuns } from "../docs/examples/session-activity.js";
+
 /** A connection to an externally owned Pi, not an Inspire-owned worker. */
 export interface ExternalSessionState {
   status: "idle" | "working" | "blocked" | "unknown";
+  taskRuns?: NativeTaskRuns;
+  outcome?: "failed";
 }
 
 export interface ExternalSessionConnection {
   /** A target extension may interrupt agent work but not native TUI shell execution. */
   readonly interruptionScope?: "agent";
+  readonly retirementReason?: "process-exit";
   /** null means this owner is confirmed no longer writing this session.
    * An unavailable endpoint or uncertain ownership MUST reject, never return null. */
   read(): Promise<ExternalSessionState | null>;

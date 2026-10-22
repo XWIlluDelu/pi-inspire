@@ -134,6 +134,17 @@ export function piActivityDirectory(): string {
   );
 }
 
+export interface NativeTaskResult {
+  id: string;
+  outcome: "completed" | "failed" | "aborted";
+  settledAt: number;
+}
+export interface NativeTaskRuns {
+  receiverId: string;
+  activeRunId: string | null;
+  settled: NativeTaskResult[];
+}
+
 export interface PiActivityRecord {
   version: 1;
   pid: number;
@@ -147,6 +158,7 @@ export interface PiActivityRecord {
   sessionFile: string;
   activity: "working" | "blocked" | "idle";
   updatedAt: number;
+  taskRuns?: NativeTaskRuns;
   nativeActions?: {
     version: 1;
     receiverId: string;
@@ -251,6 +263,9 @@ export default function (pi: ExtensionAPI) {
   let lifecycle = 0;
   let receiverId: string | undefined;
   let actionResult: NativeActionResult | undefined;
+  let activeRunId: string | null = null;
+  let taskOutcome: NativeTaskResult["outcome"] = "completed";
+  let settledTasks: NativeTaskResult[] = [];
   let unsubscribe: (() => void) | undefined;
   const invocations = new Map<string, Promise<void>>();
 
@@ -291,7 +306,10 @@ export default function (pi: ExtensionAPI) {
             : "idle",
         updatedAt: Date.now(),
         ...(receiverId
-          ? { nativeActions: { version: 1, receiverId, result: actionResult } }
+          ? {
+              taskRuns: { receiverId, activeRunId, settled: settledTasks },
+              nativeActions: { version: 1, receiverId, result: actionResult },
+            }
           : {}),
       });
     } catch {
@@ -305,6 +323,8 @@ export default function (pi: ExtensionAPI) {
     unsubscribe = undefined;
     receiverId = undefined;
     actionResult = undefined;
+    activeRunId = null;
+    settledTasks = [];
     invocations.clear();
     if (timer) clearInterval(timer);
     timer = undefined;
@@ -441,6 +461,7 @@ export default function (pi: ExtensionAPI) {
       process.env.HERDR_SOCKET_PATH
     ) {
       receiverId = randomUUID();
+      if (running) activeRunId = randomUUID();
       unsubscribe = ctx.ui.onTerminalInput(receive);
     }
     await publish();
@@ -454,18 +475,50 @@ export default function (pi: ExtensionAPI) {
     if (!context) return;
     context = ctx;
     running = true;
+    activeRunId ??= randomUUID();
     return publish();
   });
   pi.on("agent_start", (_event, ctx) => {
     if (!context) return;
     context = ctx;
     running = true;
+    activeRunId ??= randomUUID();
+    taskOutcome = "completed";
     return publish();
   });
-  pi.on("agent_settled", (_event, ctx) => {
+  pi.on("message_end", (event) => {
+    if (!context || event.message.role !== "assistant") return;
+    const message = event.message;
+    taskOutcome =
+      message.stopReason === "aborted" ||
+      (message.stopReason === "error" &&
+        message.errorMessage?.trim() === "This operation was aborted")
+        ? "aborted"
+        : message.stopReason === "error" || message.stopReason === "length"
+          ? "failed"
+          : "completed";
+  });
+  pi.on("agent_before_settle", (event) => {
+    if (event.outcome === "error") taskOutcome = "failed";
+    else if (event.outcome === "aborted") taskOutcome = "aborted";
+  });
+  pi.on("agent_settled", (event, ctx) => {
     if (!context) return;
     context = ctx;
     running = false;
+    if (activeRunId) {
+      settledTasks = [
+        ...settledTasks.filter(
+          (item) => item.settledAt > Date.now() - 15 * 60_000,
+        ),
+        {
+          id: activeRunId,
+          outcome: event.aborted ? ("aborted" as const) : taskOutcome,
+          settledAt: Date.now(),
+        },
+      ].slice(-16);
+      activeRunId = null;
+    }
     return publish();
   });
   pi.on("ui_prompt_start", () => {

@@ -6,6 +6,8 @@ import type {
 } from "../../shared/contracts";
 import { type Api, ApiError, ApiRequestCancelledError } from "../api";
 
+export type SessionOpenResult = "opened" | "missing" | "retry" | "superseded";
+
 export interface SessionSelectionState {
   sessionId: string | null;
   cwd: string | null;
@@ -55,10 +57,10 @@ export class SessionSelectionController {
     this.observation = null;
   }
 
-  async open(id: string): Promise<void> {
+  async open(id: string): Promise<SessionOpenResult> {
     const state = this.host.state();
     const api = this.host.api();
-    if (!api) return;
+    if (!api) return "retry";
     // Re-selecting the visible session is a no-op only with no older operation
     // to supersede, including create/deselect intents with no target ID yet.
     if (
@@ -66,20 +68,25 @@ export class SessionSelectionController {
       !state.sessionSelectionPending &&
       !state.readOnlyReason
     )
-      return;
-    if (id === state.openingSessionId) return;
-    await this.runSelection(
+      return "opened";
+    if (id === state.openingSessionId) return "superseded";
+    return this.runSelection<SessionOpenResult>(
       id,
       api,
       (signal) => api.openSession(id, signal),
       "Failed to open session",
-      undefined,
+      "superseded",
       (_snapshot, ticket) => {
         this.host.ensureSessionVisible(id);
         if (this.host.consumeReadyWhileOpening(id, ticket)) {
           this.host.resyncSelected(id);
         }
+        return "opened";
       },
+      (error) =>
+        error instanceof ApiError && error.code === "SESSION_NOT_FOUND"
+          ? "missing"
+          : "retry",
     );
   }
 
@@ -161,6 +168,7 @@ export class SessionSelectionController {
     fallbackMessage: string,
     staleResult: T,
     afterApply: (snapshot: ActiveSnapshot, ticket: number) => T,
+    onFailure?: (error: unknown) => T,
   ): Promise<T> {
     const transportGeneration = this.host.transportGeneration();
     const ticket = this.host.beginOpening(openingSessionId);
@@ -185,6 +193,7 @@ export class SessionSelectionController {
           if (error instanceof ApiError && error.code === "SESSION_NOT_FOUND")
             this.host.refreshSessionCatalog();
         }
+        return onFailure?.(error) ?? staleResult;
       }
       return staleResult;
     } finally {
