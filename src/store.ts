@@ -3001,10 +3001,6 @@ export class AppStore {
     this.workspace.resumeSearch();
   };
 
-  setWorkspaceExplorerOpen = (open: boolean): void => {
-    this.set({ workspaceExplorerOpen: open });
-  };
-
   openWorkspaceFile = (path: string): Promise<void> => {
     this.workspace.revealPath(path);
     return this.resources.openResource(path, "files", path);

@@ -165,10 +165,13 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   and assistive-technology use. A collapsed group containing the visible
   session carries the active highlight on its header, and active search results remain visible
   regardless of saved collapse state. Hidden is a bottom curation drawer outside the session list's
-  scroll area, below the workspace explorer when present. Both drawers use the same neutral header
-  surface, height, typography, icon alignment, and trailing disclosure indicator. Hidden places its
-  count at the trailing edge before the indicator. Each header precedes its own content; Hidden's
-  independently scrolling body is bounded to leave room for ordinary navigation. Project identity
+  scroll area. Its neutral 44px header leaves space around the label and aligned icons, with the
+  count at the trailing edge before the disclosure indicator. The header precedes its content; Hidden's
+  independently scrolling body is bounded to leave room for ordinary navigation. Both scrollports
+  retain enough height for complete rows in short windows, including safe-area insets. When those
+  minimums cannot fit alongside New/Search and the drawer header, navigation itself scrolls rather
+  than compressing a list into a sliver. Opening Hidden reveals its body without transferring focus;
+  normal-height navigation retains independent list scrolling and its existing spacing. Project identity
   remains on cross-project Hidden rows as quiet text rather than a filled badge. On phone-width or
   non-hover layouts, all cross-project rows (Pinned, search and Hidden) place project and age beneath
   the title so persistent actions do not

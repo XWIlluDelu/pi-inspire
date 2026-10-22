@@ -176,12 +176,10 @@ independent project shells in [[terminal]].
   against displayed rows and use literal escaped text when unavailable or changed between reads.
   `git-long-prefix.test.ts` covers real Git through Host HTTP and source/change navigation projection.
 
-## Workspace explorer and contextual modes
+## Contextual modes
 
-- The navigation column’s lower half offers a compact, collapsible workspace explorer labeled by the
-  visible project basename. It intentionally omits search and secondary pane actions in the
-  constrained column. Its lazy tree shares cwd-scoped expansion and selection with the right Files
-  browser, and a file row opens the same session-bound preview as a conversation reference.
+- Workspace file browsing lives in the contextual Files pane; the session navigation column does
+  not duplicate its tree.
 
 - The contextual region primarily hosts Files, Changes, History, and Terminal through equal-width
   mode controls that preserve every label at the pane's minimum width. Files uses the complete

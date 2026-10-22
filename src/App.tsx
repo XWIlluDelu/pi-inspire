@@ -657,8 +657,8 @@ export function App() {
     if (!narrowViewport) setMobileNavOpen(false);
   }, [narrowViewport]);
 
-  // Resource opens can originate inside the navigation tree. Close the nav
-  // before paint so the narrow layout never mounts two modal drawers.
+  // Resource opens close navigation before paint so the narrow layout never
+  // mounts two modal drawers.
   useLayoutEffect(() => {
     if (narrowViewport && mobileNavOpen && state.resourcesOpen)
       setMobileNavOpen(false);

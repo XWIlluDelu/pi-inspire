@@ -451,19 +451,7 @@ test("files navigation preserves context across desktop and narrow workspaces", 
   ).toHaveValue("WorkspaceBrowser.tsx");
   await drawer.getByRole("button", { name: "Close context pane" }).click();
 
-  await page.getByRole("button", { name: "Toggle navigation" }).click();
-  const navigation = page.getByRole("dialog", { name: "Sessions" });
-  const explorer = navigation.getByRole("region", { name: "Workspace files" });
-  await explorer.locator(".explorer__header").click();
-  await explorer.locator('[data-workspace-path="README.md"]').click();
-
-  await expect(page.getByRole("dialog", { name: "Sessions" })).toHaveCount(0);
-  await expect(page.getByRole("dialog")).toHaveCount(1);
-  await expect(
-    page
-      .getByRole("dialog", { name: "Context panel" })
-      .getByRole("button", { name: "Back to Files", exact: true }),
-  ).toBeVisible();
+  await expect(drawer).toHaveCount(0);
 });
 
 test("document readers preserve source toggles, intrinsic SVG geometry and independent source scrolling", async ({

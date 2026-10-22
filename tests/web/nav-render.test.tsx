@@ -47,8 +47,7 @@ const groupNames = () =>
   [...document.querySelectorAll(".nav__group-name")].map(
     (node) => node.textContent,
   );
-/** The session list only: the workspace explorer below it names the visible
- * session's folder too. */
+/** Ordinary sessions, excluding the separately docked Hidden drawer. */
 const list = () => within(document.querySelector(".nav__list") as HTMLElement);
 
 let deletedSessions: Set<string>;
@@ -70,47 +69,6 @@ describe("session navigation controls", () => {
               cwd: "/work/alpha",
             }),
           }),
-        };
-      }
-      if (url.startsWith("/api/git/status"))
-        return {
-          body: {
-            kind: "repository",
-            head: { kind: "branch", name: "main", oid: "0123456789abcdef" },
-            files: [
-              {
-                path: {
-                  id: "b3RoZXIvY2hhbmdlZC50cw",
-                  display: "other/changed.ts",
-                  utf8Path: "other/changed.ts",
-                  workspacePath: "other/changed.ts",
-                },
-                unstaged: { kind: "modified" },
-                untracked: false,
-              },
-            ],
-            total: 1,
-            truncated: false,
-            groups: {
-              conflicted: [],
-              staged: [],
-              unstaged: ["b3RoZXIvY2hhbmdlZC50cw"],
-              untracked: [],
-            },
-          },
-        };
-      if (url.startsWith("/api/files/list")) {
-        const dir = new URL(url, "http://local").searchParams.get("dir") ?? "";
-        return {
-          body: {
-            entries:
-              dir === "other"
-                ? [{ name: "changed.ts", type: "file" }]
-                : [
-                    { name: "other", type: "dir" },
-                    { name: "changed.ts", type: "file" },
-                  ],
-          },
         };
       }
       if (url.startsWith("/api/sessions/by-cwd")) {
@@ -457,7 +415,7 @@ describe("session navigation controls", () => {
     ).toBe(toggle);
     const drawer = hiddenHeading.closest("section")!;
     expect(drawer.closest(".nav__list")).toBeNull();
-    expect(drawer.previousElementSibling).toHaveClass("explorer");
+    expect(drawer.previousElementSibling).toHaveClass("nav__list");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.getByRole("button", { name: "Clear Hidden" })).toBeVisible();
     toggle.focus();
@@ -470,9 +428,6 @@ describe("session navigation controls", () => {
     expect(hiddenContent?.previousElementSibling).toBe(hiddenHeading);
     expect(hiddenHeading).toHaveClass("nav__dock-heading");
     expect(toggle).toHaveClass("nav__dock-toggle");
-    expect(document.querySelector(".explorer__header")).toHaveClass(
-      "nav__dock-toggle",
-    );
     const clear = within(hiddenHeading).getByRole("button", {
       name: "Clear Hidden",
     });
@@ -984,61 +939,6 @@ describe("session navigation controls", () => {
     expect(document.activeElement).toHaveAttribute(
       "aria-label",
       'Hide "Beta session"',
-    );
-  });
-
-  it("decorates workspace rows by exact path without basename guessing", async () => {
-    render(
-      <Nav
-        onToggleNavigation={vi.fn()}
-        collapsed={false}
-        onNewSession={() => undefined}
-        onSelectSession={() => undefined}
-      />,
-    );
-    const explorer = document.querySelector(".explorer") as HTMLElement;
-    fireEvent.click(
-      explorer.querySelector(".explorer__header") as HTMLButtonElement,
-    );
-    expect(
-      within(explorer).getByRole("button", { name: "alpha" }),
-    ).toHaveAttribute("title", "/work/alpha");
-    expect(
-      explorer.querySelector(".explorer__project"),
-    ).not.toBeInTheDocument();
-    expect(within(explorer).queryByRole("searchbox")).not.toBeInTheDocument();
-    const rootFile = await screen.findByRole("button", { name: "changed.ts" });
-    expect(
-      within(rootFile).queryByLabelText(/unstaged/),
-    ).not.toBeInTheDocument();
-    expect(rootFile.querySelector(".workspace-tree__name")).not.toHaveClass(
-      "git-deco--modified",
-    );
-    const dirtyDirectory = screen.getByRole("button", {
-      name: /other.*contains modified files/i,
-    });
-    expect(dirtyDirectory.querySelector(".workspace-tree__name")).toHaveClass(
-      "git-deco--modified",
-    );
-    expect(
-      within(dirtyDirectory).getByLabelText("Contains modified files"),
-    ).toHaveClass("git-rollup", "git-deco--modified");
-    fireEvent.click(dirtyDirectory);
-    await waitFor(() =>
-      expect(
-        screen.getAllByRole("button", { name: /changed\.ts/ }),
-      ).toHaveLength(2),
-    );
-    const files = screen.getAllByRole("button", { name: /changed\.ts/ });
-    const nested = files.find((button) => button !== rootFile)!;
-    expect(
-      within(nested).getByLabelText("unstaged modified"),
-    ).toHaveTextContent("M");
-    expect(within(nested).getByLabelText("unstaged modified")).toHaveClass(
-      "git-deco--modified",
-    );
-    expect(nested.querySelector(".workspace-tree__name")).toHaveClass(
-      "git-deco--modified",
     );
   });
 
