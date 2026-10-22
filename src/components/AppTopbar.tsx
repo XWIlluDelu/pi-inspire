@@ -16,14 +16,14 @@ import {
   useState,
 } from "react";
 import {
-  MAX_SESSION_DISPLAY_TITLE_CHARS,
   type ProjectionConflict,
   projectionConflictSeverity,
   projectNameFromCwd,
   type RunState,
 } from "../../shared/contracts";
+import { userMessageTitle } from "../../shared/user-message";
 import { branchCopiesBlocked } from "../controllers/branch-controller";
-import { type ChatMessage, userMessageDisplayText } from "../events";
+import { type ChatMessage } from "../events";
 import { gitChangeCount, gitHeadLabel } from "../git-presentation";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { shallowEqual, store, useAppState } from "../store";
@@ -48,15 +48,10 @@ export function sessionHeading(
   const catalog = catalogTitle?.trim() ?? "";
   if (catalog && !GENERIC_SESSION_HEADINGS.has(catalog)) return catalog;
   if (transcriptStartsAtRoot) {
-    const firstPrompt = messages.find(
-      (message) =>
-        message.role === "user" && userMessageDisplayText(message).trim(),
-    );
-    if (firstPrompt) {
-      return userMessageDisplayText(firstPrompt)
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, MAX_SESSION_DISPLAY_TITLE_CHARS);
+    for (const message of messages) {
+      if (message.role !== "user") continue;
+      const title = userMessageTitle(message.content);
+      if (title) return title;
     }
   }
   return "New session";

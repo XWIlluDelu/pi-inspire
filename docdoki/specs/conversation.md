@@ -105,10 +105,13 @@ custom messages remain independent readable boundaries in this contract.
   selected text and multiple formulas are preserved. Every user turn has a message-level action that
   copies its exact source. Every assistant response has an action at the end of the response that
   concatenates only its response text blocks and excludes thinking, tool, custom, and generic
-  activity payloads.
+  activity payloads. Saved user/assistant/custom copies read the original entry on demand through
+  the existing paged History content channel, not the bounded transcript preview or mixed History
+  display text. Display bounds stay unchanged; custom content and details remain complete, embedded
+  image bytes travel separately, and changing the source view retires pending copies.
 
-  Each Thinking, tool, generic activity block, and displayed custom message independently copies its
-  complete source projection; completed-tool copies include the name, arguments, and result under
+  Each Thinking, tool, and generic activity block independently copies its complete source projection;
+  completed-tool copies include the name, arguments, and result under
   the existing Host projection bounds, while a generating/interrupted call explicitly copies only
   its partial argument preview. Custom copies include the type, content, and details.
   [[design-system]] defines the shared Copy/Fork presentation types and activation scopes.

@@ -2,10 +2,12 @@ import {
   MAX_PENDING_PREVIEW_CHARS,
   type PendingMessageSummary,
 } from "./contracts.js";
+import { userMessagePreviewText } from "./user-message.js";
 
 export function pendingTextSummary(
-  text: string,
+  source: string,
 ): Pick<PendingMessageSummary, "textPreview" | "textLength" | "textTruncated"> {
+  const text = userMessagePreviewText(source);
   let textPreview = text;
   if (text.length > MAX_PENDING_PREVIEW_CHARS || text.split("\n").length > 4) {
     const separator = "\n…\n";

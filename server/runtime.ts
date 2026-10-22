@@ -3464,6 +3464,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           request.targetId,
           request.offset ?? 0,
           this.effectiveLeaf(slot),
+          request.format,
         ),
         revision: slot.branchRevision,
       };

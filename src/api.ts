@@ -738,6 +738,7 @@ export function createApi(token: string | null = null) {
           viewId: body.viewId,
           targetId: body.targetId,
           offset: String(body.offset ?? 0),
+          ...(body.format ? { format: body.format } : {}),
         }).toString()}`,
         { signal },
       ),

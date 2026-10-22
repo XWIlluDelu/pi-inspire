@@ -61,6 +61,7 @@ import {
   BRANCH_CONTENT_PAGE_CHARS,
   branchEntryContent,
   branchEntryText,
+  branchMessageSource,
   branchNode,
   projectSessionTree,
 } from "./session-tree.js";
@@ -1431,7 +1432,10 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       tree.activePath.includes(entry.id),
       tree.effectiveLeafId === entry.id,
     );
-    const text = branchEntryText(entry, "separate");
+    const text =
+      request.format === "message"
+        ? branchMessageSource(entry)
+        : branchEntryText(entry, "separate");
     const content = branchEntryContent(entry);
     const images = Array.isArray(content)
       ? content.flatMap((block, index) =>

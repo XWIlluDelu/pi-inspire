@@ -307,7 +307,10 @@ region without focusing the editor. It releases latest-follow; keyboard and poin
 share the same action. The region adds no ordinary Tab stop and retains the existing focus-within
 emphasis and idle dimming. The count disappears when the queue is empty. Text previews preserve beginning and end, up to three leading lines and one trailing
 line within 512 characters, with explicit middle ellipsis.
-Short text stays whole; omitted rows retain total and omitted counts. Known images have wrapping,
+Short text stays whole; omitted rows retain total and omitted counts. Previews use the shared
+user-content projection, showing file names instead of model-facing transport instructions.
+Preview length and truncation describe this readable text; Copy and Return retain the exact input.
+Known images have wrapping,
 clickable thumbnails from retained handles through the attachment endpoint. Until handles arrive,
 count-only rows show Image / N images; unknown empty rows imply no image. Consumed image admissions
 leave the public view even if Pi retains empty captions. Display, full-copy and recovery share that

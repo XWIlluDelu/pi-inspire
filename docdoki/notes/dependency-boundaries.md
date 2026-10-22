@@ -21,11 +21,10 @@ Pi owns session JSONL, settings, credentials, extension execution, compaction an
 [[pi-integration]] and [[session-persistence]] define their Host/GUI adaptation; [[pi-capability-gaps]]
 lists the public interfaces still needed for further GUI support.
 
-Session search also loads the installed Pi selector's pure internal parser/matcher at
-`dist/modes/interactive/components/session-selector-search.js`; it is not a root SDK export.
-`server/session-search.ts` isolates that compatibility dependency: a missing or incompatible module
-fails the search, not ordinary listing or Host startup. Native catalog-search regressions check the
-selected Pi installation when compatibility versions change.
+Session search owns its small user-facing query contract in `server/session-search-query.ts`.
+It reads Pi session data without depending on private terminal-selector modules. The search worker
+keeps full-content parsing and terminable regex matching off the Host event loop; catalog tests
+assert explicit query results rather than treating another implementation as the specification.
 
 For upstream behavior, use the installed package's `docs/rpc.md`, `docs/sdk.md`,
 `docs/session-format.md`, `docs/extensions.md`, `docs/settings.md` and `docs/mcp.md`, alongside public

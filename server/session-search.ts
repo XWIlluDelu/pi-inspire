@@ -1,11 +1,8 @@
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import type { SessionCatalogIssue } from "../shared/contracts.js";
-import { piInstallation } from "./pi-installation.js";
 import type { SessionRecord } from "./session-metadata.js";
 
-/** Full-body parsing and native fuzzy/regex work must not monopolize the Host. */
+/** Full-body parsing and fuzzy/regex work must not monopolize the Host. */
 export function searchSessionRecords(
   sessions: readonly SessionRecord[],
   query: string,
@@ -28,19 +25,13 @@ export function searchSessionRecords(
         sessions,
         query,
         partial: Boolean(issues),
-        nativeSearchPath: pathToFileURL(
-          join(
-            piInstallation.packageRoot,
-            "dist/modes/interactive/components/session-selector-search.js",
-          ),
-        ).href,
       },
     },
   );
   return new Promise((resolve, reject) => {
     const cancel = () =>
       finish(signal?.reason ?? new Error("Session search cancelled"));
-    // A pathological regex is terminable even while native matching is synchronous.
+    // A pathological regex is terminable even while matching is synchronous.
     const timer = setTimeout(
       () =>
         finish(

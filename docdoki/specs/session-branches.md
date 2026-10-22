@@ -36,6 +36,11 @@ Independent copies do not replace the active source worker. Durable trust comes 
   materialization and worker admission belong to [[session-persistence]]. RPC uncertainty and
   completion-driven hooks belong to [[pi-integration]] and [[session-transport]].
 
+  Ordinary user-input outline snippets use the shared user-content projection: readable file names
+  replace transport trailers and image-dimension notes are omitted; image cues remain visible.
+  Search snippets and detailed reads still expose retained source so matching paths, copying and
+  editing do not depend on the shortened display.
+
   The branch tree is loaded through bounded projections of Pi entry identities, with older and alternate
   points still reachable and searchable. Route pages keep their containing user prompt visible when
   tool/event detail crosses a page boundary; that heading does not skip any retained activity.
