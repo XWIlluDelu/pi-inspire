@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  HostRestartOperation,
+  HostRestartRequest,
+  HostRestartStatus,
+} from "../../shared/host-restart";
 import { HostRestartClient } from "../../src/controllers/host-restart-controller";
-import type { HostRestartStatus } from "../../shared/host-restart";
 
 beforeEach(() => sessionStorage.clear());
 function fixture() {
@@ -13,11 +17,13 @@ function fixture() {
   };
   const api = {
     hostRestartStatus: vi.fn(async () => structuredClone(status)),
-    restartHost: vi.fn(async (request) => ({
-      id: request.operationId,
-      scope: request.scope,
-      phase: "preparing" as const,
-    })),
+    restartHost: vi.fn(
+      async (request: HostRestartRequest): Promise<HostRestartOperation> => ({
+        id: request.operationId,
+        scope: request.scope,
+        phase: "preparing",
+      }),
+    ),
   };
   return { status, api, client: new HostRestartClient(api) };
 }
@@ -107,6 +113,81 @@ describe("browser restart delivery", () => {
     await f.client.refresh();
     await f.client.start("host", old);
     expect(f.api.restartHost).not.toHaveBeenCalled();
+  });
+
+  it("keeps Host observation independent of broken local recovery and unblocks after repair", async () => {
+    const f = fixture();
+    sessionStorage.setItem("inspire:host-restart:v1", "{broken}");
+    await f.client.refresh();
+    expect(f.client.snapshot().status).toEqual(f.status);
+    expect(f.client.snapshot().blocked).toBe(true);
+    expect(f.api.restartHost).not.toHaveBeenCalled();
+    sessionStorage.removeItem("inspire:host-restart:v1");
+    await f.client.refresh();
+    expect(f.client.snapshot().blocked).toBe(false);
+    await f.client.start("host", f.status.hostId);
+    expect(f.api.restartHost).toHaveBeenCalledOnce();
+  });
+
+  it("clears broken browser tracking explicitly without sending or clearing a running Host operation", async () => {
+    const f = fixture();
+    f.status.operation = {
+      id: crypto.randomUUID(),
+      scope: "all",
+      phase: "submitted",
+    };
+    sessionStorage.setItem("inspire:host-restart:v1", "{broken}");
+    await f.client.refresh();
+    await f.client.clearRecovery();
+    expect(f.client.snapshot()).toMatchObject({
+      blocked: false,
+      pending: null,
+      status: f.status,
+    });
+    expect(sessionStorage.getItem("inspire:host-restart:v1")).toBeNull();
+    expect(f.api.restartHost).not.toHaveBeenCalled();
+  });
+
+  it("recovers local cleanup after a confirmed rejection without misreporting the operation", async () => {
+    const f = fixture();
+    let canRemove = false;
+    const storage = {
+      getItem: (key: string) => sessionStorage.getItem(key),
+      setItem: (key: string, value: string) =>
+        sessionStorage.setItem(key, value),
+      removeItem: (key: string) => {
+        if (!canRemove) throw new Error("storage unavailable");
+        sessionStorage.removeItem(key);
+      },
+    } as Storage;
+    const client = new HostRestartClient(f.api, () => storage);
+    f.api.restartHost.mockImplementation(async (request) => {
+      f.status.operation = {
+        id: request.operationId,
+        scope: request.scope,
+        phase: "rejected",
+        error: "Build failed",
+      };
+      return f.status.operation;
+    });
+    await client.refresh();
+    await client.start("host", f.status.hostId);
+    expect(client.snapshot()).toMatchObject({
+      blocked: true,
+      status: { operation: { phase: "rejected", error: "Build failed" } },
+    });
+    expect(client.snapshot().error).toMatch(/recovery record/);
+    await client.clearRecovery();
+    expect(client.snapshot().pending).not.toBeNull();
+    expect(f.api.restartHost).toHaveBeenCalledOnce();
+    canRemove = true;
+    await client.refresh();
+    expect(client.snapshot()).toMatchObject({
+      blocked: false,
+      pending: null,
+      error: null,
+    });
+    expect(f.api.restartHost).toHaveBeenCalledOnce();
   });
 
   it("blocks writes when recovery storage is malformed or unavailable", async () => {

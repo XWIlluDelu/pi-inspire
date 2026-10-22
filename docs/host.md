@@ -75,6 +75,11 @@ without claiming a successful result.
 A CLI restart stops Inspire-owned Pi workers; connected external Herdr sessions keep running.
 In **Settings → System → Host**, restart first checks for unfinished work. A refusal offers a separately confirmed **Stop work and restart**, which interrupts Pi work and discards Pending input. An idle worker does not block this check. Preparation failure leaves the current Host running; after a disconnect, the browser observes the submitted restart instead of sending another one.
 
+**Recheck status** still reads the Host when this browser's local restart recovery record is
+unreadable. If storage recovers, Recheck restores the controls. **Clear local restart record…**
+lets you explicitly discard broken or unwanted browser tracking; it does not send or cancel a
+restart. A restart already pending on the Host still blocks a new one.
+
 **Restart Host** works from the page on native Windows, macOS, and Linux when started through
 `inspire` (or `npm run inspire`), as well as with the installed Linux service. Direct page restart keeps
 the existing launcher, environment, port, state path, pairing, and project terminals; it does not open
@@ -186,9 +191,9 @@ upgrades use the authenticated `inspire terminal` controls.
 ./inspire service enable-host
 ```
 
-Installation writes `inspire-host.service`, `inspire-terminal.service`, and an idle-maintenance timer. The launcher delegates lifecycle commands after verifying that the units belong to this installation. Stop or disable shuts down both services; enabling/disabling the Host also enables/disables its timer.
+Installation writes `inspire-host.service`, `inspire-terminal.service`, and an optional idle-maintenance timer. The launcher delegates lifecycle commands after verifying that the units belong to this installation. Inheriting the same default host, port, and instance-state path does not create a separately managed instance. Stop or disable shuts down both services; enabling the Host does not enable scheduled maintenance. Disabling the Host also disables its maintenance timer.
 
-At 04:00, maintenance checks whether the installed Pi version or clean source revision differs from the running one. It restarts only an idle Host and never downloads updates. Busy work, a dirty checkout, or an indeterminate state skips that run.
+If you explicitly want automatic maintenance, enable it separately with `systemctl --user enable --now inspire-idle-maintenance-restart.timer`; use `disable --now` to turn it off. At 04:00, the enabled timer checks whether the installed Pi version or clean source revision differs from the running one. It restarts only an idle Host and never downloads updates. Busy work, a dirty checkout, or an indeterminate state skips that run.
 
 For service recovery before graphical login:
 
