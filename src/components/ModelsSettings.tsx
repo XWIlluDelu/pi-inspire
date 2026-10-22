@@ -541,7 +541,8 @@ export function ModelsSettings({
       ? null
       : error) ??
     snapshot?.settingsError ??
-    snapshot?.configError;
+    snapshot?.configError ??
+    snapshot?.projectSettingsError;
   const editCommon = (pattern: string, opener: HTMLElement) => {
     if (!snapshot) return;
     commonOpener.current = opener;
@@ -859,6 +860,7 @@ export function ModelsSettings({
                     }
                     controllerRef={availableListRef}
                     models={snapshot.models}
+                    status={snapshot.modelsWarning}
                     value={savedModel}
                     placeholder="Search models"
                     optionSize={optionSize}

@@ -169,18 +169,20 @@ it("discovers native global/trusted-project registrations and resolves defaults 
     );
     expect((await catalog.read(nested)).defaults.model?.id).toBe("b");
 
-    // A broken startup factory cannot block pairing/read-only bootstrap, but
-    // explicit catalog/default queries must fail rather than return emptiness.
+    // A broken unrelated factory does not hide the models Pi can still load.
     const broken = join(f.agent, "broken.ts");
     await writeFile(
       broken,
-      'export default () => { throw new Error("broken startup factory"); };',
+      'export default () => { throw new Error("PRIVATE EXTENSION DETAIL"); };',
     );
     const settingsPath = join(f.agent, "settings.json");
     const settingsState = JSON.parse(await readFile(settingsPath, "utf8"));
     await writeFile(
       settingsPath,
-      JSON.stringify({ ...settingsState, extensions: [broken] }),
+      JSON.stringify({
+        ...settingsState,
+        extensions: [...settingsState.extensions, broken],
+      }),
     );
     catalog.invalidate();
     available.mockClear();
@@ -194,11 +196,55 @@ it("discovers native global/trusted-project registrations and resolves defaults 
       snapshot: { runState: "idle" },
     });
     expect(available).not.toHaveBeenCalled();
-    await endpoint
+    const partial = await endpoint
       .get("/api/models")
       .query({ cwd: f.trusted })
       .auth("fixture", { type: "bearer" })
-      .expect(500);
+      .expect(200);
+    expect(partial.body.models).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ provider: "global-native", id: "a" }),
+        expect.objectContaining({ provider: "project-native", id: "a" }),
+      ]),
+    );
+    expect(partial.body.defaults.model.provider).toBe("project-native");
+    expect(partial.body.warning).toContain("Some Pi extensions could not load");
+    expect(JSON.stringify(partial.body)).not.toContain(
+      "PRIVATE EXTENSION DETAIL",
+    );
+    available.mockImplementation(
+      async (refresh, cwd) =>
+        (await catalog.read(cwd ?? f.untrusted, refresh)).models,
+    );
+    const current = await endpoint
+      .get("/api/model-settings")
+      .query({ cwd: f.trusted })
+      .auth("fixture", { type: "bearer" })
+      .expect(200);
+    const saved = await endpoint
+      .patch("/api/model-settings/config")
+      .query({ cwd: f.trusted })
+      .auth("fixture", { type: "bearer" })
+      .send({
+        revision: current.body.configRevision,
+        edit: {
+          kind: "model",
+          provider: "global-native",
+          values: { id: "a", name: "Still editable" },
+        },
+      })
+      .expect(200);
+    expect(saved.body.saved).toBe(true);
+    expect(saved.body.snapshot.providers).toContainEqual(
+      expect.objectContaining({
+        id: "global-native",
+        models: [expect.objectContaining({ id: "a", name: "Still editable" })],
+      }),
+    );
+    expect(await readdir(f.sessions)).toEqual([]);
+    expect(await readFile(f.events, "utf8")).not.toMatch(
+      /session_start|agent_start|request|route/,
+    );
   } finally {
     await app.close();
     await attachments.close();
@@ -275,7 +321,7 @@ it("validates model edits over extension providers in the selected trusted works
 }, 30_000);
 
 it.each([false, true])(
-  "retires factory descendants when a metadata query fails=%s",
+  "retires factory descendants after discovery (factory throws=%s)",
   async (fail) => {
     const f = await modelWorkflowFixture();
     roots.push(f.root);
@@ -293,11 +339,9 @@ it.each([false, true])(
     );
     let pid: number | undefined;
     try {
+      const metadata = await queryModelMetadata(f.untrusted);
       if (fail)
-        await expect(queryModelMetadata(f.untrusted)).rejects.toThrow(
-          "could not load",
-        );
-      else await queryModelMetadata(f.untrusted);
+        expect(metadata.warning).toContain("Some Pi extensions could not load");
       pid = Number(await readFile(pidFile, "utf8"));
       await vi.waitFor(async () => {
         try {

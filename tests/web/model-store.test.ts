@@ -402,7 +402,17 @@ describe("recent model preference", () => {
           provider: String(body.provider),
           id: String(body.modelId),
         };
-        return { body: { model: selected, thinkingLevel: "medium" } };
+        return {
+          body: {
+            model: {
+              ...selected,
+              name: "Display model",
+              reasoning: true,
+              thinkingLevelMap: { high: "high" },
+            },
+            thinkingLevel: "medium",
+          },
+        };
       }
       if (url.startsWith("/api/snapshot"))
         return { body: activeSnapshot({ model: selected }) };

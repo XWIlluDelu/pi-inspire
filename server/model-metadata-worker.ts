@@ -33,8 +33,7 @@ async function discover(cwd: string, validationPath?: string) {
     noContextFiles: true,
   });
   await loader.reload();
-  if (loader.getExtensions().errors.length)
-    throw new Error("Pi model extensions could not load");
+  const extensionErrors = loader.getExtensions().errors.length > 0;
   // SDK initial resolution precedes constructor registration binding. This
   // disposable session binds Pi's queued providers/virtual models, then the
   // public resolver below sees the augmented runtime.
@@ -60,6 +59,17 @@ async function discover(cwd: string, validationPath?: string) {
       throw new Error("Pi model configuration could not load");
     const models = await availableModelOptions(runtime);
     const defaults = await resolveNewSessionDefaults(runtime, cwd, settings);
+    const warnings: string[] = [];
+    if (!settings.isProjectTrusted())
+      warnings.push(
+        "Project resources are not trusted; showing global models.",
+      );
+    if (extensionErrors)
+      warnings.push(
+        "Some Pi extensions could not load; their models may be unavailable.",
+      );
+    if (refresh.aborted || refresh.errors.size)
+      warnings.push("Model refresh incomplete; showing Pi's available models.");
     return {
       models,
       defaults,
@@ -67,17 +77,7 @@ async function discover(cwd: string, validationPath?: string) {
         .getModels()
         .filter((model) => model.api === "pi-virtual")
         .map(modelOption),
-      ...(!settings.isProjectTrusted()
-        ? {
-            warning:
-              "Project resources are not trusted; showing global models.",
-          }
-        : refresh.aborted || refresh.errors.size
-          ? {
-              warning:
-                "Model refresh incomplete; showing Pi's available models.",
-            }
-          : {}),
+      ...(warnings.length ? { warning: warnings.join(" ") } : {}),
     };
   } finally {
     session.dispose();

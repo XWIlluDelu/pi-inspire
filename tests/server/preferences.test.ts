@@ -148,12 +148,13 @@ describe("PreferencesStore validation", () => {
     expect((await store.read()).sessionActionOrder).toEqual(order);
   });
 
-  it("loads valid fields in memory but refuses to overwrite one invalid field", async () => {
+  it("preserves invalid and unknown fields while saving unrelated settings and allows field repair", async () => {
     const { path, store } = await fixture();
     const raw = JSON.stringify({
       theme: "dark",
       launch: "continue",
       toolVisibility: "impossible",
+      futurePreference: { retained: true },
       pinnedSessionIds: ["session-a"],
     });
     await writeFile(path, raw);
@@ -166,10 +167,51 @@ describe("PreferencesStore validation", () => {
       pinnedSessionIds: ["session-a"],
     });
     expect(inspected.warning).toMatch(/toolVisibility.*left unchanged/);
-    await expect(store.patch({ projectDisplay: "path" })).rejects.toMatchObject(
-      { status: 409 },
-    );
-    expect(await readFile(path, "utf8")).toBe(raw);
+    await expect(
+      store.patch({ projectDisplay: "path" }),
+    ).resolves.toMatchObject({
+      projectDisplay: "path",
+      toolVisibility: "dynamic",
+    });
+    await store.setTerminalSession("terminal-a", true);
+    await store.removeSession("session-a");
+    expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
+      toolVisibility: "impossible",
+      futurePreference: { retained: true },
+      projectDisplay: "path",
+      pinnedSessionIds: [],
+      terminalSessionIds: ["terminal-a"],
+    });
+    await store.patch({ toolVisibility: "compact" });
+    expect((await store.inspect()).warning).toBeUndefined();
+    expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
+      toolVisibility: "compact",
+      futurePreference: { retained: true },
+    });
+    await expect(
+      store.patch({ futurePreference: false }),
+    ).rejects.toBeDefined();
+  });
+
+  it("stores only valid model identity from a full model selection", async () => {
+    const { path, store } = await fixture();
+    const identity = { provider: "fixture", id: "model" };
+    await store.patch({
+      recentModelIds: [
+        {
+          ...identity,
+          name: "Display name",
+          reasoning: true,
+          thinkingLevelMap: { high: "high" },
+        },
+      ],
+    });
+    expect(JSON.parse(await readFile(path, "utf8")).recentModelIds).toEqual([
+      identity,
+    ]);
+    await expect(
+      store.patch({ recentModelIds: [{ ...identity, id: "" }] }),
+    ).rejects.toBeDefined();
   });
 
   it("reports malformed JSON repeatedly and leaves its bytes untouched", async () => {
