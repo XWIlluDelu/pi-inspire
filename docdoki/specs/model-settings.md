@@ -91,12 +91,22 @@ Pi's selected identity can differ from the physical responder. Selection control
 use the selected identity; response metadata and usage describe the actual response. Virtual models show
 Router in the existing model list. A physical response does not replace the selected router.
 
-Live selection comes from the owned worker, including after branch navigation. For inactive sessions,
+Live selection comes from the owning Pi, including after branch navigation. A connected native TUI
+supplies its own available catalog and selection through the session-activity receiver. Model and
+thinking setters return actual state, including native adjustment and extension changes, without a
+second setter overriding that decision or changing saved defaults. Native model cycling stays in the
+original terminal; explicit selection and supported thinking-cycle gestures use the GUI controls.
+Controls require advertised support, not merely an external owner or idle status. Unsupported controls
+cannot disable the separate configuration/credential surfaces. For inactive sessions,
 selection follows the viewed branch and Pi's recovery rules with current registration metadata.
 File-backed transcripts open independently of model discovery. New from unavailable-workspace
 history retains known selection/effort but discovers choices in the prospective directory, not through
 the read-only source. Choosing manual effort retires an in-flight thinking preview; directory changes
 preserve that choice without leaving model readiness pending.
+
+Pi 1.4.0 cold startup follows configured defaults when the reconstructed context has no messages,
+even if the file contains model/thinking records. Inspire leaves that decision to Pi rather than
+adding a preference copy, synthetic messages or forced restoration arguments.
 
 ## New-session discovery
 
@@ -146,6 +156,13 @@ content does not take focus or apply destination scrolling. Errors remain in the
 provider continues at Add model; a newly available model appears in the ordinary model list. Cancel
 returns to the entry point, and Common/Default saves retain row focus unless the user has moved it.
 
+Candidate declarations are validated in the existing isolated metadata worker against the same
+agent directory, selected working directory and project-trust policy as Pi. Extension provider
+registration precedes validation so legal inherited API/endpoint declarations remain valid, including
+when editing an unrelated provider. Validation starts no model turn or persistent session and keeps
+factory errors and credentials out of responses. Revision and atomic-publication checks still apply
+before publishing the validated candidate.
+
 Writes detect conflicting external edits, accept native file syntax and follow existing configuration
 symlinks under the same lock authority as native edits. Regular files take one native target lock
 rather than double-locking a case/normalization alias; final symlinks retain lexical and target
@@ -190,6 +207,14 @@ retains settled outcomes so clients can recover a lost final response.
 
 Stored or resolved keys/tokens are omitted from ordinary model/status payloads and logs. Logout removes
 Pi's saved credential; environment and `models.json` credentials are managed separately.
+
+## Configuration checks
+
+- `tests/server/model-metadata.integration.test.ts` exercises native global/trusted-project provider
+  composition, inherited model declarations, unrelated-provider edits, an explicit agent-directory
+  authority, and validation without a turn or persistent session.
+- `tests/server/model-settings.test.ts` covers revision conflicts, file/symlink authority, atomic
+  edits, preserved unedited declarations and protected credentials.
 
 ## Related contracts
 

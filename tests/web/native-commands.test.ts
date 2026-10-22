@@ -319,11 +319,24 @@ describe("Pi native command dispatch", () => {
         return { body: { text: "last settled answer" } };
       if (url.startsWith("/api/control/model")) {
         modelChanges += 1;
-        return { body: { ok: true } };
+        return {
+          body: {
+            model: {
+              provider: jsonBody(init).provider,
+              id: jsonBody(init).modelId,
+            },
+            thinkingLevel: "medium",
+          },
+        };
       }
       if (url.startsWith("/api/control/thinking")) {
         thinkingChanges += 1;
-        return { body: { ok: true } };
+        return {
+          body: {
+            model: activeSnapshot().active!.model,
+            thinkingLevel: jsonBody(init).level,
+          },
+        };
       }
       if (url.startsWith("/api/control/native-command")) {
         exports += 1;
@@ -738,12 +751,57 @@ describe("Pi native command dispatch", () => {
     ).toEqual(["unknown-query-test"]);
   });
 
+  it("guides unsupported external commands without launching an RPC operation, while leaving configuration accessible", async () => {
+    const snapshot = activeSnapshot();
+    snapshot.runState = "running";
+    snapshot.sessionStatuses.s1 = { runState: "running", external: true };
+    let controls = 0;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap"))
+        return { body: bootstrapPayload({ snapshot }) };
+      if (url.startsWith("/api/control/")) {
+        controls++;
+        return { status: 409, body: { error: "Do not call unsupported RPC" } };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    for (const command of ["/model", "/thinking high", "/reload"]) {
+      await store.sendPrompt(command);
+    }
+    expect(controls).toBe(0);
+    const activities = store.getState().commandActivities.s1!;
+    expect(
+      activities.find((item) => item.command === "model")?.message,
+    ).toContain("session-activity extension");
+    expect(
+      activities.find((item) => item.command === "thinking")?.message,
+    ).toContain("session-activity extension");
+    expect(activities.find((item) => item.command === "reload")).toMatchObject({
+      status: "info",
+      message: "Run /reload in the original Pi terminal.",
+      action: { kind: "open-terminal", value: "/reload" },
+    });
+    store.runPaletteNativeCommand("/login");
+    expect(store.getState().nativeCommandUiRequest?.modelSettingsFocus).toBe(
+      "credentials",
+    );
+  });
+
   it("executes browser-native model and session information commands", async () => {
     const modelBodies: Record<string, unknown>[] = [];
     installFetch((url, init) => {
       if (url.startsWith("/api/control/model")) {
         modelBodies.push(jsonBody(init));
-        return { body: { ok: true } };
+        return {
+          body: {
+            model: {
+              provider: jsonBody(init).provider,
+              id: jsonBody(init).modelId,
+            },
+            thinkingLevel: "medium",
+          },
+        };
       }
       return baseRoutes(url, init);
     });

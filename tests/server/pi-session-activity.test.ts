@@ -40,6 +40,8 @@ vi.mock("node:os", async (importOriginal) => ({
 const observers: PiSessionActivity[] = [];
 const reporters: (() => Promise<unknown>)[] = [];
 beforeEach(async () => {
+  // Unit reporters are not running inside the parent agent’s Herdr pane.
+  vi.stubEnv("HERDR_PANE_ID", "");
   paths.home = await mkdtemp(join(tmpdir(), "inspire-pi-activity-"));
   vi.stubEnv("XDG_CACHE_HOME", join(paths.home, "cache"));
   vi.stubEnv("LOCALAPPDATA", join(paths.home, "local"));

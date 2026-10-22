@@ -64,6 +64,22 @@ it("runs the portable UI example through native Pi and preserves Host request/di
     listByCwds: async () => [],
     invalidate() {},
   };
+  const backgroundExtension = join(root, "background-ui.ts");
+  await writeFile(
+    backgroundExtension,
+    `
+    export default pi => {
+      pi.registerCommand("fixture-background-ui", { handler: async (_, ctx) => {
+        void (async () => {
+          const answer = await ctx.ui.confirm("Stop question", "Cancel the actual Pi promise");
+          ctx.ui.setStatus("fixture.stop", String(answer));
+          await ctx.ui.input("Independent next question");
+          ctx.ui.setStatus("fixture.stop", "finished");
+        })();
+      } });
+    }
+  `,
+  );
   const attachments = new AttachmentStore(join(root, "uploads"));
   const workers: PiRpcProcess[] = [];
   const runtime = new RuntimeController(catalog, attachments, (options) => {
@@ -78,6 +94,8 @@ it("runs the portable UI example through native Pi and preserves Host request/di
         ...(options.args ?? []),
         "--extension",
         resolve("docs/examples/native-ui.ts"),
+        "--extension",
+        backgroundExtension,
       ],
       env: {
         ...options.env,
@@ -235,6 +253,30 @@ it("runs the portable UI example through native Pi and preserves Host request/di
     await cancelRun;
     expect((await snapshot()).pendingExtensionUiRequests).toEqual([]);
     expect((await snapshot()).extensionStatuses).toEqual({});
+
+    await runtime.prompt({ sessionId, message: "/fixture-background-ui" });
+    const stoppedQuestion = await question("confirm");
+    await runtime.abort(sessionId);
+    await vi.waitFor(async () =>
+      expect((await snapshot()).extensionStatuses).toMatchObject({
+        "fixture.stop": "false",
+      }),
+    );
+    const independent = await question("input");
+    expect(independent.id).not.toBe(stoppedQuestion.id);
+    expect(independent.title).toBe("Independent next question");
+    expect(worker.pid).toBe(pid);
+    expect(worker.available).toBe(true);
+    await runtime.extensionUiResponse({
+      sessionId,
+      id: independent.id,
+      cancelled: true,
+    });
+    await vi.waitFor(async () =>
+      expect((await snapshot()).extensionStatuses).toMatchObject({
+        "fixture.stop": "finished",
+      }),
+    );
   } finally {
     await runtime.close();
     expect(workers.every((worker) => !worker.available)).toBe(true);

@@ -14,7 +14,7 @@ directory is unavailable. Project-file errors do not block user-file edits; proj
 existing project directory and do not recreate missing directories.
 
 Each group shows the configuration file's path. A full project definition replaces the same-name
-user definition. Pi 1.1 also supports policy-only project entries, which inherit the user connection
+user definition. Policy-only project entries inherit the user connection
 and override enabled state, exposure or per-tool rules. Their editor offers **Inherit from user**
 for enabled/exposure and keeps connection settings and credentials in the user file.
 
@@ -74,10 +74,11 @@ project are not editable here.
 **Save configuration** writes the selected file only. It does not connect, sign in, disconnect or
 replace a running worker. New Pi workers read the saved configuration.
 
-After saving, **Reload selected session…** offers Inspire's existing explicit Reload. It restarts
-only the selected idle worker; other sessions stay unchanged. Check the Reload result in the
-conversation. Removing an entry similarly leaves running connections and Pi's separate saved OAuth
-credentials alone.
+After saving in an Inspire-owned session, **Reload selected session…** offers a confirmed restart
+of that idle worker. Other sessions stay unchanged. For a connected native Pi, Settings instead asks
+you to run `/reload` in its original terminal; restarting the Host does not reload that Pi.
+Removing an entry likewise changes only the file, leaving running connections and Pi's separate
+saved OAuth credentials alone.
 
 Use the session's native `/mcp` command for status, or `/mcp login <server>`,
 `/mcp logout <server>` and `/mcp reconnect <server>` through the normal command surface. These

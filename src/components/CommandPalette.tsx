@@ -28,6 +28,7 @@ import { isComposingKeyboardEvent } from "../keyboard-input";
 import { paletteTextMatchRanges, rankPaletteItems } from "../palette-search";
 import { PALETTE_LABELS, preferenceChoiceLabel } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
+import { modelControlsSupported } from "../session-controls";
 import {
   queueTerminalAction,
   type TerminalUiAction,
@@ -102,6 +103,11 @@ export const CommandPalette = memo(function CommandPalette({
     return {
       sessionId: appState.sessionId,
       readOnlyReason: appState.readOnlyReason,
+      modelControls: modelControlsSupported(appState),
+      external: Boolean(
+        appState.sessionId &&
+          appState.sessionStatuses[appState.sessionId]?.external,
+      ),
       heading: sessionHeading(
         appState.sessionName,
         catalogTitle,
@@ -356,30 +362,33 @@ export const CommandPalette = memo(function CommandPalette({
           run: () => runTerminalAction("settings"),
         },
       );
-      if (!state.readOnlyReason)
-        actions.push(
-          {
-            id: "model-next",
-            group: "Models",
-            title: "Next model",
-            hint: modelCycleShortcut("next-model"),
-            run: () => void store.cycleModel(1),
-          },
-          {
-            id: "model-previous",
-            group: "Models",
-            title: "Previous model",
-            hint: modelCycleShortcut("previous-model"),
-            run: () => void store.cycleModel(-1),
-          },
-          {
+      if (!state.readOnlyReason) {
+        if (!state.external)
+          actions.push(
+            {
+              id: "model-next",
+              group: "Models",
+              title: "Next model",
+              hint: modelCycleShortcut("next-model"),
+              run: () => void store.cycleModel(1),
+            },
+            {
+              id: "model-previous",
+              group: "Models",
+              title: "Previous model",
+              hint: modelCycleShortcut("previous-model"),
+              run: () => void store.cycleModel(-1),
+            },
+          );
+        if (state.modelControls)
+          actions.push({
             id: "thinking-cycle",
             group: "Models",
             title: "Cycle thinking level",
             hint: modelCycleShortcut("thinking"),
             run: () => void store.cycleThinking(),
-          },
-        );
+          });
+      }
       actions.push({
         id: "manage-models",
         group: "Models",
@@ -521,22 +530,32 @@ export const CommandPalette = memo(function CommandPalette({
                 (command.source === "builtin" &&
                   (command.name === "export" ||
                     nativeCommand(command.name)?.availableWithoutWorkspace))) &&
+              !(
+                command.source === "builtin" &&
+                ["model", "thinking"].includes(command.name) &&
+                !state.modelControls
+              ) &&
               !actions.some((action) =>
                 action.aliases?.includes(`/${command.name}`),
               ),
           )
           .map((command) => {
             const prepare =
-              command.source !== "builtin" || command.name === "compact";
+              command.source !== "builtin" ||
+              (command.name === "compact" && !state.external);
             const titles: Record<string, string> = {
               model: "Choose model",
               thinking: "Choose thinking level",
               export: "Export session…",
-              compact: "Compact context…",
+              compact: state.external
+                ? "Compact in native Pi…"
+                : "Compact context…",
               copy: "Copy last response",
               fork: "Fork from History",
               session: "Session & usage",
-              reload: "Reload Pi resources",
+              reload: state.external
+                ? "Reload in native Pi…"
+                : "Reload Pi resources",
               quit: "Leave Inspire",
             };
             const sessionAliases =

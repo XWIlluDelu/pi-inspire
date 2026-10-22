@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import {
   availableModelOptions,
   modelOption,
@@ -14,10 +15,14 @@ import {
 
 // A short-lived SDK process, not an RPC worker: no bindExtensions, session_start,
 // prompt or persistent SessionManager. User factories still execute natively.
-async function discover(cwd: string) {
+async function discover(cwd: string, validationPath?: string) {
   const agentDir = getAgentDir();
-  const settings = modelSettings(cwd);
-  const runtime = await ModelRuntime.create({ refreshOnCreate: false });
+  const settings = modelSettings(cwd, agentDir);
+  const runtime = await ModelRuntime.create({
+    modelsPath: validationPath ?? join(agentDir, "models.json"),
+    authPath: join(agentDir, "auth.json"),
+    refreshOnCreate: false,
+  });
   const loader = new DefaultResourceLoader({
     cwd,
     agentDir,
@@ -43,6 +48,11 @@ async function discover(cwd: string) {
     noTools: "all",
   });
   try {
+    if (validationPath) {
+      if (runtime.getError())
+        throw new Error("Pi model configuration could not load");
+      return null;
+    }
     const refresh = await runtime.refresh({
       signal: AbortSignal.timeout(12_000),
     });
@@ -78,7 +88,7 @@ async function discover(cwd: string) {
 // any factory-created descendants. IPC disconnect also retires an orphan query.
 process.on("disconnect", () => process.exit(0));
 try {
-  const result = await discover(process.argv[2]!);
+  const result = await discover(process.argv[2]!, process.argv[3]);
   process.send?.({ ok: true, result });
 } catch {
   // Factory errors may contain credentials. Keep the wire result diagnostic-only.

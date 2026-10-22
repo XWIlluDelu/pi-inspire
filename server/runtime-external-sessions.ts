@@ -1,3 +1,7 @@
+import type {
+  NativeModelCatalog,
+  NativeModelSelection,
+} from "../docs/examples/session-activity.js";
 import {
   type ComposerHistoryEntry,
   isBusyRunState,
@@ -28,6 +32,8 @@ interface Connection {
   timer?: ReturnType<typeof setTimeout>;
   interrupted: boolean;
   sending: number;
+  selectionRevision: number;
+  modelRefresh?: Promise<NativeModelCatalog>;
 }
 
 interface ExternalSessionHost {
@@ -42,6 +48,7 @@ interface ExternalSessionHost {
  * owned-worker pool, RPC persistence attestations and process retirement. */
 export class RuntimeExternalSessions {
   private readonly connections = new Map<RuntimeSlot, Connection>();
+  private readonly connecting = new Map<RuntimeSlot, Promise<boolean>>();
   private closed = false;
 
   constructor(
@@ -55,11 +62,131 @@ export class RuntimeExternalSessions {
     return this.connections.has(slot);
   }
 
+  supportsModels(slot: RuntimeSlot): boolean {
+    const c = this.connections.get(slot);
+    return (
+      c?.state.modelControls === true &&
+      Boolean(c.native.models && c.native.setModel && c.native.setThinkingLevel)
+    );
+  }
+
+  modelSelection(slot: RuntimeSlot): NativeModelSelection | undefined {
+    return this.connections.get(slot)?.state.modelSelection;
+  }
+
+  async models(slot: RuntimeSlot): Promise<NativeModelCatalog> {
+    const c = this.modelConnection(slot);
+    if (c.modelRefresh) return c.modelRefresh;
+    const selectionRevision = c.selectionRevision;
+    const pending = c.native.models!().then((result) => {
+      // Catalog reads run alongside setters. A delayed read can still supply
+      // models, but cannot undo a selection completed/observed since it began.
+      const current =
+        c.selectionRevision === selectionRevision
+          ? result
+          : { ...result, ...c.state.modelSelection };
+      this.applyModelState(slot, c, current);
+      return current;
+    });
+    c.modelRefresh = pending;
+    try {
+      return await pending;
+    } finally {
+      if (c.modelRefresh === pending) c.modelRefresh = undefined;
+    }
+  }
+
+  private modelConnection(slot: RuntimeSlot): Connection {
+    const c = this.connections.get(slot);
+    if (!c || c.interrupted)
+      throw requestError(
+        "The original Pi connection is unavailable. Reopen this session to check its owner.",
+        409,
+        { code: "SESSION_OWNER_UNAVAILABLE" },
+      );
+    if (!this.supportsModels(slot))
+      throw requestError(
+        "Load the updated session-activity extension with /reload in the original Pi terminal, then reselect this session.",
+        409,
+        { code: "NATIVE_ACTIONS_UNAVAILABLE" },
+      );
+    this.host.assertUsable(slot);
+    return c;
+  }
+
+  private applyModelState(
+    slot: RuntimeSlot,
+    c: Connection,
+    state: NativeModelSelection | NativeModelCatalog,
+  ): void {
+    if (this.connections.get(slot) !== c || !this.host.current(slot))
+      throw requestError("The external Pi connection has ended.", 409);
+    if ("models" in state) slot.availableModels = state.models;
+    c.selectionRevision++;
+    c.state = {
+      ...c.state,
+      modelSelection: {
+        model: state.model,
+        thinkingLevel: state.thinkingLevel,
+      },
+    };
+    this.host.emit(slot, { type: "model_metadata_changed" });
+  }
+
+  async setModel(
+    slot: RuntimeSlot,
+    provider: string,
+    modelId: string,
+  ): Promise<NativeModelSelection> {
+    return this.changeSelection(slot, (native, beforeSend) =>
+      native.setModel!(provider, modelId, beforeSend),
+    );
+  }
+
+  async setThinkingLevel(
+    slot: RuntimeSlot,
+    level: NativeModelSelection["thinkingLevel"],
+  ): Promise<NativeModelSelection> {
+    return this.changeSelection(slot, (native, beforeSend) =>
+      native.setThinkingLevel!(level, beforeSend),
+    );
+  }
+
+  private async changeSelection(
+    slot: RuntimeSlot,
+    change: (
+      native: ExternalSessionConnection,
+      beforeSend: () => void,
+    ) => Promise<NativeModelSelection>,
+  ): Promise<NativeModelSelection> {
+    const c = this.modelConnection(slot);
+    const result = await change(c.native, () => {
+      if (this.connections.get(slot) !== c)
+        throw requestError("The external Pi connection has ended.", 409);
+      this.host.assertUsable(slot);
+    });
+    this.applyModelState(slot, c, result);
+    await this.host.reconcile(slot, false);
+    return { model: result.model, thinkingLevel: result.thinkingLevel };
+  }
+
   needsInput(slot: RuntimeSlot): boolean {
     return this.connections.get(slot)?.state.status === "blocked";
   }
 
   async connect(slot: RuntimeSlot): Promise<boolean> {
+    const pending = this.connecting.get(slot);
+    if (pending) return pending;
+    const operation = this.connectInside(slot);
+    this.connecting.set(slot, operation);
+    try {
+      return await operation;
+    } finally {
+      if (this.connecting.get(slot) === operation) this.connecting.delete(slot);
+    }
+  }
+
+  private async connectInside(slot: RuntimeSlot): Promise<boolean> {
     if (this.closed || slot.process || !slot.sessionPath) return false;
     const previous = this.connections.get(slot);
     if (previous) {
@@ -110,6 +237,7 @@ export class RuntimeExternalSessions {
         state: { status: "unknown" },
         interrupted: true,
         sending: 0,
+        selectionRevision: 0,
       };
       this.connections.set(slot, connection);
       this.setUnavailable(slot, true);
@@ -126,6 +254,7 @@ export class RuntimeExternalSessions {
       state,
       interrupted: false,
       sending: 0,
+      selectionRevision: 0,
     };
     this.detach(slot, native);
     this.connections.set(slot, connection);
@@ -152,7 +281,16 @@ export class RuntimeExternalSessions {
   ): void {
     const priorState = connection.state;
     const changed = priorState.status !== state.status;
+    const selectionChanged =
+      JSON.stringify(priorState.modelSelection) !==
+      JSON.stringify(state.modelSelection);
     connection.state = state;
+    if (selectionChanged) connection.selectionRevision++;
+    if (priorState.modelControls !== state.modelControls || selectionChanged) {
+      this.host.emit(slot, { type: "model_metadata_changed" });
+    }
+    if (force || priorState.taskRuns?.receiverId !== state.taskRuns?.receiverId)
+      slot.availableModels = null;
     const sameReceiver =
       !force &&
       state.taskRuns &&
@@ -317,17 +455,19 @@ export class RuntimeExternalSessions {
           .reduce((size, file) => size + file.size, 0) + history.fileBytes,
         [...prepared.images, ...history.images],
       );
-      // Native terminal input represents dropped/pasted images by file path.
+      // Recalled images need managed files for the native receiver. Uploaded
+      // images already have leased copies; neither becomes a text reference.
       const stagedImages = await this.attachments.stageImages(history.images);
       copied.push(...stagedImages.map((image) => image.id));
       const recovered = await this.attachments.resolveForPrompt(copied);
-      const files = [
-        ...prepared.files,
-        ...history.files,
-        ...recovered.files,
-      ].map((file) => ({ kind: "file" as const, path: file.path }));
+      const files = [...prepared.files, ...history.files].filter(
+        (file) => file.kind === "file",
+      );
+      const images = [...prepared.files, ...recovered.files]
+        .filter((file) => file.kind === "image")
+        .map(({ path, mimeType }) => ({ path, mimeType }));
       const fullMessage = addAttachmentContext(message, files, projectFiles);
-      if (!fullMessage)
+      if (!fullMessage && images.length === 0)
         throw requestError("Message or attachment is required", 400);
       references = [
         ...history.files.map((file) => file.path),
@@ -360,6 +500,7 @@ export class RuntimeExternalSessions {
           fullMessage,
           request.behavior,
           beforeSend,
+          images.length ? images : undefined,
         );
         delivered = true;
         if (this.connections.get(slot) === connection) {

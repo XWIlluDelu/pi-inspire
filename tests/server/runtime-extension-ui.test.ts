@@ -309,8 +309,31 @@ describe("extension displays and dialog ownership", () => {
       id: "abort-b",
       method: "confirm",
     });
+    const send = worker.sendExtensionUiResponse.bind(worker);
+    worker.sendExtensionUiResponse = (response) => {
+      send(response);
+      if (response.id === "abort-a")
+        worker.emit("event", {
+          type: "extension_ui_request",
+          id: "new-during-cancel",
+          method: "input",
+        });
+    };
     await runtime.abort("a");
-    expect((await runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
+    expect(worker.uiResponses).toEqual(
+      expect.arrayContaining([
+        { id: "abort-a", cancelled: true },
+        { id: "abort-b", cancelled: true },
+      ]),
+    );
+    expect(
+      (await runtime.snapshot()).pendingExtensionUiRequests?.map((r) => r.id),
+    ).toEqual(["new-during-cancel"]);
+    await runtime.extensionUiResponse({
+      sessionId: "a",
+      id: "new-during-cancel",
+      cancelled: true,
+    });
 
     worker.emit("event", {
       type: "extension_ui_request",

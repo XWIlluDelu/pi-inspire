@@ -46,6 +46,9 @@ export function McpSettings({
       readOnlyReason: source.readOnlyReason,
       sessionId: source.sessionId,
       runState: source.runState,
+      external: Boolean(
+        source.sessionId && source.sessionStatuses[source.sessionId]?.external,
+      ),
       transport: source.transportGeneration,
     }),
     shallowEqual,
@@ -58,8 +61,10 @@ export function McpSettings({
       canReload={Boolean(
         owner.sessionId &&
           owner.sessionId === state.sessionId &&
-          !state.readOnlyReason,
+          !state.readOnlyReason &&
+          !state.external,
       )}
+      nativeReload={owner.sessionId === state.sessionId && state.external}
       reloadBlocked={isBusyRunState(state.runState)}
     />
   );
@@ -68,11 +73,13 @@ function McpConfiguration({
   owner,
   active,
   canReload,
+  nativeReload,
   reloadBlocked,
 }: {
   owner: Owner;
   active: boolean;
   canReload: boolean;
+  nativeReload: boolean;
   reloadBlocked: boolean;
 }) {
   const [snapshot, setSnapshot] = useState<McpConfigSnapshot | null>(null);
@@ -276,7 +283,9 @@ function McpConfiguration({
                   </button>
                 ) : (
                   <p className="models-status">
-                    New Pi workers read the saved configuration.
+                    {nativeReload
+                      ? "Run /reload in the original Pi terminal to apply the saved configuration."
+                      : "New Pi workers read the saved configuration."}
                   </p>
                 )}
                 {canReload && reloadBlocked ? (

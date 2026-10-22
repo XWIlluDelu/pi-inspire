@@ -103,6 +103,11 @@ export interface ModelOption extends ModelIdentity {
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
 }
 
+export interface ModelSelectionResponse {
+  model: ModelOption | null;
+  thinkingLevel: string;
+}
+
 export interface NewSessionOptions {
   /** Explicit new-session action only; observational reads never create paths. */
   createDirectory?: boolean;
@@ -195,6 +200,8 @@ export interface SessionRuntimeStatus {
   needsInput?: boolean;
   /** Connected to an independently owned native Pi, not an Inspire worker. */
   external?: boolean;
+  /** The identified external Pi advertises its model/thinking action channel. */
+  nativeModelControls?: boolean;
 }
 
 /** Socket-local transcript interest. Changing it establishes a fresh snapshot
@@ -217,7 +224,9 @@ export function isSessionRuntimeStatus(
     (status.indicator === undefined || isSessionIndicator(status.indicator)) &&
     (status.needsInput === undefined ||
       typeof status.needsInput === "boolean") &&
-    (status.external === undefined || typeof status.external === "boolean")
+    (status.external === undefined || typeof status.external === "boolean") &&
+    (status.nativeModelControls === undefined ||
+      typeof status.nativeModelControls === "boolean")
   );
 }
 

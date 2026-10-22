@@ -102,9 +102,11 @@ describe.skipIf(!nativeHerdrAvailable)(
             sessionId,
             message: "Separate browser instruction",
           }),
-        ).rejects.toMatchObject({ status: 409 });
-        expect(await f.readHistory()).not.toContain(
-          "Separate browser instruction",
+        ).resolves.toBeNull();
+        await vi.waitFor(async () =>
+          expect(await f.readHistory()).toContain(
+            "Separate browser instruction",
+          ),
         );
         const draftView = await f.client.nativeAgentRequest(
           pane.serverId,
