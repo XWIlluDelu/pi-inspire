@@ -173,15 +173,16 @@ including spaces and Unicode) independently of outgoing tool mappings. For an ex
 - `source` is a subdued source/type label.
 - `title` lists up to four field paths. The first nonblank string becomes the primary title; missing,
   null, or blank candidates advance to the next path. A non-string candidate is incompatible.
-- `body` selects an exact string rendered as sanitized Markdown, without rewriting or truncation.
+- `body` selects a string from the bounded message preview and renders it as sanitized Markdown.
 - Paths select `content` or `details.<key>` with safe dot-separated keys.
 - Optional `requireAbsent` paths must be absent. Any present value, including null or false, restores
   generic rendering. Use guards when a selected title would omit provenance or trust qualifications.
 
 Only string-content messages use this projection. Missing declarations, incompatible fields, and
 text/image/unknown-block arrays retain the readable generic presentation. Customized Details lazily
-shows the original `customType`, `content`, and `details`; copy always includes that complete original
-content and details. Presentation does not change Pi's message or model context.
+shows `customType`, `content`, and `details` from the same bounded preview. Copy reads the saved
+message on demand to include its complete original content and details. Presentation does not change
+Pi's message or model context.
 
 Existing version-1 profiles remain valid without `customMessages`. Older Inspire releases reject
 this added field; remove it when sharing a profile with those releases.

@@ -51,14 +51,15 @@ export const CustomMessage = memo(function CustomMessage({
           .replace(/^./, (character) => character.toUpperCase()));
   const hasDetails = message.details !== undefined && message.details !== null;
   const text = messageText(message);
-  const copyText = async () => {
+  const copyText = (source = message) => {
     const parts = [
       title,
-      `Type: ${message.customType ?? type}`,
+      `Type: ${source.customType ?? type}`,
       "Content",
-      inspect(message.content ?? []),
+      inspect(source.content ?? []),
     ];
-    if (hasDetails) parts.push("Details", inspect(message.details));
+    if (source.details !== undefined && source.details !== null)
+      parts.push("Details", inspect(source.details));
     return parts.join("\n\n");
   };
 

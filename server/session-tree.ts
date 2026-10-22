@@ -50,6 +50,32 @@ export function branchEntryContent(entry: SessionEntry): unknown {
       : undefined;
 }
 
+/** Copyable source stays separate from History's mixed text representation.
+ * Images use the existing binary endpoint; never repeat their base64 in JSON. */
+export function branchMessageSource(entry: SessionEntry): string {
+  if (
+    entry.type !== "custom_message" &&
+    (entry.type !== "message" ||
+      !["user", "assistant"].includes(entry.message.role))
+  )
+    throw requestError("This History point is not a conversation message", 400);
+  const content = branchEntryContent(entry);
+  return JSON.stringify({
+    role: entry.type === "custom_message" ? "custom" : entry.message.role,
+    content: Array.isArray(content)
+      ? content.map((part) => {
+          if (!part || typeof part !== "object" || part.type !== "image")
+            return part;
+          const { data: _data, ...metadata } = part;
+          return metadata;
+        })
+      : content,
+    ...(entry.type === "custom_message"
+      ? { customType: entry.customType, details: entry.details }
+      : {}),
+  });
+}
+
 function* branchTextParts(
   entry: SessionEntry,
   imagePresentation: "describe" | "separate",
