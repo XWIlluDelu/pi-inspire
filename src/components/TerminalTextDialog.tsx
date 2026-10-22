@@ -1,8 +1,9 @@
-import { Check, Copy, MessageSquareQuote, TextSelect, X } from "lucide-react";
+import { MessageSquareQuote, TextSelect, X } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { useCopied } from "../use-copied";
 import { useModalFocus } from "../use-modal-focus";
 import { ButtonLabel } from "./ButtonLabel";
+import { CopyFeedback } from "./CopyFeedback";
 
 export function TerminalTextDialog({
   text,
@@ -23,7 +24,7 @@ export function TerminalTextDialog({
   const textRef = useRef<HTMLTextAreaElement>(null);
   const [hasSelection, setHasSelection] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { copied, copy } = useCopied({ onError: setError });
+  const { copied, copying, copy } = useCopied({ onError: setError });
 
   useLayoutEffect(() => {
     const field = textRef.current;
@@ -132,11 +133,7 @@ export function TerminalTextDialog({
                 void copy(selectedText() || text);
               }}
             >
-              {copied ? (
-                <Check size={15} aria-hidden="true" />
-              ) : (
-                <Copy size={15} aria-hidden="true" />
-              )}
+              <CopyFeedback copied={copied} copying={copying} size={15} />
               <ButtonLabel reserve="Copy all">
                 {copied ? "Copied" : hasSelection ? "Copy" : "Copy all"}
               </ButtonLabel>

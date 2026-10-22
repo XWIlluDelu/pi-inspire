@@ -5,6 +5,7 @@ import type {
   ModelDeclaration,
   ProviderDeclaration,
 } from "../../shared/model-settings";
+import { DetailSummary } from "./DetailSummary";
 
 export function ProviderForm({
   value,
@@ -301,7 +302,7 @@ export function ModelForm({
             undefined
           }
         >
-          <summary>Connection overrides</summary>
+          <DetailSummary>Connection overrides</DetailSummary>
           <div className="models-form__grid">
             {hasInheritedApi ? (
               <label>

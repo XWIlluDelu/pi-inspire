@@ -349,11 +349,6 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-overlay);
-  padding: 5px;
-  background: var(--bg-raised);
-  box-shadow: var(--shadow-overlay);
 }
 
 .terminal-menu__message {
@@ -439,34 +434,21 @@
 
 .terminal-menu__popover button,
 .terminal-menu__group > summary {
-  min-height: 30px;
+  min-height: 32px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   border: 0;
-  border-radius: var(--radius-control);
-  padding: 5px 8px;
-  color: var(--body);
+  padding: var(--space-1) var(--space-2);
+  color: var(--ink);
   background: transparent;
-  font: var(--text-xs)/var(--leading-ui) var(--font-sans);
+  font: var(--text-sm)/var(--leading-ui) var(--font-sans);
   text-align: left;
   cursor: pointer;
 }
 
 .terminal-menu__popover .terminal-menu__focus {
   display: none;
-}
-
-.terminal-menu__popover button:hover:not(:disabled),
-.terminal-menu__group > summary:hover {
-  color: var(--ink);
-  background: var(--bg-control);
-}
-
-.terminal-menu__popover button:focus-visible,
-.terminal-menu summary:focus-visible {
-  outline: 2px solid var(--accent-focus);
-  outline-offset: -2px;
 }
 
 .terminal-menu__popover button:disabled {

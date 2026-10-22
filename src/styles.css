@@ -12,6 +12,8 @@
 
 @import "./styles/foundation.css";
 @import "./styles/loading.css";
+@import "./styles/menus.css";
+@import "./styles/copy-feedback.css";
 @import "./styles/window-titlebar.css";
 @import "./styles/choice-input.css";
 @import "./styles/scrollbars.css";

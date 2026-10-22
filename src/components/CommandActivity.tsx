@@ -14,7 +14,7 @@ import {
   isCommandQuery,
 } from "../app-state";
 import { shallowEqual, store, useAppState } from "../store";
-import { useReadingDwell } from "../use-reading-dwell";
+import { readingDwellMs, useReadingDwell } from "../use-reading-dwell";
 import { PiLoader } from "./PiLoader";
 import { ScrollRail } from "./ScrollRail";
 
@@ -59,8 +59,8 @@ function CommandActivityItem({
   const { ref, leaving } = useReadingDwell<HTMLElement>(
     isCommandQuery(activity)
       ? activity.command === "session"
-        ? 30_000
-        : 15_000
+        ? 8_000
+        : readingDwellMs(activity.message ?? "")
       : null,
     dismiss,
     dockRef,

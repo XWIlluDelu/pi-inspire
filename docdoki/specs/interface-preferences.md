@@ -32,7 +32,11 @@ login attempts remain intact across category switches. Model and credential dest
 owning category before locating the requested section.
 
 Section headings and descriptions sit above independent bordered field cards, not inside tinted
-header bands. Cards do not clip menus or keyboard focus. Checked switches use the shared accent fill
+header bands. Card-level empty and error messages share the field rows' content inset; helper-text
+typography alone does not provide layout. Fields with asynchronous text feedback anchor their
+description at the top and keep actions before feedback. They may reserve space for their common
+short states; longer feedback remains fully readable in normal flow, without an inner scrollbox.
+Cards do not clip menus or keyboard focus. Checked switches use the shared accent fill
 and its contrasting foreground role in both luminosities; category and palette choices keep explicit
 selected-state markers. These are presentation choices, not changes to preference saving behavior.
 
@@ -96,8 +100,10 @@ the right of each row. Mouse and touch dragging and Alt+Up/Down shortcuts preser
 action while it moves. Clicking or keyboard-activating a Settings handle opens move options
 (up and down); Escape closes those options and restores the handle without closing
 Settings. Starting a drag dismisses the move options.
-A disclosure boundary separates the first four actions, shown immediately in the compact menu,
-from the remainder revealed by More actions. Both surfaces edit the same saved order.
+A disclosure boundary separates the first three actions, shown immediately in the compact menu,
+from the remainder revealed by More actions. Behavior settings use quiet, unboxed ordinal numbers
+and a sentence-case boundary hint between thin rules, without a shaded strip or stacked row borders.
+Row and drag-handle targets retain their existing sizes. Both surfaces edit the same saved order.
 Ordering changes only presentation, not action eligibility or execution.
 
 The order is a Host-persisted interface preference, saved through the existing field-owned write

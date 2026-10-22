@@ -89,6 +89,19 @@ independent project shells in [[terminal]].
   their existing order. Normal-width desktop panes retain the single-row toolbar and narrow-screen
   startup composition keeps its existing responsive arrangement.
 
+## Short-window input and extension content
+
+Transcript and the complete Composer dock share the reading stage's height budget. Preserve a reading
+area while the draft and Pi's aboveEditor/belowEditor widgets yield through their own scrolling.
+Input text keeps its normal size; toolbars and Send/Stop retain their full targets. The minimum
+editor line and focusable widget scrollports bound compression, including touch and short landscape
+windows. Normal-height windows retain their spacing and natural widget heights.
+
+In short windows, widget cards spend their height on text rather than repeat the generic Extension
+heading; their accessible labels and Copy actions remain. Transcript's vertical breathing space
+belongs inside its scroll content, so it cannot force the scrollport across the dock boundary.
+The editor's existing Expand/Collapse, selection, draft and completion behavior remain intact.
+
 ## Session identity and Git observation
 
 - The topbar owns session identity — an explicit Pi name is the rename value, while an unnamed
@@ -136,7 +149,7 @@ independent project shells in [[terminal]].
   rejected rename leaves the current identity intact while emitting a non-blocking warning notice.
 
   The title menu defaults to Rename, Copy session ID, Clone, Use in terminal, and Export, with order
-  configurable in Settings under Behavior. It initially shows the first four actions; More actions
+  configurable in Settings under Behavior. It initially shows the first three actions; More actions
   reveals the rest in the same menu, and Fewer actions collapses them. Reopening starts compact.
   Expansion focuses the first enabled newly revealed action; the full menu remains bounded and
   scrollable within the viewport. The menu opens with its first enabled action focused; arrows,

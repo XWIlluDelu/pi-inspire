@@ -326,11 +326,13 @@ describe("Composer editing and keyboard behavior", () => {
         const editor = Number.parseFloat(input?.style.height ?? "") || 24;
         const height = this.matches("main")
           ? 900
-          : this.matches(".composer-dock")
-            ? editor + 120
-            : this.matches(".composer")
-              ? editor + 80
-              : editor;
+          : this.matches(".composer__toolbar")
+            ? 80
+            : this.matches(".composer-dock")
+              ? editor + 120
+              : this.matches(".composer")
+                ? editor + 80
+                : editor;
         return new DOMRect(0, 0, 800, height);
       },
     );
@@ -345,6 +347,7 @@ describe("Composer editing and keyboard behavior", () => {
               label="Message"
               placeholder="Message Pi…"
             />
+            <div className="composer__toolbar" />
           </div>
         </div>
       </main>,

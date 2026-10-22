@@ -1,6 +1,6 @@
 import "katex/dist/katex.min.css";
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
-import { Check, Copy, SquareTerminal } from "lucide-react";
+import { SquareTerminal } from "lucide-react";
 import {
   Children,
   cloneElement,
@@ -31,6 +31,7 @@ import { store } from "../store";
 import { highlightSource } from "../syntax-highlighting";
 import { queueTerminalInsertion } from "../terminal-actions";
 import { useCopied } from "../use-copied";
+import { CopyFeedback } from "./CopyFeedback";
 import { DocumentImage, DocumentResourceContext } from "./DocumentPreview";
 import { ImageLinkContext } from "./ImagePreview";
 import { RichTextMath } from "./RichTextMath";
@@ -45,7 +46,7 @@ const CodeBlock = memo(function CodeBlock({
   language: string;
   code: string;
 }) {
-  const { copied, copy } = useCopied({
+  const { copied, copying, copy } = useCopied({
     scope: code,
     onError: store.reportCopyError,
   });
@@ -78,11 +79,7 @@ const CodeBlock = memo(function CodeBlock({
             aria-label={copied ? "Copied" : "Copy code"}
             title={copied ? "Copied" : "Copy code"}
           >
-            {copied ? (
-              <Check size={13} aria-hidden />
-            ) : (
-              <Copy size={13} aria-hidden />
-            )}
+            <CopyFeedback copied={copied} copying={copying} />
           </button>
         </div>
       </div>

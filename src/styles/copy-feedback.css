@@ -1,0 +1,32 @@
+/* Keep icon geometry stable across idle, pending and confirmation.
+   The same small fade/scale used by project-path Copy belongs to the glyph,
+   never to the surrounding text, row or click target. */
+.copy-feedback {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  vertical-align: middle;
+}
+.copy-feedback > svg {
+  grid-area: 1 / 1;
+  width: 100%;
+  height: 100%;
+}
+.copy-feedback__idle,
+.copy-feedback__success {
+  transition:
+    opacity var(--dur-micro) var(--ease-standard),
+    transform var(--dur-micro) var(--ease-standard);
+}
+.copy-feedback__success {
+  opacity: 0;
+  transform: scale(0.75);
+}
+.copy-feedback[data-state="copied"] > .copy-feedback__success {
+  opacity: 1;
+  transform: scale(1);
+}
+.copy-feedback:not([data-state="idle"]) > .copy-feedback__idle,
+.copy-feedback[data-state="copying"] > .copy-feedback__success {
+  opacity: 0;
+}

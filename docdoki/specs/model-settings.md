@@ -39,7 +39,9 @@ The Models category has three sections:
    The provider directory, method selection and login attempt replace one another. Back preserves the
    directory query; finishing login returns to saved providers.
 3. **Custom providers:** a collapsed-by-default configuration card with provider/model counts and
-   Add provider. Each provider owns its connection fields and a collapsible model list with Add model.
+   Add provider beside the section title. Each provider owns its connection fields and a collapsible
+   model list with Add model. Counts, common order and advanced fields share the Settings disclosure
+   chevron; provider and declared-model rows share the quiet Edit/Remove icon actions used by MCP.
 
 Available-model and provider lists window large result sets while keeping every result reachable by
 search and keyboard. Provider headings are quiet, unboxed labels within the Models card; compact

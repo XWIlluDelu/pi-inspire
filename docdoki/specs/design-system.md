@@ -454,22 +454,32 @@ keep their existing behavior. Embedded documents retain their own styles.
   focusable dock retains keyboard/touch scrolling when distinct results need it; a single readout
   does not stack merely because it is queried again.
   When usage is unavailable, the result says so rather than rendering an empty Info receipt.
-- Feedback expires by meaning, not by Info tint alone. Session & usage has a 30-second reading
-  dwell; bare Name and Quit guidance have 15 seconds; ordinary INFO confirmations have 8 seconds.
-  Notice Copy/dismiss use 24px mouse or 32px touch targets; touch targets borrow from the existing
-  inset instead of stretching the header. A wrapped notice title keeps the icon and actions aligned
-  with its first line; body text starts at the title text after its icon column. Non-modal notices
-  sit below active modal dialogs rather than covering their content or controls.
+- Feedback expires by meaning and ordinary text volume, not by Info tint alone. Short INFO
+  confirmations and bare Name normally have a 3-second reading dwell; one- or two-sentence guidance
+  such as Quit has 5 seconds; denser INFO and the four-field Session & usage readout have 8 seconds.
+  General notices use compact icon/message/action rows instead of repeating a visible severity
+  heading. Severity remains announced and extension attribution stays in the message. Short messages
+  size to their content within the stack's width; diagnostics wrap without losing Copy/dismiss.
+  Those actions keep 24px mouse or 32px touch targets, aligned with the message's first line.
+  Embedded resource errors and richer update cards retain their contextual presentation.
+  Non-modal notices sit below active modal dialogs rather than covering their content or controls.
   Navigation and resource drawers also own modal interaction on narrow layouts: notices sit
   below the drawers and any scrim, retaining their contents and returning to the normal layer
   on dismissal.
   Bound the stack below the workspace header/current banners and above the bottom safe inset.
+  Welcome and conversation views share one floating feedback owner and presentation; a page
+  transition does not move notices into page flow or expand them to the start composer's width.
+  Anchor notices at the top-right at every width, below the header and any overlapping transcript
+  search or mobile tool row. Editor height does not move this anchor; its top edge only limits the
+  scrollable stack when their horizontal ranges overlap. Follow toolbar, editor, banner and pane
+  resizing. Empty space beside content-sized cards does not intercept input.
   Only an overflowing stack scrolls, without compressing cards or discarding diagnostic text;
   fitting stacks retain their normal width, shadows and placement. Additional notices preserve
   an existing reading position. Copy, dismiss and keyboard scrolling remain reachable.
   Exact repeated notices coalesce in place and renew their dwell. Hover, focus within, an active
-  pointer press and a hidden document pause the clock; resuming keeps the remaining time with
-  at least 3 seconds to finish reading. Expiry uses only a standard 150ms opacity fade, omitted
+  pointer press and a hidden document pause the clock. Reading time starts only when at least half
+  of the card is in view and pauses when it scrolls out of that range; resuming keeps the remaining
+  time with at least 3 seconds to finish reading. Expiry uses only a standard 150ms opacity fade, omitted
   for reduced motion. Manual dismissal remains immediate. Errors, warnings, export actions and
   update availability do not expire on these timers. State-owned progress, extension widgets and
   retained transcript content keep their own lifecycles. [[composer]] owns query/session boundaries
@@ -505,8 +515,10 @@ keep their existing behavior. Embedded documents retain their own styles.
   dismissing the panel or blurring its search field. Checkmarks and `aria-selected` identify committed
   values independently of that candidate highlight. Settings model search stays neutral until keyboard
   navigation or an explicit row action.
-- Command Palette groups use compact overline headings, neutral bottom rules and indented rows,
-  without full-width shaded bands. Default groups distinguish `Actions`, `Workspace` and `Sessions`.
+- Command Palette uses a 580px desktop maximum width, bounded by the viewport. Search text,
+  group titles and result titles share a 20px content edge; candidate highlights retain their own
+  outer inset. Groups use compact overline headings and neutral bottom rules without full-width
+  shaded bands, with tighter spacing between sections. Default groups distinguish `Actions`, `Workspace` and `Sessions`.
   Long titles use up to two lines; project/age metadata stays secondary and moves below titles on
   narrow screens. Omit redundant action descriptions without removing useful search aliases.
   The accent-tinted candidate remains the action highlight; shortcut hints stay separate.
@@ -539,6 +551,18 @@ keep their existing behavior. Embedded documents retain their own styles.
   quiet Retry. State content owns its padding; the normal document and shortcut-help body retain
   their existing layout. The generic unavailable message is not repeated as a hint.
 
+## Settings disclosures and configuration actions
+
+Local Settings disclosures reuse `DetailSummary`: a thin leading chevron, consistent text spacing,
+native keyboard activation and the shared rotation transition. Custom-provider counts, common-model
+order, declared models and advanced connection fields keep their existing default open/closed states.
+Reduced motion follows the shared motion rules.
+
+Configuration sections put their Add action beside the section title. Provider, declared-model and
+MCP entry rows share quiet trailing Edit/Remove icon actions with explicit accessible names and
+tooltips; confirmation remains separate. Provider/model nesting and User/Project MCP grouping retain
+their distinct meaning. Model selection and credential management keep their existing interaction.
+
 ## Native choice controls
 
 Ordinary checkbox and radio inputs opt into the shared `choice-input` skin: 14px controls, strong
@@ -557,6 +581,12 @@ calculation; checked state must not change box position or line height. They rem
 disabled/noninteractive but keep opacity 1: a recorded task state is not an unavailable form action.
 
 ## Model-list hierarchy
+
+The Composer model popover is capped at 360 × 320px, with viewport-aware placement. The composed
+Thinking popover starts at 192px wide and uses 26px desktop option rows, retaining 44px touch rows.
+Its range input shows keyboard focus around the selected dot, not a clipped rectangle across the labels.
+Their different content densities need different bounds, not identical boxes; neither reduces text
+size or removes model identity to fit.
 
 The shared model picker uses transparent provider/group headings with a thin bottom rule for distinct groups,
 retaining heading typography, spacing and 28px virtual-row height. Long headings stay on one
@@ -594,6 +624,17 @@ hover and press use the raised neutral surface with a fine neutral inset boundar
 distinct from the recessed list in light and dark themes. Click/Enter submission and roving
 keyboard navigation remain unchanged.
 
+## Compact menus
+
+Dropdown options, session actions, Settings move options and terminal menus share the raised
+surface, hairline border, medium radius, compact padding and entry motion in `styles/menus.css`.
+Action rows use the same small UI text, accent-tint interaction feedback and inset focus role.
+Each owner retains its action/selection semantics, anchor, grouping and viewport constraints;
+searchable model lists and descriptive project groups keep their information hierarchy.
+Session actions initially expose the first three saved actions and one ordinary disclosure row.
+The menu sizes to its content within viewport bounds; drag handles remain in a separate trailing
+column, and Settings uses the same ordering boundary.
+
 ## Content copying
 
 Copy availability follows the content, not a text-only projection. Image-only user messages and
@@ -628,6 +669,13 @@ Transient confirmation belongs to the copied source: changing a file or project 
 code block retires its old busy/success feedback without replacing the focused control. Current
 copy failures use the shared warning or the surface's local recovery message; retired failures
 must not report against replacement content.
+
+Icon-bearing Copy actions share `CopyFeedback`: Copy at rest, the existing Π loader while pending,
+then Check after a successful write. The fixed icon slot uses the project-path Copy's short
+fade/scale vocabulary without moving the button or nearby labels. Reduced motion removes that
+transition. Text buttons reserve their own alternate labels with `ButtonLabel`; loading is not
+artificially prolonged. Path labels and terminal-selection confirmations keep their existing
+context-specific presentation rather than becoming icon buttons.
 
 ## Searchable-surface focus
 

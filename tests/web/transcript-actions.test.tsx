@@ -27,6 +27,16 @@ describe("message actions", () => {
       configurable: true,
       value: { writeText },
     });
+    const state = store.getState();
+    vi.spyOn(store, "getState").mockReturnValue({
+      ...state,
+      sessionId: "s",
+      transcriptViewId: "v",
+    });
+    vi.spyOn(store, "branchCopyContent").mockResolvedValue({
+      text: JSON.stringify({ role: "user", content: source }),
+      images: [],
+    });
     render(
       <Transcript
         messages={[
@@ -34,6 +44,7 @@ describe("message actions", () => {
         ]}
         sessionId="s"
         viewId="v"
+        projectionIncarnation={state.transcriptIncarnation ?? ""}
         streaming={false}
         thinkingVisibility="collapsed"
         toolVisibility="collapsed"
@@ -174,6 +185,16 @@ describe("message actions", () => {
       configurable: true,
       value: { writeText },
     });
+    const state = store.getState();
+    vi.spyOn(store, "getState").mockReturnValue({
+      ...state,
+      sessionId: "s1",
+      transcriptViewId: "v",
+    });
+    vi.spyOn(store, "branchCopyContent").mockResolvedValue({
+      text: JSON.stringify({ role: "user", content: "**user source**" }),
+      images: [],
+    });
     const originalFork = store.forkFromEntry;
     const fork = vi.fn(async () => true);
     store.forkFromEntry = fork;
@@ -181,6 +202,8 @@ describe("message actions", () => {
       render(
         <Transcript
           sessionId="s1"
+          viewId="v"
+          projectionIncarnation={state.transcriptIncarnation ?? ""}
           messages={[
             {
               role: "user",

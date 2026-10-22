@@ -38,8 +38,10 @@ remains decided but deferred until public runtime interfaces can support it.
 
 Settings → MCP groups file entries under **User** and **Project**, with quiet source-path captions.
 Rows show name, transport, file-disabled state and an understated same-name project override, not
-connection health. Add, focused Edit and confirmed Remove use the established Settings controls,
-with Save/Cancel reachable while the form body scrolls. Policy-only Edit enters the first policy
+connection health. Add sits beside the section title; entry rows share Models' quiet Edit/Remove
+icon actions with explicit accessible names and tooltips. Advanced fields use the shared Settings
+disclosure chevron. Focused Edit and confirmed Remove keep their existing behavior, with Save/Cancel
+reachable while the form body scrolls. Policy-only Edit enters the first policy
 control (Tool exposure) without opening its menu; ordinary edits still enter the URL or program.
 Project trust is explained briefly in the project editor, not repeated as a policy/status block in each group.
 

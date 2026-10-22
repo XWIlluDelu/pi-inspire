@@ -102,6 +102,25 @@ describe("Settings component UX and navigation", () => {
     expect(systemHeadings).toEqual(["Versions", "Host"]);
   });
 
+  it("keeps adapter guidance in the shared section header and empty content inside the padded card", () => {
+    render(<Settings onClose={() => undefined} />);
+    const navigation = screen.getByRole("navigation", {
+      name: "Settings categories",
+    });
+    fireEvent.click(
+      within(navigation).getByRole("button", { name: "Adapters" }),
+    );
+    const section = screen.getByRole("region", { name: "Extension adapters" });
+    const guidance = within(section).getByText(
+      "Choose how Pi extensions appear in Inspire. These switches change the GUI, not which extensions Pi runs.",
+    );
+    expect(guidance.closest(".settings__section-header")).not.toBeNull();
+    expect(guidance.closest(".settings__card")).toBeNull();
+    const empty = within(section).getByText(/No adapters configured/);
+    expect(empty.closest(".settings__card-message")).not.toBeNull();
+    expect(empty.closest(".settings__card")).not.toBeNull();
+  });
+
   it("requires confirmation before restoring interface preferences", () => {
     const restore = vi
       .spyOn(store, "restoreDefaultSettings")
