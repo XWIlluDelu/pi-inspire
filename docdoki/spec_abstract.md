@@ -44,7 +44,9 @@ and untracked.
   activation boundary.
 - **Reading and workspace tools:** rich conversation/activity readers, source-backed Copy, Files and
   Changes with in-place refresh, previews and persistent project terminals. Responsive inspection
-  preserves the reading context and supports terminal quoting back to the draft.
+  preserves the reading context and supports terminal quoting back to the draft. Session actions
+  include full-ID copy and a compact menu whose drag handles share saved ordering with Behavior
+  settings under [[interface-preferences]].
   See [[conversation]], [[workspace-layout]], [[resource-preview]], [[terminal]] and [[workbench]].
 - **Extension adaptation:** standard RPC dialogs, status and text widgets, declarative presentations
   and a source-DIY task-board example. [[pi-integration]] and

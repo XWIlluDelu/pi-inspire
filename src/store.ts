@@ -32,6 +32,7 @@ import {
   parseRetryInfo,
   projectionConflictSeverity,
   type ReadingWidthPreference,
+  type SessionActionId,
   type SessionDeleteDisposition,
   type ThemePreference,
   type ThinkingLevel,
@@ -3079,6 +3080,8 @@ export class AppStore {
   captureNotificationTarget = (): void => this.notifications.captureTarget();
   setProjectDisplay = (value: ProjectDisplayPreference): void =>
     this.preferences.setProjectDisplay(value);
+  setSessionActionOrder = (value: SessionActionId[]): void =>
+    this.preferences.setSessionActionOrder(value);
   setThinkingVisibility = (value: VisibilityPreference): void =>
     this.preferences.setThinkingVisibility(value);
   setToolVisibility = (value: ToolVisibilityPreference): void =>

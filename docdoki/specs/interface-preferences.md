@@ -4,11 +4,11 @@ covers:
   - shared/contracts.ts
   - server/{preferences,update-checker,pi-update-checker,update-coordinator}.ts
   - src/controllers/{preference,update,runtime-event}-controller.ts
-  - src/{visual-preferences,update-availability,use-modal-focus}.ts
-  - src/components/{Settings,SettingsControls,SettingsDialog,SettingsSection,SystemVersionsCard}.tsx
+  - src/{visual-preferences,session-actions,update-availability,use-modal-focus}.ts
+  - src/components/{Settings,SettingsControls,SettingsDialog,SettingsSection,SessionActionsSettings,SystemVersionsCard}.tsx
   - src/styles/{settings-overlays,responsive}.css
   - tests/server/{preferences,update-checker,pi-update-checker,update-coordinator}.test.ts
-  - tests/web/{settings-navigation,settings-loading,system-versions,notices,update-controller,attention,modal-focus}.test.ts*
+  - tests/web/{preferences,session-actions,settings-navigation,settings-loading,system-versions,notices,update-controller,attention,modal-focus}.test.ts*
   - tests/browser/{settings-layout,loading-states}.spec.ts
 ---
 
@@ -40,7 +40,7 @@ selected-state markers. These are presentation choices, not changes to preferenc
 | --- | --- |
 | Display | One field group: `Theme`, `Color palette`, `Content text size`, `Reading width`, `Project location`, then `Titlebar needles`. The workbench header and installed-window title bar have distinct scopes, explained beside their controls rather than combined under a location-based heading. |
 | Conversation | One field group: activity visibility (`Reasoning detail`, `Tool activity`, `Activity groups`), then `Send key`. |
-| Behavior | App behavior (`On launch`, `Task alerts`) and `Pi session settings` (`Steering delivery`, `Follow-up delivery`, `Automatic context compaction`, `Automatic retry`). |
+| Behavior | App behavior (`On launch`, `Task alerts`), `Session actions` ordering, then `Pi session settings` (`Steering delivery`, `Follow-up delivery`, `Automatic context compaction`, `Automatic retry`). |
 | Models | Pi defaults, common scope/cycling, graphical model/provider configuration, and nearby login/logout under [[model-settings]]. |
 | MCP | Scoped native-file configuration, protected-value edits and explicit selected-worker Reload under [[mcp]]; not a connection inventory. |
 | System | Component versions, Docs/Changelog release references and unified update check; then `Host`, with `Herdr enhancement` followed by Host restart under [[host-lifecycle]]. |
@@ -63,9 +63,9 @@ Titlebar needles is an opt-in persisted switch for installed-window animation. T
 brand toggles the same preference; refresh restores the saved choice. See [[design-system]] for motion.
 
 Reset preferences opens a confirmation dialog stating its exact scope before patching the complete
-interface-default set (including Herdr and titlebar needles) while leaving Pi runtime settings, models,
-credentials, MCP servers, update observations, navigation curation, pane state, and other direct work
-state unchanged.
+interface-default set (including Herdr, titlebar needles and session action order) while leaving Pi
+runtime settings, models, credentials, MCP servers, update observations, navigation curation, pane
+state, and other direct work state unchanged.
 
 Settings and Terminal settings share field, switch, stepper and segmented-control styling: 32px
 controls for a mouse, 40px for touch. Ordinary dropdowns, segmented choices and the named palette grid
@@ -88,6 +88,22 @@ page scroll or forcing a deliberately browsed strip back on each scroll event. U
 values show Unavailable rather than a confirmed state.
 Open menus can extend beyond cards without clipping. Disabled controls remain legible and distinct
 from selected, available controls.
+
+## Session action order
+
+Behavior includes an ordered list of the session title menu's actions, with a drag handle on
+the right of each row. Mouse and touch dragging and Alt+Up/Down shortcuts preserve the focused
+action while it moves. Clicking or keyboard-activating a Settings handle opens move options
+(up, down, top and bottom); Escape closes those options and restores the handle without closing
+Settings. Starting a drag dismisses the move options.
+A disclosure boundary separates the first four actions, shown immediately in the compact menu,
+from the remainder revealed by More actions. Both surfaces edit the same saved order.
+Ordering changes only presentation, not action eligibility or execution.
+
+The order is a Host-persisted interface preference, saved through the existing field-owned write
+path and included in Reset preferences. An older saved order keeps its relative order and gains
+newly introduced actions at the end; sorting never removes actions. [[workspace-layout]] owns the
+menu's behavior.
 
 ## Loaded extension names
 

@@ -11,11 +11,12 @@ import {
   migratePalettePreference,
   PALETTE_PREFERENCES,
   READING_WIDTHS,
+  SESSION_ACTION_IDS,
 } from "../shared/contracts.js";
 import { acquireFileLock } from "./file-lock.mjs";
 import { inspireConfigDirectory } from "./platform-paths.mjs";
-import { requestError } from "./request-error.js";
 import { ProjectDirectoryStore } from "./project-directories.js";
+import { requestError } from "./request-error.js";
 
 // Field validators stay default-free here: `.partial()` keeps `.default()`,
 // so a patch schema derived from defaulted fields would fill absent keys and
@@ -46,6 +47,17 @@ const preferenceFields = {
     "collapsed",
   ]),
   projectDisplay: z.enum(["folder", "path"]),
+  sessionActionOrder: z
+    .array(z.enum(SESSION_ACTION_IDS))
+    .max(SESSION_ACTION_IDS.length)
+    .refine((order) => new Set(order).size === order.length, {
+      message: "Session actions must not repeat",
+    })
+    // New actions join the end without discarding a saved order.
+    .transform((order) => [
+      ...order,
+      ...SESSION_ACTION_IDS.filter((id) => !order.includes(id)),
+    ]),
   completionAttention: z.enum(["off", "title", "desktop"]),
   recentModelIds: z
     .array(

@@ -175,7 +175,10 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   crowd it. Selection and search highlights cover the whole row, including its action area.
   The drawer opens on demand, starts closed
   again, and search reveals matching hidden sessions inside it instead of returning them to their
-  folders. With no hidden results the drawer is absent. Ordinary rows keep Pin and Hide; Hidden rows
+  folders. Ordinary session-entry surfaces, including Welcome recents and the command palette's
+  recents/search, share the hidden-session/project filter. Hidden sessions remain available through
+  the explicit Hidden drawer rather than reappearing as ordinary recommendations.
+  With no hidden results the drawer is absent. Ordinary rows keep Pin and Hide; Hidden rows
   reuse those same two action slots for Restore and Delete, making individual deletion a deliberate
   second-stage action rather than a third always-present icon. Every hidden session, including a
   child of a hidden folder, has both Restore and Delete in those fixed columns. Restoring a child
