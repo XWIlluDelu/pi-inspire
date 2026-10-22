@@ -53,6 +53,7 @@ import { HerdrSettings } from "./HerdrSettings";
 import { HostRestartSettings } from "./HostRestartSettings";
 import { McpSettings } from "./McpSettings";
 import { ModelsSettings } from "./ModelsSettings";
+import { SessionActionsSettings } from "./SessionActionsSettings";
 import {
   type SettingsChoice as Choice,
   SegmentedControl,
@@ -614,6 +615,11 @@ export const SettingsContent = memo(function SettingsContent({
                 </div>
               </SettingField>
             </Section>
+
+            <SessionActionsSettings
+              order={state.prefs.sessionActionOrder}
+              onChange={store.setSessionActionOrder}
+            />
 
             <Section
               id="pi-settings"

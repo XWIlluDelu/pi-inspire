@@ -11,6 +11,7 @@ import {
   type PalettePreference,
   type ProjectDisplayPreference,
   type ReadingWidthPreference,
+  type SessionActionId,
   type ThemePreference,
   type ToolVisibilityPreference,
   type VisibilityPreference,
@@ -326,6 +327,10 @@ export class PreferenceController {
 
   setProjectDisplay(projectDisplay: ProjectDisplayPreference): void {
     this.save({ projectDisplay });
+  }
+
+  setSessionActionOrder(sessionActionOrder: SessionActionId[]): void {
+    this.save({ sessionActionOrder });
   }
 
   setThinkingVisibility(thinkingVisibility: VisibilityPreference): void {

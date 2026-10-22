@@ -39,6 +39,7 @@ import { modelCycleShortcut } from "../workbench-keyboard";
 import { sessionHeading } from "./AppTopbar";
 import { ButtonLabel } from "./ButtonLabel";
 import { ComposerInput } from "./ComposerInput";
+import { visibleSessions } from "./nav-model";
 import { SearchMatchText } from "./SearchMatchText";
 import { relativeTime } from "./transcript-rows";
 
@@ -502,8 +503,9 @@ export const CommandPalette = memo(function CommandPalette({
       });
     }
 
+    const visible = visibleSessions(state.sessions, state.prefs);
     const recentIds = new Set(
-      [...state.sessions]
+      [...visible]
         .filter((session) => session.id !== state.sessionId)
         .sort(
           (left, right) =>
@@ -512,7 +514,7 @@ export const CommandPalette = memo(function CommandPalette({
         .slice(0, 5)
         .map((session) => session.id),
     );
-    const sessions: PaletteItem[] = state.sessions.map((session) => ({
+    const sessions: PaletteItem[] = visible.map((session) => ({
       id: `session-${session.id}`,
       group: "Sessions",
       aliases: ["session"],

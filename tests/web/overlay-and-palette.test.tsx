@@ -39,6 +39,7 @@ let renameGate: Promise<void> | null = null;
 let extensionGate: Promise<void> | null = null;
 
 beforeEach(async () => {
+  sessions.splice(1);
   renameBodies = [];
   renameGate = null;
   extensionGate = null;
@@ -164,6 +165,50 @@ describe("botanical palette controls", () => {
         }),
       ).toBeVisible();
     }
+  });
+});
+
+describe("palette session visibility", () => {
+  it("excludes individually hidden sessions and hidden projects from recents and search", async () => {
+    sessions.push(
+      sessionSummary({ id: "visible", title: "Visible work" }),
+      sessionSummary({ id: "hidden", title: "Hidden work" }),
+      sessionSummary({
+        id: "archived",
+        title: "Archived work",
+        cwd: "/archive",
+      }),
+    );
+    await act(async () => {
+      await store.loadSessions("");
+      store.toggleSessionHidden("hidden");
+      store.toggleProjectHidden("/archive");
+    });
+    render(<App />);
+    const dialog = await openPalette();
+    expect(
+      within(dialog).getByRole("option", { name: /^Visible work/ }),
+    ).toBeVisible();
+    for (const title of ["Hidden work", "Archived work"])
+      expect(
+        within(dialog).queryByRole("option", { name: new RegExp(title) }),
+      ).toBeNull();
+    fireEvent.change(
+      within(dialog).getByRole("combobox", { name: "Filter commands" }),
+      {
+        target: { value: "work" },
+      },
+    );
+    expect(
+      within(dialog).getByRole("option", { name: /^Visible work/ }),
+    ).toBeVisible();
+    for (const title of ["Hidden work", "Archived work"])
+      expect(
+        within(dialog).queryByRole("option", { name: new RegExp(title) }),
+      ).toBeNull();
+    expect(store.getState().sessions.map((session) => session.id)).toEqual(
+      expect.arrayContaining(["hidden", "archived"]),
+    );
   });
 });
 

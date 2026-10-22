@@ -8,7 +8,10 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { acquireFileLock } from "../../server/file-lock.mjs";
 import { PreferencesStore } from "../../server/preferences.js";
-import { defaultPreferences } from "../../shared/contracts.js";
+import {
+  defaultPreferences,
+  SESSION_ACTION_IDS,
+} from "../../shared/contracts.js";
 
 const roots: string[] = [];
 
@@ -122,6 +125,27 @@ describe("PreferencesStore validation", () => {
       titlebarNeedles: true,
       theme: "dark",
     });
+  });
+
+  it("persists session action order and appends actions absent from an older saved order", async () => {
+    const { path, store } = await fixture();
+    expect((await store.read()).sessionActionOrder).toEqual(SESSION_ACTION_IDS);
+    await store.patch({
+      theme: "dark",
+      sessionActionOrder: ["export", "rename", "clone", "terminal"],
+    });
+    const order = ["export", "rename", "clone", "terminal", "copy-id"];
+    expect(await new PreferencesStore(path).read()).toMatchObject({
+      theme: "dark",
+      sessionActionOrder: order,
+    });
+    await expect(
+      store.patch({ sessionActionOrder: ["rename", "rename"] }),
+    ).rejects.toBeDefined();
+    await expect(
+      store.patch({ sessionActionOrder: ["unknown"] }),
+    ).rejects.toBeDefined();
+    expect((await store.read()).sessionActionOrder).toEqual(order);
   });
 
   it("loads valid fields in memory but refuses to overwrite one invalid field", async () => {
