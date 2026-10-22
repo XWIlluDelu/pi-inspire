@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -10,6 +10,56 @@ import { PiRpcProcess } from "../../server/pi-rpc.js";
 import { ProjectTrustStore, piInstallation } from "../../server/pi-runtime.js";
 import type { McpConfigEdit } from "../../shared/mcp.js";
 import { nativePiWorkspace } from "./fixtures/native-pi.js";
+
+it("Pi loads saved CIMD, dynamic and pre-registered OAuth configurations after partial edits", async () => {
+  const workspace = await nativePiWorkspace("inspire-mcp-oauth-", {});
+  const { root, agent, cwd } = workspace;
+  try {
+    const service = new McpConfigService(agent);
+    const variants = {
+      cimd: {
+        clientRegistration: "cimd" as const,
+        callbackUrl: "http://localhost:8765/callback",
+      },
+      dynamic: {
+        clientRegistration: "dcr" as const,
+        clientName: "Fixture client",
+        callbackUrl: "http://[::1]/custom-callback",
+      },
+      registered: { clientId: "fixture-id", clientSecret: "fixture-secret" },
+    };
+    for (const [name, oauth] of Object.entries(variants)) {
+      await service.save(null, {
+        scope: "user",
+        name,
+        operation: "add",
+        revision: (await service.read(null)).files[0]!.revision,
+        values: { url: "https://example.invalid/mcp", enabled: false, oauth },
+      });
+    }
+    await service.save(null, {
+      scope: "user",
+      name: "cimd",
+      operation: "update",
+      revision: (await service.read(null)).files[0]!.revision,
+      values: { oauth: { scope: "read" } },
+    });
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      [piInstallation.cliPath, "mcp", "list", "--json"],
+      { cwd, env: workspace.env, timeout: 15_000 },
+    );
+    const loaded = JSON.parse(stdout);
+    expect(loaded.errors).toEqual([]);
+    expect(loaded.servers).toEqual(
+      Object.keys(variants).map((name) =>
+        expect.objectContaining({ name, enabled: false, state: "disabled" }),
+      ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}, 20_000);
 
 it("Pi consumes saved MCP files with native trust/precedence while its existing RPC worker keeps loaded connections", async () => {
   const workspace = await nativePiWorkspace("inspire-mcp-native-", {});
@@ -171,11 +221,31 @@ it("Pi consumes saved MCP files with native trust/precedence while its existing 
     const [major, minor] = piInstallation.version.split(".").map(Number);
     if (major! > 1 || (major === 1 && minor! >= 1)) {
       const project = join(cwd, ".pi/mcp.json");
-      await writeFile(
-        project,
-        JSON.stringify({ mcpServers: { remote: { enabled: false } } }),
-      );
+      await rm(project);
+      expect((await service.read(cwd)).files[1]!.entries).toEqual([]);
       const userBefore = await readFile(join(agent, "mcp.json"), "utf8");
+      await edit({
+        scope: "project",
+        name: "remote",
+        operation: "add",
+        values: { enabled: false },
+      });
+      expect(JSON.parse(await readFile(project, "utf8"))).toEqual({
+        mcpServers: { remote: { enabled: false } },
+      });
+      const created = await list();
+      expect(created.errors).toEqual([]);
+      expect(
+        created.servers.find(
+          (entry: { name: string }) => entry.name === "remote",
+        ),
+      ).toMatchObject({
+        enabled: false,
+        source: join(agent, "mcp.json"),
+        override: project,
+        state: "disabled",
+      });
+      expect(initializations).toBe(2);
       expect((await service.read(cwd)).files[1]!.entries[0]).toMatchObject({
         policyOnly: true,
         transport: null,
@@ -220,6 +290,24 @@ it("Pi consumes saved MCP files with native trust/precedence while its existing 
           },
         },
       });
+      await edit({ scope: "project", name: "remote", operation: "remove" });
+      const restored = await list();
+      expect(restored.errors).toEqual([]);
+      const remote = restored.servers.find(
+        (entry: { name: string }) => entry.name === "remote",
+      );
+      expect(remote).toMatchObject({
+        enabled: true,
+        exposure: "direct",
+        source: join(agent, "mcp.json"),
+        state: "connected",
+      });
+      expect(remote.override).toBeUndefined();
+      expect(initializations).toBe(4);
+      expect(authorizations[3]).toBe("Bearer isolated-mcp-secret");
+      expect(JSON.parse(await readFile(project, "utf8")).mcpServers).toEqual(
+        {},
+      );
       expect(await readFile(join(agent, "mcp.json"), "utf8")).toBe(userBefore);
       expect((await command("/mcp")).notifications).toBe(before.notifications);
     }

@@ -1,12 +1,15 @@
 import { Plus, Trash2, Undo2 } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   MCP_EXPOSURES,
   type McpConfigEntry,
   type McpConfigScope,
   type McpConfigSnapshot,
   type McpConfigValues,
+  type McpConnectionRead,
+  type McpConnectionValues,
   type McpExposure,
+  mcpOAuthError,
 } from "../../shared/mcp";
 import { ButtonLabel } from "./ButtonLabel";
 import { Dropdown } from "./Dropdown";
@@ -171,14 +174,18 @@ const oauthLabels = [
 
 export function McpServerForm({
   entry,
+  policyName,
   initialScope,
   snapshot,
   busy,
   error,
   onSave,
+  onReadConnection,
   onCancel,
 }: {
   entry: McpConfigEntry | null;
+  /** A new policy-only project entry inheriting this user server. */
+  policyName?: string;
   initialScope: McpConfigScope;
   snapshot: McpConfigSnapshot;
   busy: boolean;
@@ -188,10 +195,12 @@ export function McpServerForm({
     name: string,
     values: McpConfigValues,
   ) => void;
+  onReadConnection: (input: McpConnectionRead) => Promise<McpConnectionValues>;
   onCancel: () => void;
 }) {
+  const policyOnly = Boolean(entry?.policyOnly || policyName);
   const [scope, setScope] = useState(initialScope);
-  const [name, setName] = useState(entry?.name ?? "");
+  const [name, setName] = useState(entry?.name ?? policyName ?? "");
   const [transport, setTransport] = useState(entry?.transport ?? "http");
   const [patch, setPatch] = useState<McpConfigValues>({});
   const [envRows, setEnvRows] = useState(() =>
@@ -200,6 +209,22 @@ export function McpServerForm({
   const [headerRows, setHeaderRows] = useState(() =>
     storedPairs(entry?.headerKeys ?? []),
   );
+  const [connection, setConnection] = useState<McpConnectionValues | null>(
+    null,
+  );
+  const connectionInput = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    if (connection) connectionInput.current?.focus();
+  }, [connection]);
+  const [readingConnection, setReadingConnection] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [replaceArgs, setReplaceArgs] = useState(false);
   const [args, setArgs] = useState<string[]>([]);
   const [toolRules, setToolRules] = useState(
@@ -223,23 +248,84 @@ export function McpServerForm({
     value: McpConfigValues[K],
   ) => setPatch((current) => ({ ...current, [key]: value }));
   const file = snapshot.files.find((file) => file.scope === scope)!;
+  const currentRevision = useRef(file.revision);
+  currentRevision.current = file.revision;
+  async function showConnection() {
+    if (!entry) return;
+    setReadingConnection(true);
+    setConnectionError(null);
+    const revision = file.revision;
+    try {
+      const value = await onReadConnection({
+        scope,
+        name: entry.name,
+        revision,
+      });
+      if (!mounted.current) return;
+      if (currentRevision.current !== revision)
+        throw new Error("Configuration changed. Show the saved values again.");
+      setConnection(value);
+      if (transport === "stdio") {
+        setArgs(value.args ?? []);
+        setReplaceArgs(true);
+      }
+    } catch (error) {
+      if (mounted.current)
+        setConnectionError(
+          error instanceof Error
+            ? error.message
+            : "Saved connection values could not be read.",
+        );
+    } finally {
+      if (mounted.current) setReadingConnection(false);
+    }
+  }
   const enabled = patch.enabled === undefined ? entry?.enabled : patch.enabled;
   const exposure =
     patch.exposure === undefined ? entry?.exposure : patch.exposure;
+  const registration =
+    patch.oauth?.clientRegistration === null
+      ? "dcr"
+      : (patch.oauth?.clientRegistration ??
+        entry?.oauthClientRegistration ??
+        "dcr");
+  // Protected values are not read back. Presence is enough to detect CIMD conflicts;
+  // the Host validates the complete merged object, including stored callback URLs.
+  const oauth: Record<string, unknown> = {
+    ...patch.oauth,
+    clientRegistration: registration,
+  };
+  for (const key of ["clientId", "clientName"] as const)
+    if (patch.oauth?.[key] === undefined && entry?.oauthFields.includes(key))
+      oauth[key] = "stored";
+  for (const [key, value] of Object.entries(oauth))
+    if (value === null) delete oauth[key];
+  const oauthError =
+    transport === "http" && !policyOnly ? mcpOAuthError(oauth) : undefined;
+  const unchangedPolicy =
+    Boolean(policyName) && !Object.values(patch).some((value) => value != null);
   const rulesChanged = (rules: typeof toolRules) => {
     setToolRules(rules);
-    change(
-      "toolExposure",
-      Object.fromEntries(
-        rules.filter((rule) => rule.key).map((rule) => [rule.key, rule.value]),
-      ),
+    const toolExposure = Object.fromEntries(
+      rules.filter((rule) => rule.key).map((rule) => [rule.key, rule.value]),
     );
+    setPatch((current) => {
+      const next = { ...current };
+      if (
+        JSON.stringify(toolExposure) ===
+        JSON.stringify(entry?.toolExposure ?? {})
+      )
+        delete next.toolExposure;
+      else next.toolExposure = toolExposure;
+      return next;
+    });
   };
   return (
     <form
       className="models-form"
       onSubmit={(event) => {
         event.preventDefault();
+        if (oauthError || unchangedPolicy) return;
         const values = { ...patch };
         const secrets = Object.fromEntries(
           (transport === "http" ? headerRows : envRows).flatMap((row) =>
@@ -265,13 +351,13 @@ export function McpServerForm({
     >
       <div className="models-form__body">
         <div className="models-form__grid">
-          {entry ? (
+          {entry || policyName ? (
             <p className="models-status models-form__wide">
               {scope === "user"
                 ? "User configuration"
                 : "Project configuration"}
               {" · "}
-              {entry.policyOnly
+              {policyOnly
                 ? "Policy override"
                 : transport === "http"
                   ? "HTTP"
@@ -315,11 +401,11 @@ export function McpServerForm({
           </p>
           {hasStoredPrivateValues ? (
             <p className="models-status models-form__wide mcp-fields-hint">
-              Stored values stay on the Host. Leave protected fields blank to
-              keep them; use their remove actions to clear them.
+              Saved connection values are hidden until requested and may contain
+              secrets. Blank credential fields keep their saved values.
             </p>
           ) : null}
-          {!entry && (
+          {!entry && !policyName && (
             <div className="models-form__field models-form__wide">
               <span>Transport</span>
               <Dropdown
@@ -335,26 +421,44 @@ export function McpServerForm({
               />
             </div>
           )}
-          {entry?.policyOnly ? null : transport === "http" ? (
-            <label className="models-form__wide">
-              Server URL
-              <input
-                type="text"
-                autoComplete="new-password"
-                value={patch.url ?? ""}
-                onChange={(event) =>
-                  change("url", event.target.value || undefined)
-                }
-                required={!entry?.urlConfigured}
-                disabled={busy}
-                autoFocus={Boolean(entry)}
-                placeholder={
-                  entry?.urlConfigured
-                    ? "Stored URL · leave blank to keep"
-                    : "https://example.com/mcp"
-                }
-              />
-            </label>
+          {policyOnly ? null : transport === "http" ? (
+            <div className="models-form__field models-form__wide">
+              <label>
+                Server URL
+                <input
+                  type="text"
+                  autoComplete="new-password"
+                  ref={connectionInput}
+                  value={patch.url ?? connection?.url ?? ""}
+                  onChange={(event) =>
+                    change(
+                      "url",
+                      connection
+                        ? event.target.value
+                        : event.target.value || undefined,
+                    )
+                  }
+                  required={Boolean(connection) || !entry?.urlConfigured}
+                  disabled={busy}
+                  autoFocus={Boolean(entry)}
+                  placeholder={
+                    entry?.urlConfigured
+                      ? "Stored URL · leave blank to keep"
+                      : "https://example.com/mcp"
+                  }
+                />
+              </label>
+              {entry?.urlConfigured && !connection ? (
+                <button
+                  type="button"
+                  className="models-text-button"
+                  disabled={busy || readingConnection || Boolean(file.error)}
+                  onClick={() => void showConnection()}
+                >
+                  {readingConnection ? "Loading saved URL…" : "Show saved URL"}
+                </button>
+              ) : null}
+            </div>
           ) : (
             <>
               <label className="models-form__wide">
@@ -378,21 +482,22 @@ export function McpServerForm({
                     <button
                       type="button"
                       className="models-text-button"
-                      disabled={busy}
-                      onClick={() => {
-                        setReplaceArgs(true);
-                        change("args", []);
-                      }}
+                      disabled={
+                        busy || readingConnection || Boolean(file.error)
+                      }
+                      onClick={() => void showConnection()}
                     >
-                      Replace arguments
+                      {readingConnection
+                        ? "Loading saved arguments…"
+                        : "Show saved arguments"}
                     </button>
                   </>
                 ) : (
                   <>
                     {entry ? (
                       <p className="models-status">
-                        Replaces all stored arguments. An empty list removes
-                        them.
+                        Edit individual arguments below. An empty list removes
+                        them all.
                       </p>
                     ) : null}
                     {args.map((arg, index) => (
@@ -402,6 +507,7 @@ export function McpServerForm({
                           <input
                             type="text"
                             autoComplete="off"
+                            ref={index === 0 ? connectionInput : undefined}
                             value={arg}
                             disabled={busy}
                             onChange={(event) => {
@@ -460,17 +566,17 @@ export function McpServerForm({
             </>
           )}
         </div>
-        <details className="models-form__optional" open={entry?.policyOnly}>
+        <details className="models-form__optional" open={policyOnly}>
           <summary>
-            {entry?.policyOnly ? "Project policy" : "Advanced configuration"}
+            {policyOnly ? "Project policy" : "Advanced configuration"}
           </summary>
           <p className="models-status">
-            {entry?.policyOnly
+            {policyOnly
               ? "Connection settings come from the user configuration."
               : "Blank credential fields keep saved values."}
           </p>
           <div className="models-form__grid">
-            {!entry?.policyOnly ? (
+            {!policyOnly ? (
               <>
                 <label className="models-form__wide">
                   Description
@@ -514,10 +620,10 @@ export function McpServerForm({
               <Dropdown
                 className="dropdown--field"
                 label="Tool exposure"
-                autoFocus={Boolean(entry?.policyOnly)}
-                value={exposure ?? (entry?.policyOnly ? "inherit" : "codemode")}
+                autoFocus={policyOnly}
+                value={exposure ?? (policyOnly ? "inherit" : "codemode")}
                 options={
-                  entry?.policyOnly
+                  policyOnly
                     ? [
                         { value: "inherit", label: "Inherit from user" },
                         ...exposureOptions,
@@ -535,16 +641,14 @@ export function McpServerForm({
             </div>
             <div className="models-form__field">
               <span>
-                {entry?.policyOnly
-                  ? "Enabled in this project"
-                  : "Enabled in file"}
+                {policyOnly ? "Enabled in this project" : "Enabled in file"}
               </span>
-              {entry?.policyOnly ? (
+              {policyOnly ? (
                 <Dropdown
                   className="dropdown--field"
                   label="Enabled in this project"
                   value={
-                    enabled === null
+                    enabled == null
                       ? "inherit"
                       : enabled
                         ? "enabled"
@@ -588,7 +692,7 @@ export function McpServerForm({
               </label>
             ) : null}
           </div>
-          {entry?.policyOnly ? null : transport === "stdio" ? (
+          {policyOnly ? null : transport === "stdio" ? (
             <SecretMap
               label="Environment variable"
               rows={envRows}
@@ -611,59 +715,98 @@ export function McpServerForm({
                   in.
                 </p>
                 <div className="models-form__grid">
-                  {oauthLabels.map(([key, label]) => (
-                    <div className="models-form__field" key={key}>
-                      <label>
-                        {label}
-                        <input
-                          type={
-                            key === "callbackPort"
-                              ? "number"
-                              : key === "clientSecret"
-                                ? "password"
-                                : "text"
-                          }
-                          autoComplete="new-password"
-                          value={patch.oauth?.[key] ?? ""}
-                          min={key === "callbackPort" ? 1 : undefined}
-                          max={key === "callbackPort" ? 65535 : undefined}
-                          disabled={busy || patch.oauth?.[key] === null}
-                          placeholder={
-                            entry?.oauthFields.includes(key)
-                              ? "Stored · leave blank to keep"
-                              : "Optional"
-                          }
-                          onChange={(event) =>
-                            change("oauth", {
-                              ...patch.oauth,
-                              [key]: event.target.value
-                                ? key === "callbackPort"
-                                  ? Number(event.target.value)
-                                  : event.target.value
-                                : undefined,
-                            })
-                          }
-                        />
-                      </label>
-                      {entry?.oauthFields.includes(key) ? (
-                        <label className="models-checkbox">
+                  <div className="models-form__field models-form__wide">
+                    <span>Client registration</span>
+                    <Dropdown
+                      className="dropdown--field"
+                      label="Client registration"
+                      value={registration}
+                      disabled={busy}
+                      options={[
+                        {
+                          value: "dcr",
+                          label: "Client ID or dynamic registration",
+                        },
+                        { value: "cimd", label: "Pi metadata document (CIMD)" },
+                      ]}
+                      onChange={(value) =>
+                        change("oauth", {
+                          ...patch.oauth,
+                          clientRegistration: value as "dcr" | "cimd",
+                        })
+                      }
+                    />
+                  </div>
+                  {registration === "cimd" ? (
+                    <p className="models-status models-form__wide">
+                      Uses Pi's client metadata document instead of a client ID
+                      or name. A custom callback must use localhost or 127.0.0.1
+                      with the path /callback.
+                    </p>
+                  ) : null}
+                  {oauthLabels
+                    .filter(
+                      ([key]) =>
+                        registration !== "cimd" ||
+                        !["clientId", "clientName"].includes(key) ||
+                        oauth[key] !== undefined ||
+                        entry?.oauthFields.includes(key),
+                    )
+                    .map(([key, label]) => (
+                      <div className="models-form__field" key={key}>
+                        <label>
+                          {label}
                           <input
-                            type="checkbox"
-                            className="choice-input"
-                            disabled={busy}
-                            checked={patch.oauth?.[key] === null}
+                            type={
+                              key === "callbackPort"
+                                ? "number"
+                                : key === "clientSecret"
+                                  ? "password"
+                                  : "text"
+                            }
+                            autoComplete="new-password"
+                            value={patch.oauth?.[key] ?? ""}
+                            min={key === "callbackPort" ? 1 : undefined}
+                            max={key === "callbackPort" ? 65535 : undefined}
+                            disabled={busy || patch.oauth?.[key] === null}
+                            placeholder={
+                              entry?.oauthFields.includes(key)
+                                ? "Stored · leave blank to keep"
+                                : "Optional"
+                            }
                             onChange={(event) =>
                               change("oauth", {
                                 ...patch.oauth,
-                                [key]: event.target.checked ? null : undefined,
+                                [key]: event.target.value
+                                  ? key === "callbackPort"
+                                    ? Number(event.target.value)
+                                    : event.target.value
+                                  : undefined,
                               })
                             }
                           />
-                          Remove {label.toLowerCase()}
                         </label>
-                      ) : null}
-                    </div>
-                  ))}
+                        {entry?.oauthFields.includes(key) ? (
+                          <label className="models-checkbox">
+                            <input
+                              type="checkbox"
+                              className="choice-input"
+                              disabled={busy}
+                              checked={patch.oauth?.[key] === null}
+                              onChange={(event) =>
+                                change("oauth", {
+                                  ...patch.oauth,
+                                  [key]: event.target.checked
+                                    ? null
+                                    : undefined,
+                                })
+                              }
+                            />
+                            Remove {label.toLowerCase()}
+                          </label>
+                        ) : null}
+                      </div>
+                    ))}
                 </div>
               </details>
             </>
@@ -748,9 +891,9 @@ export function McpServerForm({
             {entry.extraFieldCount} additional fields will be preserved.
           </p>
         ) : null}
-        {file.error || error ? (
+        {file.error || error || oauthError || connectionError ? (
           <p className="settings__error" role="alert">
-            {error ?? file.error}
+            {oauthError ?? connectionError ?? error ?? file.error}
           </p>
         ) : null}
       </div>
@@ -758,7 +901,13 @@ export function McpServerForm({
         <button
           type="submit"
           className="button button--primary"
-          disabled={busy || Boolean(file.error)}
+          disabled={
+            busy ||
+            readingConnection ||
+            Boolean(file.error) ||
+            Boolean(oauthError) ||
+            unchangedPolicy
+          }
         >
           <ButtonLabel reserve="Saving…">
             {busy ? "Saving…" : "Save"}

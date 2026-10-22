@@ -2688,6 +2688,14 @@ export class AppStore {
     return this.api.mcpConfig(owner);
   };
 
+  readMcpConnection = (
+    owner: { sessionId?: string; cwd?: string },
+    input: import("../shared/mcp").McpConnectionRead,
+  ) => {
+    if (!this.api) return Promise.reject(new Error("The Host is unavailable"));
+    return this.api.mcpConnection(owner, input);
+  };
+
   editMcpConfig = (
     owner: { sessionId?: string; cwd?: string },
     edit: import("../shared/mcp").McpConfigEdit,
