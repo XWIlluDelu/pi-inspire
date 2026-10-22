@@ -412,6 +412,20 @@
   border-bottom: 0;
 }
 
+/* Asynchronous readouts never recenter the field's label and explanation. */
+.settings__field:has(.settings__feedback) {
+  align-items: flex-start;
+}
+
+.settings__feedback {
+  display: grid;
+  grid-auto-rows: max-content;
+  align-content: start;
+  gap: var(--space-1);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
 .settings__field > .settings__field-info {
   flex: 1 1 180px;
 }
@@ -474,6 +488,18 @@
   overflow-wrap: anywhere;
 }
 
+.settings__notification-control {
+  display: grid;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.settings__notification-status {
+  display: grid;
+  gap: var(--space-2);
+  color: var(--muted);
+}
+
 .settings__field-status-block {
   display: flex;
   align-items: center;
@@ -509,15 +535,18 @@
 }
 
 .settings__field-control > .segmented,
+.settings__field-control > .settings__notification-control,
 .settings__field-control > .dropdown--field {
   flex: 1;
 }
 
+.settings__field-control > .settings__notification-control,
 .settings__field-control > .dropdown--field {
   width: var(--set-choice-w);
   max-width: 100%;
 }
 
+.settings__notification-control .dropdown__trigger,
 .settings__field-control > .dropdown--field .dropdown__trigger {
   width: 100%;
 }

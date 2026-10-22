@@ -253,11 +253,10 @@ custom messages remain independent readable boundaries in this contract.
 
 - Cancellation is a normal terminal outcome, not a Pi failure. An assistant with
   `stopReason: "aborted"` displays **Stopped** after its partial content,
-  outside activity folding. Pi also persists some native cancellations as `stopReason: "error"`
-  with the standalone default reason `This operation was aborted`; this exact reason has the same
-  presentation. Do not use substring matching: timeout, connection and other diagnostics remain
-  errors even when they mention abortion. Runtime settlement, attention indicators and the browser
-  agree on cancellation as `aborted`, so it does not activate the Composer's failed styling.
+  outside activity folding. `stopReason: "error"` remains an error, including the standalone
+  diagnostic `This operation was aborted`: diagnostic text does not establish cancellation.
+  Runtime settlement, attention indicators and the browser use native cancellation evidence,
+  not error-message wording, to determine an `aborted` run without failed Composer styling.
   Native `agent_settled.aborted` determines the run's cancellation outcome even when retry ended
   unsuccessfully or the last assistant message already completed. This leaves original message stop
   reasons, earlier diagnostics and projection conflicts intact. Retry-failure feedback waits for

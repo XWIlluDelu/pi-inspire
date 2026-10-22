@@ -185,6 +185,7 @@ function reporter(
       mode,
       cwd: paths.home,
       isIdle: idle,
+      ui: { onTerminalInput: vi.fn(() => () => {}) },
       sessionManager: {
         getSessionId: () => identity.id,
         getSessionFile: () => identity.path,

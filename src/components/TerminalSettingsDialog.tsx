@@ -17,6 +17,10 @@ import {
 } from "react";
 import type { TerminalServiceSettings } from "../../shared/terminal-contracts";
 import type { createApi } from "../api";
+import {
+  notificationPermissionMessage,
+  requestBrowserNotificationPermission,
+} from "../browser-notifications";
 import { isMacTerminalBrowser } from "../terminal-keyboard";
 import {
   DEFAULT_TERMINAL_UI_SETTINGS,
@@ -30,6 +34,7 @@ import { Dropdown } from "./Dropdown";
 import {
   SegmentedControl,
   SettingField,
+  SettingsFeedback,
   SettingsSwitch,
 } from "./SettingsControls";
 import { SettingsSection } from "./SettingsSection";
@@ -87,6 +92,13 @@ export function TerminalSettingsDialog({
   const [savingService, setSavingService] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [readRevision, setReadRevision] = useState(0);
+  const [permissionFeedback, setPermissionFeedback] = useState<{
+    target: "bell" | "task";
+    message: string;
+  } | null>(null);
+  const permissionRevisions = useRef({ bell: 0, task: 0 });
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
 
   useEffect(() => {
     let cancelled = false;
@@ -115,11 +127,15 @@ export function TerminalSettingsDialog({
 
   const updateUi = useCallback(
     (patch: Partial<TerminalUiSettings>) => {
-      const next = { ...settings, ...patch };
+      if (patch.bell !== undefined) permissionRevisions.current.bell++;
+      if (patch.longTaskNotifications !== undefined)
+        permissionRevisions.current.task++;
+      const next = { ...settingsRef.current, ...patch };
+      settingsRef.current = next;
       saveTerminalUiSettings(next);
       onSettingsChange(next);
     },
-    [onSettingsChange, settings],
+    [onSettingsChange],
   );
 
   const updateService = useCallback(
@@ -141,28 +157,46 @@ export function TerminalSettingsDialog({
     [api],
   );
 
-  const requestDesktopPermission = useCallback(async (): Promise<boolean> => {
-    if (!("Notification" in window)) return false;
-    if (Notification.permission === "granted") return true;
-    if (Notification.permission === "denied") return false;
-    return (await Notification.requestPermission()) === "granted";
-  }, []);
+  const requestDesktopPermission = useCallback(
+    async (target: "bell" | "task"): Promise<boolean | null> => {
+      const revision = ++permissionRevisions.current[target];
+      let allowed = false;
+      let message: string | null;
+      try {
+        const permission = await requestBrowserNotificationPermission();
+        allowed = permission === "granted";
+        message = notificationPermissionMessage(permission);
+      } catch {
+        message =
+          "Could not request notification permission. Check this site's browser settings.";
+      }
+      if (permissionRevisions.current[target] !== revision) return null;
+      setPermissionFeedback(message ? { target, message } : null);
+      return allowed;
+    },
+    [],
+  );
+  const permissionStatus = (target: "bell" | "task") =>
+    permissionFeedback?.target === target ? (
+      <SettingsFeedback label="Notification status">
+        <span role="status">{permissionFeedback.message}</span>
+      </SettingsFeedback>
+    ) : undefined;
   const selectBell = useCallback(
     async (bell: TerminalBellMode) => {
-      updateUi({
-        bell:
-          bell === "desktop" && !(await requestDesktopPermission())
-            ? "visual"
-            : bell,
-      });
+      setPermissionFeedback(null);
+      const allowed =
+        bell !== "desktop" || (await requestDesktopPermission("bell"));
+      if (allowed !== null) updateUi({ bell: allowed ? bell : "visual" });
     },
     [requestDesktopPermission, updateUi],
   );
   const setLongTaskNotifications = useCallback(
     async (enabled: boolean) => {
-      updateUi({
-        longTaskNotifications: enabled && (await requestDesktopPermission()),
-      });
+      setPermissionFeedback(null);
+      const allowed = !enabled || (await requestDesktopPermission("task"));
+      if (allowed !== null)
+        updateUi({ longTaskNotifications: enabled && allowed });
     },
     [requestDesktopPermission, updateUi],
   );
@@ -379,7 +413,7 @@ export function TerminalSettingsDialog({
                       />
                     </SettingField>
                   ) : null}
-                  <SettingField label="Bell">
+                  <SettingField label="Bell" status={permissionStatus("bell")}>
                     <Dropdown
                       label="Terminal bell behavior"
                       className="dropdown--field"
@@ -397,6 +431,7 @@ export function TerminalSettingsDialog({
                   <SettingField
                     label="Long task notifications"
                     description="Notify when a background command finishes. Command text isn't shown."
+                    status={permissionStatus("task")}
                   >
                     <SettingsSwitch
                       label="Long task notifications"

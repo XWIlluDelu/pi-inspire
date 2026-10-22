@@ -18,6 +18,10 @@ import {
   type UserTurnAnchor,
 } from "../shared/contracts";
 import type { ModelSettingsOwner } from "../shared/model-settings";
+import {
+  initialTaskAlerts,
+  type TaskAlertState,
+} from "../shared/notifications";
 import type { ExternalSessionActivities } from "../shared/session-activity";
 import type { PiCommand } from "./composer-completion";
 import type { PendingAttachment } from "./controllers/composer-controller";
@@ -237,6 +241,7 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   externalSessionActivities: ExternalSessionActivities;
   /** Unseen terminal transitions currently contributing a title marker. */
   attentionSessionIds: string[];
+  taskAlerts: TaskAlertState;
   /** Ephemeral cue for observed successful runs finishing in the selected session. */
   completedRunSequence: number;
   /** Session currently owned by the newest open operation, if any. */
@@ -388,6 +393,7 @@ export function createInitialAppState(): AppState {
     sessionStatuses: {},
     externalSessionActivities: {},
     attentionSessionIds: [],
+    taskAlerts: { ...initialTaskAlerts },
     completedRunSequence: 0,
     openingSessionId: null,
     sessionSelectionPending: false,

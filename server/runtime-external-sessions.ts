@@ -150,20 +150,58 @@ export class RuntimeExternalSessions {
     state: ExternalSessionState,
     force = false,
   ): void {
-    const changed = connection.state.status !== state.status;
+    const priorState = connection.state;
+    const changed = priorState.status !== state.status;
     connection.state = state;
+    const sameReceiver =
+      !force &&
+      state.taskRuns &&
+      priorState.taskRuns?.receiverId === state.taskRuns.receiverId;
+    const oldResults = new Set(
+      priorState.taskRuns?.settled.map((item) => item.id),
+    );
+    const newResults = sameReceiver
+      ? state.taskRuns!.settled.filter(
+          (item) =>
+            !oldResults.has(item.id) &&
+            item.settledAt > Date.now() - 15 * 60_000,
+        )
+      : [];
+    for (const result of newResults) {
+      this.host.emit(slot, {
+        type: "native_task_outcome",
+        outcomeId: state.taskRuns!.receiverId + ":" + result.id,
+        outcome: result.outcome,
+      });
+    }
     if (connection.sending > 0 && state.status === "idle") return;
     if (state.status === "unknown") return;
     const previous = slot.runState;
     slot.runState = slot.conflict
       ? "conflict"
       : state.status === "idle"
-        ? "idle"
+        ? state.outcome === "failed" ||
+          state.taskRuns?.settled.at(-1)?.outcome === "failed"
+          ? "failed"
+          : state.taskRuns?.settled.at(-1)?.outcome === "aborted"
+            ? "aborted"
+            : "idle"
         : "running";
-    if (!force && !changed && previous === slot.runState) return;
+    if (
+      !force &&
+      !changed &&
+      previous === slot.runState &&
+      !(newResults.length && state.status !== "idle")
+    )
+      return;
     if (state.status === "idle") {
-      if (isBusyRunState(previous)) slot.attention = "completed";
-      this.host.emit(slot, { type: "agent_settled" });
+      if (isBusyRunState(previous))
+        slot.attention = slot.runState === "failed" ? "failed" : null;
+      this.host.emit(slot, {
+        type: "agent_settled",
+        taskOutcomeReported: Boolean(sameReceiver),
+        outcomeUnknown: !sameReceiver && state.outcome !== "failed",
+      });
     } else {
       this.host.emit(slot, { type: "agent_start" });
     }
@@ -191,9 +229,20 @@ export class RuntimeExternalSessions {
         return;
       }
       if (!state) {
+        if (
+          connection.native.retirementReason === "process-exit" &&
+          isBusyRunState(slot.runState)
+        ) {
+          slot.runState = "failed";
+          this.host.emit(slot, {
+            type: "runtime_error",
+            error: "The native Pi process exited during work.",
+          });
+        }
         this.detach(slot);
         this.setUnavailable(slot, true);
-        slot.runState = slot.conflict ? "conflict" : "idle";
+        if (slot.runState !== "failed")
+          slot.runState = slot.conflict ? "conflict" : "idle";
         this.host.emit(slot, { type: "runtime_ready" });
         return;
       }

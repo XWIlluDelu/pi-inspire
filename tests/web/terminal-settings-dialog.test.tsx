@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TerminalServiceSettings } from "../../shared/terminal-contracts";
 import type { createApi } from "../../src/api";
 import { TerminalSettingsDialog } from "../../src/components/TerminalSettingsDialog";
@@ -36,6 +36,103 @@ beforeEach(() => {
   vi.resetAllMocks();
   installLocalStorage();
   api.terminalSettings.mockResolvedValue(service);
+});
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("Terminal notification permission", () => {
+  it.each(["denied", "unavailable"] as const)(
+    "explains %s permission beside the initiating control",
+    async (permission) => {
+      const requestPermission = vi.fn();
+      vi.stubGlobal(
+        "Notification",
+        permission === "unavailable"
+          ? undefined
+          : { permission, requestPermission },
+      );
+      render(<Dialog />);
+      await act(async () => {});
+      navigate("Interaction");
+      fireEvent.click(
+        screen.getByRole("switch", { name: "Long task notifications" }),
+      );
+      await act(async () => {});
+      const feedback =
+        permission === "denied"
+          ? "Blocked by browser"
+          : "System notifications are unavailable";
+      expect(screen.getByRole("status")).toHaveTextContent(feedback);
+      expect(
+        screen.getByRole("switch", { name: "Long task notifications" }),
+      ).not.toBeChecked();
+      fireEvent.click(
+        screen.getByRole("combobox", { name: "Terminal bell behavior" }),
+      );
+      fireEvent.click(
+        screen.getByRole("option", { name: "Desktop notification" }),
+      );
+      await act(async () => {});
+      expect(screen.getByRole("status")).toHaveTextContent(feedback);
+      expect(
+        screen.getByRole("combobox", { name: "Terminal bell behavior" }),
+      ).toHaveTextContent("Mark terminal tab");
+      expect(requestPermission).not.toHaveBeenCalled();
+      fireEvent.click(
+        screen.getByRole("combobox", { name: "Terminal bell behavior" }),
+      );
+      fireEvent.click(screen.getByRole("option", { name: "Off" }));
+      await act(async () => {});
+      expect(screen.queryByRole("status")).toBeNull();
+    },
+  );
+
+  it("retires a permission selection when browser defaults are restored", async () => {
+    const permission = deferred<NotificationPermission>();
+    vi.stubGlobal("Notification", {
+      permission: "default",
+      requestPermission: () => permission.promise,
+    });
+    render(<Dialog />);
+    await act(async () => {});
+    navigate("Interaction");
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Long task notifications" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Restore browser defaults" }),
+    );
+    await act(async () => permission.resolve("granted"));
+    expect(
+      screen.getByRole("switch", { name: "Long task notifications" }),
+    ).not.toBeChecked();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("applies a delayed permission grant without reverting newer browser preferences", async () => {
+    const permission = deferred<NotificationPermission>();
+    const requestPermission = vi.fn(() => permission.promise);
+    vi.stubGlobal("Notification", { permission: "default", requestPermission });
+    render(<Dialog />);
+    await act(async () => {});
+    navigate("Interaction");
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Long task notifications" }),
+    );
+    expect(requestPermission).toHaveBeenCalledTimes(1);
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Protect terminal paste" }),
+    );
+    await act(async () => permission.resolve("granted"));
+    expect(
+      screen.getByRole("switch", { name: "Long task notifications" }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: "Protect terminal paste" }),
+    ).not.toBeChecked();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(api.updateTerminalSettings).not.toHaveBeenCalled();
+  });
 });
 
 describe("Terminal settings categories", () => {

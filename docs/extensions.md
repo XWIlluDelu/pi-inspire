@@ -130,6 +130,10 @@ are not a control channel, and an ordinary Pi outside Herdr remains observation-
 
 Reload the updated file with `/reload` in the original idle Pi terminal, or start Pi normally next time.
 Inspire connects to that process; returning to the original terminal continues the same instance.
+The reporter also retains bounded, receiver-bound task results so Inspire can distinguish normal
+completion, errors and confirmed cancellation, including a short run between polls. It does not
+replay old results when the Host first attaches. Older reporters may show **Task ended** rather
+than claim success; reload the updated extension for precise task notifications.
 An unsent terminal draft or unanswered dialog prevents new browser input without altering either.
 A call receipt means Pi's public function returned, not that a message ran or work completed;
 extensions can handle input without a model turn, and native asynchronous errors remain in Pi.

@@ -15,6 +15,7 @@ import {
   memo,
   type ReactNode,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -177,7 +178,7 @@ const COMPLETION_ALERTS: Array<{
 }> = [
   { value: "off", label: "Off" },
   { value: "title", label: "Mark tab" },
-  { value: "desktop", label: "Desktop notification" },
+  { value: "desktop", label: "System notification" },
 ];
 
 const LAUNCH_OPTIONS: Array<{ value: LaunchPreference; label: string }> = [
@@ -247,12 +248,16 @@ export const SettingsContent = memo(function SettingsContent({
   const state = useAppState(
     (source) => ({
       prefs: source.prefs,
+      taskAlerts: source.taskAlerts,
       version: source.version,
       sessionId: source.sessionId,
       runtimeSettings: source.runtimeSettings,
     }),
     shallowEqual,
   );
+  useEffect(() => {
+    void store.refreshTaskAlerts();
+  }, []);
   const install = useSyncExternalStore(
     subscribeInstallAvailability,
     installAvailability,
@@ -527,20 +532,86 @@ export const SettingsContent = memo(function SettingsContent({
               </SettingField>
 
               <SettingField
-                label="Completion alerts"
-                description="Notify when a background response finishes."
+                label="Task alerts"
+                description="This device · Notify when a background task finishes or stops with an error."
               >
-                <Dropdown
-                  label="Completion alerts"
-                  className="dropdown--field"
-                  value={state.prefs.completionAttention}
-                  options={COMPLETION_ALERTS}
-                  onChange={(value) =>
-                    void store.setCompletionAttention(
-                      value as CompletionAttentionPreference,
-                    )
-                  }
-                />
+                <div className="settings__notification-control">
+                  <Dropdown
+                    label="Task alerts"
+                    className="dropdown--field"
+                    value={state.taskAlerts.mode}
+                    options={COMPLETION_ALERTS}
+                    onChange={(value) =>
+                      void store.setCompletionAttention(
+                        value as CompletionAttentionPreference,
+                      )
+                    }
+                  />
+                  {state.taskAlerts.mode === "desktop" ? (
+                    <div className="settings__field-status settings__notification-status">
+                      <span role="status">
+                        {state.taskAlerts.busy
+                          ? "Updating notifications…"
+                          : state.taskAlerts.permission === "denied"
+                            ? "Blocked by browser. Allow notifications in this site's browser settings."
+                            : state.taskAlerts.permission === "unavailable"
+                              ? "System notifications are unavailable. On iPhone or iPad, add Inspire to the Home Screen and enable them there."
+                              : state.taskAlerts.permission !== "granted"
+                                ? "Notification permission is needed."
+                                : state.taskAlerts.subscribed
+                                  ? "Background notifications enabled"
+                                  : "While Inspire is open"}
+                      </span>
+                      {state.taskAlerts.error ? (
+                        <span className="settings__error">
+                          {state.taskAlerts.error}
+                        </span>
+                      ) : null}
+                      {state.taskAlerts.testResult ? (
+                        <span role="status">{state.taskAlerts.testResult}</span>
+                      ) : null}
+                      <div className="settings__field-status-block">
+                        {!state.taskAlerts.subscribed &&
+                        state.taskAlerts.permission !== "denied" ? (
+                          <button
+                            type="button"
+                            className="button button--small"
+                            disabled={
+                              state.taskAlerts.busy ||
+                              state.taskAlerts.permission === "unavailable"
+                            }
+                            onClick={() =>
+                              void store.setCompletionAttention("desktop")
+                            }
+                          >
+                            Enable notifications
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="button button--small"
+                          disabled={
+                            state.taskAlerts.busy ||
+                            state.taskAlerts.permission !== "granted"
+                          }
+                          onClick={() => void store.testTaskNotification()}
+                        >
+                          Send test notification
+                        </button>
+                      </div>
+                      {!state.taskAlerts.subscribed ? (
+                        <span>
+                          Background delivery uses your browser's push service.
+                          No additional account is needed.
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : state.taskAlerts.error ? (
+                    <span className="settings__error">
+                      {state.taskAlerts.error}
+                    </span>
+                  ) : undefined}
+                </div>
               </SettingField>
             </Section>
 

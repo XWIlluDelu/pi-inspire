@@ -1,4 +1,5 @@
 import { appendFile } from "node:fs/promises";
+import { TaskOutcomeTracker } from "../../server/task-notifications.js";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -15,6 +16,48 @@ import {
 afterEach(disposeProjectionFixture);
 
 describe("live and durable transcript reconciliation", () => {
+  it.each([false, true])(
+    "uses native cancellation evidence for failure attention and notifications (aborted=%s)",
+    async (aborted) => {
+      const { runtime, workers } = await setup();
+      const tracker = new TaskOutcomeTracker();
+      const notifications: unknown[] = [];
+      const events: Array<Record<string, unknown>> = [];
+      runtime.on("event", (event) => {
+        events.push(event);
+        const notification = tracker.observe(event);
+        if (notification) notifications.push(notification);
+      });
+      try {
+        await runtime.deselectSession();
+        const worker = workers[0]!;
+        worker.emit("event", { type: "agent_start" });
+        worker.emit("event", {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [],
+            stopReason: "error",
+            errorMessage: "This operation was aborted",
+            timestamp: 2,
+          },
+        });
+        worker.emit("event", { type: "agent_settled", aborted });
+        await vi.waitFor(() =>
+          expect(
+            events.findLast((event) => event.type === "agent_settled"),
+          ).toMatchObject({
+            sessionStatus: { runState: aborted ? "aborted" : "failed" },
+          }),
+        );
+        expect(notifications).toEqual(
+          aborted ? [] : [expect.objectContaining({ outcome: "failed" })],
+        );
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
   it.each(["retry", "completed message"])(
     "settles a background %s cancellation without completion/failure attention",
     async (phase) => {
@@ -401,9 +444,12 @@ describe("live and durable transcript reconciliation", () => {
     },
   );
 
-  it.each(["aborted", "error"])(
-    "keeps %s cancellation non-failing across settlement, snapshot and persistence",
-    async (stopReason) => {
+  it.each([
+    ["aborted", "aborted"],
+    ["error", "failed"],
+  ])(
+    "preserves native %s as %s across settlement, snapshot and persistence",
+    async (stopReason, runState) => {
       const { runtime, workers, path } = await setup();
       try {
         const forwarded: Array<Record<string, unknown>> = [];
@@ -428,7 +474,7 @@ describe("live and durable transcript reconciliation", () => {
         });
         workers[0]!.emit("event", { type: "message_end", message: stopped });
         expect(forwarded.at(-1)?.message).toMatchObject(stopped);
-        expect((await runtime.snapshot()).runState).toBe("aborted");
+        expect((await runtime.snapshot()).runState).toBe(runState);
         await appendFile(
           path,
           `${JSON.stringify({ type: "message", id: "stopped", parentId: "u1", timestamp: "2026-08-01T00:00:02.000Z", message: stopped })}\n`,
@@ -436,7 +482,7 @@ describe("live and durable transcript reconciliation", () => {
         workers[0]!.emit("event", { type: "agent_settled" });
         await vi.waitFor(async () => {
           const snapshot = await runtime.snapshot();
-          expect(snapshot.runState).toBe("aborted");
+          expect(snapshot.runState).toBe(runState);
           expect(snapshot.active?.transcriptPage.messages.at(-1)).toMatchObject(
             { ...stopped, __inspireEntryId: "stopped" },
           );

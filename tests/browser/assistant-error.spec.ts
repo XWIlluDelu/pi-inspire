@@ -5,14 +5,12 @@ import { openMockSession, pairedPage } from "./support/navigation";
 
 for (const scenario of [
   {
-    name: "legacy native cancellation",
-    stopReason: "error" as const,
+    name: "native cancellation with a mouse",
     hasTouch: false,
     deviceScaleFactor: 1,
   },
   {
-    name: "structured cancellation on touch",
-    stopReason: "aborted" as const,
+    name: "native cancellation on touch",
     hasTouch: true,
     deviceScaleFactor: 2,
   },
@@ -26,7 +24,7 @@ for (const scenario of [
     test("Stopped preserves output and drafts without hiding later failures @cross-browser", async ({
       page,
     }) => {
-      const fixture = await assistantOutcomeScenario(page, scenario.stopReason);
+      const fixture = await assistantOutcomeScenario(page);
       await page.emulateMedia({ reducedMotion: "reduce" });
       await pairedPage(page);
       await openMockSession(page, /Pi error display fixture/);
@@ -146,7 +144,7 @@ for (const scenario of [
       fixture.failed();
       await expect(
         page.getByRole("group", { name: "Pi error", exact: true }),
-      ).toHaveText(/Request timed out/);
+      ).toHaveText(/This operation was aborted/);
       await expect(stopped).toHaveCount(1);
       const outcomeColors = await page
         .locator(".assistant-error")

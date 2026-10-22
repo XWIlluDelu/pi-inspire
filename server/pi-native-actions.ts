@@ -77,6 +77,35 @@ export class PiNativeActions {
     return matches[0]!;
   }
 
+  /** Read-only outcome evidence bound to the same validated receiver as actions. */
+  async taskRuns(): Promise<
+    import("../docs/examples/session-activity.js").NativeTaskRuns | undefined
+  > {
+    const { record } = await this.target();
+    const runs = record.taskRuns;
+    if (
+      !runs ||
+      runs.receiverId !== record.nativeActions?.receiverId ||
+      !(
+        runs.activeRunId === null ||
+        (typeof runs.activeRunId === "string" &&
+          /^[0-9a-f-]{36}$/.test(runs.activeRunId))
+      ) ||
+      !Array.isArray(runs.settled) ||
+      runs.settled.length > 16 ||
+      !runs.settled.every(
+        (item) =>
+          typeof item.id === "string" &&
+          /^[0-9a-f-]{36}$/.test(item.id) &&
+          ["completed", "failed", "aborted"].includes(item.outcome) &&
+          Number.isSafeInteger(item.settledAt) &&
+          item.settledAt > 0,
+      )
+    )
+      return undefined;
+    return runs;
+  }
+
   async invoke(
     action: NativeAction,
     send: (frame: string) => Promise<unknown>,
