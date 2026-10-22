@@ -66,6 +66,9 @@ directory. General control and focus styling follows [[design-system]].
 
 Settings edits global Pi preferences and displays effective project overrides alongside them. Saved
 identities and patterns remain visible when unavailable. A failed read has its own error state.
+Read failures retain their file scope: an unreadable project settings file reports that its overrides
+are unavailable, but does not disable editing the separate global preferences. Global reads/writes
+still require a valid global file and preserve the project file.
 
 Common choices use Pi's ordered model-cycle patterns. Exact entries, including thinking-effort
 suffixes, toggle directly. Rule-covered rows show a separate “Via rule” edit action instead of a
@@ -120,8 +123,9 @@ effort is left to native startup rather than guessed. A manual effort choice rem
 
 One metadata query returns available choices and startup-default previews for the prospective cwd.
 It includes global and already-trusted project extension registrations, using Pi's stored/inherited
-trust and global default trust rule. Skipped project resources produce a warning; failed discovery
-produces an error. Fresh trust decisions remain part of Pi startup.
+trust and global default trust rule. Skipped project resources and individual extension-load failures
+produce warnings while retaining the models Pi can load. Invalid model configuration or a failed
+metadata query produces an error. Fresh trust decisions remain part of Pi startup.
 
 Discovery completes extension registration before resolving defaults. The short-lived SDK process
 creates no persistent session, emits no session-start event and makes no agent/model request.
@@ -139,7 +143,9 @@ optional endpoint overrides stay compact. Custom API types are accepted.
 
 Forms retain untouched providers, model metadata, overrides and advanced fields under Pi's schema.
 Removing a declaration affects `models.json`, independently of built-in catalog entries and saved
-login credentials. Configured declarations remain editable when their models are unavailable.
+login credentials. Configured declarations and saved preferences remain editable when model discovery
+is unavailable. Settings reports the availability failure separately from file errors; catalog
+discovery is not a prerequisite for reading or saving configuration.
 
 Provider/model creation and editing open a focused subview inside the Models category, replacing
 the browsing sections without unmounting their state. The header identifies the edit target and
@@ -159,8 +165,9 @@ returns to the entry point, and Common/Default saves retain row focus unless the
 Candidate declarations are validated in the existing isolated metadata worker against the same
 agent directory, selected working directory and project-trust policy as Pi. Extension provider
 registration precedes validation so legal inherited API/endpoint declarations remain valid, including
-when editing an unrelated provider. Validation starts no model turn or persistent session and keeps
-factory errors and credentials out of responses. Revision and atomic-publication checks still apply
+when editing an unrelated provider. Unrelated extension-load failures do not veto valid declarations;
+Pi still validates the complete candidate against the providers that loaded. Validation starts no
+model turn or persistent session and keeps factory errors and credentials out of responses. Revision and atomic-publication checks still apply
 before publishing the validated candidate.
 
 Writes detect conflicting external edits, accept native file syntax and follow existing configuration

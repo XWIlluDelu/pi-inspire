@@ -310,9 +310,15 @@ export class ModelSettingsService {
       defaultThinkingLevel: settings.getDefaultThinkingLevel(),
       enabledModels: settings.getEnabledModels(),
     });
-    if (settings.drainErrors().length)
+    const settingsErrors = settings.drainErrors();
+    if (settingsErrors.some((error) => error.scope === "global"))
       settingsError ??=
-        "Pi settings could not be loaded. Repair the file before saving.";
+        "Global Pi settings could not be loaded. Repair settings.json before saving.";
+    const projectSettingsError = settingsErrors.some(
+      (error) => error.scope === "project",
+    )
+      ? "Project settings could not be loaded. Showing global defaults; global settings remain editable. Repair this project's .pi/settings.json to restore its overrides."
+      : undefined;
     const saved = preferences(
       settingsError ? global : (settings.getGlobalSettings() as JsonObject),
     );
@@ -338,6 +344,7 @@ export class ModelSettingsService {
         })),
       ),
       ...(settingsError ? { settingsError } : {}),
+      ...(projectSettingsError ? { projectSettingsError } : {}),
       ...(configError ? { configError } : {}),
     };
   }

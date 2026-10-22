@@ -61,12 +61,10 @@ const preferenceFields = {
   completionAttention: z.enum(["off", "title", "desktop"]),
   recentModelIds: z
     .array(
-      z
-        .object({
-          provider: z.string().min(1).max(120),
-          id: z.string().min(1).max(240),
-        })
-        .strict(),
+      z.object({
+        provider: z.string().min(1).max(120),
+        id: z.string().min(1).max(240),
+      }),
     )
     .max(8),
   pinnedSessionIds: z
@@ -87,11 +85,14 @@ const preferencesSchema = z.object(preferenceFields).strict();
 
 // Writes are field-scoped patches merged over the stored file, never full
 // snapshots, so concurrent writers can only contend on the fields they
-// actually changed. `.strict()` keeps unknown keys out of the stored file.
+// actually changed. Reject unknown patch fields, but preserve existing fields
+// belonging to other versions of Inspire.
 const preferencesPatchSchema = preferencesSchema.partial().strict();
 
 interface DiskPreferences {
   preferences: InspirePreferences;
+  /** Absent only when the file cannot be safely patched as a JSON object. */
+  source?: Record<string, unknown>;
   warning?: string;
 }
 
@@ -100,10 +101,7 @@ interface PreferencesInspection {
   warning?: string;
 }
 
-function projectPreferences(value: unknown): {
-  preferences: InspirePreferences;
-  warning?: string;
-} {
+function projectPreferences(value: unknown): DiskPreferences {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {
       preferences: structuredClone(defaultPreferences),
@@ -112,7 +110,9 @@ function projectPreferences(value: unknown): {
     };
   }
 
-  const source = value as Record<string, unknown>;
+  const source = { ...(value as Record<string, unknown>) };
+  // Retired preference; unlike unknown fields, this has a known migration.
+  delete source.assistantRoundDisplay;
   const normalized = structuredClone(defaultPreferences) as unknown as Record<
     string,
     unknown
@@ -121,26 +121,21 @@ function projectPreferences(value: unknown): {
   for (const [field, schema] of Object.entries(preferenceFields)) {
     if (!Object.hasOwn(source, field)) continue;
     const parsed = schema.safeParse(source[field]);
-    if (parsed.success) normalized[field] = parsed.data;
-    else invalid.push(field);
+    if (parsed.success) {
+      normalized[field] = parsed.data;
+      source[field] = parsed.data;
+    } else invalid.push(field);
   }
-  const unknown = Object.keys(source).filter(
-    // Retired presentation preference is ignored on read and dropped on the
-    // next successful write; it must not lock existing installations.
-    (field) =>
-      field !== "assistantRoundDisplay" &&
-      !Object.hasOwn(preferenceFields, field),
-  );
-  const issues = [...invalid, ...unknown.map((field) => `unknown:${field}`)];
   const issueSummary =
-    issues.length <= 8
-      ? issues.join(", ")
-      : `${issues.slice(0, 8).join(", ")}, and ${issues.length - 8} more`;
+    invalid.length <= 8
+      ? invalid.join(", ")
+      : `${invalid.slice(0, 8).join(", ")}, and ${invalid.length - 8} more`;
   return {
+    source,
     preferences: preferencesSchema.parse(normalized),
-    ...(issues.length > 0
+    ...(invalid.length > 0
       ? {
-          warning: `Some saved preferences are invalid (${issueSummary}). Valid fields were loaded in memory; repair or remove the file before changing settings.`,
+          warning: `Some saved preferences are invalid (${issueSummary}). Defaults are shown for those fields. Change them in Settings to repair them; other settings remain editable.`,
         }
       : {}),
   };
@@ -164,7 +159,7 @@ export class PreferencesStore {
       raw = await readFile(this.path, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { preferences: structuredClone(defaultPreferences) };
+        return { preferences: structuredClone(defaultPreferences), source: {} };
       }
       throw error;
     }
@@ -181,15 +176,6 @@ export class PreferencesStore {
       }
       throw error;
     }
-  }
-
-  private invalidSourceError(current: DiskPreferences): Error | null {
-    return current.warning
-      ? requestError(
-          `${current.warning} The saved file at ${this.path} was left unchanged.`,
-          409,
-        )
-      : null;
   }
 
   async inspect(): Promise<PreferencesInspection> {
@@ -225,7 +211,7 @@ export class PreferencesStore {
   }
 
   private async persist(
-    preferences: InspirePreferences,
+    preferences: Record<string, unknown>,
     assertOwned: () => Promise<void>,
   ): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
@@ -257,11 +243,16 @@ export class PreferencesStore {
     return this.enqueue(() =>
       this.withWriteLock(async (assertOwned) => {
         const current = await this.readDisk();
-        const invalid = this.invalidSourceError(current);
-        if (invalid) throw invalid;
-        const preferences = preferencesSchema.parse(
+        if (!current.source)
+          throw requestError(
+            `${current.warning} The saved file at ${this.path} was left unchanged.`,
+            409,
+          );
+        const patch = preferencesPatchSchema.parse(
           transform(current.preferences),
         );
+        const source = { ...current.source, ...patch };
+        const { preferences } = projectPreferences(source);
         // Curation can introduce discovery roots, never remove them. Save both
         // sides before replacing legacy preferences, including deletion cleanup.
         await this.projectDirectories.remember([
@@ -270,7 +261,7 @@ export class PreferencesStore {
           ...preferences.pinnedProjectCwds,
           ...preferences.hiddenProjectCwds,
         ]);
-        await this.persist(preferences, assertOwned);
+        await this.persist(source, assertOwned);
         return preferences;
       }),
     );
@@ -281,7 +272,6 @@ export class PreferencesStore {
     terminal: boolean,
   ): Promise<void> {
     await this.mutate((current) => ({
-      ...current,
       terminalSessionIds: terminal
         ? [...new Set([...current.terminalSessionIds, sessionId])]
         : current.terminalSessionIds.filter((id) => id !== sessionId),
@@ -290,7 +280,7 @@ export class PreferencesStore {
 
   async patch(value: unknown): Promise<InspirePreferences> {
     const patch = preferencesPatchSchema.parse(value);
-    return this.mutate((current) => ({ ...current, ...patch }));
+    return this.mutate(() => patch);
   }
 
   /** The read/transform/write stays in one serialized preference operation,
@@ -304,7 +294,6 @@ export class PreferencesStore {
     const clearedHidden = new Set(clearedHiddenSessionIds);
     const clearedProjects = new Set(clearedProjectCwds);
     return this.mutate((current) => ({
-      ...current,
       terminalSessionIds: current.terminalSessionIds.filter(
         (id) => !deleted.has(id),
       ),

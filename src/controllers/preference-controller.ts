@@ -277,7 +277,7 @@ export class PreferenceController {
   rememberModel(model: ModelIdentity): void {
     const current = this.host.state().prefs.recentModelIds;
     const recentModelIds = [
-      model,
+      { provider: model.provider, id: model.id },
       ...current.filter(
         (candidate) => modelIdentityKey(candidate) !== modelIdentityKey(model),
       ),

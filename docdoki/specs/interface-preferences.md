@@ -135,10 +135,13 @@ read, including command-free extensions. Package update results remain separate 
   advanced since that operation began; deletion cleanup therefore preserves newer settings.
 - Palette identifiers and their legacy migration follow [[design-system]]. Theme and palette changes
   own separate fields; resetting preferences returns to Chimonanthus with System luminosity.
-- Missing stored fields receive migration defaults. For invalid fields, use defaults only for those
-  fields; malformed JSON or a non-object root uses the full default projection. Preserve the saved
-  file unchanged, warn during bootstrap, and refuse preference writes with a recoverable conflict
-  until the user repairs or removes it.
+- Missing stored fields receive migration defaults. Invalid fields use defaults in the displayed
+  projection and produce a bootstrap warning; other settings remain editable. Field-scoped writes
+  preserve unedited invalid values and unknown fields, and a valid edit repairs its addressed field.
+  Known migrations canonicalize valid saved values on the next write. Unknown patch fields still
+  reject. Recent models store only provider/ID, accepting extra discovery metadata without retaining it.
+- Malformed JSON or a non-object root uses the full default projection and blocks writes to avoid
+  discarding unreadable settings. The warning names the file to repair or remove; reads never rewrite it.
 - Every transient right-corner notice, including information notices, offers Copy and dismissal.
 
 ## Update observations
