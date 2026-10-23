@@ -57,7 +57,10 @@ const RecentFileRow = memo(function RecentFileRow({
   const selected = workspacePath
     ? selectedPath === workspacePath
     : selectedReference === reference;
-  const unavailable = availability && availability.availability !== "available";
+  const unavailable =
+    availability &&
+    availability.availability !== "available" &&
+    availability.availability !== "unknown";
   const missing = availability?.availability === "missing";
   const facet = presentGitFacet(change);
   const decoration = gitDecorationForChange(change);
@@ -75,7 +78,7 @@ const RecentFileRow = memo(function RecentFileRow({
       ]
         .filter(Boolean)
         .join(", ")}
-      title={availability?.message ?? displayPath}
+      title={unavailable ? (availability?.message ?? displayPath) : displayPath}
       onClick={() => void store.openResource(reference)}
     >
       <Icon size={13} aria-hidden />
@@ -117,14 +120,12 @@ function FileBrowser({
   rows,
   loading,
   error,
-  onRetry,
   savedScrollTop,
 }: {
   state: ContextPaneView;
   rows: ResourceRow[];
   loading: boolean;
   error: string | null;
-  onRetry: () => void;
   savedScrollTop: MutableRefObject<number>;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -200,14 +201,10 @@ function FileBrowser({
                   <div className="files-browser__note" role="status">
                     <PiLoader size={12} aria-hidden /> Loading…
                   </div>
-                ) : error ? (
-                  <button
-                    type="button"
-                    className="files-browser__note files-browser__note--action"
-                    onClick={onRetry}
-                  >
-                    <AlertTriangle size={12} aria-hidden /> Retry recent files
-                  </button>
+                ) : error && recent.length === 0 ? (
+                  <div className="files-browser__note" role="status">
+                    Recent files are unavailable right now.
+                  </div>
                 ) : recent.length === 0 ? (
                   <div className="files-browser__note">
                     No files referenced in this chat yet.
@@ -250,13 +247,11 @@ export function FilesPane({
   rows,
   loading,
   error,
-  onRetry,
 }: {
   state: ContextPaneView;
   rows: ResourceRow[];
   loading: boolean;
   error: string | null;
-  onRetry: () => void;
 }) {
   const browseScrollTop = useRef(0);
   if (state.fileBrowserView === "browse")
@@ -267,7 +262,6 @@ export function FilesPane({
           rows={rows}
           loading={loading}
           error={error}
-          onRetry={onRetry}
           savedScrollTop={browseScrollTop}
         />
       </div>

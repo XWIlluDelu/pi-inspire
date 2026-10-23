@@ -14,7 +14,7 @@ covers:
   - src/components/{Transcript,transcript-cards,ChildCalls,CodeModeResult,ImagePreview}.tsx
   - src/components/ResourcePathLabel.tsx
   - src/child-call-summary.ts
-  - tests/web/child-call-summary.test.ts
+  - tests/web/{child-call-summary,status-choice}.test.ts*
   - src/styles/activity-cards.css
   - tests/browser/{tool-presentations,custom-message}.spec.ts
   - tests/server/{app,app-events}.test.ts
@@ -192,7 +192,10 @@ Runtime state and credentials stay outside presentation configuration.
 - Status-bound discrete choices compose above the native Thinking options. They use available
   extension commands, retain confirmation text, commit pointer selection on release and confirm
   through Pi state. Pending state survives closing the menu; session/transport changes retire it.
-  Effort availability does not disable an independently supported extension choice.
+  Effort availability does not disable an independently supported extension choice. A delayed
+  confirmation clears its obsolete timeout hint as soon as Pi publishes the requested value.
+  Missing status is neutral unavailability, not evidence that the extension needs reloading;
+  confirmation timeout does not prescribe connection repair or redispatch a command.
 - Exact hidden status keys affect display only. Configurable checkpoint titles, prefix elision and
   metric wording do not change the original summary, source identity or complete Copy.
 - Cards, messages, controls and checkpoint rules use the same composition and enablement mechanism.

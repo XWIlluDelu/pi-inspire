@@ -73,6 +73,76 @@ function createHarness() {
 }
 
 describe("SessionCatalogController", () => {
+  it("keeps confirmed catalog rows and foreground loading separate during background preservation", async () => {
+    const harness = createHarness();
+    harness.sessions.mockResolvedValue({
+      sessions: [session("confirmed")],
+      offset: 0,
+      total: 1,
+    });
+    await harness.controller.load("");
+    const pending = deferred<{
+      sessions: SessionSummary[];
+      offset: number;
+      total: number;
+    }>();
+    harness.sessions.mockReturnValue(pending.promise);
+    const refreshing = harness.controller.refreshLoaded();
+    expect(harness.state()).toMatchObject({
+      sessions: [session("confirmed")],
+      sessionListLoading: false,
+      sessionListOperation: null,
+    });
+    pending.resolve({ sessions: [session("confirmed")], offset: 0, total: 1 });
+    await refreshing;
+    harness.controller.invalidate();
+  });
+
+  it("silently retries a live row while its catalog record materializes", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = createHarness();
+      harness.patch({ sessionId: "materializing" });
+      harness.sessionsByIds
+        .mockResolvedValueOnce({ sessions: [] })
+        .mockResolvedValue({ sessions: [session("materializing")] });
+      harness.controller.ensureVisible("materializing");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(harness.state()).toMatchObject({
+        sessionListError: null,
+        sessionListOperation: null,
+        sessions: [],
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(harness.state().sessions).toEqual([session("materializing")]);
+      expect(harness.state().sessionListNextOffset).toBe(0);
+      expect(harness.sessionsByIds).toHaveBeenCalledTimes(2);
+      harness.controller.invalidate();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds absent live-row lookups and retires their recovery with the catalog generation", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = createHarness();
+      harness.patch({ sessionId: "absent" });
+      harness.sessionsByIds.mockResolvedValue({ sessions: [] });
+      harness.controller.ensureVisible("absent");
+      await vi.advanceTimersByTimeAsync(14_000);
+      expect(harness.sessionsByIds).toHaveBeenCalledTimes(4);
+      expect(harness.state().sessionListError).toBeNull();
+      harness.controller.invalidate();
+      harness.controller.ensureVisible("absent");
+      await vi.advanceTimersByTimeAsync(0);
+      harness.controller.invalidate();
+      await vi.advanceTimersByTimeAsync(14_000);
+      expect(harness.sessionsByIds).toHaveBeenCalledTimes(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("keeps available rows and source diagnostics separate from transport errors, then clears diagnostics on recovery", async () => {
     const harness = createHarness();
     harness.sessionsByIds.mockResolvedValue({ sessions: [] });

@@ -417,8 +417,11 @@ history keep one result per native execution. [[pi-integration]] owns execution 
   revision, and effective leaf remain on the cursor's append-compatible branch lineage, then restore
   the same visible message at the same viewport offset through virtualization. Same-view append
   snapshots preserve loaded pages, pending ranges, and an in-flight older load behind a changed
-  older cursor, while a rewrite or view change cancels and replaces them. Ordinary page failure
-  pauses automatic loading and exposes an explicit retry; a stale cursor still resyncs from the
+  older cursor, while a rewrite or view change cancels and replaces them. Transient page-read failure
+  retains the same load promise, continuous loading state, confirmed messages and viewport anchor
+  through bounded automatic backoff. Each retry rechecks its cursor and append-compatible owner;
+  navigation or transport replacement retires it. Only persistent or non-transient failures expose
+  local retry, and successful loading clears that error. A stale cursor still resyncs from the
   authoritative snapshot. Deferred range pages retain the same per-message and per-page transport
   bounds and accept an append-only continuation of their owning branch without accepting a sibling
   view.

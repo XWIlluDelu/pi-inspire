@@ -198,15 +198,17 @@ Let the user move between existing terminal Pi and inspire without losing histor
   Session and project curation reclassify known rows synchronously; only newly off-page owners run bounded id/cwd
   hydration, without resetting chronology or presenting the confirmed catalog as globally loading.
   All id and cwd hydration unions are deduplicated and split within their host route bounds;
-  authentication loss follows the shared auth boundary, while other partial hydration failures
-  retain the last confirmed base/curated union and expose a retryable warning.
+  authentication loss follows the shared auth boundary. Other partial hydration failures retain the
+  last confirmed base/curated union and recover with bounded background retry, without list-wide
+  errors or manual hydration controls. A selected/live id may precede its catalog row; a successful
+  lookup that has not found it yet is an expected materialization delay, not a failure.
 
-  A standalone selected/live lookup failure retries only its generation-bound id hydration and
-  merges that row without changing the base extent; query or list refresh invalidates stale
-  ownership. Older-page failures retain confirmed pages for retry. Settlement hints atomically
-  refetch the already consumed extent in bounded sequential pages under one generation—even beyond
-  one server page—and a failed retry retains and targets that exact extent instead of collapsing
-  navigation back to page zero. Successful deletion removes committed rows immediately, then runs
+  A standalone selected/live lookup retries only its generation-bound id hydration and merges that
+  row without changing the base extent; query, list refresh or lost owner interest retires stale
+  recovery. Foreground initial/search/older-page failures retain their local retry surface.
+  Settlement hints atomically refetch the already consumed extent in bounded sequential pages under
+  one generation—even beyond one server page—and background recovery retains and targets that exact
+  extent instead of collapsing navigation back to page zero. Successful deletion removes committed rows immediately, then runs
   the same authoritative preservation in the background to repair totals and offsets without
   reviving completed-list loading chrome.
 

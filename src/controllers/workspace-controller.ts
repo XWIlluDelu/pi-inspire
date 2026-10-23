@@ -1,5 +1,6 @@
 import type { ProjectDirEntry } from "../../shared/contracts";
 import { type Api, ApiError, type ProjectFileResult } from "../api";
+import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 
 export interface WorkspaceBrowserState {
   workspaceShowHidden: boolean;
@@ -67,6 +68,8 @@ function parentsOf(path: string): string[] {
 export class WorkspaceController {
   private directoryRequests = new Map<string, AbortController>();
   private searchRequest: AbortController | null = null;
+  private directoryRecoveries = new Map<string, RecoveryBackoff>();
+  private searchRecovery = new RecoveryBackoff();
   private refreshGeneration = 0;
   private revealNonce = 0;
   private statesByCwd = new Map<string, WorkspaceBrowserState>();
@@ -92,6 +95,9 @@ export class WorkspaceController {
     this.refreshGeneration += 1;
     for (const request of this.directoryRequests.values()) request.abort();
     this.directoryRequests.clear();
+    for (const recovery of this.directoryRecoveries.values()) recovery.reset();
+    this.directoryRecoveries.clear();
+    this.searchRecovery.reset();
     this.searchRequest?.abort();
     this.searchRequest = null;
   }
@@ -154,7 +160,7 @@ export class WorkspaceController {
       state.sessionId &&
       state.cwd &&
       state.workspaceQuery.trim() &&
-      state.workspaceSearchLoading &&
+      (state.workspaceSearchLoading || state.workspaceSearchError) &&
       !this.searchRequest
     )
       void this.search(state.workspaceQuery);
@@ -178,12 +184,19 @@ export class WorkspaceController {
       !cwd ||
       this.directoryRequests.has(dir) ||
       (!options.refresh &&
-        Object.prototype.hasOwnProperty.call(workspaceLevels, dir))
+        Object.prototype.hasOwnProperty.call(workspaceLevels, dir) &&
+        !this.host.state().workspaceDirectoryErrors[dir])
     )
       return;
     const request = new AbortController();
     const transportGeneration = this.host.transportGeneration();
     this.directoryRequests.set(dir, request);
+    const recovery = new RecoveryBackoff();
+    this.directoryRecoveries.set(dir, recovery);
+    const currentRequest = () =>
+      this.directoryRequests.get(dir) === request &&
+      !request.signal.aborted &&
+      this.owns(api, transportGeneration, sessionId, cwd);
     const before = this.host.state();
     this.host.patch({
       workspaceLoadingDirs: [...new Set([...before.workspaceLoadingDirs, dir])],
@@ -194,11 +207,25 @@ export class WorkspaceController {
       ),
     });
     try {
-      const response = await api.listFiles(sessionId, dir, {
-        signal: request.signal,
-        refresh: options.refresh,
-        showHidden: this.host.state().workspaceShowHidden,
-      });
+      let response;
+      while (true) {
+        try {
+          response = await api.listFiles(sessionId, dir, {
+            signal: request.signal,
+            refresh: options.refresh,
+            showHidden: before.workspaceShowHidden,
+          });
+          break;
+        } catch (error) {
+          if (!currentRequest()) return;
+          if (
+            !isTransientFailure(error) ||
+            !(await recovery.wait(request.signal))
+          )
+            throw error;
+          if (!currentRequest()) return;
+        }
+      }
       if (
         this.directoryRequests.get(dir) !== request ||
         request.signal.aborted ||
@@ -242,6 +269,8 @@ export class WorkspaceController {
     } finally {
       if (this.directoryRequests.get(dir) === request) {
         this.directoryRequests.delete(dir);
+        recovery.reset();
+        this.directoryRecoveries.delete(dir);
         const current = this.host.state();
         this.host.patch({
           workspaceLoadingDirs: current.workspaceLoadingDirs.filter(
@@ -287,18 +316,28 @@ export class WorkspaceController {
 
   setShowHidden(showHidden: boolean): void {
     if (showHidden === this.host.state().workspaceShowHidden) return;
+    const state = this.host.state();
     this.cancelRequests();
-    this.host.patch({ workspaceShowHidden: showHidden });
+    // A visibility change is a different projection, not an in-place refresh.
+    this.host.patch({
+      ...emptyWorkspaceBrowserState(),
+      workspaceShowHidden: showHidden,
+      workspaceExpandedDirs: state.workspaceExpandedDirs,
+      workspaceQuery: state.workspaceQuery,
+    });
     void this.refresh();
   }
 
   setQuery(query: string): void {
     this.searchRequest?.abort();
     this.searchRequest = null;
+    this.searchRecovery.reset();
+    const state = this.host.state();
+    const sameQuery = state.workspaceQuery === query;
     this.host.patch({
       workspaceQuery: query,
-      workspaceMatches: [],
-      workspaceSearchTruncated: false,
+      workspaceMatches: sameQuery ? state.workspaceMatches : [],
+      workspaceSearchTruncated: sameQuery && state.workspaceSearchTruncated,
       workspaceSearchLoading: Boolean(query.trim()),
       workspaceSearchError: null,
     });
@@ -312,14 +351,39 @@ export class WorkspaceController {
     const request = new AbortController();
     const transportGeneration = this.host.transportGeneration();
     this.searchRequest = request;
+    this.searchRecovery.reset();
+    const showHidden = this.host.state().workspaceShowHidden;
+    const ownsQuery = () =>
+      this.searchRequest === request &&
+      !request.signal.aborted &&
+      this.owns(api, transportGeneration, sessionId, cwd) &&
+      this.host.state().workspaceQuery === query;
+    this.host.patch({
+      workspaceSearchLoading: true,
+      workspaceSearchError: null,
+    });
     try {
-      const response = await api.searchFiles(
-        sessionId,
-        query,
-        100,
-        request.signal,
-        this.host.state().workspaceShowHidden,
-      );
+      let response;
+      while (true) {
+        try {
+          response = await api.searchFiles(
+            sessionId,
+            query,
+            100,
+            request.signal,
+            showHidden,
+          );
+          break;
+        } catch (error) {
+          if (!ownsQuery()) return;
+          if (
+            !isTransientFailure(error) ||
+            !(await this.searchRecovery.wait(request.signal))
+          )
+            throw error;
+          if (!ownsQuery()) return;
+        }
+      }
       const current = this.host.state();
       if (
         this.searchRequest !== request ||
@@ -348,12 +412,14 @@ export class WorkspaceController {
         return;
       }
       this.host.patch({
-        workspaceMatches: [],
         workspaceSearchLoading: false,
         workspaceSearchError: messageOf(error, "Workspace search failed"),
       });
     } finally {
-      if (this.searchRequest === request) this.searchRequest = null;
+      if (this.searchRequest === request) {
+        this.searchRequest = null;
+        this.searchRecovery.reset();
+      }
     }
   }
 
@@ -364,15 +430,16 @@ export class WorkspaceController {
     this.cancelRequests();
     const generation = this.refreshGeneration;
     this.host.patch({
-      ...emptyWorkspaceBrowserState(),
-      workspaceShowHidden: state.workspaceShowHidden,
-      workspaceExpandedDirs: expanded,
-      workspaceQuery: query,
+      workspaceLoadingDirs: [],
+      workspaceDirectoryErrors: {},
+      workspaceSearchError: null,
       workspaceSearchLoading: Boolean(query.trim()),
     });
     await this.loadDirectory("", { refresh: true });
     if (generation !== this.refreshGeneration) return;
-    await Promise.all(expanded.map((dir) => this.loadDirectory(dir)));
+    await Promise.all(
+      expanded.map((dir) => this.loadDirectory(dir, { refresh: true })),
+    );
     if (
       generation === this.refreshGeneration &&
       query.trim() &&

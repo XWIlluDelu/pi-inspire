@@ -145,6 +145,7 @@ export function ModelsSettings({
   currentOwner.current = { owner, transport: state.transport };
   const mounted = useRef(false),
     generation = useRef(0),
+    choicesGeneration = useRef(0),
     providerGeneration = useRef(0);
   const captureFocus = (): FocusTicket => {
     focusTicketRef.current?.release();
@@ -249,17 +250,22 @@ export function ModelsSettings({
     const current = ++generation.current;
     try {
       const settings = await store.readModelSettings(owner);
-      if (generation.current !== current) return;
+      if (generation.current !== current) return null;
       setSnapshot(settings);
       setReadFailed(false);
       setError(null);
+      return current;
     } catch (error) {
       if (generation.current === current) {
         setReadFailed(true);
         setError(messageOf(error));
       }
+      return null;
     }
   }, [owner, state.transport]);
+  const reloadSettings = useCallback(async () => {
+    await load();
+  }, [load]);
   const refreshProviders = useCallback(async () => {
     const owns = () =>
       mounted.current &&
@@ -284,19 +290,24 @@ export function ModelsSettings({
     }
   }, [owner, state.transport]);
   const refreshChoices = useCallback(async () => {
+    const request = ++choicesGeneration.current;
+    const settingsGeneration = generation.current;
     const owns = () =>
       mounted.current &&
+      choicesGeneration.current === request &&
       currentOwner.current.owner === owner &&
       currentOwner.current.transport === state.transport;
     if (!owns()) return;
     try {
       const warning = await store.refreshModels(owner);
-      if (owns()) {
-        await load();
-        if (warning && owns()) setError(warning);
+      if (owns() && generation.current === settingsGeneration) {
+        const observed = await load();
+        if (warning && owns() && observed === generation.current)
+          setError(warning);
       }
     } catch (error) {
-      if (owns()) setError(messageOf(error));
+      if (owns() && generation.current === settingsGeneration)
+        setError(messageOf(error));
     }
   }, [owner, state.transport, load]);
   useEffect(() => {
@@ -320,6 +331,7 @@ export function ModelsSettings({
       mounted.current = false;
       focusTicketRef.current?.release();
       ++generation.current;
+      ++choicesGeneration.current;
       ++providerGeneration.current;
     };
   }, [load, refreshProviders, refreshChoices]);
@@ -1321,7 +1333,7 @@ export function ModelsSettings({
             loading={providersLoading}
             loaded={providersLoaded}
             onRefresh={refreshProviders}
-            onModelsRefreshed={load}
+            onModelsRefreshed={reloadSettings}
           />
         </SettingsSection>
 

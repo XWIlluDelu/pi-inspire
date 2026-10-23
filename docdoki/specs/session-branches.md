@@ -15,7 +15,7 @@ covers:
   - src/controllers/composer-controller.ts
   - tests/server/{runtime-branching,session-fork,session-tree,branch-bridge-extension,session-export.integration,generated-exports}.test.ts
   - tests/server/{runtime-branch-bridge,pi-branch-callback.integration}.test.ts
-  - tests/web/{branch-tree,branch-store}.test.ts*
+  - tests/web/{branch-controller,branch-tree,branch-store}.test.ts*
   - tests/browser/history.spec.ts
   - src/styles/{history,transcript}.css
 ---
@@ -78,12 +78,15 @@ Independent copies do not replace the active source worker. Durable trust comes 
   while an older completion cannot clear a newer read's progress. Entry/image reads bind to their
   immutable entry and current transcript view, not the advancing branch revision: ordinary appends
   remain readable, while navigation and source/worker/view replacement retire the read. Same-file
-  mutations still require a fresh revision. A failed image offers Retry;
-  contextual Refresh retries failed selected resources. History text uses the same authorized file
-  preview actions as Transcript. Structured images render separately from descriptive placeholders;
-  user-written placeholder-like text remains unchanged. A failed selected detail has a local
-  retry that preserves search, loaded pages and the Back anchor. Read failures wrap literal paths
-  within the warning's content edges instead of clipping them or covering the preview header.
+  mutations still require a fresh revision. Search/route pages, selected entries and image reads
+  recover transient failures with bounded backoff inside the original read promise. Replacing the
+  query, entry, session/view/selection or transport cancels pending recovery; immutable entry/image
+  reads still survive ordinary same-view appends. Persistent or definitive failures keep local Retry
+  controls and the selected entry, loaded pages and Back anchor. Recovery never repeats navigation,
+  Fork, Clone or clipboard copying. History text uses the same authorized file preview actions as
+  Transcript. Structured images render separately from descriptive placeholders; user-written
+  placeholder-like text remains unchanged. Read failures wrap literal paths within the warning's
+  content edges instead of clipping them or covering the preview header.
   Read-only inspection never creates
   a navigation lease.
   Deliberate switching creates a non-evictable in-memory navigation lease until the next append
@@ -114,8 +117,13 @@ Independent copies do not replace the active source worker. Durable trust comes 
   bootstrap or selection replacement invalidates pending tree/action requests and clears their
   actionable presentation, including the old action marker when a successful response changes the
   view. Ordinary append can invalidate the effective leaf without replacing the
-  view: the still-current request must retire its loading/action marker and expose refreshable stale
-  history even when its result is discarded. It cannot clear a newer request's marker.
+  view: the still-current request retires its loading/action marker and schedules read-only History
+  revalidation even when its result is discarded. It cannot clear a newer request's marker.
+  Connection loss and projection changes mark a retained tree stale, not failed. A fresh snapshot or
+  healthy reconnect automatically renews that tree; transient read failures retry with bounded
+  backoff while preserving its visible rows. Position-changing actions wait for a current validated
+  tree. Recovery never replays a navigation or copy gesture. Only a persistent or definitive History
+  read failure exposes a local error and the existing Refresh action.
 
   Extension responses use a separate process-instance-validated per-slot FIFO, so navigation hooks
   can await browser input without deadlocking the mutation FIFO and each accepted response is

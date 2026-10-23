@@ -24,6 +24,7 @@ import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import type { PendingAttachment } from "../controllers/composer-controller";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { clampThinkingLevel, supportedThinkingLevels } from "../model-options";
+import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 import {
   sessionDraft,
   setSessionDraft,
@@ -33,8 +34,8 @@ import {
 import { shallowEqual, store, useAppState } from "../store";
 import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
-import { DirectoryPicker } from "./DirectoryPicker";
 import { ThinkingSelector } from "./ComposerThinkingControl";
+import { DirectoryPicker } from "./DirectoryPicker";
 import { ModelSelector } from "./ModelSelector";
 import { visibleSessions } from "./nav-model";
 import { PiLoader } from "./PiLoader";
@@ -87,6 +88,7 @@ export const Welcome = memo(function Welcome({
   const state = useAppState(
     (source) => ({
       sessionId: source.sessionId,
+      transportGeneration: source.transportGeneration,
       cwd: source.cwd,
       model: source.model,
       modelDiscovery: source.modelDiscovery,
@@ -128,8 +130,8 @@ export const Welcome = memo(function Welcome({
       state.thinkingLevel);
   const sourcePending = Boolean(
     !inheritance?.readOnlyReason &&
-    inheritance?.modelDiscovery &&
-    !sourceSelection,
+      inheritance?.modelDiscovery &&
+      !sourceSelection,
   );
   const [draft, setDraft] = useState(startDraft);
   const updateDraft = (text: string) => {
@@ -202,6 +204,18 @@ export const Welcome = memo(function Welcome({
     null,
   );
   const directoryChecking = checkingDirectory === effectiveDirectory;
+  const confirmedDirectory = useRef<{
+    path: string;
+    transportGeneration: number;
+  } | null>(null);
+  const directoryConfirmed =
+    confirmedDirectory.current?.path === effectiveDirectory &&
+    confirmedDirectory.current.transportGeneration ===
+      state.transportGeneration;
+  const modelReadyRef = useRef(false);
+  modelReadyRef.current = modelStatus === "ready";
+  const [catalogRecovery] = useState(() => new RecoveryBackoff());
+  const catalogRequest = useRef<AbortController | null>(null);
   const [catalog, setCatalog] = useState<ModelOption[] | null>(null);
   const [pickedModel, setPickedModel] = useState<ModelOption | null>(null);
   const [commonModels, setCommonModels] = useState<ModelIdentity[]>([]);
@@ -221,43 +235,79 @@ export const Welcome = memo(function Welcome({
       ? inheritance.sessionId
       : undefined;
   const refreshModels = useCallback(async () => {
+    catalogRequest.current?.abort();
+    catalogRecovery.reset();
+    const request = new AbortController();
+    catalogRequest.current = request;
     const generation = ++catalogGeneration.current;
+    const transportGeneration = state.transportGeneration;
+    const owns = () =>
+      !request.signal.aborted &&
+      catalogGeneration.current === generation &&
+      store.getState().transportGeneration === transportGeneration;
     setCheckingDirectory(effectiveDirectory);
     const inputGeneration = thinkingInputGeneration.current;
     let result;
     try {
-      result = await store.readNewSessionModels(
-        catalogSource,
-        effectiveDirectory || undefined,
-      );
-    } catch (error) {
-      if (catalogGeneration.current === generation) {
-        setDirectoryIssue((previous) => {
-          const missing =
-            error instanceof ApiError &&
-            error.code === "PROJECT_DIRECTORY_MISSING";
-          // A failed retry cannot turn a known invalid/missing directory into
-          // a ready project simply because a model was inherited or selected.
-          const invalid =
-            error instanceof ApiError &&
-            (error.status === 400 || error.status === 403);
-          return missing || invalid || previous?.path === effectiveDirectory
-            ? {
-                path: effectiveDirectory,
-                missing,
-                message:
-                  error instanceof Error
-                    ? error.message
-                    : "Project directory could not be checked",
-              }
-            : null;
-        });
-        if (!modelOwnedRef.current) {
-          setModelWarning(
-            error instanceof Error ? error.message : "Model discovery failed",
+      while (true) {
+        if (!owns()) return undefined;
+        try {
+          result = await store.readNewSessionModels(
+            catalogSource,
+            effectiveDirectory || undefined,
           );
-          setModelStatus("error");
+          break;
+        } catch (error) {
+          if (!owns()) return undefined;
+          if (
+            !isTransientFailure(error) ||
+            !(await catalogRecovery.wait(request.signal))
+          )
+            throw error;
+          if (!owns()) return undefined;
         }
+      }
+    } catch (error) {
+      if (!owns()) return undefined;
+      const missing =
+        error instanceof ApiError && error.code === "PROJECT_DIRECTORY_MISSING";
+      const invalid =
+        error instanceof ApiError &&
+        (error.status === 400 || error.status === 403);
+      if (missing || invalid) confirmedDirectory.current = null;
+      const directoryWasConfirmed =
+        confirmedDirectory.current?.path === effectiveDirectory &&
+        confirmedDirectory.current.transportGeneration === transportGeneration;
+      // An observation failure cannot undo a known invalid/missing path.
+      setDirectoryIssue((previous) => {
+        if (missing || invalid) {
+          return {
+            path: effectiveDirectory,
+            missing,
+            message:
+              error instanceof Error
+                ? error.message
+                : "Project directory could not be checked",
+          };
+        }
+        if (previous?.path === effectiveDirectory) return previous;
+        return directoryWasConfirmed
+          ? null
+          : {
+              path: effectiveDirectory,
+              missing: false,
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Project directory could not be checked",
+            };
+      });
+      const keepReady = directoryWasConfirmed && modelReadyRef.current;
+      if (!modelOwnedRef.current && !keepReady) {
+        setModelWarning(
+          error instanceof Error ? error.message : "Model discovery failed",
+        );
+        setModelStatus("error");
       }
       if (
         error instanceof ApiError &&
@@ -266,27 +316,39 @@ export const Welcome = memo(function Welcome({
         return undefined;
       throw error;
     } finally {
-      if (catalogGeneration.current === generation) setCheckingDirectory(null);
-    }
-    if (catalogGeneration.current === generation) {
-      setDirectoryIssue(null);
-      setCatalog(result.models);
-      setCommonModels(result.commonModels ?? []);
-      if (!modelOwnedRef.current && result.defaults) {
-        const defaults = result.defaults;
-        setResolvedDefaultModel(defaults.model);
-        setModelKey(defaults.model ? modelIdentityKey(defaults.model) : "");
-        setModelWarning(result.warning ?? null);
-        if (
-          !thinkingTouchedRef.current &&
-          thinkingInputGeneration.current === inputGeneration
-        )
-          setThinkingLevel(defaults.thinkingLevel);
-        setModelStatus(defaults.model ? "ready" : "error");
+      if (owns()) setCheckingDirectory(null);
+      if (catalogRequest.current === request) {
+        catalogRequest.current = null;
+        catalogRecovery.reset();
       }
     }
+    if (!owns()) return undefined;
+    confirmedDirectory.current = {
+      path: effectiveDirectory,
+      transportGeneration,
+    };
+    setDirectoryIssue(null);
+    setCatalog(result.models);
+    setCommonModels(result.commonModels ?? []);
+    if (!modelOwnedRef.current && result.defaults) {
+      const defaults = result.defaults;
+      setResolvedDefaultModel(defaults.model);
+      setModelKey(defaults.model ? modelIdentityKey(defaults.model) : "");
+      setModelWarning(result.warning ?? null);
+      if (
+        !thinkingTouchedRef.current &&
+        thinkingInputGeneration.current === inputGeneration
+      )
+        setThinkingLevel(defaults.thinkingLevel);
+      setModelStatus(defaults.model ? "ready" : "error");
+    }
     return result.warning;
-  }, [catalogSource, effectiveDirectory]);
+  }, [
+    catalogSource,
+    effectiveDirectory,
+    state.transportGeneration,
+    catalogRecovery,
+  ]);
   useEffect(() => {
     if (!modelOwnedRef.current) {
       setModelKey("");
@@ -302,8 +364,10 @@ export const Welcome = memo(function Welcome({
     return () => {
       clearTimeout(timer);
       ++catalogGeneration.current;
+      catalogRequest.current?.abort();
+      catalogRecovery.reset();
     };
-  }, [effectiveDirectory, refreshModels]);
+  }, [effectiveDirectory, refreshModels, catalogRecovery]);
   const availableModels = useMemo(() => {
     const models = catalog ?? state.availableModels;
     if (
@@ -356,28 +420,50 @@ export const Welcome = memo(function Welcome({
       setModelStatus("ready");
       return;
     }
-    let cancelled = false;
+    const request = new AbortController();
+    const recovery = new RecoveryBackoff();
+    const transportGeneration = state.transportGeneration;
+    const owns = () =>
+      !request.signal.aborted &&
+      store.getState().transportGeneration === transportGeneration;
     const inputGeneration = thinkingInputGeneration.current;
+    setModelWarning(null);
     setModelStatus("loading");
-    void store
-      .resolveNewSessionThinking(
-        effectiveDirectory,
-        pickedModel,
-        thinkingRef.current,
-      )
-      .then(
-        (level) => {
-          if (cancelled) return;
+    void (async () => {
+      while (owns()) {
+        try {
+          const level = await store.resolveNewSessionThinking(
+            effectiveDirectory,
+            pickedModel,
+            thinkingRef.current,
+          );
+          if (!owns()) return;
           if (thinkingInputGeneration.current === inputGeneration)
             setThinkingLevel(clampThinkingLevel(pickedModel, level));
           setModelStatus("ready");
-        },
-        () => {
-          if (!cancelled) setModelStatus("error");
-        },
-      );
+          return;
+        } catch (error) {
+          if (!owns()) return;
+          if (
+            isTransientFailure(error) &&
+            (await recovery.wait(request.signal))
+          )
+            continue;
+          if (owns()) {
+            setModelWarning(
+              error instanceof Error
+                ? error.message
+                : "Thinking preview could not be loaded",
+            );
+            setModelStatus("error");
+          }
+          return;
+        }
+      }
+    })();
     return () => {
-      cancelled = true;
+      request.abort();
+      recovery.reset();
     };
   }, [
     effectiveDirectory,
@@ -386,38 +472,59 @@ export const Welcome = memo(function Welcome({
     pickedModel,
     thinkingTouched,
     modelResolveAttempt,
+    state.transportGeneration,
   ]);
 
   useEffect(() => {
     const sessionId = inheritance?.sessionId;
     if (!sourcePending || modelTouched || !sessionId) return;
-    let cancelled = false;
+    const request = new AbortController();
+    const recovery = new RecoveryBackoff();
+    const transportGeneration = state.transportGeneration;
+    const owns = () =>
+      !request.signal.aborted &&
+      store.getState().transportGeneration === transportGeneration;
     setModelWarning(null);
     setModelStatus("loading");
-    void store.readNewSessionModels(sessionId, inheritance.cwd, true).then(
-      (result) => {
-        if (cancelled) return;
-        if (!result.selection) {
+    void (async () => {
+      while (owns()) {
+        try {
+          const result = await store.readNewSessionModels(
+            sessionId,
+            inheritance.cwd,
+            true,
+          );
+          if (!owns()) return;
+          if (!result.selection) {
+            setModelStatus("error");
+            return;
+          }
+          setResolvedInheritance({ sessionId, selection: result.selection });
+          setPickedModel(result.selection.model);
+          setModelWarning(result.warning ?? null);
+          setModelStatus(result.selection.model ? "ready" : "idle");
+          return;
+        } catch (error) {
+          if (!owns()) return;
+          if (
+            isTransientFailure(error) &&
+            (await recovery.wait(request.signal))
+          )
+            continue;
+          if (!owns()) return;
+          setModelWarning(
+            error instanceof Error
+              ? error.message
+              : "The source model is unavailable",
+          );
           setModelStatus("error");
           return;
         }
-        setResolvedInheritance({ sessionId, selection: result.selection });
-        setPickedModel(result.selection.model);
-        setModelWarning(result.warning ?? null);
-        setModelStatus(result.selection.model ? "ready" : "idle");
-      },
-      (error) => {
-        if (cancelled) return;
-        setModelWarning(
-          error instanceof Error
-            ? error.message
-            : "The source model is unavailable",
-        );
-        setModelStatus("error");
-      },
-    );
+      }
+    })();
     return () => {
-      cancelled = true;
+      request.abort();
+      recovery.reset();
     };
   }, [
     inheritance?.sessionId,
@@ -425,6 +532,7 @@ export const Welcome = memo(function Welcome({
     sourcePending,
     modelTouched,
     modelResolveAttempt,
+    state.transportGeneration,
   ]);
 
   // Until the user chooses explicitly, an inherited session model is the
@@ -506,9 +614,13 @@ export const Welcome = memo(function Welcome({
   );
 
   const changeDirectory = (value: string) => {
-    ++catalogGeneration.current;
-    setDirectoryIssue(null);
     setDirectory(value);
+    if (value.trim() === effectiveDirectory) return;
+    ++catalogGeneration.current;
+    catalogRequest.current?.abort();
+    catalogRecovery.reset();
+    confirmedDirectory.current = null;
+    setDirectoryIssue(null);
     setShowHiddenFiles(false);
     setProjectFiles([]);
     setProjectFileRoot(null);
@@ -534,7 +646,7 @@ export const Welcome = memo(function Welcome({
         ? "Starting session…"
         : !effectiveDirectory || !hasInput
           ? null
-          : directoryChecking
+          : !directoryConfirmed && !directoryMissing
             ? "Checking project directory…"
             : modelStatus === "loading"
               ? "Resolving model…"
@@ -545,21 +657,21 @@ export const Welcome = memo(function Welcome({
                   : null);
   const canStart = Boolean(
     hasInput &&
-    effectiveDirectory &&
-    !directoryMissing &&
-    !directoryProblem &&
-    !directoryChecking &&
-    selectedModel &&
-    modelStatus === "ready" &&
-    !starting,
+      effectiveDirectory &&
+      !directoryMissing &&
+      !directoryProblem &&
+      directoryConfirmed &&
+      selectedModel &&
+      modelStatus === "ready" &&
+      !starting,
   );
 
   const canCreate = Boolean(
     hasInput &&
-    effectiveDirectory &&
-    directoryMissing &&
-    !sourceUnresolved &&
-    !starting,
+      effectiveDirectory &&
+      directoryMissing &&
+      !sourceUnresolved &&
+      !starting,
   );
   const start = async (createDirectory = false) => {
     if (createDirectory ? !canCreate : !canStart) return;

@@ -1088,6 +1088,11 @@
   right: 4px;
 }
 
+.attachment--image .attachment__retry {
+  right: auto;
+  left: 4px;
+}
+
 .attachment--image .attachment__status {
   right: 5px;
   bottom: 5px;
@@ -1146,6 +1151,10 @@
 
 .attachment__remove:hover:where(:not(:disabled)) {
   color: var(--error);
+}
+
+.attachment__retry:hover:where(:not(:disabled)) {
+  color: var(--accent);
 }
 
 /* Project-file picker */

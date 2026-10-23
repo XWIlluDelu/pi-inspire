@@ -238,10 +238,11 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   server order. Curated, selected, and live-session hydration is deduplicated and chunked within the
   host route bounds; it can add visible rows but never advances the chronological cursor.
 
-  Hydration or preservation failure retains the last confirmed union, identifies the operation
-  truthfully, and retries that same operation; a standalone live-row failure is labeled session
-  hydration and never resets already loaded base pages. Loading and failure states suppress the
-  empty-result message until a successful empty response.
+  Hydration and preservation failures retain the last confirmed union and recover automatically in
+  a bounded, generation-owned window. Supplemental catalog reads do not create warning/retry tasks;
+  a not-yet-materialized live row is expected and never resets loaded base pages. Initial/search and
+  older-page failures stay beside their explicit navigation action. Foreground loading and failure
+  states suppress the empty-result message until a successful empty response.
 
 ## Startup, welcome, and directory selection
 
@@ -327,10 +328,16 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 
 ## Feedback scope
 
-- Top banners describe a current workspace condition: lost connection, an unavailable session
-  refresh, projection failure, or a recoverable ownership conflict. Their action retries the
-  relevant read, reconnects, or recovers that condition. A successful authoritative observation
-  clears a refresh warning; a cached-state acknowledgement does so only when no projection
+- Recover internal read state automatically while retaining confirmed content. Catalog backfill,
+  History revalidation, snapshot refresh and file probes use bounded, ownership-checked retry;
+  branch commands and prompts with uncertain acceptance are never automatically replayed.
+- Top banners describe a condition that affects the workspace: persistent loss of synchronization,
+  an unavailable address, projection failure, or a recoverable ownership conflict. A normal stream
+  interruption starts with the existing topbar reconnect status; it gains a banner only after ten
+  seconds. A more specific reachability diagnosis may appear immediately. A single transient
+  background snapshot failure does not become a global warning; persistent failure can do so after
+  bounded automatic recovery. Banner actions retry the relevant read, reconnect, or recover that
+  condition. A successful authoritative observation clears a refresh warning; a cached-state acknowledgement does so only when no projection
   problem remains. An unrelated successful operation does not clear a synchronization warning.
 - Operation failures belong beside an available retry surface, such as deletion confirmation,
   an extension question, a form, or a resource pane. Otherwise they use the existing notification

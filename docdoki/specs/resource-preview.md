@@ -14,7 +14,7 @@ covers:
   - src/styles.css
   - src/styles/*.css
   - tests/server/{app-resources,app-auth,resources,resources-windows-paths,resource-reference-identity,runtime-reads,git-inspection,git-configuration,runtime-selection}.test.ts
-  - tests/web/{resources,document-resources,document-image-controller,git-controller,workspace-controller,store-resources}.test.ts
+  - tests/web/{resources,document-resources,document-image-controller,resource-read-recovery,git-controller,workspace-controller,store-resources}.test.ts
   - tests/web/{document-preview,pdf-preview,file-preview,resources-pane,search-match-text,changes-pane,pane-resize,rich-text}.test.tsx
   - tests/web/{source-diff,file-icons,syntax-highlighting}.test.ts
   - tests/server/html-preview.test.ts
@@ -65,7 +65,14 @@ Filesystem membership is independent of Git. Browse includes ignored non-hidden 
 directories. **Show hidden files** defaults off and covers dot names plus native filesystem hidden
 attributes. Visibility changes retire requests without closing a selected preview. Directory/search
 responses require the same cwd, session, visibility, and browser transport generation. Cwd-local
-state is cached across switching; Refresh reloads the root and expanded levels.
+state is cached across switching; Refresh revalidates the root, expanded levels and current query
+without first discarding their confirmed contents. A visibility change retires the previous projection.
+Transient directory/search failures recover automatically in a bounded owner-scoped window. Pending
+rereads and persistent refresh errors leave existing rows usable, rather than replacing them with
+loading/unavailable states. Success clears the corresponding error. A different query clears the old
+query's results; switching workspace or transport cancels pending waits and stale responses. Returning
+to a workspace revalidates failed visible directories and its failed/pending search without another
+recovery gesture.
 
 | Discovery bound | Limit |
 | --- | --- |
@@ -147,14 +154,27 @@ refresh, Git ignore changes, and hidden visibility are independent of this autho
 Recent references are probed in batches of at most 16 without allocating content handles, sharing one
 lazy transcript read. Each batch merges within its exact session/view/revision/API/transport
 generation. Rows distinguish missing, unauthorized, invalid, ambiguous, and unknown references. A
-failed or incomplete batch marks only its own unconfirmed references unknown and leaves them retryable.
+failed or incomplete batch leaves confirmed standing intact and marks only previously unconfirmed
+references unknown. Unknown is not an unavailable-file warning and does not prevent an authorized
+open attempt. Failed batches retry automatically in a bounded owner-scoped window.
 
 Successful probe/resolve may return a canonical workspace-relative path for shared file/Git selection
 without exposing an absolute Host path. A later transfer failure retains that resolved standing.
+Preview resolution and content transfers recover transient failures with bounded, cancellable backoff
+under the original selection and authority. A same-authority refresh retains loaded content and its
+object URL until replacement succeeds. Persistent transient failure identifies the retained content
+as stale; a successful refresh removes that feedback. Confirmed missing or revoked access replaces
+the old preview with its actual failure, rather than retaining it as usable. Authority replacement
+never inherits old content. Refresh retires interactive HTML immediately, even while static content
+remains visible; recovery does not restart execution.
 
 Explicit Files Refresh renews Recent, probes, discovery, and the selected preview without requesting
 Git status. Compatible transcript appends refresh Recent only while Browse is visible and retain the
 previous rows until success; a visible preview keeps its reader mounted and does not load hidden Recent.
+Transient Recent reads recover automatically without replacing retained rows with retry controls.
+An initial read remains loading during recovery; after persistent failure its local empty surface
+says Recent is unavailable rather than claiming there are no references. The existing Files Refresh
+remains the explicit refresh action. Pane close or owner changes cancel pending recovery.
 
 Selection replacement, pane close, session/view change, or API/transport replacement retires affected
 requests and object URLs. Cancellation closes the exact opened file even if it arrives during open.

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PromptAcceptedResponse } from "../../shared/contracts";
 import { type Api, ApiError, ApiTransportError } from "../../src/api";
 import {
@@ -73,6 +73,7 @@ const acceptedPrompt: PromptAcceptedResponse = {
 };
 
 describe("ComposerController", () => {
+  afterEach(() => vi.useRealTimers());
   it("deduplicates each image in a handoff after a draft is removed, not the handle forever", () => {
     const f = createHarness();
     const authority = "11111111-1111-4111-8111-111111111111";
@@ -588,7 +589,7 @@ describe("ComposerController", () => {
   });
 
   it.each(["staged", "history draft", "failed delivery"])(
-    "invalidates a %s upload in an inactive partition after Host replacement",
+    "restores a browser-held %s upload in its inactive partition after Host replacement",
     async (location) => {
       const harness = createHarness();
       harness.uploadAttachments.mockResolvedValue({
@@ -615,29 +616,30 @@ describe("ComposerController", () => {
       }
       harness.activate("session-b");
       const nextAuthority = "22222222-2222-4222-8222-222222222222";
-      harness.replaceAuthority(nextAuthority);
-      harness.controller.reconcileAuthority(nextAuthority);
-      harness.controller.cancelHistoryPreview("session-a");
-      harness.restoreDraftIfEmpty.mockReturnValue(true);
-      harness.controller.restoreFailedPrompt("session-a");
-      expect(harness.slice().attachments[0]).toMatchObject({
-        status: "error",
-        uploadedId: "old-upload",
-        error: expect.stringContaining("Host restarted"),
-      });
-      harness.activate("session-a");
-      harness.prompt.mockClear();
-      await expect(harness.controller.send("send")).resolves.toBe(false);
-      expect(harness.prompt).not.toHaveBeenCalled();
-      harness.controller.removeAttachment(
-        harness.slice().attachments[0]!.localId,
-      );
       harness.uploadAttachments.mockResolvedValue({
         attachments: [
           { id: "new-upload", fileName: "draft.txt", kind: "file" },
         ],
       });
-      await harness.controller.addFiles([new File(["draft"], "draft.txt")]);
+      harness.replaceAuthority(nextAuthority);
+      harness.controller.reconcileAuthority(nextAuthority);
+      harness.controller.resumeUploads();
+      harness.controller.cancelHistoryPreview("session-a");
+      harness.restoreDraftIfEmpty.mockReturnValue(true);
+      harness.controller.restoreFailedPrompt("session-a");
+      await vi.waitFor(() =>
+        expect(harness.slice().attachments[0]).toMatchObject({
+          status: "ready",
+          uploadedId: "new-upload",
+          uploadedAuthorityId: nextAuthority,
+        }),
+      );
+      expect(harness.uploadAttachments.mock.calls[1]![0][0]).toBe(
+        harness.uploadAttachments.mock.calls[0]![0][0],
+      );
+      expect(harness.slice("session-b").attachments).toEqual([]);
+      harness.activate("session-a");
+      harness.prompt.mockClear();
       harness.prompt.mockResolvedValue(acceptedPrompt);
       await expect(harness.controller.send("send")).resolves.toEqual(
         acceptedPrompt,
@@ -649,7 +651,7 @@ describe("ComposerController", () => {
     },
   );
 
-  it("marks only refused expired uploads invalid rather than repeatedly sending them", async () => {
+  it("restages only definitively expired files without replaying the refused prompt", async () => {
     const harness = createHarness();
     harness.uploadAttachments.mockResolvedValue({
       attachments: ["expired", "valid"].map((id) => ({
@@ -662,6 +664,10 @@ describe("ComposerController", () => {
       new File(["old"], "expired.txt"),
       new File(["new"], "valid.txt"),
     ]);
+    const replacement = deferred<{
+      attachments: Array<{ id: string; fileName: string; kind: "file" }>;
+    }>();
+    harness.uploadAttachments.mockReturnValue(replacement.promise);
     harness.prompt.mockRejectedValue(
       new ApiError(
         409,
@@ -672,16 +678,35 @@ describe("ComposerController", () => {
     );
     await expect(harness.controller.send("send")).resolves.toBe(false);
     expect(harness.slice().attachments.map((item) => item.status)).toEqual([
-      "error",
+      "uploading",
       "ready",
+    ]);
+    expect(harness.uploadAttachments).toHaveBeenCalledTimes(2);
+    expect(harness.uploadAttachments.mock.calls[1]![0]).toEqual([
+      harness.uploadAttachments.mock.calls[0]![0][0],
     ]);
     await expect(harness.controller.send("send")).resolves.toBe(false);
     expect(harness.prompt).toHaveBeenCalledOnce();
+    replacement.resolve({
+      attachments: [{ id: "renewed", fileName: "expired.txt", kind: "file" }],
+    });
+    await vi.waitFor(() =>
+      expect(harness.slice().attachments[0]?.status).toBe("ready"),
+    );
+    expect(harness.prompt).toHaveBeenCalledOnce();
+    harness.prompt.mockResolvedValue(acceptedPrompt);
+    await harness.controller.send("send");
+    expect(harness.prompt.mock.calls[1]![0].attachmentIds).toEqual([
+      "renewed",
+      "valid",
+    ]);
   });
 
   it("refuses prompt delivery while an attachment remains in an error state", async () => {
     const harness = createHarness();
-    harness.uploadAttachments.mockRejectedValue(new Error("upload failed"));
+    harness.uploadAttachments.mockRejectedValue(
+      new ApiError(400, "Unsupported file"),
+    );
     await harness.controller.addFiles([
       new File(["broken"], "broken.txt", { type: "text/plain" }),
     ]);
@@ -689,7 +714,7 @@ describe("ComposerController", () => {
     await expect(harness.controller.send("send")).resolves.toBe(false);
     expect(harness.notify).toHaveBeenCalledWith(
       "warning",
-      "Remove failed attachments before sending",
+      "Retry or remove failed attachments before sending",
     );
     expect(harness.prompt).not.toHaveBeenCalled();
   });
@@ -732,25 +757,73 @@ describe("ComposerController", () => {
     ]);
   });
 
-  it("marks a timed-out upload failed and allows sending after user withdrawal", async () => {
+  it("keeps a timed-out upload quiet and cancels recovery after user withdrawal", async () => {
+    vi.useFakeTimers();
     const harness = createHarness();
     harness.uploadAttachments.mockRejectedValue(
       new ApiTransportError("request", true, true),
     );
     await harness.controller.addFiles([new File(["body"], "attachment.txt")]);
     expect(harness.slice().attachments[0]).toMatchObject({
-      status: "error",
-      error: "Upload timed out; remove this attachment and add it again",
+      status: "uploading",
+      error: undefined,
     });
     expect(harness.uploadAttachments).toHaveBeenCalledOnce();
     await expect(harness.controller.send("message")).resolves.toBe(false);
     harness.controller.removeAttachment(
       harness.slice().attachments[0]!.localId,
     );
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(harness.uploadAttachments).toHaveBeenCalledOnce();
     harness.prompt.mockResolvedValue(acceptedPrompt);
     await expect(harness.controller.send("message")).resolves.toEqual(
       acceptedPrompt,
     );
+  });
+
+  it("retains the original file through bounded upload recovery and explicit retry", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    const file = new File(["retained"], "retained.txt");
+    harness.uploadAttachments.mockRejectedValue(
+      new ApiTransportError("request", true, true),
+    );
+    await harness.controller.addFiles([file]);
+    expect(harness.slice().attachments[0]?.status).toBe("uploading");
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(harness.uploadAttachments).toHaveBeenCalledTimes(4);
+    const item = harness.slice().attachments[0]!;
+    expect(item).toMatchObject({ status: "error", retryable: true });
+    harness.uploadAttachments.mockResolvedValue({
+      attachments: [{ id: "recovered", fileName: file.name, kind: "file" }],
+    });
+    await harness.controller.retryAttachment(item.localId);
+    expect(harness.uploadAttachments.mock.calls.at(-1)![0][0]).toBe(file);
+    expect(harness.slice().attachments[0]).toMatchObject({
+      localId: item.localId,
+      status: "ready",
+      uploadedId: "recovered",
+    });
+    expect(harness.prompt).not.toHaveBeenCalled();
+  });
+
+  it("keeps a prior uncertain attachment fenced after a later definitive refusal", async () => {
+    const harness = createHarness();
+    harness.uploadAttachments.mockResolvedValue({
+      attachments: [{ id: "uncertain", fileName: "kept.txt", kind: "file" }],
+    });
+    await harness.controller.addFiles([new File(["kept"], "kept.txt")]);
+    harness.prompt.mockRejectedValue(new ApiTransportError("request", true));
+    await harness.controller.send("possibly accepted");
+    harness.prompt.mockRejectedValue(new ApiError(409, "Edited input refused"));
+    await harness.controller.send("edited input");
+    const next = "22222222-2222-4222-8222-222222222222";
+    harness.replaceAuthority(next);
+    harness.controller.reconcileAuthority(next);
+    harness.controller.resumeUploads();
+    expect(harness.uploadAttachments).toHaveBeenCalledOnce();
+    expect(harness.prompt).toHaveBeenCalledTimes(2);
+    expect(harness.slice().attachments[0]?.status).toBe("error");
   });
 
   it("cancels a batch only after all its attachments are withdrawn", async () => {
@@ -801,7 +874,7 @@ describe("ComposerController", () => {
 
     expect(harness.deleteAttachment).toHaveBeenCalledWith("late-file");
     expect(harness.slice().attachments).toEqual([
-      expect.objectContaining({ status: "error" }),
+      expect.objectContaining({ status: "uploading", error: undefined }),
     ]);
   });
 });

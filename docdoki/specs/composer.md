@@ -8,12 +8,12 @@ covers:
   - server/pending-operation-receipts.ts
   - tests/server/app-pending-recovery.test.ts
   - tests/integration/{pending-deferred-images,recovered-image-user-intent}.test.ts
-  - src/components/{ActivityBar,AttachmentList,Composer,ComposerInput,ImagePreview,ImageLightbox,ImageGallery,ModelSelector,ProjectFiles,Transcript,transcript-rows,Welcome,ExportDialog}.tsx
+  - src/components/{ActivityBar,AttachmentList,Composer,ComposerInput,ImagePreview,ImageLightbox,ImageGallery,ModelSelector,ProjectFiles,Transcript,transcript-rows,Welcome,DirectoryPicker,ExportDialog}.tsx
   - src/{image-viewport,use-image-viewport,use-image-history}.ts
   - src/styles/*.css
   - tests/server/{attachments,attachment-file-names,attachment-retention,composer-history*,runtime-composer-artifacts,runtime-pending*,runtime-compaction,app}.test.ts
   - tests/shared/{composer-artifact-references,pending-contracts}.test.ts
-  - tests/web/{composer*,session-drafts,native-commands,readonly-session,transcript-actions,welcome*,model-selector,model-store}.test.ts*
+  - tests/web/{composer*,session-drafts,native-commands,readonly-session,transcript-actions,welcome*,directory-picker,project-file-picker,model-selector,model-store}.test.ts*
   - tests/web/{image-viewport,image-gallery,attachments}.test.ts*
   - tests/browser/{composer,file-attachments,usage-facts,model-selection,project-file-picker,pending-input,image-preview,image-interactions}.spec.ts
 ---
@@ -103,6 +103,10 @@ addresses its immutable workspace. New searches the typed or inherited prospecti
 creating a session. Picker selections bind to its canonical root; changing the directory clears them,
 and creation uses that root. New's inline selections use absolute canonical-workspace paths so a
 later directory change cannot retarget them.
+
+The explicit picker recovers transient search failures with bounded backoff in its current workspace,
+query and visibility scope; dismissal or transport replacement retires old work. Recovery only reads
+candidates and never adds a reference. Persistent failures retain local feedback.
 
 The explicit project-file picker (Composer and Welcome) keeps its compact single-line rows and
 existing placement/keyboard behavior. Each result uses the shared 13px monochrome file-type icon,
@@ -228,9 +232,12 @@ rules without renaming payloads or rewriting session references.
 Resolution rechecks totals and encodes images
 sequentially within the Base64 budget; RPC rejects excess commands before stdin. Upload observation
 covers headers/body for 120 seconds plus allowance at 128 KiB/s. Transport replacement cancels
-observation; withdrawing the batch's last attachment cancels it. Timeout marks remaining chips failed
-with remove/re-add guidance, without resending. Late handles are reclaimed even when cancellation is
-ignored. Switching sessions preserves the upload owner. Inspire never silently uploads elsewhere.
+observation; withdrawing the batch's last attachment cancels it. The browser retains each original
+`File` while its unsent staging exists. Transient upload failures keep the chip pending and recover
+with bounded backoff; persistent failures offer local retry without requiring removal or file
+reselection. Late handles are reclaimed even when cancellation is ignored. Removing staging or its
+partition retires its retry and releases the retained bytes. Switching sessions preserves the upload
+owner. Recovery stays on the configured connection and never silently switches destinations.
 
 Withdrawing staging deletes its owned copy. Delivered images remain in Pi and release upload copies;
 ordinary files become durable assets rather than reference-counted caches. They survive Host restart,
@@ -256,10 +263,13 @@ maintenance writes. Delivered-file reclamation is an explicit operator choice wi
 all surviving references will break; see [cleanup operations](../../docs/host.md#uploaded-file-retention-and-cleanup).
 
 Preview failure does not invalidate an otherwise current staging handle. Ready handles survive
-same-Host reconnect. Changed Host authority invalidates them in every partition,
-including saved history drafts and failed deliveries; a definite expiry refusal names only affected
-uploads. Invalid chips explain remove/re-add and block send. Recovery does not silently reupload or
-resend acceptance-unknown input. Upload cleanup cannot revoke confirmed prompt acceptance.
+same-Host reconnect. Changed Host authority invalidates old handles in every partition, including
+saved history drafts and failed deliveries. Unsent browser-held bytes are staged again after the
+new authority is confirmed; a definite expiry refusal restages only affected files. A restored
+attachment does not resubmit its message. Artifacts without retained bytes explain when reselection
+is necessary. Unusable attachments block send. Once an attachment enters a prompt whose acceptance
+is unknown, its original operation and handles remain fenced: neither its bytes nor the prompt enter
+automatic upload recovery. Upload cleanup cannot revoke confirmed prompt acceptance.
 
 ## Delivery and Pending
 
@@ -458,7 +468,10 @@ status. Changes commit selection/recency only on success; failed thinking rolls 
 New uses the same editor/artifacts, with a full-width editable directory address/browser below the
 toolbar. Its filled bordered input expresses path editability and remains separate from the message.
 The first-message editor receives initial autofocus. Directory Enter does not implicitly submit
-creation; IME confirmation remains native.
+creation; IME confirmation remains native. The directory browser recovers temporary level/drive
+reads without switching the requested target to Home; only a confirmed invalid or inaccessible initial
+path permits that fallback. Same-scope reloads retain a successful listing, and drive discovery never
+blocks selection. Navigation, visibility, transport changes and dismissal retire obsolete reads.
 A missing typed directory offers one contextual **Create folder and start** action, without another
 confirmation. Only that action authorizes recursive directory creation; Send, Enter, browsing and
 model/file observations do not create directories. A file or inaccessible path is not offered as
@@ -468,13 +481,15 @@ normal defaults after creation in that directory, without substituting another e
 Changing the path immediately retires the old action and late observations cannot restore it.
 Failure preserves staged work. Opening retained history never creates its missing directory.
 
-Readiness distinguishes pending/failed model resolution and in-flight creation; errors offer Retry
-and Pi's `unknown/unknown` means no model. While cwd matches and the source workspace is available,
-the inherited worker supplies model and resource completion; changing directory clears its commands
-until the new worker loads. Read-only sources retain known choices, but New queries the prospective
-directory rather than starting source discovery. Unresolved source selection keeps its loading/error
-feedback and Retry alongside the missing-folder action. Existing-
-session built-ins appear after creation; Host Compact also works before the first message.
+Readiness distinguishes unresolved model/directory checks from in-flight creation. Transient read-only
+prechecks recover automatically without creating a directory/session or delivering input; persistent
+failures and configuration problems retain local recovery. Pi's `unknown/unknown` means no model.
+While cwd matches and the source workspace is available, the inherited worker supplies model and
+resource completion; changing directory clears its commands until the new worker loads. Read-only
+sources retain known choices, but New queries the prospective directory rather than starting source
+discovery. Unresolved source selection keeps its loading feedback alongside the missing-folder action
+while recovering, and offers Retry only after persistent failure. Existing-session built-ins appear
+after creation; Host Compact also works before the first message.
 
 Files stay browser-local until Pi supplies a session identity, then use ordinary upload lifecycle.
 Completion sends the first prompt only while that session remains selected; otherwise work remains
