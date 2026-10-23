@@ -6,8 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const HOST_SERVICE_NAME = "inspire-host.service";
 const TERMINAL_SERVICE_NAME = "inspire-terminal.service";
-const IDLE_MAINTENANCE_TIMER_NAME =
-  "inspire-idle-maintenance-restart.timer";
+const IDLE_MAINTENANCE_TIMER_NAME = "inspire-idle-maintenance-restart.timer";
 
 function transientTerminalServiceName(root) {
   const key = createHash("sha256")
@@ -22,7 +21,10 @@ function transientTerminalServiceName(root) {
 }
 
 function configHome(environment = process.env) {
-  return environment.XDG_CONFIG_HOME || join(environment.HOME || homedir(), ".config");
+  return (
+    environment.XDG_CONFIG_HOME ||
+    join(environment.HOME || homedir(), ".config")
+  );
 }
 
 export function hostServicePath(environment = process.env) {
@@ -30,7 +32,12 @@ export function hostServicePath(environment = process.env) {
 }
 
 export function terminalServicePath(environment = process.env) {
-  return join(configHome(environment), "systemd", "user", TERMINAL_SERVICE_NAME);
+  return join(
+    configHome(environment),
+    "systemd",
+    "user",
+    TERMINAL_SERVICE_NAME,
+  );
 }
 
 function runSystemctl(arguments_, environment = process.env) {
@@ -64,7 +71,9 @@ function properties(text) {
       .split("\n")
       .flatMap((line) => {
         const separator = line.indexOf("=");
-        return separator < 0 ? [] : [[line.slice(0, separator), line.slice(separator + 1)]];
+        return separator < 0
+          ? []
+          : [[line.slice(0, separator), line.slice(separator + 1)]];
       }),
   );
 }
@@ -141,7 +150,8 @@ export async function inspectHostService(
     environment,
   );
   if (result.code !== 0) {
-    if (/not[ -]found|not loaded/iu.test(commandDetail(result))) return { kind: "absent" };
+    if (/not[ -]found|not loaded/iu.test(commandDetail(result)))
+      return { kind: "absent" };
     return { kind: "unavailable", detail: commandDetail(result) };
   }
   const value = properties(result.stdout);
@@ -224,7 +234,6 @@ export async function manageHostService(root, action, options) {
     enable: [
       ["enable", TERMINAL_SERVICE_NAME],
       ["enable", "--now", HOST_SERVICE_NAME],
-      ["enable", "--now", IDLE_MAINTENANCE_TIMER_NAME],
     ],
     disable: [
       ["disable", "--now", IDLE_MAINTENANCE_TIMER_NAME],
@@ -254,9 +263,14 @@ export async function manageHostService(root, action, options) {
   }
   const settled = await inspectHostService(root, options);
   if (settled.kind !== "managed") return settled;
-  const expectedActive = action === "stop" || action === "disable" ? false : true;
+  const expectedActive =
+    action === "stop" || action === "disable" ? false : true;
   if ((settled.activeState === "active") !== expectedActive) {
-    return { kind: "control-failed", action, detail: serviceStatusLine(settled) };
+    return {
+      kind: "control-failed",
+      action,
+      detail: serviceStatusLine(settled),
+    };
   }
   return { kind: "controlled", action, service: settled };
 }
@@ -269,11 +283,21 @@ export async function inspectBrowserRestart(root, options = {}) {
   const service = await inspectHostService(root, options);
   if (service.kind !== "managed") return service;
   const result = await (options.run ?? runSystemctl)(
-    ["--user", "show", HOST_SERVICE_NAME, "--property=InvocationID", "--property=ActiveState"],
+    [
+      "--user",
+      "show",
+      HOST_SERVICE_NAME,
+      "--property=InvocationID",
+      "--property=ActiveState",
+    ],
     options.environment,
   );
   const value = properties(result.stdout);
-  if (result.code !== 0 || value.InvocationID !== options.invocationId || value.ActiveState !== "active")
+  if (
+    result.code !== 0 ||
+    value.InvocationID !== options.invocationId ||
+    value.ActiveState !== "active"
+  )
     return { kind: "invocation-changed" };
   return { kind: "managed" };
 }
@@ -285,7 +309,13 @@ export async function requestBrowserRestart(root, all, commit, options = {}) {
   // runtime drain cannot expire while systemd is processing this transaction.
   if (!commit()) return { issued: false, code: 1 };
   return (options.run ?? runSystemctl)(
-    ["--user", "--no-block", "restart", ...(all ? [TERMINAL_SERVICE_NAME] : []), HOST_SERVICE_NAME],
+    [
+      "--user",
+      "--no-block",
+      "restart",
+      ...(all ? [TERMINAL_SERVICE_NAME] : []),
+      HOST_SERVICE_NAME,
+    ],
     options.environment,
   );
 }
@@ -388,7 +418,16 @@ async function main() {
     return;
   }
 
-  if (!new Set(["start", "stop", "restart", "restart-all", "enable", "disable"]).has(action)) {
+  if (
+    !new Set([
+      "start",
+      "stop",
+      "restart",
+      "restart-all",
+      "enable",
+      "disable",
+    ]).has(action)
+  ) {
     usage();
     process.exitCode = 64;
     return;
@@ -396,7 +435,9 @@ async function main() {
 
   const result = await manageHostService(root, action);
   if (result.kind === "absent") {
-    console.error(`No ${HOST_SERVICE_NAME} unit is installed for this checkout.`);
+    console.error(
+      `No ${HOST_SERVICE_NAME} unit is installed for this checkout.`,
+    );
     process.exitCode = 3;
     return;
   }
@@ -428,14 +469,16 @@ async function main() {
     stop: "Stopped",
     restart: "Restarted",
     "restart-all": "Restarted Host and terminal services for",
-    enable: "Enabled and started (with daily idle maintenance)",
-    disable: "Disabled and stopped (with daily idle maintenance)",
+    enable: "Enabled and started",
+    disable: "Disabled and stopped",
   };
-  console.log(action === "restart"
-    ? "Restarted INSΠRE Host. Terminals remain running."
-    : action === "restart-all"
-      ? "Restarted INSΠRE Host and terminal services."
-      : `${verbs[action]} INSΠRE system service.`);
+  console.log(
+    action === "restart"
+      ? "Restarted INSΠRE Host. Terminals remain running."
+      : action === "restart-all"
+        ? "Restarted INSΠRE Host and terminal services."
+        : `${verbs[action]} INSΠRE system service.`,
+  );
   console.log(serviceStatusLine(result.service));
 }
 

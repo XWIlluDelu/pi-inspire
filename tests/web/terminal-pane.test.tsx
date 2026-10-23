@@ -761,6 +761,67 @@ describe("terminal project ownership", () => {
     ).toBeTruthy();
   });
 
+  it("shows confirmed results with a separate local cleanup action", async () => {
+    vi.spyOn(terminalOperations, "snapshot").mockReturnValue([
+      {
+        key: "confirmed",
+        path: "/api/terminals",
+        label: "Create terminal · /A",
+        uncertain: false,
+        busy: false,
+        confirmed: "completed",
+      },
+    ]);
+    api.retryTerminalOperation.mockResolvedValue(undefined);
+    render(<TerminalPane cwd="/A" />);
+    await screen.findByText(
+      "Completed · browser recovery record could not be cleared",
+    );
+    expect(screen.queryByText("Outcome unknown")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Stop tracking…" })).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clear recovery record" }),
+    );
+    await waitFor(() =>
+      expect(api.retryTerminalOperation).toHaveBeenCalledWith("confirmed"),
+    );
+    expect(api.createTerminal).not.toHaveBeenCalled();
+  });
+
+  it("requires confirmation before stopping tracking and sends no terminal mutation", async () => {
+    const pending = [
+      {
+        key: "lost",
+        path: "/api/terminals",
+        label: "Create terminal · /A",
+        uncertain: true,
+        busy: false,
+      },
+    ];
+    vi.spyOn(terminalOperations, "snapshot").mockReturnValue(pending);
+    const stopTracking = vi
+      .spyOn(terminalOperations, "stopTracking")
+      .mockImplementation(() => {});
+    const confirm = vi
+      .fn()
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    vi.stubGlobal("confirm", confirm);
+    render(<TerminalPane cwd="/A" />);
+    const button = await screen.findByRole("button", {
+      name: "Stop tracking…",
+    });
+    fireEvent.click(button);
+    expect(stopTracking).not.toHaveBeenCalled();
+    fireEvent.click(button);
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining("This does not cancel it"),
+    );
+    expect(stopTracking).toHaveBeenCalledExactlyOnceWith("lost");
+    expect(api.createTerminal).not.toHaveBeenCalled();
+    expect(api.retryTerminalOperation).not.toHaveBeenCalled();
+  });
+
   it.each(["create", "reopen", "reorder", "close", "restart", "rename"])(
     "ignores a delayed %s response after switching projects in the pane",
     async (operation) => {
