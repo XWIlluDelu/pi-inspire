@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createInitialAppState } from "../../src/app-state";
 import { selectContextPaneView } from "../../src/components/context-pane-view";
 import { FilePreview } from "../../src/components/FilePreview";
+import { store } from "../../src/store";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -48,11 +49,12 @@ describe("Files source reading", () => {
       <FilePreview
         state={{
           ...initial,
-          resourcePreview: { status: "loading", reference: "notes.md" },
+          resourcePreview: { ...ready("first"), refreshing: true },
         }}
       />,
     );
-    expect(screen.getByText("Loading preview")).toBeVisible();
+    expect(screen.getByRole("region", { name: "File source" })).toBe(source);
+    expect(source).toHaveTextContent("Original source");
     rerender(
       <FilePreview
         state={{
@@ -82,6 +84,60 @@ describe("Files source reading", () => {
       <FilePreview state={{ ...initial, resourcePreview: ready("third") }} />,
     );
     expect(screen.queryByRole("region", { name: "File source" })).toBeNull();
+  });
+
+  it("retires HTML interaction while retaining static content during refresh", async () => {
+    const release = vi.fn();
+    const start = vi.spyOn(store, "createHtmlPreview").mockResolvedValue({
+      url: "/html-preview/lease",
+      release,
+    });
+    const preview = {
+      ...ready("html", "<h1>Loaded page</h1>"),
+      descriptor: {
+        ...ready("html").descriptor,
+        kind: "html" as const,
+        mimeType: "text/html",
+      },
+      objectUrl: "blob:static-page",
+    };
+    const { rerender } = render(
+      <FilePreview state={{ ...initial, resourcePreview: preview }} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Enable interaction" }));
+    await screen.findByRole("button", { name: "Stop interaction" });
+    rerender(
+      <FilePreview
+        state={{
+          ...initial,
+          resourcePreview: { ...preview, refreshing: true },
+        }}
+      />,
+    );
+    expect(release).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole("button", { name: "Enable interaction" }),
+    ).toBeDisabled();
+    expect(document.querySelector("iframe")?.getAttribute("src")).toBe(
+      preview.objectUrl,
+    );
+    rerender(
+      <FilePreview
+        state={{
+          ...initial,
+          resourcePreview: { ...preview, refreshError: "Still unavailable" },
+        }}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Showing the last loaded content",
+    );
+    expect(
+      screen.getByRole("button", { name: "Enable interaction" }),
+    ).toBeEnabled();
+    expect(start).toHaveBeenCalledOnce();
+    rerender(<FilePreview state={{ ...initial, resourcePreview: preview }} />);
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("retains source-only offsets on refresh but honors a new line target or file", () => {

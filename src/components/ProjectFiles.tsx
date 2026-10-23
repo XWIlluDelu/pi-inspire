@@ -14,6 +14,8 @@ import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
 import { rankProjectFiles } from "../composer-completion";
 import { fileIconForPath } from "../file-icons";
 import { isComposingKeyboardEvent } from "../keyboard-input";
+import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import { store, useAppState } from "../store";
 import {
   type FloatingMenuConstraints,
   useFloatingMenuPlacement,
@@ -85,6 +87,7 @@ export function ProjectFilePicker({
   onAdd: (file: ProjectFileResult) => void;
   onClose: () => void;
 }) {
+  const transportGeneration = useAppState((state) => state.transportGeneration);
   const [query, setQuery] = useState("");
   const [truncated, setTruncated] = useState(false);
   const [results, setResults] = useState<ProjectFileResult[]>([]);
@@ -157,34 +160,48 @@ export function ProjectFilePicker({
   };
 
   useEffect(() => {
-    let cancelled = false;
+    const request = new AbortController();
+    const recovery = new RecoveryBackoff();
+    const owns = () =>
+      !request.signal.aborted &&
+      store.getState().transportGeneration === transportGeneration;
     setResults([]);
     setTruncated(false);
     setActiveIndex(0);
     setStatus("loading");
-    const timer = setTimeout(() => {
-      search(query).then(
-        (result) => {
-          if (!cancelled) {
+    const read = async () => {
+      try {
+        while (owns()) {
+          try {
+            const result = await search(query);
+            if (!owns()) return;
             setResults(rankProjectFiles(result.files, query));
             setTruncated(Boolean(result.truncated));
             setActiveIndex(0);
             setStatus("ready");
+            return;
+          } catch (cause) {
+            if (!owns()) return;
+            if (
+              !isTransientFailure(cause) ||
+              !(await recovery.wait(request.signal))
+            )
+              throw cause;
           }
-        },
-        () => {
-          if (!cancelled) {
-            setResults([]);
-            setStatus("error");
-          }
-        },
-      );
-    }, 200);
+        }
+      } catch {
+        if (owns()) setStatus("error");
+      } finally {
+        recovery.reset();
+      }
+    };
+    const timer = setTimeout(() => void read(), 200);
     return () => {
-      cancelled = true;
+      request.abort();
+      recovery.reset();
       clearTimeout(timer);
     };
-  }, [query, scope, search, showHidden]);
+  }, [query, scope, search, showHidden, transportGeneration]);
 
   useEffect(() => {
     if (

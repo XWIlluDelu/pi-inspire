@@ -16,6 +16,7 @@ import {
 } from "../../shared/resource-references";
 import { gitChangeCount } from "../git-presentation";
 import { resourceRows as toResourceRows } from "../resources";
+import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { hasActiveModal, recoverModalFocus } from "../use-modal-focus";
@@ -47,6 +48,7 @@ export const ContextPane = memo(function ContextPane({
   const [resourceError, setResourceError] = useState<string | null>(null);
   const [terminalReloadKey, setTerminalReloadKey] = useState(0);
   const resourceRequest = useRef<AbortController | null>(null);
+  const resourceRecovery = useMemo(() => new RecoveryBackoff(), []);
   const changesReadings = useRef<ChangesReadingPositions>(new Map());
   const recentRows = useMemo(
     () =>
@@ -61,49 +63,97 @@ export const ContextPane = memo(function ContextPane({
     state.contextMode === "files" &&
     state.fileBrowserView === "browse";
 
-  const loadResources = useCallback(async () => {
-    if (!state.sessionId || !state.transcriptViewId) return;
-    resourceRequest.current?.abort();
-    const request = new AbortController();
-    resourceRequest.current = request;
-    setResourceStatus("loading");
-    setResourceError(null);
-    try {
-      const response = await store.loadSessionResources({
-        limit: RESOURCE_LIST_INITIAL_SIZE,
-        signal: request.signal,
-      });
-      if (
-        request.signal.aborted ||
-        store.getState().transportGeneration !== transportGeneration
-      )
-        return;
-      if (response)
-        setResourcePage({
-          ...response,
-          clientTransportGeneration: transportGeneration,
+  const loadResources = useCallback(
+    async function loadResources() {
+      if (!state.sessionId || !state.transcriptViewId) return;
+      resourceRecovery.cancel();
+      resourceRequest.current?.abort();
+      const request = new AbortController();
+      resourceRequest.current = request;
+      setResourceStatus("loading");
+      setResourceError(null);
+      try {
+        const response = await store.loadSessionResources({
+          limit: RESOURCE_LIST_INITIAL_SIZE,
+          signal: request.signal,
         });
-      setResourceStatus("idle");
-    } catch (error) {
-      if (
-        request.signal.aborted ||
-        store.getState().transportGeneration !== transportGeneration
-      )
-        return;
-      setResourceStatus("error");
-      setResourceError(
-        error instanceof Error ? error.message : "Recent files failed to load",
-      );
-    } finally {
-      if (resourceRequest.current === request) resourceRequest.current = null;
-    }
-  }, [state.sessionId, state.transcriptViewId, transportGeneration]);
+        if (
+          request.signal.aborted ||
+          store.getState().transportGeneration !== transportGeneration
+        )
+          return;
+        if (response) {
+          resourceRecovery.reset();
+          setResourcePage({
+            ...response,
+            clientTransportGeneration: transportGeneration,
+          });
+        }
+        setResourceStatus("idle");
+      } catch (error) {
+        if (
+          request.signal.aborted ||
+          store.getState().transportGeneration !== transportGeneration
+        )
+          return;
+        const current = store.getState();
+        if (
+          isTransientFailure(error) &&
+          resourceRecovery.schedule(() => {
+            const latest = store.getState();
+            if (
+              latest.sessionId === state.sessionId &&
+              latest.transcriptViewId === state.transcriptViewId &&
+              latest.transportGeneration === transportGeneration &&
+              latest.resourcesOpen &&
+              latest.contextMode === "files" &&
+              latest.fileBrowserView === "browse"
+            )
+              void loadResources();
+          })
+        ) {
+          setResourceStatus("loading");
+          return;
+        }
+        if (
+          current.sessionId !== state.sessionId ||
+          current.transcriptViewId !== state.transcriptViewId
+        )
+          return;
+        setResourceStatus("error");
+        setResourceError(
+          error instanceof Error
+            ? error.message
+            : "Recent files failed to load",
+        );
+      } finally {
+        if (resourceRequest.current === request) resourceRequest.current = null;
+      }
+    },
+    [
+      state.sessionId,
+      state.transcriptViewId,
+      transportGeneration,
+      resourceRecovery,
+    ],
+  );
 
   useEffect(() => {
     resourceRequest.current?.abort();
+    resourceRecovery.reset();
     setResourceStatus("idle");
     setResourceError(null);
-  }, [state.sessionId, state.transcriptViewId, transportGeneration]);
+    return () => {
+      resourceRequest.current?.abort();
+      resourceRecovery.reset();
+    };
+  }, [
+    state.sessionId,
+    state.transcriptViewId,
+    transportGeneration,
+    browsingFiles,
+    resourceRecovery,
+  ]);
 
   useEffect(() => {
     if (!browsingFiles || !state.sessionId || !state.transcriptViewId) return;
@@ -214,7 +264,9 @@ export const ContextPane = memo(function ContextPane({
     state.contextMode === "files"
       ? (state.fileBrowserView === "browse" && resourceStatus === "loading") ||
         (state.fileBrowserView === "preview" &&
-          state.resourcePreview?.status === "loading") ||
+          (state.resourcePreview?.status === "loading" ||
+            (state.resourcePreview?.status === "ready" &&
+              state.resourcePreview.refreshing))) ||
         state.workspaceLoadingDirs.length > 0 ||
         state.workspaceSearchLoading
       : state.contextMode === "changes"
@@ -307,7 +359,6 @@ export const ContextPane = memo(function ContextPane({
           rows={recentRows}
           loading={resourceStatus === "loading"}
           error={resourceError}
-          onRetry={() => void loadResources()}
         />
       ) : state.contextMode === "changes" ? (
         <ChangesPane state={state} readingPositions={changesReadings.current} />

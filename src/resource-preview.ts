@@ -36,6 +36,9 @@ export type ResourcePreview =
       status: "ready";
       reference: string;
       descriptor: ResourceDescriptor;
+      /** Same-authority refresh retains the last loaded content. */
+      refreshing?: boolean;
+      refreshError?: string;
       /** Decoded text for source-capable text, HTML, Markdown, notebook, and SVG previews. */
       text?: string;
       truncated?: boolean;
@@ -95,6 +98,6 @@ export function unknownResourceAvailability(
   const message =
     error instanceof Error && error.message
       ? `Availability could not be checked: ${error.message}`
-      : "Availability could not be checked. Retry to verify this reference.";
+      : "Availability has not been confirmed.";
   return { reference, availability: "unknown", message };
 }

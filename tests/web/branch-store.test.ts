@@ -189,7 +189,8 @@ describe("branch request view ownership", () => {
     pending.resolve({ body: { ...branchTree(), revision: 99 } });
     await loading;
     expect(store.getState().branchTree?.revision).toBe(1);
-    expect(store.getState().branchTreeError).toMatch(/stale/);
+    expect(store.getState().branchTreeError).toBeNull();
+    expect(store.getState().branchTreeStale).toBe(true);
     expect(store.getState().branchTreeLoading).toBe(false);
   });
 
@@ -227,7 +228,8 @@ describe("branch request view ownership", () => {
       await loading;
       expect(store.getState().branchTreeLoading).toBe(false);
       expect(store.getState().branchTree?.revision).toBe(1);
-      expect(store.getState().branchTreeError).toMatch(/stale|changed/);
+      expect(store.getState().branchTreeError).toBeNull();
+      expect(store.getState().branchTreeStale).toBe(true);
 
       await store.loadBranchTree();
       expect(treeReads).toBe(2);
@@ -263,9 +265,10 @@ describe("branch request view ownership", () => {
       expect(store.getState().branchActionId).toBeNull();
       // Navigation owns the original leaf; independent copying survives an
       // append, so its failure retains the server diagnostic.
-      if (kind === "navigate")
-        expect(store.getState().branchTreeError).toMatch(/stale|changed/);
-      else expect(store.getState().branchTreeError).toBe("Source changed");
+      if (kind === "navigate") {
+        expect(store.getState().branchTreeError).toBeNull();
+        expect(store.getState().branchTreeStale).toBe(true);
+      } else expect(store.getState().branchTreeError).toBe("Source changed");
       expect(store.getState().sessionId).toBe("s1");
       expect(store.getState().transcriptEffectiveLeafId).toBe("a2");
       expect(store.getState().branchTree?.revision).toBe(1);
@@ -282,7 +285,8 @@ describe("branch request view ownership", () => {
     pending.resolve({ status: 500, body: { error: "old view failed" } });
     await expect(navigating).resolves.toBe(false);
     expect(store.getState().error).not.toBe("old view failed");
-    expect(store.getState().branchTreeError).toMatch(/stale/);
+    expect(store.getState().branchTreeError).toBeNull();
+    expect(store.getState().branchTreeStale).toBe(true);
     expect(store.getState().branchActionId).toBeNull();
   });
 
@@ -452,7 +456,8 @@ describe("branch request view ownership", () => {
           branchTreeLoading: false,
           branchActionId: null,
         });
-        expect(store.getState().branchTreeError).toMatch(/Refresh History/);
+        expect(store.getState().branchTreeError).toBeNull();
+        expect(store.getState().branchTreeStale).toBe(true);
 
         if (selectionOutcome === "failed")
           opening.resolve({ status: 500, body: { error: "selection failed" } });
@@ -482,7 +487,8 @@ describe("branch request view ownership", () => {
 
         if (selectionOutcome === "failed") {
           expect(store.getState().sessionId).toBe("s1");
-          expect(store.getState().branchTreeError).toMatch(/Refresh History/);
+          expect(store.getState().branchTreeError).toBeNull();
+          expect(store.getState().branchTreeStale).toBe(true);
           expect(store.getState().error).toBeNull();
           expect(store.getState().sessionActionError).toBe("selection failed");
         } else {

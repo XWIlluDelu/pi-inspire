@@ -106,7 +106,10 @@ export class FakeWebSocket {
   close(): void {
     this.readyState = 3;
   }
-  open(snapshot = FakeWebSocket.bootstrapSnapshot): void {
+  open(
+    snapshot = FakeWebSocket.bootstrapSnapshot,
+    authorityId = TEST_HOST_AUTHORITY,
+  ): void {
     if (this.opened) return;
     this.opened = true;
     this.readyState = 1;
@@ -114,7 +117,7 @@ export class FakeWebSocket {
     if (snapshot)
       this.emit({
         type: "snapshot",
-        authorityId: TEST_HOST_AUTHORITY,
+        authorityId,
         snapshotDigest: TEST_SNAPSHOT_DIGEST,
         updateStatus: FakeWebSocket.bootstrapUpdateStatus ?? hostUpdateStatus(),
         data: snapshot,

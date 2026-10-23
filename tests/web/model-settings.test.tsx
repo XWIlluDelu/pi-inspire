@@ -68,7 +68,95 @@ beforeEach(() => {
   });
 });
 
+function mockSuccessfulDefaultModelSave() {
+  const saved = modelSettingsSnapshot();
+  saved.settingsRevision = "c".repeat(64);
+  saved.saved.defaultModel = saved.effective.defaultModel = {
+    provider: "anthropic",
+    id: "claude-haiku",
+  };
+  fixture.host.saveModelPreferences.mockImplementation(async () => {
+    fixture.host.readModelSettings.mockResolvedValue(saved);
+    return { saved: true, snapshot: saved };
+  });
+}
+
 describe("Models settings configuration and ownership", () => {
+  it.each(["warning", "failure"] as const)(
+    "does not restore an obsolete catalog %s after accepting a configuration snapshot",
+    async (result) => {
+      const pending = deferred<string | undefined>();
+      fixture.host.refreshModels.mockReturnValueOnce(pending.promise);
+      mockSuccessfulDefaultModelSave();
+      render(<ModelsSettings />);
+      const thinking = await screen.findByRole("combobox", {
+        name: "Default thinking",
+      });
+      fireEvent.click(
+        await screen.findByRole("radio", { name: "Default: Claude Haiku" }),
+      );
+      await waitFor(() =>
+        expect(fixture.host.saveModelPreferences).toHaveBeenCalledTimes(1),
+      );
+      await waitFor(() => expect(thinking).toBeEnabled());
+      await act(async () => {
+        if (result === "warning")
+          pending.resolve("Obsolete catalog observation");
+        else pending.reject(new Error("Obsolete catalog observation"));
+      });
+      expect(screen.queryByText("Obsolete catalog observation")).toBeNull();
+      expect(
+        screen.getByRole("radio", { name: "Default: Claude Haiku" }),
+      ).toBeChecked();
+    },
+  );
+
+  it("retires catalog feedback when its settings reread finishes after a save", async () => {
+    const warmup = deferred<string | undefined>();
+    const reread = deferred<ReturnType<typeof modelSettingsSnapshot>>();
+    fixture.host.refreshModels.mockReturnValueOnce(warmup.promise);
+    fixture.host.readModelSettings
+      .mockReturnValueOnce(Promise.resolve(modelSettingsSnapshot()))
+      .mockReturnValueOnce(reread.promise);
+    mockSuccessfulDefaultModelSave();
+    render(<ModelsSettings />);
+    const thinking = await screen.findByRole("combobox", {
+      name: "Default thinking",
+    });
+    await act(async () => warmup.resolve("Obsolete catalog warning"));
+    expect(fixture.host.readModelSettings).toHaveBeenCalledTimes(2);
+    fireEvent.click(
+      screen.getByRole("radio", { name: "Default: Claude Haiku" }),
+    );
+    await waitFor(() =>
+      expect(fixture.host.saveModelPreferences).toHaveBeenCalledTimes(1),
+    );
+    await waitFor(() => expect(thinking).toBeEnabled());
+    await act(async () =>
+      reread.reject(new Error("Obsolete settings failure")),
+    );
+    expect(screen.queryByText("Obsolete catalog warning")).toBeNull();
+    expect(screen.queryByText("Obsolete settings failure")).toBeNull();
+    expect(
+      screen.getByRole("radio", { name: "Default: Claude Haiku" }),
+    ).toBeChecked();
+  });
+
+  it("retains the newest catalog failure when an older refresh finishes late", async () => {
+    const older = deferred<undefined>();
+    fixture.host.refreshModels
+      .mockReturnValueOnce(older.promise)
+      .mockRejectedValueOnce(new Error("Current catalog failure"));
+    render(<ModelsSettings />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Refresh available models" }),
+    );
+    expect(await screen.findByText("Current catalog failure")).toBeVisible();
+    await act(async () => older.reject(new Error("Obsolete catalog failure")));
+    expect(screen.getByText("Current catalog failure")).toBeVisible();
+    expect(screen.queryByText("Obsolete catalog failure")).toBeNull();
+  });
+
   it("shows catalog failure without disabling saved declarations or preferences", async () => {
     const warning =
       "Model availability could not load. Saved configuration is still editable; refresh models to retry.";

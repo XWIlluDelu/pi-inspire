@@ -158,8 +158,8 @@ describe("snapshot transitions", () => {
       resourcePreview: null,
     });
     expect(snapshotLifecyclePatch(previous, changedView)).toMatchObject({
-      branchTreeError:
-        "Branch history is stale — refresh to use branch actions",
+      branchTreeStale: true,
+      branchTreeError: null,
       branchActionId: null,
       selectedResourceReference: null,
     });
