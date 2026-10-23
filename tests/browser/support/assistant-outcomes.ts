@@ -3,10 +3,7 @@ import type { ActiveSnapshot } from "../../../shared/contracts";
 
 /** A public-wire fixture: the mock Host supplies navigation and read snapshots;
  * controlled completion frames represent native Pi without executing a model. */
-export async function assistantOutcomeScenario(
-  page: Page,
-  stopReason: "error" | "aborted" = "error",
-) {
+export async function assistantOutcomeScenario(page: Page) {
   const sessionId = "mock-errors";
   let socket: WebSocketRoute | undefined;
   let readySocket: WebSocketRoute | undefined;
@@ -21,7 +18,7 @@ export async function assistantOutcomeScenario(
   const stopped = {
     role: "assistant",
     content: [],
-    stopReason,
+    stopReason: "aborted",
     errorMessage: "This operation was aborted",
     timestamp: 3,
     __inspireEntryId: "outcome-stopped",
@@ -30,7 +27,7 @@ export async function assistantOutcomeScenario(
     role: "assistant",
     content: [],
     stopReason: "error",
-    errorMessage: "Request timed out: This operation was aborted",
+    errorMessage: "This operation was aborted",
     timestamp: 4,
     __inspireEntryId: "outcome-failed",
   };
@@ -123,7 +120,7 @@ export async function assistantOutcomeScenario(
     stopped: () => {
       phase = "stopped";
       emit({ type: "message_end", message: stopped });
-      emit({ type: "agent_settled" });
+      emit({ type: "agent_settled", aborted: true });
     },
     failed: () => {
       phase = "failed";
@@ -133,7 +130,7 @@ export async function assistantOutcomeScenario(
         message: { ...failed, stopReason: undefined, errorMessage: undefined },
       });
       emit({ type: "message_end", message: failed });
-      emit({ type: "agent_settled" });
+      emit({ type: "agent_settled", aborted: false });
     },
   };
 }

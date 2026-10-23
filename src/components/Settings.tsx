@@ -41,6 +41,7 @@ import {
   type VisibilityPreference,
 } from "../../shared/contracts";
 import type { ModelSettingsDestination } from "../../shared/model-settings";
+import { notificationPermissionMessage } from "../browser-notifications";
 import {
   installAvailability,
   requestInstall,
@@ -53,8 +54,8 @@ import { Dropdown } from "./Dropdown";
 import { HerdrSettings } from "./HerdrSettings";
 import { HostRestartSettings } from "./HostRestartSettings";
 import { McpSettings } from "./McpSettings";
-import { PresentationAdapterSettings } from "./PresentationAdapterSettings";
 import { ModelsSettings } from "./ModelsSettings";
+import { PresentationAdapterSettings } from "./PresentationAdapterSettings";
 import { SessionActionsSettings } from "./SessionActionsSettings";
 import {
   type SettingsChoice as Choice,
@@ -591,15 +592,16 @@ export const SettingsContent = memo(function SettingsContent({
                         <span role="status">
                           {state.taskAlerts.busy
                             ? "Updating notifications…"
-                            : state.taskAlerts.permission === "denied"
-                              ? "Blocked by browser. Allow notifications in this site's browser settings."
-                              : state.taskAlerts.permission === "unavailable"
-                                ? "System notifications are unavailable. On iPhone or iPad, add Inspire to the Home Screen and enable them there."
-                                : state.taskAlerts.permission !== "granted"
-                                  ? "Notification permission is needed."
-                                  : state.taskAlerts.subscribed
-                                    ? "Background notifications enabled"
-                                    : "While Inspire is open"}
+                            : (notificationPermissionMessage(
+                                state.taskAlerts.permission,
+                              ) ??
+                              (state.taskAlerts.subscribed
+                                ? "Background notifications enabled"
+                                : "While Inspire is open"))}
+                          {!state.taskAlerts.busy &&
+                          state.taskAlerts.permission === "unavailable"
+                            ? " On iPhone or iPad, add Inspire to the Home Screen and enable them there."
+                            : null}
                         </span>
                         {state.taskAlerts.error ? (
                           <span className="settings__error" role="alert">
@@ -607,7 +609,9 @@ export const SettingsContent = memo(function SettingsContent({
                           </span>
                         ) : null}
                         {state.taskAlerts.testResult ? (
-                          <span role="status">{state.taskAlerts.testResult}</span>
+                          <span role="status">
+                            {state.taskAlerts.testResult}
+                          </span>
                         ) : null}
                       </SettingsFeedback>
                       {!state.taskAlerts.subscribed ? (
