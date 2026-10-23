@@ -299,9 +299,6 @@ describe("welcome flow", () => {
     expect(deselectCalls).toBe(1);
     expect(store.getState().sessionId).toBeNull();
     expect(previous).not.toHaveAttribute("aria-current");
-    expect(
-      within(nav).queryByRole("region", { name: "Workspace files" }),
-    ).not.toBeInTheDocument();
     await store.openSession("s1");
   });
 
@@ -883,7 +880,7 @@ describe("welcome flow", () => {
         screen.getByRole("button", { name: "Open conversation search" }),
       );
       const search = screen.getByRole("searchbox", {
-        name: "Search loaded messages",
+        name: "Search conversation",
       });
       fireEvent.keyDown(search, { key: "Escape" });
       await waitFor(() =>
@@ -1093,33 +1090,6 @@ describe("folder grouping and settings page", () => {
 
     act(() => ws.emit({ type: "agent_settled" }));
     await waitFor(() => expect(store.getState().runState).toBe("idle"));
-  });
-
-  it("explores the workspace from the nav and opens a file preview", async () => {
-    render(<App />);
-    fireEvent.click(sessionRowButton(document.body, "Previous work"));
-    const region = await screen.findByRole("region", {
-      name: "Workspace files",
-    });
-    fireEvent.click(within(region).getByRole("button", { name: /demo/ }));
-
-    expect(
-      await within(region).findByRole("button", { name: /README\.md/ }),
-    ).toBeInTheDocument();
-    // directories expand lazily one level at a time
-    fireEvent.click(within(region).getByRole("button", { name: /src/ }));
-    expect(
-      await within(region).findByRole("button", { name: /main\.ts/ }),
-    ).toBeInTheDocument();
-
-    fireEvent.click(within(region).getByRole("button", { name: /README\.md/ }));
-    expect(
-      await screen.findByRole("complementary", { name: "Context panel" }),
-    ).toBeInTheDocument();
-    expect(await screen.findByText("Binary file")).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Toggle resources panel" }),
-    );
   });
 
   it("keeps command-palette preference actions working after the move", async () => {

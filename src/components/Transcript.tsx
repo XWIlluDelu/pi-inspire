@@ -327,12 +327,8 @@ export const Transcript = memo(function Transcript({
         return;
       closeMobileTranscriptTool();
     };
-    const timer = window.setTimeout(
-      () => document.addEventListener("pointerdown", closeFromOutside, true),
-      0,
-    );
+    document.addEventListener("pointerdown", closeFromOutside, true);
     return () => {
-      window.clearTimeout(timer);
       document.removeEventListener("pointerdown", closeFromOutside, true);
     };
   }, [closeMobileTranscriptTool, mobileTranscriptTool]);
@@ -477,7 +473,6 @@ export const Transcript = memo(function Transcript({
       if (!pending || !scroller) return;
       promptNavigationOverrideRef.current = null;
       search.clearCurrentMatch();
-      viewport.markUserScrollIntent();
       viewport.releaseLatestFollow();
       const topPadding =
         Number.parseFloat(getComputedStyle(scroller).scrollPaddingTop) || 0;
@@ -485,6 +480,7 @@ export const Transcript = memo(function Transcript({
         pending.getBoundingClientRect().top -
         scroller.getBoundingClientRect().top -
         topPadding;
+      viewport.restoreGeometricFollow();
       pending.focus({ preventScroll: true });
     },
   }));
@@ -529,7 +525,8 @@ export const Transcript = memo(function Transcript({
         if (isComposingKeyboardEvent(event.nativeEvent)) return;
         if (event.key === "f" && (event.metaKey || event.ctrlKey)) {
           event.preventDefault();
-          setMobileTranscriptTool("search");
+          if (window.matchMedia("(max-width: 900px)").matches)
+            setMobileTranscriptTool("search");
           searchInputRef.current?.focus();
           searchInputRef.current?.select();
         } else if (
@@ -558,10 +555,6 @@ export const Transcript = memo(function Transcript({
         mobileTool={mobileTranscriptTool}
         onOpenMobile={setMobileTranscriptTool}
         onClose={closeMobileTranscriptTool}
-        onSearchHistory={() => {
-          store.searchHistory(search.query);
-          closeMobileTranscriptTool();
-        }}
       />
       <PromptMap
         key={`prompt-map:${sessionId}\u0000${projectionViewKey}`}
@@ -703,7 +696,7 @@ export const Transcript = memo(function Transcript({
           ) : null}
         </div>
       </div>
-      {!viewport.pinned ? (
+      {!viewport.atLatest ? (
         <button type="button" className="jump-to-latest" onClick={jumpToLatest}>
           Jump to latest
         </button>

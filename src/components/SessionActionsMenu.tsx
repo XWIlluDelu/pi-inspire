@@ -1,4 +1,12 @@
-import { ChevronDown, ChevronUp, GripVertical } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  Download,
+  GitBranch,
+  GripVertical,
+  Pencil,
+  SquareTerminal,
+} from "lucide-react";
 import {
   type RefObject,
   useCallback,
@@ -20,6 +28,8 @@ import {
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
 import { useSessionActionReorder } from "../use-session-action-reorder";
+import { ButtonLabel } from "./ButtonLabel";
+import { CopyFeedback } from "./CopyFeedback";
 
 const CONSTRAINTS: FloatingMenuConstraints = {
   gap: 4,
@@ -31,6 +41,12 @@ const CONSTRAINTS: FloatingMenuConstraints = {
 };
 
 const EXPANDED_CONSTRAINTS = { ...CONSTRAINTS, maxHeight: 360 };
+const ACTION_ICONS = {
+  rename: Pencil,
+  clone: GitBranch,
+  terminal: SquareTerminal,
+  export: Download,
+};
 
 export function SessionActionsMenu({
   anchorRef,
@@ -156,7 +172,8 @@ export function SessionActionsMenu({
         left: placement.left,
         top: placement.top,
         bottom: placement.bottom,
-        width: placement.width,
+        width: "max-content",
+        maxWidth: placement.width,
         maxHeight: placement.maxHeight,
       }}
       onPointerMove={reorder.onPointerMove}
@@ -203,47 +220,60 @@ export function SessionActionsMenu({
         }
       }}
     >
-      {visibleActions.map((id, index) => (
-        <div
-          key={id}
-          role="none"
-          className="session-actions-menu__row"
-          data-session-action-id={id}
-          data-dragging={reorder.draggingId === id || undefined}
-        >
-          <button
-            type="button"
-            role="menuitem"
-            data-session-action
-            data-copied={id === "copy-id" && copied ? "true" : undefined}
-            data-overflow-action={
-              index >= SESSION_ACTION_VISIBLE_COUNT || undefined
-            }
-            disabled={actions[id].disabled}
-            aria-disabled={id === "copy-id" ? copying : undefined}
-            aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-            onClick={actions[id].run}
+      {visibleActions.map((id, index) => {
+        const Icon = id === "copy-id" ? null : ACTION_ICONS[id];
+        return (
+          <div
+            key={id}
+            role="none"
+            className="session-actions-menu__row"
+            data-session-action-id={id}
+            data-dragging={reorder.draggingId === id || undefined}
           >
-            {id === "copy-id" && copied
-              ? "ID copied"
-              : SESSION_ACTION_LABELS[id]}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="session-actions-menu__handle"
-            aria-label={`Reorder ${SESSION_ACTION_LABELS[id]}`}
-            aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-            title="Drag to reorder · Alt+↑/↓ to move"
-            onPointerDown={(event) => reorder.startDrag(event, id)}
-          >
-            <GripVertical size={14} aria-hidden />
-          </button>
-        </div>
-      ))}
+            <button
+              type="button"
+              role="menuitem"
+              data-session-action
+              data-copied={id === "copy-id" && copied ? "true" : undefined}
+              data-overflow-action={
+                index >= SESSION_ACTION_VISIBLE_COUNT || undefined
+              }
+              disabled={actions[id].disabled}
+              aria-disabled={id === "copy-id" ? copying : undefined}
+              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+              onClick={actions[id].run}
+            >
+              {id === "copy-id" ? (
+                <CopyFeedback copied={copied} copying={copying} size={14} />
+              ) : Icon ? (
+                <Icon size={14} aria-hidden />
+              ) : null}
+              <ButtonLabel
+                reserve={
+                  id === "copy-id" && copied ? SESSION_ACTION_LABELS[id] : []
+                }
+              >
+                {id === "copy-id" && copied
+                  ? "ID copied"
+                  : SESSION_ACTION_LABELS[id]}
+              </ButtonLabel>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="session-actions-menu__handle"
+              aria-label={`Reorder ${SESSION_ACTION_LABELS[id]}`}
+              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+              title="Drag to reorder · Alt+↑/↓ to move"
+              onPointerDown={(event) => reorder.startDrag(event, id)}
+            >
+              <GripVertical size={14} aria-hidden />
+            </button>
+          </div>
+        );
+      })}
       {actionOrder.length > SESSION_ACTION_VISIBLE_COUNT ? (
         <>
-          <div className="session-actions-menu__separator" aria-hidden />
           <button
             key="overflow"
             ref={overflowRef}
@@ -256,10 +286,12 @@ export function SessionActionsMenu({
               setExpanded(!expanded);
             }}
           >
+            {expanded ? (
+              <ChevronUp size={14} aria-hidden />
+            ) : (
+              <ChevronDown size={14} aria-hidden />
+            )}
             <span>{expanded ? "Fewer actions" : "More actions"}</span>
-            <span className="session-actions-menu__overflow-icon" aria-hidden>
-              {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            </span>
           </button>
         </>
       ) : null}

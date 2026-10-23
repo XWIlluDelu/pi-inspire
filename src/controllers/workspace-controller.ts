@@ -60,10 +60,9 @@ function parentsOf(path: string): string[] {
 }
 
 /**
- * Owns the single workspace tree/search projection rendered by both the
- * compact navigation explorer and the full Files browser. Requests are bound
- * to the active transport, session, and cwd so a late response cannot refill
- * another workspace.
+ * Owns the workspace tree/search projection rendered by the Files browser.
+ * Requests are bound to the active transport, session, and cwd so a late
+ * response cannot refill another workspace.
  */
 export class WorkspaceController {
   private directoryRequests = new Map<string, AbortController>();

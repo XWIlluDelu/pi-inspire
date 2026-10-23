@@ -119,9 +119,8 @@ test("composition keys do not navigate transcript matches or dismiss search", as
     type: "message_end",
     message: { role: "user", content: "测量一，测量二。", timestamp: 1 },
   });
-  await page.getByRole("button", { name: "Open conversation search" }).click();
   const input = page.getByRole("searchbox", {
-    name: "Search loaded messages",
+    name: "Search conversation",
     exact: true,
   });
   const result = page.getByLabel("Transcript search matches");
@@ -156,8 +155,8 @@ test("composition keys do not navigate transcript matches or dismiss search", as
   await input.press("Enter");
   await expect(result).toHaveText("2 of 2");
   await input.press("Escape");
-  await expect(input).toBeHidden();
-  await page.getByRole("button", { name: "Open conversation search" }).click();
+  await expect(input).toBeVisible();
+  await expect(input).not.toBeFocused();
   await expect(input).toHaveValue("测量");
 });
 
@@ -189,12 +188,11 @@ test("search counts only visible shell and checkpoint text", async ({
       },
     },
   );
-  await page.getByRole("button", { name: "Open conversation search" }).click();
   const search = page.getByRole("search", {
-    name: "Search loaded messages",
+    name: "Search conversation",
   });
   const input = search.getByRole("searchbox", {
-    name: "Search loaded messages",
+    name: "Search conversation",
   });
   for (const query of ["31m", "Magic Context compacted"]) {
     await input.fill(query);
@@ -280,8 +278,7 @@ test("literal highlights follow scope, occurrences and disclosure without changi
   await expect(
     page.getByRole("heading", { name: "Searchable answer" }),
   ).toBeAttached();
-  await page.getByRole("button", { name: "Open conversation search" }).click();
-  const input = page.getByRole("searchbox", { name: "Search loaded messages" });
+  const input = page.getByRole("searchbox", { name: "Search conversation" });
   const count = page.getByLabel("Transcript search matches");
   await input.fill("precise match");
   await expect(count).toHaveText("6 matches");
@@ -354,8 +351,8 @@ test("literal highlights follow scope, occurrences and disclosure without changi
     )
     .toBe(true);
   await input.press("Escape");
-  await expect(input).toBeHidden();
-  await page.getByRole("button", { name: "Open conversation search" }).click();
+  await expect(input).toBeVisible();
+  await expect(input).not.toBeFocused();
   await expect(input).toHaveValue("precise match");
   await expect(count).toHaveText("5 of 5");
   await input.focus();
@@ -406,8 +403,7 @@ test("highlights recover when a searched virtual row mounts and clear on session
     })),
   );
   await expect(page.locator(".transcript__column--virtual")).toBeVisible();
-  await page.getByRole("button", { name: "Open conversation search" }).click();
-  const input = page.getByRole("searchbox", { name: "Search loaded messages" });
+  const input = page.getByRole("searchbox", { name: "Search conversation" });
   await input.fill("unique older");
   await input.press("Enter");
   await expect
@@ -460,7 +456,7 @@ test.describe("touch reading controls", () => {
       for (const action of await page
         .locator(".code-block__actions button")
         .all()) {
-        const icon = (await action.locator("svg").boundingBox())!;
+        const icon = (await action.locator("svg").first().boundingBox())!;
         const button = (await action.boundingBox())!;
         expect(icon.width).toBe(13);
         expect(icon.height).toBe(13);
@@ -480,7 +476,7 @@ test.describe("touch reading controls", () => {
     await expect(page.locator(".ctx")).toHaveCount(0);
     await page.getByRole("button", { name: "Open conversation search" }).tap();
     const input = page.getByRole("searchbox", {
-      name: "Search loaded messages",
+      name: "Search conversation",
     });
     await input.fill("Ready");
     await input.press("Enter");

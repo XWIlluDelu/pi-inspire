@@ -7,6 +7,9 @@
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  scroll-padding-block: var(--safe-top) var(--safe-bottom);
   background: var(--bg-rail);
   border-right: 1px solid var(--line-subtle);
   transition: width var(--dur-panel) var(--ease-standard);
@@ -281,14 +284,14 @@
 
 .nav__list {
   flex: 1;
-  /* Keep browsing usable when both bottom drawers are expanded. */
-  min-height: min(144px, 25%);
+  /* Keep a group heading and a complete cross-project row, including insets. */
+  min-height: 104px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
   /* Folder rows reserve 8px for the active marker; compensate at the outer
-     gutter so their icon/text axes still match New, Search and Workspace. */
+     gutter so their icon/text axes still match New and Search. */
   padding: 0 var(--space-3) var(--space-3) var(--space-2);
 }
 
@@ -579,9 +582,9 @@
   color: var(--faint);
 }
 
-/* The two bottom drawers share one header grammar. */
+/* Hidden stays docked below the scrolling session catalog. */
 .nav__dock-heading {
-  flex: 0 0 36px;
+  flex: 0 0 44px;
   display: flex;
   align-items: stretch;
   margin: 0;
@@ -649,12 +652,17 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Hidden follows the workspace explorer, outside the scrolling session catalog. */
+/* Hidden has its own bounded scroll area. */
 .nav__group.nav__group--hidden {
   flex: 0 1 auto;
-  min-height: 36px;
+  min-height: 44px;
   max-height: 40%;
   gap: 0;
+}
+
+.nav__group--hidden:has(.nav__hidden-content) {
+  /* The 44px heading must not consume the body’s entire height budget. */
+  min-height: 108px;
 }
 
 .nav__hidden-content {
@@ -742,31 +750,6 @@
 }
 
 /* --- Shared workspace browser --- */
-
-.explorer {
-  flex: 0 0 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.explorer--open {
-  flex: 0 1 50%;
-}
-
-.explorer__browser {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.explorer__tree {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 0 var(--space-3) var(--space-2);
-}
 
 .workspace-tree {
   display: flex;

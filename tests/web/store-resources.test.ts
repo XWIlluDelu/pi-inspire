@@ -622,7 +622,13 @@ describe("resource previews", () => {
 
   it("retains bounded PDF bytes without a native-viewer URL and releases them on replacement", async () => {
     const createObjectURL = vi.fn();
-    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL: vi.fn() });
+    vi.stubGlobal(
+      "URL",
+      class extends nativeUrl {
+        static createObjectURL = createObjectURL;
+        static revokeObjectURL = vi.fn();
+      },
+    );
     let range: string | null = null;
     installFetch((url, init) => {
       if (url.startsWith("/api/resources/resolve")) {
@@ -667,11 +673,13 @@ describe("resource previews", () => {
       deferred<void>();
     let firstSignal: AbortSignal | undefined;
     let secondRange: string | null = null;
-    vi.stubGlobal("URL", {
-      ...URL,
-      createObjectURL: vi.fn(() => "blob:second"),
-      revokeObjectURL: vi.fn(),
-    });
+    vi.stubGlobal(
+      "URL",
+      class extends nativeUrl {
+        static createObjectURL = vi.fn(() => "blob:second");
+        static revokeObjectURL = vi.fn();
+      },
+    );
     installFetch((url, init) => {
       if (url.startsWith("/api/resources/resolve")) {
         const body = jsonBody(init) as { reference: string };
@@ -982,15 +990,17 @@ describe("resource previews", () => {
   it("clears the selection and revokes the object URL when the session changes", async () => {
     const created: string[] = [];
     const revoked: string[] = [];
-    vi.stubGlobal("URL", {
-      ...URL,
-      createObjectURL: vi.fn(() => {
-        const url = `blob:preview-${created.length}`;
-        created.push(url);
-        return url;
-      }),
-      revokeObjectURL: vi.fn((url: string) => revoked.push(url)),
-    });
+    vi.stubGlobal(
+      "URL",
+      class extends nativeUrl {
+        static createObjectURL = vi.fn(() => {
+          const url = `blob:preview-${created.length}`;
+          created.push(url);
+          return url;
+        });
+        static revokeObjectURL = vi.fn((url: string) => revoked.push(url));
+      },
+    );
     installFetch((url, init) => {
       if (url.startsWith("/api/resources/resolve")) {
         return {

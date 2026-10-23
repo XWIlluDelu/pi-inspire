@@ -127,9 +127,8 @@ test("sent file prompts show filenames, survive reload and recall, and retain co
       }
     }
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.getByRole("button", { name: "Open conversation search" }).click();
   const search = page.getByRole("searchbox", {
-    name: "Search loaded messages",
+    name: "Search conversation",
   });
   await page.getByRole("combobox", { name: "Search scope" }).click();
   await page.getByRole("option", { name: "User", exact: true }).click();
@@ -267,9 +266,8 @@ test("mixed attachments stay above prose with shared spacing, including attachme
     }
   }
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.getByRole("button", { name: "Open conversation search" }).click();
   const search = page.getByRole("searchbox", {
-    name: "Search loaded messages",
+    name: "Search conversation",
   });
   await search.fill("report.md");
   await expect(page.getByLabel("Transcript search matches")).toHaveText(

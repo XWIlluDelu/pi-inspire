@@ -1133,7 +1133,8 @@ input[type="search"]::-webkit-search-cancel-button:hover {
 
 /* Skew padding without changing its total, then keep icons on the row centre.
    Independent translate leaves spinning icons' rotation untouched. */
-.button > svg {
+.button > svg,
+.button > .copy-feedback {
   flex-shrink: 0;
   translate: 0 calc(-1 * var(--ui-text-offset));
 }

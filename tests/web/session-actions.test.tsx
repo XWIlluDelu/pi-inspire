@@ -139,9 +139,9 @@ describe("Session actions", () => {
     const more = screen.getByRole("menuitem", { name: "Fewer actions" });
     expect(more).toHaveAttribute("aria-expanded", "true");
     expect(
-      screen.getByRole("menuitem", { name: "Export session…" }),
+      screen.getByRole("menuitem", { name: "Use in terminal…" }),
     ).toHaveFocus();
-    await user.keyboard("{Enter}");
+    await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");
     expect(onExport).toHaveBeenCalledOnce();
     await user.keyboard("{Escape}");
     expect(title).toHaveFocus();
@@ -157,7 +157,7 @@ describe("Session actions", () => {
     render(<Harness />);
     await user.click(screen.getByRole("button", { name: "Session title" }));
     const handle = screen.getByRole("menuitem", {
-      name: "Reorder Use in terminal…",
+      name: "Reorder Clone current branch",
     });
     handle.focus();
     await user.keyboard("{Alt>}{ArrowDown}{/Alt}");
@@ -165,8 +165,8 @@ describe("Session actions", () => {
     expect(
       within(screen.getByRole("list", { name: "Session action order" }))
         .getAllByRole("listitem")
-        .at(-1),
-    ).toHaveTextContent("Use in terminal…");
+        .at(3),
+    ).toHaveTextContent("Clone current branch");
     expect(
       screen.getByRole("menuitem", { name: "Export session…" }),
     ).toBeVisible();
@@ -209,6 +209,10 @@ describe("Session actions", () => {
       "Export session…",
       "Use in terminal…",
     ]);
+    fireEvent.click(exportHandle);
+    await user.click(
+      screen.getByRole("menuitem", { name: "Move Export session… up" }),
+    );
     await user.click(screen.getByRole("button", { name: "Session title" }));
     expect(
       screen.getByRole("menuitem", { name: "Export session…" }),

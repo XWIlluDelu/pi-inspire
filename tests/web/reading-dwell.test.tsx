@@ -2,7 +2,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useCallback } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useReadingDwell } from "../../src/use-reading-dwell";
+import { readingDwellMs, useReadingDwell } from "../../src/use-reading-dwell";
 
 function Feedback({
   revision = 1,
@@ -35,9 +35,75 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("feedback reading dwell", () => {
+  it.each([
+    ["Copied to clipboard", 3_000],
+    ["This session does not have a name yet.", 3_000],
+    [
+      "Close this browser tab when you are done. The Host and persistent Pi sessions keep running so you can reconnect later.",
+      5_000,
+    ],
+    [
+      "The workspace has finished loading. Some background services are still reconnecting, so their status may take a moment to update. You can keep editing your draft and choose another session without waiting for these services.",
+      8_000,
+    ],
+    [
+      "当前工作目录暂时不可用，请检查网络连接并确认磁盘已经挂载。你可以继续编辑草稿，也可以切换到其他会话。连接恢复后再刷新文件列表，现有内容不会被替换。",
+      8_000,
+    ],
+  ] as const)("uses a coarse reading band for %s", (text, duration) => {
+    expect(readingDwellMs(text)).toBe(duration);
+  });
+
+  it("waits until readable, pauses offscreen, and disconnects on unmount", () => {
+    let visibility!: (ratio: number) => void;
+    const disconnect = vi.fn();
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          visibility = (ratio) =>
+            callback(
+              [
+                {
+                  isIntersecting: ratio > 0,
+                  intersectionRatio: ratio,
+                } as IntersectionObserverEntry,
+              ],
+              this as unknown as IntersectionObserver,
+            );
+        }
+        observe(): void {}
+        disconnect = disconnect;
+      } as unknown as typeof IntersectionObserver,
+    );
+    const dismiss = vi.fn();
+    const view = render(<Feedback duration={3_000} dismiss={dismiss} />);
+    const node = screen.getByTestId("feedback");
+    advance(20_000);
+    act(() => visibility(0.25));
+    advance(20_000);
+    expect(dismiss).not.toHaveBeenCalled();
+    expect(node).toHaveAttribute("data-leaving", "false");
+    act(() => visibility(1));
+    advance(2_900);
+    act(() => visibility(0));
+    advance(20_000);
+    expect(dismiss).not.toHaveBeenCalled();
+    act(() => visibility(1));
+    advance(2_999);
+    expect(node).toHaveAttribute("data-leaving", "false");
+    advance(1);
+    expect(node).toHaveAttribute("data-leaving", "true");
+    advance(150);
+    expect(dismiss).toHaveBeenCalledExactlyOnceWith(1);
+    view.unmount();
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
   it("fades only after the dwell, and cancels an obsolete expiry on renewal/unmount", () => {
     const dismiss = vi.fn();
     const view = render(<Feedback dismiss={dismiss} />);
@@ -112,13 +178,13 @@ describe("feedback reading dwell", () => {
 
   it("resumes remaining reading time, not a fresh full dwell", () => {
     const dismiss = vi.fn();
-    render(<Feedback duration={30_000} dismiss={dismiss} />);
+    render(<Feedback dismiss={dismiss} />);
     const node = screen.getByTestId("feedback");
-    advance(10_000);
+    advance(3_000);
     pointer(node, "pointerenter");
-    advance(40_000);
-    pointer(node, "pointerleave");
     advance(20_000);
+    pointer(node, "pointerleave");
+    advance(5_000);
     expect(node).toHaveAttribute("data-leaving", "true");
     advance(150);
     expect(dismiss).toHaveBeenCalledExactlyOnceWith(1);

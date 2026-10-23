@@ -21,6 +21,27 @@ class ResizeObserverStub {
 }
 globalThis.ResizeObserver = ResizeObserverStub;
 
+// jsdom has no layout; feedback is in view unless a visibility test overrides it.
+class IntersectionObserverStub {
+  constructor(private callback: IntersectionObserverCallback) {}
+  observe(target: Element): void {
+    this.callback(
+      [
+        {
+          target,
+          isIntersecting: true,
+          intersectionRatio: 1,
+        } as IntersectionObserverEntry,
+      ],
+      this as unknown as IntersectionObserver,
+    );
+  }
+  unobserve(): void {}
+  disconnect(): void {}
+}
+globalThis.IntersectionObserver =
+  IntersectionObserverStub as unknown as typeof IntersectionObserver;
+
 window.matchMedia = (query: string) => ({
   matches: false,
   media: query,

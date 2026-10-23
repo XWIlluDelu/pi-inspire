@@ -34,18 +34,20 @@ for (const touch of [false, true]) {
       const measure = () =>
         [
           ...document.querySelectorAll<SVGSVGElement>(
-            ".icon-button > svg, .nav__row-action > svg, .transcript-search > button > svg",
+            ".icon-button > svg, .icon-button .copy-feedback > svg, .nav__row-action > svg, .transcript-search > button > svg",
           ),
         ]
           .filter(
             (svg) =>
-              svg.checkVisibility() && svg.getBoundingClientRect().height,
+              svg.checkVisibility() &&
+              getComputedStyle(svg).opacity !== "0" &&
+              svg.getBoundingClientRect().height,
           )
           .map((svg) => {
             const box = svg.getBoundingClientRect(),
-              parent = svg.parentElement!.getBoundingClientRect();
+              parent = svg.closest("button")!.getBoundingClientRect();
             return {
-              label: svg.parentElement!.getAttribute("aria-label"),
+              label: svg.closest("button")!.getAttribute("aria-label"),
               width: box.width,
               height: box.height,
               declared: Number(svg.getAttribute("width")),
@@ -107,7 +109,7 @@ for (const touch of [false, true]) {
       deviceScaleFactor: touch ? 2 : 1,
       reducedMotion: "reduce",
     });
-    test("keeps the visibility icon on the resource action axis in browse and preview", async ({
+    test("keeps visibility aligned in the desktop index and returns to Browse on narrow previews", async ({
       page,
     }) => {
       await page.setViewportSize({ width: 1280, height: 900 });
@@ -164,6 +166,19 @@ for (const touch of [false, true]) {
           .locator(".file-detail-header__actions > .icon-button")
           .first();
         await expect(download).toBeVisible();
+        if (width <= 900) {
+          // Narrow Files dedicates the panel to the reader; the index controls
+          // return with Browse rather than competing with the preview header.
+          await expect(toggle).toHaveCount(0);
+          await pane
+            .getByRole("button", { name: "Back to Files", exact: true })
+            .click();
+          await expect(toggle).toHaveAttribute("aria-pressed", "false");
+          expect(Math.abs((await measure()).x - browse.x)).toBeLessThanOrEqual(
+            0.5,
+          );
+          continue;
+        }
         for (const pressed of [false, true]) {
           if (pressed) await toggle.click();
           await expect(toggle).toHaveAttribute("aria-pressed", String(pressed));

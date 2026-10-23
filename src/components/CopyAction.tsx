@@ -1,8 +1,7 @@
-import { Check, Copy } from "lucide-react";
 import { type CopyLoader, copyLoader } from "../content-copy";
 import { store } from "../store";
 import { useCopied } from "../use-copied";
-import { PiLoader } from "./PiLoader";
+import { CopyFeedback } from "./CopyFeedback";
 
 interface CopyActionProps {
   text?: string;
@@ -53,13 +52,7 @@ export function CopyAction({
         )
       }
     >
-      {copying ? (
-        <PiLoader size={iconSize} aria-hidden />
-      ) : copied ? (
-        <Check size={iconSize} aria-hidden />
-      ) : (
-        <Copy size={iconSize} aria-hidden />
-      )}
+      <CopyFeedback copied={copied} copying={copying} size={iconSize} />
     </button>
   );
 }

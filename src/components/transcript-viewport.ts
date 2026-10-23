@@ -78,8 +78,6 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
 }: TranscriptViewportOptions<Row>) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const latestRowIndexRef = useRef(-1);
-  const virtualizedFollowRef = useRef<((index: number) => void) | null>(null);
   const userScrollIntentRef = useRef(false);
   const userScrollIntentTimerRef = useRef<number | null>(null);
   const geometricFollowFrameRef = useRef<number | null>(null);
@@ -99,6 +97,15 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
 
   const pinnedRef = useRef(true);
   const [pinned, setPinned] = useState(true);
+  // Follow ownership and the visible latest boundary are different facts.
+  const [atLatest, setAtLatest] = useState(true);
+  const measureLatest = useCallback(() => {
+    const element = scrollRef.current;
+    const latest =
+      !element ||
+      element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
+    setAtLatest(latest);
+  }, []);
   const virtualize = rows.length >= VIRTUALIZE_AT;
   const getRowKey = useCallback(
     (index: number) => rows[index]?.key ?? index,
@@ -112,11 +119,6 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     estimateSize: () => 180,
     overscan: 6,
   });
-  latestRowIndexRef.current = rows.length - 1;
-  virtualizedFollowRef.current = virtualize
-    ? (index) => virtualizer.scrollToIndex(index, { align: "end" })
-    : null;
-
   const rowsRef = useRef(rows);
   const virtualizeRef = useRef(virtualize);
   const virtualizerRef = useRef(virtualizer);
@@ -139,24 +141,23 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     // Input arrives before the browser's corresponding scroll event. Do not let
     // a stream delta win that race and pull the viewport back to latest.
     if (!element || !pinnedRef.current || userScrollIntentRef.current) return;
-    const virtualizedFollow = virtualizedFollowRef.current;
-    if (virtualizedFollow && latestRowIndexRef.current >= 0) {
-      virtualizedFollow(latestRowIndexRef.current);
-      return;
-    }
+    // Pending and extension content follow the virtual message list. The latest
+    // boundary is the complete scrollport, not the end of its last message row.
     element.scrollTop = Math.max(
       0,
       element.scrollHeight - element.clientHeight,
     );
-  }, []);
+    measureLatest();
+  }, [measureLatest]);
 
   const scheduleGeometricFollow = useCallback(() => {
     if (geometricFollowFrameRef.current !== null) return;
     geometricFollowFrameRef.current = requestAnimationFrame(() => {
       geometricFollowFrameRef.current = null;
       followLatest();
+      measureLatest();
     });
-  }, [followLatest]);
+  }, [followLatest, measureLatest]);
 
   const requestOlderRef = useRef<() => boolean>(() => false);
   const loadOlder = useCallback(async () => {
@@ -239,6 +240,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   const onScroll = useCallback(() => {
     const element = scrollRef.current;
     if (!element) return;
+    measureLatest();
     const previousScrollTop = lastScrollTopRef.current;
     lastScrollTopRef.current = element.scrollTop;
     const remaining =
@@ -268,7 +270,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     if (nextPinned) userScrollIntentRef.current = false;
     setPinned(nextPinned);
     if (element.scrollTop <= OLDER_PRELOAD_PX) requestOlderRef.current();
-  }, [followLatest, searchOwnsViewportRef]);
+  }, [followLatest, measureLatest, searchOwnsViewportRef]);
 
   const restoreGeometricFollow = useCallback(() => {
     const element = scrollRef.current;
@@ -277,7 +279,8 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
       : true;
     pinnedRef.current = isPinned;
     setPinned(isPinned);
-  }, []);
+    measureLatest();
+  }, [measureLatest]);
 
   const releaseLatestFollow = useCallback(() => {
     pinnedRef.current = false;
@@ -336,6 +339,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
           if (Number.isFinite(delta) && Math.abs(delta) > 0.5)
             currentRoot.scrollTop += delta;
           lastScrollTopRef.current = currentRoot.scrollTop;
+          measureLatest();
           if (
             restoreLatestAtBoundary &&
             currentRoot.scrollHeight -
@@ -349,7 +353,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
         });
       });
     },
-    [searchOwnsViewportRef],
+    [measureLatest, searchOwnsViewportRef],
   );
 
   const jumpToLatest = useCallback(() => {
@@ -430,6 +434,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     virtualize,
     virtualizer,
     pinned,
+    atLatest,
     loadingEarlier,
     markUserScrollIntent,
     onScroll,

@@ -1,8 +1,24 @@
 /* --- Composer --- */
 
 .composer-dock {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: calc(100% - var(--reading-min-height));
   padding: var(--space-3) var(--space-6) var(--space-4);
   background: transparent;
+}
+
+.composer-dock > .composer {
+  --composer-min-height: 96px;
+  width: 100%;
+  min-height: var(--composer-min-height);
+}
+
+.composer-dock > .activity {
+  flex-shrink: 0;
+  width: 100%;
 }
 
 .composer-readonly {
@@ -47,6 +63,7 @@
 }
 
 .command-activity {
+  min-height: 32px;
   width: 100%;
   max-width: var(--composer-max);
   max-height: min(34dvh, 320px);
@@ -271,6 +288,7 @@
 }
 
 .extension-dock {
+  min-height: 32px;
   width: 100%;
   max-width: var(--composer-max);
   max-height: min(28dvh, 240px);
@@ -368,6 +386,37 @@
   overflow-wrap: anywhere;
 }
 
+/* In a short window, spend the widget's space on its text rather than repeat
+   the generic Extension heading. Its label and Copy action remain available. */
+@media (max-height: 500px) {
+  .extension-dock {
+    border-radius: var(--radius-surface);
+    outline: 1px solid var(--hairline);
+    outline-offset: -1px;
+  }
+
+  .extension-display--widget {
+    position: relative;
+    padding: var(--space-1) 40px var(--space-1) var(--space-2);
+  }
+
+  .extension-display--widget .extension-display__head {
+    position: absolute;
+    top: 0;
+    right: var(--space-1);
+    min-height: 0;
+  }
+
+  .extension-display--widget .extension-display__head > :not(.extension-display__copy) {
+    display: none;
+  }
+
+  .transcript {
+    --transcript-padding-bottom: var(--space-4);
+    mask-image: linear-gradient(to bottom, transparent, #000 6px, #000 calc(100% - 6px), transparent);
+  }
+}
+
 @media (pointer: coarse) {
   .extension-display__copy.icon-button {
     width: 32px;
@@ -377,6 +426,8 @@
 }
 
 .composer {
+  /* Align writing and delivery with the model label, inside its trigger border. */
+  --composer-content-inset: calc(var(--space-2) + 1px);
   position: relative;
   max-width: var(--composer-max);
   margin: 0 auto;
@@ -474,6 +525,8 @@
 .composer__input-wrap {
   position: relative;
   display: flex;
+  flex-direction: column;
+  min-height: 32px;
   min-width: 0;
   padding: var(--space-1);
 }
@@ -515,6 +568,7 @@
 }
 
 .composer__input {
+  min-height: 24px;
   width: 100%;
   border: 0;
   background: transparent;
@@ -525,11 +579,16 @@
   max-height: 40dvh;
 }
 
+.composer .composer__input {
+  padding-inline: calc(var(--composer-content-inset) - var(--space-1));
+}
+
 .composer__input::placeholder {
   color: var(--faint);
 }
 
 .composer__delivery {
+  padding-inline: var(--composer-content-inset);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -668,13 +727,6 @@
   min-width: max(100%, 148px);
   max-height: 300px;
   overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: var(--space-1);
-  background: var(--bg-raised);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-2);
-  animation: float-in var(--dur-standard) var(--ease-standard);
 }
 
 .dropdown__menu--floating {

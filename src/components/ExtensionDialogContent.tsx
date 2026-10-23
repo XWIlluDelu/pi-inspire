@@ -18,16 +18,15 @@ export interface ExtensionDialogContentProps {
 
 /** Presentation only: no store, session selection, transport or modal ownership. */
 export function ExtensionDialogContent(props: ExtensionDialogContentProps) {
-  return (
-    <>
-      <RequestFields {...props} />
-      {props.error ? (
-        <p className="dialog__error" role="alert">
-          {props.error}
-        </p>
-      ) : null}
-    </>
-  );
+  return <RequestFields {...props} />;
+}
+
+function RequestError({ error }: { error?: string | null }) {
+  return error ? (
+    <p className="dialog__error" role="alert" tabIndex={0}>
+      {error}
+    </p>
+  ) : null;
 }
 
 function Selection({
@@ -100,6 +99,7 @@ function RequestFields({
   request,
   value,
   pending: responding,
+  error,
   onValueChange,
   onRespond,
   onCancel: cancel,
@@ -124,6 +124,7 @@ function RequestFields({
             {JSON.stringify(request.payload, null, 2)}
           </pre>
         </details>
+        <RequestError error={error} />
         <div className="dialog__actions">
           <button
             type="button"
@@ -149,6 +150,7 @@ function RequestFields({
           responding={responding}
           onRespond={onRespond}
         />
+        <RequestError error={error} />
         <div className="dialog__actions">
           <button
             type="button"
@@ -170,6 +172,7 @@ function RequestFields({
         {request.message ? (
           <p className="dialog__message">{request.message}</p>
         ) : null}
+        <RequestError error={error} />
         <div className="dialog__actions">
           <button
             type="button"
@@ -229,6 +232,7 @@ function RequestFields({
           autoFocus
         />
       )}
+      <RequestError error={error} />
       <div className="dialog__actions">
         <button
           type="button"

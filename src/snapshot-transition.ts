@@ -200,7 +200,6 @@ export function snapshotLifecyclePatch(
         pendingAction: null,
         windowTitle: null,
         contextMode: "files",
-        workspaceExplorerOpen: false,
         ...sessionOwnerPatch,
         branchTree: null,
         branchTreeLoading: false,

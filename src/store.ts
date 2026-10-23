@@ -3001,10 +3001,6 @@ export class AppStore {
     this.workspace.resumeSearch();
   };
 
-  setWorkspaceExplorerOpen = (open: boolean): void => {
-    this.set({ workspaceExplorerOpen: open });
-  };
-
   openWorkspaceFile = (path: string): Promise<void> => {
     this.workspace.revealPath(path);
     return this.resources.openResource(path, "files", path);
@@ -3172,17 +3168,6 @@ export class AppStore {
     if (contextMode === "branches") void this.loadBranchTree();
   };
 
-  searchHistory = (query: string): void => {
-    if (!this.state.sessionId) return;
-    this.set({
-      historySearchRequest: { sessionId: this.state.sessionId, query },
-      resourcesOpen: true,
-    });
-    this.setContextMode("branches");
-  };
-
-  clearHistorySearch = (): void => this.set({ historySearchRequest: null });
-
   loadBranchTree = (): Promise<void> => this.branches.loadTree();
 
   readBranchTree = (query: BranchTreeQuery, signal?: AbortSignal) =>
@@ -3217,7 +3202,8 @@ export class AppStore {
 
   cloneBranch = (targetId: string): Promise<boolean> =>
     this.branches.clone(targetId);
-  cloneCurrentBranch = (): Promise<boolean> => this.branches.clone();
+  cloneCurrentBranch = (): Promise<boolean> =>
+    this.branches.clone(undefined, (message) => this.notify("warning", message));
 
   setGitSurfaceVisible = (surface: string, visible: boolean): void => {
     this.git.setSurfaceVisible(surface, visible);

@@ -172,6 +172,13 @@ describe("Prompt Map", () => {
   });
 
   it("uses an explicit mobile quick navigator before opening the full directory", async () => {
+    const matchMedia = window.matchMedia;
+    const media = vi
+      .spyOn(window, "matchMedia")
+      .mockImplementation((query) => ({
+        ...matchMedia(query),
+        matches: query === "(max-width: 900px)",
+      }));
     const { container } = render(
       <Transcript
         sessionId="mobile-prompt-map"
@@ -226,6 +233,7 @@ describe("Prompt Map", () => {
     expect(
       screen.getByRole("toolbar", { name: "Transcript tools" }),
     ).toBeInTheDocument();
+    media.mockRestore();
   });
 
   it("locks duplicate navigation and retries the exact failed target", async () => {

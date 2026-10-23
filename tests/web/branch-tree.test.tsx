@@ -15,6 +15,7 @@ import type {
 import { BranchTree } from "../../src/components/BranchTree";
 import { Composer } from "../../src/components/Composer";
 import { EarlierBranchBanner } from "../../src/components/EarlierBranchBanner";
+import { Notices } from "../../src/components/Notices";
 import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
 import { store } from "../../src/store";
 import { sessionPage } from "./fixtures/session-catalog";
@@ -67,6 +68,7 @@ let fixture: {
   searchGate?: Promise<void>;
   navigateGate?: Promise<void>;
   cloneGate?: Promise<void>;
+  cloneError?: string;
   treeGate?: Promise<void>;
   entryFailures?: number;
   imageFailures?: number;
@@ -214,7 +216,11 @@ beforeEach(async () => {
         });
       }
       if (url === "/api/branches/fork" || url === "/api/branches/clone") {
-        if (url.endsWith("clone")) await fixture.cloneGate;
+        if (url.endsWith("clone")) {
+          await fixture.cloneGate;
+          if (fixture.cloneError)
+            return Response.json({ error: fixture.cloneError }, { status: 400 });
+        }
         const fork = url.endsWith("fork");
         const id = fork ? "forked" : "cloned";
         return Response.json({
@@ -898,6 +904,14 @@ describe("explicit History actions", () => {
     expect(
       screen.getByRole("button", { name: "Back to latest" }),
     ).toBeEnabled();
+  });
+
+  it("reports current-branch Clone failures without requiring History to be open", async () => {
+    fixture.cloneError = "The clone destination is read-only";
+    render(<Notices onViewUpdates={() => undefined} />);
+    expect(await store.cloneCurrentBranch()).toBe(false);
+    expect(screen.getByText(fixture.cloneError)).toBeVisible();
+    expect(store.getState().sessionId).toBe("s1");
   });
 
   it("offers endpoint-inclusive Clone in the active earlier-history notice, not user-only Fork", async () => {

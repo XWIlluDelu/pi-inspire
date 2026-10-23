@@ -34,6 +34,32 @@ export function SettingField({
   );
 }
 
+/** Reserve common short states without constraining longer feedback. */
+export function SettingsFeedback({
+  label,
+  reserveLines,
+  children,
+}: {
+  label: string;
+  reserveLines?: number;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className="settings__feedback"
+      role="group"
+      aria-label={label}
+      style={
+        reserveLines
+          ? { minBlockSize: `calc(${reserveLines}lh + var(--space-1))` }
+          : undefined
+      }
+    >
+      {children}
+    </div>
+  );
+}
+
 export function SegmentedControl<T extends string>({
   label,
   value,

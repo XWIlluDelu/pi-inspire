@@ -65,7 +65,7 @@ describe("Stopped assistant outcomes", () => {
       expect(screen.queryByText("This operation was aborted")).toBeNull();
 
       const search = screen.getByRole("searchbox", {
-        name: "Search loaded messages",
+        name: "Search conversation",
       });
       fireEvent.change(search, {
         target: { value: "This operation was aborted" },

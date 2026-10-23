@@ -27,13 +27,17 @@ export interface BranchControllerState {
 }
 
 /** Independent copies need a readable source, not control of its writer. */
+function branchCopyBlockReason(state: BranchControllerState): string | null {
+  if (state.readOnlyReason === "workspace-unavailable")
+    return "The project folder is unavailable";
+  if (state.branchActionId) return "A history action is in progress";
+  if (state.projectionHealth.status === "error" || state.projectionConflict)
+    return "Recover this session before continuing";
+  return null;
+}
+
 export function branchCopiesBlocked(state: BranchControllerState): boolean {
-  return Boolean(
-    state.readOnlyReason === "workspace-unavailable" ||
-      state.branchActionId ||
-      state.projectionHealth.status === "error" ||
-      state.projectionConflict,
-  );
+  return branchCopyBlockReason(state) !== null;
 }
 
 export function branchActionsBlocked(state: BranchControllerState): boolean {
@@ -417,13 +421,17 @@ export class BranchController {
     );
   }
 
-  async clone(targetId?: string): Promise<boolean> {
+  async clone(targetId?: string, onFailure?: (message: string) => void): Promise<boolean> {
     const api = this.host.api();
     const state = this.host.state();
     const sessionId = state.sessionId;
     const viewId = state.transcriptViewId;
-    if (!api || !sessionId || !viewId || branchCopiesBlocked(state))
+    if (!api || !sessionId || !viewId) return false;
+    const blocked = branchCopyBlockReason(state);
+    if (blocked) {
+      onFailure?.(blocked);
       return false;
+    }
     const endpoint = targetId ?? state.transcriptEffectiveLeafId;
     const selectionRequest = this.host.beginForkSelection();
     return this.runAction(
@@ -442,6 +450,8 @@ export class BranchController {
       },
       "Clone failed",
       "view",
+      undefined,
+      onFailure,
     );
   }
 
@@ -454,6 +464,7 @@ export class BranchController {
     fallbackError: string,
     ownership: "position" | "view" = "position",
     discard?: (response: T) => Promise<void>,
+    onFailure?: (message: string) => void,
   ): Promise<boolean> {
     const actionRequest = ++this.actionRequest;
     const transportGeneration = this.host.transportGeneration();
@@ -484,9 +495,9 @@ export class BranchController {
         return false;
       }
       if (!owns()) return false;
-      this.host.patch({
-        branchTreeError: error instanceof Error ? error.message : fallbackError,
-      });
+      const message = error instanceof Error ? error.message : fallbackError;
+      this.host.patch({ branchTreeError: message });
+      onFailure?.(message);
       return false;
     } finally {
       if (ownsRequest() && this.host.state().branchActionId === actionId)

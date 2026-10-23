@@ -3,16 +3,16 @@
 /* Navigation and Transcript retain their established boundary rails. Files
    and Changes deliberately use native scrollbars so their dense code/list
    surfaces remain dependable beside the pane resize boundary. */
+.nav,
 .nav__list,
 .nav__hidden-content,
-.explorer__tree,
 .transcript {
   scrollbar-width: none;
 }
 
+.nav::-webkit-scrollbar,
 .nav__list::-webkit-scrollbar,
 .nav__hidden-content::-webkit-scrollbar,
-.explorer__tree::-webkit-scrollbar,
 .transcript::-webkit-scrollbar {
   display: none;
 }
@@ -275,9 +275,9 @@ body.srail-dragging {
   }
 
   .transcript {
-    padding: calc(var(--space-2) + 44px + var(--space-3))
-      max(var(--space-4), var(--safe-right)) var(--space-6)
-      max(var(--space-4), var(--safe-left));
+    --transcript-padding-top: calc(var(--space-2) + 44px + var(--space-3));
+    --transcript-padding-bottom: var(--space-6);
+    padding-inline: max(var(--space-4), var(--safe-left)) max(var(--space-4), var(--safe-right));
   }
 
   .transcript-search {
@@ -444,6 +444,7 @@ body.srail-dragging {
   }
 
   .notices {
+    --notice-anchor: top;
     top: calc(var(--notice-header-bottom) + var(--space-2));
     right: max(var(--space-3), var(--safe-right));
     bottom: auto;
@@ -608,6 +609,7 @@ body.srail-dragging {
   }
 
   .composer {
+    --composer-content-inset: 7px;
     padding: 10px 12px;
   }
 
@@ -945,7 +947,6 @@ body.srail-dragging {
 .transcript,
 .nav__list,
 .nav__hidden-content,
-.explorer__tree,
 .palette__list,
 .picker__list,
 .ctx {

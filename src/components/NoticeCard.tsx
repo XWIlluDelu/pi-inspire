@@ -21,6 +21,7 @@ export function NoticeCard({
   onDismiss,
   dismissLabel = "Dismiss notification",
   className = "",
+  compact = false,
   ref,
 }: {
   kind: Notice["kind"];
@@ -28,6 +29,7 @@ export function NoticeCard({
   onDismiss: () => void;
   dismissLabel?: string;
   className?: string;
+  compact?: boolean;
   ref?: Ref<HTMLDivElement>;
 }) {
   const match = /^\(([^)]+)\):\s*(.+)$/s.exec(text);
@@ -38,8 +40,11 @@ export function NoticeCard({
   return (
     <div
       ref={ref}
-      className={`notice notice--${kind}${className ? ` ${className}` : ""}`}
-      role={kind === "error" ? "alert" : "status"}
+      className={`notice notice--${kind}${compact ? " notice--compact" : ""}${className ? ` ${className}` : ""}`}
+      {...{
+        role: kind === "error" ? "alert" : "status",
+        "aria-label": compact ? label : undefined,
+      }}
     >
       <div className="notice__head">
         <span className="notice__title">
@@ -59,7 +64,9 @@ export function NoticeCard({
           </button>
         </div>
       </div>
-      <div className="notice__text">{match ? match[2] : text}</div>
+      <div className="notice__text">
+        {compact ? text : match ? match[2] : text}
+      </div>
     </div>
   );
 }

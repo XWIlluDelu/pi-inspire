@@ -3,10 +3,10 @@
 .mcp-config > .settings__error { padding: 0; }
 .mcp-config > .settings__error:not(:last-child) { margin-bottom: var(--space-2); }
 .mcp-settings .models-editor__header .models-subheading { margin: 0; }
-.mcp-config > .models-subheading { flex-wrap: wrap; }
-.mcp-config > .models-subheading > .models-actions { flex-wrap: nowrap; margin-left: auto; }
 .mcp-settings .models-form .settings-switch { flex-direction: row; align-self: flex-start; }
 .mcp-file { padding-block: var(--space-3); border-top: 1px solid var(--line); }
+.mcp-file:first-child { padding-top: 0; border-top: 0; }
+.mcp-file:last-child { padding-bottom: 0; }
 .mcp-file__header {
   display: flex;
   flex-direction: column;

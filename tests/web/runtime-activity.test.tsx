@@ -97,9 +97,9 @@ afterEach(() => vi.useRealTimers());
 
 describe("runtime-owned activity", () => {
   it.each([
-    { command: "session", duration: 30_000 },
-    { command: "name", duration: 15_000 },
-    { command: "quit", duration: 15_000 },
+    { command: "session", duration: 8_000 },
+    { command: "name", duration: 3_000 },
+    { command: "quit", duration: 5_000 },
   ])(
     "renews one /$command card without remounting or evicting it on runtime progress",
     async ({ command, duration }) => {
@@ -134,7 +134,7 @@ describe("runtime-owned activity", () => {
     act(() => vi.advanceTimersByTime(60_000));
     expect(screen.getByText("/session")).toBeInTheDocument();
     act(() => dock.blur());
-    act(() => vi.advanceTimersByTime(30_150));
+    act(() => vi.advanceTimersByTime(8_150));
     expect(screen.queryByText("/session")).not.toBeInTheDocument();
   });
 

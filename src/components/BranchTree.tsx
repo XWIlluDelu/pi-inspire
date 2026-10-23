@@ -172,7 +172,6 @@ export function BranchTree({
       pendingCount: source.queue.totalCount,
       dialogCount: source.extensionUiRequests.length,
       viewId: source.transcriptViewId,
-      historySearchRequest: source.historySearchRequest,
     }),
     shallowEqual,
   );
@@ -285,20 +284,6 @@ export function BranchTree({
     setSummarizing(false);
     loadedSearchRef.current = null;
   }, [state.sessionId, state.viewId, retireRead]);
-
-  useEffect(() => {
-    const request = state.historySearchRequest;
-    if (!request || request.sessionId !== state.sessionId) return;
-    retireRead();
-    setQuery(request.query);
-    setPage(null);
-    setRouteLeaf(undefined);
-    setSelected(null);
-    setDetail(null);
-    loadedSearchRef.current = null;
-    outlineScrollRef.current = 0;
-    store.clearHistorySearch();
-  }, [state.historySearchRequest, state.sessionId, retireRead]);
 
   useEffect(() => {
     if (!state.tree || selected) return;
@@ -631,9 +616,6 @@ export function BranchTree({
             <PiLoader size={13} aria-label="Searching history" />
           ) : null}
         </label>
-        <p className="history-search-hint">
-          Search all saved history, including other branches and tool activity.
-        </p>
         {routeLeaf && !searching ? (
           <div className="history-route-notice">
             <span>Inspecting another route</span>
