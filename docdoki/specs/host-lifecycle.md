@@ -4,7 +4,7 @@ covers:
   - inspire
   - inspire.mjs
   - deploy/systemd/**
-  - scripts/{build-release,build-web,source-build-hash,write-build-stamp,verify-release-package,web-build-output,start-dev,start-dev-host}.mjs
+  - scripts/{build-release,build-web,source-build-hash,verify-release-package,web-build-output,start-dev,start-dev-host}.mjs
   - scripts/vite-dev-launch.ts
   - vite.config.ts
   - tests/server/dev-launcher.integration.test.ts

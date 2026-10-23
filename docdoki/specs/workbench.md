@@ -76,7 +76,7 @@ covers:
   - scripts/build-web.mjs
   - scripts/verify-release-package.mjs
   - scripts/web-build-output.mjs
-  - scripts/write-build-stamp.mjs
+  - scripts/source-build-hash.mjs
   - tests/server/app*.test.ts
   - tests/server/preferences.test.ts
   - tests/portable/file-lock.test.mjs
