@@ -36,11 +36,9 @@ import {
   MAX_PROMPT_IMAGE_ENCODED_BYTES,
   type UploadedAttachment,
 } from "../shared/contracts.js";
+import { isSupportedPromptImageMimeType } from "../shared/image-types.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
-import {
-  canonicalBase64DecodedSize,
-  isSupportedPromptImageMimeType,
-} from "./image-content.js";
+import { canonicalBase64DecodedSize } from "./image-content.js";
 import { processStartIdentity } from "./instance-state.mjs";
 import { inspireStateDirectory } from "./platform-paths.mjs";
 import { requestError } from "./request-error.js";
@@ -141,10 +139,6 @@ function cacheFileName(id: string, displayName: string): string {
   return id + "-" + suffix;
 }
 
-function isImage(mimeType: string): boolean {
-  return /^image\/(png|jpe?g|gif|webp)$/i.test(mimeType);
-}
-
 function payloadTooLarge(message: string): Error {
   return requestError(message, 413);
 }
@@ -164,7 +158,8 @@ function assertAttachmentBudget(files: readonly Express.Multer.File[]): void {
     );
   }
   const imageBytes = files.reduce(
-    (sum, file) => sum + (isImage(file.mimetype) ? file.size : 0),
+    (sum, file) =>
+      sum + (isSupportedPromptImageMimeType(file.mimetype) ? file.size : 0),
     0,
   );
   if (imageBytes > MAX_PROMPT_IMAGE_BYTES) {
@@ -531,7 +526,7 @@ export class AttachmentStore {
       fileName,
       mimeType: file.mimetype || "application/octet-stream",
       size: file.size,
-      kind: isImage(file.mimetype) ? "image" : "file",
+      kind: isSupportedPromptImageMimeType(file.mimetype) ? "image" : "file",
       path,
       state: "staged",
     };

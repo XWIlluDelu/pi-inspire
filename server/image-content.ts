@@ -13,10 +13,6 @@ function isBase64Character(code: number): boolean {
   );
 }
 
-export function isSupportedPromptImageMimeType(value: string): boolean {
-  return /^image\/(?:png|jpe?g|gif|webp)$/iu.test(value);
-}
-
 /** Validate standard canonical base64 (padding may be omitted) without
  * allocating the decoded body. */
 export function canonicalBase64DecodedSize(value: string): number | null {

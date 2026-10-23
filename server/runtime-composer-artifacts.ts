@@ -15,11 +15,9 @@ import {
   parseAttachmentContext,
   resolveProjectFiles,
 } from "./attachments.js";
+import { isSupportedPromptImageMimeType } from "../shared/image-types.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
-import {
-  canonicalBase64DecodedSize,
-  isSupportedPromptImageMimeType,
-} from "./image-content.js";
+import { canonicalBase64DecodedSize } from "./image-content.js";
 import { requestError } from "./request-error.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 

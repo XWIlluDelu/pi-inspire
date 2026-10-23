@@ -74,6 +74,46 @@ const acceptedPrompt: PromptAcceptedResponse = {
 
 describe("ComposerController", () => {
   afterEach(() => vi.useRealTimers());
+  it("keeps a previewable file out of the image budget before and after upload", async () => {
+    const f = createHarness();
+    const upload = deferred<{
+      attachments: Array<{
+        id: string;
+        fileName: string;
+        mimeType: string;
+        size: number;
+        kind: "file";
+      }>;
+    }>();
+    f.uploadAttachments.mockReturnValue(upload.promise);
+    const file = new File(["<svg/>"], "diagram.svg", { type: "image/svg+xml" });
+    const adding = f.controller.addFiles([file]);
+    const pending = f.slice().attachments[0]!;
+    expect(pending).toMatchObject({
+      kind: "file",
+      status: "uploading",
+      previewUrl: expect.stringContaining("blob:"),
+    });
+    upload.resolve({
+      attachments: [
+        {
+          id: "svg",
+          fileName: file.name,
+          mimeType: file.type,
+          size: file.size,
+          kind: "file",
+        },
+      ],
+    });
+    await adding;
+    expect(f.slice().attachments[0]).toMatchObject({
+      kind: "file",
+      status: "ready",
+      previewUrl: pending.previewUrl,
+    });
+    f.controller.removeAttachment(pending.localId);
+  });
+
   it("deduplicates each image in a handoff after a draft is removed, not the handle forever", () => {
     const f = createHarness();
     const authority = "11111111-1111-4111-8111-111111111111";

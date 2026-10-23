@@ -16,6 +16,10 @@ import {
   THINKING_LEVELS,
   type ThinkingLevel,
 } from "../../shared/contracts";
+import {
+  isImageMimeType,
+  isSupportedPromptImageMimeType,
+} from "../../shared/image-types";
 import { ApiError, type ProjectFileResult } from "../api";
 import { selectAttachmentFiles } from "../attachment-selection";
 import { clipboardFiles } from "../clipboard-files";
@@ -54,14 +58,14 @@ interface WelcomeAttachment extends PendingAttachment {
 }
 
 function localAttachment(file: File): WelcomeAttachment {
-  const image = /^image\//i.test(file.type);
+  const image = isImageMimeType(file.type);
   return {
     localId: crypto.randomUUID(),
     file,
     fileName: file.name || "pasted-image",
     mimeType: file.type || "application/octet-stream",
     size: file.size,
-    kind: image ? "image" : "file",
+    kind: isSupportedPromptImageMimeType(file.type) ? "image" : "file",
     previewUrl: image ? URL.createObjectURL(file) : undefined,
     status: "ready",
   };

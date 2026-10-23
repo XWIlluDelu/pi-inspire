@@ -2,7 +2,7 @@
 purpose: One composer owns editing, drafts, prompt artifacts, input handoff, Pending recovery, and command feedback.
 covers:
   - server/{attachments,composer-history,runtime-composer-artifacts,runtime-pending*,project-files,image-content,assistant-text}.ts
-  - shared/{contracts,pending-preview,composer-artifact-references,resource-references,image-dimension-notes,attachment-context}.ts
+  - shared/{contracts,pending-preview,composer-artifact-references,resource-references,image-dimension-notes,image-types,attachment-context}.ts
   - src/{App,api,store,app-state,clipboard-files,keyboard-input,composer-*,session-drafts,model-options}.ts*
   - src/controllers/{composer,pending-recovery}-controller.ts
   - server/pending-operation-receipts.ts
@@ -167,6 +167,11 @@ repeating inline; errors retain their diagnostic and removal guidance. Filenames
 squeezing status/removal controls, and file chips do not stretch to adjacent image-tile height. Clipboard
 `files` is the complete source when non-empty; only an empty list falls back to file-kind `items`.
 Do not combine these projections or deduplicate distinct files by coincident metadata.
+
+Preview capability does not determine delivery kind. Browser-previewable image files such as BMP
+and SVG retain their local thumbnail but travel as ordinary files. Browser selection and Host
+validation share the Pi prompt-image MIME classification (PNG, JPEG, GIF, WebP); only those images
+consume the prompt-image budget. All attachments still count toward the file/count/total budgets.
 
 Sent image thumbnails stay subordinate to the message: 4:3 previews grow from 104 × 78px on narrow
 screens to 160 × 120px on desktop. Staged attachment tiles are 64 × 64px with a fine pointer and
