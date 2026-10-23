@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
+import { mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,8 +10,8 @@ import {
   defaultStaticAssetCacheDirectory,
   prepareStaticAssetCache,
 } from "../server/static-asset-cache.mjs";
+import { sourceBuildHash } from "./source-build-hash.mjs";
 import { publishWebBuild } from "./web-build-output.mjs";
-import { writeBuildStamp } from "./write-build-stamp.mjs";
 
 const root = await realpath(
   resolve(dirname(fileURLToPath(import.meta.url)), ".."),
@@ -65,7 +65,10 @@ try {
       console.warn(
         `Deferred cleanup of ${publication.cleanupFailures} old static asset(s).`,
       );
-    await writeBuildStamp(root);
+    await writeFile(
+      join(root, ".inspire-build"),
+      `${await sourceBuildHash(root)}\n`,
+    );
   } finally {
     await rm(stagingDirectory, { recursive: true, force: true });
   }
