@@ -306,7 +306,7 @@ export const statusControlSchema = z
     id: userRuleIdSchema,
     slot: z.literal("thinking"),
     label: z.string().min(1).max(80),
-    command: z.string().regex(/^\/[A-Za-z][A-Za-z0-9_-]*$/),
+    command: z.string().regex(/^\/\S+$/u),
     state: z
       .object({
         key: z.string().min(1).max(128),

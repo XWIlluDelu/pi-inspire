@@ -205,10 +205,10 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 
 ### Search and pagination
 
-- The existing sidebar search reaches session name, cwd, ID, and complete retained user/assistant
-  text through the Host catalog, using Pi's fuzzy keywords, quoted phrases, and `re:` regex. The
-  corpus, source-authority, and execution boundary live in [[session-continuity]]; no second search
-  panel or filter toolbar is introduced.
+- Sidebar search reaches session name, cwd, ID and complete retained user/assistant text through
+  the Host catalog. [[session-continuity]] owns query syntax, matching and source authority;
+  [[design-system]] owns visible match emphasis. Search uses the existing sidebar without another
+  panel or filter toolbar.
 
   Search reveals the immediate parent beside a project group when that parent has a visible
   token/phrase match but the project basename does not. Existing context for colliding basenames
@@ -256,18 +256,11 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   and manual retry without claiming that the service is certainly stopped.
 
   A later live-stream interruption preserves the last settled state and starts with the narrower
-  reconnect explanation, then adopts the more specific bootstrap result. Settings and the contextual
-  Files/Changes/History implementation remain separate on-demand JavaScript chunks; their loading
-  placeholders already own the same dialog/focus boundary, so reducing the critical shell never
-  exposes background shortcuts or an unclosable narrow drawer. Settings keeps the identical overlay,
-  dialog, header, and focus owner mounted outside its deferred body boundary through loading, ready,
-  and failure states; resolving its first import must not replay whole-overlay or dialog entrance
-  animations.
-
-  Its loading body reserves the responsive sidebar, card, and footer geometry with static decorative
-  placeholders and one concise status; it offers no placeholder controls. Context and History use
-  the same styled pane-state component for waiting, empty, and unavailable views, with alert
-  semantics and real recovery buttons on failure. Before React bootstraps, a validated browser-local
+  reconnect explanation, then adopts the more specific bootstrap result. Settings and contextual
+  Files/Changes/History load on demand within a stable shell and focus boundary. Loading, ready and
+  failure preserve the dialog/drawer owner, Close control and keyboard containment; resolving content
+  does not restart shell entry animations. [[design-system]] owns loading geometry, delay, status and
+  recovery presentation. Before React bootstraps, a validated browser-local
   cache may apply only the saved theme, palette, content text size, and reading width to prevent a
   wrong first paint; host preferences remain authoritative and immediately replace stale cache
   state. [[design-system]] owns PWA metadata: active Window Controls Overlay follows the workspace
@@ -347,19 +340,13 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   request, selection, or transport replacement cannot inherit it.
 - Expected lifecycle transitions do not report obsolete background reads as failures.
   [[session-deletion]] owns the deletion boundary; real deletion failure and authentication loss
-  remain visible. General notifications use one floating stack across welcome and conversation
-  views; they do not become full-width welcome-page content. They stay top-right at every width,
-  below the workspace header, current banners and horizontally overlapping transcript search/tools.
-  An overflowing stack remains scrollable above the editor rather than moving the anchor with
-  editor height. [[design-system]] owns their compact visual treatment and dwell.
+  remain visible. [[design-system]] owns the shared floating notice stack, placement, scrolling and
+  dwell across Welcome and conversation views.
 
 ## Session-owned controls and command palette
 
-- The composer and host share one busy-state authority for `running`, `retrying`, `compacting`, and
-  `queued`. Busy work presents steer, follow-up, and abort controls, including while input is
-  queued; a prompt result may update only its sending session’s composer partition and may touch the
-  visible global error only while that session remains visible. A session switch restores its draft
-  and closes session-owned transient surfaces — project-file picker, drop state, model/thinking
+- [[composer]] owns delivery states, per-session drafts and prompt-result ownership. A session switch
+  restores its draft and closes session-owned transient surfaces — project-file picker, drop state, model/thinking
   popovers, and completions — before the new owner paints.
 
 - Visible controls make core operations discoverable while keyboard shortcuts and a command
@@ -393,9 +380,7 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   metadata. Renames are latest-request-wins per session, and an older completion cannot close a
   subsequently reopened rename editor.
 
-  These actions reuse existing UI owners and narrow store facades; a registry is warranted only when
-  distinct visible, keyboard, and palette surfaces begin to duplicate one operation's capability or
-  eligibility logic.
+  Visible, keyboard and palette actions share each operation's eligibility and execution path.
 
 - Keyboard shortcuts open one focus-contained, scrollable browser help dialog. It reflects the
   chosen desktop send chord, touch-first Return and IME boundaries, completion/history, palette and

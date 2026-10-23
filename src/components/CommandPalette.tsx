@@ -109,7 +109,7 @@ export const CommandPalette = memo(function CommandPalette({
       copiesBlocked: branchCopiesBlocked(appState),
       external: Boolean(
         appState.sessionId &&
-        appState.sessionStatuses[appState.sessionId]?.external,
+          appState.sessionStatuses[appState.sessionId]?.external,
       ),
       heading: sessionHeading(
         appState.sessionName,
@@ -189,8 +189,8 @@ export const CommandPalette = memo(function CommandPalette({
   const abortable = isAbortableRunState(state.runState) || state.bashRunning;
   const hasEarlierBranch = Boolean(
     state.transcriptDurableLeafId &&
-    state.transcriptEffectiveLeafId &&
-    state.transcriptDurableLeafId !== state.transcriptEffectiveLeafId,
+      state.transcriptEffectiveLeafId &&
+      state.transcriptDurableLeafId !== state.transcriptEffectiveLeafId,
   );
 
   useSearchFocus(active && !preparation && !renaming, inputRef, dialogRef);

@@ -2067,7 +2067,7 @@
   grid-column: 3;
   grid-row: 1;
 }
-.notice--compact .notice__copy,
+.notice--compact .notice__copy.icon-button,
 .notice--compact .notice__dismiss {
   margin-block: 0;
 }
@@ -2080,7 +2080,7 @@
   );
 }
 @media (pointer: coarse) {
-  .notice--compact {
+  .notice.notice--compact {
     --notice-control-size: 32px;
   }
 }

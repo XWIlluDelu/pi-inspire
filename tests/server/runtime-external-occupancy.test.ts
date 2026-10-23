@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type PiActivityRecord,
   piActivityProcessIdentity,
-} from "../../docs/examples/session-activity.js";
+} from "../../extensions/inspire-session-bridge.js";
 import { HerdrNativeSession } from "../../server/herdr-native-session.js";
 import { captureHerdrHostIdentity } from "../../server/herdr-process-group.js";
 import type { PiRpcProcess } from "../../server/pi-rpc.js";
@@ -382,42 +382,50 @@ describe("writer admission for externally held session files", () => {
     }
   });
 
-  it("reports an actual Pi startup failure without automatically restarting it", async () => {
-    const f = await fixture();
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    f.runtime.retainSessionView(f.session.id);
-    f.create.mockImplementationOnce((options) => {
-      const worker = new FakeRpc(options);
-      vi.spyOn(worker, "start").mockRejectedValue(
-        new Error("Pi failed during session_start"),
-      );
-      f.workers.push(worker);
-      return worker as unknown as PiRpcProcess;
-    });
-    try {
-      await f.runtime.openSession(f.session.id);
-      await vi.waitFor(async () =>
-        expect((await f.runtime.snapshot()).active?.readOnlyReason).toBe(
-          "external-active",
-        ),
-      );
-      f.check.mockResolvedValue();
-      await vi.advanceTimersByTimeAsync(2_000);
-      await vi.waitFor(() => expect(f.workers[0]?.stops).toBe(1));
-      const failed = await f.runtime.snapshot();
-      expect(failed.runState).toBe("failed");
-      expect(failed.active?.readOnlyReason).toBeUndefined();
-      await vi.advanceTimersByTimeAsync(6_000);
-      expect(f.create).toHaveBeenCalledOnce();
+  it.each(["start", "attestation"] as const)(
+    "reports an actual Pi %s failure without automatically restarting it",
+    async (phase) => {
+      const f = await fixture();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      f.runtime.retainSessionView(f.session.id);
+      f.create.mockImplementationOnce((options) => {
+        const worker = new FakeRpc(options);
+        if (phase === "start")
+          vi.spyOn(worker, "start").mockRejectedValue(
+            new Error("Pi failed during session_start"),
+          );
+        else
+          worker.responseOverrides.set("get_state", () => {
+            throw new Error("Startup attestation unavailable");
+          });
+        f.workers.push(worker);
+        return worker as unknown as PiRpcProcess;
+      });
+      try {
+        await f.runtime.openSession(f.session.id);
+        await vi.waitFor(async () =>
+          expect((await f.runtime.snapshot()).active?.readOnlyReason).toBe(
+            "external-active",
+          ),
+        );
+        f.check.mockResolvedValue();
+        await vi.advanceTimersByTimeAsync(2_000);
+        await vi.waitFor(() => expect(f.workers[0]?.stops).toBe(1));
+        const failed = await f.runtime.snapshot();
+        expect(failed.runState).toBe("failed");
+        expect(failed.active?.readOnlyReason).toBeUndefined();
+        await vi.advanceTimersByTimeAsync(6_000);
+        expect(f.create).toHaveBeenCalledOnce();
 
-      await f.runtime.openSession(f.session.id);
-      await waitForReady(f.runtime, f.session.id);
-      expect(f.workers[1]!.starts).toBe(1);
-    } finally {
-      await f.runtime.close();
-      vi.useRealTimers();
-    }
-  });
+        await f.runtime.openSession(f.session.id);
+        await waitForReady(f.runtime, f.session.id);
+        expect(f.workers[1]!.starts).toBe(1);
+      } finally {
+        await f.runtime.close();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("pauses admission during deletion and resumes observation if deletion fails", async () => {
     const f = await fixture();

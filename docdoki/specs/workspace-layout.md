@@ -34,9 +34,9 @@ independent project shells in [[terminal]].
   gutter and rail position before paint, so the rail never covers conversation content or retains an
   earlier-width position.
 
-  Desktop search rests as a compact launcher at the top-right of the reading measure and opens on demand. On both desktop and narrow
-  screens, search/navigation controls preserve vertical reading space rather than reserve a toolbar
-  row. The floating `Jump to latest` text button remains bottom-centered within the transcript.
+  Search and navigation controls occupy the reading measure without reserving a toolbar row on
+  desktop or narrow screens. [[conversation]] owns the inline desktop search, narrow launchers and
+  floating `Jump to latest` behavior.
   The transcript scroll thumb is separate from Prompt Map: its complete grab band fits the
   trailing reading gutter without covering content, and its travel stays inside the scrollport
   even in short windows. Native reading width, wheel and keyboard scrolling remain unchanged.
@@ -68,7 +68,8 @@ independent project shells in [[terminal]].
   focus and Escape ownership when a viewport change turns the underlying pane into a drawer;
   the lower drawer cannot trap or make that dialog inert.
 
-- Both side regions' widths are adjustable by dragging their boundary with the conversation
+- Automatic desktop widths use 220–272px for navigation (48px collapsed) and 340–760px for context.
+  Both side regions' widths are adjustable by dragging their boundary with the conversation
   using focusable handles with pointer and keyboard control, persist across reloads, and reset to
   the default on double-click; each boundary's scroll thumb keeps grab priority where the two
   overlap. A saved width is clamped live as the window narrows without overwriting the user's
@@ -171,23 +172,19 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
   sending a model prompt or changing the source's work, pending input or draft. [[session-branches]]
   defines native navigation, Fork/Clone boundaries and optional branch summaries.
 
-- Git status/diff request, cancellation, polling, and visible-surface scheduling belong to a bounded
-  `GitController`. `AppStore` remains the sole snapshot publisher and executes the explicit
-  cross-domain transition between a Git-selected path and a session-bound resource preview, so Git
-  never becomes a parallel browser store. While Changes is visible, status observations also refresh
-  its selected file and side. Polling, Pi tool completion, terminal command completion and explicit
+- Git status and diff observations share a bounded scheduler and the workbench's snapshot authority.
+  Selecting a Git path and opening its session-bound resource preview form one cross-domain transition;
+  Git does not maintain a parallel browser store. While Changes is visible, status observations also
+  refresh its selected file and side. Polling, Pi tool completion, terminal command completion and explicit
   Refresh share that inspection path. One active read and one queued refresh coalesce repeated hints;
   slow reads do not overlap polling. Keep the previous source readable until its replacement is ready,
   preserve the selected path/side and reader offsets, and reuse unchanged results. A failed refresh
   retains the source with a visible stale-result notice; a successful read clears it.
-  `tests/web/git-{controller,store}.test.ts` and `tests/browser/changes.spec.ts` cover refresh ownership,
-  coalescing, retained content and reading continuity.
 
   Keep complete selected-file source when it fits the bounded projection. If unchanged context exhausts
   that budget, reread bounded changed regions instead of hiding the edits behind a long prefix. Mark omitted context separately from a
   truncated diff. Syntax highlighting has its own bounded complete-revision context; validate it
   against displayed rows and use literal escaped text when unavailable or changed between reads.
-  `git-long-prefix.test.ts` covers real Git through Host HTTP and source/change navigation projection.
 
 ## Contextual modes
 

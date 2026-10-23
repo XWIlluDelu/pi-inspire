@@ -47,138 +47,110 @@ checkout's pinned development dependency is not a production fallback. Pi's norm
 project directory, settings, credentials, models, extensions, skills, prompts, and sessions remain
 authoritative. Workers inherit the user environment defined by [[host-lifecycle]].
 
-Direct RPC pipes are the default. Optional [[herdr-enhancement]] changes worker placement through a
-private byte transport while preserving native execution and session authority. It also connects the
-ordinary conversation composer to an existing native Pi terminal instead of starting another writer;
-that terminal retains its process, queue and dialogs. The detailed connection and lifecycle contract
-lives in [[herdr-enhancement]]. Direct mode remains independent of Herdr. Project terminals belong to the separate [[terminal]] daemon, outside Pi's
-runtime and history. Session-bound file previews follow [[resource-preview]].
+Direct RPC pipes are the default. Optional [[herdr-enhancement]] changes worker placement or connects
+the composer to an existing Pi terminal while preserving native process, queue and dialog ownership.
+Project terminals use the separate [[terminal]] daemon; previews follow [[resource-preview]].
 
 ## Settings and native commands
 
-The browser receives model availability and runtime state, not stored credential values. Typed
-settings controls cover auto-compaction, auto-retry, and steering/follow-up delivery. Pi's worker and
-`SettingsManager` own those values. Browser optimism is per field and selection/transport owner:
-a stale failure cannot roll back a newer request, and a current failure reconciles against Pi.
-Retry reads use the owning worker's public `getSettings()` through the hidden bridge, preserving its
-project-trust and override decisions. A native setter acknowledgment is followed by an effective read;
-that confirmation does not establish successful persistence. Behavior discloses this boundary and
-the selected worker/global-save/project-override scope beside the controls.
+Pi's worker and `SettingsManager` own auto-compaction, retry and steering/follow-up delivery.
+Controls read effective values after native setters. Optimistic state belongs to its field and
+session/transport owner; stale failures cannot roll back newer requests, and current failures
+reconcile with Pi. Retry reads use the owning worker's public `getSettings()` to retain its trust
+and override decisions.
 
-Pi 1.3.0 exposes SDK settings flush/error APIs, but not the RPC worker's manager or a reliable
-owning-write result. A load-blocked file may produce no new save error, and a flush can resolve with
-a drainable write error. Per-change saved/failed feedback therefore remains blocked on a public
-worker-owned persistence result; [[pi-capability-gaps]] tracks that requirement.
+An effective-value read confirms runtime state, not persistence. Controls disclose their
+worker/global-save/project-override scope. Pi 1.3.0 lacks a reliable worker-owned persistence result;
+[[pi-capability-gaps]] records the missing interface and why SDK flush/error APIs are insufficient.
 
-[[model-settings]] owns saved defaults, common scope, declarations and credential controls. Native
-files and precedence remain authoritative; configuration is independent of login and current-session
-selection. Authentication uses the current worker's provider definitions and public
-`ModelRuntime.login/logout` in a separately owned operation sharing native storage. The bridge carries
-interactions outside model input and retains native cancellation/worker stop fences. Browser payloads
-and errors omit stored or resolved keys/tokens.
+[[model-settings]] owns saved defaults, declarations, selection and authentication. Login/logout
+uses public `ModelRuntime` methods with the worker's provider definitions and native storage.
+The separately owned operation carries interactions outside model input, retains cancellation and
+worker-stop fences, and excludes stored/resolved keys and tokens from browser payloads and errors.
 
-Pi RPC enumerates extension, prompt, and skill commands but not interactive built-ins.
-`shared/commands.ts` reserves the installed interactive built-in vocabulary before resource dispatch,
-matching Pi's interactive client. Within resources, preserve Pi's first wire owner. Namespaced
-extension commands remain available. Names are case-sensitive. Exact inventory matches also admit
-Pi-registered Unicode and punctuated names without classifying other filesystem paths as commands.
-First-message completion hides native commands needing a session without exposing colliding resources
-instead. Browser commands reuse
-existing surfaces, including Models settings for `/scoped-models`, `/login` and `/logout`; Host
-commands own compaction, export and reload. Terminal-only commands expose precise copy/open guidance.
-`/bug` neither uploads a report nor sends its description to the model.
-The public command inventory is [Pi commands](../../docs/pi-commands.md).
+### Command dispatch
 
-For owned RPC workers, the Host rejects unknown command-shaped text at the prompt boundary and
-dispatches direct `!`/`!!` input to native Bash. Existing TUI connections instead direct shell input
-and interactive built-ins to the original terminal; `sendUserMessage` is not the TUI shell/built-in
-submit handler. The Host normalizes resource-command separators, and revalidates command ownership
-after reload/worker replacement. Snapshots and slash-command admission/delivery read the worker's
-current loaded inventory. Resource-command completion refreshes browser discovery even during model
-work, without settling that work or Pending. Native in-process reload therefore does not require a
-GUI worker replacement merely to discover its commands.
-`/compact` also has a first-message path using its standalone operation lifecycle. The browser
-acknowledges typed Host commands immediately; their HTTP results remain completion-driven, outside
-prompt confirmation timeouts. Read-only/local
-commands remain available through delivery phases; Reload and a new manual Compact refuse active Pi
-work. Typed native commands and shell input reject artifacts without consuming them; palette actions
-have an independent draft owner under [[composer]].
+RPC lists extension, prompt and skill commands but omits interactive built-ins. Reserve the installed
+built-in vocabulary before resource dispatch, then retain Pi's first wire owner for each resource
+name. Names are case-sensitive; exact inventory matches admit namespaced, Unicode and punctuated
+names without treating arbitrary filesystem paths as commands. First-message completion hides
+session-dependent commands without exposing colliding resources.
 
-Compaction completes according to Pi, outside browser prompt deadlines. Standalone manual Stop uses
-Pi's generic `abort`, retaining the same worker and extension-local state when cancellation cooperates.
-The abort acknowledgement is not the compaction's completion boundary: Pi's terminal event and compact
-response determine cancellation versus completion, with persisted completion winning a Stop race.
-Only explicit cancellation has a short settlement grace; an unresponsive hook retires through the
-existing confirmed-stop/writer fence. Normal compaction has no time budget. Reload replaces an idle worker and invalidates
-resource/model inventories. Opening the model picker instead refreshes the current worker through
-public `ExtensionCommandContext.modelRegistry.refresh({ signal })`, followed by RPC
-`get_available_models`; native `set_model` reads that same available snapshot. The narrow internal
-command/status pair is worker/session/nonce-owned, hidden from user command/status inventories,
-coalesced per worker, and independent of the persistence/branch mutation lane. A 15-second abort
-budget bounds catalog discovery without stopping Pi. Pi retains extension registrations, credentials,
-offline/network policy and usable cached catalogs.
-The owning RPC worker supplies its model list and accepts native RPC model changes. Connected TUI
-owners instead use the existing activity receiver and public model/thinking functions, as specified in
-[[herdr-enhancement]]. Both return effective model and thinking values rather than echoed arguments.
-[[model-settings]]
-owns selection/discovery semantics; [[composer]] owns cached-first controls and feedback.
-Export content, source protection and
-managed downloads belong to [[session-branches]], with controls/receipts in [[composer]].
+Browser commands open existing surfaces; Host commands run compaction, export and reload.
+Terminal-only commands give copy/open guidance. `/bug` does not upload a report or send its text to
+the model. [Pi commands](../../docs/pi-commands.md) is the user-facing inventory.
 
-`/changelog` reads the installed package's matching version section, not a dependency fallback or
-remote latest-release feed. Public extension command enumeration has no argument-completion hooks;
-Inspire does not infer callbacks or patch Pi internals to manufacture them. [[composer]] owns native
-argument assistance and explicit resource preparation. In Pi 1.3.0, `registerCommand()`
-accepts `getArgumentCompletions`, but both RPC `get_commands` and public `ExtensionAPI.getCommands()`
-return `SlashCommandInfo` metadata without callable completion hooks. `addAutocompleteProvider()`
-is a no-op in RPC. Generic completion needs a public current-worker command-completion invocation
-(name/prefix to completion items); package-specific guesses and private runner access are excluded.
+For owned workers, reject unknown command-shaped input and route `!`/`!!` to native Bash. Connected
+TUI sessions direct shell input and interactive built-ins to the original terminal: `sendUserMessage`
+is not that terminal's submit handler. Normalize resource separators and recheck the worker's current
+inventory at admission and delivery, including after reload. Resource completion can refresh browser
+discovery during agent work without settling work or Pending.
+
+Typed Host commands acknowledge immediately and await completion outside prompt timeouts. `/compact`
+also supports first-message startup. Read-only/local commands remain usable through delivery phases;
+Reload and a new manual Compact refuse active Pi work. Typed native commands and shell input reject
+artifacts without consuming them; palette actions have the draft ownership defined in [[composer]].
+
+### Compaction, reload and model discovery
+
+Compaction follows Pi completion without a generic time budget. Manual Stop calls native `abort`
+and keeps a cooperative worker and its extension state. Pi's terminal event and compact response
+settle the operation; persisted completion wins a Stop race. Only explicit cancellation has a short
+settlement grace, after which an unresponsive hook uses the confirmed-stop/writer fence.
+
+Reload replaces an idle worker and invalidates resource/model inventories. Opening the model picker
+instead calls public `ExtensionCommandContext.modelRegistry.refresh({ signal })` in the current
+worker, then `get_available_models`; `set_model` uses that available snapshot. The hidden bridge
+command/status pair is worker/session/nonce-owned, coalesced per worker and independent of the
+persistence/branch mutation lane. Its 15-second discovery budget does not stop Pi. Native extension registrations,
+credentials, offline policy and usable cached catalogs remain authoritative.
+
+Owned RPC and connected TUI controls return effective model/thinking values. [[model-settings]]
+owns selection and discovery semantics; [[herdr-enhancement]] owns the TUI receiver;
+[[composer]] owns control feedback. [[session-branches]] owns exports and download protection.
+
+### Installed resources and capability gaps
+
+`/changelog` reads the installed package's matching version section. Generic argument completion
+needs a public current-worker callback invocation: Pi 1.3.0 command inventories expose metadata,
+not callable completions, and RPC autocomplete registration is a no-op. Keep that requirement in
+[[pi-capability-gaps]]; [[composer]] owns supported argument assistance and resource preparation.
 
 ## Extension UI reuse and source DIY
 
-The standard dialog content has a controlled props-only boundary: request/value, pending/error,
-value change, respond and cancel callbacks. The connected wrapper owns session/request identity,
-communication, form lifetime, deadlines and modal focus. Reusing the body does not import the global
-store or grant runtime control. Existing select/input/editor/confirm behavior remains unchanged.
+Standard dialog bodies accept controlled props for values, pending/error state and response/cancel
+callbacks. Their connected wrapper owns session/request identity, communication, lifetime, deadlines
+and modal focus. Reusing the body grants no runtime control or global-store dependency.
 
-Prefer native RPC primitives when they meet the use case, then declarative typed display rules.
-Nested-property display is not a general subagent-management API. A purpose-built interaction can
-use source DIY: a Pi extension owns state and namespaced commands, a small adapter maps admitted data
-and available actions, and a React component renders list/detail UI. Actions require declared
-capability plus current inventory and use `sendPreparedCommand` to preserve drafts/artifacts.
+Prefer native RPC primitives, then typed declarative displays. Purpose-built source customization
+uses a Pi extension for state and namespaced commands, an adapter for admitted data/actions, and a
+React view. Actions require both declared capability and current command inventory;
+`sendPreparedCommand` preserves drafts and attachments. Nested-property display alone does not
+provide subagent management or scheduling.
 
-The task-board example demonstrates this complete path with cancellable local timers and editable
-notes, persisted as native custom messages. Startup and native tree navigation cancel its local
-demo timers and restore only the selected branch’s saved task state; returning does not resume
-process-local work. Its adapter resets local selection/pending/errors per
-session/view/transport owner. A missing loaded snapshot has an explicit Show tasks command, not a
-new full-history index or automatic selection-side command. The same view can be mounted in the
-responsive Context pane; the stock frontend adds no Tasks panel. Pi authors retain scheduling and
-permission choices. Native confirmation is the first permission-request surface; there is no new
-permission-list panel, runtime React SDK or agent scheduler.
-
-[The extension guide](../../docs/extensions.md#choose-the-smallest-integration) links the files,
-data/action flow, source mounting and build/load/reload verification instructions.
+The [task-board example](../../docs/extensions.md#choose-the-smallest-integration) demonstrates
+persisted custom messages, editable notes and cancellable local timers. Startup/tree navigation
+cancels local timers and restores the selected branch's saved state without resuming process-local
+work. UI state belongs
+to its session/view/transport. An explicit Show tasks action obtains a missing snapshot; selection
+does not silently issue commands or index full history. The view can mount in Context without
+adding a stock Tasks panel or runtime React SDK. Native confirmation remains the permission surface;
+extension authors own scheduling and permissions.
 
 ## Startup and resource diagnostics
 
-Recognized Pi startup extension-load failures identify the failed resource and repair/disable action
-in the existing error surface, rather than only reporting a closed RPC stream. Invalid-settings
-startup diagnostics identify the settings file and advise repair and Reload, including when Pi
-continues with in-memory defaults. Retention uses the bounded stderr tail; disclosure strips terminal
-controls and caps each diagnostic category at three entries and resource paths at 300 characters.
-Exception bodies, stack traces, source excerpts and unrelated stderr remain Host-only, not browser
-errors or notices. Startup failures retain the raw tail in the Host console error detail. Unknown stderr is not interpreted as structured runtime state.
+Recognized extension-load and invalid-settings failures identify the resource and repair/disable
+or Reload action, including when Pi falls back to in-memory settings. Browser diagnostics are
+sanitized, bounded summaries from stderr; exception bodies, stacks, source excerpts and unrelated
+stderr stay in Host diagnostics. Unknown stderr is not structured runtime state.
 
-The internal bridge reads public `ctx.isProjectTrusted()` on `session_start` (including native
-reload) and warns when trust-protected project settings/resources are skipped. Trust remains Pi-owned:
-the notice directs the user to terminal `/trust` and then session Reload, without granting trust or
-claiming an omitted-resource inventory. Context files and Pi's pre-trust session-directory lookup
-retain their native exceptions.
+The internal bridge reads public `ctx.isProjectTrusted()` at `session_start`, including reload.
+When trust skips protected project settings/resources, direct the user to terminal `/trust` and
+session Reload. Pi owns the decision and its context-file/session-directory exceptions.
 
-Invalid-skill omissions lack attributable diagnostics in Pi 1.3.0 RPC and extension contexts.
-The SDK's ResourceLoader diagnostics belong to its own loader. GUI omission reasons require the
-current worker to expose resource identity and native reason, rather than another filesystem scan.
+Explaining omitted invalid skills needs attributable current-worker resource diagnostics. Another
+SDK loader or filesystem scan cannot supply the worker's omission reasons; the remaining interface
+is recorded in [[pi-capability-gaps]].
 
 ## Direct shell execution
 
@@ -278,20 +250,16 @@ because independent extension commands may still await an answer. Fork leaves so
 requests with their worker. Startup restrictions follow [[session-persistence]] and the
 [adaptation guide](../../docs/extensions.md#startup).
 
-Select dialogs support arrow-key choice and Enter, alongside direct pointer/touch selection.
-Confirmation has two visible choices, No and Yes; Escape cancels. On narrow viewports, browser Back
-uses the same cancellation path, preserving any suspended Settings or Context surface. Pending or
-failed cancellation keeps the question visible and its return layer usable. Input and multiline dialogs retain
-Submit and Save. Dialogs stay within the available overlay height; multiline editors and choice
-lists yield space before the action row. Editors retain a four-line minimum, scrolling their content
-without replacing the draft or moving focus. Rejection text stays before the relevant actions and,
-for input/editor requests, inside the same form; long diagnostics remain keyboard-focusable and
-scroll rather than overlap the editor or retry buttons. An oversized title, diagnostic or request body remains
-reachable through the bounded dialog's own scrolling. Normal-height desktop geometry is unchanged.
-A request with a deadline shows its remaining time without restarting the expiry on
-reopen or reconnect. Pi 1.3.0 does not send request-attributed extension cancellation to RPC
-clients. Aggregate `ui_prompt_start/end` callbacks carry kind/title but no RPC request ID; concurrent
-same-title dialogs cannot be distinguished. A request-ID-bearing dismissal event is still needed.
+Select supports arrows, Enter and pointer/touch choice. Confirm shows No/Yes; Escape and narrow-screen
+Back cancel while preserving a suspended Settings or Context surface. Pending/failed cancellation
+keeps the question and return layer usable. Input/editor dialogs retain Submit/Save. Within bounded
+overlay height, editors and choice lists yield space before actions; editors keep a four-line
+minimum. Long bodies and diagnostics remain scrollable and keyboard-reachable, with input errors
+inside the owning form. Resizing preserves draft and focus.
+
+Show remaining deadline time and retain the original expiry across reopen/reconnect. Pi 1.3.0 lacks request-attributed
+extension dismissal; aggregate prompt callbacks cannot identify concurrent same-title questions.
+[[pi-capability-gaps]] retains the requirement for a request-ID-bearing cancellation event.
 
 Keyed status text is bounded at Host retention, restored on reconnect, ordered in a compact topbar
 trigger at every viewport width, and cleared with its worker. Native in-process reload also clears
@@ -309,9 +277,9 @@ fallback. Persisted generic extension content uses available extension attributi
 **Extension**, with raw method/type/payload inside the body. Displayed custom messages follow
 [[conversation]]. Extension failures retain their originating lifecycle/operation diagnostic.
 
-The public [adaptation guide](../../docs/extensions.md) covers commands, dialogs, text widgets,
-custom cards, lifecycle differences, and source customization. Dedicated frontend controls require
-source changes; the runnable native-UI example illustrates shared primitives.
+The [adaptation guide](../../docs/extensions.md) provides command, dialog, widget and customization
+examples. Declarative adapters use [[tool-presentations]]; purpose-built frontend interactions use
+source customization.
 
 ## Checks
 

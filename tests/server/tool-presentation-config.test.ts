@@ -38,6 +38,19 @@ describe("ToolPresentationConfigStore", () => {
         rules: {},
         mappings: {},
         hiddenStatuses: ["example-state"],
+        controls: [
+          {
+            id: "user.example.mode",
+            slot: "thinking",
+            label: "Mode",
+            command: "/mode:2",
+            state: { key: "example-state", value: "mode" },
+            options: [
+              { value: "normal", label: "Normal" },
+              { value: "quick", label: "Quick" },
+            ],
+          },
+        ],
         checkpoints: [
           {
             source: "example",
@@ -69,6 +82,7 @@ describe("ToolPresentationConfigStore", () => {
     const active = await store.inspect();
     expect(active.warning).toBeUndefined();
     expect(active.configuration.hiddenStatuses).toEqual(["example-state"]);
+    expect(active.configuration.controls?.[0]?.command).toBe("/mode:2");
     expect(active.configuration.checkpoints?.[0]?.source).toBe("example");
     const disabled = await store.inspect({ example: false });
     expect(disabled.configuration).toEqual({

@@ -9,6 +9,7 @@ import {
   activeSnapshot,
   bootstrapPayload,
   deferred,
+  FakeWebSocket,
   installFakeWebSocket,
   installFetch,
   jsonBody,
@@ -635,7 +636,8 @@ describe("Pending input recovery and copying", () => {
 describe("composer session partitions", () => {
   beforeEach(() => installFakeWebSocket());
 
-  it("invalidates ready attachment handles only when bootstrap confirms a different Host", async () => {
+  it("reuploads unsent browser-held attachments after bootstrap confirms a different Host", async () => {
+    let uploads = 0;
     let authorityId = "11111111-1111-4111-8111-111111111111";
     const prompt = vi.fn();
     installFetch((url, init) => {
@@ -646,29 +648,43 @@ describe("composer session partitions", () => {
             authorityId,
           },
         };
-      if (url === "/api/attachments")
+      if (url === "/api/attachments") {
+        uploads += 1;
         return {
           body: {
             attachments: [
-              { id: "upload", fileName: "notes.txt", kind: "file" },
+              { id: `upload-${uploads}`, fileName: "notes.txt", kind: "file" },
             ],
           },
         };
-      if (url === "/api/prompt") prompt();
+      }
+      if (url === "/api/prompt") {
+        prompt(jsonBody(init));
+        return { status: 202, body: { accepted: true } };
+      }
       return baseRoutes(url, init);
     });
     const { store } = await initStore();
     await store.addFiles([new File(["notes"], "notes.txt")]);
     await store.init(null);
     expect(store.getState().attachments[0]?.status).toBe("ready");
+    expect(uploads).toBe(1);
     authorityId = "22222222-2222-4222-8222-222222222222";
     await store.init(null);
-    expect(store.getState().attachments[0]).toMatchObject({
-      status: "error",
-      error: expect.stringContaining("Host restarted"),
-    });
-    await store.sendPrompt("send");
+    expect(store.getState().attachments[0]?.status).toBe("uploading");
+    FakeWebSocket.instances.at(-1)!.open(activeSnapshot(), authorityId);
+    await vi.waitFor(() =>
+      expect(store.getState().attachments[0]).toMatchObject({
+        status: "ready",
+        uploadedId: "upload-2",
+        uploadedAuthorityId: authorityId,
+      }),
+    );
     expect(prompt).not.toHaveBeenCalled();
+    await store.sendPrompt("send");
+    expect(prompt).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ authorityId, attachmentIds: ["upload-2"] }),
+    );
   });
 
   it("keeps staged artifacts with their session across switches and sends", async () => {

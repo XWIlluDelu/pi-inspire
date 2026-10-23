@@ -59,7 +59,7 @@ it.skipIf(process.platform !== "linux")(
         sessionFile,
         ...modelArgs,
         "-e",
-        resolve("docs/examples/session-activity.ts"),
+        resolve("extensions/inspire-session-bridge.ts"),
       ],
       {
         cwd: f.cwd,

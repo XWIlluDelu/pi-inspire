@@ -188,9 +188,7 @@ custom messages remain independent readable boundaries in this contract.
   only a floating stack of at most 12 fixed-spacing theme-muted horizontal ticks with one accent
   current mark: no full-height border, background, icon, or boundary buttons.
 
-  Its minimum left reading gutter is derived from the actual center pane rather than the browser
-  viewport, and its resting position follows side-pane, reading-measure, and window geometry before
-  paint, so resizing in either direction cannot leave the rail over content or at stale coordinates.
+  [[workspace-layout]] owns the reserved gutter and responsive rail positioning.
   Up to 12 prompts map one-to-one; beyond that, the marks are a stable consecutive window that moves
   only when sequential reading exits it and recenters after a distant seek. Hover or keyboard focus
   expands the bounded, independently scrollable virtual prompt list and its fixed non-wrapping
@@ -221,15 +219,13 @@ custom messages remain independent readable boundaries in this contract.
   while same-branch pagination, append snapshots, branch rewrites, search ownership, and
   latest-follow preserve their existing authorities. Outline loading, conflict resync, turn reads
   and the eventual scroll share the original session/view owner; crossing an await cannot recapture
-  another session. Component regressions exercise both loaded and unloaded destinations across a
-  409/resync gate and selection change.
+  another session.
 
 ## Response streaming and message-owned outcomes
 
 - Assistant text streams smoothly without visually rebuilding the entire transcript for every
-  fragment. Pi 0.84 JSON/RPC `message_update` frames intentionally carry only
-  `assistantMessageEvent`; the Host reconstructs the active assistant from typed thinking/text
-  deltas and identity-bearing tool starts for both live events and reconnect snapshots. Tool
+  fragment. Pi JSON/RPC `message_update` frames carry `assistantMessageEvent`; the Host reconstructs
+  the active assistant from typed thinking/text deltas and identity-bearing tool starts for both live events and reconnect snapshots. Tool
   argument JSON is incrementally parsed and redacted into bounded display-only updates before it
   reaches the browser. Both projections use the same pure reducer, with ordered batching governed
   by [[session-transport]], and resync rather than guessing against settled history. Tool argument
@@ -298,8 +294,7 @@ custom messages remain independent readable boundaries in this contract.
   from the same Pi message, without a second error-history store or a retry/diagnostic subsystem.
 
 - Assistant replies and activity have no per-turn Pi/model/time attribution row or divider rule.
-  The Assistant turn details preference is retired. Message metadata remains intact; independent
-  error notices and per-tool duration/status are unchanged.
+  Message metadata, independent error notices and per-tool duration/status remain intact.
 
 - A displayed Pi custom message is extension-authored context, not a tool execution or user-authored
   turn. It uses a quiet, neutral bordered message surface without a colored edge, a package glyph,
@@ -392,10 +387,9 @@ history keep one result per native execution. [[pi-integration]] owns execution 
 
 - Pending sits at the end of Transcript; the composer-adjacent activity surface provides a compact
   count and Jump to Pending action. That surface keeps the Composer’s full measure and left alignment
-  for Pending, retry and compaction states, including in short windows. Jump to Pending focuses
-  its region and retains latest-follow when the destination is already at the latest boundary.
-  [[composer]] owns previews, visual emphasis, copying, recovery
-  and discard. Pending remains a projection of Pi/Host-owned input, not a browser-owned queue.
+  for Pending, retry and compaction states, including in short windows. [[composer]] owns navigation,
+  previews, copying, recovery and discard; [[design-system]] owns visual emphasis. Pending remains a
+  projection of Pi/Host-owned input, not a browser-owned queue.
   Retry/compaction feedback belongs to the activity surface; running and failed tools remain in
   their chronological cards.
 
@@ -430,11 +424,9 @@ history keep one result per native execution. [[pi-integration]] owns execution 
   Host restart keeps the complete legacy page response rather than silently dropping activity
   descriptors it cannot interpret.
 
-- Refreshing the browser reconstructs settled conversation state from Pi and then resumes live
-  updates. `Transcript` composes canonical rows with bounded collaborators: activity timing owns no
-  transcript data, the viewport owns only DOM geometry/cursor loads/follow intent, search owns only
-  view-local settled-text state, rows compose turns, and cards render activity variants. No
-  transcript collaborator retains a second message projection or changes host pagination authority.
+- Refresh reconstructs settled conversation state from Pi, then resumes live updates. Activity timing,
+  viewport geometry and view-local search share one canonical message projection; they do not retain
+  competing transcript copies or change Host pagination authority.
 
 ## Non-goals
 

@@ -12,7 +12,7 @@ import { StatusChoice, StatusChoiceIndicator } from "./StatusChoice";
 
 const THINKING_MENU_MIN_WIDTH = 208;
 
-export function ThinkingSelector({
+function ThinkingSelector({
   levels,
   display,
   menuWidth = THINKING_MENU_MIN_WIDTH,

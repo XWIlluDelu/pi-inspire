@@ -75,6 +75,7 @@ export function Dropdown({
   menuWidth?: number;
 }) {
   const id = useId();
+  const composed = Boolean(header);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const [keyboardActive, setKeyboardActive] = useState(true);
@@ -128,7 +129,7 @@ export function Dropdown({
     if (openRequest === undefined || handledOpenRequest.current === openRequest)
       return;
     handledOpenRequest.current = openRequest;
-    if (!disabled && (options.length > 0 || header)) {
+    if (!disabled && (options.length > 0 || composed)) {
       setActive(Math.max(0, selectedIndex));
       setKeyboardActive(true);
       setOpen(true);
@@ -140,7 +141,7 @@ export function Dropdown({
     onOpenRequestHandled,
     openRequest,
     options.length,
-    Boolean(header),
+    composed,
     selectedIndex,
   ]);
 
@@ -169,14 +170,15 @@ export function Dropdown({
       ?.scrollIntoView({ block: "nearest" });
   }, [open, active, keyboardActive, placement]);
 
+  const placed = Boolean(placement);
   useEffect(() => {
-    if (open && placement && header)
+    if (open && placed && composed)
       listRef.current
         ?.querySelector<HTMLElement>(
           "input:not(:disabled), button:not(:disabled)",
         )
         ?.focus({ preventScroll: true });
-  }, [open, Boolean(placement), Boolean(header)]);
+  }, [open, placed, composed]);
 
   const closeDialog = () => {
     setOpen(false);
@@ -257,17 +259,18 @@ export function Dropdown({
       <button
         ref={triggerRef}
         type="button"
-        role={header ? undefined : "combobox"}
         className="dropdown__trigger"
         aria-label={label}
         aria-expanded={open}
-        aria-haspopup={header ? "dialog" : "listbox"}
         aria-controls={open ? `${id}-listbox` : undefined}
-        aria-activedescendant={
-          !header && open && keyboardActive
-            ? `${id}-option-${active}`
-            : undefined
-        }
+        {...(composed
+          ? { "aria-haspopup": "dialog" as const }
+          : {
+              role: "combobox",
+              "aria-haspopup": "listbox" as const,
+              "aria-activedescendant":
+                open && keyboardActive ? `${id}-option-${active}` : undefined,
+            })}
         disabled={disabled}
         autoFocus={autoFocus}
         title={title ?? label}
@@ -293,9 +296,13 @@ export function Dropdown({
                 width: placement?.width,
                 maxHeight: placement?.maxHeight,
               }}
-              role={header ? "dialog" : "listbox"}
-              onKeyDown={header ? onDialogKeyDown : undefined}
-              aria-label={label}
+              {...(composed
+                ? {
+                    role: "dialog",
+                    "aria-label": label,
+                    onKeyDown: onDialogKeyDown,
+                  }
+                : { role: "listbox", "aria-label": label })}
               id={`${id}-listbox`}
               ref={listRef}
             >

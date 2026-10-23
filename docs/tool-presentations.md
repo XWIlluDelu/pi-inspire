@@ -58,6 +58,7 @@ In addition to cards, modules may declare:
   `value`, compact `label`, optional full `title`, `description`, `confirmation`, and
   `indicator` (`bolt` or `double-bolt`). Controls appear only when the corresponding extension
   command is available, using the same native-name precedence as command completion.
+  Use Pi's registered invocation name, including collision suffixes such as `/mode:2`.
   The same choices appear before session creation when the target directory discovers the command.
   Untouched choices keep Pi defaults; an explicit choice stays local until creation, then the native
   command must be confirmed before the first input is delivered. Failure preserves that input and its

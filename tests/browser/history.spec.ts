@@ -33,15 +33,15 @@ async function connectCalibration(page: Page) {
   await chooseSource(page);
 }
 
-test("History recovery uses shared action spacing and keeps Retry reachable in short panes", async ({
+test("History read failure keeps Retry reachable in short panes", async ({
   page,
 }) => {
   let refuse = true;
   await page.route("**/api/branches/tree**", async (route) => {
     if (refuse)
       await route.fulfill({
-        status: 503,
-        json: { error: "History is temporarily unavailable" },
+        status: 422,
+        json: { error: "History could not be read" },
       });
     else await route.fallback();
   });
@@ -147,7 +147,7 @@ test("Fork restores saved images for preview, editing and explicit resend", asyn
   await expect(input).toHaveValue("");
 });
 
-test("retries a History image locally and opens local references in the authorized session reader", async ({
+test("recovers a History image and opens local references in the authorized session reader", async ({
   page,
 }) => {
   await connectCalibration(page);
@@ -187,14 +187,15 @@ test("retries a History image locally and opens local references in the authoriz
     return history;
   };
   let history = await selectInput();
-  const retryImage = history.getByRole("button", {
-    name: "Retry image",
-    exact: true,
-  });
-  await expect(retryImage).toBeVisible();
+  await expect(
+    history.getByText("Loading image…", { exact: true }),
+  ).toBeVisible();
+  await expect.poll(() => imageRequests.length).toBeGreaterThan(0);
+  await expect(
+    history.getByRole("button", { name: "Retry image", exact: true }),
+  ).toHaveCount(0);
   const failedReads = imageRequests.length;
   imageAvailable = true;
-  await retryImage.click();
   const image = history.getByRole("button", {
     name: "Preview image in this history entry",
   });
@@ -339,7 +340,7 @@ test("reads native-shaped shell History and inspects saved images", async ({
   );
 });
 
-test("clears a pending search and retries the selected failed detail without losing its place", async ({
+test("clears a pending search and recovers the selected detail without losing its place", async ({
   page,
 }) => {
   await connectCalibration(page);
@@ -393,9 +394,9 @@ test("clears a pending search and retries the selected failed detail without los
     name: /Your input.*Review calibration run 598/,
   });
   await match.click();
-  await history
-    .getByRole("button", { name: "Retry preview", exact: true })
-    .click();
+  await expect(
+    history.getByRole("button", { name: "Retry preview", exact: true }),
+  ).toHaveCount(0);
   try {
     const loading = history.locator(".history-detail__body > p[role=status]");
     await expect(loading).toContainText("Loading complete content");
@@ -984,6 +985,9 @@ test("earlier-branch notice follows reader width and reserves wrapped diagnostic
       const actions = r(root.querySelector(".earlier-branch-banner__actions")!);
       const transcript = root.parentElement!.querySelector(".transcript")!;
       const style = getComputedStyle(transcript);
+      const contentStyle = getComputedStyle(
+        transcript.querySelector(".transcript__content")!,
+      );
       const needed =
         r(root).bottom -
         r(transcript).top +
@@ -1008,7 +1012,7 @@ test("earlier-branch notice follows reader width and reserves wrapped diagnostic
             : actions.left >= header.right,
         paddingRoom:
           Math.min(
-            Number.parseFloat(style.paddingTop),
+            Number.parseFloat(contentStyle.paddingTop),
             Number.parseFloat(style.scrollPaddingTop),
           ) - needed,
       };

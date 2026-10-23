@@ -15,7 +15,7 @@ import reportActivity, {
   type PiActivityRecord,
   piActivityDirectory,
   piActivityProcessIdentity,
-} from "../../docs/examples/session-activity.js";
+} from "../../extensions/inspire-session-bridge.js";
 import { PiNativeActions } from "../../server/pi-native-actions.js";
 
 const directories: string[] = [];

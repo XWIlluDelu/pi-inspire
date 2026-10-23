@@ -77,7 +77,7 @@ it.skipIf(process.platform !== "linux")(
         piInstallation.cliPath,
         "--no-extensions",
         "--extension",
-        resolve("docs/examples/session-activity.ts"),
+        resolve("extensions/inspire-session-bridge.ts"),
         "--extension",
         extension,
         "--no-skills",

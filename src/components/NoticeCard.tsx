@@ -41,8 +41,10 @@ export function NoticeCard({
     <div
       ref={ref}
       className={`notice notice--${kind}${compact ? " notice--compact" : ""}${className ? ` ${className}` : ""}`}
-      role={kind === "error" ? "alert" : "status"}
-      aria-label={compact ? label : undefined}
+      {...{
+        role: kind === "error" ? "alert" : "status",
+        "aria-label": compact ? label : undefined,
+      }}
     >
       <div className="notice__head">
         <span className="notice__title">

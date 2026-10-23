@@ -4,7 +4,7 @@ progress: done
 covers:
   - server/herdr-*.ts
   - server/pi-{rpc*,native-actions}.ts
-  - docs/examples/session-activity.ts
+  - extensions/inspire-session-bridge.ts
   - server/{runtime,runtime-worker-lifecycle,runtime-worker-pool,runtime-external-sessions,external-session}.ts
   - server/index.ts
   - server/preferences.ts
@@ -126,15 +126,16 @@ other applications' unreported or later launches remain outside its authority.
   Herdr server, missing agent/pane, or vanished session metadata does not establish that Pi exited.
   Keep its history read-only while ownership is unverified; an explicit reselect may connect through
   fresh discovery, never reused pane IDs from an obsolete connection. Original-process retirement
-  releases that connection; its late reads cannot restore availability or apply run state.
-  A completed reporter rebind may also retire it: the same captured producer and process birth must
-  transfer the exact old file/session to the newly observed native target. Commit that verified binding before release so report loss cannot restore an old fence.
+  releases that connection; late reads cannot restore its availability or apply run state.
+  A completed reporter rebind may also retire it: the same captured producer and process birth
+  must transfer the exact old file/session to the newly observed native target. Commit that
+  verified binding before release so report loss cannot restore an old fence.
   For a session still viewed in a browser, release automatically resumes ordinary writer
   admission, including any other holder, without navigation, input replay or another polling delay.
   An unviewed session does not start a replacement worker. Metadata mismatch alone keeps the
   connection unavailable. Transient transport failures do not establish retirement, and uncertain
   input is never automatically resent.
-- Reuse the installed `docs/examples/session-activity.ts` in Herdr TUI instances. Herdr supplies
+- Reuse the installed `extensions/inspire-session-bridge.ts` in Herdr TUI instances. Herdr supplies
   existing terminal-control authority and status; a consumed, receiver-bound action frame invokes
   public Pi `sendUserMessage`, `ctx.abort`, `setSessionName`, `setModel` or `setThinkingLevel` in that same process. Neither user
   keybindings nor terminal screen geometry establish an action or editor state. The Host transport

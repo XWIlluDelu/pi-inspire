@@ -150,8 +150,9 @@ describe.runIf(process.platform === "linux")(
     );
     it("keeps inherited default instance values under the installed service", async () => {
       const f = await fixture(false);
-      const { inspireRuntimeDirectory } =
-        await import("../server/platform-paths.mjs");
+      const { inspireRuntimeDirectory } = await import(
+        "../server/platform-paths.mjs"
+      );
       const { createHash } = await import("node:crypto");
       const stateName = createHash("sha256")
         .update(f.root)

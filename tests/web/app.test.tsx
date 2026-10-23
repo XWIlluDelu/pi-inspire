@@ -278,7 +278,7 @@ describe("welcome flow", () => {
     );
     expect(
       screen.getByRole("combobox", { name: "Thinking level" }),
-    ).toHaveTextContent("medium");
+    ).toHaveTextContent("Medium");
 
     const firstMessage = screen.getByLabelText(
       "First message",

@@ -5,7 +5,7 @@ import { expect, it, vi } from "vitest";
 import {
   type PiActivityRecord,
   piActivityDirectory,
-} from "../../docs/examples/session-activity.js";
+} from "../../extensions/inspire-session-bridge.js";
 import { AttachmentStore } from "../../server/attachments.js";
 import { HerdrNativeSession } from "../../server/herdr-native-session.js";
 import { captureHerdrProcessIdentity } from "../../server/herdr-process-group.js";
@@ -107,7 +107,7 @@ async function exerciseOwner(connectHerdr: boolean) {
       "--no-tools",
       "--no-approve",
       "--extension",
-      resolve("docs/examples/session-activity.ts"),
+      resolve("extensions/inspire-session-bridge.ts"),
       "--extension",
       resolve("tests/fixtures/pi-model-workflow-extension.ts"),
       "--extension",

@@ -16,7 +16,7 @@ import reportActivity, {
   ACTIVITY_STALE_MS,
   piActivityDirectory,
   type PiActivityRecord,
-} from "../../docs/examples/session-activity.js";
+} from "../../extensions/inspire-session-bridge.js";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -195,6 +195,7 @@ function reporter(
     } as unknown as ExtensionContext);
   reportActivity({
     getCommands: commands,
+    getThinkingLevel: () => "off",
     on: (name: string, handler: Handler) => {
       handlers.set(name, handler);
     },
@@ -235,6 +236,145 @@ function reporter(
     },
   };
 }
+
+describe("native task outcome reporting", () => {
+  beforeEach(() => {
+    vi.stubEnv("HERDR_ENV", "1");
+    vi.stubEnv("HERDR_PANE_ID", "task-outcomes");
+    vi.stubEnv("HERDR_SOCKET_PATH", join(paths.home, "unused-herdr"));
+  });
+
+  it.each([
+    {
+      name: "normal completion",
+      stopReason: "stop",
+      boundary: "completed",
+      aborted: false,
+      outcome: "completed",
+    },
+    {
+      name: "assistant error whose text mentions cancellation",
+      stopReason: "error",
+      boundary: "error",
+      aborted: false,
+      outcome: "failed",
+    },
+    {
+      name: "output limit despite an otherwise completed boundary",
+      stopReason: "length",
+      boundary: "completed",
+      aborted: false,
+      outcome: "failed",
+    },
+    {
+      name: "failure before any assistant message",
+      stopReason: null,
+      boundary: "error",
+      aborted: false,
+      outcome: "failed",
+    },
+    {
+      name: "confirmed cancellation after an assistant error",
+      stopReason: "error",
+      boundary: "error",
+      aborted: true,
+      outcome: "aborted",
+    },
+  ])("reports $name only after final settlement", async (testCase) => {
+    const f = reporter();
+    await f.emit("session_start");
+    await f.emit("before_agent_start");
+    const started = (await f.records())[0]!.taskRuns!;
+    expect(started.activeRunId).toEqual(expect.any(String));
+    await f.emit("agent_start");
+    if (testCase.stopReason)
+      await f.emit("message_end", {
+        message: {
+          role: "assistant",
+          stopReason: testCase.stopReason,
+          ...(testCase.stopReason === "error"
+            ? { errorMessage: "This operation was aborted" }
+            : {}),
+        },
+      });
+    await f.emit("agent_end");
+    await f.emit("agent_before_settle", { outcome: testCase.boundary });
+    expect((await f.records())[0]!.taskRuns).toEqual(started);
+
+    await f.emit("agent_settled", { aborted: testCase.aborted });
+    expect((await f.records())[0]!.taskRuns).toEqual({
+      receiverId: started.receiverId,
+      activeRunId: null,
+      settled: [
+        {
+          id: started.activeRunId,
+          outcome: testCase.outcome,
+          settledAt: expect.any(Number),
+        },
+      ],
+    });
+  });
+
+  it("retains successive short outcomes while the next run starts without inheriting failure", async () => {
+    const f = reporter();
+    await f.emit("session_start");
+    await f.emit("agent_start");
+    const first = (await f.records())[0]!.taskRuns!;
+    await f.emit("agent_before_settle", { outcome: "error" });
+    await f.emit("agent_settled", { aborted: false });
+    await f.emit("agent_start");
+    const second = (await f.records())[0]!.taskRuns!;
+    expect(second.activeRunId).not.toBe(first.activeRunId);
+    await f.emit("agent_before_settle", { outcome: "completed" });
+    await f.emit("agent_settled", { aborted: false });
+    await f.emit("agent_start");
+
+    const current = (await f.records())[0]!.taskRuns!;
+    expect(current.receiverId).toBe(first.receiverId);
+    expect(current.activeRunId).toEqual(expect.any(String));
+    expect([first.activeRunId, second.activeRunId]).not.toContain(
+      current.activeRunId,
+    );
+    expect(current.settled).toEqual([
+      {
+        id: first.activeRunId,
+        outcome: "failed",
+        settledAt: expect.any(Number),
+      },
+      {
+        id: second.activeRunId,
+        outcome: "completed",
+        settledAt: expect.any(Number),
+      },
+    ]);
+  });
+
+  it("retires outcomes with their receiver and ignores late events from the old extension", async () => {
+    const first = reporter();
+    await first.emit("session_start");
+    await first.emit("agent_start");
+    await first.emit("agent_before_settle", { outcome: "error" });
+    await first.emit("agent_settled", { aborted: false });
+    const previous = (await first.records())[0]!.taskRuns!;
+    await first.emit("session_shutdown", { reason: "reload" });
+
+    const replacement = reporter("tui", first.context);
+    await replacement.emit("session_start", { reason: "reload" });
+    const current = (await replacement.records())[0]!.taskRuns!;
+    expect(current.receiverId).not.toBe(previous.receiverId);
+    expect(current).toMatchObject({ activeRunId: null, settled: [] });
+    await first.emit("agent_settled", { aborted: true });
+    expect((await replacement.records())[0]!.taskRuns).toEqual(current);
+
+    await replacement.emit("agent_start");
+    await replacement.emit("agent_settled", { aborted: false });
+    expect((await replacement.records())[0]!.taskRuns).toMatchObject({
+      receiverId: current.receiverId,
+      activeRunId: null,
+      settled: [{ outcome: "completed" }],
+    });
+  });
+});
 
 describe("optional native Pi activity reporter", () => {
   it("keeps presence while a later SDK shutdown handler is pending and after in-process disposal", async () => {

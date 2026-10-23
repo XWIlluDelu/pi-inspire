@@ -6,7 +6,7 @@ scope:
   - server/herdr-*.ts
   - shared/contracts.ts
   - src/App.tsx
-  - docs/examples/session-activity.ts
+  - extensions/inspire-session-bridge.ts
   - tests/server/runtime-external-*.test.ts
   - tests/server/herdr-native-session*.test.ts
   - tests/server/pi-session-{activity,occupancy}*.test.ts
@@ -27,7 +27,9 @@ interfaces and process evidence, not a particular external host's control API.
 
 - Herdr native discovery remains the existing optional execution integration. Its process-birth
   evidence, unavailable-owner fence, cold settings admission and shutdown detach/drain are retained.
-- The optional single-file Pi reporter covers TUI/RPC/JSON/print. It reports process-bound session
+- The optional single-file Inspire session bridge lives in `extensions/inspire-session-bridge.ts`;
+  the former `docs/examples/session-activity.ts` path forwards existing installations to it.
+  It covers TUI/RPC/JSON/print and reports process-bound session
   presence separately from busy/input activity, and excludes the loaded Inspire-owned RPC bridge.
   In Herdr TUI only, the same installed entry also receives scope-bound native action frames through
   existing Herdr control; observation outside that connection remains read-only.
@@ -48,20 +50,16 @@ interfaces and process evidence, not a particular external host's control API.
 
 ## Viewed-session recovery
 
-The current repair follows [[session-persistence]]: subscribed external read-only sessions
+Following [[session-persistence]], subscribed external read-only sessions
 recover automatically through existing writer admission after release. Ordinary presence checks
 share one bounded observation timer; retained Herdr connections keep their existing polling.
-The browser receives availability events in the current session, without navigation.
+The browser receives availability events without navigation or a new transcript view.
 
-The repair is complete on `auto-dev`. Confirmed native retirement triggers admission immediately;
-ordinary presence is checked every two seconds while viewed. Recovery continues through preparation
-failure or a failed deletion, and a returning viewer resumes observation. Successful recovery
-clears the read-only boundary when control is ready; actual Pi startup failures use the ordinary
-error path without automatic restarts. Pre-start cleanup preserves the reading view, and retired
-native connections cannot publish late results. Observation does not replay input or rewrite
-unchanged retained presence. The running installation has not been restarted.
+Confirmed native retirement triggers admission immediately;
+ordinary presence is checked every two seconds while viewed. Observation does not replay input or
+rewrite unchanged retained presence. [[follow-project-quality-2026-10-21]] tracks integration into `main`.
 
-## Verification
+## Existing verification
 
 - `herdr-native-actions.integration.test.ts` uses real offline Pi TUI/PTY with non-default Follow-up
   and Interrupt keys: native queueing, agent abort/queue restoration, below-editor widget/draft
@@ -86,7 +84,10 @@ unchanged retained presence. The running installation has not been restarted.
   with a controlled later hook and busy session double, now keeps admission blocked both before
   disposal and afterward while the process is alive. Activity stop hints never authorize a writer.
 - Producer tests cover all replacement reasons, wrong/ambiguous targets, old-manager reuse,
-  same-file replacement, reload/late cleanup and shutdown overtaking startup publication.
+  same-file replacement, reload/late cleanup and shutdown overtaking startup publication. Native
+  task results publish only at final settlement, retain consecutive short runs and stay scoped to
+  their receiver. Loader coverage checks that legacy/current entries share one reporter per session
+  while independent SDK sessions and reload keep their own lifecycles.
 - The overlapping-admission regression also failed before its fix: a paused old cache rename could
   overwrite a newer binding, losing that protection after report loss and Host reconstruction.
   Serialized observation/commit now preserves the newer holder across that sequence.
@@ -96,13 +97,12 @@ unchanged retained presence. The running installation has not been restarted.
   the report and reconstructing the Host cannot restore the old binding. A separate holder still
   blocks admission after that connection retires.
 - Runtime regressions cover cold settings admission, second-check refusal with the reading view
-  retained, preparation failure, actual startup failure without automatic restarts, deletion
+  retained, preparation failure, startup failure without automatic restarts, deletion
   reservations, and shared subscriptions that leave during an observation and return.
-  Unavailable observations retry without repeated UI events. Startup attestation still invalidates
-  a view whose history was replaced before Pi started.
-  Late native state after retirement cannot resurrect the connection or its run state. Recovery
-  does not change the Host's global selection. Existing Herdr control recovers in place rather
-  than creating a local worker.
+  Unavailable observations retry without repeated UI events. Startup attestation invalidates
+  a view whose history was replaced before Pi started. Late native state after retirement cannot
+  restore the connection or its run state. Recovery does not change the Host's global selection.
+  Existing Herdr control recovers in place rather than creating a local worker.
 - A real PTY Pi exits through `/quit`; its still-viewed session then starts one RPC writer with
   the same transcript view, no replayed input, and a successful subsequent prompt.
 - Browser-store checks cover draft/attachment preservation for both external read-only reasons.
