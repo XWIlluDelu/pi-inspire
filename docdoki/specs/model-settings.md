@@ -30,39 +30,32 @@ configuration editing and login remain independent.
 
 ## Interface
 
-The Models category has three sections:
+Models settings separates three tasks:
 
-1. **Models:** a searchable available-model list with Common and Default choices, followed by the saved
-   default model, Clear action and default-thinking dropdown. “Model default” clears the explicit
-   thinking setting. Common order and rules expand below the list. Declared models offer an edit action.
-2. **Login & API keys:** saved providers with credential status and Manage, plus Connect provider.
-   The provider directory, method selection and login attempt replace one another. Back preserves the
-   directory query; finishing login returns to saved providers.
-3. **Custom providers:** a collapsed-by-default configuration card with provider/model counts and
-   Add provider beside the section title. Each provider owns its connection fields and a collapsible
-   model list with Add model. Counts, common order and advanced fields share the Settings disclosure
-   chevron; provider and declared-model rows share the quiet Edit/Remove icon actions used by MCP.
+| Section | Controls |
+| --- | --- |
+| Models | Searchable available models; Common membership; one Default; saved-default Clear; default thinking; ordered common rules; declared-model editing |
+| Login & API keys | Saved credential status and Manage; Connect provider; provider → method → login navigation |
+| Custom providers | Collapsed provider/model list with counts, Add and Edit/Remove; connection fields and advanced model declarations |
 
-Available-model and provider lists window large result sets while keeping every result reachable by
-search and keyboard. Provider headings are quiet, unboxed labels within the Models card; compact
-rows give Common and Default equal-width columns. Common uses a checkbox for independent membership;
-Default uses a radio for the single saved startup choice. Their indicators share Settings control
-surfaces, hairlines and accent tint/mark roles while retaining native input behavior. Reselecting
-Default leaves it set; the saved-default summary's Clear action removes it. Action-row Up/Down and
-Home/End navigation reaches the full filtered list, including unmounted rows. Default also supports Left/Right and wraps between
-the first and last result, focusing and selecting the destination after it mounts. Common navigation
-moves focus without toggling membership. Search navigation remains neutral until explicitly used.
-The shared picker and Settings list show display names first. Provider-group captions omit the
-provider already named by the heading; Common captions retain it. The picker always retains its
-second-line ID, including identical names and IDs, and shows provider/ID in Common. Settings
-shows identical names and IDs once. Both retain full-identity row tooltips.
-Search emphasizes original-text matches in names, IDs and provider labels, tracing the existing
-locale-folded literal-first/greedy-subsequence rule, including provider/ID-spanning queries.
-Identity deduplication and emphasis preserve fixed row heights, capacity, ordering and badges.
-The picker marks its selected model with one checkmark and `aria-selected`, and offers one
-Manage models destination. From New, that destination keeps the prospective project directory; an
-open session keeps its session owner. Opening Settings directly from New uses the same prospective
-directory. General control and focus styling follows [[design-system]].
+Common uses independent checkboxes; Default is a single radio choice whose Clear action removes the
+saved value. Reselecting Default keeps it selected. “Model default” clears explicit default thinking.
+Controls, disclosures and focus styling follow [[design-system]].
+
+Large lists stay reachable through search and keyboard despite virtualization. Up/Down and Home/End
+navigate the full filtered results. Default also supports Left/Right and wrapping selection;
+Common navigation moves focus without changing membership. Focus waits for an unmounted target row.
+Search navigation stays neutral until explicitly used.
+
+Display names lead. Provider-group captions omit the repeated provider, while Common shows
+provider/ID. The picker retains its ID line and selected checkmark/`aria-selected`; Settings omits
+an identical repeated ID. Full-identity tooltips remain available. Search emphasizes original-text
+matches using the existing locale-folded literal-first/greedy-subsequence rule, including queries
+spanning provider/ID, without changing row capacity, ordering or badges.
+
+The picker's Manage models action retains its session owner, or New's prospective directory.
+Opening Settings directly from New uses that same directory. Provider navigation preserves its
+query on Back and returns to saved providers after login.
 
 ## Defaults, common models and selection
 
@@ -83,9 +76,9 @@ Model cycling must preserve a single native cycle's cached scope, effort default
 order. Forward cycling uses the owning worker's RPC `cycle_model`, followed by an effective read;
 never replace it with model/effort setters. Pi 1.3.0 RPC and its extension contexts expose no owning
 backward-cycle action: Previous model currently reports that limitation and leaves selection unchanged;
-the model picker remains available. The backward requirement remains in [[pi-capability-gaps]], not
-implemented by repeated forward calls. Explicit thinking selection and thinking-cycle commands keep
-their separate native semantics. Gestures execute in order within their session/transport owner and
+the model picker remains available. [[pi-capability-gaps]] retains the backward-cycle requirement;
+repeated forward calls cannot reproduce it. Explicit thinking selection and thinking-cycle commands
+keep their separate native semantics. Gestures execute in order within their session/transport owner and
 respect editors, menus, modals and IME. macOS uses
 Control+Command+M/P/R; other browser platforms retain Alt+Shift+M/P/R only when the layout actually
 produces that letter. Physical key codes never turn Option/AltGraph characters or dead keys into
@@ -177,15 +170,15 @@ agent directory, selected working directory and project-trust policy as Pi. Exte
 registration precedes validation so legal inherited API/endpoint declarations remain valid, including
 when editing an unrelated provider. Unrelated extension-load failures do not veto valid declarations;
 Pi still validates the complete candidate against the providers that loaded. Validation starts no
-model turn or persistent session and keeps factory errors and credentials out of responses. Revision and atomic-publication checks still apply
-before publishing the validated candidate.
+model turn or persistent session and keeps factory errors and credentials out of responses. Publish
+only after revision and atomic-publication checks.
 
 Writes detect conflicting external edits, accept native file syntax and follow existing configuration
 symlinks under the same lock authority as native edits. Regular files take one native target lock
 rather than double-locking a case/normalization alias; final symlinks retain lexical and target
 authorities. Target/revision checks remain mandatory before publication, including a file replaced by
-a symlink during the edit. A committed write remains successful when
-refresh or readback fails; the response supplies a warning so Settings can offer refresh or reload.
+a symlink during the edit. After publication, a refresh/readback failure produces a warning and a
+recovery action without changing the save result.
 
 A configuration save invalidates cached workspace metadata. For an addressed session, it refreshes
 that worker only; other workspaces rediscover on demand. Without a session, it refreshes the edited
@@ -203,15 +196,9 @@ starts only after selecting a method. Loading, errors and empty results are sepa
 Provider discovery and login admission reread saved declarations without requiring a Host restart,
 including when no session is selected.
 
-The Connect provider directory uses regular-weight names and semibold literal search matches.
-Search keeps its existing case-insensitive substring filter over provider ID and name. When only the
-ID matches, the row also shows that ID as secondary monospace text with the matching fragment emphasized.
-Names matching the query need no extra ID. Connected-provider and method-page titles retain their
-stronger hierarchy, with no directory match emphasis; returning from methods preserves query and focus.
-
-Login-attempt headers align provider and status text on the first baseline; long captions wrap onto
-separate rows within the card instead of squeezing the status into a narrow column. Method prompts
-use the form's explicit gaps without additional browser paragraph margins.
+Provider search matches case-insensitive substrings in IDs and names. Show an ID as secondary text
+when it alone matches; emphasize matches without repeating identical labels. Returning from methods
+preserves query and focus. Long login captions wrap without squeezing status or obscuring prompts.
 
 Login operates on the connected Host's Pi credentials. Switching Settings categories leaves the
 attempt running and preserves entered responses. The browser displays native links, codes,

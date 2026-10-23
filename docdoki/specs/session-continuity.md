@@ -88,214 +88,205 @@ covers:
 
 ## Goal
 
-Let the user move between existing terminal Pi and inspire without losing history or learning a second session system.
+Move between native Pi and Inspire using Pi's existing identities and session trees, without losing
+history or introducing a second conversation store.
 
 ## Contract map
 
-- [[session-persistence]] — read-only preview, worker startup, writer admission, and extension-request ownership.
-- [[session-transport]] — per-browser detail, reconnect, asynchronous completion fences, and transcript views.
-- [[session-branches]] — tree navigation, edit-from-here, and independent fork publication.
-- [[session-deletion]] — Hidden confirmation, all-target preflight, and destructive commit boundaries.
+- [[session-persistence]] — read-only preview, worker startup, writer admission and extension requests.
+- [[session-transport]] — per-browser detail, reconnect, asynchronous completion and transcript views.
+- [[session-branches]] — History inspection, navigation, edit-from-here and independent copies.
+- [[session-deletion]] — confirmation, all-target preflight and destructive commit boundaries.
 
-## Discovery and bounded catalog
+## Storage discovery
 
-- inspire discovers sessions from the same Pi session storage selected by the user’s Pi
-  configuration. For each known worker working directory, a nonempty inherited
-  `PI_CODING_AGENT_SESSION_DIR` precedes Pi's project/global `sessionDir` setting; an absent
-  or empty override falls through. Pi owns path normalization, and relative storage paths
-  resolve against that worker's working directory, not the Host's.
+Discover storage using the user's Pi configuration for each known worker cwd. A nonempty inherited
+`PI_CODING_AGENT_SESSION_DIR` precedes project/global `sessionDir`; an absent or empty override falls
+through. Pi owns normalization. Relative storage paths and Pi-reported session files resolve against
+the worker cwd for creation, snapshots and startup checks, not against the Host cwd.
 
-  Discovery covers the Host startup directory, saved pinned/Hidden project directories, and
-  directories the Host has created or opened sessions in, including after Host reconstruction.
-  A private, lock-merged, atomically replaced cwd-only index beside the preferences file retains
-  these discovery roots independently of navigation curation. It stores no session identities,
-  storage paths, or history. Creating or opening a session retains its resolved cwd in the current
-  Host before attempting to save this discovery hint. Failure to save does not reject creation,
-  writer startup, input, or history reads. The Host logs the failed save, continues discovering
-  in-memory roots, and retries them during later catalog refreshes. Until a save succeeds, those
-  additional roots cannot survive Host reconstruction through this index alone.
-  Legacy saved project folders seed the index, including before their first Unpin/Unhide or
-  deletion-cleanup mutation. Removing curation never removes discovery knowledge.
+Discovery covers the Host startup directory, saved pinned/Hidden project directories, and directories
+where the Host has created or opened sessions, including after Host reconstruction. A private,
+lock-merged, atomically replaced cwd-only index beside preferences retains these roots independently
+of curation. It stores no session identities, storage paths or history. Legacy saved folders seed it
+before their first Unpin/Unhide or deletion cleanup; removing curation does not forget a project.
 
-  Each scan derives storage from current Pi environment/settings, not remembered storage paths.
-  Custom storage is flat; default storage scans Pi's project subdirectories. Shared or overlapping
-  roots contribute each file once. Saving project-folder curation invalidates discovery so newly
-  included project settings participate in the next scan. Missing storage contributes no sessions;
-  deleted files disappear on refresh, while missing project roots remain known for later return
-  or external storage. The Host never searches overridden storage as a fallback, nor traverses
-  arbitrary filesystem trees to find projects. Pi-reported relative session files resolve against
-  the worker cwd for creation, snapshots, and startup identity checks.
+Retain a resolved cwd in memory before attempting to save this hint. Save failure is logged and
+retried during later catalog refreshes, without rejecting creation, startup, input or history reads.
+Unsaved roots cannot survive Host reconstruction through this index alone.
 
-- A session can be listed, searched, opened, continued, named, and switched using Pi’s identity and
-  tree rather than copied into another conversation store. A missing project directory does not
-  prevent reading retained history; [[session-persistence]] separates that read from worker admission.
+Each scan resolves storage from current environment/settings. Custom storage is flat; default
+storage scans Pi's project subdirectories. Overlapping roots contribute each file once. Saving folder
+curation invalidates discovery so newly included project settings enter the next scan. Missing
+storage contributes no sessions, and deleted files disappear on refresh. Missing project roots
+remain known for later return or external storage. Do not search overridden storage as a fallback
+or traverse arbitrary filesystem trees to discover projects.
 
-- A workspace-unavailable session keeps its transcript, History inspection, Copy and local
-  information queries. Replace the composer with one short neutral read-only explanation in the
-  same location, not an error page or recovery wizard. Session-writing/execution controls are
-  unavailable; preference and navigation controls remain usable. Reselecting this read-only session
-  requests a fresh open so a restored directory can become available again.
+## Readable history when execution is unavailable
 
-- An unavailable external execution route also preserves readable history, with a distinct neutral
-  explanation in place of the composer. It must not be reported as a missing project folder.
-  A viewed external read-only session automatically recovers when its owner releases it or its
-  connection recovers. The current reading surface and unsent input remain in place;
-  [[session-persistence]] owns observation and writer admission.
+A missing project directory preserves transcript, History inspection, Copy and local information
+queries. Show a short neutral explanation in the composer's place; disable session-writing and
+execution controls while retaining navigation and preference controls. Reselecting requests a fresh
+open so a restored directory can become usable. [[session-persistence]] owns source validation and
+worker admission.
 
-- Automatic titles use the same user-content projection as the transcript and live header fallback.
-  Model-facing file trailers and image-dimension notes do not become titles. A first message with
-  only file references uses their readable filenames; explicit session names retain precedence.
-  Title extraction does not change persisted messages or remove file paths from full-text search.
+An unavailable external execution route preserves the same reading surface with a distinct
+explanation, rather than reporting a missing folder. Viewed external read-only sessions recheck
+owner availability automatically while preserving unsent input. The recovery and startup boundaries
+in [[session-persistence]] determine when execution resumes.
 
-- Session listing retains only bounded name, first-user-caption, working-directory, count, and
-  timestamp metadata. The host keys each rebuildable JSONL summary by filesystem identity and stat
-  version: unchanged files reuse their bounded summary, same-inode growth under the one-writer rule
-  scans only the prior incomplete tail and new bytes, and other detected changes rebuild that file
-  without retaining full message text. It owns a deterministic newest-first filtered order plus
-  validated bounded `offset`/`limit` and total.
+## Catalog metadata and search
 
-  Nonempty catalog queries separately search Pi session name, cwd, session ID, and complete retained
-  user/assistant text, including retained branches and text beyond the bounded first-message
-  summary. Tool output, thinking blocks, and non-text content do not enter this text corpus. Queries
-  AND case-insensitive fuzzy tokens (each a character subsequence within one field) and
-  whitespace-normalized quoted phrases. A leading `re:` selects a case-insensitive regex over
-  the combined fields; invalid/empty regex and unclosed quotes yield no matches. Results remain in
-  chronological catalog order with authoritative totals and explicit pagination, not a filter over
-  the browser's already-loaded rows.
+### Titles and bounded summaries
 
-  [[workbench]] owns navigation labels, match emphasis and search interaction.
+Automatic titles share the transcript/live-header user-content projection. Exclude model-facing file
+trailers and image-dimension notes; file-only input uses readable filenames. Explicit session names
+take precedence. Title extraction changes neither persisted messages nor searchable file paths.
 
-  Search reads one session's complete admitted JSONL prefix at a time without retaining a
-  whole-catalog conversation cache. Same-inode append may continue while that prefix is read under
-  Pi's one-writer rule; equal-size observations require an unchanged stat version, and truncation,
-  replaced/rebound paths, or changed header identity exclude that source and report it as unavailable
-  rather than searching a cached or replacement conversation. Other admitted sources still contribute
-  matches; displayed totals cover only the sources successfully searched. An isolated worker uses
-  Inspire's query matcher, keeping synchronous parsing/fuzzy/regex work off the Host event loop
-  without private Pi dependencies. Request cancellation retires obsolete workers; a 30-second
-  deadline makes an expensive query retryable with a simpler expression.
+Listing retains only bounded name, first-user caption, cwd, count and timestamps. Key rebuildable
+summaries by file identity/stat version: reuse unchanged summaries, scan the prior incomplete tail
+and new bytes for same-inode growth under the one-writer rule, and rebuild other detected changes
+without retaining full message text. The Host owns deterministic newest-first ordering, validated
+bounded `offset`/`limit`, and totals.
 
-  Directory and individual-file read failures are isolated: healthy sources still publish, and
-  known rows under unavailable sources retain their last complete summaries. Pages include bounded
-  `issues` diagnostics (the first 20 unavailable paths and explanations); the browser shows an
-  expandable source notice and a refresh action without replacing available history with an error
-  or empty state. Counts on incomplete pages are not a complete catalog count. Successful refresh
-  clears the notice. Missing roots remain distinct from roots whose contents could not be read.
-  Ordinary open and single delete revalidate their addressed path, source identity, and header;
-  an unknown id in an incomplete catalog is not reported as a confirmed absence. Reviewed Hidden
-  clearing explicitly requires a fresh complete scan before authorizing any destructive step.
-  A present malformed session may retain its last complete summary for inspection. Duplicate Pi session ids are omitted from navigation and every id-addressed
-  operation rejects the ambiguity instead of selecting a path. The browser's bounded
-  `SessionCatalogController` owns list request generations, chronology pagination, curation/live
-  hydration, and retry presentation through the `AppStore` facade; it does not own a second catalog
-  snapshot.
+### Query semantics and source admission
 
-  It keeps chronological base pages separate from curated/live hydration, advances only by
-  `response.offset + response.sessions.length`, deduplicates identities without changing that
-  cursor, and uses latest-wins reset semantics for query and explicit refresh. Retiring a list
-  generation also aborts its pending HTTP observation and corresponding full-content search;
-  generation ownership still rejects late responses from transports that ignore cancellation.
-  Session and project curation reclassify known rows synchronously; only newly off-page owners run bounded id/cwd
-  hydration, without resetting chronology or presenting the confirmed catalog as globally loading.
-  All id and cwd hydration unions are deduplicated and split within their host route bounds;
-  authentication loss follows the shared auth boundary. Other partial hydration failures retain the
-  last confirmed base/curated union and recover with bounded background retry, without list-wide
-  errors or manual hydration controls. A selected/live id may precede its catalog row; a successful
-  lookup that has not found it yet is an expected materialization delay, not a failure.
+Search session name, cwd, id and complete retained user/assistant text, including alternate branches
+and text beyond the first-message summary. Exclude tool output, thinking and non-text blocks.
 
-  A standalone selected/live lookup retries only its generation-bound id hydration and merges that
-  row without changing the base extent; query, list refresh or lost owner interest retires stale
-  recovery. Foreground initial/search/older-page failures retain their local retry surface.
-  Settlement hints atomically refetch the already consumed extent in bounded sequential pages under
-  one generation—even beyond one server page—and background recovery retains and targets that exact
-  extent instead of collapsing navigation back to page zero. Successful deletion removes committed rows immediately, then runs
-  the same authoritative preservation in the background to repair totals and offsets without
-  reviving completed-list loading chrome.
+- AND case-insensitive fuzzy tokens, each matching a character subsequence within one field.
+- Match quoted phrases against whitespace-normalized text.
+- A leading `re:` selects a case-insensitive regex over combined fields. Invalid/empty regex and
+  unclosed quotes match nothing.
 
-## Explicit terminal handoff
+Results retain chronological catalog order, authoritative totals and explicit pagination; they are
+not a filter over loaded browser rows. [[workbench]] owns labels, emphasis and search interaction.
 
-Session actions can return one Inspire-owned session to the native terminal without stopping the
-Host or other sessions. A busy browser path first uses ordinary Stop/Pending recovery, then retires
-that session's writer. Pending input must be recovered before release. Confirmed worker retirement,
-not transport disconnection or an idle status, precedes the resume command. Copy provides a correctly
-quoted project change-directory and `pi --session` command for a current POSIX shell or PowerShell.
-Inspire never executes it automatically or modifies the session's history to record this choice.
+Read one session's complete admitted JSONL prefix at a time, without a whole-catalog conversation
+cache. Same-inode appends may continue beyond that prefix. Equal-size observations require an
+unchanged stat version. Truncation, replaced/rebound paths and changed header identity exclude the
+source and report it unavailable; never substitute cached or replacement content. Other admitted
+sources still contribute results, whose totals cover only successfully searched sources.
 
-A small preference keyed by session id preserves the explicit terminal intent across selection,
-worker-cache eviction and Host reconstruction. It is removed with session deletion. The read-only
-view retains history, branch JSONL export and the browser draft. **Continue in Inspire** explicitly
-clears that intent and reuses ordinary installed-Pi/external-owner admission. A live external owner
-therefore still vetoes another writer, or can reconnect through the already supported Herdr channel.
-No ownership lease, new multiwriter protocol or Herdr dependency is introduced.
+Run synchronous parsing/fuzzy/regex work in an isolated cancellable worker using Inspire's matcher,
+without private Pi dependencies. Cancellation retires obsolete workers; the 30-second deadline
+allows an expensive query to be retried with a simpler expression.
 
-Linux checks exercise real Pi RPC retirement, native PTY continuation on the same JSONL, persistent
-no-prewarm behavior and occupied/released owner rechecks. Worker-lifecycle checks retain another
-session through a delayed busy handoff; browser checks preserve the draft and show the return action.
+### Unavailable and ambiguous sources
+
+Isolate directory and file failures. Publish healthy sources and retain last complete summaries
+for known rows under unavailable sources; a present malformed session may likewise retain its
+summary for inspection. Missing roots remain distinct from unreadable roots.
+
+Pages carry bounded `issues`: the first 20 unavailable paths and explanations. An expandable source
+notice and refresh action accompany available history. Incomplete-page counts are not complete
+catalog counts; successful refresh clears the notice.
+
+Ordinary open and individual delete revalidate the addressed path, identity and header. Unknown ids
+in an incomplete catalog are not confirmed absent. Hidden clearing requires a fresh complete scan
+before any destructive step. Omit duplicate Pi ids from navigation and reject every id-addressed
+operation on that ambiguity rather than choosing a path.
+
+## Browser catalog continuity
+
+One browser catalog owner manages request generations, chronological pages, curated/live hydration
+and retries through the application state facade. It does not keep a parallel catalog snapshot.
+
+Keep chronological base pages separate from hydration. Advance pagination only by
+`response.offset + response.sessions.length`; identity deduplication does not change that cursor.
+Query changes and explicit refresh replace the generation and abort its pending HTTP observation
+and content search. Generation checks also reject late replies from transports that ignore abort.
+
+Curation changes reclassify known rows synchronously. Hydrate only newly off-page session ids and
+exact cwds, deduplicating and splitting their unions within route bounds. Preserve chronology and
+confirmed rows without global loading or manual hydration controls. Authentication loss follows the
+shared transport boundary; other partial failures retain the confirmed base/curated union and retry
+in the background with bounded backoff. A selected/live id can precede its catalog row: a successful
+lookup that has not found it yet is a materialization delay, not a failure.
+
+Standalone selected/live lookup retries only that generation's id hydration and merges the result
+without changing the base extent. A new query, list refresh or lost owner interest retires its
+recovery. Foreground initial, search and older-page failures retain local retry controls.
+
+Settlement hints atomically refetch the consumed extent in bounded sequential pages under one
+generation, even beyond one server page. Background retries retain that extent instead of collapsing
+to page zero. Deletion removes committed rows immediately, then uses the same background refresh to
+repair totals and offsets without reintroducing completed-list loading UI.
 
 ## Navigation and curation
 
-- Navigation exposes current work, unseen completion, and unresolved recovery per session: running,
-  successful completion awaiting review, and error completion awaiting review remain distinct until
-  the user opens that session. A healthy external-change conflict instead derives a yellow recovery
-  indicator for as long as the conflicted session is in the background; selecting it moves recovery
-  to the topbar chip and persistent banner, and only explicit recovery clears the conflict.
+Keep running work, successful completion awaiting review, and error completion awaiting review
+distinct until the user opens the session. A healthy external-change conflict retains a yellow
+recovery indicator in navigation; selecting it shows recovery in the topbar and persistent banner.
+Only explicit recovery clears that conflict.
 
-- External native Pi activity appears on existing catalog rows through one optional, user-enabled Pi
-  extension, including independent RPC hosts and TUI/JSON/print modes. Observation is independent
-  of execution connectors, the launcher and Herdr enhancement. It uses supported Pi
-  lifecycle and aggregate UI-prompt events; it adds no tools, prompts or session entries.
-  The Host does not install or inject it automatically. The enable/reload procedure is in
-  [the extension guide](../../docs/extensions.md#show-external-session-activity).
-  Inspire-owned RPC workers retain their managed status instead of reporting twice; exclusion
-  requires their loaded internal GUI command, not RPC mode or inherited environment alone.
+Pins, folder pin/Hidden, session Hidden and folder-collapse state belong to Inspire preferences,
+not Pi JSONL. Hydrate curated sessions by id and folders by exact cwd so off-page pins stay reachable,
+Hidden remains reversible, and folder sections stay complete. Folder curation is independent of
+session curation, bounded, and not limited to the first chronological page.
 
-  Reports contain session identity/file, process id and birth identity, activity, heartbeat time,
-  and an activity-stop hint in the local user's private cache. Publication is atomic and
-  serialized. Factory-only discovery has no runtime side effects. Shutdown cancels resources
-  without releasing writer presence, and a shutdown overtaking asynchronous startup cannot rearm
-  a heartbeat. Reload reuses the manager's report; completed native replacement transfers that
-  producer only when the shutdown/start metadata match uniquely. Independent SDK managers do not
-  share a transferred producer. Dead process reports can be collected.
-  Final settlement, not `agent_end`, clears work, so retries and queued continuations remain busy.
-  Blocking input is distinct from active work. Eight-second-old, inactive, legacy released and
-  exited-process reports no longer count as current activity; writer admission does not use that
-  activity expiry or either stop hint as proof of release.
+## External Pi activity
 
-  The Host polls about every two seconds and matches both native session id and absolute file
-  against the unambiguous discovery catalog. Reports do not expand storage roots or confer
-  execution, stop, restart or writer ownership. Failed/stalled observations and browser disconnect
-  clear the independent activity map: missing evidence is unknown, not an invented idle or
-  completion event. Repeated full maps supply reconnect baselines and hydrate catalog rows without
-  changing pagination. External activity remains observational: it does not block deletion.
-  [[session-deletion]] owns the contextual confirmation and managed-writer checks. Busy identities count once alongside managed
-  workers for titlebar density under [[design-system]]; waiting for input does not increase the
-  count. There is no second Herdr-specific activity source.
+### Reporter lifecycle
 
-  Regression checks cover lifecycle and input waits, heartbeats, session replacement and shutdown,
-  catalog identity/path matching, duplicate identities, expiry, process exit, delayed results and
-  UI state isolation.
+One optional, user-enabled Pi extension reports activity for independent RPC hosts and TUI/JSON/print
+modes. It uses supported lifecycle and aggregate UI-prompt events, adding no tools, prompts or session
+entries. Observation is independent of execution connectors, the launcher and Herdr; the Host never
+installs or injects it automatically. See the
+[enable/reload procedure](../../docs/extensions.md#show-external-session-activity).
+Inspire-owned workers keep their managed status rather than reporting twice; exclusion requires the
+loaded internal GUI command, not RPC mode or inherited environment alone.
 
-  Separately, process-bound session presence vetoes cold local writer admission under
-  [[session-persistence]]. Its lifetime is not the busy indicator's freshness window. Presence
-  can require a read-only view but never grants control of the reporting Pi.
+Reports contain session id/file, process id/birth identity, activity, heartbeat time and an
+activity-stop hint in the user's private cache. Publish atomically and serially. Factory-only
+discovery has no runtime side effects. Shutdown cancels resources without releasing writer presence;
+if it overtakes asynchronous startup, no heartbeat may rearm. Reload reuses the manager's report.
+A completed native replacement transfers its producer only for uniquely matching shutdown/start
+metadata; independent SDK managers do not share the transfer. Dead-process reports may be collected.
 
-- Persistent pin, folder pin/Hidden, session Hidden, and folder-collapse metadata belongs to inspire
-  preferences, not Pi JSONL. Curated sessions are hydrated by id and curated folders by exact
-  working directory, so off-page pins stay reachable, Hidden remains reversible, and a folder
-  curated as a whole stays complete. Folder-level state is independent of per-session state,
-  bounded, and never dependent on the first chronological catalog page.
+Final settlement, not `agent_end`, clears work so retries and queued continuations stay busy.
+Blocking input is distinct from active work. Reports eight seconds old, inactive, legacy-released,
+or from exited processes no longer count as current activity. Activity expiry and stop hints do
+not prove writer release; presence admission belongs to [[session-persistence]].
+
+### Browser observations
+
+Poll about every two seconds, matching both native session id and absolute file against the
+unambiguous catalog. Reports cannot expand discovery roots or grant execution, Stop, restart or
+writer ownership. Failed/stalled observation and browser disconnect clear the independent activity
+map: missing evidence is unknown, not idle or completed. Repeated full maps provide reconnect
+baselines and hydrate rows without changing pagination.
+
+External activity does not block deletion; [[session-deletion]] owns its contextual confirmation and
+managed-writer checks. Count busy identities once alongside managed workers for titlebar density;
+waiting for input does not increase the count. There is no second Herdr-specific activity source.
+Process-bound presence may require a read-only view, but never grants control of the reporting Pi.
+
+## Explicit terminal handoff
+
+Session actions return one Inspire-owned session to the native terminal without stopping the Host
+or other sessions. A busy session first uses ordinary Stop/Pending recovery; recover pending input
+before releasing the writer. Confirm actual worker retirement before offering a correctly quoted
+project change-directory and `pi --session` command for POSIX shells or PowerShell. Inspire neither
+executes the command nor modifies session history to record the handoff.
+
+A session-id preference preserves terminal intent across selection, worker eviction and Host
+reconstruction, and is removed with session deletion. The read-only view retains history, branch
+JSONL export and the draft. **Continue in Inspire** explicitly clears that intent and uses ordinary
+installed-Pi/external-owner admission. An external holder still vetoes a new writer or reconnects
+through supported Herdr control. Handoff introduces no writer lease, multiwriter protocol or Herdr
+dependency.
 
 ## New project creation
 
-The New composer can explicitly create a missing project directory and start a session there.
-Model/file discovery remains observational, and opening existing history never recreates its cwd.
-The requested path is created recursively only after the user activates **Create folder and start**,
-then resolves to the normal canonical directory before discovery registration and Pi admission.
-Existing files are neither replaced nor treated as missing directories. Directory creation and
-session startup are not atomic: a startup failure can leave the requested folder in place, while
-the browser retains its untransferred input. [[composer]] owns the contextual action and handoff.
+The New composer may explicitly create a missing project directory and start a session there.
+Model/file discovery stays observational; opening existing history never recreates its cwd.
+Only **Create folder and start** creates the path recursively, then canonicalizes it before discovery
+registration and Pi admission. Existing files are not replaced or treated as missing directories.
+Creation and startup are not atomic: startup failure can leave the directory while the browser
+retains untransferred input. [[composer]] owns the action and input handoff.
 
 ## Non-goals
 
-- The product does not coordinate independent Pi runtimes as concurrent writers for one session.
-- The rebuildable session-metadata index never becomes conversation authority.
+- Coordinate independent Pi runtimes as concurrent writers for one session.
+- Make the rebuildable metadata index a conversation authority.

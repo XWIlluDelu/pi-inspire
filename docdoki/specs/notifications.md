@@ -20,210 +20,158 @@ progress: in-progress
 
 ## Goal
 
-Tell the user when Pi finishes or stops because of an error after they leave the conversation.
-Desktop and mobile use the same outcome rules. Notification eligibility must survive page refresh,
-background suspension and event-socket reconnection while the Host continues observing the run.
-
-This contract replaces browser-start-event ownership in [[interface-preferences]]. The Host owns
-outcomes; each browser installation owns its intent, enrollment and display.
-Implementation gaps and verification are in [[follow-notifications-2026-10-22]].
+Notify users when Pi finishes or fails after they leave the conversation. The Host owns run
+outcomes across page refresh, suspension and reconnection; each browser installation owns its
+notification choice, enrollment and display. Device acceptance is tracked in
+[[follow-notifications-2026-10-22]].
 
 ## Outcomes and scope
 
 | Observed result | Notification |
 | --- | --- |
-| Normal run completion | **Task completed** |
-| Error ends the run, including exhausted provider retries or an unexpected worker exit during work | **Task failed** |
-| Confirmed explicit cancellation | No task notification |
-| External run ended, but the available integration cannot establish its result | **Task ended**; do not claim success |
-| Connection lost without evidence that work ended | No invented completion or failure |
+| Normal completion | **Task completed** |
+| Error ends work, including exhausted retries or unexpected worker exit | **Task failed** |
+| Confirmed explicit cancellation | None |
+| Observed external run ends without a known result | **Task ended** |
+| Connection lost without evidence that work ended | None |
 
-Error-induced interruption remains a failure even if a diagnostic contains “abort” or “cancel”.
-Use the canonical outcome rules in [[conversation]] and explicit cancellation evidence, not
-substring matching or a Stop request's HTTP receipt. A cancellation of the current run does not
-erase a later genuine failure. An aborted outcome with insufficient cancellation provenance must
-not silently discard an independently established error.
+Use canonical outcomes from [[conversation]] and explicit cancellation evidence. Error text
+containing “abort” or “cancel”, or a Stop receipt alone, cannot classify the result. Cancellation
+of one run cannot erase a later failure; an unattributed aborted outcome cannot erase an
+independently established error.
 
-Notifications cover live runs observed by the Host: directly managed Pi and connected native Pi.
-Merely discovering a session file or presence record does not start a worker or create a completed
-task. Opening old history never produces notifications. Host-owned run observation continues when
-the browser leaves; it does not depend on which session another browser selected.
-
-Keep the existing standalone manual-compaction completion/failure behavior, using its own operation
-identity. Terminal bell and long-command notifications remain under [[terminal]]; this work does
-not add terminal triggers. Both use the same browser permission request and status vocabulary;
-permission is separate from each feature's delivery intent and enrollment. Waiting-for-input/approval
-alerts are outside this design.
+Observe directly managed and connected native Pi runs independently of browser selection.
+Opening saved history or discovering a presence record does not create an outcome or start work.
+Standalone manual compaction retains its own operation identity. Terminal alerts follow
+[[terminal]]; they share browser permission handling but keep separate delivery intent.
+Waiting-for-input alerts are outside this design.
 
 ## Viewing and delivery
 
-- If a focused, visible window on this installation is displaying the owning conversation at
-  settlement, consume the outcome without a system notification.
-- A different conversation, background application or locked phone is eligible for notification.
-- Multiple windows on the same origin/browser profile share one installation and one display
-  coordinator. A computer and phone opt in independently; viewing one does not silence the other.
-- One outcome has one stable identity across live delivery and push retry. A later run in the same
-  conversation has a different identity. Refresh and reconnect do not reset outcome identity.
-- Off disables new task delivery on this installation. Mark tab retains the existing title marker.
-  System notification also retains that marker when a page is open. Viewing the conversation clears
-  the marker without changing an extension-authored title.
-- Push has a short expiry and bounded retry. Expired outcomes are not replayed as a notification
-  backlog. This is not a notification inbox or a new task-history store.
+- A focused, visible window displaying the owning conversation at settlement consumes the outcome
+  without a system notification. Another conversation, a background app or a locked phone is eligible.
+- Windows on one origin/browser profile share an installation and display coordinator. Devices
+  opt in independently; viewing on one device does not silence another.
+- **Off** disables delivery. **Mark tab** sets the existing title marker. **System notification**
+  also marks an open page. Viewing clears the marker while preserving extension-authored titles.
+- Each outcome keeps one identity across live delivery, reconnect and retry; later runs get new
+  identities. Pending sends expire and retries are bounded, so old outcomes do not form a backlog.
 
-The service worker owns system-notification display and click handling. Use
-`ServiceWorkerRegistration.showNotification()` on supported desktop and mobile installations,
-rather than the mobile-incompatible `new Notification()` path.
+The service worker owns display through `ServiceWorkerRegistration.showNotification()` and handles
+clicks. This supports mobile installations where the `Notification` constructor is unavailable.
+The Host first offers an outcome over the authenticated event connection. The worker checks all
+same-installation windows and acknowledges viewing or display. Without acknowledgement, the Host
+uses encrypted Web Push.
 
-For an installation with responsive pages, the Host offers the outcome over its authenticated
-event connection. A single service-worker coordinator checks same-installation windows and returns
-either viewed or displayed. A missing socket alone is not an outcome; a missing delivery
-acknowledgment selects the background transport.
-
-For background delivery, the Host sends standard encrypted Web Push to the installation's
-subscription. A positive foreground-consumption acknowledgment prevents sending the push in the
-first place. Do not send silent pushes and then discard them in a foreground page: WebKit requires
-each received push to display a user-visible notification.
-
-Once a push has been sent, it displays even if the user returns during delivery. Stable notification
-tags and non-renotifying replacement limit duplicate alerts when local delivery and a retry race.
-The coordinator records handled event identities to prevent a late page delivery from showing the
-same event again. Transport acceptance, browser display acceptance and human receipt are distinct;
-the system must not advertise exactly-once human delivery.
+A foreground acknowledgement prevents push dispatch. Once sent, a push must display even if the
+user returns: WebKit requires received pushes to produce a visible notification. Stable tags,
+non-renotifying replacement and recorded handled identities limit duplicate displays across
+transports. Report transport acceptance and display acceptance separately from human receipt.
 
 ## Settings and activation
 
-Keep the control in **Settings → Behavior**, in the existing field-card style. Use **Task alerts**
-with **Off / Mark tab / System notification** and the description:
-“Notify when a background task finishes or stops with an error.”
-A short “This device” scope label prevents confusion with Host-wide preferences.
-
-Show one contextual status beneath the control, not a separate diagnostics dashboard:
+**Settings → Behavior → Task alerts** offers **Off / Mark tab / System notification**, with
+“This device” scope and a description of background completion/error alerts. Show one contextual
+status beneath the control:
 
 | State | Presentation and action |
 | --- | --- |
 | Off or Mark tab | No permission prompt |
 | System selected, not enrolled | **Enable notifications** |
-| Browser permission denied | **Blocked by browser** with concise site-settings guidance |
-| Permission granted and page delivery usable, push unavailable | **While Inspire is open**; explain the failed background setup and offer Retry |
-| Subscription registered successfully | **Background notifications enabled** |
-| iOS browser tab without supported installation | Explain **Add to Home Screen**, then enable from that app |
-| Required platform capability missing | Explain the specific unavailable capability; preserve Off/Mark tab |
-| Host delivery failure known | Show the current actionable failure near the setting |
+| Permission denied | **Blocked by browser**, with site-settings guidance |
+| Page delivery works but push setup failed | **While Inspire is open**, with the error and Retry |
+| Subscription registered | **Background notifications enabled** |
+| iOS installation required | **Add to Home Screen**, then enable from that app |
+| Required capability unavailable | Explain it; retain Off/Mark tab |
+| Host delivery failed | Show the actionable error |
 
-Selecting System notification starts enrollment from that user gesture; Enable notifications is
-also available for a migrated or interrupted setup. Only a user gesture requests permission or
-creates a push subscription. Enabling background delivery briefly explains that it uses the browser's push service; no extra account or hosted Inspire service
-is required. Do not infer browser permission from a saved preference, or claim to detect OS
-Do Not Disturb/banner settings through an API that does not expose them.
+Only a user gesture requests permission or creates a subscription. Selecting System notification
+starts enrollment from that gesture; Enable supports migrated or interrupted enrollment. Explain that push
+uses the browser's service without requiring another account. Permission is observed from the
+browser, independently of saved intent; OS notification policy is outside that observation. Do not
+repeatedly prompt after denial.
 
-**Send test notification** uses the same active transport and worker display path as a real task,
-but deliberately bypasses foreground suppression. It reports actual stages accurately: sent,
-display request accepted, or a concrete error. The notification itself is the visual test;
-a successful Promise is not labeled “You received it.” An enabled background installation tests
-Host-to-push delivery, not merely a local imitation.
+**Send test notification** uses the active delivery transport and worker display path, bypasses
+foreground suppression, and reports the actual accepted stage or error. An enrolled installation
+tests Host-to-push delivery.
 
-Persist intent per Host and origin/browser installation, not in the shared Host preference file.
-Keep subscription state and visible permission separate from intent. Check permission on opening
-Settings and when the app resumes. Do not repeatedly prompt after denial. An asynchronous permission
-or subscription result applies only while that installation's choice is still current. Switching
-Off during setup cannot be undone by a late success; failed setup must not overwrite a newer choice.
-All windows of the installation observe the same current choice and delivery health. Subscription
-reconciliation cannot restore an older choice; a healthy refresh need not rewrite enrollment.
-Initialization and Settings refresh must also recover a valid browser subscription whose initial
-Host registration failed, without creating a subscription or requesting permission again. The Host
-retains an endpoint rejected as expired by the push service: refresh cannot resurrect it, and an
-explicit Enable replaces that browser subscription before registering a new one.
+### Installation state
 
-Migration preserves the legacy choice as initial intent. A legacy Desktop selection is not proof
-that this installation has enrolled for background push: keep existing granted page delivery while
-showing the setup action, and require a gesture before creating its subscription. Off and Mark tab
-remain usable without enrollment. New installations default to Off. Reset preferences resets task
-alerts only on the current installation; it does not disable another device.
+Persist the choice per Host and origin/browser installation. All its windows share current intent
+and delivery health. Recheck on initialization, opening Settings and app resume. Reconcile an
+existing subscription whose Host registration failed without requesting permission again; healthy
+refreshes need not rewrite enrollment. An endpoint rejected as expired stays retired until explicit
+Enable replaces the browser subscription.
+
+Async permission, subscription and display results belong to the current choice and API owner.
+Late completion cannot re-enable alerts, overwrite another window's choice or restore stale errors.
+Disabling alerts cancels pending sends; re-enabling does not revive them. Reset affects this device
+only. New installations default to Off. Migration preserves the old choice and any usable page
+delivery while showing enrollment as a separate step.
 
 ## Host and native-session integration
 
-Introduce one Host-owned outcome coordinator, downstream of authoritative runtime reduction and
-independent of browser detail interests. Give each observed run/standalone compaction an identity
-and emit its result once. Browser reconnection cannot erase this state. A snapshot can reconcile an
-already known run but cannot manufacture an old outcome.
+The Host's outcome coordinator follows authoritative runtime reduction and retains each observed
+run or manual-compaction result independently of page interests. Snapshots reconcile known runs;
+they do not create historical outcomes. Direct workers supply settlement, assistant outcomes and
+unexpected-exit evidence. Maintenance and idle eviction are not task failures.
 
-Direct workers supply native settlement, canonical assistant outcomes and unexpected runtime-exit
-evidence. Intentional worker maintenance and idle eviction are not task failures.
+The optional native activity reporter uses public Pi events with process/receiver-bound run and
+outcome identities. Retain settled outcomes long enough to observe short runs or a subsequent run
+starting between polls, and check receiver identity across reload, replacement and rebind. An
+activity-only reporter can establish **Task ended**; classifying success or cancellation requires
+outcome evidence. Poll failures or missing presence records establish neither death nor release.
+Independently confirmed process exit during an observed run is failure evidence; ownership follows
+[[herdr-enhancement]].
 
-External native Pi needs more than a polled working/idle bit. Extend the existing optional
-public-API activity reporter with process/receiver-bound run identity and terminal-result evidence.
-Use public Pi events; do not modify Pi, scrape terminal text or create a second writer. The record
-must retain a settlement long enough to observe a short run or a subsequent run starting between
-polls. Check receiver identity across reload, session replacement and rebind.
-
-Older activity-only integrations may report a genuine observed end as **Task ended** but must not
-label it successful or classify it as a confirmed user cancellation. A poll error or missing
-presence record is not proof of worker death. Independently confirmed process exit during an
-observed run is failure evidence. These distinctions do not change occupancy or writer-release
-rules in [[herdr-enhancement]].
-
-Keep subscription registration and pending delivery state bounded and persistent per Host.
-Use stable VAPID keys and a standard Web Push library, not a proprietary Firebase application SDK.
-Store pending sends only for their short delivery lifetime; cancel them when the subscription is
-disabled or its authority is retired. Restart must not create fresh events from old session status
-or lose already queued, still-current notifications.
+Bound and persist subscriptions and short-lived pending sends per Host with stable VAPID keys and
+standard Web Push. Restart preserves still-current queued sends without generating new historical outcomes.
+Disabling a subscription or retiring its authority cancels its pending sends.
 
 ## Security, content and navigation
 
-- Subscription enrollment, changes, test sends and foreground-consumption acknowledgments require
-  authenticated, exact-origin requests. Bind the installation to the existing browser pairing
-  identity, not just a caller-supplied installation ID.
-- Carry the verified browser-key identity through authenticated request/socket context for
-  per-installation routing; origin-only or master-token authentication cannot enroll a device.
-  Host credential rotation invalidates subscriptions belonging to the retired authority.
-- Push endpoints, encryption keys and VAPID secrets stay in protected Host state and out of logs,
-  URLs and project documents. Validate subscription shape and outbound endpoints; disallow local
-  network targets, embedded credentials and redirect-based endpoint substitution.
-- Push contains the display data needed without contacting the Host: fixed outcome wording,
-  cwd-derived project label, opaque event/session identifiers and the same-origin navigation target.
-  No prompt, conversation text, model error detail, terminal output or full filesystem path goes to
-  the OS surface. Session catalog titles may contain the first prompt and remain excluded.
-- Clicking focuses an existing Inspire window when possible or opens its installed-app scope.
-  Authenticate normally, then select the target session. Carry an opaque session target through
-  initial bootstrap or pairing; never embed a Host/API token in the notification URL.
-- If the Host is unavailable, retain the navigation target until connection returns. If the
-  session was deleted, explain that without silently opening an unrelated conversation.
-  A notification click navigates; it never starts or retries agent work.
+- Enrollment, settings changes, test sends and acknowledgements require authenticated exact-origin
+  requests bound to the verified browser pairing key. Caller-supplied IDs, origin-only credentials
+  and master tokens cannot enroll a device. Host credential rotation invalidates old subscriptions.
+- Protect endpoints, encryption keys and VAPID secrets in Host storage; keep them out of logs, URLs
+  and project documents. Validate subscription shape and endpoints; reject local-network targets,
+  embedded credentials and redirect substitution.
+- Push contains fixed outcome wording, a cwd-derived project label, opaque event/session IDs and a
+  same-origin navigation target. Exclude conversation titles/text, error details, terminal output,
+  full filesystem paths and credentials. The worker can display it without fetching from the Host.
+- Clicking focuses an existing window or opens the installed-app scope, authenticates normally and
+  selects the target conversation. Preserve the opaque target through pairing or Host downtime;
+  a newer click supersedes an older target. A deleted target shows the selection error. Navigation
+  never starts or retries agent work.
 
 ## Platform contract
 
 | Platform | Intended experience |
 | --- | --- |
-| Linux Chrome desktop/PWA | Page and background system notifications; closing the PWA window is supported while Chrome's background runtime remains available |
-| Android supported browsers/PWA | Worker-based system notification, including background/lock screen through Web Push |
-| iPhone/iPad | Supported Home Screen web app, HTTPS and explicit permission; background/lock-screen Web Push |
-| Browser fully exited/force-stopped, OS notification policy or network blocks delivery | Describe the actual limitation; do not claim always-on delivery |
+| Linux Chrome desktop/PWA | Page and background notifications while Chrome's background runtime remains available |
+| Supported Android browser/PWA | Worker notifications through Web Push, including background/lock screen |
+| iPhone/iPad | HTTPS Home Screen app with explicit permission and background/lock-screen Web Push |
 
-The Host must be running and able to reach the browser's push service. A powered-off Host cannot
-report its own failure. Standard push does not require public inbound access to the Host: receiving
-the encrypted display payload is separate from opening the private/VPN-hosted conversation.
-Remote enrollment and click-through require a trusted HTTPS origin reachable by the device.
+The Host must be running with outbound access to the push service. Push reception needs no public
+inbound Host access. Remote enrollment and click-through require a trusted HTTPS origin reachable
+by the device. Browser force-stop, OS notification policy and network availability can prevent delivery.
 
 ## Checks
 
-Exercise normal completion and error-induced interruption from real Host/Pi events, explicit
-cancellation, a task spanning page refresh/reconnect, multiple windows, and click-through after
-page closure. Verify native terminal outcomes separately from direct workers.
-
-Use focused regression tests for outcome identity/classification, installation ownership,
-transport fallback, cancellation/expiry and authenticated navigation. Preserve tests for privacy.
-Use a real Linux Chrome installed app to verify both normal and error notifications while another
-application is focused. Verify an Android background/locked device and an iOS Home Screen app
-before claiming those platforms delivered notifications. Simulated permission or Push events do
-not substitute for system delivery.
+Regressions cover outcome classification/identity, installation ownership, live-to-push fallback,
+expiry/cancellation, privacy and authenticated navigation. Exercise real normal/error outcomes,
+explicit Stop, refresh during work, multiple windows and closed-page click-through. Verify direct
+workers and native Pi separately. Platform acceptance verifies real system display in an installed
+Linux Chrome app while another application is focused, a background or locked Android device, and
+an iOS Home Screen app; current evidence and gaps stay in the stage.
 
 ## Sources
 
-Design follows the delegated notification investigation and design on 2026-10-22.
-Implementation and platform verification are recorded in [[follow-notifications-2026-10-22]].
+Design follows the notification investigation on 2026-10-22; implementation evidence is in
+[[follow-notifications-2026-10-22]].
 
-- [MDN: Notification constructor](https://developer.mozilla.org/en-US/docs/Web/API/Notification/Notification) — mobile constructor limitation and worker display.
+- [MDN: Notification constructor](https://developer.mozilla.org/en-US/docs/Web/API/Notification/Notification) — mobile display support.
 - [MDN: Push API](https://developer.mozilla.org/en-US/docs/Web/API/Push_API) — subscriptions and worker wakeup.
-- [WebKit: Web Push for Home Screen apps](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/) — iOS installation, permission and lock-screen behavior.
-- [WebKit: Meet Web Push](https://webkit.org/blog/12945/meet-web-push/) — user-visible delivery requirement.
-- [web.dev: Push FAQ](https://web.dev/articles/push-notifications-faq) — page closure versus browser-process exit.
+- [WebKit: Web Push for Home Screen apps](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/) — iOS installation and permission.
+- [WebKit: Meet Web Push](https://webkit.org/blog/12945/meet-web-push/) — visible delivery requirement.
+- [web.dev: Push FAQ](https://web.dev/articles/push-notifications-faq) — page closure and browser exit.
