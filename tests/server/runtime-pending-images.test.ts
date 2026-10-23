@@ -16,8 +16,6 @@ const report = vi.fn();
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "inspire-pending-image-owner-"));
   store = new AttachmentStore(root, null, {
-    sessionDirectories: [],
-    trashDirectories: [],
     sweepIntervalMs: 0,
   });
   queue = { steering: [], followUp: [] };

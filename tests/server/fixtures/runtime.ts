@@ -9,7 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, parse, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { expect, vi } from "vitest";
 import { AttachmentStore } from "../../../server/attachments.js";
 import type {
@@ -320,32 +320,14 @@ const attachments: AttachmentStore[] = [];
 
 export const workspaceDirectories: string[] = [];
 
-/** Fake-worker tests exercise real JSONL/registration, not OS volume discovery.
- * Native metadata adapters have their own retention and installed-package proofs.
- * Keep Host locks, process identity, markers and durable registry writes real. */
-export function workerAttachmentStore(
-  root: string,
-  sessionDirectory: string,
-): AttachmentStore {
-  return new AttachmentStore(root, null, {
-    sessionDirectories: [sessionDirectory],
-    trashDirectories: [],
-    sweepIntervalMs: 0,
-    volume: {
-      nativeIdentity: async (directory) => ({
-        kind: process.platform === "win32" ? "windows-guid" : "macos-uuid",
-        directory: parse(directory).root,
-        id: "12345678-1234-4234-8234-123456789abc",
-        ...(process.platform === "win32" ? { format: "12345678" } : {}),
-      }),
-    },
-  });
+/** Real upload lifecycle with periodic cleanup disabled for deterministic fixtures. */
+export function workerAttachmentStore(root: string): AttachmentStore {
+  return new AttachmentStore(root, null, { sweepIntervalMs: 0 });
 }
 
 export function trackedAttachmentStore(): AttachmentStore {
   const store = workerAttachmentStore(
     join(fixtureWorkspace, `attachments-${attachments.length}`),
-    fixtureWorkspace,
   );
   attachments.push(store);
   return store;

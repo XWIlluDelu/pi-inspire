@@ -1,4 +1,3 @@
-import { execFile as execFileCallback } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants, createWriteStream } from "node:fs";
 import {
@@ -20,10 +19,8 @@ import {
   extname,
   isAbsolute,
   join,
-  parse,
   resolve,
 } from "node:path";
-import { promisify } from "node:util";
 import type { Request } from "express";
 import type { StorageEngine } from "multer";
 import {
@@ -39,52 +36,12 @@ import {
   MAX_PROMPT_IMAGE_ENCODED_BYTES,
   type UploadedAttachment,
 } from "../shared/contracts.js";
-import {
-  type AttachmentReferenceCache,
-  containsAttachmentPath,
-  sessionAttachmentReferences,
-} from "./attachment-references.js";
-import {
-  assertNoRetentionMaintenance,
-  createRetentionLease,
-  defaultAttachmentParent,
-  parseDirectoryRegistry,
-  writeDirectoryRegistry as persistDirectoryRegistry,
-  RETENTION_REGISTRY,
-  type RootIdentity,
-  type RootSnapshot,
-  readRootIdentity,
-  retentionOwnerAlive,
-  retentionProcessIdentity,
-  sameRootIdentity,
-  verifyRootSnapshot,
-  withRetentionMaintenance,
-} from "./attachment-retention-identity.js";
+import { isSupportedPromptImageMimeType } from "../shared/image-types.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
-import {
-  canonicalBase64DecodedSize,
-  isSupportedPromptImageMimeType,
-} from "./image-content.js";
-import {
-  type LinuxTrashOptions,
-  linuxDirectoryAuthority,
-  linuxMounts,
-  linuxSessionTrashDirectories,
-  sameLinuxMount,
-} from "./linux-trash.js";
-import { macosSessionTrashDirectories } from "./macos-trash.js";
-import { getAgentDir } from "./pi-runtime.js";
-import { resolvePiSessionDirectory } from "./pi-session-directory.js";
-import { windowsPowerShellCommand } from "./platform-environment.mjs";
+import { canonicalBase64DecodedSize } from "./image-content.js";
+import { processStartIdentity } from "./instance-state.mjs";
+import { inspireStateDirectory } from "./platform-paths.mjs";
 import { requestError } from "./request-error.js";
-import {
-  resolveStorageVolume,
-  type StorageVolumeIdentity,
-  type StorageVolumeOptions,
-  type StorageVolumeProof,
-  sameStorageVolume,
-  snapshotStorageVolumes,
-} from "./storage-volume.js";
 
 export interface AttachmentContextFile {
   kind: "image" | "file";
@@ -100,19 +57,16 @@ interface StoredAttachment extends UploadedAttachment {
 }
 
 interface AttachmentOwnership extends UploadedAttachment {
-  /** Absent for legacy display-derived paths; v2 bounds the physical name. */
-  version?: 2;
+  /** Legacy paths stay unchanged; v3 distinguishes temporary and possibly delivered copies. */
+  version?: 2 | 3;
+  delivery?: "unsubmitted" | "possible";
   path: string;
   ownerPid: number;
   ownerStartTime?: string;
 }
 
-interface AttachmentRetentionOptions {
-  sessionDirectories?: readonly string[];
-  trashDirectories?: readonly string[];
-  linux?: LinuxTrashOptions;
-  volume?: Omit<StorageVolumeOptions, "parent" | "linux">;
-  /** Disable the periodic sweep in isolated fixtures. */
+interface AttachmentStoreOptions {
+  /** Disable the periodic staged-upload sweep in isolated fixtures. */
   sweepIntervalMs?: number;
 }
 
@@ -185,10 +139,6 @@ function cacheFileName(id: string, displayName: string): string {
   return id + "-" + suffix;
 }
 
-function isImage(mimeType: string): boolean {
-  return /^image\/(png|jpe?g|gif|webp)$/i.test(mimeType);
-}
-
 function payloadTooLarge(message: string): Error {
   return requestError(message, 413);
 }
@@ -208,7 +158,8 @@ function assertAttachmentBudget(files: readonly Express.Multer.File[]): void {
     );
   }
   const imageBytes = files.reduce(
-    (sum, file) => sum + (isImage(file.mimetype) ? file.size : 0),
+    (sum, file) =>
+      sum + (isSupportedPromptImageMimeType(file.mimetype) ? file.size : 0),
     0,
   );
   if (imageBytes > MAX_PROMPT_IMAGE_BYTES) {
@@ -218,8 +169,31 @@ function assertAttachmentBudget(files: readonly Express.Multer.File[]): void {
   }
 }
 
-const DEFAULT_UPLOAD_PARENT = defaultAttachmentParent();
-const execFile = promisify(execFileCallback);
+const DEFAULT_UPLOAD_PARENT = join(inspireStateDirectory(), "attachments");
+let ownStart: Promise<string> | undefined;
+function ownerStart(): Promise<string> {
+  return (ownStart ??= processStartIdentity(process.pid).catch(
+    () => `pid:${process.pid}`,
+  ));
+}
+
+async function ownerAlive(value: AttachmentOwnership): Promise<boolean> {
+  if (value.ownerPid <= 0) return false;
+  try {
+    process.kill(value.ownerPid, 0);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+  if (!value.ownerStartTime || value.ownerStartTime.startsWith("pid:"))
+    return true;
+  try {
+    return (
+      (await processStartIdentity(value.ownerPid)) === value.ownerStartTime
+    );
+  } catch {
+    return true;
+  }
+}
 
 export class AttachmentStore {
   private readonly values = new Map<string, StoredAttachment>();
@@ -227,30 +201,14 @@ export class AttachmentStore {
   private cleanupParent: string | null;
   private initialization: Promise<void> | null = null;
   private readonly owned = new Map<string, AttachmentOwnership>();
-  private readonly sessionDirectories = new Set<string>();
-  private readonly observedDirectories = new Set<string>();
-  private readonly registeredDirectories = new Set<string>();
-  private readonly rootIdentities = new Map<string, RootIdentity>();
-  private readonly unverifiedDirectories = new Set<string>();
-  private readonly identityConflicts = new Set<string>();
-  private readonly registrylessRoots = new Set<string>();
-  private releaseRetentionLease: (() => Promise<void>) | null = null;
-  private readonly awaitingReference = new Map<string, Set<string | null>>();
-  private registryTail: Promise<void> = Promise.resolve();
-  private readonly pathLeases = new Map<string, number>();
-  private readonly referenceCache: AttachmentReferenceCache = new Map();
   private sweep: ReturnType<typeof setInterval> | null = null;
   private collecting: Promise<AttachmentCollection> | null = null;
   private closed = false;
-  private windowsSid: Promise<string> | null = null;
-  private directorySource:
-    | (() => Promise<readonly (string | undefined)[]>)
-    | null = null;
 
   constructor(
     root?: string,
     cleanupParent?: string | null,
-    private readonly retention: AttachmentRetentionOptions = {},
+    private readonly options: AttachmentStoreOptions = {},
   ) {
     this.root = resolve(
       root ??
@@ -274,28 +232,11 @@ export class AttachmentStore {
     this.root = await realpath(this.root);
     if (this.cleanupParent)
       this.cleanupParent = await realpath(this.cleanupParent);
-    for (const directory of this.retention.sessionDirectories ?? [
-      join(getAgentDir(), "sessions"),
-    ])
-      this.sessionDirectories.add(resolve(directory));
-    await withRetentionMaintenance(
-      dirname(this.root),
-      async () => {
-        this.releaseRetentionLease = await createRetentionLease(this.root);
-      },
-      true,
-    );
-    try {
-      await this.loadOwnership();
-    } catch (error) {
-      await this.releaseRetentionLease?.();
-      this.releaseRetentionLease = null;
-      throw error;
-    }
-    const interval = this.retention.sweepIntervalMs ?? 60_000;
+    await this.loadOwnership();
+    const interval = this.options.sweepIntervalMs ?? 60_000;
     if (interval > 0 && !this.closed) {
       this.sweep = setInterval(() => {
-        void this.collectUnreferenced();
+        void this.collectStaged();
       }, interval);
       this.sweep.unref();
     }
@@ -304,84 +245,81 @@ export class AttachmentStore {
   private async storageRoots(): Promise<string[]> {
     if (!this.cleanupParent) return [this.root];
     const entries = await readdir(this.cleanupParent, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isDirectory() && /^\d+-\d+-/u.test(entry.name))
-      .map((entry) => join(this.cleanupParent!, entry.name));
+    return [
+      ...new Set([
+        this.root,
+        ...entries
+          .filter(
+            (entry) => entry.isDirectory() && /^\d+-\d+-/u.test(entry.name),
+          )
+          .map((entry) => join(this.cleanupParent!, entry.name)),
+      ]),
+    ];
+  }
+
+  private async readOwnership(
+    root: string,
+    id: string,
+  ): Promise<AttachmentOwnership | null> {
+    try {
+      const value: AttachmentOwnership = JSON.parse(
+        await readFile(join(root, `${id}.json`), "utf8"),
+      );
+      if (
+        !value ||
+        value.id !== id ||
+        (value.kind !== "file" &&
+          !(value.version === 3 && value.kind === "image")) ||
+        typeof value.fileName !== "string" ||
+        (value.version !== undefined &&
+          value.version !== 2 &&
+          value.version !== 3) ||
+        (value.version === 3 &&
+          value.delivery !== "unsubmitted" &&
+          value.delivery !== "possible") ||
+        value.fileName !==
+          (value.version
+            ? safeName(value.fileName)
+            : legacySafeName(value.fileName)) ||
+        value.path !==
+          join(
+            root,
+            value.version
+              ? cacheFileName(value.id, value.fileName)
+              : `${value.id}-${value.fileName}`,
+          ) ||
+        !Number.isSafeInteger(value.ownerPid)
+      )
+        return null;
+      return value;
+    } catch {
+      // Unreadable/unknown metadata authorizes neither recall nor automatic deletion.
+      return null;
+    }
   }
 
   private async loadOwnership(): Promise<void> {
     for (const root of await this.storageRoots()) {
-      const entries = await readdir(root, { withFileTypes: true });
-      const hasRegistry = entries.some(
-        (entry) => entry.isFile() && entry.name === RETENTION_REGISTRY,
+      const entries = await readdir(root, { withFileTypes: true }).catch(
+        () => [],
       );
       for (const entry of entries) {
-        if (!entry.isFile()) continue;
-        if (entry.name === RETENTION_REGISTRY) {
-          const registry = parseDirectoryRegistry(
-            JSON.parse(await readFile(join(root, entry.name), "utf8")),
-          );
-          for (const directory of registry.directories) {
-            this.sessionDirectories.add(directory);
-            this.registeredDirectories.add(directory);
-            if (!registry.identities[directory]?.volume)
-              this.unverifiedDirectories.add(directory);
-          }
-          for (const [path, identity] of Object.entries(registry.identities)) {
-            const existing = this.rootIdentities.get(path);
-            if (
-              existing &&
-              (!sameRootIdentity(existing, identity) ||
-                (existing.volume &&
-                  identity.volume &&
-                  !sameStorageVolume(existing.volume, identity.volume)))
-            )
-              this.identityConflicts.add(path);
-            else this.rootIdentities.set(path, identity);
-          }
+        if (!entry.isFile() || !/^[0-9a-f-]{36}\.json$/u.test(entry.name))
           continue;
-        }
-        if (!/^[0-9a-f-]{36}\.json$/u.test(entry.name)) continue;
-        const value: AttachmentOwnership = JSON.parse(
-          await readFile(join(root, entry.name), "utf8"),
-        );
-        if (
-          value.id !== entry.name.slice(0, -5) ||
-          value.kind !== "file" ||
-          typeof value.fileName !== "string" ||
-          (value.version !== undefined && value.version !== 2) ||
-          value.fileName !==
-            (value.version === 2
-              ? safeName(value.fileName)
-              : legacySafeName(value.fileName)) ||
-          value.path !==
-            join(
-              root,
-              value.version === 2
-                ? cacheFileName(value.id, value.fileName)
-                : `${value.id}-${value.fileName}`,
-            ) ||
-          !Number.isInteger(value.ownerPid)
-        )
-          throw new Error("Invalid attachment ownership record");
-        if (
-          !hasRegistry &&
-          !(await retentionOwnerAlive(value.ownerPid, value.ownerStartTime))
-        )
-          this.registrylessRoots.add(root);
-        this.owned.set(value.path, value);
+        const value = await this.readOwnership(root, entry.name.slice(0, -5));
+        if (value) this.owned.set(value.path, value);
       }
     }
   }
 
   private async persistOwnership(value: StoredAttachment): Promise<void> {
-    if (value.kind !== "file") return;
     const ownership: AttachmentOwnership = {
       ...this.publicValue(value),
-      version: 2,
+      version: 3,
+      delivery: "unsubmitted",
       path: value.path,
       ownerPid: process.pid,
-      ownerStartTime: await retentionProcessIdentity(),
+      ownerStartTime: await ownerStart(),
     };
     await writeFile(
       join(this.root, `${value.id}.json`),
@@ -391,407 +329,32 @@ export class AttachmentStore {
     this.owned.set(value.path, ownership);
   }
 
-  discoverSessionDirectories(
-    source: () => Promise<readonly (string | undefined)[]>,
-  ): void {
-    this.directorySource = source;
-  }
-
-  /** Reading existing history needs no storage writes. GC registers observed
-   * roots before using their absence as negative reference evidence. */
-  observeSession(path: string): void {
-    const directory = dirname(resolve(path));
-    this.sessionDirectories.add(directory);
-    this.observedDirectories.add(directory);
-  }
-
-  /** Registration remembers the path before sidecar I/O. Missing/readonly
-   * identity pauses GC, not opening/sending/deleting a normal Pi session. */
-  async registerSession(path: string): Promise<void> {
-    await this.ensureRoot();
-    if (this.closed) throw new Error("Attachment storage is closed");
-    const directory = dirname(resolve(path));
-    const writing = this.registryTail.then(async () => {
-      if (this.registeredDirectories.has(directory)) return;
-      await this.writeDirectoryRegistry(
-        new Set([...this.registeredDirectories, directory]),
-        this.rootIdentities,
-      );
-      this.registeredDirectories.add(directory);
-      this.sessionDirectories.add(directory);
-      this.unverifiedDirectories.add(directory);
-      // A first registration starts a new retention namespace. Older paths,
-      // even with valid current Pi headers, require explicit operator trust.
-      try {
-        const identity = await readRootIdentity(directory, true);
-        const volume = await resolveStorageVolume(
-          directory,
-          this.volumeOptions(),
-          readRootIdentity,
-          undefined,
-          true,
-        );
-        const next = new Map(this.rootIdentities);
-        next.set(directory, {
-          directory: identity.directory,
-          id: identity.id,
-          volume: volume.identity,
-        });
-        await this.writeDirectoryRegistry(this.registeredDirectories, next);
-        this.rootIdentities.set(directory, {
-          directory: identity.directory,
-          id: identity.id,
-          volume: volume.identity,
-        });
-        this.unverifiedDirectories.delete(directory);
-      } catch {
-        // The durable unknown path remains a collection barrier.
-      }
-    });
-    this.registryTail = writing.catch(() => undefined);
-    await writing;
-  }
-
-  private async writeDirectoryRegistry(
-    directories: ReadonlySet<string>,
-    identities: ReadonlyMap<string, RootIdentity>,
-  ): Promise<void> {
-    await withRetentionMaintenance(
-      dirname(this.root),
-      () =>
-        persistDirectoryRegistry(join(this.root, RETENTION_REGISTRY), {
-          directories: [...directories],
-          identities: Object.fromEntries(
-            [...identities].filter(([path]) => directories.has(path)),
-          ),
-        }),
-      true,
-    );
-  }
-
-  private volumeOptions(): StorageVolumeOptions {
-    return {
-      parent: dirname(this.root),
-      linux: this.retention.linux,
-      ...this.retention.volume,
+  private async protectDelivery(value: StoredAttachment): Promise<void> {
+    const previous = this.owned.get(value.path)!;
+    if (previous.delivery === "possible") return;
+    const ownership: AttachmentOwnership = {
+      ...previous,
+      delivery: "possible",
     };
-  }
-
-  private async retentionReferenceRoots(): Promise<{
-    sessions: string[];
-    volumes: StorageVolumeIdentity[];
-    verify: () => Promise<void>;
-  }> {
-    await assertNoRetentionMaintenance(dirname(this.root));
-    if (this.identityConflicts.size)
-      throw new Error(
-        "Conflicting attachment retention root identities; collection is deferred",
-      );
-    if (this.registrylessRoots.size)
-      throw new Error(
-        "Retained uploads have no session-directory registry; collection is deferred",
-      );
-    const sessions: string[] = [];
-    const observations: Array<{ path: string; snapshot: RootSnapshot }> = [];
-    for (const path of this.sessionDirectories) {
-      const expected = this.rootIdentities.get(path);
-      if (this.registeredDirectories.has(path)) {
-        if (!expected?.volume || this.unverifiedDirectories.has(path))
-          throw new Error(
-            "Unverified session retention storage; run inspire uploads trust-session-directory " +
-              JSON.stringify(path) +
-              " to inspect migration",
-          );
-        let current: RootSnapshot;
-        try {
-          current = await readRootIdentity(path);
-        } catch (error) {
-          throw new Error(
-            "Session retention marker is unavailable or invalid; collection is deferred: " +
-              path,
-            { cause: error },
-          );
-        }
-        if (!sameRootIdentity(expected!, current))
-          throw new Error(
-            "Session retention namespace changed; collection is deferred: " +
-              path,
-          );
-        observations.push({ path, snapshot: current });
-        sessions.push(path);
-      } else {
-        const current = await stat(path).catch(
-          (error: NodeJS.ErrnoException) => {
-            if (error.code === "ENOENT") return null;
-            throw error;
-          },
-        );
-        if (current && !current.isDirectory())
-          throw new Error("Pi session storage is not a directory");
-        if (current) sessions.push(path);
-      }
-    }
-    const native = await snapshotStorageVolumes(sessions, this.volumeOptions());
-    const volumes: StorageVolumeProof[] = [];
-    for (const { path } of observations)
-      volumes.push(
-        await resolveStorageVolume(
-          path,
-          native.options,
-          readRootIdentity,
-          this.rootIdentities.get(path)!.volume,
-        ),
-      );
-    const platform = native.options.platform ?? process.platform;
-    if (platform === "win32" || platform === "darwin")
-      for (const path of sessions)
-        if (!this.registeredDirectories.has(path))
-          volumes.push(
-            await resolveStorageVolume(path, native.options, readRootIdentity),
-          );
-    return {
-      sessions,
-      volumes: volumes.map((volume) => volume.identity),
-      verify: async () => {
-        for (const { path, snapshot } of observations)
-          await verifyRootSnapshot(path, snapshot);
-        for (const volume of volumes) await volume.verify();
-        await native.verify();
-        await assertNoRetentionMaintenance(dirname(this.root));
-      },
-    };
-  }
-
-  /** Unregistered catalog/default paths can retain references, but mere
-   * existence never grants durable negative authority. Remember actual
-   * referenced JSONL directories before a later sweep can release uploads. */
-  private async rememberDiscoveredReferences(
-    sessions: ReadonlyMap<string, ReadonlySet<string>>,
-    sources: readonly string[],
-  ): Promise<boolean> {
-    let discovered = false;
-    for (const [file, references] of sessions) {
-      if (!references.size) continue;
-      let source: { directory: string; within: string } | undefined;
-      for (const directory of sources) {
-        const within = await filesystemRelativePath(directory, file);
-        if (within !== null) {
-          source = { directory, within };
-          break;
-        }
-      }
-      if (!source) {
-        // A positive native-Trash reference can also reveal a previously
-        // unregistered storage volume. Adopt its long-lived source root, never
-        // the temporary Trash/recovery folder. Device values only associate
-        // current paths; the new durable proof remains UUID/anchor + marker.
-        const payload = await stat(file);
-        const matches: string[] = [];
-        for (const directory of sources)
-          if ((await stat(directory)).dev === payload.dev)
-            matches.push(directory);
-        if (
-          matches.some((directory) => this.registeredDirectories.has(directory))
-        )
-          continue;
-        if (matches.length) {
-          await this.registerSession(
-            join(matches[0]!, ".retention-reference.jsonl"),
-          );
-          discovered = true;
-        } else {
-          // Do not forget an observed but unidentified reference namespace.
-          // Leave candidate long-lived roots explicitly unknown for repair.
-          for (const directory of sources) {
-            if (this.registeredDirectories.has(directory)) continue;
-            const writing = this.registryTail.then(async () => {
-              await this.writeDirectoryRegistry(
-                new Set([...this.registeredDirectories, directory]),
-                this.rootIdentities,
-              );
-              this.registeredDirectories.add(directory);
-              this.sessionDirectories.add(directory);
-              this.unverifiedDirectories.add(directory);
-            });
-            this.registryTail = writing.catch(() => undefined);
-            await writing;
-          }
-          throw new Error(
-            "Unidentified retained Trash reference volume; collection is deferred",
-          );
-        }
-        continue;
-      }
-      let covered = false;
-      for (const directory of this.registeredDirectories) {
-        const path = await filesystemRelativePath(directory, file);
-        if (path !== null && path !== "") {
-          covered = true;
-          break;
-        }
-      }
-      if (covered) continue;
-      const pieces = source.within.split(/[\\/]/u);
-      const quarantine = pieces.findIndex((part) =>
-        part.startsWith(".inspire-delete-"),
-      );
-      const registration =
-        quarantine < 0
-          ? file
-          : join(
-              source.directory,
-              ...pieces.slice(0, quarantine),
-              ".retention-reference.jsonl",
-            );
-      await this.registerSession(registration);
-      discovered = true;
-    }
-    return discovered;
-  }
-
-  private async linuxReferenceRoots(sessions: readonly string[]): Promise<{
-    trash: string[];
-    verify: () => Promise<void>;
-  }> {
-    const mounts = await linuxMounts(this.retention.linux);
-    const observations: Array<{
-      path: string;
-      current: Awaited<ReturnType<typeof linuxDirectoryAuthority>>;
-    }> = [];
-    for (const path of sessions)
-      observations.push({
-        path,
-        current: await linuxDirectoryAuthority(
-          path,
-          mounts,
-          this.retention.linux,
-        ),
+    const metadata = join(this.root, `${value.id}.json`);
+    const temporary = `${metadata}.${randomUUID()}`;
+    try {
+      await writeFile(temporary, JSON.stringify(ownership), {
+        mode: 0o600,
+        flag: "wx",
       });
-    return {
-      trash: this.retention.trashDirectories
-        ? [...this.retention.trashDirectories]
-        : await linuxSessionTrashDirectories(
-            observations.map(({ current }) => current.authority),
-            this.retention.linux,
-          ),
-      verify: async () => {
-        const after = await linuxMounts(this.retention.linux);
-        for (const { path, current } of observations) {
-          const actual = await linuxDirectoryAuthority(
-            path,
-            after,
-            this.retention.linux,
-          );
-          if (
-            current.mount.id !== actual.mount.id ||
-            current.authority.directory !== actual.authority.directory ||
-            !sameLinuxMount(current.authority, actual.authority)
-          )
-            throw new Error(
-              "A Linux session mount changed during attachment reclamation",
-            );
-        }
-      },
-    };
-  }
-
-  /** A registered but offline Windows root cannot supply negative reference
-   * evidence. Resolve aliases before choosing the volume's Recycle Bin, and
-   * recheck source identity after the sweep. Unused missing roots stay optional. */
-  private async windowsReferenceRoots(
-    sessions: readonly string[],
-    volumes: readonly StorageVolumeIdentity[],
-  ): Promise<{
-    sessions: string[];
-    volumes: string[];
-    verify: () => Promise<void>;
-  }> {
-    const observations: Array<{
-      path: string;
-      physical: string;
-      dev: bigint;
-      ino: bigint;
-    }> = [];
-    for (const path of sessions) {
-      let physical: string;
-      try {
-        physical = await realpath(path);
-      } catch (error) {
-        if (
-          (error as NodeJS.ErrnoException).code === "ENOENT" &&
-          !this.registeredDirectories.has(path)
-        )
-          continue;
-        throw error;
-      }
-      const version = await stat(physical, { bigint: true });
-      if (!version.isDirectory())
-        throw new Error("Pi session storage is not a directory");
-      observations.push({ path, physical, dev: version.dev, ino: version.ino });
-    }
-    return {
-      sessions: observations.map(({ path }) => path),
-      volumes: [
-        ...new Set(
-          volumes.some((volume) => volume.kind === "windows-guid")
-            ? volumes
-                .filter((volume) => volume.kind === "windows-guid")
-                .map((volume) => volume.directory)
-            : observations.map(({ physical }) => parse(physical).root),
-        ),
-      ],
-      verify: async () => {
-        for (const expected of observations) {
-          const physical = await realpath(expected.path);
-          const current = await stat(physical, { bigint: true });
-          if (
-            !current.isDirectory() ||
-            physical !== expected.physical ||
-            current.dev !== expected.dev ||
-            current.ino !== expected.ino
-          )
-            throw new Error(
-              "Windows session storage changed during attachment reclamation",
-            );
-        }
-      },
-    };
-  }
-
-  referencedPromptFiles(text: string): string[] {
-    return [...this.owned.keys()].filter((path) =>
-      containsAttachmentPath(text, path),
-    );
-  }
-
-  /** History references can outlive their old session while a resend owns them. */
-  leasePromptFiles(paths: readonly string[]): () => void {
-    for (const path of paths)
-      this.pathLeases.set(path, (this.pathLeases.get(path) ?? 0) + 1);
-    return () => {
-      for (const path of paths) {
-        const count = (this.pathLeases.get(path) ?? 1) - 1;
-        if (count === 0) this.pathLeases.delete(path);
-        else this.pathLeases.set(path, count);
-      }
-    };
-  }
-
-  retainPromptFiles(
-    paths: readonly string[],
-    sessionPath?: string | null,
-  ): void {
-    for (const path of paths) {
-      if (!this.owned.has(path)) continue;
-      const sessions =
-        this.awaitingReference.get(path) ?? new Set<string | null>();
-      sessions.add(sessionPath ? resolve(sessionPath) : null);
-      this.awaitingReference.set(path, sessions);
+      await rename(temporary, metadata);
+      this.owned.set(value.path, ownership);
+    } finally {
+      await rm(temporary, { force: true });
     }
   }
 
-  /** Negative reference evidence requires a complete session/Trash sweep. */
-  async collectUnreferenced(): Promise<AttachmentCollection> {
+  /** Only explicitly unsubmitted copies of retired owners are collectible.
+   * Legacy and possibly delivered copies are durable assets, independent of
+   * session directories, forks, backup locations and desktop Trash.
+   */
+  async collectStaged(): Promise<AttachmentCollection> {
     await this.ensureRoot();
     if (this.collecting) return this.collecting;
     const collection = this.collectInside().catch((error) => ({
@@ -806,140 +369,52 @@ export class AttachmentStore {
     }
   }
 
-  private currentWindowsSid(): Promise<string> {
-    return (this.windowsSid ??= execFile(
-      windowsPowerShellCommand(),
-      [
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
-      ],
-      { encoding: "utf8", timeout: 10_000, maxBuffer: 8192, windowsHide: true },
-    )
-      .then(({ stdout }) => {
-        const sid = stdout.trim();
-        if (!/^S-\d+(?:-\d+)+$/u.test(sid))
-          throw new Error("Unable to identify current-user Recycle Bin");
-        return sid;
-      })
-      .catch((error) => {
-        this.windowsSid = null;
-        throw error;
-      }));
-  }
-
   private async collectInside(): Promise<AttachmentCollection> {
     await this.loadOwnership();
-    if (this.owned.size === 0) return { reclaimed: [] };
-    const configured = this.retention.sessionDirectories
-      ? []
-      : [await resolvePiSessionDirectory(process.cwd())];
-    for (const directory of [
-      ...configured,
-      ...((await this.directorySource?.()) ?? []),
-    ]) {
-      this.sessionDirectories.add(
-        resolve(directory ?? join(getAgentDir(), "sessions")),
-      );
-    }
-    for (const directory of this.observedDirectories) {
-      await this.registerSession(join(directory, ".retention-reference.jsonl"));
-      this.observedDirectories.delete(directory);
-    }
-    const roots = await this.retentionReferenceRoots();
-    const sources = roots.sessions;
-    // Explicit volume adapters select retention discovery, not the Host's
-    // file permissions, process identity or maintenance-lock implementation.
-    const platform = this.volumeOptions().platform ?? process.platform;
-    const linux =
-      platform === "linux"
-        ? await this.linuxReferenceRoots(sources)
-        : undefined;
-    const windows =
-      platform === "win32"
-        ? await this.windowsReferenceRoots(sources, roots.volumes)
-        : undefined;
-    const trash = linux?.trash ?? [...(this.retention.trashDirectories ?? [])];
-    if (platform === "darwin" && !this.retention.trashDirectories) {
-      trash.push(...(await macosSessionTrashDirectories(sources)));
-    }
-    if (platform === "win32" && !this.retention.trashDirectories) {
-      const sid = await this.currentWindowsSid();
-      for (const volume of windows!.volumes)
-        trash.push(join(volume, "$Recycle.Bin", sid));
-    }
-    const candidates = [...this.owned.entries()];
-    const references = await sessionAttachmentReferences(
-      new Set(candidates.map(([path]) => path)),
-      sources,
-      trash,
-      this.referenceCache,
-    );
-    await linux?.verify();
-    await windows?.verify();
-    await roots.verify();
-    if (await this.rememberDiscoveredReferences(references.sessions, sources))
-      return { reclaimed: [] };
     const reclaimed: string[] = [];
-    const liveOwners = new Map<string, Promise<boolean>>();
-    for (const [path, ownership] of candidates) {
-      const waiting = this.awaitingReference.get(path);
-      if (waiting) {
-        for (const session of waiting) {
-          if (session && references.sessions.get(session)?.has(path))
-            waiting.delete(session);
-        }
-        if (waiting.size === 0) this.awaitingReference.delete(path);
-      }
-      if (references.paths.has(path)) continue;
-      const local = this.values.get(ownership.id);
+    for (const value of this.owned.values()) {
       if (
-        local?.state === "staged" ||
-        local?.state === "in-flight" ||
-        this.awaitingReference.has(path) ||
-        this.pathLeases.has(path)
+        value.version !== 3 ||
+        value.delivery !== "unsubmitted" ||
+        this.values.has(value.id) ||
+        (await ownerAlive(value))
       )
         continue;
-      // Another live Host's staging/pending input is not this sweep's property.
-      if (dirname(path) !== this.root) {
-        const key = ownership.ownerPid + ":" + ownership.ownerStartTime;
-        let live = liveOwners.get(key);
-        if (!live) {
-          live = retentionOwnerAlive(
-            ownership.ownerPid,
-            ownership.ownerStartTime,
-          );
-          liveOwners.set(key, live);
-        }
-        if (await live) continue;
-      }
-      const stats = await lstat(path).catch((error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT") return null;
-        throw error;
-      });
-      if (stats && (!stats.isFile() || stats.isSymbolicLink()))
-        throw new Error(`Owned upload was replaced: ${path}`);
-      const current = this.values.get(ownership.id);
+      // The owner may have marked a delivery possible before exiting. Re-read
+      // after retirement; a stale scan must not erase an uncertain delivery.
+      const latest = await this.readOwnership(dirname(value.path), value.id);
       if (
-        current?.state === "staged" ||
-        current?.state === "in-flight" ||
-        this.awaitingReference.has(path) ||
-        this.pathLeases.has(path)
+        !latest ||
+        latest.version !== 3 ||
+        latest.delivery !== "unsubmitted" ||
+        latest.ownerPid !== value.ownerPid ||
+        latest.ownerStartTime !== value.ownerStartTime
       )
         continue;
-      await rm(path, { force: true });
-      await rm(join(dirname(path), `${ownership.id}.json`), { force: true });
-      this.owned.delete(path);
-      this.values.delete(ownership.id);
-      reclaimed.push(path);
+      const details = await lstat(value.path).catch(
+        (error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        },
+      );
+      if (details && !details.isFile()) continue;
+      await rm(value.path, { force: true });
+      await rm(join(dirname(value.path), `${value.id}.json`), { force: true });
+      this.owned.delete(value.path);
+      reclaimed.push(value.path);
     }
     return { reclaimed };
   }
 
   private ensureRoot(): Promise<void> {
-    return (this.initialization ??= this.initializeRoot());
+    if (!this.initialization) {
+      const initializing = this.initializeRoot().catch((error) => {
+        if (this.initialization === initializing) this.initialization = null;
+        throw error;
+      });
+      this.initialization = initializing;
+    }
+    return this.initialization;
   }
 
   async uploadDirectory(): Promise<string> {
@@ -1051,7 +526,7 @@ export class AttachmentStore {
       fileName,
       mimeType: file.mimetype || "application/octet-stream",
       size: file.size,
-      kind: isImage(file.mimetype) ? "image" : "file",
+      kind: isSupportedPromptImageMimeType(file.mimetype) ? "image" : "file",
       path,
       state: "staged",
     };
@@ -1157,6 +632,9 @@ export class AttachmentStore {
         }
         images.push({ type: "image", data, mimeType: item.mimeType });
       }
+      // Persist the handoff before anything can reach Pi. A crash or lost receipt
+      // must never turn a possibly delivered file back into collectible staging.
+      for (const file of files) await this.protectDelivery(file);
       return { files, images };
     } catch (error) {
       // All-or-nothing: a rejected resolve holds no leases.
@@ -1249,7 +727,7 @@ export class AttachmentStore {
         const value = this.values.get(id);
         if (value?.kind !== "image" || value.state !== "pending") return;
         this.values.delete(id);
-        await rm(value.path, { force: true });
+        await this.removeStoredFile(value);
       }),
     );
   }
@@ -1352,17 +830,19 @@ export class AttachmentStore {
 
   private async removeStoredFile(value: StoredAttachment): Promise<void> {
     await rm(value.path, { force: true });
-    if (value.kind === "file") {
-      await rm(join(this.root, `${value.id}.json`), { force: true });
-      this.owned.delete(value.path);
-    }
+    await rm(join(this.root, `${value.id}.json`), { force: true });
+    this.owned.delete(value.path);
   }
 
   private promptFile(path: string): AttachmentOwnership | null {
     const candidate = resolve(path);
     const value = this.owned.get(candidate);
     const local = value ? this.values.get(value.id) : null;
-    return value && local?.state !== "staged" ? value : null;
+    return value?.kind === "file" &&
+      local?.state !== "staged" &&
+      (value.version !== 3 || value.delivery === "possible")
+      ? value
+      : null;
   }
 
   /** Durable ownership metadata, not persisted path text, authorizes recall. */
@@ -1387,20 +867,15 @@ export class AttachmentStore {
 
   /** Reclaim attachments a delivered prompt consumed. Image bytes were
    * inlined into the request, so their cache files can go; ordinary files
-   * are referenced by host path and retained until their last session/Trash
-   * reference disappears. Pending Pi input stays protected before persistence. */
-  async releaseConsumed(
-    ids: string[],
-    sessionPath?: string | null,
-    awaitReference = true,
-  ): Promise<void> {
+   * are durable assets referenced by host path. Unknown delivery remains protected. */
+  async releaseConsumed(ids: string[]): Promise<void> {
     await Promise.all(
       ids.map(async (id) => {
         const value = this.values.get(id);
         if (!value) return;
         if (value.kind !== "image") {
           value.state = "consumed";
-          if (awaitReference) this.retainPromptFiles([value.path], sessionPath);
+          await this.protectDelivery(value);
           return;
         }
         // Worker artifact ownership outlives queue acceptance. Runtime excludes
@@ -1409,7 +884,7 @@ export class AttachmentStore {
         this.values.delete(id);
         // Best-effort: the prompt is already delivered, so a failed cleanup
         // must not turn the response into an error the client would retry.
-        await rm(value.path, { force: true }).catch(() => undefined);
+        await this.removeStoredFile(value).catch(() => undefined);
       }),
     );
   }
@@ -1423,14 +898,6 @@ export class AttachmentStore {
     await this.ensureRoot();
   }
 
-  async sessionDeleted(path: string): Promise<AttachmentCollection> {
-    for (const [attachment, sessions] of this.awaitingReference) {
-      sessions.delete(resolve(path));
-      if (sessions.size === 0) this.awaitingReference.delete(attachment);
-    }
-    return this.collectUnreferenced();
-  }
-
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -1438,28 +905,12 @@ export class AttachmentStore {
     if (!this.initialization) return;
     await this.ensureRoot();
     await this.collecting;
-    await this.registryTail;
     for (const value of this.values.values()) {
-      if (value.state === "staged" || value.kind === "image")
-        await this.removeStoredFile(value);
+      if (value.state === "staged") await this.removeStoredFile(value);
     }
-    // Runtime and HTTP drain precede close: remaining in-flight uncertainty
-    // stays on disk; accepted references are reconstructed on the next Host.
-    for (const ownership of this.owned.values()) {
-      if (dirname(ownership.path) !== this.root) continue;
-      ownership.ownerPid = 0;
-      const metadata = join(this.root, `${ownership.id}.json`);
-      const temporary = `${metadata}.${randomUUID()}`;
-      await writeFile(temporary, JSON.stringify(ownership), {
-        mode: 0o600,
-        flag: "wx",
-      });
-      await rename(temporary, metadata);
-    }
+    // Runtime and HTTP drain precede close. Remaining uncertain deliveries
+    // retain their on-disk protection; no external reference scan is needed.
     this.values.clear();
-    this.awaitingReference.clear();
-    await this.releaseRetentionLease?.();
-    this.releaseRetentionLease = null;
   }
 }
 

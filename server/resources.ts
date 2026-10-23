@@ -24,11 +24,11 @@ import {
   type SessionResourceReference,
   stripResourceLocation,
 } from "../shared/resource-references.js";
+import { isSupportedPromptImageMimeType } from "../shared/image-types.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
 import {
   canonicalBase64DecodedSize,
   decodeCanonicalBase64,
-  isSupportedPromptImageMimeType,
 } from "./image-content.js";
 import { resolveUserPath } from "./paths.js";
 import {

@@ -11,6 +11,7 @@ import { RuntimeExternalSessions } from "../../server/runtime-external-sessions.
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
 import { createRuntimeSlot } from "../../server/runtime-slot.js";
 import { SessionProjection } from "../../server/session-projection.js";
+import { parseAttachmentContext } from "../../shared/attachment-context.js";
 import {
   catalog,
   deferredSignal,
@@ -406,7 +407,7 @@ describe("continue an externally owned Pi", () => {
       const text = vi.mocked(f.native.prompt).mock.calls[0]![0];
       expect(text).toContain("Read this");
       expect(text).toContain("Referenced files available");
-      const paths = store.referencedPromptFiles(text);
+      const paths = parseAttachmentContext(text).references;
       expect(paths).toHaveLength(1);
       expect(await readFile(paths[0]!, "utf8")).toBe("notes");
     } finally {

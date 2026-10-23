@@ -342,10 +342,7 @@ async function setup(
     listByCwds: async () => [],
     invalidate() {},
   };
-  const attachments = workerAttachmentStore(
-    join(directory, "uploads"),
-    directory,
-  );
+  const attachments = workerAttachmentStore(join(directory, "uploads"));
   stores.push(attachments);
   let worker!: BranchRpc;
   const workers: BranchRpc[] = [];

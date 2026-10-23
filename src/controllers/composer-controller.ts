@@ -6,6 +6,10 @@ import {
   type PromptDeliveryRequest,
   type UploadedAttachment,
 } from "../../shared/contracts";
+import {
+  isImageMimeType,
+  isSupportedPromptImageMimeType,
+} from "../../shared/image-types";
 import { type Api, ApiError, ApiTransportError } from "../api";
 import { selectAttachmentFiles } from "../attachment-selection";
 import {
@@ -31,6 +35,7 @@ export interface PendingAttachment {
   fileName: string;
   mimeType: string;
   size: number;
+  /** Delivery kind, not preview capability. Ordinary image files may have a preview URL. */
   kind: "image" | "file";
   previewUrl?: string;
   previewLoading?: boolean;
@@ -859,13 +864,13 @@ export class ComposerController {
     if (accepted.length === 0) return;
 
     const pending: PendingAttachment[] = accepted.map((file) => {
-      const isImage = /^image\//i.test(file.type);
+      const isImage = isImageMimeType(file.type);
       return {
         localId: crypto.randomUUID(),
         fileName: file.name || "pasted-image",
         mimeType: file.type || "application/octet-stream",
         size: file.size,
-        kind: isImage ? "image" : "file",
+        kind: isSupportedPromptImageMimeType(file.type) ? "image" : "file",
         previewUrl: isImage ? URL.createObjectURL(file) : undefined,
         status: "uploading",
       };
