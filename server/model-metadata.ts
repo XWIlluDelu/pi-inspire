@@ -1,12 +1,14 @@
 import { fork } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { PiCommand } from "../shared/commands.js";
 import type { ModelOption, NewSessionDefaults } from "../shared/contracts.js";
 import { getAgentDir, piInstallation } from "./pi-runtime.js";
 import { isolatedProcessOptions, signalProcessTree } from "./process-tree.mjs";
 
 export interface ModelMetadata {
   models: ModelOption[];
+  commands?: PiCommand[];
   defaults: NewSessionDefaults;
   /** Registered definitions, including routers whose physical provider lacks auth. */
   virtualModels: ModelOption[];

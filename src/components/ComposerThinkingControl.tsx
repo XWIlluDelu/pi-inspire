@@ -1,7 +1,11 @@
 import type { ComponentProps } from "react";
+import type { PiCommand } from "../../shared/commands";
 import type { ThinkingLevel } from "../../shared/contracts";
 import { thinkingLevelLabel, thinkingLevelOptions } from "../model-options";
-import { usePresentationAdapters } from "../presentation-adapters";
+import {
+  availableStatusControls,
+  usePresentationAdapters,
+} from "../presentation-adapters";
 import { shallowEqual, useAppState } from "../store";
 import { Dropdown } from "./Dropdown";
 import { StatusChoice, StatusChoiceIndicator } from "./StatusChoice";
@@ -27,30 +31,34 @@ export function ThinkingSelector({
   );
 }
 
-export function ComposerThinkingControl({
+type ThinkingControlProps = ComponentProps<typeof ThinkingSelector> & {
+  thinkingSupported: boolean;
+};
+
+type ControlScope = {
+  commands: readonly PiCommand[];
+} & (
+  | {
+      kind: "session";
+      sessionId: string | null;
+      generation: number;
+      statuses: Record<string, string>;
+    }
+  | {
+      kind: "new-session";
+      values: Record<string, string>;
+      onSelect: (id: string, value: string) => void;
+    }
+);
+
+/** Lifecycle supplies state and execution; capability admission and presentation stay shared. */
+export function ThinkingControl({
+  scope,
   thinkingSupported,
   ...props
-}: ComponentProps<typeof ThinkingSelector> & { thinkingSupported: boolean }) {
+}: ThinkingControlProps & { scope: ControlScope }) {
   const { configuration } = usePresentationAdapters();
-  const state = useAppState(
-    (source) => ({
-      statuses: source.statuses,
-      commands: source.commands,
-      sessionId: source.sessionId,
-      generation: source.transportGeneration,
-    }),
-    shallowEqual,
-  );
-  const controls =
-    configuration.controls?.filter(
-      (control) =>
-        control.slot === "thinking" &&
-        state.commands.some(
-          (command) =>
-            command.source === "extension" &&
-            "/" + command.name === control.command,
-        ),
-    ) ?? [];
+  const controls = availableStatusControls(configuration, scope.commands);
   if (!controls.length)
     return (
       <ThinkingSelector
@@ -79,19 +87,49 @@ export function ComposerThinkingControl({
         <StatusChoiceIndicator
           key={control.id}
           control={control}
-          status={state.statuses[control.state.key]}
+          {...(scope.kind === "session"
+            ? { status: scope.statuses[control.state.key] }
+            : { draftValue: scope.values[control.id] ?? null })}
         />
       ))}
       header={controls.map((control) => (
         <StatusChoice
-          key={state.sessionId + ":" + state.generation + ":" + control.id}
+          key={
+            scope.kind === "session"
+              ? scope.sessionId + ":" + scope.generation + ":" + control.id
+              : control.id
+          }
           control={control}
-          status={state.statuses[control.state.key]}
           disabled={Boolean(props.disabled)}
-          owner={state.sessionId}
-          generation={state.generation}
+          {...(scope.kind === "session"
+            ? {
+                status: scope.statuses[control.state.key],
+                owner: scope.sessionId,
+                generation: scope.generation,
+              }
+            : {
+                draft: {
+                  value: scope.values[control.id] ?? null,
+                  onSelect: (value: string) =>
+                    scope.onSelect(control.id, value),
+                },
+              })}
         />
       ))}
     />
   );
+}
+
+export function ComposerThinkingControl(props: ThinkingControlProps) {
+  const scope = useAppState(
+    (source) => ({
+      kind: "session" as const,
+      statuses: source.statuses,
+      commands: source.commands,
+      sessionId: source.sessionId,
+      generation: source.transportGeneration,
+    }),
+    shallowEqual,
+  );
+  return <ThinkingControl {...props} scope={scope} />;
 }

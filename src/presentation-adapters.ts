@@ -1,10 +1,12 @@
 import { useSyncExternalStore } from "react";
+import type { PiCommand } from "../shared/commands";
 import {
   emptyToolPresentationConfiguration,
   type PresentationAdapterInfo,
   type StatusControlDeclaration,
   type ToolPresentationConfiguration,
 } from "../shared/tool-presentation-config";
+import { resolveCommandInventory } from "./composer-completion";
 import type { ChatMessage } from "./events";
 
 let current = {
@@ -33,6 +35,23 @@ export function configurePresentationAdapters(
 ) {
   current = { configuration, adapters };
   for (const listener of listeners) listener();
+}
+
+/** Every entry point admits the same declared controls from its own command inventory. */
+export function availableStatusControls(
+  configuration: ToolPresentationConfiguration,
+  commands: readonly PiCommand[],
+): StatusControlDeclaration[] {
+  const inventory = resolveCommandInventory(commands);
+  return (
+    configuration.controls?.filter((control) =>
+      inventory.some(
+        (command) =>
+          command.source === "extension" &&
+          "/" + command.name === control.command,
+      ),
+    ) ?? []
+  );
 }
 
 function field(value: unknown, path: string): unknown {

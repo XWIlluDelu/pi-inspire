@@ -25,6 +25,21 @@ afterEach(async () => {
 it("discovers native global/trusted-project registrations and resolves defaults over the same target without a session or model request", async () => {
   const f = await modelWorkflowFixture();
   roots.push(f.root);
+  for (const [base, scope] of [
+    [f.agent, "global"],
+    [join(f.trusted, ".pi"), "project"],
+  ] as const) {
+    await mkdir(join(base, "prompts"), { recursive: true });
+    await writeFile(
+      join(base, "prompts", `${scope}-review.md`),
+      `---\ndescription: ${scope} review prompt\n---\nReview $@`,
+    );
+    await mkdir(join(base, "skills", `${scope}-review`), { recursive: true });
+    await writeFile(
+      join(base, "skills", `${scope}-review`, "SKILL.md"),
+      `---\nname: ${scope}-review\ndescription: ${scope} review skill\n---\nReview the requested changes.`,
+    );
+  }
   const catalog = new ModelMetadataCatalog();
   const attachments = new AttachmentStore(join(f.root, "uploads"));
   const available = vi.fn(
@@ -78,6 +93,32 @@ it("discovers native global/trusted-project registrations and resolves defaults 
     expect(
       untrusted.models.some((model) => model.provider.startsWith("project-")),
     ).toBe(false);
+    expect(trusted.commands?.map((command) => command.name)).toEqual(
+      expect.arrayContaining([
+        "global-mode",
+        "project-mode",
+        "shared-mode:1",
+        "shared-mode:2",
+      ]),
+    );
+    expect(untrusted.commands?.map((command) => command.name)).toContain(
+      "global-mode",
+    );
+    for (const scope of ["global", "project"]) {
+      expect(trusted.commands).toContainEqual({
+        name: `${scope}-review`,
+        description: `${scope} review prompt`,
+        source: "prompt",
+      });
+      expect(trusted.commands).toContainEqual({
+        name: `skill:${scope}-review`,
+        description: `${scope} review skill`,
+        source: "skill",
+      });
+    }
+    expect(
+      untrusted.commands?.some((command) => command.name === "project-mode"),
+    ).toBe(false);
     expect(trusted.defaults).toMatchObject({
       cwd: f.trusted,
       model: { provider: "project-router", id: "auto", virtual: true },
@@ -113,6 +154,11 @@ it("discovers native global/trusted-project registrations and resolves defaults 
       .auth("fixture", { type: "bearer" })
       .expect(200);
     expect(models.body.defaults.model.provider).toBe("project-router");
+    expect(models.body.commands).toContainEqual({
+      name: "project-mode",
+      description: "project response mode",
+      source: "extension",
+    });
     expect(models.body.virtualModels).toBeUndefined();
     const settings = await endpoint
       .get("/api/model-settings")

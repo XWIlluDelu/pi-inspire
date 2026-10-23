@@ -57,7 +57,12 @@ In addition to cards, modules may declare:
   `supported` and `active` field paths), and two to eight `options`. Each option has a safe command
   `value`, compact `label`, optional full `title`, `description`, `confirmation`, and
   `indicator` (`bolt` or `double-bolt`). Controls appear only when the corresponding extension
-  command is available. Pi status confirms changes; a command receipt does not.
+  command is available, using the same native-name precedence as command completion.
+  The same choices appear before session creation when the target directory discovers the command.
+  Untouched choices keep Pi defaults; an explicit choice stays local until creation, then the native
+  command must be confirmed before the first input is delivered. Failure preserves that input and its
+  attachments in the new session. Live changes use the same confirmation boundary: Pi status confirms
+  changes; a command receipt does not.
 - `checkpoints`: exact compaction `source`, `title`, `tokensLabel` and `tokensDescription`.
   Optional `summaryPrefix` elides a redundant displayed prefix while retaining source Copy.
   `legacySummaryPrefix` matches cached source-less records at a word/colon boundary.
