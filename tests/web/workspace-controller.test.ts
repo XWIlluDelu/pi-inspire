@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type Api, ApiError } from "../../src/api";
 import {
   emptyWorkspaceBrowserState,
@@ -42,6 +42,8 @@ function createHarness() {
     },
   };
 }
+
+afterEach(() => vi.useRealTimers());
 
 describe("WorkspaceController", () => {
   it("retires directory and search observations when hidden visibility changes", async () => {
@@ -262,6 +264,166 @@ describe("WorkspaceController", () => {
       "",
       "src",
     ]);
+  });
+
+  it("retains the tree and search while refreshing through transient failures", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    harness.patch({
+      workspaceLevels: {
+        "": [{ name: "src", type: "dir" }],
+        src: [{ name: "old.ts", type: "file" }],
+      },
+      workspaceExpandedDirs: ["src"],
+      workspaceQuery: "file",
+      workspaceMatches: [{ name: "old.ts", path: "src/old.ts" }],
+    });
+    harness.listFiles
+      .mockRejectedValueOnce(new ApiError(503, "temporarily unavailable"))
+      .mockResolvedValueOnce({ entries: [{ name: "src", type: "dir" }] })
+      .mockResolvedValueOnce({ entries: [{ name: "new.ts", type: "file" }] });
+    harness.searchFiles
+      .mockRejectedValueOnce(new ApiError(503, "temporarily unavailable"))
+      .mockResolvedValue({ files: [{ name: "new.ts", path: "src/new.ts" }] });
+
+    const refreshing = harness.controller.refresh();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.state()).toMatchObject({
+      workspaceLevels: {
+        "": [{ name: "src", type: "dir" }],
+        src: [{ name: "old.ts", type: "file" }],
+      },
+      workspaceMatches: [{ name: "old.ts", path: "src/old.ts" }],
+      workspaceDirectoryErrors: {},
+      workspaceSearchError: null,
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(harness.state()).toMatchObject({
+      workspaceLevels: { src: [{ name: "new.ts", type: "file" }] },
+      workspaceMatches: [{ name: "old.ts", path: "src/old.ts" }],
+      workspaceSearchLoading: true,
+      workspaceSearchError: null,
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await refreshing;
+    expect(harness.state()).toMatchObject({
+      workspaceMatches: [{ name: "new.ts", path: "src/new.ts" }],
+      workspaceLoadingDirs: [],
+      workspaceSearchLoading: false,
+      workspaceDirectoryErrors: {},
+      workspaceSearchError: null,
+    });
+    expect(harness.listFiles).toHaveBeenCalledTimes(3);
+    expect(harness.searchFiles).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds recovery and resumes an exhausted cached search when returning", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    harness.patch({
+      workspaceQuery: "file",
+      workspaceMatches: [{ name: "old.ts", path: "old.ts" }],
+    });
+    harness.searchFiles.mockRejectedValue(
+      new ApiError(503, "still unavailable"),
+    );
+    harness.controller.setQuery("file");
+    for (const delay of [0, 1_000, 3_000, 10_000])
+      await vi.advanceTimersByTimeAsync(delay);
+    expect(harness.searchFiles).toHaveBeenCalledTimes(4);
+    expect(harness.state()).toMatchObject({
+      workspaceMatches: [{ name: "old.ts", path: "old.ts" }],
+      workspaceSearchLoading: false,
+      workspaceSearchError: "still unavailable",
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(harness.searchFiles).toHaveBeenCalledTimes(4);
+
+    const other = harness.controller.changeOwner("/other");
+    harness.patch({ sessionId: "s2", cwd: "/other", ...other });
+    const returning = harness.controller.changeOwner("/project");
+    harness.patch({ sessionId: "s1", cwd: "/project", ...returning });
+    harness.searchFiles.mockResolvedValue({
+      files: [{ name: "new.ts", path: "new.ts" }],
+    });
+    harness.controller.resumeSearch();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.state()).toMatchObject({
+      workspaceMatches: [{ name: "new.ts", path: "new.ts" }],
+      workspaceSearchError: null,
+    });
+  });
+
+  it("retires queued retries on workspace, visibility, query and transport replacement", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    harness.listFiles.mockRejectedValue(new ApiError(503, "temporary"));
+    harness.searchFiles.mockRejectedValue(new ApiError(503, "temporary"));
+    const oldRoot = harness.controller.loadDirectory("");
+    harness.controller.setQuery("old");
+    await vi.advanceTimersByTimeAsync(0);
+    const other = harness.controller.changeOwner("/other");
+    harness.patch({ sessionId: "s2", cwd: "/other", ...other });
+    await oldRoot;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(harness.listFiles).toHaveBeenCalledTimes(1);
+    expect(harness.searchFiles).toHaveBeenCalledTimes(1);
+
+    const hiddenRoot = harness.controller.loadDirectory("");
+    harness.controller.setQuery("hidden");
+    await vi.advanceTimersByTimeAsync(0);
+    harness.listFiles.mockResolvedValue({ entries: [] });
+    harness.searchFiles.mockResolvedValue({ files: [] });
+    harness.controller.setShowHidden(true);
+    await hiddenRoot;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(harness.listFiles).toHaveBeenCalledTimes(3);
+    expect(harness.searchFiles).toHaveBeenCalledTimes(3);
+
+    harness.searchFiles.mockRejectedValueOnce(new ApiError(503, "old query"));
+    harness.controller.setQuery("old");
+    await vi.advanceTimersByTimeAsync(0);
+    harness.controller.setQuery("new");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(harness.searchFiles).toHaveBeenCalledTimes(5);
+
+    harness.listFiles.mockRejectedValue(new ApiError(503, "old transport"));
+    const oldTransport = harness.controller.loadDirectory("src");
+    await vi.advanceTimersByTimeAsync(0);
+    harness.replaceTransport();
+    harness.controller.invalidateForTransportReplacement();
+    await oldTransport;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(harness.listFiles).toHaveBeenCalledTimes(4);
+    expect(harness.state()).toMatchObject(emptyWorkspaceBrowserState());
+  });
+
+  it("keeps a failed directory refresh visible and lets a new visit revalidate it", async () => {
+    const harness = createHarness();
+    harness.patch({
+      workspaceLevels: { "": [{ name: "known.ts", type: "file" }] },
+    });
+    harness.listFiles.mockRejectedValueOnce(
+      new ApiError(403, "Permission denied"),
+    );
+    await harness.controller.loadDirectory("", { refresh: true });
+    expect(harness.listFiles).toHaveBeenCalledTimes(1);
+    expect(harness.state()).toMatchObject({
+      workspaceLevels: { "": [{ name: "known.ts", type: "file" }] },
+      workspaceDirectoryErrors: { "": "Permission denied" },
+    });
+    const other = harness.controller.changeOwner("/other");
+    harness.patch({ sessionId: "s2", cwd: "/other", ...other });
+    const returning = harness.controller.changeOwner("/project");
+    harness.patch({ sessionId: "s1", cwd: "/project", ...returning });
+    harness.listFiles.mockResolvedValue({
+      entries: [{ name: "new.ts", type: "file" }],
+    });
+    await harness.controller.loadDirectory("");
+    expect(harness.state()).toMatchObject({
+      workspaceLevels: { "": [{ name: "new.ts", type: "file" }] },
+      workspaceDirectoryErrors: {},
+    });
   });
 
   it("clears stale projections on transport replacement and reports auth expiry", async () => {

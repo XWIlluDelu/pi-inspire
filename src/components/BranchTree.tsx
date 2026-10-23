@@ -163,6 +163,7 @@ export function BranchTree({
       tree: source.branchTree,
       readOnlyReason: source.readOnlyReason,
       loading: source.branchTreeLoading,
+      stale: source.branchTreeStale,
       error: source.branchTreeError,
       actionId: source.branchActionId,
       health: source.projectionHealth,
@@ -452,19 +453,22 @@ export function BranchTree({
         : state.conflict || state.health.status !== "ok"
           ? "Recover this session before continuing"
           : null;
+  const updating = state.loading || (state.stale && !state.error);
   const sameSessionBlocked =
     blocked ??
-    (state.loading || state.error || tree?.health.status !== "ok"
-      ? "Refresh History before continuing"
-      : state.readOnlyReason
-        ? "This session is read-only"
-        : state.runState !== "idle" || state.bashRunning
-          ? "Wait until the current task finishes before changing this conversation"
-          : state.pendingCount
-            ? "Send or clear Pending input before changing this conversation"
-            : state.dialogCount
-              ? "Answer the open dialog before changing this conversation"
-              : null);
+    (updating
+      ? "Updating History…"
+      : state.error || tree?.health.status !== "ok"
+        ? "History is unavailable"
+        : state.readOnlyReason
+          ? "This session is read-only"
+          : state.runState !== "idle" || state.bashRunning
+            ? "Wait until the current task finishes before changing this conversation"
+            : state.pendingCount
+              ? "Send or clear Pending input before changing this conversation"
+              : state.dialogCount
+                ? "Answer the open dialog before changing this conversation"
+                : null);
 
   async function navigate(summarize: boolean) {
     if (!selected || sameSessionBlocked) return;
@@ -556,15 +560,15 @@ export function BranchTree({
     return (
       <ContextPaneState
         icon={
-          state.loading ? (
+          updating ? (
             <PiLoader size={17} aria-hidden />
           ) : (
             <AlertTriangle size={17} aria-hidden />
           )
         }
-        title={state.loading ? "Loading history…" : "History is unavailable."}
+        title={updating ? "Loading history…" : "History is unavailable."}
       >
-        {!state.loading ? (
+        {!updating ? (
           <button
             type="button"
             className="button button--quiet res__state-action"

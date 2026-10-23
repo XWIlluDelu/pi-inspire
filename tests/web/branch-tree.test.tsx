@@ -219,7 +219,10 @@ beforeEach(async () => {
         if (url.endsWith("clone")) {
           await fixture.cloneGate;
           if (fixture.cloneError)
-            return Response.json({ error: fixture.cloneError }, { status: 400 });
+            return Response.json(
+              { error: fixture.cloneError },
+              { status: 400 },
+            );
         }
         const fork = url.endsWith("fork");
         const id = fork ? "forked" : "cloned";
@@ -395,7 +398,7 @@ describe("read-only History inspection", () => {
     ).toBe(false);
   });
 
-  it("retries only a failed image without discarding the selected entry or outline position", async () => {
+  it("recovers a failed image without discarding the selected entry or outline position", async () => {
     fixture.images = true;
     fixture.imageFailures = 1;
     render(<BranchTree />);
@@ -408,10 +411,14 @@ describe("read-only History inspection", () => {
     const rows = history().querySelector(".branch-tree__rows")!;
     rows.scrollTop = 81;
     fireEvent.click(match);
-    fireEvent.click(await screen.findByRole("button", { name: "Retry image" }));
-    await screen.findByRole("button", {
-      name: "Preview image in this history entry",
-    });
+    await screen.findByRole(
+      "button",
+      {
+        name: "Preview image in this history entry",
+      },
+      { timeout: 2_500 },
+    );
+    expect(screen.queryByRole("button", { name: "Retry image" })).toBeNull();
     expect(
       requests.filter((request) =>
         request.url.startsWith("/api/branches/image"),
@@ -572,7 +579,7 @@ describe("read-only History inspection", () => {
     ).toBeVisible();
   });
 
-  it("retries a failed selected preview and keeps its search and Back anchor", async () => {
+  it("recovers a failed selected preview and keeps its search and Back anchor", async () => {
     render(<BranchTree />);
     const search = screen.getByRole("searchbox", { name: "Find in history" });
     fireEvent.change(search, { target: { value: "old keyword" } });
@@ -583,10 +590,12 @@ describe("read-only History inspection", () => {
     rows.scrollTop = 73;
     fixture.entryFailures = 1;
     fireEvent.click(match);
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Retry preview" }),
+    await screen.findByRole(
+      "button",
+      { name: "Read more content" },
+      { timeout: 2_500 },
     );
-    await screen.findByRole("button", { name: "Read more content" });
+    expect(screen.queryByRole("button", { name: "Retry preview" })).toBeNull();
     expect(
       requests.filter((request) =>
         request.url.startsWith("/api/branches/entry"),

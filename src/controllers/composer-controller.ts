@@ -18,6 +18,7 @@ import {
   discardComposerHistory,
 } from "../composer-history";
 import { deleteSessionDraft, touchSessionDraft } from "../session-drafts";
+import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 
 interface RecalledHistoryArtifact {
   type: "image" | "file";
@@ -44,6 +45,15 @@ export interface PendingAttachment {
   uploadedAuthorityId?: string;
   recalledArtifact?: RecalledHistoryArtifact;
   error?: string;
+  retryable?: boolean;
+}
+
+interface StagedFile {
+  sessionId: string;
+  file: File;
+  recovery: RecoveryBackoff;
+  /** Possibly delivered bytes must never enter automatic upload recovery. */
+  submitted: boolean;
 }
 
 interface ComposerArtifactDraft {
@@ -111,6 +121,7 @@ export class ComposerController {
     Map<string, AbortController>
   >();
   private readonly uploads = new Map<string, AbortController>();
+  private readonly stagedFiles = new Map<string, StagedFile>();
   private requestEpoch = 0;
   private recoveryAuthorityId: string | null = null;
   private readonly appliedRecoveryImages = new Map<string, Set<string>>();
@@ -141,6 +152,7 @@ export class ComposerController {
     this.confirmations.clear();
     for (const upload of new Set(this.uploads.values())) upload.abort();
     this.uploads.clear();
+    for (const staged of this.stagedFiles.values()) staged.recovery.reset();
     let deliveryOutcomeUnknown = false;
     for (const [sessionId, composer] of this.composers) {
       deliveryOutcomeUnknown ||= composer.deliveries.size > 0;
@@ -159,9 +171,12 @@ export class ComposerController {
           item.status === "uploading"
             ? {
                 ...item,
-                status: "error" as const,
-                error:
-                  "Connection changed while uploading; add this file again",
+                status: this.stagedFiles.has(item.localId)
+                  ? ("uploading" as const)
+                  : ("error" as const),
+                error: this.stagedFiles.has(item.localId)
+                  ? undefined
+                  : "The attachment upload was interrupted.",
               }
             : item,
         );
@@ -199,10 +214,22 @@ export class ComposerController {
         )
           return item;
         changed = true;
+        const staged = this.stagedFiles.get(item.localId);
+        if (staged && !staged.submitted) {
+          staged.recovery.reset();
+          return {
+            ...item,
+            uploadedId: undefined,
+            uploadedAuthorityId: undefined,
+            status: "uploading",
+            error: undefined,
+            retryable: false,
+          };
+        }
         return {
           ...item,
           status: "error",
-          error: "The Host restarted; remove this attachment and add it again",
+          error: "This attachment is no longer available. Add it again.",
         };
       });
     for (const composer of this.composers.values()) {
@@ -442,7 +469,10 @@ export class ComposerController {
       !independent &&
       composer.attachments.some((item) => item.status === "error")
     ) {
-      this.host.notify("warning", "Remove failed attachments before sending");
+      this.host.notify(
+        "warning",
+        "Retry or remove failed attachments before sending",
+      );
       return false;
     }
     const included = independent ? [] : composer.attachments;
@@ -577,6 +607,13 @@ export class ComposerController {
       (item) => item.delivery !== retained,
     );
     composer.deliveries.set(delivery.request.operationId, record);
+    for (const item of included) {
+      const staged = this.stagedFiles.get(item.localId);
+      if (staged) {
+        staged.submitted = true;
+        staged.recovery.reset();
+      }
+    }
     if (!independent) {
       composer.attachments = [];
       composer.projectFiles = [];
@@ -592,8 +629,10 @@ export class ComposerController {
     try {
       const response = await api.prompt(delivery.request, confirmation.signal);
       if (!ownsTransport()) return false;
-      for (const item of record.attachments)
+      for (const item of record.attachments) {
+        this.forgetStagedFile(item.localId);
         if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      }
       if (record.historyDraft)
         this.releaseAttachments(record.historyDraft.attachments);
       composer.unknownDeliveries.delete(signature);
@@ -612,7 +651,18 @@ export class ComposerController {
           error.authorityId !== authorityId);
       if (acceptanceUnknown)
         composer.unknownDeliveries.set(signature, delivery);
-      else composer.unknownDeliveries.delete(signature);
+      else {
+        composer.unknownDeliveries.delete(signature);
+        for (const item of record.attachments) {
+          const staged = this.stagedFiles.get(item.localId);
+          if (staged)
+            staged.submitted = [...composer.unknownDeliveries.values()].some(
+              (unknown) =>
+                item.uploadedId &&
+                unknown.request.attachmentIds?.includes(item.uploadedId),
+            );
+        }
+      }
       if (error instanceof ApiError && error.code === "PROMPT_RECOVERED") {
         // Both observers share a handoff. A late observer cannot undo a later
         // removal or send, even after the draft no longer contains the handle.
@@ -624,8 +674,10 @@ export class ComposerController {
             error.recoveryId,
           );
           for (const item of record.attachments)
-            if (item.kind === "image" && item.previewUrl)
-              URL.revokeObjectURL(item.previewUrl);
+            if (item.kind === "image") {
+              this.forgetStagedFile(item.localId);
+              if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+            }
         }
         composer.attachments = [
           ...record.attachments
@@ -667,8 +719,12 @@ export class ComposerController {
           item.uploadedId && error.matches?.includes(item.uploadedId)
             ? {
                 ...item,
-                status: "error",
-                error: "This attachment expired; remove it and add it again",
+                status: this.stagedFiles.has(item.localId)
+                  ? "uploading"
+                  : "error",
+                error: this.stagedFiles.has(item.localId)
+                  ? undefined
+                  : "This attachment is no longer available. Add it again.",
               }
             : item,
         );
@@ -676,6 +732,8 @@ export class ComposerController {
       if (!independent) {
         composer.failedDeliveries.push(record);
         this.restoreFailedIfEmpty(sessionId, composer);
+        if (error instanceof ApiError && error.code === "ATTACHMENTS_EXPIRED")
+          this.resumeUploads();
       }
       if (error instanceof ApiError && error.code === "PROMPT_ABORTED")
         return false;
@@ -721,7 +779,10 @@ export class ComposerController {
     const composer = this.composers.get(sessionId);
     if (!composer) return false;
     const restored = this.restoreFailedIfEmpty(sessionId, composer);
-    if (restored) this.publish(sessionId);
+    if (restored) {
+      this.publish(sessionId);
+      this.resumeUploads();
+    }
     return restored;
   }
 
@@ -843,12 +904,6 @@ export class ComposerController {
     const api = this.host.api();
     const authorityId = this.host.authorityId();
     if (!api || !sessionId || !authorityId || files.length === 0) return;
-    const generation = this.host.transportGeneration();
-    const requestEpoch = this.requestEpoch;
-    const ownsTransport = (): boolean =>
-      this.host.api() === api &&
-      this.host.transportGeneration() === generation &&
-      this.requestEpoch === requestEpoch;
     const composer = this.forSession(sessionId);
     const { accepted, warning } = selectAttachmentFiles(
       composer.attachments.filter(
@@ -877,102 +932,201 @@ export class ComposerController {
     });
     touchSessionDraft(sessionId);
     composer.attachments = [...composer.attachments, ...pending];
-    const upload = new AbortController();
-    for (const item of pending) this.uploads.set(item.localId, upload);
+    pending.forEach((item, index) =>
+      this.stagedFiles.set(item.localId, {
+        sessionId,
+        file: accepted[index]!,
+        recovery: new RecoveryBackoff(),
+        submitted: false,
+      }),
+    );
     this.publish(sessionId);
+    await this.uploadStaged(
+      sessionId,
+      pending.map((item) => item.localId),
+    );
+  }
 
+  private editableAttachment(
+    sessionId: string,
+    localId: string,
+  ): PendingAttachment | undefined {
+    const composer = this.composers.get(sessionId);
+    return (
+      composer?.attachments.find((item) => item.localId === localId) ??
+      composer?.historyDraft?.attachments.find(
+        (item) => item.localId === localId,
+      )
+    );
+  }
+
+  /** Only browser-held, unsent staging is replayable. Prompt delivery has its own identity. */
+  private async uploadStaged(
+    sessionId: string,
+    localIds: string[],
+  ): Promise<void> {
+    const api = this.host.api();
+    const authorityId = this.host.authorityId();
+    const composer = this.composers.get(sessionId);
+    if (!api || !authorityId || !composer) return;
+    const pending = localIds.flatMap((localId) => {
+      const staged = this.stagedFiles.get(localId);
+      const item = this.editableAttachment(sessionId, localId);
+      return staged && !staged.submitted && item && !this.uploads.has(localId)
+        ? [{ item, staged }]
+        : [];
+    });
+    if (!pending.length) return;
+    const generation = this.host.transportGeneration();
+    const requestEpoch = this.requestEpoch;
+    const upload = new AbortController();
+    const ownsTransport = () =>
+      this.host.api() === api &&
+      this.host.authorityId() === authorityId &&
+      this.host.transportGeneration() === generation &&
+      this.requestEpoch === requestEpoch &&
+      this.composers.get(sessionId) === composer;
+    for (const { item, staged } of pending) {
+      staged.recovery.cancel();
+      this.uploads.set(item.localId, upload);
+      this.patchRecoveredPreview(composer, item.localId, {
+        status: "uploading",
+        error: undefined,
+        retryable: false,
+      });
+    }
+    this.publish(sessionId);
     try {
       const { attachments: uploaded } = await api.uploadAttachments(
-        accepted,
+        pending.map(({ staged }) => staged.file),
         upload.signal,
       );
-      if (!ownsTransport()) {
+      if (!ownsTransport() || uploaded.length !== pending.length) {
         await Promise.all(
           uploaded.map((item) =>
             api.deleteAttachment(item.id).catch(() => undefined),
           ),
         );
+        if (ownsTransport())
+          throw new ApiError(
+            502,
+            "The attachment upload could not be verified",
+            undefined,
+            "INVALID_ATTACHMENT_UPLOAD",
+          );
         return;
       }
-      if (uploaded.length !== pending.length) {
-        await Promise.all(
-          uploaded.map((item) =>
-            api.deleteAttachment(item.id).catch(() => undefined),
-          ),
-        );
-        throw new Error("The Host returned an invalid attachment upload");
-      }
-      const applyUploaded = (items: PendingAttachment[]) =>
-        items.map((item) => {
-          const index = pending.findIndex(
-            (candidate) => candidate.localId === item.localId,
-          );
-          const result = index >= 0 ? uploaded[index] : undefined;
-          return result
-            ? {
-                ...item,
-                status: "ready" as const,
-                uploadedId: result.id,
-                uploadedAuthorityId: authorityId,
-                fileName: result.fileName,
-                kind: result.kind,
-              }
-            : item;
-        });
-      composer.attachments = applyUploaded(composer.attachments);
-      if (composer.historyDraft)
-        composer.historyDraft.attachments = applyUploaded(
-          composer.historyDraft.attachments,
-        );
-      this.publish(sessionId);
-      // An item removed while its upload was in flight never got a chance to
-      // delete its host copy; reclaim it now.
-      pending.forEach((candidate, index) => {
-        const id = uploaded[index]?.id;
+      pending.forEach(({ item, staged }, index) => {
+        const result = uploaded[index]!;
         if (
-          id &&
-          !composer.attachments.some(
-            (item) => item.localId === candidate.localId,
-          ) &&
-          !composer.historyDraft?.attachments.some(
-            (item) => item.localId === candidate.localId,
-          )
+          !this.editableAttachment(sessionId, item.localId) ||
+          this.stagedFiles.get(item.localId) !== staged
         ) {
-          void api.deleteAttachment(id).catch(() => undefined);
+          void api.deleteAttachment(result.id).catch(() => undefined);
+          return;
         }
+        staged.recovery.reset();
+        this.patchRecoveredPreview(composer, item.localId, {
+          status: "ready",
+          error: undefined,
+          retryable: false,
+          uploadedId: result.id,
+          uploadedAuthorityId: authorityId,
+          fileName: result.fileName,
+          kind: result.kind,
+        });
       });
+      this.publish(sessionId);
     } catch (error) {
       if (!ownsTransport()) return;
       if (error instanceof ApiError && error.status === 401) {
         this.host.handleAuthFailure();
         return;
       }
-      const message =
-        error instanceof ApiTransportError
-          ? error.timedOut
-            ? "Upload timed out; remove this attachment and add it again"
-            : "Upload could not be confirmed; remove this attachment and add it again"
-          : error instanceof Error
-            ? error.message
-            : "Upload failed";
-      const failPending = (items: PendingAttachment[]) =>
-        items.map((item) =>
-          pending.some((candidate) => candidate.localId === item.localId)
-            ? { ...item, status: "error" as const, error: message }
-            : item,
+      for (const { item, staged } of pending) {
+        if (
+          this.stagedFiles.get(item.localId) !== staged ||
+          !this.editableAttachment(sessionId, item.localId)
+        )
+          continue;
+        const recovering =
+          isTransientFailure(error) &&
+          !(
+            error instanceof ApiError &&
+            error.code === "INVALID_ATTACHMENT_UPLOAD"
+          ) &&
+          staged.recovery.schedule(() => {
+            if (
+              this.stagedFiles.get(item.localId) === staged &&
+              !staged.submitted
+            )
+              void this.uploadStaged(sessionId, [item.localId]);
+          });
+        this.patchRecoveredPreview(
+          composer,
+          item.localId,
+          recovering
+            ? { status: "uploading", error: undefined, retryable: false }
+            : {
+                status: "error",
+                retryable: true,
+                error:
+                  error instanceof ApiTransportError
+                    ? "This file could not be uploaded. Retry without selecting it again."
+                    : error instanceof Error
+                      ? error.message
+                      : "This file could not be uploaded.",
+              },
         );
-      composer.attachments = failPending(composer.attachments);
-      if (composer.historyDraft)
-        composer.historyDraft.attachments = failPending(
-          composer.historyDraft.attachments,
-        );
+      }
       this.publish(sessionId);
     } finally {
-      for (const item of pending) this.uploads.delete(item.localId);
+      for (const { item } of pending)
+        if (this.uploads.get(item.localId) === upload)
+          this.uploads.delete(item.localId);
     }
   }
 
+  retryAttachment(localId: string): Promise<void> {
+    const sessionId = this.host.state().sessionId;
+    const staged = this.stagedFiles.get(localId);
+    if (
+      !sessionId ||
+      !staged ||
+      staged.submitted ||
+      staged.sessionId !== sessionId
+    )
+      return Promise.resolve();
+    staged.recovery.reset();
+    return this.uploadStaged(sessionId, [localId]);
+  }
+
+  /** A resumed transport restarts only unfinished staging in its original partition. */
+  resumeUploads(): void {
+    const batches = new Map<string, string[]>();
+    for (const [localId, staged] of this.stagedFiles) {
+      const item = this.editableAttachment(staged.sessionId, localId);
+      if (
+        staged.submitted ||
+        item?.status !== "uploading" ||
+        this.uploads.has(localId)
+      )
+        continue;
+      const batch = batches.get(staged.sessionId) ?? [];
+      batch.push(localId);
+      batches.set(staged.sessionId, batch);
+    }
+    for (const [sessionId, localIds] of batches)
+      void this.uploadStaged(sessionId, localIds);
+  }
+
+  private forgetStagedFile(localId: string): void {
+    this.stagedFiles.get(localId)?.recovery.reset();
+    this.stagedFiles.delete(localId);
+  }
+
   private withdrawUpload(localId: string): void {
+    this.forgetStagedFile(localId);
     const upload = this.uploads.get(localId);
     if (!upload) return;
     this.uploads.delete(localId);

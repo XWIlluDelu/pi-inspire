@@ -44,7 +44,10 @@ for (const touch of [false, true]) {
         .poll(() =>
           page.locator(".notices").evaluate((el) => {
             const search = document.querySelector(".transcript-search")!;
-            return el.getBoundingClientRect().top - search.getBoundingClientRect().bottom;
+            return (
+              el.getBoundingClientRect().top -
+              search.getBoundingClientRect().bottom
+            );
           }),
         )
         .toBeCloseTo(8, 0);
@@ -305,284 +308,273 @@ for (const touch of [false, true]) {
       await expect(notices).toHaveCount(2);
     });
 
-    test(
-      "overflowing warnings remain readable and operable inside the available viewport",
-      {
-        tag: "@platform-ui",
-      },
-      async ({ page, context }) => {
-        await page.setViewportSize({ width: 1366, height: 900 });
-        let sessionId: string | null = null;
-        const transport = await routeMockSnapshots(page, {
-          snapshot: (snapshot) => {
-            sessionId = snapshot.active?.sessionId ?? null;
-          },
-          bootstrap: (body) => {
-            body.preferences.theme = touch ? "dark" : "light";
-          },
+    test("overflowing warnings remain readable and operable inside the available viewport", {
+      tag: "@platform-ui",
+    }, async ({ page, context }) => {
+      await page.setViewportSize({ width: 1366, height: 900 });
+      let sessionId: string | null = null;
+      const transport = await routeMockSnapshots(page, {
+        snapshot: (snapshot) => {
+          sessionId = snapshot.active?.sessionId ?? null;
+        },
+        bootstrap: (body) => {
+          body.preferences.theme = touch ? "dark" : "light";
+        },
+      });
+      await pairedPage(page);
+      await openMockSession(page, /Review extension event lifecycle/);
+      const editor = page.getByRole("textbox", {
+        name: "Message",
+        exact: true,
+      });
+      const draft = "Keep this draft while reading the notifications.";
+      await editor.fill(draft);
+      await page.evaluate(() => document.fonts.ready);
+      const messages = [
+        "(Files): The project directory is temporarily unavailable. Keep the current document open, check that the network volume is mounted, then refresh the files list.",
+        "(Extension): A background extension could not reconnect to its local service. The current draft is unchanged. Check the service and retry when it becomes available.",
+        "(Export): Could not write the report because the output directory is read-only. Choose another destination or update permissions, then retry. The existing report has not been replaced.",
+        "(Terminal): The connection was interrupted. Reconnect after the host is reachable; the current session and message draft are unchanged.",
+      ];
+      const notify = (id: string, message: string) =>
+        transport.send({
+          type: "extension_ui_request",
+          sessionId,
+          id,
+          method: "notify",
+          notifyType: "warning",
+          message,
         });
-        await pairedPage(page);
-        await openMockSession(page, /Review extension event lifecycle/);
-        const editor = page.getByRole("textbox", {
-          name: "Message",
-          exact: true,
-        });
-        const draft = "Keep this draft while reading the notifications.";
-        await editor.fill(draft);
-        await page.evaluate(() => document.fonts.ready);
-        const messages = [
-          "(Files): The project directory is temporarily unavailable. Keep the current document open, check that the network volume is mounted, then refresh the files list.",
-          "(Extension): A background extension could not reconnect to its local service. The current draft is unchanged. Check the service and retry when it becomes available.",
-          "(Export): Could not write the report because the output directory is read-only. Choose another destination or update permissions, then retry. The existing report has not been replaced.",
-          "(Terminal): The connection was interrupted. Reconnect after the host is reachable; the current session and message draft are unchanged.",
-        ];
-        const notify = (id: string, message: string) =>
-          transport.send({
-            type: "extension_ui_request",
-            sessionId,
-            id,
-            method: "notify",
-            notifyType: "warning",
-            message,
-          });
-        await page.emulateMedia({ reducedMotion: "no-preference" });
-        messages.forEach((message, index) =>
-          notify(`overflow-${index}`, message),
-        );
-        const stack = page.locator(".notices");
-        const notices = stack.locator(".notice");
-        await expect(notices).toHaveCount(messages.length);
-        await expect(stack).not.toHaveClass(/notices--scrollable/);
-        await expect(notices.first()).toHaveCSS("animation-name", "float-in");
-        await stack.evaluate((el) =>
-          Promise.all(
-            el
-              .getAnimations({ subtree: true })
-              .map((animation) => animation.finished),
-          ),
-        );
-        await expect(stack).not.toHaveClass(/notices--scrollable/);
-        await page.emulateMedia({ reducedMotion: "reduce" });
-        const normalCard = (await notices.first().boundingBox())!;
+      await page.emulateMedia({ reducedMotion: "no-preference" });
+      messages.forEach((message, index) =>
+        notify(`overflow-${index}`, message),
+      );
+      const stack = page.locator(".notices");
+      const notices = stack.locator(".notice");
+      await expect(notices).toHaveCount(messages.length);
+      await expect(stack).not.toHaveClass(/notices--scrollable/);
+      await expect(notices.first()).toHaveCSS("animation-name", "float-in");
+      await stack.evaluate((el) =>
+        Promise.all(
+          el
+            .getAnimations({ subtree: true })
+            .map((animation) => animation.finished),
+        ),
+      );
+      await expect(stack).not.toHaveClass(/notices--scrollable/);
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      const normalCard = (await notices.first().boundingBox())!;
 
-        // A normal desktop with the context pane closed used to put feedback on
-        // top of Send. The same non-overlap must hold when the stack scrolls.
-        await page.setViewportSize({ width: 1366, height: 900 });
+      // A normal desktop with the context pane closed used to put feedback on
+      // top of Send. The same non-overlap must hold when the stack scrolls.
+      await page.setViewportSize({ width: 1366, height: 900 });
+      await page
+        .getByRole("button", { name: "Send message", exact: true })
+        .click({ trial: true });
+
+      for (const [width, height] of [
+        [901, 390],
+        [568, 320],
+        [320, 420],
+      ]) {
+        await page.setViewportSize({ width, height });
+        await expect(stack).toHaveClass(/notices--scrollable/);
+        await expect
+          .poll(async () => {
+            const bounds = (await stack.boundingBox())!;
+            const composer = (await page.locator(".composer").boundingBox())!;
+            return (
+              bounds.x < composer.x + composer.width &&
+              bounds.x + bounds.width > composer.x &&
+              bounds.y < composer.y + composer.height &&
+              bounds.y + bounds.height > composer.y
+            );
+          })
+          .toBe(false);
         await page
           .getByRole("button", { name: "Send message", exact: true })
           .click({ trial: true });
-
-        for (const [width, height] of [
-          [901, 390],
-          [568, 320],
-          [320, 420],
-        ]) {
-          await page.setViewportSize({ width, height });
-          await expect(stack).toHaveClass(/notices--scrollable/);
-          await expect
-            .poll(async () => {
-              const bounds = (await stack.boundingBox())!;
-              const composer = (await page.locator(".composer").boundingBox())!;
-              return (
-                bounds.x < composer.x + composer.width &&
-                bounds.x + bounds.width > composer.x &&
-                bounds.y < composer.y + composer.height &&
-                bounds.y + bounds.height > composer.y
-              );
-            })
-            .toBe(false);
-          await page
-            .getByRole("button", { name: "Send message", exact: true })
-            .click({ trial: true });
-          const header = (await page.locator("main > .topbar").boundingBox())!;
-          const box = (await stack.boundingBox())!;
-          expect(box.y).toBeGreaterThanOrEqual(header.y + header.height + 7);
-          expect(box.y + box.height).toBeLessThanOrEqual(height - 15);
-          expect(
-            await stack.evaluate((el) => el.scrollHeight > el.clientHeight),
-          ).toBe(true);
-          // Ordinary Tab targets bring their complete action row into the scrollport.
-          for (const notice of await notices.all()) {
-            const close = notice.getByRole("button", {
-              name: "Dismiss notification",
-            });
-            await close.focus();
-            await expect(close).toBeFocused();
-            await close.click({ trial: true });
-            const action = (await close.boundingBox())!;
-            expect(action.y).toBeGreaterThanOrEqual(box.y);
-            expect(action.y + action.height).toBeLessThanOrEqual(
-              box.y + box.height + 0.5,
-            );
-          }
+        const header = (await page.locator("main > .topbar").boundingBox())!;
+        const box = (await stack.boundingBox())!;
+        expect(box.y).toBeGreaterThanOrEqual(header.y + header.height + 7);
+        expect(box.y + box.height).toBeLessThanOrEqual(height - 15);
+        expect(
+          await stack.evaluate((el) => el.scrollHeight > el.clientHeight),
+        ).toBe(true);
+        // Ordinary Tab targets bring their complete action row into the scrollport.
+        for (const notice of await notices.all()) {
+          const close = notice.getByRole("button", {
+            name: "Dismiss notification",
+          });
+          await close.focus();
+          await expect(close).toBeFocused();
+          await close.click({ trial: true });
+          const action = (await close.boundingBox())!;
+          expect(action.y).toBeGreaterThanOrEqual(box.y);
+          expect(action.y + action.height).toBeLessThanOrEqual(
+            box.y + box.height + 0.5,
+          );
         }
+      }
 
-        // Scrolling the notices must not scroll the transcript underneath.
-        const transcript = page.locator(".transcript");
-        const transcriptTop = await transcript.evaluate((el) => el.scrollTop);
+      // Scrolling the notices must not scroll the transcript underneath.
+      const transcript = page.locator(".transcript");
+      const transcriptTop = await transcript.evaluate((el) => el.scrollTop);
+      await notices
+        .first()
+        .getByRole("button", { name: "Copy Warning" })
+        .focus();
+      await page.keyboard.press("PageDown");
+      let readingPosition = 0;
+      // Keyboard scrolling may settle without a scrollend event. Measure the
+      // actual positive reading position and wait until it stops changing.
+      await expect
+        .poll(async () => {
+          const current = await stack.evaluate((el) => el.scrollTop);
+          const settled = current > 0 && current === readingPosition;
+          readingPosition = current;
+          return settled;
+        })
+        .toBe(true);
+      expect(readingPosition).toBeGreaterThan(0);
+      expect(await transcript.evaluate((el) => el.scrollTop)).toBe(
+        transcriptTop,
+      );
+      notify("overflow-new", "(Workspace): A separate check could not finish.");
+      await expect(notices).toHaveCount(5);
+      await expect
+        .poll(() => stack.evaluate((el) => el.scrollTop))
+        .toBeCloseTo(readingPosition, 0);
+
+      // Reflowing a current banner reduces, rather than overlaps, the notice budget.
+      let unavailable = true;
+      await page.route("**/api/snapshot**", async (route) => {
+        if (unavailable)
+          await route.fulfill({
+            status: 422,
+            json: {
+              error:
+                "The session snapshot could not be read. Check the host connection and retry.",
+            },
+          });
+        else await route.fallback();
+      });
+      transport.send({ type: "runtime_ready", sessionId });
+      const banner = page.getByRole("main").locator(".banner");
+      await expect(banner).toBeVisible();
+      await expect
+        .poll(async () => {
+          const noticeBox = (await stack.boundingBox())!;
+          const bannerBox = (await banner.boundingBox())!;
+          return noticeBox.y - bannerBox.y - bannerBox.height;
+        })
+        .toBeGreaterThanOrEqual(7);
+      unavailable = false;
+      await banner.getByRole("button", { name: "Retry", exact: true }).click();
+      await expect(banner).toHaveCount(0);
+
+      const safeArea = await page.addStyleTag({
+        content: ":root { --safe-bottom: 32px; }",
+      });
+      for (const [width, height] of [
+        [1024, 390],
+        [568, 320],
+      ]) {
+        await page.setViewportSize({ width, height });
+        await expect
+          .poll(async () => {
+            const bounds = (await stack.boundingBox())!;
+            return bounds.y + bounds.height;
+          })
+          .toBeLessThanOrEqual(height - 32);
+      }
+      await safeArea.evaluate((el) => el.remove());
+
+      await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+      const copy = notices.last().getByRole("button", { name: "Copy Warning" });
+      await copy.focus();
+      if (touch) await copy.tap();
+      else await copy.click();
+      await expect(
+        notices.last().getByRole("button", { name: "Warning copied" }),
+      ).toBeVisible();
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+        "(Workspace): A separate check could not finish.",
+      );
+      // Returning to ample height removes clipping and restores the floating card width.
+      await page.setViewportSize({ width: 1366, height: 900 });
+      await expect(stack).not.toHaveClass(/notices--scrollable/);
+      const restoredCard = (await notices.first().boundingBox())!;
+      expect(restoredCard.width).toBe(normalCard.width);
+      expect(restoredCard.height).toBe(normalCard.height);
+      await expect(editor).toHaveValue(draft);
+      while (await notices.count())
+        await notices
+          .last()
+          .getByRole("button", { name: "Dismiss notification" })
+          .click();
+      await expect(stack).toHaveCount(0);
+
+      // One tall warning also scrolls without shrinking its card or losing its end.
+      const longMessage =
+        "(Diagnostics): " +
+        "The operation could not finish; check the service and retry. ".repeat(
+          35,
+        ) +
+        "END OF DIAGNOSTIC";
+      notify("overflow-single", longMessage);
+      await page.setViewportSize({ width: 320, height: 420 });
+      await expect(stack).toHaveClass(/notices--scrollable/);
+      await expect(notices).toHaveCount(1);
+      expect(
         await notices
           .first()
-          .getByRole("button", { name: "Copy Warning" })
-          .focus();
-        await page.keyboard.press("PageDown");
-        let readingPosition = 0;
-        // Keyboard scrolling may settle without a scrollend event. Measure the
-        // actual positive reading position and wait until it stops changing.
-        await expect
-          .poll(async () => {
-            const current = await stack.evaluate((el) => el.scrollTop);
-            const settled = current > 0 && current === readingPosition;
-            readingPosition = current;
-            return settled;
-          })
-          .toBe(true);
-        expect(readingPosition).toBeGreaterThan(0);
-        expect(await transcript.evaluate((el) => el.scrollTop)).toBe(
-          transcriptTop,
+          .evaluate((el) => el.scrollHeight <= el.clientHeight),
+      ).toBe(true);
+      // ResizeObserver applies the Composer boundary after the viewport change.
+      // Scroll the settled budget, then measure the text and its owner together.
+      await expect
+        .poll(() =>
+          stack.evaluate((el) => {
+            const composer = document
+              .querySelector(".composer")!
+              .getBoundingClientRect();
+            return el.getBoundingClientRect().bottom <= composer.top - 7;
+          }),
+        )
+        .toBe(true);
+      const ending = await stack.evaluate((el) => {
+        el.scrollTop = el.scrollHeight;
+        const text = el.querySelector(".notice__text")!;
+        const node = text.firstChild!;
+        const range = document.createRange();
+        range.selectNodeContents(text);
+        range.setStart(
+          node,
+          node.textContent!.length - "END OF DIAGNOSTIC".length,
         );
-        notify(
-          "overflow-new",
-          "(Workspace): A separate check could not finish.",
-        );
-        await expect(notices).toHaveCount(5);
-        await expect
-          .poll(() => stack.evaluate((el) => el.scrollTop))
-          .toBeCloseTo(readingPosition, 0);
-
-        // Reflowing a current banner reduces, rather than overlaps, the notice budget.
-        let unavailable = true;
-        await page.route("**/api/snapshot**", async (route) => {
-          if (unavailable)
-            await route.fulfill({
-              status: 503,
-              json: {
-                error:
-                  "The session snapshot could not be read. Check the host connection and retry.",
-              },
-            });
-          else await route.fallback();
-        });
-        transport.send({ type: "runtime_ready", sessionId });
-        const banner = page.getByRole("main").locator(".banner");
-        await expect(banner).toContainText("Failed to refresh session");
-        await expect
-          .poll(async () => {
-            const noticeBox = (await stack.boundingBox())!;
-            const bannerBox = (await banner.boundingBox())!;
-            return noticeBox.y - bannerBox.y - bannerBox.height;
-          })
-          .toBeGreaterThanOrEqual(7);
-        unavailable = false;
-        await banner
-          .getByRole("button", { name: "Retry", exact: true })
-          .click();
-        await expect(banner).toHaveCount(0);
-
-        const safeArea = await page.addStyleTag({
-          content: ":root { --safe-bottom: 32px; }",
-        });
-        for (const [width, height] of [
-          [1024, 390],
-          [568, 320],
-        ]) {
-          await page.setViewportSize({ width, height });
-          await expect
-            .poll(async () => {
-              const bounds = (await stack.boundingBox())!;
-              return bounds.y + bounds.height;
-            })
-            .toBeLessThanOrEqual(height - 32);
-        }
-        await safeArea.evaluate((el) => el.remove());
-
-        await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-        const copy = notices
-          .last()
-          .getByRole("button", { name: "Copy Warning" });
-        await copy.focus();
-        if (touch) await copy.tap();
-        else await copy.click();
-        await expect(
-          notices.last().getByRole("button", { name: "Warning copied" }),
-        ).toBeVisible();
-        expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-          "(Workspace): A separate check could not finish.",
-        );
-        // Returning to ample height removes clipping and restores the floating card width.
-        await page.setViewportSize({ width: 1366, height: 900 });
-        await expect(stack).not.toHaveClass(/notices--scrollable/);
-        const restoredCard = (await notices.first().boundingBox())!;
-        expect(restoredCard.width).toBe(normalCard.width);
-        expect(restoredCard.height).toBe(normalCard.height);
-        await expect(editor).toHaveValue(draft);
-        while (await notices.count())
-          await notices
-            .last()
-            .getByRole("button", { name: "Dismiss notification" })
-            .click();
-        await expect(stack).toHaveCount(0);
-
-        // One tall warning also scrolls without shrinking its card or losing its end.
-        const longMessage =
-          "(Diagnostics): " +
-          "The operation could not finish; check the service and retry. ".repeat(
-            35,
-          ) +
-          "END OF DIAGNOSTIC";
-        notify("overflow-single", longMessage);
-        await page.setViewportSize({ width: 320, height: 420 });
-        await expect(stack).toHaveClass(/notices--scrollable/);
-        await expect(notices).toHaveCount(1);
-        expect(
-          await notices
-            .first()
-            .evaluate((el) => el.scrollHeight <= el.clientHeight),
-        ).toBe(true);
-        // ResizeObserver applies the Composer boundary after the viewport change.
-        // Scroll the settled budget, then measure the text and its owner together.
-        await expect
-          .poll(() =>
-            stack.evaluate((el) => {
-              const composer = document
-                .querySelector(".composer")!
-                .getBoundingClientRect();
-              return el.getBoundingClientRect().bottom <= composer.top - 7;
-            }),
-          )
-          .toBe(true);
-        const ending = await stack.evaluate((el) => {
-          el.scrollTop = el.scrollHeight;
-          const text = el.querySelector(".notice__text")!;
-          const node = text.firstChild!;
-          const range = document.createRange();
-          range.selectNodeContents(text);
-          range.setStart(
-            node,
-            node.textContent!.length - "END OF DIAGNOSTIC".length,
-          );
-          const box = range.getBoundingClientRect();
-          const owner = el.getBoundingClientRect();
-          return {
-            top: box.top - owner.top,
-            bottom: box.bottom - owner.bottom,
-          };
-        });
-        expect(ending.top).toBeGreaterThanOrEqual(0);
-        expect(ending.bottom).toBeLessThanOrEqual(0.5);
-        const copyLong = notices.getByRole("button", { name: "Copy Warning" });
-        await copyLong.focus();
-        await copyLong.click();
-        expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-          longMessage,
-        );
-        const close = notices
-          .first()
-          .getByRole("button", { name: "Dismiss notification" });
-        await close.focus();
-        await close.press("Enter");
-        await expect(stack).toHaveCount(0);
-        await expect(editor).toHaveValue(draft);
-      },
-    );
+        const box = range.getBoundingClientRect();
+        const owner = el.getBoundingClientRect();
+        return {
+          top: box.top - owner.top,
+          bottom: box.bottom - owner.bottom,
+        };
+      });
+      expect(ending.top).toBeGreaterThanOrEqual(0);
+      expect(ending.bottom).toBeLessThanOrEqual(0.5);
+      const copyLong = notices.getByRole("button", { name: "Copy Warning" });
+      await copyLong.focus();
+      await copyLong.click();
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+        longMessage,
+      );
+      const close = notices
+        .first()
+        .getByRole("button", { name: "Dismiss notification" });
+      await close.focus();
+      await close.press("Enter");
+      await expect(stack).toHaveCount(0);
+      await expect(editor).toHaveValue(draft);
+    });
   });
 }

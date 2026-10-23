@@ -1374,43 +1374,53 @@ describe("multi-session event routing", () => {
   ] as const)(
     "keeps %s severity when event-driven resync fails",
     async (kind, health, expectedSeverity) => {
-      let snapshotCalls = 0;
-      const { promise: failedSnapshot, resolve: releaseSnapshot } =
-        deferred<RouteResponse>();
-      installFetch((url, init) => {
-        if (url.startsWith("/api/snapshot")) {
-          snapshotCalls += 1;
-          return failedSnapshot;
-        }
-        return baseRoutes(url, init);
-      });
-      const { store, socket } = await initStore();
-      const conflict = { kind, message: `${kind} conflict`, revision: 2 };
-      socket.emit({
-        type: "session_projection_conflict",
-        sessionId: "s1",
-        conflict,
-        sessionStatus: { runState: "conflict" },
-      });
-      let updatesAfterFailure = 0;
-      const unsubscribe = store.subscribe(() => {
-        updatesAfterFailure += 1;
-      });
-      socket.emit({
-        type: "session_projection_changed",
-        sessionId: "s1",
-        revision: 2,
-        health,
-        conflict,
-        sessionStatus: { runState: "conflict" },
-      });
-      await vi.waitFor(() => expect(snapshotCalls).toBe(1));
-      updatesAfterFailure = 0;
-      releaseSnapshot({ status: 503, body: { error: "snapshot unavailable" } });
-      await vi.waitFor(() => expect(updatesAfterFailure).toBeGreaterThan(0));
-      expect(store.getState().errorSeverity).toBe(expectedSeverity);
-      expect(store.getState().error).toBe(`${kind} conflict`);
-      unsubscribe();
+      vi.useFakeTimers();
+      try {
+        let snapshotCalls = 0;
+        const { promise: failedSnapshot, resolve: releaseSnapshot } =
+          deferred<RouteResponse>();
+        installFetch((url, init) => {
+          if (url.startsWith("/api/snapshot")) {
+            snapshotCalls += 1;
+            return failedSnapshot;
+          }
+          return baseRoutes(url, init);
+        });
+        const { store, socket } = await initStore();
+        const conflict = { kind, message: `${kind} conflict`, revision: 2 };
+        socket.emit({
+          type: "session_projection_conflict",
+          sessionId: "s1",
+          conflict,
+          sessionStatus: { runState: "conflict" },
+        });
+        let updatesAfterFailure = 0;
+        const unsubscribe = store.subscribe(() => {
+          updatesAfterFailure += 1;
+        });
+        socket.emit({
+          type: "session_projection_changed",
+          sessionId: "s1",
+          revision: 2,
+          health,
+          conflict,
+          sessionStatus: { runState: "conflict" },
+        });
+        await vi.advanceTimersByTimeAsync(120);
+        expect(snapshotCalls).toBe(1);
+        updatesAfterFailure = 0;
+        releaseSnapshot({
+          status: 503,
+          body: { error: "snapshot unavailable" },
+        });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(updatesAfterFailure).toBe(0);
+        expect(store.getState().errorSeverity).toBe(expectedSeverity);
+        expect(store.getState().error).toBe(`${kind} conflict`);
+        unsubscribe();
+      } finally {
+        vi.useRealTimers();
+      }
     },
   );
 

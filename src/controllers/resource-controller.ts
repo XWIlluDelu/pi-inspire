@@ -16,6 +16,7 @@ import {
   unknownResourceAvailability,
 } from "../resource-preview";
 import { transcriptProjectionKey } from "../transcript-projection-key";
+import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 
 interface ResourceControllerState {
   sessionId: string | null;
@@ -88,21 +89,25 @@ export class ResourceController {
   private downloadRequests = new Set<AbortController>();
   private resourceProbeRequest: AbortController | null = null;
   private resourceProbeKey: string | null = null;
+  private probeRecovery = new RecoveryBackoff();
   private resourceProbedReferences = new Set<string>();
   private referenceGenerations = new Map<string, number>();
 
   constructor(private readonly host: ResourceControllerHost) {}
 
-  cancelRequest(): void {
+  cancelRequest(retainDocumentImages = false): void {
     this.resourceRequest?.abort();
     this.resourceRequest = null;
-    for (const request of this.documentImageRequests) request.abort();
-    this.documentImageRequests.clear();
+    if (!retainDocumentImages) {
+      for (const request of this.documentImageRequests) request.abort();
+      this.documentImageRequests.clear();
+    }
     for (const request of this.downloadRequests) request.abort();
     this.downloadRequests.clear();
   }
 
   cancelProbes(clearStanding = false): void {
+    this.probeRecovery.reset();
     this.resourceProbeRequest?.abort();
     this.resourceProbeRequest = null;
     this.resourceProbeKey = null;
@@ -223,6 +228,7 @@ export class ResourceController {
     );
     if (pending.length === 0) return;
 
+    this.probeRecovery.cancel();
     this.resourceProbeRequest?.abort();
     const request = new AbortController();
     this.resourceProbeRequest = request;
@@ -237,6 +243,7 @@ export class ResourceController {
         current.transcriptRevision !== revision
       );
     };
+    let retryNeeded = false;
     try {
       for (
         let offset = 0;
@@ -294,11 +301,10 @@ export class ResourceController {
             if (received.has(reference)) {
               this.resourceProbedReferences.add(reference);
             } else {
-              applyProbeResult(
-                unknownResourceAvailability(reference),
-                resourceAvailability,
-                resourceWorkspacePaths,
-              );
+              retryNeeded = true;
+              if (!resourceAvailability[reference])
+                resourceAvailability[reference] =
+                  unknownResourceAvailability(reference);
             }
           }
           this.host.patch({
@@ -311,25 +317,33 @@ export class ResourceController {
             this.host.handleAuthFailure();
             return;
           }
-          const current = this.host.state();
-          const resourceAvailability = { ...current.resourceAvailability };
-          const resourceWorkspacePaths = {
-            ...current.resourceWorkspacePaths,
+          retryNeeded ||= isTransientFailure(error);
+          // A failed observation cannot revoke the last confirmed file standing.
+          const resourceAvailability = {
+            ...this.host.state().resourceAvailability,
           };
           for (const reference of batch) {
-            if (!generationIsCurrent(reference)) continue;
-            applyProbeResult(
-              unknownResourceAvailability(reference, error),
-              resourceAvailability,
-              resourceWorkspacePaths,
-            );
+            if (
+              generationIsCurrent(reference) &&
+              !resourceAvailability[reference]
+            )
+              resourceAvailability[reference] = unknownResourceAvailability(
+                reference,
+                error,
+              );
           }
-          this.host.patch({
-            resourceAvailability,
-            resourceWorkspacePaths,
-          });
+          this.host.patch({ resourceAvailability });
         }
       }
+      if (retryNeeded)
+        this.probeRecovery.schedule(() => {
+          if (
+            this.resourceProbeKey === generationKey &&
+            this.ownsTransport(api, transportGeneration)
+          )
+            void this.probeResources(unique);
+        });
+      else this.probeRecovery.reset();
     } finally {
       if (this.resourceProbeRequest === request)
         this.resourceProbeRequest = null;
@@ -352,6 +366,7 @@ export class ResourceController {
       preview?.status !== "ready" ||
       preview.descriptor.kind !== "html" ||
       preview.text === undefined ||
+      preview.refreshing ||
       preview.truncated
     )
       throw new Error(
@@ -381,6 +396,13 @@ export class ResourceController {
   private revokePreviewObjectUrl(): void {
     if (this.previewObjectUrl) URL.revokeObjectURL(this.previewObjectUrl);
     this.previewObjectUrl = null;
+  }
+
+  private publishPreview(preview: ResourcePreview): void {
+    this.revokePreviewObjectUrl();
+    this.previewObjectUrl =
+      preview.status === "ready" ? (preview.objectUrl ?? null) : null;
+    this.host.patch({ resourcePreview: preview });
   }
 
   clearSelection(): void {
@@ -629,39 +651,76 @@ export class ResourceController {
   ): Promise<void> {
     const api = this.host.api();
     const transportGeneration = this.host.transportGeneration();
-    const { sessionId, transcriptViewId: viewId } = this.host.state();
+    const {
+      sessionId,
+      transcriptViewId: viewId,
+      resourcePreview: previous,
+    } = this.host.state();
     if (!api || !sessionId || !viewId) return;
-    this.cancelRequest();
+    const retained =
+      previous?.status === "ready" &&
+      previous.reference === reference &&
+      previous.descriptor.sessionId === sessionId &&
+      previous.descriptor.viewId === viewId &&
+      (knownWorkspacePath === undefined ||
+        knownWorkspacePath === previous.descriptor.workspacePath)
+        ? previous
+        : null;
+    this.cancelRequest(Boolean(retained));
     const ownsWorkspaceSelection =
       this.host.prepareGitForResourceOpen(contextMode);
     const request = new AbortController();
     this.resourceRequest = request;
-    this.revokePreviewObjectUrl();
+    if (!retained) this.revokePreviewObjectUrl();
     this.host.patch({
       resourcesOpen: true,
       contextMode,
       fileBrowserView: "preview",
       selectedResourceReference: reference,
       selectedResourceWorkspacePath: knownWorkspacePath ?? null,
-      resourcePreview: { status: "loading", reference },
+      resourcePreview: retained
+        ? { ...retained, refreshing: true, refreshError: undefined }
+        : { status: "loading", reference },
     });
     let descriptorResolved = false;
     const stale = () => {
       const current = this.host.state();
       return (
         this.resourceRequest !== request ||
+        request.signal.aborted ||
         !this.ownsTransport(api, transportGeneration) ||
         current.selectedResourceReference !== reference ||
         current.sessionId !== sessionId ||
         current.transcriptViewId !== viewId
       );
     };
+    const backoff = new RecoveryBackoff();
+    // Retry transport reads, not validation failures or interactive HTML.
+    const read = async <T>(perform: () => Promise<T>): Promise<T> => {
+      while (!stale()) {
+        try {
+          return await perform();
+        } catch (error) {
+          if (
+            !isTransientFailure(error) ||
+            stale() ||
+            !(await backoff.wait(request.signal))
+          )
+            throw error;
+        }
+      }
+      throw Object.assign(new Error("The preview selection changed"), {
+        name: "AbortError",
+      });
+    };
     try {
-      const descriptor = await api.resolveResource(
-        sessionId,
-        reference,
-        request.signal,
-        knownWorkspacePath,
+      const descriptor = await read(() =>
+        api.resolveResource(
+          sessionId,
+          reference,
+          request.signal,
+          knownWorkspacePath,
+        ),
       );
       if (stale()) return;
       // Bare filename recovery intentionally returns the canonical workspace
@@ -687,9 +746,7 @@ export class ResourceController {
           descriptor.workspacePath !== knownWorkspacePath,
         );
       if (descriptor.kind === "binary") {
-        this.host.patch({
-          resourcePreview: { status: "ready", reference, descriptor },
-        });
+        this.publishPreview({ status: "ready", reference, descriptor });
         return;
       }
       const textLike =
@@ -699,25 +756,25 @@ export class ResourceController {
         descriptor.kind === "html";
       const svg = descriptor.mimeType === "image/svg+xml";
       if (!textLike && !svg && descriptor.size > MAX_MEDIA_PREVIEW_BYTES) {
-        this.host.patch({
-          resourcePreview: {
-            status: "ready",
-            reference,
-            descriptor,
-            contentUnavailable: "too-large",
-          },
+        this.publishPreview({
+          status: "ready",
+          reference,
+          descriptor,
+          contentUnavailable: "too-large",
         });
         return;
       }
-      const content = await api.resourceContent(descriptor.id, sessionId, {
-        byteLimit:
-          descriptor.kind === "notebook"
-            ? NOTEBOOK_PREVIEW_BYTES
-            : textLike || (svg && descriptor.size > MAX_MEDIA_PREVIEW_BYTES)
-              ? TEXT_PREVIEW_BYTES
-              : MAX_MEDIA_PREVIEW_BYTES + 1,
-        signal: request.signal,
-      });
+      const content = await read(() =>
+        api.resourceContent(descriptor.id, sessionId, {
+          byteLimit:
+            descriptor.kind === "notebook"
+              ? NOTEBOOK_PREVIEW_BYTES
+              : textLike || (svg && descriptor.size > MAX_MEDIA_PREVIEW_BYTES)
+                ? TEXT_PREVIEW_BYTES
+                : MAX_MEDIA_PREVIEW_BYTES + 1,
+          signal: request.signal,
+        }),
+      );
       if (stale()) return;
       const blob = content.blob;
       // Resolve metadata authorizes discovery only. Once bytes arrive, the
@@ -733,26 +790,22 @@ export class ResourceController {
           blob.size < content.totalSize,
         );
         if (stale()) return;
-        if (descriptor.kind === "html") {
-          this.previewObjectUrl = URL.createObjectURL(
-            new Blob([injectHtmlPreviewCsp(text)], {
-              type: "text/html;charset=utf-8",
-            }),
-          );
-        }
-        this.host.patch({
-          resourcePreview: {
-            status: "ready",
-            reference,
-            descriptor: currentDescriptor,
-            text,
-            // A 206 also answers full-coverage ranges, so judge truncation
-            // by what actually arrived against the transfer's current total.
-            truncated: blob.size < content.totalSize,
-            ...(this.previewObjectUrl
-              ? { objectUrl: this.previewObjectUrl }
-              : {}),
-          },
+        const objectUrl =
+          descriptor.kind === "html"
+            ? URL.createObjectURL(
+                new Blob([injectHtmlPreviewCsp(text)], {
+                  type: "text/html;charset=utf-8",
+                }),
+              )
+            : undefined;
+        this.publishPreview({
+          status: "ready",
+          reference,
+          descriptor: currentDescriptor,
+          text,
+          // A 206 also answers full-coverage ranges; judge actual coverage.
+          truncated: blob.size < content.totalSize,
+          ...(objectUrl ? { objectUrl } : {}),
         });
         return;
       }
@@ -769,37 +822,29 @@ export class ResourceController {
         content.totalSize > MAX_MEDIA_PREVIEW_BYTES ||
         blob.size > MAX_MEDIA_PREVIEW_BYTES
       ) {
-        this.host.patch({
-          resourcePreview: {
-            status: "ready",
-            reference,
-            descriptor: currentDescriptor,
-            ...(svgText !== undefined
-              ? { text: svgText, truncated: true }
-              : {}),
-            contentUnavailable: "too-large",
-          },
-        });
-        return;
-      }
-      this.previewObjectUrl =
-        descriptor.kind === "pdf" ? null : URL.createObjectURL(blob);
-      this.host.patch({
-        resourcePreview: {
+        this.publishPreview({
           status: "ready",
           reference,
           descriptor: currentDescriptor,
-          ...(descriptor.kind === "pdf" ? { pdfBlob: blob } : {}),
-          ...(svgText !== undefined
-            ? {
-                text: svgText,
-                truncated: content.totalSize > TEXT_PREVIEW_BYTES,
-              }
-            : {}),
-          ...(this.previewObjectUrl
-            ? { objectUrl: this.previewObjectUrl }
-            : {}),
-        },
+          ...(svgText !== undefined ? { text: svgText, truncated: true } : {}),
+          contentUnavailable: "too-large",
+        });
+        return;
+      }
+      const objectUrl =
+        descriptor.kind === "pdf" ? undefined : URL.createObjectURL(blob);
+      this.publishPreview({
+        status: "ready",
+        reference,
+        descriptor: currentDescriptor,
+        ...(descriptor.kind === "pdf" ? { pdfBlob: blob } : {}),
+        ...(svgText !== undefined
+          ? {
+              text: svgText,
+              truncated: content.totalSize > TEXT_PREVIEW_BYTES,
+            }
+          : {}),
+        ...(objectUrl ? { objectUrl } : {}),
       });
     } catch (error) {
       if (
@@ -818,29 +863,37 @@ export class ResourceController {
         this.advanceReferenceGeneration(reference);
         this.recordAvailability(availability);
       }
+      if (retained && isTransientFailure(error)) {
+        this.host.patch({
+          resourcePreview: {
+            ...retained,
+            refreshing: false,
+            refreshError:
+              error instanceof Error ? error.message : "Preview refresh failed",
+          },
+        });
+        return;
+      }
       if (
         error instanceof ApiError &&
         error.matches &&
         error.matches.length > 0
       ) {
-        this.host.patch({
-          resourcePreview: {
-            status: "ambiguous",
-            reference,
-            message: error.message,
-            matches: error.matches,
-          },
+        this.publishPreview({
+          status: "ambiguous",
+          reference,
+          message: error.message,
+          matches: error.matches,
         });
         return;
       }
-      this.host.patch({
-        resourcePreview: {
-          status: "error",
-          reference,
-          message: error instanceof Error ? error.message : "Preview failed",
-        },
+      this.publishPreview({
+        status: "error",
+        reference,
+        message: error instanceof Error ? error.message : "Preview failed",
       });
     } finally {
+      backoff.reset();
       if (this.resourceRequest === request) this.resourceRequest = null;
     }
   }

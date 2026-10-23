@@ -457,6 +457,7 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
   const htmlScope = [
     descriptor?.id,
     preview?.status === "ready" ? preview.objectUrl : null,
+    preview?.status === "ready" && Boolean(preview.refreshing),
     state.transportGeneration,
     state.sessionId,
     state.transcriptViewId,
@@ -598,6 +599,7 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
               className="file-detail-header__view file-detail-header__interaction"
               aria-pressed={currentInteraction?.status === "running"}
               aria-busy={currentInteraction?.status === "loading"}
+              disabled={preview?.status === "ready" && preview.refreshing}
               title={
                 currentInteraction && currentInteraction.status !== "error"
                   ? "Stop this page and return to static preview"
@@ -624,6 +626,12 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
         </div>
       </div>
       <div className="file-preview__content">
+        {preview?.status === "ready" && preview.refreshError ? (
+          <div className="file-preview__notice" role="status">
+            Preview refresh failed: {preview.refreshError}. Showing the last
+            loaded content.
+          </div>
+        ) : null}
         {currentDownload?.error ? (
           <div className="file-preview__notice" role="status">
             {currentDownload.error}

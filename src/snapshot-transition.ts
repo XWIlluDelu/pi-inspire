@@ -203,6 +203,7 @@ export function snapshotLifecyclePatch(
         ...sessionOwnerPatch,
         branchTree: null,
         branchTreeLoading: false,
+        branchTreeStale: false,
         branchTreeError: null,
         branchActionId: null,
         ...emptyResourceInspectionState(),
@@ -218,9 +219,8 @@ export function snapshotLifecyclePatch(
       return {
         pendingRetryError: null,
         branchTreeLoading: false,
-        branchTreeError: previous.branchTree
-          ? "Branch history is stale — refresh to use branch actions"
-          : null,
+        branchTreeStale: Boolean(previous.branchTree),
+        branchTreeError: null,
         branchActionId: null,
         ...renewedResourceInspection(previous, transition),
       };

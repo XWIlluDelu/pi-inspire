@@ -1,8 +1,10 @@
 import { CornerLeftUp, Eye, EyeOff, Folder, HardDrive } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { HostDirEntry, HostDirListing } from "../../shared/contracts";
+import { ApiError } from "../api";
 import { isComposingKeyboardEvent } from "../keyboard-input";
-import { store } from "../store";
+import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import { store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { PiLoader } from "./PiLoader";
 
@@ -29,6 +31,12 @@ export function DirectoryPicker({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showHidden, setShowHidden] = useState(false);
+  const transportGeneration = useAppState((state) => state.transportGeneration);
+  const initialTransport = useRef(transportGeneration);
+  const pathRef = useRef(path);
+  pathRef.current = path;
+  const listingTransport = useRef<number | null>(null);
+  const listingRequest = useRef<AbortController | null>(null);
   const dialogRef = useModalFocus<HTMLDivElement>(
     true,
     "directory-picker",
@@ -70,62 +78,125 @@ export function DirectoryPicker({
     } = {},
   ) => {
     const mine = ++ticket.current;
+    listingRequest.current?.abort();
+    const request = new AbortController();
+    const recovery = new RecoveryBackoff();
+    listingRequest.current = request;
+    const owns = () =>
+      !request.signal.aborted &&
+      ticket.current === mine &&
+      store.getState().transportGeneration === transportGeneration;
     requested.current = { path, fallbackHome };
     restoreListFocus.current = Boolean(
       listRef.current?.contains(document.activeElement),
     );
     setPath(path ?? "");
-    setListing(null);
+    if (
+      listing?.path !== path ||
+      hidden !== showHidden ||
+      listingTransport.current !== transportGeneration
+    )
+      setListing(null);
     setLoading(true);
     setError(null);
-    const listing = store
-      .browseHostDirs(path, hidden)
+    const read = async (
+      target?: string,
+    ): Promise<HostDirListing | undefined> => {
+      while (owns()) {
+        try {
+          return await store.browseHostDirs(target, hidden);
+        } catch (cause) {
+          if (!owns()) return undefined;
+          if (
+            !isTransientFailure(cause) ||
+            !(await recovery.wait(request.signal))
+          )
+            throw cause;
+        }
+      }
+      return undefined;
+    };
+    return read(path)
       .catch((cause: unknown) => {
-        if (ticket.current !== mine) throw cause;
-        if (fallbackHome && path)
-          return store.browseHostDirs(undefined, hidden);
+        if (!owns()) return undefined;
+        if (
+          fallbackHome &&
+          path &&
+          cause instanceof ApiError &&
+          [400, 403, 404].includes(cause.status)
+        ) {
+          recovery.reset();
+          return read(undefined);
+        }
         throw cause;
-      });
-    return listing
+      })
       .then((result) => {
-        if (ticket.current !== mine) return;
+        if (!owns() || !result) return;
         requested.current = { path: result.path };
+        listingTransport.current = transportGeneration;
         setListing(result);
         setPath(result.path);
         return result;
       })
       .catch((cause: unknown) => {
-        if (ticket.current === mine)
-          setError(
-            cause instanceof Error
-              ? cause.message
-              : "Cannot open that directory",
-          );
+        if (!owns()) return;
+        if (!isTransientFailure(cause)) {
+          setListing(null);
+          listingTransport.current = null;
+        }
+        setError(
+          cause instanceof Error ? cause.message : "Cannot open that directory",
+        );
       })
       .finally(() => {
-        if (ticket.current === mine) setLoading(false);
+        recovery.reset();
+        if (owns()) setLoading(false);
+        if (listingRequest.current === request) listingRequest.current = null;
       });
   };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only initialization deliberately hands later navigation to the picker.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: transport replacement revalidates the live path; navigation and visibility own their own reads.
   useEffect(() => {
-    let current = true;
-    void load(initial?.trim() || undefined, { fallbackHome: true });
-    // Drive discovery is advisory and belongs to the dialog lifetime, not a
-    // particular directory request. Neither delay nor failure may block Home.
-    void store.browseHostRoots().then(
-      (result) => {
-        if (current) setRoots(result.roots);
-      },
-      () => {
-        if (current) setRootsUnavailable(true);
-      },
-    );
+    const request = new AbortController();
+    const recovery = new RecoveryBackoff();
+    const owns = () =>
+      !request.signal.aborted &&
+      store.getState().transportGeneration === transportGeneration;
+    void load(pathRef.current.trim() || undefined, {
+      fallbackHome: initialTransport.current === transportGeneration,
+    });
+    setRoots([]);
+    setRootsUnavailable(false);
+    // Advisory drive discovery must not block directory navigation.
+    void (async () => {
+      try {
+        while (owns()) {
+          try {
+            const result = await store.browseHostRoots();
+            if (owns()) setRoots(result.roots);
+            return;
+          } catch (cause) {
+            if (!owns()) return;
+            if (
+              !isTransientFailure(cause) ||
+              !(await recovery.wait(request.signal))
+            )
+              throw cause;
+          }
+        }
+      } catch {
+        if (owns()) setRootsUnavailable(true);
+      } finally {
+        recovery.reset();
+      }
+    })();
     return () => {
-      current = false;
+      request.abort();
+      recovery.reset();
+      listingRequest.current?.abort();
       ticket.current += 1;
     };
-  }, []);
+  }, [transportGeneration]);
 
   return (
     <div className="overlay" role="presentation" onClick={onCancel}>

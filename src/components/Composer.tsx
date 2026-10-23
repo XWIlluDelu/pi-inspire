@@ -483,6 +483,7 @@ export const Composer = memo(function Composer() {
         items={state.attachments}
         disabled={sessionOpening}
         onRemove={store.removeAttachment}
+        onRetry={(localId) => void store.retryAttachment(localId)}
       />
       <ProjectFileChips
         paths={state.projectFiles}

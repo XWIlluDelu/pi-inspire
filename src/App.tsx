@@ -490,6 +490,21 @@ export function App() {
     }),
     shallowEqual,
   );
+  const [connectionDelayed, setConnectionDelayed] = useState(false);
+  const connectionInterrupted = state.connection !== "open";
+  useEffect(() => {
+    if (!connectionInterrupted) {
+      setConnectionDelayed(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setConnectionDelayed(true), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [connectionInterrupted]);
+  const showConnectionBanner =
+    connectionInterrupted &&
+    (connectionDelayed ||
+      (state.connectionProblem !== null &&
+        state.connectionProblem.kind !== "stream-interrupted"));
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const navSearchRef = useRef<HTMLInputElement>(null);
@@ -997,7 +1012,7 @@ export function App() {
             </div>
           </div>
         ) : null}
-        {state.connection !== "open" && !state.error ? (
+        {showConnectionBanner && !state.error ? (
           <div className="banner banner--warning" role="status">
             <span>
               {state.connectionProblem

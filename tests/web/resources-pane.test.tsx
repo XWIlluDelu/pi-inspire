@@ -528,6 +528,66 @@ describe("Files pane", () => {
     store.setContextMode("files");
   });
 
+  it("keeps Recent usable through transient list and probe failures without a retry chore", async () => {
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    let failProbe = true;
+    let failList = false;
+    let lists = 0;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith("/api/resources/list")) {
+        lists += 1;
+        if (failList)
+          return Response.json(
+            { error: "Temporary list failure" },
+            { status: 503 },
+          );
+      }
+      if (url.startsWith("/api/resources/probe") && failProbe)
+        return Response.json(
+          { error: "Temporary probe failure" },
+          { status: 503 },
+        );
+      return original(input, init);
+    });
+    vi.useFakeTimers();
+    try {
+      store.setResourcesOpen(true);
+      const { container, unmount } = render(<ContextPane />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      const row = container.querySelector(".recent-file")!;
+      expect(row).toBeVisible();
+      expect(row).not.toHaveClass("recent-file--unavailable");
+      expect(row.getAttribute("aria-label")).not.toContain("File unavailable");
+      failProbe = false;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect(container.querySelector(".recent-file")).toBe(row);
+      failList = true;
+      fireEvent.click(
+        screen.getByRole("button", { name: "Refresh context pane" }),
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.queryByText("Retry recent files")).toBeNull();
+      expect(container.querySelector(".recent-file")).toBe(row);
+      const beforeRecovery = lists;
+      failList = false;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect(lists).toBe(beforeRecovery + 1);
+      expect(container.querySelector(".recent-file")).toBe(row);
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("renders grouped changes over a stable source view with change navigation", async () => {
     Element.prototype.scrollIntoView = vi.fn();
     await store.openResource("notes.md", "changes");

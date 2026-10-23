@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   activeSnapshot,
   bootstrapPayload,
@@ -11,6 +11,7 @@ import { baseRoutes, initStore } from "./store-fixture";
 
 describe("transcript paging", () => {
   beforeEach(() => installFakeWebSocket());
+  afterEach(() => vi.useRealTimers());
 
   it("materializes a bounded activity tail before expanding the complete range", async () => {
     const requested: string[] = [];
@@ -263,7 +264,7 @@ describe("transcript paging", () => {
     expect(store.getState().olderMessagesError).toBeNull();
   });
 
-  it("keeps a failed automatic page local to the transcript and clears it on retry", async () => {
+  it("keeps one page promise and its confirmed messages through automatic recovery", async () => {
     let attempts = 0;
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap")) {
@@ -298,15 +299,123 @@ describe("transcript paging", () => {
     });
     const { store } = await initStore();
 
-    expect(await store.loadOlderMessages()).toBe(false);
-    expect(store.getState().olderMessagesError).toBe("temporarily unavailable");
+    vi.useFakeTimers();
+    const loading = store.loadOlderMessages();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(attempts).toBe(1);
+    expect(store.getState().loadingOlderMessages).toBe(true);
+    expect(store.getState().olderMessagesError).toBeNull();
+    expect(
+      store.getState().messages.map((message) => message.timestamp),
+    ).toEqual([2]);
     expect(store.getState().error).toBeNull();
 
-    expect(await store.loadOlderMessages()).toBe(true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(attempts).toBe(2);
+    await expect(loading).resolves.toBe(true);
+    expect(store.getState().loadingOlderMessages).toBe(false);
     expect(store.getState().olderMessagesError).toBeNull();
     expect(
       store.getState().messages.map((message) => message.timestamp),
     ).toEqual([1, 2]);
+  });
+
+  describe("older-page recovery ownership", () => {
+    function installPaging(read: () => { status?: number; body: unknown }) {
+      installFetch((url, init) => {
+        if (url.startsWith("/api/bootstrap"))
+          return {
+            body: bootstrapPayload({
+              snapshot: activeSnapshot({
+                transcriptPage: {
+                  revision: 4,
+                  messages: [{ role: "user", content: "new", timestamp: 2 }],
+                  hasOlder: true,
+                  olderCursor: "cursor-1",
+                },
+              }),
+            }),
+          };
+        if (url.startsWith("/api/transcript/older")) return read();
+        return baseRoutes(url, init);
+      });
+    }
+
+    it("bounds transient failures locally and clears the error after successful recovery", async () => {
+      let healthy = false;
+      const read = vi.fn(() =>
+        healthy
+          ? {
+              body: {
+                sessionId: "s1",
+                revision: 4,
+                messages: [{ role: "user", content: "old", timestamp: 1 }],
+                hasOlder: false,
+                olderCursor: null,
+              },
+            }
+          : { status: 503, body: { error: "Still unavailable" } },
+      );
+      installPaging(read);
+      const { store } = await initStore();
+      vi.useFakeTimers();
+      const loading = store.loadOlderMessages();
+      for (const delay of [0, 1_000, 3_000, 10_000])
+        await vi.advanceTimersByTimeAsync(delay);
+      await expect(loading).resolves.toBe(false);
+      expect(read).toHaveBeenCalledTimes(4);
+      expect(store.getState()).toMatchObject({
+        olderMessagesError: "Still unavailable",
+        loadingOlderMessages: false,
+        error: null,
+      });
+      expect(
+        store.getState().messages.map((message) => message.timestamp),
+      ).toEqual([2]);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(read).toHaveBeenCalledTimes(4);
+      healthy = true;
+      await expect(store.loadOlderMessages()).resolves.toBe(true);
+      expect(store.getState().olderMessagesError).toBeNull();
+      expect(
+        store.getState().messages.map((message) => message.timestamp),
+      ).toEqual([1, 2]);
+    });
+
+    it.each(["view", "transport"] as const)(
+      "retires the queued older read after its %s changes",
+      async (change) => {
+        const read = vi.fn(() => ({
+          status: 503,
+          body: { error: "Old read unavailable" },
+        }));
+        installPaging(read);
+        const { store, socket } = await initStore();
+        vi.useFakeTimers();
+        const loading = store.loadOlderMessages();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(read).toHaveBeenCalledTimes(1);
+        if (change === "view")
+          socket.emit({
+            type: "snapshot",
+            data: activeSnapshot({
+              transcriptPage: {
+                revision: 4,
+                viewId: "other-view",
+                messages: [
+                  { role: "user", content: "other view", timestamp: 3 },
+                ],
+              },
+            }),
+          });
+        else await store.init("replacement-token");
+        await vi.advanceTimersByTimeAsync(2_000);
+        await expect(loading).resolves.toBe(false);
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(store.getState().olderMessagesError).toBeNull();
+        expect(store.getState().loadingOlderMessages).toBe(false);
+      },
+    );
   });
 
   it("discards a delayed older page from branch A after same-session switch to branch B", async () => {
