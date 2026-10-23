@@ -2,22 +2,13 @@ import { fuzzyFilter } from "@earendil-works/pi-tui";
 import {
   nativeCommand,
   PI_NATIVE_COMMANDS,
-  type PiNativeCommandExecution,
+  type PiCommand,
 } from "../shared/commands";
 import type { ModelOption } from "../shared/contracts";
 import type { ProjectFileResult } from "./api";
-import { supportedThinkingLevels } from "./model-options";
+import { resolveModelMetadata, supportedThinkingLevels } from "./model-options";
 
-export interface PiCommand {
-  name: string;
-  description?: string;
-  /** Pi currently reports extension/prompt/skill. Keep unknown future sources
-   * attributable instead of collapsing or rejecting them. */
-  source?: string;
-  argumentHint?: string;
-  /** Browser adaptation, not a capability claimed by Pi's runtime inventory. */
-  execution?: PiNativeCommandExecution;
-}
+export type { PiCommand } from "../shared/commands";
 
 const INSPIRE_COMMANDS: PiCommand[] = PI_NATIVE_COMMANDS.map((command) => ({
   name: command.name,
@@ -167,6 +158,7 @@ export function commandArgumentCandidates(
   activeModel: ModelOption | null,
 ): CommandArgumentCandidate[] {
   if (token.name === "thinking") {
+    activeModel = resolveModelMetadata(activeModel, models);
     if (activeModel?.reasoning === false) return [];
     return fuzzyFilter(
       supportedThinkingLevels(activeModel),

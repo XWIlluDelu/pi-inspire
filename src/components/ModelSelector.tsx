@@ -19,8 +19,8 @@ const MODEL_MENU_CONSTRAINTS: FloatingMenuConstraints = {
   gap: 4,
   horizontalMargin: 16,
   verticalMargin: 8,
-  maxWidth: 520,
-  maxHeight: 440,
+  maxWidth: 384,
+  maxHeight: 456,
 };
 export function ModelSelector({
   value,

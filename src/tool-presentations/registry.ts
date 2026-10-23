@@ -1,8 +1,13 @@
 import type {
+  PresentationAdapterInfo,
   ThinkingPresentationRuleDeclaration,
   ToolPresentationConfiguration,
 } from "../../shared/tool-presentation-config";
 import { createCustomMessagePresentationRegistry } from "../custom-message-presentations";
+import {
+  configurePresentationAdapters,
+  subscribePresentationAdapters,
+} from "../presentation-adapters";
 import {
   compileThinkingPresentationRule,
   compileToolPresentationRules,
@@ -95,17 +100,13 @@ export let thinkingPresentationRegistry = createThinkingPresentationRegistry();
 export let customMessagePresentationRegistry: ReturnType<
   typeof createCustomMessagePresentationRegistry
 > = createCustomMessagePresentationRegistry();
-const customMessageListeners = new Set<() => void>();
 
 export function getCustomMessagePresentationRegistry(): typeof customMessagePresentationRegistry {
   return customMessagePresentationRegistry;
 }
 
 export function subscribeCustomMessagePresentations(listener: () => void) {
-  customMessageListeners.add(listener);
-  return () => {
-    customMessageListeners.delete(listener);
-  };
+  return subscribePresentationAdapters(listener);
 }
 
 /** Replace the user-owned generation after an authoritative host bootstrap.
@@ -113,6 +114,7 @@ export function subscribeCustomMessagePresentations(listener: () => void) {
  * replace only the projected summary and expanded body. */
 export function configureToolPresentationRegistry(
   configuration?: ToolPresentationConfiguration,
+  adapters?: PresentationAdapterInfo[],
 ): void {
   const resolved: ToolPresentationConfiguration = configuration ?? {
     version: 1,
@@ -129,5 +131,5 @@ export function configureToolPresentationRegistry(
   customMessagePresentationRegistry = createCustomMessagePresentationRegistry(
     resolved.customMessages,
   );
-  for (const listener of customMessageListeners) listener();
+  configurePresentationAdapters(resolved, adapters);
 }

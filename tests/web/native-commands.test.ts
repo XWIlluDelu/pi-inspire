@@ -305,6 +305,39 @@ describe("Pi native command dispatch", () => {
     });
   });
 
+  it("opens the model picker from Composer and palette without requiring a loaded catalog", async () => {
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap"))
+        return {
+          body: bootstrapPayload({
+            snapshot: activeSnapshot({ availableModels: [] }),
+          }),
+        };
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    installFetch((url, init) =>
+      url.startsWith("/api/models")
+        ? { body: { models: [] } }
+        : baseRoutes(url, init),
+    );
+    await store.refreshModels();
+    for (const run of [store.sendPrompt, store.runPaletteNativeCommand]) {
+      const previous = store.getState().nativeCommandUiRequest?.id;
+      await run("/model");
+      expect(store.getState().nativeCommandUiRequest).toMatchObject({
+        action: "model",
+      });
+      expect(store.getState().nativeCommandUiRequest?.id).not.toBe(previous);
+    }
+    expect(store.getState().commandActivities.s1).toBeUndefined();
+    await store.sendPrompt("/model missing");
+    expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
+      command: "model",
+      status: "warning",
+    });
+  });
+
   it("keeps local controls and live model/thinking/export available during Pi work", async () => {
     let exports = 0;
     let modelChanges = 0;

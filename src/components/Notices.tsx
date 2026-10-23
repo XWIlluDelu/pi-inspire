@@ -120,7 +120,7 @@ export const Notices = memo(function Notices({
       ? availableUpdates(state)
       : null;
   const ref = useRef<HTMLDivElement>(null);
-  // Both anchors respect the current header and multiline banners. Rebind
+  // Keep one top-right anchor below the visible workspace controls. Rebind
   // after feedback changes can replace those nodes.
   useLayoutEffect(() => {
     const element = ref.current;
@@ -130,38 +130,43 @@ export const Notices = memo(function Notices({
         "main > .topbar, main > .banner",
       ),
     ];
+    const tools = [
+      ...document.querySelectorAll<HTMLElement>(
+        "main .transcript-search, main .transcript-mobile-toolbar",
+      ),
+    ];
     const composer = document.querySelector<HTMLElement>(
       "main .composer, main .composer-readonly",
     );
     const measure = () => {
-      if (boundaries.length > 0) {
-        const bottom = Math.max(
-          ...boundaries.map((node) => node.getBoundingClientRect().bottom),
-        );
-        element.style.setProperty("--notice-header-bottom", `${bottom}px`);
-      }
-      // Measure the normal viewport anchor, not a prior editor adjustment.
-      element.style.removeProperty("--notice-bottom");
       const stackBounds = element.getBoundingClientRect();
+      const overlapsHorizontally = (bounds: DOMRect) =>
+        bounds.width > 0 &&
+        stackBounds.left < bounds.right &&
+        stackBounds.right > bounds.left;
+      let headerBottom = Math.max(
+        0,
+        ...boundaries.map((node) => node.getBoundingClientRect().bottom),
+      );
+      for (const tool of tools) {
+        const bounds = tool.getBoundingClientRect();
+        if (bounds.height > 0 && overlapsHorizontally(bounds))
+          headerBottom = Math.max(headerBottom, bounds.bottom);
+      }
+      element.style.setProperty("--notice-header-bottom", `${headerBottom}px`);
+      // The editor limits an overflowing stack; it never moves the top anchor.
       const composerBounds = composer?.getBoundingClientRect();
-      // Only a real two-dimensional overlap needs an editor boundary. A form
-      // higher on the page must not push bottom-corner feedback off the screen.
       if (
-        getComputedStyle(element).getPropertyValue("--notice-anchor").trim() !==
-          "top" &&
         composerBounds &&
-        composerBounds.width > 0 &&
-        stackBounds.left < composerBounds.right &&
-        stackBounds.right > composerBounds.left &&
-        stackBounds.top < composerBounds.bottom &&
-        stackBounds.bottom > composerBounds.top
+        overlapsHorizontally(composerBounds) &&
+        composerBounds.top > headerBottom + 8
       ) {
         element.style.setProperty(
-          "--notice-bottom",
+          "--notice-bottom-inset",
           `max(var(--space-4), var(--safe-bottom), ${window.innerHeight - composerBounds.top + 8}px)`,
         );
       } else {
-        element.style.removeProperty("--notice-bottom");
+        element.style.removeProperty("--notice-bottom-inset");
       }
       // Measure at the full card width, without a previous scrollbar. Normal
       // stacks keep their floating shadows; only overflowing ones need clipping.
@@ -186,6 +191,7 @@ export const Notices = memo(function Notices({
         : new ResizeObserver(measure);
     [
       ...boundaries,
+      ...tools,
       element,
       ...element.children,
       composer,

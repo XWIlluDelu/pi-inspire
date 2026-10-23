@@ -34,6 +34,7 @@ import type {
   ProviderDeclaration,
   ProviderLoginOption,
 } from "../../shared/model-settings";
+import { thinkingLevelLabel, thinkingLevelOptions } from "../model-options";
 import { shallowEqual, store, useAppState } from "../store";
 import { DetailSummary } from "./DetailSummary";
 import { Dropdown } from "./Dropdown";
@@ -1095,7 +1096,7 @@ export function ModelsSettings({
                     label="Default thinking"
                     description={
                       snapshot.projectOverrides.includes("defaultThinkingLevel")
-                        ? `This project uses ${snapshot.effective.defaultThinkingLevel ?? "Model default"}.`
+                        ? `This project uses ${thinkingLevelLabel(snapshot.effective.defaultThinkingLevel ?? "Model default")}.`
                         : undefined
                     }
                   >
@@ -1113,10 +1114,7 @@ export function ModelsSettings({
                           label: "Model default",
                           description: "Use each model's own setting.",
                         },
-                        ...THINKING_LEVELS.map((level) => ({
-                          value: level,
-                          label: level,
-                        })),
+                        ...thinkingLevelOptions(THINKING_LEVELS),
                       ]}
                       onChange={(value) =>
                         void save({

@@ -43,6 +43,7 @@ describe("static asset contracts", () => {
       "PromptMap",
       "ChangesPane",
       "SettingsControls",
+      "StatusChoice",
       "TerminalTouchKeys",
     ]) {
       const source = await readFile(

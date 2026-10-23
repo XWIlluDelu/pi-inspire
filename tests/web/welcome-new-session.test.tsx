@@ -377,7 +377,7 @@ describe("new-session start surface", () => {
       expect(read).not.toHaveBeenCalledWith("archived", "/archived/project");
       expect(
         screen.getByRole("combobox", { name: "Thinking level" }),
-      ).toHaveTextContent("high");
+      ).toHaveTextContent("High");
       if (kind === "missing") {
         const create = await screen.findByRole("button", {
           name: "Create folder and start",
@@ -494,13 +494,13 @@ describe("new-session start surface", () => {
       await waitFor(() =>
         expect(
           screen.getByRole("combobox", { name: "Thinking level" }),
-        ).toHaveTextContent("default"),
+        ).toHaveTextContent("Default"),
       );
       if (manualEffort) {
         fireEvent.click(
           screen.getByRole("combobox", { name: "Thinking level" }),
         );
-        fireEvent.click(screen.getByRole("option", { name: "high" }));
+        fireEvent.click(screen.getByRole("option", { name: "High" }));
       }
       const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
       try {
@@ -578,7 +578,7 @@ describe("new-session start surface", () => {
     },
   );
 
-  it("keeps a rejected project blocked during retry and after a transient read failure", async () => {
+  it("keeps a rejected project blocked while a transient retry recovers automatically", async () => {
     directoryFailure = "file";
     act(() =>
       FakeWebSocket.instances.at(-1)!.emit({
@@ -604,6 +604,7 @@ describe("new-session start surface", () => {
       target: { value: "Preserve my prompt" },
     });
     await screen.findByText("Project path is not a directory");
+    vi.useFakeTimers();
     const gate = deferred<ModelCatalogResponse>();
     const original = store.readNewSessionModels;
     const read = vi
@@ -619,8 +620,9 @@ describe("new-session start surface", () => {
         gate.reject(new Error("Directory service unavailable")),
       );
       expect(screen.getByRole("alert")).toHaveTextContent(
-        "Directory service unavailable",
+        "Project path is not a directory",
       );
+      expect(screen.getByRole("button", { name: "Checking…" })).toBeDisabled();
       expect(
         screen.getByRole("button", { name: "Start session" }),
       ).toBeDisabled();
@@ -629,16 +631,15 @@ describe("new-session start surface", () => {
       ).toHaveValue("Preserve my prompt");
       directoryFailure = null;
       read.mockImplementation(original);
-      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-      await waitFor(() =>
-        expect(
-          screen.getByRole("button", { name: "Start session" }),
-        ).toBeEnabled(),
-      );
+      await act(() => vi.advanceTimersByTimeAsync(1_000));
+      expect(
+        screen.getByRole("button", { name: "Start session" }),
+      ).toBeEnabled();
       expect(screen.queryByRole("alert")).toBeNull();
     } finally {
       view.unmount();
       read.mockRestore();
+      vi.useRealTimers();
     }
   });
 
@@ -766,7 +767,7 @@ describe("new-session start surface", () => {
     ).toBeDisabled();
     expect(
       screen.getByRole("combobox", { name: "Thinking level" }),
-    ).toHaveTextContent("unavailable");
+    ).toHaveTextContent("Unavailable");
 
     fireEvent.click(screen.getByRole("button", { name: "Model" }));
     models = screen.getByRole("listbox", { name: "Available models" });
@@ -777,7 +778,7 @@ describe("new-session start surface", () => {
     fireEvent.click(
       within(screen.getByRole("listbox", { name: "Thinking level" })).getByRole(
         "option",
-        { name: "high" },
+        { name: "High" },
       ),
     );
 

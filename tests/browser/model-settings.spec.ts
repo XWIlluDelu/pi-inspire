@@ -574,9 +574,9 @@ test("provider -> model -> common/default retains row focus, current model and c
   await thinking.click();
   await page
     .getByRole("listbox", { name: "Default thinking", exact: true })
-    .getByRole("option", { name: "xhigh", exact: true })
+    .getByRole("option", { name: /^xhigh$/i })
     .click();
-  await expect(thinking).toHaveText("xhigh");
+  await expect(thinking).toHaveText(/^xhigh$/i);
   expect(scenario.snapshot().saved.defaultThinkingLevel).toBe("xhigh");
   await settings.getByText(/Common order/, { exact: false }).click();
   await settings

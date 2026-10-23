@@ -9,7 +9,10 @@ import {
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelSelector } from "../../src/components/ModelSelector";
-import { supportedThinkingLevels } from "../../src/model-options";
+import {
+  supportedThinkingLevels,
+  thinkingLevelOptions,
+} from "../../src/model-options";
 import { mockModelMenuLayout } from "./fixtures/model-menu-layout";
 import { mockTouchFirstDevice } from "./fixtures/touch-device";
 
@@ -32,6 +35,27 @@ const models = [
 ];
 
 describe("model picker interaction", () => {
+  it("labels native thinking choices without changing their values", () => {
+    expect(
+      thinkingLevelOptions([
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+      ]),
+    ).toEqual([
+      { value: "off", label: "Off" },
+      { value: "minimal", label: "Minimal" },
+      { value: "low", label: "Low" },
+      { value: "medium", label: "Medium" },
+      { value: "high", label: "High" },
+      { value: "xhigh", label: "Xhigh" },
+      { value: "max", label: "Max" },
+    ]);
+  });
   it.each([
     { state: "disabled", disabled: true, choices: models },
     { state: "unavailable", disabled: false, choices: [] },

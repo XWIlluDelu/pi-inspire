@@ -2011,14 +2011,13 @@
 /* --- Notices --- */
 
 .notices {
-  --notice-anchor: bottom;
   --notice-header-bottom: calc(
     var(--window-titlebar-height) + var(--topbar-h) + var(--safe-top)
   );
-  --notice-bottom: max(var(--space-4), var(--safe-bottom));
+  --notice-bottom-inset: max(var(--space-4), var(--safe-bottom));
   position: fixed;
-  right: var(--space-4);
-  bottom: var(--notice-bottom);
+  top: calc(var(--notice-header-bottom) + var(--space-2));
+  right: max(var(--space-4), var(--safe-right));
   z-index: 60;
   pointer-events: none;
   display: flex;
@@ -2029,7 +2028,7 @@
     0px,
     calc(
       100dvh - var(--notice-header-bottom) - var(--space-2) -
-        var(--notice-bottom)
+        var(--notice-bottom-inset)
     )
   );
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
+import { checkpointAdapterConfiguration } from "../web/fixtures/extension-adapters";
 import { conversationFeedbackMessages } from "../web/fixtures/conversation-feedback";
 import { openMockEventSession } from "./support/mock-host";
 import { textBaseline } from "./support/text-baseline";
@@ -15,7 +15,7 @@ for (const touch of [false, true]) {
       const send = await openMockEventSession(
         page,
         "Feedback boundaries",
-        emptyToolPresentationConfiguration(),
+        checkpointAdapterConfiguration,
         {
           theme: "dark",
           palette: "classic-amber",

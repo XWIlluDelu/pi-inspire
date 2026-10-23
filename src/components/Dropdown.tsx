@@ -1,5 +1,6 @@
 import { Check, ChevronDown } from "lucide-react";
 import {
+  type ReactNode,
   useCallback,
   useEffect,
   useId,
@@ -44,9 +45,13 @@ export function Dropdown({
   direction = "down",
   display,
   className = "",
+  menuClassName = "",
   title,
   openRequest,
   onOpenRequestHandled,
+  header,
+  indicator,
+  menuWidth,
 }: {
   label: string;
   value: string;
@@ -60,11 +65,17 @@ export function Dropdown({
   /** Trigger text when it should differ from the selected option's label. */
   display?: string;
   className?: string;
+  menuClassName?: string;
   title?: string;
   openRequest?: number;
   onOpenRequestHandled?: (id: number) => void;
+  /** Composable controls use a dialog popup; plain selects retain listbox semantics. */
+  header?: ReactNode;
+  indicator?: ReactNode;
+  menuWidth?: number;
 }) {
   const id = useId();
+  const composed = Boolean(header);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const [keyboardActive, setKeyboardActive] = useState(true);
@@ -85,10 +96,11 @@ export function Dropdown({
       context: trigger,
       anchor,
       positioningRoot: trigger.closest<HTMLElement>(".overlay"),
-      preferredWidth: described ? 320 : Math.max(148, anchor.width),
+      preferredWidth:
+        menuWidth ?? (described ? 320 : Math.max(148, anchor.width)),
       observe: [trigger],
     };
-  }, [described]);
+  }, [described, menuWidth]);
   const placement = useFloatingMenuPlacement(open, resolveTarget, constraints);
   useModalPortal(Boolean(open && placement), triggerRef, listRef);
 
@@ -97,7 +109,7 @@ export function Dropdown({
     display ?? (selectedIndex >= 0 ? options[selectedIndex]!.label : value);
 
   const openMenu = () => {
-    if (disabled || options.length === 0) return;
+    if (disabled || (options.length === 0 && !header)) return;
     setActive(Math.max(0, selectedIndex));
     setKeyboardActive(true);
     setOpen(true);
@@ -117,7 +129,7 @@ export function Dropdown({
     if (openRequest === undefined || handledOpenRequest.current === openRequest)
       return;
     handledOpenRequest.current = openRequest;
-    if (!disabled && options.length > 0) {
+    if (!disabled && (options.length > 0 || composed)) {
       setActive(Math.max(0, selectedIndex));
       setKeyboardActive(true);
       setOpen(true);
@@ -129,6 +141,7 @@ export function Dropdown({
     onOpenRequestHandled,
     openRequest,
     options.length,
+    composed,
     selectedIndex,
   ]);
 
@@ -152,9 +165,51 @@ export function Dropdown({
 
   useEffect(() => {
     if (!open || !keyboardActive) return;
-    listRef.current?.children[active]?.scrollIntoView({ block: "nearest" });
+    listRef.current
+      ?.querySelector(`[data-dropdown-option="${active}"]`)
+      ?.scrollIntoView({ block: "nearest" });
   }, [open, active, keyboardActive, placement]);
 
+  const placed = Boolean(placement);
+  useEffect(() => {
+    if (open && placed && composed)
+      listRef.current
+        ?.querySelector<HTMLElement>(
+          "input:not(:disabled), button:not(:disabled)",
+        )
+        ?.focus({ preventScroll: true });
+  }, [open, placed, composed]);
+
+  const closeDialog = () => {
+    setOpen(false);
+    triggerRef.current?.focus({ preventScroll: true });
+  };
+  const onDialogKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeDialog();
+      return;
+    }
+    const option = (event.target as HTMLElement).closest<HTMLElement>(
+      "[data-dropdown-option]",
+    );
+    if (!option || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key))
+      return;
+    event.preventDefault();
+    const index = Number(option.dataset.dropdownOption);
+    const next =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? options.length - 1
+          : (index + (event.key === "ArrowDown" ? 1 : -1) + options.length) %
+            options.length;
+    setActive(next);
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-dropdown-option="${next}"]`)
+      ?.focus();
+  };
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (!open) {
       if (
@@ -197,19 +252,25 @@ export function Dropdown({
   };
 
   return (
-    <div className={`dropdown ${className}`} ref={rootRef}>
+    <div
+      className={`dropdown ${header ? "dropdown--composed " : ""}${className}`}
+      ref={rootRef}
+    >
       <button
         ref={triggerRef}
         type="button"
-        role="combobox"
         className="dropdown__trigger"
         aria-label={label}
         aria-expanded={open}
-        aria-haspopup="listbox"
         aria-controls={open ? `${id}-listbox` : undefined}
-        aria-activedescendant={
-          open && keyboardActive ? `${id}-option-${active}` : undefined
-        }
+        {...(composed
+          ? { "aria-haspopup": "dialog" as const }
+          : {
+              role: "combobox",
+              "aria-haspopup": "listbox" as const,
+              "aria-activedescendant":
+                open && keyboardActive ? `${id}-option-${active}` : undefined,
+            })}
         disabled={disabled}
         autoFocus={autoFocus}
         title={title ?? label}
@@ -217,57 +278,82 @@ export function Dropdown({
         onKeyDown={onKeyDown}
       >
         <span className="dropdown__value">{shown}</span>
+        {indicator}
         <ChevronDown size={11} aria-hidden />
       </button>
-      {open && placement
+      {header || (open && placement)
         ? createPortal(
             <div
-              className="dropdown__menu dropdown__menu--floating"
-              data-placement={placement.direction}
+              className={`dropdown__menu dropdown__menu--floating${header ? " dropdown__menu--composed" : ""}${menuClassName ? ` ${menuClassName}` : ""}`}
+              hidden={!open || !placement}
+              data-placement={placement?.direction}
               data-keyboard-active={keyboardActive}
               style={{
-                left: placement.left,
-                top: placement.top,
-                bottom: placement.bottom,
-                width: placement.width,
-                maxHeight: placement.maxHeight,
+                display: !open || !placement ? "none" : undefined,
+                left: placement?.left,
+                top: placement?.top,
+                bottom: placement?.bottom,
+                width: placement?.width,
+                maxHeight: placement?.maxHeight,
               }}
-              role="listbox"
-              aria-label={label}
+              {...(composed
+                ? {
+                    role: "dialog",
+                    "aria-label": label,
+                    onKeyDown: onDialogKeyDown,
+                  }
+                : { role: "listbox", "aria-label": label })}
               id={`${id}-listbox`}
               ref={listRef}
             >
-              {options.map((option, index) => (
-                <div
-                  key={option.value}
-                  role="option"
-                  id={`${id}-option-${index}`}
-                  aria-selected={option.value === value}
-                  className={`dropdown__option ${option.description ? "dropdown__option--described" : ""} ${keyboardActive && index === active ? "dropdown__option--active" : ""}`}
-                  // Focus must stay on the trigger; mousedown would steal it.
-                  onMouseDown={(event) => event.preventDefault()}
-                  onPointerMove={(event) => {
-                    if (event.pointerType === "touch") return;
-                    setKeyboardActive(false);
-                    setActive(index);
-                  }}
-                  onClick={() => pick(option)}
-                >
-                  <span className="dropdown__option-copy">
-                    <span className="dropdown__option-label">
-                      {option.label}
-                    </span>
-                    {option.description ? (
-                      <span className="dropdown__option-description">
-                        {option.description}
-                      </span>
-                    ) : null}
-                  </span>
-                  {option.value === value ? (
-                    <Check size={12} aria-hidden />
-                  ) : null}
+              {header}
+              {options.length === 0 && header ? (
+                <div className="dropdown__unavailable">
+                  Thinking unavailable
                 </div>
-              ))}
+              ) : null}
+              {options.map((option, index) => {
+                const Option = header ? "button" : "div";
+                return (
+                  <Option
+                    key={option.value}
+                    type={header ? "button" : undefined}
+                    role={header ? undefined : "option"}
+                    data-dropdown-option={index}
+                    id={`${id}-option-${index}`}
+                    aria-selected={header ? undefined : option.value === value}
+                    aria-pressed={header ? option.value === value : undefined}
+                    className={`dropdown__option ${option.description ? "dropdown__option--described" : ""} ${keyboardActive && index === active ? "dropdown__option--active" : ""}`}
+                    // Focus must stay on the trigger; mousedown would steal it.
+                    onMouseDown={(event) => {
+                      if (!header) event.preventDefault();
+                    }}
+                    onPointerMove={(event) => {
+                      if (event.pointerType === "touch") return;
+                      setKeyboardActive(false);
+                      setActive(index);
+                    }}
+                    onClick={() => {
+                      pick(option);
+                      if (header) triggerRef.current?.focus();
+                    }}
+                  >
+                    <span className="dropdown__option-copy">
+                      <span className="dropdown__option-label">
+                        {option.label}
+                      </span>
+                      {option.description ? (
+                        <span className="dropdown__option-description">
+                          {option.description}
+                        </span>
+                      ) : null}
+                    </span>
+                    {option.value === value ? (
+                      <Check size={12} aria-hidden />
+                    ) : null}
+                  </Option>
+                );
+              })}
             </div>,
             triggerRef.current?.closest(".overlay") ?? document.body,
           )

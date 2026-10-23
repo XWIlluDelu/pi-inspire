@@ -47,6 +47,7 @@ import type {
   ModelSettingsSnapshot,
 } from "../shared/model-settings";
 import type { ProviderAuthOperation } from "../shared/provider-auth-bridge";
+import type { StatusControlDeclaration } from "../shared/tool-presentation-config";
 import {
   type Api,
   ApiError,
@@ -92,7 +93,8 @@ import { TranscriptDataController } from "./controllers/transcript-data-controll
 import { UpdateController } from "./controllers/update-controller";
 import { WorkspaceController } from "./controllers/workspace-controller";
 import { appendNotice, type Notice, parseExtensionDisplays } from "./events";
-import { supportedThinkingLevels } from "./model-options";
+import { resolveModelMetadata, supportedThinkingLevels } from "./model-options";
+import { controlState } from "./presentation-adapters";
 import {
   isExternalSession,
   modelControlsSupported,
@@ -810,7 +812,10 @@ export class AppStore {
         boot.preferences,
         preferenceOwners,
       );
-      configureToolPresentationRegistry(boot.toolPresentations);
+      configureToolPresentationRegistry(
+        boot.toolPresentations,
+        boot.presentationAdapters,
+      );
       const updateProjection = this.updates.bootstrap(boot.updateStatus);
       this.set({
         prefs: preferences,
@@ -1719,6 +1724,85 @@ export class AppStore {
     );
   };
 
+  /** Shared confirmation boundary for both live controls and pre-session selections. */
+  selectStatusControl = async (
+    control: StatusControlDeclaration,
+    value: string,
+    sessionId: string | null,
+  ): Promise<boolean> => {
+    const transport = this.transportGeneration;
+    const current = () =>
+      this.state.sessionId === sessionId &&
+      this.transportGeneration === transport;
+    if (!sessionId || !current()) return false;
+    if (
+      !control.options.some((option) => option.value === value) ||
+      !resolveCommandInventory(this.state.commands).some(
+        (command) =>
+          command.source === "extension" &&
+          "/" + command.name === control.command,
+      )
+    )
+      throw new Error("This control is not available in this session.");
+    const confirmed = () =>
+      controlState(control, this.state.statuses[control.state.key])?.value ===
+      value;
+    if (confirmed()) return true;
+    return new Promise<boolean>((resolve, reject) => {
+      let settled = false;
+      const finish = (result: boolean, error?: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        unsubscribe();
+        if (error) reject(error);
+        else resolve(result);
+      };
+      const unsubscribe = this.subscribe(() => {
+        if (!current()) finish(false);
+        else if (confirmed()) finish(true);
+      });
+      const timer = setTimeout(
+        () =>
+          finish(false, new Error("The selection has not been confirmed yet.")),
+        10_000,
+      );
+      void this.sendPreparedCommand(control.command + " " + value).then(
+        (receipt) => {
+          if (!current()) finish(false);
+          else if (confirmed()) finish(true);
+          else if (!receipt)
+            finish(false, new Error("The change was not accepted."));
+        },
+        (error) => {
+          if (!current()) finish(false);
+          else if (confirmed()) finish(true);
+          else finish(false, error);
+        },
+      );
+    });
+  };
+
+  applyInitialStatusControls = async (
+    sessionId: string,
+    selections: readonly { control: StatusControlDeclaration; value: string }[],
+  ): Promise<boolean> => {
+    for (const { control, value } of selections) {
+      try {
+        if (!(await this.selectStatusControl(control, value, sessionId)))
+          return false;
+      } catch (error) {
+        if (this.state.sessionId === sessionId)
+          this.notify(
+            "warning",
+            `${control.label}: ${error instanceof Error ? error.message : "Could not apply selection."} Your first message is still in the composer.`,
+          );
+        return false;
+      }
+    }
+    return true;
+  };
+
   private executeNativeCommand(
     input: string,
     command: NonNullable<ReturnType<typeof parseNativeCommand>>,
@@ -1870,6 +1954,10 @@ export class AppStore {
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "model") {
+      if (!command.argument) {
+        this.requestNativeCommandUi(sessionId, "model");
+        return ACCEPTED_NATIVE_COMMAND;
+      }
       if (this.state.availableModels.length === 0) {
         this.presentCommandActivity(
           sessionId,
@@ -1878,10 +1966,6 @@ export class AppStore {
           "warning",
           "Pi did not report any available models for this session.",
         );
-        return ACCEPTED_NATIVE_COMMAND;
-      }
-      if (!command.argument) {
-        this.requestNativeCommandUi(sessionId, "model");
         return ACCEPTED_NATIVE_COMMAND;
       }
       const needle = command.argument.toLocaleLowerCase();
@@ -1921,7 +2005,11 @@ export class AppStore {
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "thinking") {
-      if (this.state.model?.reasoning === false) {
+      const activeModel = resolveModelMetadata(
+        this.state.model,
+        this.state.availableModels,
+      );
+      if (activeModel?.reasoning === false) {
         this.presentCommandActivity(
           sessionId,
           input,
@@ -1936,12 +2024,6 @@ export class AppStore {
         return ACCEPTED_NATIVE_COMMAND;
       }
       const level = command.argument.toLocaleLowerCase();
-      const activeModel =
-        this.state.availableModels.find(
-          (model) =>
-            model.provider === this.state.model?.provider &&
-            model.id === this.state.model.id,
-        ) ?? this.state.model;
       const levels = supportedThinkingLevels(activeModel);
       if (!levels.some((candidate) => candidate === level)) {
         this.presentCommandActivity(
@@ -2787,7 +2869,9 @@ export class AppStore {
   cycleThinking = (): Promise<void> =>
     this.queueModelCycle(async () => {
       if (!this.state.model || this.state.readOnlyReason) return;
-      const levels = supportedThinkingLevels(this.state.model);
+      const levels = supportedThinkingLevels(
+        resolveModelMetadata(this.state.model, this.state.availableModels),
+      );
       const index = levels.indexOf(this.state.thinkingLevel as ThinkingLevel);
       await this.setThinkingLevel(levels[(index + 1) % levels.length]!);
     });
@@ -3089,6 +3173,24 @@ export class AppStore {
   };
 
   // --- Preferences ---
+
+  setPresentationAdapterEnabled = async (
+    id: string,
+    enabled: boolean,
+  ): Promise<void> => {
+    const api = this.api;
+    if (!api) throw new Error("Connect to the Host before changing adapters.");
+    const result = await api.setPresentationAdapterEnabled(id, enabled);
+    if (api !== this.api) return;
+    this.set({
+      prefs: {
+        ...this.state.prefs,
+        adapterEnabled: result.preferences.adapterEnabled,
+      },
+    });
+    configureToolPresentationRegistry(result.configuration, result.adapters);
+    if (result.warning) this.notify("warning", result.warning);
+  };
 
   setTheme = (value: ThemePreference): void => this.preferences.setTheme(value);
   setPalette = (value: PalettePreference): void =>
