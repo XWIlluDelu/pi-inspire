@@ -88,7 +88,25 @@ export class HerdrEnhancement {
    * switch back to direct mode must fence a previous enhanced writer first.
    */
   initialize(): Promise<void> {
-    return (this.initialization ??= this.recover());
+    if (this.closed)
+      return Promise.reject(requestError("The Host is shutting down", 503));
+    if (this.initialization) return this.initialization;
+    this.initialized = false;
+    this.recoveryIssue = undefined;
+    const attempt = this.recover();
+    this.initialization = attempt;
+    void attempt.then(
+      () => {
+        // Successful admission stays established: later leases belong to this
+        // Host. A failed recovery can be checked again on the next start.
+        if (this.initialization === attempt && this.recoveryIssue)
+          this.initialization = null;
+      },
+      () => {
+        if (this.initialization === attempt) this.initialization = null;
+      },
+    );
+    return attempt;
   }
 
   private async recover(): Promise<void> {
@@ -172,13 +190,9 @@ export class HerdrEnhancement {
     );
   }
 
-  createProcess(options: PiRpcOptions): PiRpcProcess {
+  async createProcess(options: PiRpcOptions): Promise<PiRpcProcess> {
+    await this.initialize();
     if (this.closed) throw requestError("The Host is shutting down", 503);
-    if (!this.initialized)
-      throw requestError(
-        "The Host is still stopping previous enhanced sessions",
-        503,
-      );
     if (this.recoveryIssue) throw requestError(this.recoveryIssue, 503);
     if (!this.options.enabled || this.options.mock)
       return new PiRpcProcess(options);

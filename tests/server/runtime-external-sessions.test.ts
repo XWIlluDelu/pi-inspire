@@ -21,6 +21,7 @@ import {
   preview,
   record,
   trackedAttachmentStore,
+  waitForReady,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
@@ -130,7 +131,7 @@ describe("continue an externally owned Pi", () => {
     }
   });
 
-  it("keeps an unavailable discovered owner read-only and recovers on explicit reopen", async () => {
+  it("keeps an unavailable discovered owner read-only and recovers its connection without navigation", async () => {
     const f = nativeFixture();
     const create = vi.fn(() => {
       throw new Error("must not launch Pi");
@@ -156,7 +157,13 @@ describe("continue an externally owned Pi", () => {
       );
       expect(create).not.toHaveBeenCalled();
       vi.mocked(f.native.read).mockResolvedValue({ status: "idle" });
-      await runtime.openSession("a");
+      await vi.waitFor(
+        async () =>
+          expect(
+            (await runtime.snapshot("a")).active?.readOnlyReason,
+          ).toBeUndefined(),
+        { timeout: 2_000 },
+      );
       await runtime.prompt({ sessionId: "a", message: "Recovered input" });
       expect(
         (await runtime.snapshot("a")).active?.readOnlyReason,
@@ -207,6 +214,59 @@ describe("continue an externally owned Pi", () => {
     }
     expect(f.native.close).toHaveBeenCalledOnce();
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it("discards late native state after retirement and completes writer recovery", async () => {
+    const f = nativeFixture();
+    const entered = deferredSignal();
+    const proceed = deferredSignal();
+    let retired = false;
+    const worker = vi.fn(
+      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+    );
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      trackedAttachmentStore(),
+      worker,
+      preview,
+    ).setExternalSessionConnector(async () => (retired ? null : f.native));
+    const events: Array<{ type: string }> = [];
+    runtime.on("event", (event) => events.push(event));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      runtime.retainSessionView("a");
+      await runtime.openSession("a");
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot("a")).sessionStatuses.a?.external).toBe(
+          true,
+        ),
+      );
+      vi.mocked(f.native.read).mockImplementationOnce(async () => {
+        entered.resolve();
+        await proceed.promise;
+        return { status: "working" };
+      });
+      await runtime.openSession("a");
+      await entered.promise;
+      retired = true;
+      f.setState(null);
+      await vi.advanceTimersByTimeAsync(750);
+      expect(f.native.close).toHaveBeenCalledOnce();
+      expect(worker).not.toHaveBeenCalled();
+
+      proceed.resolve();
+      await waitForReady(runtime, "a");
+      expect(worker).toHaveBeenCalledOnce();
+      const snapshot = await runtime.snapshot("a");
+      expect(snapshot.active?.readOnlyReason).toBeUndefined();
+      expect(snapshot.sessionStatuses.a?.external).not.toBe(true);
+      expect(snapshot.runState).toBe("idle");
+      expect(events.some((event) => event.type === "agent_start")).toBe(false);
+    } finally {
+      proceed.resolve();
+      await runtime.close();
+      vi.useRealTimers();
+    }
   });
 
   it("does not block Host restart for independently running Pi work", async () => {
@@ -673,6 +733,7 @@ describe("continue an externally owned Pi", () => {
         current: () => true,
         emit: vi.fn(),
         assertUsable: vi.fn(),
+        released: vi.fn(),
         log: vi.fn(),
         reconcile: async () => {},
       },
@@ -732,6 +793,7 @@ describe("continue an externally owned Pi", () => {
         current: () => true,
         emit,
         assertUsable: vi.fn(),
+        released: vi.fn(),
         log: vi.fn(),
         reconcile: async () => {},
       },
@@ -783,6 +845,7 @@ describe("continue an externally owned Pi", () => {
         current: () => true,
         emit: vi.fn(),
         assertUsable: vi.fn(),
+        released: vi.fn(),
         log,
         reconcile,
       },

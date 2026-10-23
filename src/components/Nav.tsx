@@ -133,6 +133,7 @@ export const Nav = memo(function Nav({
     sessionListHydrating,
     sessionListOperation,
     sessionListError,
+    sessionListIssues,
     sessionActionError,
     clearingHidden,
     deletingSessionId,
@@ -155,6 +156,7 @@ export const Nav = memo(function Nav({
       sessionListHydrating: state.sessionListHydrating,
       sessionListOperation: state.sessionListOperation,
       sessionListError: state.sessionListError,
+      sessionListIssues: state.sessionListIssues,
       sessionActionError: state.sessionActionError,
       clearingHidden: state.clearingHidden,
       deletingSessionId: state.deletingSessionId,
@@ -342,6 +344,7 @@ export const Nav = memo(function Nav({
     sessionListLoadingOlder,
     sessionListHydrating,
     sessionListError,
+    sessionListIssues,
     clearingHidden,
     deletingSessionId,
   };
@@ -518,6 +521,31 @@ export const Nav = memo(function Nav({
             />
           );
         })}
+        {sessionListIssues.length ? (
+          <div className="nav__pagination">
+            <details className="nav__source-issues">
+              <summary>Some session sources are unavailable</summary>
+              <p>Showing available history. Counts may be incomplete.</p>
+              <ul>
+                {sessionListIssues.map((issue) => (
+                  <li key={issue.path}>
+                    <strong>{issue.path}</strong>
+                    <br />
+                    {issue.message}
+                  </li>
+                ))}
+              </ul>
+            </details>
+            <button
+              type="button"
+              className="nav__pagination-button"
+              disabled={sessionListBusy}
+              onClick={() => void store.refreshSessions()}
+            >
+              Retry unavailable sources
+            </button>
+          </div>
+        ) : null}
         {showSessionListActivity ? (
           <div className="nav__pagination">
             <span
@@ -558,7 +586,10 @@ export const Nav = memo(function Nav({
             ) : null}
           </div>
         ) : null}
-        {sessions.length === 0 && !sessionListBusy && !sessionListError ? (
+        {sessions.length === 0 &&
+        !sessionListBusy &&
+        !sessionListError &&
+        !sessionListIssues.length ? (
           <div className="empty-state">
             {searching ? (
               <SearchX size={26} strokeWidth={1.5} aria-hidden />

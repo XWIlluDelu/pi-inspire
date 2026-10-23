@@ -73,6 +73,36 @@ function createHarness() {
 }
 
 describe("SessionCatalogController", () => {
+  it("keeps available rows and source diagnostics separate from transport errors, then clears diagnostics on recovery", async () => {
+    const harness = createHarness();
+    harness.sessionsByIds.mockResolvedValue({ sessions: [] });
+    harness.sessionsByCwds.mockResolvedValue({ sessions: [] });
+    harness.sessions.mockResolvedValueOnce({
+      sessions: [session("healthy")],
+      offset: 0,
+      total: 1,
+      issues: [{ path: "/offline", message: "Access denied" }],
+    });
+    await harness.controller.load("");
+    expect(harness.state()).toMatchObject({
+      sessions: [{ id: "healthy" }],
+      sessionListTotal: 1,
+      sessionListNextOffset: 1,
+      sessionListError: null,
+      sessionListIssues: [{ path: "/offline" }],
+    });
+    harness.sessions.mockResolvedValueOnce({
+      sessions: [session("healthy"), session("recovered")],
+      offset: 0,
+      total: 2,
+    });
+    await harness.controller.refresh();
+    expect(harness.refreshSessions).toHaveBeenCalledOnce();
+    expect(harness.state()).toMatchObject({
+      sessions: [{ id: "healthy" }, { id: "recovered" }],
+      sessionListIssues: [],
+    });
+  });
   it("publishes only the newest query generation", async () => {
     const oldPage = deferred<{
       sessions: SessionSummary[];

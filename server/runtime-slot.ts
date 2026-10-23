@@ -90,8 +90,6 @@ export interface PendingPartialPersistence {
   sourceIdentity: string | null;
   sourceVersion: string | null;
   observedBytes: number;
-  deadline: number;
-  timer: ReturnType<typeof setTimeout>;
 }
 
 interface NavigationLease {

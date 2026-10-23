@@ -228,6 +228,7 @@ export class AttachmentStore {
   private initialization: Promise<void> | null = null;
   private readonly owned = new Map<string, AttachmentOwnership>();
   private readonly sessionDirectories = new Set<string>();
+  private readonly observedDirectories = new Set<string>();
   private readonly registeredDirectories = new Set<string>();
   private readonly rootIdentities = new Map<string, RootIdentity>();
   private readonly unverifiedDirectories = new Set<string>();
@@ -394,6 +395,14 @@ export class AttachmentStore {
     source: () => Promise<readonly (string | undefined)[]>,
   ): void {
     this.directorySource = source;
+  }
+
+  /** Reading existing history needs no storage writes. GC registers observed
+   * roots before using their absence as negative reference evidence. */
+  observeSession(path: string): void {
+    const directory = dirname(resolve(path));
+    this.sessionDirectories.add(directory);
+    this.observedDirectories.add(directory);
   }
 
   /** Registration remembers the path before sidecar I/O. Missing/readonly
@@ -834,6 +843,10 @@ export class AttachmentStore {
       this.sessionDirectories.add(
         resolve(directory ?? join(getAgentDir(), "sessions")),
       );
+    }
+    for (const directory of this.observedDirectories) {
+      await this.registerSession(join(directory, ".retention-reference.jsonl"));
+      this.observedDirectories.delete(directory);
     }
     const roots = await this.retentionReferenceRoots();
     const sources = roots.sessions;

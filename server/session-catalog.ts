@@ -3,6 +3,7 @@ import {
   MAX_SESSION_DISPLAY_TITLE_CHARS,
   MAX_SESSION_LIST_PAGE_SIZE,
   projectNameFromCwd,
+  type SessionCatalogIssue,
   type SessionListResponse,
   type SessionSummary,
 } from "../shared/contracts.js";
@@ -69,7 +70,10 @@ export function newestPerCwd(
 }
 
 export interface SessionCatalogLike {
-  refresh(force?: boolean): Promise<readonly SessionRecord[]>;
+  refresh(
+    force?: boolean,
+    options?: { requireComplete?: boolean },
+  ): Promise<readonly SessionRecord[]>;
   get(id: string): Promise<SessionRecord | undefined>;
   list(options?: {
     query?: string;
@@ -80,7 +84,7 @@ export interface SessionCatalogLike {
   listByIds(ids: readonly string[]): Promise<SessionSummary[]>;
   listByCwds(cwds: readonly string[]): Promise<SessionSummary[]>;
   invalidate(): void;
-  /** Persist before Pi can create a session; mocks need no discovery index. */
+  /** Retain discovery hints in memory before attempting optional persistence. */
   rememberProjectCwds?(cwds: readonly string[]): Promise<void>;
   /** Complete configured storage roots, independent of curation/pagination. */
   sessionDirectories?(): Promise<readonly (string | undefined)[]>;
@@ -88,6 +92,8 @@ export interface SessionCatalogLike {
 
 export class SessionCatalog implements SessionCatalogLike {
   private cached: SessionRecord[] = [];
+  private observedProjectCwds = new Set<string>();
+  private issues: SessionCatalogIssue[] = [];
   private loadedAt = 0;
   private byId = new Map<string, SessionRecord>();
   private ambiguousIds = new Set<string>();
@@ -112,11 +118,30 @@ export class SessionCatalog implements SessionCatalogLike {
   ) {}
 
   async rememberProjectCwds(cwds: readonly string[]): Promise<void> {
-    await this.projects?.remember(cwds);
+    for (const cwd of cwds) this.observedProjectCwds.add(cwd);
     this.invalidate();
+    await this.projects?.remember([...this.observedProjectCwds]);
   }
 
-  async refresh(force = false): Promise<readonly SessionRecord[]> {
+  async refresh(
+    force = false,
+    options: { requireComplete?: boolean } = {},
+  ): Promise<readonly SessionRecord[]> {
+    await this.refreshRecords(force);
+    if (options.requireComplete) this.requireComplete();
+    return this.cached;
+  }
+
+  private requireComplete(): void {
+    if (this.issues.length)
+      throw requestError(
+        "The session catalog is incomplete because some sources are unavailable. Restore access and refresh the session list.",
+        409,
+        { code: "SESSION_CATALOG_INCOMPLETE" },
+      );
+  }
+
+  private async refreshRecords(force: boolean): Promise<void> {
     if (force) this.invalidate();
 
     for (;;) {
@@ -126,7 +151,7 @@ export class SessionCatalog implements SessionCatalogLike {
         this.loadedAt > 0 &&
         Date.now() - this.loadedAt < CACHE_MS
       ) {
-        return this.cached;
+        return;
       }
 
       try {
@@ -137,17 +162,50 @@ export class SessionCatalog implements SessionCatalogLike {
         if (generation !== this.generation) continue;
         throw error;
       }
-      if (this.loadedGeneration === this.generation) return this.cached;
+      if (this.loadedGeneration === this.generation) return;
     }
   }
 
-  async sessionDirectories(): Promise<readonly (string | undefined)[]> {
-    const seeds = [this.startupCwd, ...(await this.projectCwds())];
-    await this.projects?.remember(seeds);
-    const cwds = new Set([...seeds, ...((await this.projects?.read()) ?? [])]);
+  async sessionDirectories(
+    issues?: SessionCatalogIssue[],
+  ): Promise<readonly (string | undefined)[]> {
+    const unavailable = (path: string, error: unknown) => {
+      if (!issues) throw error;
+      issues.push({
+        path,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Session discovery is unavailable",
+      });
+    };
+    const seeds = [this.startupCwd, ...this.observedProjectCwds];
+    try {
+      seeds.push(...(await this.projectCwds()));
+    } catch (error) {
+      unavailable(this.startupCwd, error);
+    }
+    const cwds = new Set(seeds);
+    try {
+      for (const cwd of (await this.projects?.read()) ?? []) cwds.add(cwd);
+    } catch (error) {
+      unavailable(this.projects!.path, error);
+    }
+    // A refresh retries unsaved hints, including projects used while their
+    // registry was unavailable. These writes never authorize a Pi writer.
+    try {
+      await this.projects?.remember(seeds);
+    } catch (error) {
+      console.warn("Project discovery hints could not be saved", error);
+    }
     const directories = new Set<string | undefined>();
-    for (const cwd of cwds)
-      directories.add(await resolvePiSessionDirectory(cwd));
+    for (const cwd of cwds) {
+      try {
+        directories.add(await resolvePiSessionDirectory(cwd));
+      } catch (error) {
+        unavailable(cwd, error);
+      }
+    }
     return [...directories];
   }
 
@@ -161,9 +219,10 @@ export class SessionCatalog implements SessionCatalogLike {
       if (predecessor) await predecessor.catch(() => undefined);
       if (generation !== this.generation) return;
 
-      const directories = await this.sessionDirectories();
+      const issues: SessionCatalogIssue[] = [];
+      const directories = await this.sessionDirectories(issues);
       if (generation !== this.generation) return;
-      const sessions = await this.metadata.list(directories);
+      const sessions = await this.metadata.list(directories, issues);
       if (generation !== this.generation) return;
 
       // Pi storage enumeration is not an ordering contract. Page boundaries
@@ -182,6 +241,7 @@ export class SessionCatalog implements SessionCatalogLike {
           .map((session) => [session.path, session.id]),
       );
       this.cached = cached;
+      this.issues = issues;
       this.byId = byId;
       this.ambiguousIds = ambiguousIds;
       this.idByPath = idByPath;
@@ -213,6 +273,7 @@ export class SessionCatalog implements SessionCatalogLike {
         409,
       );
     }
+    if (!this.byId.has(id)) this.requireComplete();
     return this.byId.get(id);
   }
 
@@ -242,8 +303,9 @@ export class SessionCatalog implements SessionCatalogLike {
       MAX_SESSION_LIST_PAGE_SIZE,
       Math.max(1, requestedLimit),
     );
+    const issues = [...this.issues];
     const filtered = query
-      ? await searchSessionRecords(sessions, query, options.signal)
+      ? await searchSessionRecords(sessions, query, options.signal, issues)
       : sessions;
 
     return {
@@ -251,6 +313,13 @@ export class SessionCatalog implements SessionCatalogLike {
         .slice(offset, offset + limit)
         .map((session) => this.project(session)),
       total: filtered.length,
+      ...(issues.length
+        ? {
+            issues: [
+              ...new Map(issues.map((issue) => [issue.path, issue])).values(),
+            ].slice(0, 20),
+          }
+        : {}),
       offset,
       limit,
     };

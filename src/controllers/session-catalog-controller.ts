@@ -3,11 +3,12 @@ import {
   MAX_SESSION_CWD_HYDRATION_CWDS,
   MAX_SESSION_ID_HYDRATION_IDS,
   MAX_SESSION_LIST_PAGE_SIZE,
+  type SessionCatalogIssue,
   type SessionRuntimeStatus,
   type SessionSummary,
 } from "../../shared/contracts";
-import { type Api, ApiError } from "../api";
 import type { ExternalSessionActivities } from "../../shared/session-activity";
+import { type Api, ApiError } from "../api";
 
 const SESSION_PAGE_SIZE = 40;
 
@@ -46,6 +47,7 @@ export interface SessionCatalogPatch {
   sessionListHydrating?: boolean;
   sessionListOperation?: SessionListOperation;
   sessionListError?: string | null;
+  sessionListIssues?: SessionCatalogIssue[];
 }
 
 function baseLoadingPatch(
@@ -281,6 +283,7 @@ export class SessionCatalogController {
         this.retry = null;
         this.host.patch({
           sessionListTotal: page.total,
+          sessionListIssues: page.issues ?? [],
           // Consumed server rows, including duplicate identities, own the
           // cursor. Rendered/union length is deliberately irrelevant.
           sessionListNextOffset: page.offset + page.sessions.length,
@@ -449,6 +452,9 @@ export class SessionCatalogController {
         );
       }
       rows.push(...page.sessions);
+      const issues = new Map(
+        (page.issues ?? []).map((issue) => [issue.path, issue]),
+      );
       let nextOffset = page.sessions.length;
       let total = page.total;
       if (!this.owns(ticket, query, api)) return;
@@ -477,6 +483,7 @@ export class SessionCatalogController {
           throw new Error("Session paging resumed from an unexpected offset");
         }
         rows.push(...page.sessions);
+        for (const issue of page.issues ?? []) issues.set(issue.path, issue);
         nextOffset = page.offset + page.sessions.length;
         total = page.total;
         if (nextOffset <= priorOffset && priorOffset < total) {
@@ -498,6 +505,7 @@ export class SessionCatalogController {
       this.retry = null;
       this.host.patch({
         sessionListTotal: total,
+        sessionListIssues: [...issues.values()],
         sessionListNextOffset: nextOffset,
         sessionListLoading: false,
         sessionListLoadingOlder: false,

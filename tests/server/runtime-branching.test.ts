@@ -17,6 +17,7 @@ import type {
   PiRpcProcess,
   PiRpcResponseFence,
 } from "../../server/pi-rpc.js";
+import { requestError } from "../../server/request-error.js";
 import { RuntimeController } from "../../server/runtime.js";
 import type {
   SessionCatalogLike,
@@ -298,6 +299,7 @@ async function setup(
   openForkProjection?: ConstructorParameters<typeof RuntimeController>[5],
   stageFork?: StageSessionFork,
   userContent?: Parameters<typeof entry>[3],
+  externallyOwned = false,
 ) {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), "inspire-branch-runtime-")),
@@ -363,11 +365,26 @@ async function setup(
     undefined,
     stageFork ?? fakeStageFork(directory),
   );
+  if (externallyOwned)
+    runtime.setExternalSessionGuard(async (id) => {
+      if (id === SESSION_ID)
+        throw requestError("Source is owned by another Pi", 409, {
+          code: "EXTERNAL_PI_WRITER_ACTIVE",
+        });
+    });
   await runtime.openSession(SESSION_ID);
-  await vi.waitFor(() => expect(worker).toBeDefined());
-  await vi.waitFor(async () =>
-    expect((await runtime.snapshot()).active?.commands).toBeDefined(),
-  );
+  if (externallyOwned) {
+    await vi.waitFor(async () =>
+      expect((await runtime.snapshot()).active?.readOnlyReason).toBe(
+        "external-active",
+      ),
+    );
+  } else {
+    await vi.waitFor(() => expect(worker).toBeDefined());
+    await vi.waitFor(async () =>
+      expect((await runtime.snapshot()).active?.commands).toBeDefined(),
+    );
+  }
   return {
     runtime,
     worker,
@@ -656,6 +673,66 @@ describe("stock RPC branch bridge", () => {
     },
   );
 
+  it.each(["fork", "clone"] as const)(
+    "%s reads an externally owned source without acquiring or changing its writer",
+    async (mode) => {
+      const { runtime, workers, path } = await setup(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
+      const release = runtime.retainSessionView(SESSION_ID);
+      try {
+        const original = await readFile(path, "utf8");
+        const tree = await runtime.branchTree(SESSION_ID);
+        await expect(
+          runtime.navigateBranch({
+            sessionId: SESSION_ID,
+            revision: tree.revision,
+            targetId: "u2",
+            mode: "edit",
+          }),
+        ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
+        const request = {
+          sessionId: SESSION_ID,
+          viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
+            .viewId,
+          targetId: "u2",
+        };
+        // The target is unchanged when the external Pi appends after the
+        // browser captured its view/endpoint but before copy admission.
+        const appended = `${JSON.stringify(entry("later", "a2", "assistant", "later progress", 50))}\n`;
+        await appendFile(path, appended);
+        const copied = await (mode === "fork"
+          ? runtime.forkBranch(request)
+          : runtime.cloneBranch(request));
+        expect(copied.sessionId).toBe(FORK_SESSION_ID);
+        expect(copied.editorText).toBe(
+          mode === "fork" ? "second question" : "",
+        );
+        expect(await readFile(path, "utf8")).toBe(original + appended);
+        const output = await readFile(
+          copied.snapshot.active!.sessionFile!,
+          "utf8",
+        );
+        expect(output).not.toContain("later progress");
+        expect((await runtime.branchTree(SESSION_ID)).revision).toBeGreaterThan(
+          tree.revision,
+        );
+        expect(
+          (await runtime.snapshot(SESSION_ID)).active?.readOnlyReason,
+        ).toBe("external-active");
+        await vi.waitFor(() => expect(workers).toHaveLength(1));
+        expect(workers[0]!.sessionId).toBe(FORK_SESSION_ID);
+      } finally {
+        release();
+        await runtime.close();
+      }
+    },
+  );
+
   it.each(["source", "other", "none"] as const)(
     "forks an active source without changing its worker, queue, or dialog when the Host selection is %s",
     async (selection) => {
@@ -691,13 +768,13 @@ describe("stock RPC branch bridge", () => {
           }),
         );
         const sourceBefore = await readFile(path, "utf8");
-        const tree = await runtime.branchTree(SESSION_ID);
         if (selection === "other") await openOtherSession(fixture);
         else if (selection === "none") await runtime.deselectSession();
         const selectedBeforeFork = runtime.activeSessionId;
         const forked = await runtime.forkBranch({
           sessionId: SESSION_ID,
-          revision: tree.revision,
+          viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
+            .viewId,
           targetId: "u2",
         });
 
@@ -772,11 +849,11 @@ describe("stock RPC branch bridge", () => {
           enabled: false,
         }),
       );
-      const tree = await runtime.branchTree(SESSION_ID);
       await openOtherSession(fixture);
       const forking = runtime.forkBranch({
         sessionId: SESSION_ID,
-        revision: tree.revision,
+        viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
+          .viewId,
         targetId: "u2",
       });
       // This newer selection is made before the queued fork can begin admission.
@@ -799,7 +876,7 @@ describe("stock RPC branch bridge", () => {
     }
   });
 
-  it("retains source identity, revision, target, and conflict validation when another session is selected", async () => {
+  it("retains source identity, view, target, and conflict validation when another session is selected", async () => {
     const stageFork = vi.fn<StageSessionFork>();
     const fixture = await setup(15_000, undefined, stageFork);
     const { runtime, path, directory } = fixture;
@@ -809,26 +886,32 @@ describe("stock RPC branch bridge", () => {
       await openOtherSession(fixture);
       const request = {
         sessionId: SESSION_ID,
-        revision: tree.revision,
+        viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
+          .viewId,
         targetId: "u2",
       };
       await expect(
         runtime.forkBranch({ ...request, sessionId: FORK_SESSION_ID }),
       ).rejects.toThrow("That session is not open on this host");
       await expect(
-        runtime.forkBranch({ ...request, revision: tree.revision + 1 }),
-      ).rejects.toThrow(/stale/);
+        runtime.forkBranch({ ...request, viewId: "retired-source-view" }),
+      ).rejects.toThrow(/branch changed/);
       await expect(
         runtime.forkBranch({ ...request, targetId: "a1" }),
       ).rejects.toThrow("Fork requires a retained user message");
       await runtime.navigateBranch({
-        ...request,
+        sessionId: SESSION_ID,
+        revision: tree.revision,
         targetId: "a1",
         mode: "switch",
       });
-      const earlierTree = await runtime.branchTree(SESSION_ID);
+      await expect(runtime.forkBranch(request)).rejects.toThrow(
+        /branch changed/,
+      );
+      const viewId = (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
+        .viewId;
       await expect(
-        runtime.forkBranch({ ...request, revision: earlierTree.revision }),
+        runtime.forkBranch({ ...request, viewId }),
       ).resolves.toMatchObject({
         sessionId: FORK_SESSION_ID,
         editorText: "second question",
@@ -841,7 +924,7 @@ describe("stock RPC branch bridge", () => {
       await expect(
         runtime.forkBranch({
           ...request,
-          revision: earlierTree.revision,
+          viewId,
           targetId: "u1",
         }),
       ).rejects.toThrow(/could not verify ownership/);
@@ -877,10 +960,10 @@ describe("stock RPC branch bridge", () => {
     const { runtime, workers, records } = fixture;
     recordsRef = records;
     try {
-      const tree = await runtime.branchTree(SESSION_ID);
       const forking = runtime.forkBranch({
         sessionId: SESSION_ID,
-        revision: tree.revision,
+        viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
+          .viewId,
         targetId: "u2",
       });
       await finalOpen;
@@ -932,10 +1015,10 @@ describe("stock RPC branch bridge", () => {
       );
       const original = await readFile(path, "utf8");
       try {
-        const tree = await runtime.branchTree(SESSION_ID);
         const forked = await runtime.forkBranch({
           sessionId: SESSION_ID,
-          revision: tree.revision,
+          viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
+            .viewId,
           targetId: "u2",
         });
         expect(forked.editorText).toBe(text);
@@ -988,10 +1071,10 @@ describe("stock RPC branch bridge", () => {
     const image = { type: "image", data: "aW1hZ2U=", mimeType: "image/png" };
     const { runtime } = await setup(15_000, undefined, undefined, [image]);
     try {
-      const tree = await runtime.branchTree(SESSION_ID);
       const cloned = await runtime.cloneBranch({
         sessionId: SESSION_ID,
-        revision: tree.revision,
+        viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
+          .viewId,
         targetId: "u2",
       });
       expect(cloned.editorText).toBe("");
@@ -1016,11 +1099,11 @@ describe("stock RPC branch bridge", () => {
     await writeFile(destinationPath, "existing destination\n");
     const sourceBefore = await readFile(path, "utf8");
     try {
-      const tree = await runtime.branchTree(SESSION_ID);
       await expect(
         runtime.forkBranch({
           sessionId: SESSION_ID,
-          revision: tree.revision,
+          viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
+            .viewId,
           targetId: "u2",
         }),
       ).rejects.toMatchObject({ status: 409 });
@@ -1053,11 +1136,11 @@ describe("stock RPC branch bridge", () => {
       },
     );
     try {
-      const tree = await runtime.branchTree(SESSION_ID);
       await expect(
         runtime.forkBranch({
           sessionId: SESSION_ID,
-          revision: tree.revision,
+          viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
+            .viewId,
           targetId: "u2",
         }),
       ).rejects.toMatchObject({

@@ -35,6 +35,35 @@ function record(id: string, cwd: string, modified: string): SessionRecord {
 }
 
 describe("catalog identity and pagination", () => {
+  it("publishes partial pages but refuses complete-set authorization and false not-found results", async () => {
+    const row = record("available", "/work/healthy", "2026-07-02T10:00:00Z");
+    let unavailable = true;
+    const catalog = new SessionCatalog("/unused", {
+      list: async (_directories, issues) => {
+        if (unavailable)
+          issues!.push({ path: "/offline", message: "Access denied" });
+        return [row];
+      },
+    });
+    expect(await catalog.list()).toMatchObject({
+      sessions: [{ id: "available" }],
+      total: 1,
+      issues: [{ path: "/offline" }],
+    });
+    expect(await catalog.get("available")).toBe(row);
+    await expect(catalog.get("unknown")).rejects.toMatchObject({
+      code: "SESSION_CATALOG_INCOMPLETE",
+    });
+    await expect(
+      catalog.refresh(true, { requireComplete: true }),
+    ).rejects.toMatchObject({ code: "SESSION_CATALOG_INCOMPLETE" });
+    expect(await catalog.listByCwds([row.cwd])).toHaveLength(1);
+    unavailable = false;
+    await catalog.refresh(true, { requireComplete: true });
+    expect(await catalog.list()).not.toHaveProperty("issues");
+    expect(await catalog.get("unknown")).toBeUndefined();
+  });
+
   it("isolates duplicate Pi ids instead of displaying one path and opening another", async () => {
     const duplicateNew = record(
       "duplicate",
@@ -452,6 +481,23 @@ describe("catalog retained-content search", () => {
         searchSessionRecords([owner], "replacement"),
       ).rejects.toThrow(/source changed/i);
     });
+  });
+});
+
+it("searches available sessions while identifying an unreadable or replaced source", async () => {
+  await withSearchFixture(async (_root, _index, catalog) => {
+    await catalog.list();
+    const owner = await catalog.get("search-owner");
+    await rm(owner!.path);
+    await writeFile(
+      owner!.path,
+      `${JSON.stringify({ type: "session", version: 3, id: "replacement", cwd: owner!.cwd })}\n`,
+    );
+    const result = await catalog.list({ query: "cobalt" });
+    expect(result.sessions.map((row) => row.id)).toEqual(["search-newer"]);
+    expect(result.issues).toEqual([
+      expect.objectContaining({ path: owner!.path }),
+    ]);
   });
 });
 

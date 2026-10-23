@@ -1,4 +1,3 @@
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
   appendFile,
   mkdtemp,
@@ -11,14 +10,15 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DiagnosticLogger } from "../../server/diagnostics.js";
 import type { PiRpcProcess } from "../../server/pi-rpc.js";
-import { RuntimePersistenceOwnershipController } from "../../server/runtime-persistence-ownership.js";
 import {
   deferredExpectation,
   exactEntryExpectation,
 } from "../../server/runtime-persistence.js";
+import { RuntimePersistenceOwnershipController } from "../../server/runtime-persistence-ownership.js";
 import { RuntimeProjectionCoordinator } from "../../server/runtime-projection-coordinator.js";
 import { createRuntimeSlot } from "../../server/runtime-slot.js";
 import { SessionProjection } from "../../server/session-projection.js";
@@ -477,6 +477,35 @@ describe("runtime projection reconciliation ownership", () => {
     await f.coordinator.reconcile(f.slot, true);
     expect(f.slot.conflict?.kind).toBe("external-change");
     expect(f.host.stopWriter).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an owned unfinished write alive until it completes", async () => {
+    const f = await fixture();
+    const value = entry("slow", "base");
+    const line = `${JSON.stringify(value)}\n`;
+    f.durableEntries.push(value);
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    try {
+      await appendFile(f.path, line.slice(0, 20));
+      await f.coordinator.reconcile(f.slot, true);
+      expect(f.projection.health.status).toBe("pending");
+      expect(f.projection.leafId).toBe("base");
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      await f.coordinator.reconcile(f.slot, true);
+      expect(f.slot.conflict).toBeNull();
+      expect(f.slot.process).toBe(f.worker);
+      expect(f.host.stopWriter).not.toHaveBeenCalled();
+
+      await appendFile(f.path, line.slice(20));
+      await f.coordinator.reconcile(f.slot, true);
+      expect(f.slot.pendingPartialPersistence).toBeNull();
+      expect(f.projection.health).toEqual({ status: "ok" });
+      expect(f.projection.leafId).toBe("slow");
+      expect(f.host.stopWriter).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not extend incomplete-tail ownership with a same-byte timestamp change", async () => {

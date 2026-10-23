@@ -335,9 +335,9 @@ export async function setup(
     undefined,
     diagnostics,
   );
-  await runtime.openSession("session-a");
+  const opened = await runtime.openSession("session-a");
   if (expectWorker) await vi.waitFor(() => expect(workers).toHaveLength(1));
-  return { runtime, workers, sequence, path };
+  return { runtime, workers, sequence, path, opened };
 }
 
 export async function disposeProjectionFixture() {

@@ -1,4 +1,4 @@
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { appendFile, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -145,6 +145,31 @@ describe("writer startup attestation", () => {
       }
     },
   );
+
+  it("invalidates replaced history even when admission stops before Pi starts", async () => {
+    const { runtime, workers, sequence, opened } = await setup([], (worker) => {
+      writeFileSync(
+        worker.sessionPath,
+        readFileSync(worker.sessionPath, "utf8").replace(
+          '"content":"original"',
+          '"content":"replaced before startup"',
+        ),
+      );
+    });
+    try {
+      await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
+      expect(sequence).not.toContain("start");
+      const changed = (await runtime.snapshot()).active!;
+      expect(changed.transcriptPage.viewId).not.toBe(
+        opened.active!.transcriptPage.viewId,
+      );
+      expect(JSON.stringify(changed.transcriptPage.messages)).toContain(
+        "replaced before startup",
+      );
+    } finally {
+      await runtime.close();
+    }
+  });
 
   it("rejects an otherwise exact state-equivalent entry injected by the process factory before rpc.start", async () => {
     const entry = startupThinking("u1");

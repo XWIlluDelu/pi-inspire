@@ -15,6 +15,7 @@ import {
 } from "./helpers";
 
 let olderAttempts = 0;
+let sourceUnavailable = false;
 let releaseFirstOlder!: () => void;
 const firstOlderGate = new Promise<void>((resolve) => {
   releaseFirstOlder = resolve;
@@ -34,6 +35,18 @@ beforeAll(async () => {
         }),
       };
     if (url.startsWith("/api/sessions?")) {
+      if (sourceUnavailable)
+        return {
+          body: {
+            ...sessionPage([], 0),
+            issues: [
+              {
+                path: "/offline/project/sessions",
+                message: "Permission denied",
+              },
+            ],
+          },
+        };
       const offset = Number(
         new URL(url, "http://local").searchParams.get("offset") ?? 0,
       );
@@ -75,6 +88,33 @@ beforeAll(async () => {
 });
 
 describe("session pagination control", () => {
+  it("explains unavailable sources without treating them as an empty catalog", async () => {
+    const user = userEvent.setup();
+    sourceUnavailable = true;
+    await store.loadSessions("");
+    const view = render(
+      <Nav
+        onToggleNavigation={() => undefined}
+        collapsed={false}
+        onNewSession={() => undefined}
+        onSelectSession={() => undefined}
+      />,
+    );
+    try {
+      expect(screen.queryByText("No sessions yet")).not.toBeInTheDocument();
+      await user.click(
+        screen.getByText("Some session sources are unavailable"),
+      );
+      expect(screen.getByText("/offline/project/sessions")).toBeVisible();
+      expect(
+        screen.getByRole("button", { name: "Retry unavailable sources" }),
+      ).toBeEnabled();
+    } finally {
+      view.unmount();
+      sourceUnavailable = false;
+      await store.loadSessions("");
+    }
+  });
   it("exposes keyboard loading, retry, and completion states accessibly", async () => {
     const user = userEvent.setup();
     const { container } = render(
