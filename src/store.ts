@@ -109,6 +109,7 @@ import {
   snapshotLifecyclePatch,
 } from "./snapshot-transition";
 import { configureToolPresentationRegistry } from "./tool-presentations/registry";
+import { isTransientFailure, RecoveryBackoff } from "./recovery-backoff";
 
 export type {
   ActivityMaterializationMode,
@@ -480,6 +481,8 @@ export class AppStore {
     patch: (patch) => {
       this.set(patch);
       if (patch.connection === "open") {
+        this.branches.reconcile();
+        this.composer.resumeUploads();
         this.pendingRecovery.resume();
         void this.notifications.openTarget();
       }
@@ -517,8 +520,12 @@ export class AppStore {
         if (event.unchanged !== true) this.runtimeEvents.apply(event);
         // An authenticated cache acknowledgement reobserves the same state.
         // It resolves a read warning, but not an existing projection problem.
-        else if (this.state.error && !this.state.projectionError)
-          this.dismissError();
+        else {
+          this.resyncRecovery.reset();
+          this.branches.reconcile();
+          if (this.state.error && !this.state.projectionError)
+            this.dismissError();
+        }
       } else if (!this.updates.applyEvent(event)) {
         this.runtimeEvents.apply(event);
       }
@@ -560,6 +567,7 @@ export class AppStore {
    * never clear a newer owner. */
   private openingOwner: number | null = null;
   private resyncRequest = 0;
+  private resyncRecovery = new RecoveryBackoff();
   private pausedSessionReads: ReadonlySet<string> | null = null;
   private pendingActionRequest = 0;
   private thinkingLevelRequest = 0;
@@ -625,7 +633,14 @@ export class AppStore {
 
   dismissError = (): void => this.set({ error: null, errorSeverity: "error" });
 
-  refreshSession = (): Promise<void> => this.resync();
+  refreshSession = (): Promise<void> =>
+    this.resync(
+      this.state.sessionId,
+      this.selectionGeneration,
+      undefined,
+      true,
+      true,
+    );
 
   /** Replace the visible composer's text through the same nonce channel used
    * by branch editing. The welcome flow uses this only after Pi assigns the
@@ -637,6 +652,7 @@ export class AppStore {
   };
 
   private invalidateTransportRequests(): void {
+    this.resyncRecovery.reset();
     this.resyncRequest += 1;
     this.pausedSessionReads = null;
     this.transcriptData.invalidate();
@@ -744,6 +760,7 @@ export class AppStore {
         sessionSelectionPending: false,
       });
     }
+    this.branches.reconcile();
   }
 
   async init(token: string | null = this.authToken): Promise<void> {
@@ -915,6 +932,7 @@ export class AppStore {
         ? emptyPendingQueues()
         : parsePendingQueues(snapshot.pendingQueues);
     if (!pendingQueues) throw new Error("Invalid Pending queue snapshot");
+    this.resyncRecovery.reset();
     this.snapshotGeneration += 1;
     // Only a snapshot supplied with its matching wire digest can be confirmed
     // without retransmission. HTTP resyncs and local event reduction invalidate
@@ -1122,6 +1140,7 @@ export class AppStore {
     if (nextSessionId) this.runtimeEvents.acknowledgeVisibleSession();
     if (sessionChanged && nextSessionId && this.git.hasVisibleSurface())
       void this.git.refreshStatus();
+    this.branches.reconcile();
   }
 
   /** Deletion temporarily retires the target's projection. Fence older reads,
@@ -1145,6 +1164,7 @@ export class AppStore {
     expectedGeneration = this.selectionGeneration,
     minimumRevision?: number,
     preserveAppendHistory = true,
+    explicit = false,
   ): Promise<void> {
     const api = this.api;
     if (
@@ -1156,6 +1176,7 @@ export class AppStore {
     )
       return;
     const transportGeneration = this.transportGeneration;
+    this.resyncRecovery.cancel();
     const request = ++this.resyncRequest;
     const ownsTransport = (): boolean =>
       this.api === api && this.transportGeneration === transportGeneration;
@@ -1193,13 +1214,28 @@ export class AppStore {
           this.selectionGeneration !== expectedGeneration
         )
           return;
+        if (!explicit && isTransientFailure(error)) {
+          if (
+            this.resyncRecovery.schedule(() => {
+              if (request === this.resyncRequest && ownsTransport())
+                void this.resync(
+                  expectedSessionId,
+                  expectedGeneration,
+                  minimumRevision,
+                  preserveAppendHistory,
+                );
+            })
+          )
+            return;
+          if (this.state.connection !== "open") return;
+        }
         const currentProjectionError = this.state.projectionError;
         this.set({
           error:
             currentProjectionError ??
-            (error instanceof Error
+            (explicit && error instanceof Error
               ? `Failed to refresh session: ${error.message}`
-              : "Failed to refresh session"),
+              : "The conversation could not be synchronized. Showing the last confirmed state."),
           errorSeverity:
             currentProjectionError &&
             projectionConflictSeverity(this.state.projectionConflict) ===
@@ -2674,6 +2710,9 @@ export class AppStore {
   removeAttachment = (localId: string): void =>
     this.composer.removeAttachment(localId);
 
+  retryAttachment = (localId: string): Promise<void> =>
+    this.composer.retryAttachment(localId);
+
   addProjectFile = (path: string): void => this.composer.addProjectFile(path);
 
   removeProjectFile = (path: string): void =>
@@ -3224,7 +3263,9 @@ export class AppStore {
   cloneBranch = (targetId: string): Promise<boolean> =>
     this.branches.clone(targetId);
   cloneCurrentBranch = (): Promise<boolean> =>
-    this.branches.clone(undefined, (message) => this.notify("warning", message));
+    this.branches.clone(undefined, (message) =>
+      this.notify("warning", message),
+    );
 
   setGitSurfaceVisible = (surface: string, visible: boolean): void => {
     this.git.setSurfaceVisible(surface, visible);

@@ -9,17 +9,11 @@ import {
 } from "../../shared/contracts";
 import type { ExternalSessionActivities } from "../../shared/session-activity";
 import { type Api, ApiError } from "../api";
+import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 
 const SESSION_PAGE_SIZE = 40;
 
-type SessionListOperation =
-  | "reset"
-  | "older"
-  | "refresh"
-  | "preserve"
-  | "hydrate"
-  | "curation"
-  | null;
+type SessionListOperation = "reset" | "older" | "refresh" | "curation" | null;
 
 export interface SessionCatalogState {
   sessions: SessionSummary[];
@@ -50,9 +44,7 @@ export interface SessionCatalogPatch {
   sessionListIssues?: SessionCatalogIssue[];
 }
 
-function baseLoadingPatch(
-  operation: "reset" | "refresh" | "preserve",
-): SessionCatalogPatch {
+function baseLoadingPatch(operation: "reset" | "refresh"): SessionCatalogPatch {
   return {
     sessionListLoading: true,
     sessionListLoadingOlder: false,
@@ -81,10 +73,7 @@ type HydrationOwner = { id: string; query: string; ticket: number };
 type SessionListRetry =
   | { kind: "reset"; query: string }
   | { kind: "older"; query: string; offset: number }
-  | { kind: "refresh"; query: string }
-  | { kind: "preserve"; query: string; offset: number; total: number }
-  | { kind: "hydrate"; owner: HydrationOwner }
-  | { kind: "curation"; ownerKey: string };
+  | { kind: "refresh"; query: string };
 
 interface SessionCatalogControllerHost {
   state(): SessionCatalogState;
@@ -115,6 +104,10 @@ export class SessionCatalogController {
     { ticket: number; token: symbol }
   >();
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
+  private preserveRecovery = new RecoveryBackoff();
+  private curationRecovery = new RecoveryBackoff();
+  private curationRecoveryOwner = "";
+  private hydrationRecovery = new Map<string, RecoveryBackoff>();
 
   constructor(private readonly host: SessionCatalogControllerHost) {}
 
@@ -123,7 +116,14 @@ export class SessionCatalogController {
     this.listAbort = new AbortController();
   }
 
+  private clearBackgroundRecovery(): void {
+    this.preserveRecovery.reset();
+    for (const recovery of this.hydrationRecovery.values()) recovery.reset();
+    this.hydrationRecovery.clear();
+  }
+
   private beginListGeneration(): number {
+    this.clearBackgroundRecovery();
     this.retireListRequest();
     this.cancelCurationRequest();
     this.curationPending = false;
@@ -136,6 +136,7 @@ export class SessionCatalogController {
    * Confirmed rows stay visible, but a former transport cannot publish over the
    * current generation or turn a later successful pairing into a 401. */
   invalidate(): void {
+    this.clearBackgroundRecovery();
     this.retireListRequest();
     this.loadTicket += 1;
     this.clearSearchTimer();
@@ -219,14 +220,21 @@ export class SessionCatalogController {
   ): Promise<void> {
     if (!this.host.api() || query !== this.host.state().sessionQuery)
       return Promise.resolve();
+    const foreground = this.host.state().sessionListLoading;
     const ticket = this.beginListGeneration();
-    this.host.patch(baseLoadingPatch("preserve"));
+    this.host.patch({
+      sessionListLoading: foreground,
+      sessionListLoadingOlder: false,
+      sessionListHydrating: false,
+      sessionListOperation: foreground ? "reset" : null,
+      sessionListError: null,
+    });
     return this.requestReset(
       query,
       ticket,
       preserveOffset,
       preserveTotal,
-      "preserve",
+      foreground ? "reset" : "preserve",
     );
   }
 
@@ -371,33 +379,8 @@ export class SessionCatalogController {
         return this.loadOlder(retry);
       case "refresh":
         return this.refresh(retry.query);
-      case "preserve":
-        return this.preserve(retry.query, retry.offset, retry.total);
       case "reset":
         return this.load(retry.query);
-      case "hydrate":
-        if (!this.hydrationOwnerIsCurrent(retry.owner)) {
-          this.clearHydrationRetry();
-          this.host.patch({
-            sessionListHydrating: false,
-            sessionListOperation: null,
-            sessionListError: null,
-          });
-          return Promise.resolve();
-        }
-        return this.hydrateVisible(retry.owner, true);
-      case "curation":
-        if (retry.ownerKey !== this.curationOwnerKey()) {
-          this.retry = null;
-          this.host.patch({
-            sessionListHydrating: false,
-            sessionListOperation: null,
-            sessionListError: null,
-          });
-          this.reconcileCuration();
-          return Promise.resolve();
-        }
-        return this.hydrateCuration();
     }
   }
 
@@ -423,6 +406,8 @@ export class SessionCatalogController {
     this.basePages = this.basePages.filter((session) => session.id !== id);
     this.hydration.delete(id);
     this.hydrationInFlight.delete(id);
+    this.hydrationRecovery.get(id)?.reset();
+    this.hydrationRecovery.delete(id);
     this.publishUnion();
   }
 
@@ -493,14 +478,8 @@ export class SessionCatalogController {
         }
       }
       if (!this.owns(ticket, query, api)) return;
-      const hydration = query.trim()
-        ? new Map<string, SessionSummary>()
-        : await this.hydrateUnion(rows, this.host.state().prefs, () =>
-            this.owns(ticket, query, api),
-          );
-      if (!hydration || !this.owns(ticket, query, api)) return;
+      this.preserveRecovery.reset();
       this.basePages = uniqueSessions(rows);
-      this.hydration = hydration;
       this.pruneHydration();
       this.retry = null;
       this.host.patch({
@@ -513,6 +492,8 @@ export class SessionCatalogController {
         sessionListError: null,
       });
       this.publishUnion();
+      // Supplemental discovery must never hold back a confirmed base page.
+      if (!query.trim()) await this.hydrateCuration();
     } catch (error) {
       if (!this.owns(ticket, query, api)) return;
       if (error instanceof ApiError && error.status === 401) {
@@ -525,22 +506,34 @@ export class SessionCatalogController {
         this.host.handleAuthFailure();
         return;
       }
-      this.retry =
-        operation === "preserve"
-          ? {
-              kind: "preserve",
-              query,
-              offset: preserveOffset,
-              total: preserveTotal,
-            }
-          : { kind: "reset", query };
-      this.host.patch({
-        sessionListLoading: false,
-        sessionListLoadingOlder: false,
-        sessionListOperation: operation,
-        sessionListError:
-          error instanceof Error ? error.message : "Failed to list sessions",
-      });
+      if (operation === "preserve") {
+        this.host.patch({
+          sessionListLoading: false,
+          sessionListLoadingOlder: false,
+          sessionListOperation: null,
+          sessionListError: null,
+        });
+        if (isTransientFailure(error))
+          this.preserveRecovery.schedule(() => {
+            if (this.owns(ticket, query, api))
+              void this.requestReset(
+                query,
+                ticket,
+                preserveOffset,
+                preserveTotal,
+                operation,
+              );
+          });
+      } else {
+        this.retry = { kind: "reset", query };
+        this.host.patch({
+          sessionListLoading: false,
+          sessionListLoadingOlder: false,
+          sessionListOperation: operation,
+          sessionListError:
+            error instanceof Error ? error.message : "Failed to list sessions",
+        });
+      }
     } finally {
       if (this.owns(ticket, query, api)) this.runPendingCuration();
     }
@@ -602,9 +595,10 @@ export class SessionCatalogController {
   }
 
   private cancelCurationRequest(): void {
+    this.curationRecovery.reset();
+    this.curationRecoveryOwner = "";
     this.curationTicket += 1;
     this.curationRequestKey = null;
-    if (this.retry?.kind === "curation") this.retry = null;
   }
 
   private runPendingCuration(): void {
@@ -631,9 +625,7 @@ export class SessionCatalogController {
     const ownerKey = this.curationOwnerKey();
     const staleRequest =
       this.curationRequestKey !== null && this.curationRequestKey !== ownerKey;
-    const staleRetry =
-      this.retry?.kind === "curation" && this.retry.ownerKey !== ownerKey;
-    if (staleRequest || staleRetry) {
+    if (staleRequest) {
       this.cancelCurationRequest();
       if (this.host.state().sessionListOperation === "curation") {
         this.host.patch({
@@ -644,13 +636,26 @@ export class SessionCatalogController {
       }
     }
 
+    for (const [id, recovery] of this.hydrationRecovery) {
+      if (
+        !this.hydrationOwnerIsCurrent({
+          id,
+          query: this.host.state().sessionQuery,
+          ticket: this.loadTicket,
+        })
+      ) {
+        recovery.reset();
+        this.hydrationRecovery.delete(id);
+      }
+    }
     if (this.pruneHydration()) this.publishUnion();
   }
 
   /** Hydrate only newly curated off-page identities/folders. Chronological
    * pages, totals, and cursors stay untouched, and the operation remains a
-   * quiet background reconciliation unless it fails and needs a retry. */
+   * quiet background reconciliation, including its bounded recovery window. */
   async hydrateCuration(): Promise<void> {
+    this.curationRecovery.cancel();
     this.reconcileCuration();
     const api = this.host.api();
     const state = this.host.state();
@@ -675,6 +680,10 @@ export class SessionCatalogController {
 
     const ticket = ++this.curationTicket;
     const ownerKey = this.curationOwnerKey();
+    if (ownerKey !== this.curationRecoveryOwner) {
+      this.curationRecovery.reset();
+      this.curationRecoveryOwner = ownerKey;
+    }
     const query = state.sessionQuery;
     const base = this.basePages;
     this.curationPending = false;
@@ -702,6 +711,7 @@ export class SessionCatalogController {
         this.curationRequestKey = null;
         return this.hydrateCuration();
       }
+      this.curationRecovery.reset();
       this.hydration = hydration;
       this.curationRequestKey = null;
       this.retry = null;
@@ -711,6 +721,19 @@ export class SessionCatalogController {
         sessionListError: null,
       });
       this.publishUnion();
+      const live = this.host.state();
+      const liveIds = new Set([
+        ...(live.sessionId ? [live.sessionId] : []),
+        ...Object.keys(live.sessionStatuses),
+        ...Object.keys(live.externalSessionActivities ?? {}),
+      ]);
+      for (const id of liveIds) {
+        if (
+          !this.basePages.some((session) => session.id === id) &&
+          !this.hydration.has(id)
+        )
+          this.retryHydration({ id, query, ticket: this.loadTicket }, api);
+      }
     } catch (error) {
       if (!ownsRequest()) return;
       this.curationRequestKey = null;
@@ -724,15 +747,16 @@ export class SessionCatalogController {
         this.host.handleAuthFailure();
         return;
       }
-      this.retry = { kind: "curation", ownerKey };
       this.host.patch({
         sessionListHydrating: false,
-        sessionListOperation: "curation",
-        sessionListError:
-          error instanceof Error
-            ? error.message
-            : "Failed to load curated sessions",
+        sessionListOperation: null,
+        sessionListError: null,
       });
+      if (isTransientFailure(error))
+        this.curationRecovery.schedule(() => {
+          if (ownerKey === this.curationOwnerKey() && api === this.host.api())
+            void this.hydrateCuration();
+        });
     }
   }
 
@@ -832,10 +856,6 @@ export class SessionCatalogController {
     return hydration;
   }
 
-  private clearHydrationRetry(): void {
-    if (this.retry?.kind === "hydrate") this.retry = null;
-  }
-
   private hydrationOwnerIsCurrent(owner: HydrationOwner): boolean {
     const state = this.host.state();
     const stillOwned =
@@ -850,28 +870,26 @@ export class SessionCatalogController {
     );
   }
 
-  private hydrationRetryMatches(owner: HydrationOwner): boolean {
-    const retry = this.retry;
-    return (
-      retry?.kind === "hydrate" &&
-      retry.owner.id === owner.id &&
-      retry.owner.query === owner.query &&
-      retry.owner.ticket === owner.ticket
-    );
+  private retryHydration(owner: HydrationOwner, api: Api): void {
+    let recovery = this.hydrationRecovery.get(owner.id);
+    if (!recovery) {
+      recovery = new RecoveryBackoff();
+      this.hydrationRecovery.set(owner.id, recovery);
+    }
+    recovery.schedule(() => {
+      if (this.hydrationOwnerIsCurrent(owner) && this.host.api() === api)
+        void this.hydrateVisible(owner);
+    });
   }
 
-  private hydrateVisible(
-    owner: HydrationOwner,
-    retrying = false,
-  ): Promise<void> {
+  private hydrateVisible(owner: HydrationOwner): Promise<void> {
     const api = this.host.api();
     const state = this.host.state();
     if (
       !api ||
       owner.query.trim() ||
       owner.query !== state.sessionQuery ||
-      owner.ticket !== this.loadTicket ||
-      (retrying && !this.hydrationOwnerIsCurrent(owner))
+      owner.ticket !== this.loadTicket
     ) {
       return Promise.resolve();
     }
@@ -879,14 +897,8 @@ export class SessionCatalogController {
       this.basePages.some((session) => session.id === owner.id) ||
       this.hydration.has(owner.id)
     ) {
-      if (this.hydrationRetryMatches(owner)) {
-        this.clearHydrationRetry();
-        this.host.patch({
-          sessionListHydrating: false,
-          sessionListOperation: null,
-          sessionListError: null,
-        });
-      }
+      this.hydrationRecovery.get(owner.id)?.reset();
+      this.hydrationRecovery.delete(owner.id);
       return Promise.resolve();
     }
     if (this.hydrationInFlight.get(owner.id)?.ticket === owner.ticket)
@@ -896,35 +908,23 @@ export class SessionCatalogController {
       ticket: owner.ticket,
       token: requestToken,
     });
-    if (retrying) {
-      this.host.patch({
-        sessionListHydrating: true,
-        sessionListOperation: "hydrate",
-        sessionListError: null,
-      });
-    }
+    this.hydrationRecovery.get(owner.id)?.cancel();
     const request = (async () => {
       try {
         const { sessions } = await api.sessionsByIds([owner.id]);
         if (!this.hydrationOwnerIsCurrent(owner) || this.host.api() !== api)
           return;
         const session = sessions.find((candidate) => candidate.id === owner.id);
-        if (!session)
-          throw new Error("Session is not yet available in the catalog");
+        if (!session) {
+          // A new Pi session need not have materialized its catalog file yet.
+          this.retryHydration(owner, api);
+          return;
+        }
         if (!this.basePages.some((candidate) => candidate.id === owner.id)) {
           this.hydration.set(owner.id, session);
         }
-        const ownsHydrationRetry = this.hydrationRetryMatches(owner);
-        if (ownsHydrationRetry) {
-          this.clearHydrationRetry();
-          this.host.patch({
-            sessionListHydrating: false,
-            sessionListOperation: null,
-            sessionListError: null,
-          });
-        } else if (retrying) {
-          this.host.patch({ sessionListHydrating: false });
-        }
+        this.hydrationRecovery.get(owner.id)?.reset();
+        this.hydrationRecovery.delete(owner.id);
         this.publishUnion();
       } catch (error) {
         if (
@@ -936,21 +936,10 @@ export class SessionCatalogController {
           return;
         }
         if (error instanceof ApiError && error.status === 401) {
-          this.clearHydrationRetry();
-          this.host.patch({
-            sessionListHydrating: false,
-            sessionListOperation: null,
-            sessionListError: null,
-          });
           this.host.handleAuthFailure();
           return;
         }
-        this.retry = { kind: "hydrate", owner };
-        this.host.patch({
-          sessionListHydrating: false,
-          sessionListOperation: "hydrate",
-          sessionListError: this.hydrationFailure("session ids", error).message,
-        });
+        if (isTransientFailure(error)) this.retryHydration(owner, api);
       } finally {
         if (this.hydrationInFlight.get(owner.id)?.token === requestToken) {
           this.hydrationInFlight.delete(owner.id);

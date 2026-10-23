@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   BranchForkResponse,
   BranchNavigateResponse,
@@ -97,6 +97,56 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
 }
 
 describe("BranchController", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("renews stale History after reconnecting without a manual refresh or replayed action", async () => {
+    const harness = createHarness({ connection: "reconnecting" });
+    harness.branchTree.mockResolvedValue({ ...tree(), effectiveLeafId: "a1" });
+    harness.controller.markConnectionInterrupted();
+    expect(harness.state()).toMatchObject({
+      branchTreeStale: true,
+      branchTreeError: null,
+    });
+    expect(branchActionsBlocked(harness.state())).toBe(true);
+    harness.controller.reconcile();
+    expect(harness.branchTree).not.toHaveBeenCalled();
+    harness.patch({ connection: "open" });
+    harness.controller.reconcile();
+    await vi.waitFor(() => expect(harness.state().branchTreeStale).toBe(false));
+    expect(branchActionsBlocked(harness.state())).toBe(false);
+    expect(harness.branchTree).toHaveBeenCalledOnce();
+    expect(harness.navigateBranch).not.toHaveBeenCalled();
+  });
+
+  it("recovers an append-raced History read under its new position without an error", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    const pending = deferred<BranchTreeResponse>();
+    harness.branchTree.mockReturnValueOnce(pending.promise);
+    const reading = harness.controller.loadTree();
+    harness.patch({
+      transcriptEffectiveLeafId: "next",
+      transcriptDurableLeafId: "next",
+    });
+    pending.resolve({ ...tree(), effectiveLeafId: "a1" });
+    await reading;
+    expect(harness.state()).toMatchObject({
+      branchTreeError: null,
+      branchTreeStale: true,
+      branchTreeLoading: false,
+    });
+    harness.branchTree.mockResolvedValue({
+      ...tree(),
+      effectiveLeafId: "next",
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(harness.state()).toMatchObject({
+      branchTreeStale: false,
+      branchTreeLoading: false,
+      branchTreeError: null,
+    });
+    expect(harness.navigateBranch).not.toHaveBeenCalled();
+  });
   it.each([
     { branchActionId: "another-action" },
     {
@@ -164,6 +214,85 @@ describe("BranchController", () => {
       }
     },
   );
+
+  it.each(["tree", "entry", "image"] as const)(
+    "recovers a transient %s inspection without repeating an action",
+    async (kind) => {
+      vi.useFakeTimers();
+      const harness = createHarness();
+      const endpoint =
+        kind === "tree"
+          ? "branchTree"
+          : kind === "entry"
+            ? "branchEntry"
+            : "branchImage";
+      const result =
+        kind === "tree"
+          ? tree()
+          : kind === "entry"
+            ? { text: "Retained content" }
+            : new Blob(["image"]);
+      harness[endpoint]
+        .mockRejectedValueOnce(new ApiError(503, "Temporary read failure"))
+        .mockResolvedValue(result);
+      const signal = new AbortController();
+      const reading =
+        kind === "tree"
+          ? harness.controller.readTree({ query: "Root" }, signal.signal)
+          : kind === "entry"
+            ? harness.controller.readEntry("point", 0, signal.signal)
+            : harness.controller.readImage("point", 0, signal.signal);
+      void reading.catch(() => {});
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(reading).resolves.toBe(result);
+      expect(harness[endpoint]).toHaveBeenCalledTimes(2);
+      expect(harness.navigateBranch).not.toHaveBeenCalled();
+      expect(harness.forkBranch).not.toHaveBeenCalled();
+      expect(harness.cloneBranch).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["caller", "selection", "transport"] as const)(
+    "settles a paused inspection without another request after %s cancellation",
+    async (change) => {
+      vi.useFakeTimers();
+      const harness = createHarness();
+      harness.branchEntry.mockRejectedValue(
+        new ApiError(503, "Temporary read failure"),
+      );
+      const caller = new AbortController();
+      const reading = harness.controller.readEntry("point", 0, caller.signal);
+      void reading.catch(() => {});
+      await vi.advanceTimersByTimeAsync(0);
+      if (change === "caller") caller.abort();
+      else if (change === "selection") harness.invalidateSelection();
+      else harness.replaceTransport();
+      await expect(reading).resolves.toBeNull();
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(harness.branchEntry).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("bounds persistent inspection recovery and keeps authorization failures definitive", async () => {
+    vi.useFakeTimers();
+    for (const status of [503, 403, 401]) {
+      const harness = createHarness();
+      harness.branchEntry.mockRejectedValue(
+        new ApiError(status, "Read failed"),
+      );
+      const reading = harness.controller.readEntry("point");
+      const outcome =
+        status === 401
+          ? expect(reading).resolves.toBeNull()
+          : expect(reading).rejects.toMatchObject({ status });
+      await vi.advanceTimersByTimeAsync(14_000);
+      await outcome;
+      expect(harness.branchEntry).toHaveBeenCalledTimes(status === 503 ? 4 : 1);
+      expect(harness.handleAuthFailure).toHaveBeenCalledTimes(
+        status === 401 ? 1 : 0,
+      );
+    }
+  });
 
   it("retains position fencing for navigation during same-view append", async () => {
     const harness = createHarness();

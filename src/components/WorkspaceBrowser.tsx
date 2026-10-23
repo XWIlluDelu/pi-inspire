@@ -237,6 +237,17 @@ export function WorkspaceTree({
     state.workspaceLoadingDirs,
   ]);
 
+  // Returning to a workspace revalidates its failed visible reads once. An
+  // error arriving in this owner is handled by the controller's bounded retry.
+  useEffect(() => {
+    if (!state.sessionId || !state.cwd) return;
+    const current = store.getState();
+    for (const dir of ["", ...current.workspaceExpandedDirs]) {
+      if (current.workspaceDirectoryErrors[dir])
+        void store.loadWorkspaceDirectory(dir);
+    }
+  }, [state.cwd, state.sessionId]);
+
   useLayoutEffect(() => {
     const request = state.workspaceRevealRequest;
     if (!revealRequests || !request) return;
@@ -250,37 +261,41 @@ export function WorkspaceTree({
 
   const renderLevel = (dir: string, depth: number): React.ReactNode => {
     const entries = state.workspaceLevels[dir];
-    const loading = state.workspaceLoadingDirs.includes(dir);
     const error = state.workspaceDirectoryErrors[dir];
     const indent = { paddingLeft: `${8 + depth * 14}px` };
-    if (error)
+    const failure = error ? (
+      <button
+        type="button"
+        className="workspace-tree__status workspace-tree__status--error"
+        style={indent}
+        title={error}
+        onClick={() => void store.loadWorkspaceDirectory(dir)}
+      >
+        <AlertTriangle size={11} aria-hidden />
+        <span>
+          {entries
+            ? "Directory could not be refreshed"
+            : "Directory unavailable"}
+        </span>
+        <RefreshCw size={11} aria-hidden />
+      </button>
+    ) : null;
+    if (!entries)
       return (
-        <button
-          type="button"
-          className="workspace-tree__status workspace-tree__status--error"
-          style={indent}
-          title={error}
-          onClick={() => void store.loadWorkspaceDirectory(dir)}
-        >
-          <AlertTriangle size={11} aria-hidden />
-          <span>Directory unavailable</span>
-          <RefreshCw size={11} aria-hidden />
-        </button>
-      );
-    if (!entries || loading)
-      return (
-        <div className="workspace-tree__status" style={indent} role="status">
-          <PiLoader size={11} aria-hidden /> Loading…
-        </div>
-      );
-    if (entries.length === 0 && !state.workspaceTruncatedDirs[dir])
-      return (
-        <div className="workspace-tree__status" style={indent}>
-          Empty
-        </div>
+        failure ?? (
+          <div className="workspace-tree__status" style={indent} role="status">
+            <PiLoader size={11} aria-hidden /> Loading…
+          </div>
+        )
       );
     return (
       <>
+        {failure}
+        {entries.length === 0 && !state.workspaceTruncatedDirs[dir] ? (
+          <div className="workspace-tree__status" style={indent}>
+            Empty
+          </div>
+        ) : null}
         {state.workspaceTruncatedDirs[dir] ? (
           <div className="workspace-tree__status" role="status" style={indent}>
             Directory listing incomplete; showing partial contents.
@@ -349,6 +364,7 @@ export function WorkspaceTree({
       className={`workspace-tree ${className}`}
       role="region"
       aria-label="Workspace file tree"
+      aria-busy={state.workspaceLoadingDirs.length > 0}
       ref={rootRef}
     >
       {state.sessionId && state.cwd ? (
@@ -387,6 +403,7 @@ export function WorkspaceSearchResults({
       className={`workspace-tree workspace-tree--results ${className}`}
       role="region"
       aria-label="Workspace search results"
+      aria-busy={state.workspaceSearchLoading}
     >
       {state.workspaceSearchTruncated ? (
         <div className="workspace-tree__status" role="status">
@@ -403,15 +420,17 @@ export function WorkspaceSearchResults({
           <span>{state.workspaceSearchError}</span>
           <RefreshCw size={11} aria-hidden />
         </button>
-      ) : state.workspaceSearchLoading &&
-        state.workspaceMatches.length === 0 ? (
+      ) : null}
+      {state.workspaceSearchLoading && state.workspaceMatches.length === 0 ? (
         <div className="workspace-tree__status" role="status">
           <PiLoader size={11} aria-hidden /> Searching…
         </div>
       ) : state.workspaceMatches.length === 0 ? (
-        <div className="workspace-tree__status">
-          {normalized ? `No files match “${normalized}”.` : "Type to search."}
-        </div>
+        state.workspaceSearchError ? null : (
+          <div className="workspace-tree__status">
+            {normalized ? `No files match “${normalized}”.` : "Type to search."}
+          </div>
+        )
       ) : (
         state.workspaceMatches.map((file) => (
           <WorkspaceFileRow

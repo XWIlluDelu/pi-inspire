@@ -25,6 +25,7 @@ export function StatusChoiceIndicator({
   return (
     <span
       className="status-choice-indicator"
+      role="img"
       data-inactive={inactive}
       aria-label={label}
       title={label}
@@ -90,6 +91,9 @@ export function StatusChoice({
   const [pending, setPending] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const requested = useRef<string | null>(null);
+  const confirmedValue = useRef(snapshot?.value);
+  confirmedValue.current = snapshot?.value;
   const confirmedIndex = control.options.findIndex(
     (option) => option.value === snapshot?.value,
   );
@@ -107,16 +111,18 @@ export function StatusChoice({
     };
   }, []);
   useEffect(() => {
-    if (pending && snapshot?.value === pending) setPending(null);
+    if (snapshot?.value === requested.current) {
+      setPending(null);
+      setError("");
+      requested.current = null;
+    }
     setPreview(null);
-  }, [status]);
+  }, [snapshot?.value]);
   useEffect(() => {
     if (!pending) return;
     const timer = window.setTimeout(() => {
       setPending(null);
-      setError(
-        "State not confirmed. Check the session connection before retrying.",
-      );
+      setError("The selection has not been confirmed yet.");
     }, 10000);
     return () => clearTimeout(timer);
   }, [pending]);
@@ -132,17 +138,18 @@ export function StatusChoice({
     setConfirmation(null);
     setPreview(null);
     setError("");
+    requested.current = value;
     setPending(value);
     try {
       const receipt = await store.sendPreparedCommand(
         control.command + " " + value,
       );
-      if (owned() && !receipt) {
+      if (owned() && !receipt && confirmedValue.current !== value) {
         setPending(null);
         setError("The change was not accepted.");
       }
     } catch (error) {
-      if (owned()) {
+      if (owned() && confirmedValue.current !== value) {
         setPending(null);
         setError(
           error instanceof Error
@@ -168,7 +175,7 @@ export function StatusChoice({
     (pending
       ? "Applying selection…"
       : !snapshot
-        ? "State unavailable. Reload the Pi extension."
+        ? "Selection status is not available yet."
         : snapshot.supported?.[snapshot.value] === false
           ? "Requested; inactive for this model."
           : (selected.description ?? ""));

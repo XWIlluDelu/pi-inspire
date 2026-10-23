@@ -249,33 +249,19 @@ export const Nav = memo(function Nav({
   const foregroundSessionListBusy =
     sessionListBusy && sessionListOperation !== "curation";
   const showSessionListActivity =
-    hasOlderSessions ||
-    sessionListError !== null ||
-    (foregroundSessionListBusy && sessionListOperation !== "preserve");
+    hasOlderSessions || sessionListError !== null || foregroundSessionListBusy;
   const retrySessionLabel =
-    sessionListOperation === "hydrate"
-      ? "Retry loading active sessions"
-      : sessionListOperation === "curation"
-        ? "Retry loading curated sessions"
-        : sessionListOperation === "preserve"
-          ? "Retry refreshing the list"
-          : sessionListOperation === "refresh"
-            ? "Retry refreshing sessions"
-            : sessionListOperation === "older"
-              ? "Retry loading older sessions"
-              : "Retry loading sessions";
+    sessionListOperation === "refresh"
+      ? "Retry refreshing sessions"
+      : sessionListOperation === "older"
+        ? "Retry loading older sessions"
+        : "Retry loading sessions";
   const loadingSessionLabel =
-    sessionListOperation === "hydrate"
-      ? "Loading active sessions…"
-      : sessionListOperation === "curation"
-        ? "Loading curated sessions…"
-        : sessionListOperation === "preserve"
-          ? "Refreshing loaded sessions…"
-          : sessionListOperation === "refresh"
-            ? "Refreshing sessions…"
-            : sessionListOperation === "older"
-              ? "Loading older sessions…"
-              : "Loading sessions…";
+    sessionListOperation === "refresh"
+      ? "Refreshing sessions…"
+      : sessionListOperation === "older"
+        ? "Loading older sessions…"
+        : "Loading sessions…";
   // Hidden is a curation drawer, not a browsing group: it opens on demand and
   // starts closed again next time. Search reveals matches inside it without
   // reclassifying them out of Hidden.

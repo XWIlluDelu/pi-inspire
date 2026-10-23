@@ -648,7 +648,7 @@ describe("resync failure ownership", () => {
     });
   });
 
-  it("still reports a failed read of the current selection", async () => {
+  it("only escalates a persistent current-selection read failure after quiet recovery", async () => {
     installFetch((url, init) =>
       url.startsWith("/api/snapshot")
         ? { status: 503, body: { error: "Snapshot unavailable" } }
@@ -657,10 +657,39 @@ describe("resync failure ownership", () => {
     const { store, socket } = await initStore();
     socket.emit({ type: "runtime_ready", sessionId: "s1" });
     await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState()).toMatchObject({ connection: "open", error: null });
+    await vi.advanceTimersByTimeAsync(14_000);
     expect(store.getState()).toMatchObject({
-      error: "Failed to refresh session: Snapshot unavailable",
+      error:
+        "The conversation could not be synchronized. Showing the last confirmed state.",
       errorSeverity: "warning",
     });
+  });
+
+  it("recovers a transient background snapshot failure without a global warning", async () => {
+    let reads = 0;
+    installFetch((url, init) => {
+      if (url.startsWith("/api/snapshot")) {
+        reads += 1;
+        return reads === 1
+          ? { status: 503, body: { error: "Temporary read failure" } }
+          : { body: activeSnapshot({ sessionName: "Reobserved" }) };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    socket.emit({ type: "runtime_ready", sessionId: "s1" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState().error).toBeNull();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(reads).toBe(2);
+    expect(store.getState()).toMatchObject({
+      sessionName: "Reobserved",
+      error: null,
+      connection: "open",
+    });
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(reads).toBe(2);
   });
 
   it("keeps a same-API 401 transport-wide after navigation", async () => {

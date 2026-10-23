@@ -1,4 +1,4 @@
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, RotateCw, X } from "lucide-react";
 import type { PendingAttachment } from "../controllers/composer-controller";
 import { fileIconForPath } from "../file-icons";
 import { formatBytes } from "../format";
@@ -12,11 +12,13 @@ export function AttachmentList({
   items,
   disabled = false,
   onRemove,
+  onRetry,
 }: {
   sessionId: string | null;
   items: readonly PendingAttachment[];
   disabled?: boolean;
   onRemove: (localId: string) => void;
+  onRetry?: (localId: string) => void;
 }) {
   if (items.length === 0) return null;
   return (
@@ -85,6 +87,18 @@ export function AttachmentList({
                   aria-label="Upload failed"
                   aria-description={item.error}
                 />
+              ) : null}
+              {item.status === "error" && item.retryable && onRetry ? (
+                <button
+                  type="button"
+                  className="attachment__remove attachment__retry"
+                  disabled={disabled}
+                  onClick={() => onRetry(item.localId)}
+                  aria-label={`Retry uploading ${item.fileName}`}
+                  title="Retry upload"
+                >
+                  <RotateCw size={12} aria-hidden />
+                </button>
               ) : null}
               <button
                 type="button"

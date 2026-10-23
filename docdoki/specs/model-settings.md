@@ -126,15 +126,23 @@ effort is left to native startup rather than guessed. A manual effort choice rem
 One metadata query returns available choices and startup-default previews for the prospective cwd.
 It includes global and already-trusted project extension registrations, using Pi's stored/inherited
 trust and global default trust rule. Skipped project resources and individual extension-load failures
-produce warnings while retaining the models Pi can load. Invalid model configuration or a failed
-metadata query produces an error. Fresh trust decisions remain part of Pi startup.
+produce warnings while retaining the models Pi can load. Invalid model configuration and persistent
+metadata-query failures produce local errors. Fresh trust decisions remain part of Pi startup.
 
 Discovery completes extension registration before resolving defaults. The short-lived SDK process
 creates no persistent session, emits no session-start event and makes no agent/model request.
-Refresh replaces an older preview without replacing explicit or inherited choices. Retrying a failed
-directory check shows pending feedback and keeps Start unavailable until that check succeeds; an
-inherited or explicit model cannot turn a failed directory retry into readiness. Process lifetime,
-shared queries and cache invalidation are described in [[state-ownership]].
+Refresh replaces an older preview without replacing explicit or inherited choices. Directory/catalog,
+inherited-selection and per-model thinking reads use bounded automatic recovery for transient failure.
+Each attempt stays bound to its directory, source, input intent and browser transport; changing these
+owners or unmounting retires old waits and responses. Manual effort retires a pending thinking preview.
+Successful reads clear their obsolete errors without creating a session or submitting a message.
+
+An unverified or known-invalid directory keeps Start unavailable until a successful check; an inherited
+or explicit model cannot bypass that check. A failed observation preserves a known missing/invalid
+path rather than reclassifying it. Optional refresh of the same confirmed directory retains its model,
+effort and readiness; changing directory or transport requires fresh validation. Persistent failure
+keeps staged work and local recovery. Process lifetime, shared queries and cache invalidation are
+described in [[state-ownership]].
 
 ## Provider and model configuration
 
@@ -183,7 +191,9 @@ A configuration save invalidates cached workspace metadata. For an addressed ses
 that worker only; other workspaces rediscover on demand. Without a session, it refreshes the edited
 workspace catalog. Refresh preserves ongoing work and the current selection. The explicit Refresh
 control rereads external changes while Settings remains open. Earlier catalog/settings reads cannot
-replace a newer published write snapshot in the picker or Common scope.
+replace a newer published write snapshot in the picker or Common scope, including its error state.
+Only the current catalog observation may publish warnings or errors; an obsolete warmup cannot
+restore feedback after a configuration snapshot has been accepted.
 
 ## Authentication
 

@@ -16,6 +16,7 @@ import {
   transcriptRevisionContains,
 } from "../app-state";
 import { asMessage, type ChatMessage, messageKey } from "../events";
+import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 
 const PROMPT_MAP_PAGE_SIZE = 100;
 
@@ -75,6 +76,7 @@ function unseen<T>(
  * paging, and deferred activity materialization. */
 export class TranscriptDataController {
   private olderTranscriptRequest: AbortController | null = null;
+  private olderRecovery = new RecoveryBackoff();
   private activityTranscriptRequests = new Map<string, AbortController>();
   private userTurnIndexRequests = new Map<string, AbortController>();
   private userTurnIndexPromises = new Map<string, Promise<UserTurnAnchor[]>>();
@@ -163,6 +165,7 @@ export class TranscriptDataController {
   invalidate(): void {
     this.olderTranscriptRequest?.abort();
     this.olderTranscriptRequest = null;
+    this.olderRecovery.reset();
     for (const request of this.activityTranscriptRequests.values())
       request.abort();
     this.activityTranscriptRequests.clear();
@@ -181,6 +184,7 @@ export class TranscriptDataController {
     const { api, sessionId, revision, viewId, incarnation } = scope;
     const request = new AbortController();
     this.olderTranscriptRequest = request;
+    this.olderRecovery.reset();
     // A Prompt Map seek can move the paging boundary without changing the
     // session/view/revision. The old page no longer belongs at the front.
     const ownsCursor = () =>
@@ -189,7 +193,21 @@ export class TranscriptDataController {
       this.host.state().olderMessagesCursor === cursor;
     this.host.patch({ loadingOlderMessages: true, olderMessagesError: null });
     try {
-      const page = await api.olderTranscript(sessionId, cursor, request.signal);
+      let page;
+      while (true) {
+        try {
+          page = await api.olderTranscript(sessionId, cursor, request.signal);
+          break;
+        } catch (error) {
+          if (!ownsCursor() || !this.ownsScope(scope, true)) return false;
+          if (
+            !isTransientFailure(error) ||
+            !(await this.olderRecovery.wait(request.signal))
+          )
+            throw error;
+          if (!ownsCursor() || !this.ownsScope(scope, true)) return false;
+        }
+      }
       const pageLineageCompatible = transcriptRevisionContains(
         page.revision,
         page.appendFromRevision ?? page.revision,
@@ -251,6 +269,7 @@ export class TranscriptDataController {
     } finally {
       if (this.olderTranscriptRequest === request) {
         this.olderTranscriptRequest = null;
+        this.olderRecovery.reset();
         if (this.ownsScope(scope))
           this.host.patch({ loadingOlderMessages: false });
       }

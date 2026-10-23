@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
@@ -24,6 +24,7 @@ function offsetOf(url: string): number {
 
 describe("session list pagination", () => {
   beforeEach(() => installFakeWebSocket());
+  afterEach(() => vi.useRealTimers());
 
   it("loads more than three pages while curated identities and duplicate rows never advance the display cursor", async () => {
     const requests: number[] = [];
@@ -614,23 +615,21 @@ describe("session list pagination", () => {
       ]),
     );
 
+    vi.useFakeTimers();
     phase = "failing";
     socket.emit({
       type: "message_start",
       sessionId: "live-1",
       sessionStatus: { runState: "running" },
     });
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await vi.advanceTimersByTimeAsync(0);
     socket.emit({
       type: "agent_settled",
       sessionId: "live-2",
       sessionStatus: { runState: "idle" },
     });
-    await vi.waitFor(() =>
-      expect(store.getState().sessionListError).toContain(
-        "second id chunk unavailable",
-      ),
-    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState().sessionListError).toBeNull();
 
     expect(preserveChunks).toEqual([600, 1]);
     expect(store.getState().sessions.map((session) => session.id)).toEqual([
@@ -639,13 +638,12 @@ describe("session list pagination", () => {
     ]);
     expect(store.getState()).toMatchObject({
       sessionListNextOffset: 1,
-      sessionListOperation: "preserve",
+      sessionListOperation: null,
     });
 
     phase = "retry";
-    preserving = false;
     preserveChunks.length = 0;
-    await store.retrySessionList();
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(preserveChunks).toEqual([600, 1]);
     expect(store.getState().sessions).toHaveLength(603);
     expect(store.getState()).toMatchObject({
@@ -668,7 +666,7 @@ describe("session list pagination", () => {
       }
       if (url.startsWith("/api/sessions?")) {
         return {
-          body: sessionPage([sessionSummary({ id: "uncommitted-base" })], 1),
+          body: sessionPage([sessionSummary({ id: "confirmed-base" })], 1),
         };
       }
       return undefined;
@@ -682,7 +680,9 @@ describe("session list pagination", () => {
       sessionListLoadingOlder: false,
       sessionListOperation: null,
     });
-    expect(store.getState().sessions).toEqual([]);
+    expect(store.getState().sessions.map((session) => session.id)).toEqual([
+      "confirmed-base",
+    ]);
   });
 
   it("retains confirmed folder hydration on cwd failure and retries it truthfully", async () => {
@@ -728,25 +728,23 @@ describe("session list pagination", () => {
       ]),
     );
 
+    vi.useFakeTimers();
     failCwd = true;
     socket.emit({
       type: "agent_settled",
       sessionId: "background",
       sessionStatus: { runState: "idle" },
     });
-    await vi.waitFor(() =>
-      expect(store.getState().sessionListError).toContain(
-        "folder hydration unavailable",
-      ),
-    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState().sessionListError).toBeNull();
     expect(store.getState().sessions.map((session) => session.id)).toEqual([
       "base-row",
       "folder-row",
     ]);
-    expect(store.getState().sessionListOperation).toBe("preserve");
+    expect(store.getState().sessionListOperation).toBeNull();
 
     failCwd = false;
-    await store.retrySessionList();
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(store.getState().sessions.map((session) => session.id)).toEqual([
       "base-row",
       "folder-row",
@@ -802,24 +800,22 @@ describe("session list pagination", () => {
     expect(store.getState().sessionListNextOffset).toBe(240);
     expect(store.getState().sessions.at(-1)?.id).toBe("old-239");
 
+    vi.useFakeTimers();
     preserving = true;
     socket.emit({
       type: "agent_settled",
       sessionId: "background",
       sessionStatus: { runState: "idle" },
     });
-    await vi.waitFor(() =>
-      expect(store.getState().sessionListError).toContain(
-        "middle preservation page failed",
-      ),
-    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState().sessionListError).toBeNull();
     expect(store.getState().sessions[0]?.id).toBe("old-0");
     expect(store.getState().sessions.at(-1)?.id).toBe("old-239");
     expect(store.getState().sessionListNextOffset).toBe(240);
 
     failMiddle = false;
     preserveRequests.length = 0;
-    await store.retrySessionList();
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(preserveRequests).toEqual([
       [0, 100],
       [100, 100],
@@ -962,25 +958,23 @@ describe("session list pagination", () => {
     });
     expect(listRequests).toBe(6);
 
+    vi.useFakeTimers();
     socket.emit({
       type: "message_start",
       sessionId: "live-session",
       sessionStatus: { runState: "running" },
     });
-    await vi.waitFor(() =>
-      expect(store.getState().sessionListError).toContain(
-        "live hydration unavailable",
-      ),
-    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState().sessionListError).toBeNull();
     expect(store.getState()).toMatchObject({
       sessionListNextOffset: 240,
       sessionListTotal: 300,
-      sessionListOperation: "hydrate",
+      sessionListOperation: null,
       sessionListHydrating: false,
     });
     expect(store.getState().sessions).toHaveLength(240);
 
-    await store.retrySessionList();
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(hydrationAttempts).toBe(2);
     expect(listRequests).toBe(6);
     expect(store.getState().sessions).toHaveLength(241);
@@ -1078,19 +1072,18 @@ describe("session list pagination", () => {
       expect(store.getState().sessions[0]?.id).toBe("base"),
     );
 
+    vi.useFakeTimers();
     socket.emit({
       type: "message_start",
       sessionId: "stale-live",
       sessionStatus: { runState: "running" },
     });
-    await vi.waitFor(() =>
-      expect(store.getState().sessionListOperation).toBe("hydrate"),
-    );
-    const retry = store.retrySessionList();
+    await vi.advanceTimersByTimeAsync(1_000);
     await started;
+    expect(store.getState().sessionListError).toBeNull();
     await store.loadSessions("needle");
     releaseRetry();
-    await retry;
+    await vi.advanceTimersByTimeAsync(0);
 
     expect(hydrationAttempts).toBe(2);
     expect(store.getState().sessions.map((session) => session.id)).toEqual([

@@ -35,6 +35,21 @@ Reads may time out while native execution continues. Prompt acceptance, operatio
 confirmed worker retirement are separate boundaries. Replacement requires confirmed exit;
 Herdr additionally requires an empty worker scope. See [[pi-integration]] and [[session-persistence]].
 
+## Recoverable reads
+
+`RecoveryBackoff` supplies the shared bounded retry timing, not permission to repeat an operation.
+Callers authorize every read under its API, transport, session/view and input scope; cancellation
+retires both pending waits and late completions. Preserve confirmed data while revalidating the same
+scope, and clear the corresponding error only when that read succeeds. Authentication, invalid
+configuration and persistent unavailability keep their actual user-facing boundary.
+
+Awaitable backoff preserves the initiating read promise. Older-message paging therefore keeps its
+viewport anchor and loading owner across transient failures instead of prepending later through an
+unrelated callback. Abort/reset settles a waiting promise so retired reads cannot hold UI ownership.
+Directory/model previews and workspace directory/search reads share this mechanism; none of these
+recoveries replay session creation, messages or other writes. See `src/recovery-backoff.ts`,
+`src/controllers/{transcript-data,workspace}-controller.ts` and `src/components/Welcome.tsx`.
+
 ## Durable operations and catalogs
 
 A terminal mutation carries the same operation ID through browser, Host and daemon. A lost response

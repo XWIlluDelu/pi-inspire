@@ -203,7 +203,7 @@ describe("resource previews", () => {
     expect(store.getState().resourceAvailability["file-0.md"]).toBeUndefined();
   });
 
-  it("keeps probe transport failures visibly unknown and retryable", async () => {
+  it("recovers unknown file standing automatically after a probe transport failure", async () => {
     let fail = true;
     installFetch((url, init) => {
       if (url.startsWith("/api/resources/probe")) {
@@ -224,14 +224,16 @@ describe("resource previews", () => {
       return resourceRoutes()(url, init);
     });
     const { store } = await initStore();
+    vi.useFakeTimers();
 
     await store.probeResources(["retry.md"]);
     expect(store.getState().resourceAvailability["retry.md"]).toMatchObject({
       availability: "unknown",
     });
     fail = false;
-    await store.probeResources(["retry.md"]);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(store.getState().resourceAvailability["retry.md"]).toBeUndefined();
+    vi.useRealTimers();
   });
 
   it("preserves successful batches when a later availability batch fails", async () => {

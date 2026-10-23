@@ -1,20 +1,147 @@
 // @vitest-environment jsdom
 import {
+  act,
   fireEvent,
   render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
-import { expect, it } from "vitest";
-import { WorkspaceTree } from "../../src/components/WorkspaceBrowser";
+import { afterEach, expect, it, vi } from "vitest";
+import {
+  WorkspaceSearchResults,
+  WorkspaceTree,
+} from "../../src/components/WorkspaceBrowser";
 import { store } from "../../src/store";
 import {
   activeSnapshot,
   bootstrapPayload,
+  FakeWebSocket,
   installFakeWebSocket,
   installFetch,
+  type RouteResponse,
 } from "./helpers";
+
+afterEach(() => vi.useRealTimers());
+
+async function workspaceHarness() {
+  const directory = vi.fn(
+    (dir: string): RouteResponse => ({
+      body: {
+        entries: dir
+          ? [{ name: "nested.ts", type: "file" }]
+          : [
+              { name: "known.ts", type: "file" },
+              { name: "src", type: "dir" },
+            ],
+      },
+    }),
+  );
+  const search = vi.fn(
+    (): RouteResponse => ({
+      body: { files: [{ name: "known.ts", path: "known.ts" }] },
+    }),
+  );
+  installFakeWebSocket();
+  installFetch((url) => {
+    if (url.startsWith("/api/bootstrap"))
+      return {
+        body: bootstrapPayload({
+          snapshot: activeSnapshot({ sessionId: "s1", cwd: "/project" }),
+        }),
+      };
+    if (url.startsWith("/api/files/list"))
+      return directory(
+        new URL(url, "http://local").searchParams.get("dir") ?? "",
+      );
+    if (url.startsWith("/api/files")) return search();
+    return undefined;
+  });
+  await store.init("token");
+  const socket = FakeWebSocket.instances.at(-1)!;
+  socket.open();
+  return { directory, search, socket };
+}
+
+it("keeps confirmed directory and search rows visible during and after a failed refresh", async () => {
+  const harness = await workspaceHarness();
+  await store.loadWorkspaceDirectory("");
+  store.setWorkspaceQuery("known");
+  await vi.waitFor(() =>
+    expect(store.getState().workspaceSearchLoading).toBe(false),
+  );
+  render(
+    <>
+      <WorkspaceTree />
+      <WorkspaceSearchResults />
+    </>,
+  );
+  expect(screen.getAllByRole("button", { name: /^known\.ts/ })).toHaveLength(2);
+  harness.directory.mockReturnValue({
+    status: 503,
+    body: { error: "Directory temporarily unavailable" },
+  });
+  harness.search.mockReturnValue({
+    status: 503,
+    body: { error: "Search temporarily unavailable" },
+  });
+  vi.useFakeTimers();
+  let refresh!: Promise<void>;
+  await act(async () => {
+    refresh = store.refreshWorkspaceBrowser();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(screen.getAllByRole("button", { name: /^known\.ts/ })).toHaveLength(2);
+  expect(screen.queryByText("Loading…")).toBeNull();
+  await act(() => vi.advanceTimersByTimeAsync(28_000));
+  await refresh;
+  expect(screen.getAllByRole("button", { name: /^known\.ts/ })).toHaveLength(2);
+  expect(screen.getByText("Directory could not be refreshed")).toBeVisible();
+  expect(screen.getByText("Search temporarily unavailable")).toBeVisible();
+  expect(screen.queryByText("Directory unavailable")).toBeNull();
+});
+
+it("revalidates cached failed visible directories when returning to a workspace", async () => {
+  const harness = await workspaceHarness();
+  render(<WorkspaceTree />);
+  fireEvent.click(await screen.findByRole("button", { name: "src" }));
+  await screen.findByRole("button", { name: "nested.ts" });
+  harness.directory.mockReturnValue({
+    status: 403,
+    body: { error: "Permission denied" },
+  });
+  await act(() => store.refreshWorkspaceBrowser());
+  expect(store.getState().workspaceDirectoryErrors).toEqual({
+    "": "Permission denied",
+    src: "Permission denied",
+  });
+  act(() =>
+    harness.socket.emit({
+      type: "snapshot",
+      data: activeSnapshot({
+        sessionId: "other",
+        cwd: "/other",
+      }),
+    }),
+  );
+  await screen.findByText("Directory unavailable");
+  harness.directory.mockReturnValue({
+    body: { entries: [{ name: "new.ts", type: "file" }] },
+  });
+  harness.directory.mockClear();
+  act(() =>
+    harness.socket.emit({
+      type: "snapshot",
+      data: activeSnapshot({
+        sessionId: "s1",
+        cwd: "/project",
+      }),
+    }),
+  );
+  await screen.findByRole("button", { name: "new.ts" });
+  expect(harness.directory.mock.calls.map(([dir]) => dir)).toEqual(["", "src"]);
+  expect(store.getState().workspaceDirectoryErrors).toEqual({});
+});
 
 it("decorates workspace rows by exact path without basename guessing", async () => {
   installFakeWebSocket();

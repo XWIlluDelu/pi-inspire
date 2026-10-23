@@ -42,6 +42,10 @@ and untracked.
   [[composer]], [[session-continuity]] and [[herdr-enhancement]] own the contracts;
   [[follow-session-execution-2026-10-19]] records native continuity evidence and the separate Host/Pi
   activation boundary.
+- **Unobtrusive recovery:** background catalog, snapshot, History and file reads recover automatically
+  while retaining confirmed content. Unsent uploads retain their browser-held bytes; recovery never
+  replays branch commands or prompts with uncertain acceptance. [[workbench]], [[session-continuity]],
+  [[session-transport]], [[session-branches]], [[composer]] and [[resource-preview]] define the scope.
 - **Reading and workspace tools:** rich conversation/activity readers, source-backed Copy, Files and
   Changes with in-place refresh, previews and persistent project terminals. Responsive inspection
   preserves the reading context and supports terminal quoting back to the draft. Session actions

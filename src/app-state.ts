@@ -220,14 +220,7 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   sessionListLoadingOlder: boolean;
   sessionListHydrating: boolean;
   /** Current operation, retained after failure so retry copy stays truthful. */
-  sessionListOperation:
-    | "reset"
-    | "older"
-    | "refresh"
-    | "preserve"
-    | "hydrate"
-    | "curation"
-    | null;
+  sessionListOperation: "reset" | "older" | "refresh" | "curation" | null;
   sessionListError: string | null;
   sessionListIssues: SessionCatalogIssue[];
   /** Selection failures stay with the session navigation/start surface rather
@@ -277,6 +270,7 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
    * responsive transitions retain it. */
   branchTree: BranchTreeResponse | null;
   branchTreeLoading: boolean;
+  branchTreeStale: boolean;
   branchTreeError: string | null;
   branchActionId: string | null;
   /** Reference currently selected in the resources pane. */
@@ -414,6 +408,7 @@ export function createInitialAppState(): AppState {
     ...emptyResourceInspectionState(),
     branchTree: null,
     branchTreeLoading: false,
+    branchTreeStale: false,
     branchTreeError: null,
     branchActionId: null,
     gitStatus: null,
