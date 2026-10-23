@@ -132,8 +132,8 @@ export const Welcome = memo(function Welcome({
       state.thinkingLevel);
   const sourcePending = Boolean(
     !inheritance?.readOnlyReason &&
-      inheritance?.modelDiscovery &&
-      !sourceSelection,
+    inheritance?.modelDiscovery &&
+    !sourceSelection,
   );
   const [draft, setDraft] = useState(startDraft);
   const updateDraft = (text: string) => {
@@ -549,21 +549,21 @@ export const Welcome = memo(function Welcome({
                   : null);
   const canStart = Boolean(
     hasInput &&
-      effectiveDirectory &&
-      !directoryMissing &&
-      !directoryProblem &&
-      !directoryChecking &&
-      selectedModel &&
-      modelStatus === "ready" &&
-      !starting,
+    effectiveDirectory &&
+    !directoryMissing &&
+    !directoryProblem &&
+    !directoryChecking &&
+    selectedModel &&
+    modelStatus === "ready" &&
+    !starting,
   );
 
   const canCreate = Boolean(
     hasInput &&
-      effectiveDirectory &&
-      directoryMissing &&
-      !sourceUnresolved &&
-      !starting,
+    effectiveDirectory &&
+    directoryMissing &&
+    !sourceUnresolved &&
+    !starting,
   );
   const start = async (createDirectory = false) => {
     if (createDirectory ? !canCreate : !canStart) return;

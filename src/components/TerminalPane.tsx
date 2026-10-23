@@ -1247,9 +1247,9 @@ export const TerminalPane = memo(function TerminalPane({
                     ) : null}
                   </div>
                 </details>
+                <div className="terminal-menu__separator" />
               </>
             ) : null}
-            <div className="terminal-menu__separator" />
             <details
               className="terminal-menu__group terminal-menu__projects"
               data-terminal-menu-group

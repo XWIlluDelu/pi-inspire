@@ -770,7 +770,7 @@ test("navigates to a native shell card and opens its complete log on a narrow sc
   await connectCalibration(page);
   await page.getByRole("button", { name: "Open conversation search" }).click();
   const search = page.getByRole("searchbox", {
-    name: "Search loaded messages",
+    name: "Search conversation",
   });
   await search.fill("COMPLETE_NATIVE_SHELL_LOG_END");
   await expect(page.getByLabel("Transcript search matches")).toContainText(

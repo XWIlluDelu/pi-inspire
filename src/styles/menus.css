@@ -1,0 +1,51 @@
+/* Compact transient menus share Dropdown's visual grammar.
+   Positioning, selection and action semantics stay with their owning component. */
+.dropdown__menu,
+.session-actions-menu,
+.session-action-order__popover,
+.terminal-menu__popover {
+  padding: var(--space-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-2);
+  overscroll-behavior: contain;
+  animation: float-in var(--dur-standard) var(--ease-standard);
+}
+
+.dropdown__option,
+.session-action-order__popover-item,
+.session-actions-menu__row,
+.session-actions-menu__overflow,
+.terminal-menu__popover button,
+.terminal-menu__group > summary {
+  border-radius: var(--radius-control);
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .session-actions-menu__row:hover:where(:not([data-dragging])):not(:has([data-session-action]:disabled)),
+  .session-actions-menu__overflow:hover,
+  .session-action-order__popover-item:hover:not(:disabled),
+  .terminal-menu__popover button:hover:not(:disabled),
+  .terminal-menu__group > summary:hover {
+    background: var(--accent-tint);
+  }
+}
+
+.session-actions-menu__overflow:active,
+.session-action-order__popover-item:active:not(:disabled),
+.terminal-menu__popover button:active:not(:disabled),
+.terminal-menu__group > summary:active {
+  background: var(--accent-tint);
+}
+
+.session-action-order__popover-item:focus-visible,
+.session-actions-menu button:focus-visible,
+.terminal-menu__popover button:focus-visible,
+.terminal-menu summary:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: -2px;
+}

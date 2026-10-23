@@ -230,7 +230,7 @@ describe("extension context messages", () => {
       />,
     );
     fireEvent.change(
-      screen.getByRole("searchbox", { name: "Search loaded messages" }),
+      screen.getByRole("searchbox", { name: "Search conversation" }),
       { target: { value: "extension" } },
     );
     expect(

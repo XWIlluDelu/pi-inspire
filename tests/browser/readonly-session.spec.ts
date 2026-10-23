@@ -60,15 +60,14 @@ test("unavailable-project history keeps its reading surface at desktop and phone
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toHaveCount(0);
   await page.getByRole("button", { name: /^Session actions:/ }).click();
-  for (const name of [
-    "Rename session",
-    "Clone current branch",
-    "Use in terminal…",
-  ])
+  for (const name of ["Rename session", "Clone current branch"])
     await expect(
       page.getByRole("menuitem", { name, exact: true }),
     ).toBeDisabled();
   await page.getByRole("menuitem", { name: "More actions" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Use in terminal…", exact: true }),
+  ).toBeDisabled();
   await page
     .getByRole("menuitem", { name: "Export session…", exact: true })
     .click();

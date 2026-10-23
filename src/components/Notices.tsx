@@ -7,7 +7,7 @@ import {
   availableUpdates,
   updateDetailsText,
 } from "../update-availability";
-import { useReadingDwell } from "../use-reading-dwell";
+import { readingDwellMs, useReadingDwell } from "../use-reading-dwell";
 import { CopyAction } from "./CopyAction";
 import { NoticeCard } from "./NoticeCard";
 
@@ -17,12 +17,13 @@ function NoticeItem({ notice }: { notice: Notice }) {
     [notice.id],
   );
   const { ref, leaving } = useReadingDwell<HTMLDivElement>(
-    notice.kind === "info" ? 8_000 : null,
+    notice.kind === "info" ? readingDwellMs(notice.text) : null,
     dismiss,
   );
   return (
     <NoticeCard
       ref={ref}
+      compact
       kind={notice.kind}
       text={notice.text}
       onDismiss={dismiss}
@@ -99,6 +100,7 @@ export const Notices = memo(function Notices({
 }) {
   const state = useAppState(
     (source) => ({
+      sessionId: source.sessionId,
       notices: source.notices,
       error: source.error,
       connection: source.connection,
@@ -128,12 +130,38 @@ export const Notices = memo(function Notices({
         "main > .topbar, main > .banner",
       ),
     ];
+    const composer = document.querySelector<HTMLElement>(
+      "main .composer, main .composer-readonly",
+    );
     const measure = () => {
       if (boundaries.length > 0) {
         const bottom = Math.max(
           ...boundaries.map((node) => node.getBoundingClientRect().bottom),
         );
         element.style.setProperty("--notice-header-bottom", `${bottom}px`);
+      }
+      // Measure the normal viewport anchor, not a prior editor adjustment.
+      element.style.removeProperty("--notice-bottom");
+      const stackBounds = element.getBoundingClientRect();
+      const composerBounds = composer?.getBoundingClientRect();
+      // Only a real two-dimensional overlap needs an editor boundary. A form
+      // higher on the page must not push bottom-corner feedback off the screen.
+      if (
+        getComputedStyle(element).getPropertyValue("--notice-anchor").trim() !==
+          "top" &&
+        composerBounds &&
+        composerBounds.width > 0 &&
+        stackBounds.left < composerBounds.right &&
+        stackBounds.right > composerBounds.left &&
+        stackBounds.top < composerBounds.bottom &&
+        stackBounds.bottom > composerBounds.top
+      ) {
+        element.style.setProperty(
+          "--notice-bottom",
+          `max(var(--space-4), var(--safe-bottom), ${window.innerHeight - composerBounds.top + 8}px)`,
+        );
+      } else {
+        element.style.removeProperty("--notice-bottom");
       }
       // Measure at the full card width, without a previous scrollbar. Normal
       // stacks keep their floating shadows; only overflowing ones need clipping.
@@ -156,9 +184,16 @@ export const Notices = memo(function Notices({
       typeof ResizeObserver === "undefined"
         ? null
         : new ResizeObserver(measure);
-    [...boundaries, element, ...element.children].forEach((node) =>
-      observer?.observe(node),
-    );
+    [
+      ...boundaries,
+      element,
+      ...element.children,
+      composer,
+      composer?.closest(".composer-dock"),
+      document.querySelector("main"),
+    ].forEach((node) => {
+      if (node) observer?.observe(node);
+    });
     window.addEventListener("resize", measure);
     return () => {
       observer?.disconnect();

@@ -23,6 +23,7 @@ import {
   resolveCommandInventory,
 } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
+import { branchCopiesBlocked } from "../controllers/branch-controller";
 import { isTouchFirstDevice } from "../input-device";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { paletteTextMatchRanges, rankPaletteItems } from "../palette-search";
@@ -39,6 +40,7 @@ import { modelCycleShortcut } from "../workbench-keyboard";
 import { sessionHeading } from "./AppTopbar";
 import { ButtonLabel } from "./ButtonLabel";
 import { ComposerInput } from "./ComposerInput";
+import { visibleSessions } from "./nav-model";
 import { SearchMatchText } from "./SearchMatchText";
 import { relativeTime } from "./transcript-rows";
 
@@ -104,6 +106,7 @@ export const CommandPalette = memo(function CommandPalette({
       sessionId: appState.sessionId,
       readOnlyReason: appState.readOnlyReason,
       modelControls: modelControlsSupported(appState),
+      copiesBlocked: branchCopiesBlocked(appState),
       external: Boolean(
         appState.sessionId &&
           appState.sessionStatuses[appState.sessionId]?.external,
@@ -406,7 +409,7 @@ export const CommandPalette = memo(function CommandPalette({
         });
       }
     }
-    if (state.sessionId && state.readOnlyReason !== "workspace-unavailable") {
+    if (state.sessionId && !state.copiesBlocked) {
       actions.push({
         id: "clone",
         group: "Workspace",
@@ -504,8 +507,9 @@ export const CommandPalette = memo(function CommandPalette({
       });
     }
 
+    const visible = visibleSessions(state.sessions, state.prefs);
     const recentIds = new Set(
-      [...state.sessions]
+      [...visible]
         .filter((session) => session.id !== state.sessionId)
         .sort(
           (left, right) =>
@@ -514,7 +518,7 @@ export const CommandPalette = memo(function CommandPalette({
         .slice(0, 5)
         .map((session) => session.id),
     );
-    const sessions: PaletteItem[] = state.sessions.map((session) => ({
+    const sessions: PaletteItem[] = visible.map((session) => ({
       id: `session-${session.id}`,
       group: "Sessions",
       aliases: ["session"],

@@ -131,7 +131,7 @@ describe("right-corner notices", () => {
       );
     notify("info", "Indexing finished");
     const notice = screen.getByText("Indexing finished").closest(".notice")!;
-    act(() => vi.advanceTimersByTime(7_000));
+    act(() => vi.advanceTimersByTime(2_000));
     notify("info", "Indexing finished");
     expect(screen.getByText("Indexing finished").closest(".notice")).toBe(
       notice,
@@ -140,7 +140,7 @@ describe("right-corner notices", () => {
     notify("warning", "Credentials need attention");
     notify("error", "Reload failed");
     notify("error", "Reload failed");
-    act(() => vi.advanceTimersByTime(7_999));
+    act(() => vi.advanceTimersByTime(2_999));
     expect(notice).not.toHaveClass("feedback--leaving");
     act(() => vi.advanceTimersByTime(1));
     expect(notice).toHaveClass("feedback--leaving");

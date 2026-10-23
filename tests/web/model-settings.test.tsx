@@ -39,9 +39,12 @@ async function openDeclarations() {
   const section = await screen.findByRole("region", {
     name: "Custom providers",
   });
-  const showButton = within(section).queryByRole("button", { name: "Show" });
-  if (showButton) {
-    fireEvent.click(showButton);
+  const disclosure = within(section).getByLabelText(
+    "Custom provider declarations",
+  );
+  if (!(disclosure.parentElement as HTMLDetailsElement).open) {
+    fireEvent.click(disclosure);
+    await within(section).findByRole("button", { name: /^Edit provider / });
   }
 }
 beforeEach(() => {
@@ -543,14 +546,21 @@ describe("Models settings configuration and ownership", () => {
     expect(
       within(custom).queryByRole("button", { name: "Edit provider custom" }),
     ).toBeNull();
-    fireEvent.click(within(custom).getByRole("button", { name: "Show" }));
+    const disclosure = within(custom).getByLabelText(
+      "Custom provider declarations",
+    );
+    fireEvent.click(disclosure);
     expect(
-      within(custom).getByRole("button", { name: "Edit provider custom" }),
+      await within(custom).findByRole("button", {
+        name: "Edit provider custom",
+      }),
     ).toBeEnabled();
-    fireEvent.click(within(custom).getByRole("button", { name: "Hide" }));
-    expect(
-      within(custom).queryByRole("button", { name: "Edit provider custom" }),
-    ).toBeNull();
+    fireEvent.click(disclosure);
+    await waitFor(() =>
+      expect(
+        within(custom).queryByRole("button", { name: "Edit provider custom" }),
+      ).toBeNull(),
+    );
   });
 
   it("saves a row default and native common order independently", async () => {

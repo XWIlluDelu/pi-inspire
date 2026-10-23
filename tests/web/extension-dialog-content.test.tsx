@@ -44,4 +44,8 @@ it("reuses controlled dialog content without a session store or transport", () =
   expect(screen.getByRole("textbox")).toHaveValue("Changed notes");
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   expect(screen.getByRole("alert")).toHaveTextContent("Please retry");
+  expect(screen.getByRole("alert")).toHaveAttribute("tabindex", "0");
+  expect(screen.getByRole("textbox").closest("form")).toContainElement(
+    screen.getByRole("alert"),
+  );
 });

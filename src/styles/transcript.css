@@ -2,7 +2,7 @@
 
 .transcript-wrap {
   position: relative;
-  flex: 1;
+  flex: 1 0 var(--reading-min-height, 0px);
   min-height: 0;
   display: flex;
   outline: none;
@@ -13,7 +13,7 @@
 }
 
 .transcript-wrap--earlier-branch .transcript {
-  padding-top: max(
+  --transcript-padding-top: max(
     calc(var(--space-16) + 84px),
     calc(var(--earlier-branch-banner-bottom, 0px) + var(--space-4))
   );
@@ -93,7 +93,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-16) var(--space-6) var(--space-16);
+  padding-inline: var(--space-6);
   /* Search jumps and row anchors land below the floating search pill zone
      (top 12 + pill 32 + breathing room) instead of sliding underneath it. */
   scroll-padding-top: calc(var(--space-3) + 44px);
@@ -107,13 +107,14 @@
    Markdown reflow, and virtual-row measurement without polling the scroller. */
 .transcript__content {
   min-height: 100%;
+  padding-block: var(--transcript-padding-top, var(--space-16)) var(--transcript-padding-bottom, var(--space-16));
   display: flow-root;
 }
 
 /* Side panes can narrow the reader even on a wide desktop window. */
 @container reading-stage (max-width: 640px) {
   .transcript-wrap--earlier-branch .transcript {
-    padding-top: max(
+    --transcript-padding-top: max(
       calc(var(--space-16) + 130px),
       calc(var(--earlier-branch-banner-bottom, 0px) + var(--space-4))
     );
@@ -144,30 +145,8 @@
 }
 
 .transcript-mobile-toolbar {
-  position: absolute;
-  z-index: 4;
-  top: var(--space-3);
-  right: max(var(--space-6), calc((100% - var(--content-max)) / 2));
-  display: flex;
-  pointer-events: none;
+  display: none;
 }
-
-.transcript-mobile-toolbar__launchers { display: flex; pointer-events: auto; }
-.transcript-mobile-toolbar__button {
-  display: inline-flex;
-  width: 32px;
-  height: 32px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: var(--bg-surface);
-  color: var(--muted);
-  cursor: pointer;
-}
-.transcript-mobile-toolbar__button:hover,
-.transcript-mobile-toolbar__button:focus-visible { color: var(--ink); background: var(--bg-raised); }
-.transcript-mobile-toolbar__button--prompt { display: none; }
 
 .transcript ::highlight(transcript-match) {
   background-color: var(--selection);
@@ -184,8 +163,7 @@
   top: var(--space-3);
   right: max(var(--space-6), calc((100% - var(--content-max)) / 2));
   max-width: calc(100% - 2 * var(--space-6));
-  display: none;
-  flex-wrap: wrap;
+  display: flex;
   align-items: center;
   gap: var(--space-1);
   min-height: 32px;
@@ -202,24 +180,6 @@
     border-color var(--dur-micro) var(--ease-standard),
     box-shadow var(--dur-micro) var(--ease-standard),
     color var(--dur-micro) var(--ease-standard);
-}
-
-.transcript-search--mobile-open { display: flex; }
-
-.transcript-search__details {
-  flex: 0 0 100%;
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding-top: var(--space-1);
-  font-size: var(--text-xs);
-}
-.transcript-search__details button {
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--accent-deep);
-  cursor: pointer;
 }
 
 .transcript-search:hover {
@@ -321,7 +281,7 @@
 }
 
 .transcript-search > .transcript-search__close {
-  display: inline-flex;
+  display: none;
 }
 
 .transcript__column {

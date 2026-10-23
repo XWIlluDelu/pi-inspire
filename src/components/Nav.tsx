@@ -1,7 +1,6 @@
 import {
   ChevronUp,
   EyeOff,
-  Folder,
   Inbox,
   PanelLeft,
   Pin,
@@ -16,14 +15,12 @@ import {
   type Ref,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import {
-  projectNameFromCwd,
-  type SessionSummary,
-} from "../../shared/contracts";
+import { type SessionSummary } from "../../shared/contracts";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
@@ -34,67 +31,6 @@ import { PiLoader } from "./PiLoader";
 import { ScrollRail } from "./ScrollRail";
 import { SessionDeleteDialog } from "./SessionDeleteDialog";
 import { BrandLogo, Wordmark } from "./Wordmark";
-import { WorkspaceTree } from "./WorkspaceBrowser";
-
-/** Compact quick navigation over the shared workspace projection. The right
- * Files pane consumes the same expansion, search, identity, selection, and
- * disclosure state so narrow drawer remounts do not reset it. */
-const WorkspaceExplorer = memo(function WorkspaceExplorer({
-  selectedSessionId,
-}: {
-  selectedSessionId: string | null;
-}) {
-  const { activeSessionId, activeCwd, open } = useAppState(
-    (state) => ({
-      activeSessionId: state.sessionId,
-      activeCwd: state.cwd,
-      open: state.workspaceExplorerOpen,
-    }),
-    shallowEqual,
-  );
-  const cwd = selectedSessionId === activeSessionId ? activeCwd : null;
-
-  useEffect(() => {
-    store.setGitSurfaceVisible("workspace-explorer", open && cwd !== null);
-    return () => store.setGitSurfaceVisible("workspace-explorer", false);
-  }, [open, cwd]);
-
-  if (!cwd) return null;
-
-  return (
-    <section
-      className={`explorer ${open ? "explorer--open" : ""}`}
-      aria-label="Workspace files"
-    >
-      <div className="explorer__heading nav__dock-heading">
-        <button
-          type="button"
-          className="explorer__header nav__dock-toggle"
-          aria-expanded={open}
-          onClick={() => store.setWorkspaceExplorerOpen(!open)}
-          title={cwd}
-        >
-          <Folder size={16} aria-hidden />
-          <span className="explorer__title nav__dock-title">
-            {projectNameFromCwd(cwd)}
-          </span>
-          <ChevronUp
-            size={12}
-            className={`chev-flip ${open ? "chev-flip--open" : ""}`}
-            aria-hidden
-          />
-        </button>
-      </div>
-      {open ? (
-        <div className="explorer__browser">
-          <div className="explorer__tree">
-            <WorkspaceTree />
-          </div>
-        </div>
-      ) : null}
-    </section>
-  );
-});
 
 export const Nav = memo(function Nav({
   collapsed,
@@ -201,6 +137,19 @@ export const Nav = memo(function Nav({
   );
   const searching = sessionQuery.trim() !== "";
   const hiddenExpanded = searching || hiddenOpen;
+  useLayoutEffect(() => {
+    if (!hiddenOpen || searching || collapsed) return;
+    const nav = navRef.current;
+    const body = nav?.querySelector(".nav__hidden-content");
+    if (!nav || !body) return;
+    // Reveal the actual scrollport after flex layout and subsequent resizes settle.
+    const observer = new ResizeObserver(() => {
+      body.scrollIntoView({ block: "nearest" });
+    });
+    observer.observe(body);
+    observer.observe(nav);
+    return () => observer.disconnect();
+  }, [hiddenOpen, searching, collapsed, navRef]);
   const searchResults = useMemo(() => {
     const folderRows = (groups: typeof sections.groups) =>
       groups.flatMap((group) =>
@@ -607,7 +556,6 @@ export const Nav = memo(function Nav({
           </div>
         ) : null}
       </div>
-      <WorkspaceExplorer selectedSessionId={visibleSessionId} />
       {hiddenCount > 0 ? (
         <section
           className="nav__group nav__group--hidden"
@@ -697,13 +645,13 @@ export const Nav = memo(function Nav({
           ) : null}
         </section>
       ) : null}
+      <ScrollRail container={navRef} variant="nav" />
       <ScrollRail container={navRef} scroller=".nav__list" variant="nav" />
       <ScrollRail
         container={navRef}
         scroller=".nav__hidden-content"
         variant="nav"
       />
-      <ScrollRail container={navRef} scroller=".explorer__tree" variant="nav" />
       {deleteCandidate ? (
         <SessionDeleteDialog
           session={deleteCandidate}

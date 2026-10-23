@@ -12,6 +12,7 @@ import {
   mcpOAuthError,
 } from "../../shared/mcp";
 import { ButtonLabel } from "./ButtonLabel";
+import { DetailSummary } from "./DetailSummary";
 import { Dropdown } from "./Dropdown";
 import { SettingsSwitch } from "./SettingsControls";
 
@@ -567,9 +568,9 @@ export function McpServerForm({
           )}
         </div>
         <details className="models-form__optional" open={policyOnly}>
-          <summary>
+          <DetailSummary>
             {policyOnly ? "Project policy" : "Advanced configuration"}
-          </summary>
+          </DetailSummary>
           <p className="models-status">
             {policyOnly
               ? "Connection settings come from the user configuration."
@@ -708,7 +709,7 @@ export function McpServerForm({
                 busy={busy}
               />
               <details className="models-form__optional">
-                <summary>OAuth client configuration</summary>
+                <DetailSummary>OAuth client configuration</DetailSummary>
                 <p className="models-status">
                   HTTP servers can use Pi's automatic OAuth discovery. Configure
                   these only when the server needs them; saving does not sign

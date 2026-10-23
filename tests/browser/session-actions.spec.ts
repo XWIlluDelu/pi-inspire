@@ -113,8 +113,8 @@ for (const touch of [false, true]) {
             sessionActionOrder: [
               "rename",
               "copy-id",
-              "clone",
               "terminal",
+              "clone",
               "export",
             ],
           },
@@ -276,7 +276,6 @@ for (const touch of [false, true]) {
           "Rename session",
           "Copy session ID",
           "Export session…",
-          "Clone current branch",
         ]);
         const writeCount = writes.length;
         await down(
@@ -317,6 +316,9 @@ for (const touch of [false, true]) {
     }, testInfo) => {
       const { title, composer } = await namedSession(page);
       await title.click();
+      await page
+        .getByRole("menuitem", { name: "More actions", exact: true })
+        .click();
       await page
         .getByRole("menuitem", { name: "Use in terminal…", exact: true })
         .click();
@@ -408,7 +410,7 @@ for (const touch of [false, true]) {
       await expect(composer).toHaveValue("Keep the unfinished comparison");
     });
 
-    test("opens the title menu and anchors in-place rename with keyboard focus restoration", async ({
+    test("keeps copy feedback stable and anchors in-place rename with keyboard focus restoration", async ({
       page,
     }) => {
       const { title, composer } = await namedSession(page);
@@ -432,7 +434,6 @@ for (const touch of [false, true]) {
         "Rename session",
         "Copy session ID",
         "Clone current branch",
-        "Use in terminal…",
       ]);
       await expect(
         menu.getByRole("menuitem", { name: "More actions" }),
@@ -444,6 +445,24 @@ for (const touch of [false, true]) {
         exact: true,
       });
       await expect(rename).toBeFocused();
+      await menu.evaluate(async (element) => {
+        await Promise.all(
+          element.getAnimations().map((animation) => animation.finished),
+        );
+      });
+      const menuBeforeCopy = (await menu.boundingBox())!;
+      await page
+        .context()
+        .grantPermissions(["clipboard-read", "clipboard-write"]);
+      await menu
+        .getByRole("menuitem", { name: "Copy session ID", exact: true })
+        .click();
+      await expect(
+        menu.getByRole("menuitem", { name: "ID copied", exact: true }),
+      ).toBeVisible();
+      const menuAfterCopy = (await menu.boundingBox())!;
+      expect(menuAfterCopy.width).toBeCloseTo(menuBeforeCopy.width, 1);
+      expect(menuAfterCopy.height).toBeCloseTo(menuBeforeCopy.height, 1);
       if (touch) await rename.tap();
       else await rename.click();
       await expect(menu).toHaveCount(0);

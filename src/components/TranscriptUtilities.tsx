@@ -25,7 +25,6 @@ export function TranscriptUtilities({
   mobileTool,
   onOpenMobile,
   onClose,
-  onSearchHistory,
 }: {
   search: ReturnType<typeof useTranscriptSearch>;
   inputRef: RefObject<HTMLInputElement | null>;
@@ -34,7 +33,6 @@ export function TranscriptUtilities({
   mobileTool: MobileTranscriptTool;
   onOpenMobile: (tool: MobileTranscriptTool) => void;
   onClose: (restoreFocus?: boolean) => void;
-  onSearchHistory: () => void;
 }) {
   return (
     <>
@@ -60,7 +58,7 @@ export function TranscriptUtilities({
               type="button"
               className="transcript-mobile-toolbar__button"
               aria-label="Open conversation search"
-              title="Search loaded messages"
+              title="Search conversation"
               onClick={() => onOpenMobile("search")}
             >
               <Search size={18} aria-hidden />
@@ -71,7 +69,7 @@ export function TranscriptUtilities({
       <div
         className={`transcript-search ${search.query ? "transcript-search--active" : ""} ${mobileTool === "search" ? "transcript-search--mobile-open" : ""}`}
         role="search"
-        aria-label="Search loaded messages"
+        aria-label="Search conversation"
         onClick={(event) => {
           if (
             event.target === event.currentTarget ||
@@ -108,8 +106,9 @@ export function TranscriptUtilities({
               if (!mobileSearch) inputRef.current?.blur();
             }
           }}
-          placeholder="Loaded messages"
-          aria-label="Search loaded messages"
+          placeholder="Search conversation"
+          aria-label="Search conversation"
+          title="Search loaded conversation messages"
         />
         <output aria-live="polite" aria-label="Transcript search matches">
           {search.query
@@ -145,12 +144,6 @@ export function TranscriptUtilities({
         >
           <X size={14} aria-hidden />
         </button>
-        <div className="transcript-search__details">
-          <span>Loaded messages only</span>
-          <button type="button" onClick={onSearchHistory}>
-            Search full History
-          </button>
-        </div>
       </div>
     </>
   );

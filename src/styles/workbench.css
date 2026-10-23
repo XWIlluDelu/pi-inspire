@@ -1709,4 +1709,3 @@ button.res__more:hover {
 
 /* Mobile file inspection keeps the reading surface full height. */
 .file-preview__back { display: none; }
-.history-search-hint { margin: 0; padding: 0 var(--space-3) var(--space-2); color: var(--muted); font-size: var(--text-xs); }

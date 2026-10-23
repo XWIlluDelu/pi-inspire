@@ -228,37 +228,36 @@ function McpConfiguration({
           icon={<Server size={14} />}
           title="MCP"
           description="Edit Pi's saved MCP configuration. Changes take effect in new or reloaded sessions."
+          headerAction={
+            <div className="models-actions">
+              <button
+                type="button"
+                className="models-icon-button"
+                aria-label="Refresh MCP files"
+                disabled={busy}
+                onClick={() => void read()}
+              >
+                <RefreshCw size={14} aria-hidden />
+              </button>
+              <button
+                type="button"
+                className="button"
+                ref={addButton}
+                disabled={busy || !snapshot}
+                onClick={(event) => {
+                  opener.current = event.currentTarget;
+                  setError(null);
+                  setConfirmReload(false);
+                  setEditor({ scope: "user", entry: null });
+                }}
+              >
+                <Plus size={14} aria-hidden />
+                Add server
+              </button>
+            </div>
+          }
         >
           <div className="models-settings mcp-config">
-            <div className="models-subheading">
-              <span className="models-status">Server configuration</span>
-              <div className="models-actions">
-                <button
-                  type="button"
-                  className="models-icon-button"
-                  aria-label="Refresh MCP files"
-                  disabled={busy}
-                  onClick={() => void read()}
-                >
-                  <RefreshCw size={14} aria-hidden />
-                </button>
-                <button
-                  type="button"
-                  className="button button--quiet"
-                  ref={addButton}
-                  disabled={busy || !snapshot}
-                  onClick={(event) => {
-                    opener.current = event.currentTarget;
-                    setError(null);
-                    setConfirmReload(false);
-                    setEditor({ scope: "user", entry: null });
-                  }}
-                >
-                  <Plus size={14} aria-hidden />
-                  Add server
-                </button>
-              </div>
-            </div>
             {error ? (
               <p className="settings__error" role="alert">
                 {error}
@@ -436,6 +435,7 @@ function McpConfiguration({
                           <button
                             type="button"
                             className="models-icon-button"
+                            title="Edit server"
                             aria-label={`Edit ${file.scope} server ${entry.name}`}
                             disabled={
                               busy || (!entry.transport && !entry.policyOnly)
@@ -452,6 +452,7 @@ function McpConfiguration({
                           <button
                             type="button"
                             className="models-icon-button"
+                            title="Remove server"
                             aria-label={`Remove ${file.scope} server ${entry.name}`}
                             disabled={busy}
                             onClick={(event) => {

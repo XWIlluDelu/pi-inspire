@@ -3,6 +3,8 @@ import { isBusyRunState } from "../../shared/contracts";
 import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
 import { useModalFocus } from "../use-modal-focus";
+import { ButtonLabel } from "./ButtonLabel";
+import { CopyFeedback } from "./CopyFeedback";
 
 export function SessionTerminalDialog({
   sessionId,
@@ -27,7 +29,7 @@ export function SessionTerminalDialog({
   const ref = useModalFocus<HTMLDivElement>(active, sessionId, () => {
     if (!pending) onClose();
   });
-  const { copied, copy } = useCopied({
+  const { copied, copying, copy } = useCopied({
     scope: sessionId,
     onError: store.reportCopyError,
   });
@@ -100,7 +102,10 @@ export function SessionTerminalDialog({
               className="button button--primary"
               onClick={() => void copy(command)}
             >
-              {copied ? "Copied" : "Copy command"}
+              <CopyFeedback copied={copied} copying={copying} />
+              <ButtonLabel reserve="Copy command">
+                {copied ? "Copied" : "Copy command"}
+              </ButtonLabel>
             </button>
           ) : (
             <button

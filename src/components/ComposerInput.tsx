@@ -482,10 +482,78 @@ export function ComposerInput({
     const main = wrap.closest("main");
     const composer = wrap.closest(".composer");
     const dock = wrap.closest(".composer-dock");
-    const chrome = composer
-      ? composer.getBoundingClientRect().height -
-        element.getBoundingClientRect().height
-      : 0;
+    let chrome = 0;
+    if (composer) {
+      const style = getComputedStyle(composer);
+      const insets = (node: Element) => {
+        const css = getComputedStyle(node);
+        return [
+          css.paddingTop,
+          css.paddingBottom,
+          css.borderTopWidth,
+          css.borderBottomWidth,
+        ].reduce((sum, value) => sum + (Number.parseFloat(value) || 0), 0);
+      };
+      const siblings = [...composer.children].filter((node) => {
+        const css = getComputedStyle(node);
+        return (
+          node !== wrap &&
+          css.display !== "none" &&
+          css.position !== "absolute" &&
+          css.position !== "fixed"
+        );
+      });
+      // Measure the actual controls, not unused flex space in a minimum-height
+      // form; otherwise each resize can turn that space into a larger minimum.
+      chrome =
+        insets(composer) +
+        insets(wrap) +
+        (Number.parseFloat(style.rowGap) || 0) * siblings.length +
+        siblings.reduce((sum, node) => {
+          const css = getComputedStyle(node);
+          return (
+            sum +
+            node.getBoundingClientRect().height +
+            (Number.parseFloat(css.marginTop) || 0) +
+            (Number.parseFloat(css.marginBottom) || 0)
+          );
+        }, 0);
+    }
+    if (composer instanceof HTMLElement && dock) {
+      // Flex layout can share a short dock with widgets, but never compress the
+      // toolbar or the editor below one readable line.
+      composer.style.setProperty("--composer-min-height", `${chrome + 24}px`);
+      const stage = dock.closest<HTMLElement>(".reading-stage");
+      if (stage) {
+        const dockStyle = getComputedStyle(dock);
+        const support = [...dock.children]
+          .filter((node) => node !== composer)
+          .reduce((sum, node) => {
+            const css = getComputedStyle(node);
+            const height = node.matches(".extension-dock, .command-activity")
+              ? Number.parseFloat(css.minHeight) || 0
+              : node.getBoundingClientRect().height;
+            return (
+              sum +
+              height +
+              (Number.parseFloat(css.marginTop) || 0) +
+              (Number.parseFloat(css.marginBottom) || 0)
+            );
+          }, 0);
+        const height = stage.getBoundingClientRect().height;
+        const remaining =
+          height -
+          chrome -
+          24 -
+          support -
+          (Number.parseFloat(dockStyle.paddingTop) || 0) -
+          (Number.parseFloat(dockStyle.paddingBottom) || 0);
+        stage.style.setProperty(
+          "--reading-min-height",
+          `${Math.max(0, Math.min(144, height * 0.28, remaining))}px`,
+        );
+      }
+    }
     const dockChrome =
       dock && composer
         ? dock.getBoundingClientRect().height -
@@ -519,6 +587,13 @@ export function ComposerInput({
     resizeEditor();
   }, [resizeEditor, value]);
 
+  useLayoutEffect(() => {
+    const stage = inputWrapRef.current?.closest<HTMLElement>(".reading-stage");
+    return () => {
+      stage?.style.removeProperty("--reading-min-height");
+    };
+  }, []);
+
   useEffect(() => {
     let frame = 0;
     const schedule = () => {
@@ -534,6 +609,8 @@ export function ComposerInput({
       observer?.observe(wrap);
       const main = wrap.closest("main");
       if (main) observer?.observe(main);
+      const dock = wrap.closest(".composer-dock");
+      if (dock) observer?.observe(dock);
     }
     window.addEventListener("resize", schedule);
     window.visualViewport?.addEventListener("resize", schedule);

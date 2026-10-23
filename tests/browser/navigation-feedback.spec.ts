@@ -134,7 +134,122 @@ for (const touch of [false, true]) {
       serviceWorkers: "block",
     });
 
-    test("workspace and Hidden retain a complete outline without moving their headers", async ({
+    test("short navigation keeps rows reachable instead of shrinking its scrollports", async ({
+      page,
+    }) => {
+      await navigationGroupsFixture(page);
+      await pairedPage(page);
+      const nav = page.locator(".nav");
+      for (const [width, height] of [
+        [1366, 900],
+        [901, 390],
+        [568, 320],
+        [568, 260],
+      ]) {
+        await page.setViewportSize({ width, height });
+        if (width <= 900) {
+          const toggle = page.getByRole("button", {
+            name: "Toggle navigation",
+            exact: true,
+          });
+          await expect(toggle).toBeVisible();
+          if (!(await nav.isVisible())) await toggle.click();
+        }
+        const hidden = nav.getByRole("button", { name: "Hidden", exact: true });
+        if ((await hidden.getAttribute("aria-expanded")) === "true")
+          await hidden.click();
+        // Insets count against the same budget as content, as on a landscape phone.
+        await nav.evaluate((el) => {
+          el.style.setProperty("--safe-top", "8px");
+          el.style.setProperty("--safe-bottom", "12px");
+        });
+        await hidden.click();
+        const body = nav.locator(".nav__hidden-content");
+        await expect
+          .poll(async () =>
+            body.evaluate((el) => {
+              const nav = el.closest(".nav")!;
+              return (
+                el.getBoundingClientRect().bottom -
+                (nav.getBoundingClientRect().bottom -
+                  Number.parseFloat(getComputedStyle(nav).paddingBottom))
+              );
+            }),
+          )
+          .toBeLessThanOrEqual(1);
+        const row = body.getByRole("button", {
+          name: "archived-b",
+          exact: true,
+        });
+        await row.focus();
+        await expect(row).toBeFocused();
+        const bounds = await row.boundingBox();
+        const viewport = await nav.evaluate((el) => {
+          const bounds = el.getBoundingClientRect();
+          const style = getComputedStyle(el);
+          return {
+            top: bounds.top + Number.parseFloat(style.paddingTop),
+            bottom: bounds.bottom - Number.parseFloat(style.paddingBottom),
+          };
+        });
+        const scrollport = await body.boundingBox();
+        expect(bounds).not.toBeNull();
+        expect(bounds!.y).toBeGreaterThanOrEqual(
+          Math.max(viewport.top, scrollport!.y) - 1,
+        );
+        expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(
+          Math.min(viewport.bottom, scrollport!.y + scrollport!.height) + 1,
+        );
+        if ((await row.getAttribute("aria-expanded")) !== "true")
+          await row.press("Enter");
+        await expect(row).toHaveAttribute("aria-expanded", "true");
+        const session = body.locator(".nav__row-main").last();
+        await session.focus();
+        await expect(session).toBeFocused();
+        const visible = await session.boundingBox();
+        const bodyBounds = await body.boundingBox();
+        expect(bodyBounds!.height).toBeGreaterThanOrEqual(visible!.height);
+        expect(visible!.y).toBeGreaterThanOrEqual(
+          Math.max(viewport.top, bodyBounds!.y) - 1,
+        );
+        expect(visible!.y + visible!.height).toBeLessThanOrEqual(
+          Math.min(viewport.bottom, bodyBounds!.y + bodyBounds!.height) + 1,
+        );
+        // Closing keeps focus on its trigger and gives the catalog its space back.
+        await hidden.focus();
+        await hidden.press("Enter");
+        await expect(hidden).toBeFocused();
+        await expect(body).toHaveCount(0);
+        const catalog = nav.locator(".nav__list");
+        const folder = catalog.getByRole("button", {
+          name: "calibration",
+          exact: true,
+        });
+        await folder.focus();
+        if ((await folder.getAttribute("aria-expanded")) !== "true")
+          await folder.press("Enter");
+        const catalogRow = catalog.locator(".nav__row-main").first();
+        await catalogRow.focus();
+        await expect(catalogRow).toBeFocused();
+        const catalogBounds = await catalog.boundingBox();
+        const catalogRowBounds = await catalogRow.boundingBox();
+        expect(catalogRowBounds!.y).toBeGreaterThanOrEqual(
+          catalogBounds!.y - 1,
+        );
+        expect(
+          catalogRowBounds!.y + catalogRowBounds!.height,
+        ).toBeLessThanOrEqual(
+          Math.min(catalogBounds!.y + catalogBounds!.height, viewport.bottom) +
+            1,
+        );
+        if (height === 900)
+          expect(
+            await nav.evaluate((el) => el.scrollHeight <= el.clientHeight + 1),
+          ).toBe(true);
+      }
+    });
+
+    test("Hidden retains a complete outline without moving its header", async ({
       page,
     }) => {
       await navigationGroupsFixture(page);
@@ -169,20 +284,18 @@ for (const touch of [false, true]) {
         }
         await expect(nav).toBeVisible();
         const hidden = nav.getByRole("button", { name: "Hidden", exact: true });
-        for (const control of [nav.locator(".explorer__header"), hidden]) {
-          const before = (await control.boundingBox())!;
-          await page.keyboard.press("Tab");
-          await control.focus();
-          await expect(control).toBeFocused();
-          await expect(control).toHaveCSS("outline-style", "solid");
-          await expect(control).toHaveCSS("outline-width", "2px");
-          expect(await control.evaluate(focusRingClipping)).toBeLessThanOrEqual(
-            0.5,
-          );
-          const after = (await control.boundingBox())!;
-          for (const key of ["x", "y", "width", "height"] as const)
-            expect(after[key]).toBeCloseTo(before[key], 1);
-        }
+        const before = (await hidden.boundingBox())!;
+        await page.keyboard.press("Tab");
+        await hidden.focus();
+        await expect(hidden).toBeFocused();
+        await expect(hidden).toHaveCSS("outline-style", "solid");
+        await expect(hidden).toHaveCSS("outline-width", "2px");
+        expect(await hidden.evaluate(focusRingClipping)).toBeLessThanOrEqual(
+          0.5,
+        );
+        const after = (await hidden.boundingBox())!;
+        for (const key of ["x", "y", "width", "height"] as const)
+          expect(after[key]).toBeCloseTo(before[key], 1);
         // Changing disclosure state must retain focus and the inset contour.
         const expanded = await hidden.getAttribute("aria-expanded");
         await hidden.press("Enter");

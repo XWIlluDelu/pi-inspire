@@ -196,16 +196,15 @@ test("MCP configuration failures share the existing card inset", async ({
     const alignment = await error.evaluate((el) => {
       const text = document.createRange();
       text.selectNodeContents(el);
-      const heading = el.parentElement!.querySelector(".models-subheading")!;
-      return {
-        left:
-          text.getClientRects()[0]!.left - heading.getBoundingClientRect().left,
-        // The parent already owns the card inset; this is not another form row.
-        paddingBlock: getComputedStyle(el).paddingBlock,
-      };
+      const card = el.parentElement!;
+      // The parent already owns the card inset; errors must not add another.
+      return (
+        text.getClientRects()[0]!.left -
+        card.getBoundingClientRect().left -
+        Number.parseFloat(getComputedStyle(card).paddingLeft)
+      );
     });
-    expect(Math.abs(alignment.left)).toBeLessThanOrEqual(1);
-    expect(alignment.paddingBlock).toBe("0px");
+    expect(Math.abs(alignment)).toBeLessThanOrEqual(1);
   }
 });
 

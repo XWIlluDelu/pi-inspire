@@ -1,5 +1,23 @@
 import { type ReactNode, useId } from "react";
 
+/** Card-level empty or error content uses the same inset as setting rows. */
+export function SettingsCardMessage({
+  children,
+  error = false,
+}: {
+  children: ReactNode;
+  error?: boolean;
+}) {
+  return (
+    <div
+      className={`settings__card-message${error ? " settings__error" : ""}`}
+      role={error ? "alert" : undefined}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function SettingsSection({
   id,
   icon,
