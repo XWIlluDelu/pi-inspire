@@ -112,6 +112,10 @@ it.each([
     expect(
       screen.getByRole("menuitem", { name: "Clone current branch" }),
     ).toBeDisabled();
+    expect(
+      screen.getByRole("menuitem", { name: "Copy session ID" }),
+    ).toBeEnabled();
+    fireEvent.click(screen.getByRole("menuitem", { name: "More actions" }));
     const exportItem = screen.getByRole("menuitem", {
       name: "Export session…",
     });

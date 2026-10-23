@@ -110,22 +110,38 @@ export function registerModelSettingsRoutes(
       throw requestError("The selected session is no longer open", 409);
     return { sessionId, cwd: root };
   }
-  async function modelsFor(owner: { sessionId?: string; cwd: string }) {
-    return owner.sessionId
-      ? (
-          (await deps.runtime.snapshot(owner.sessionId)).active
-            ?.availableModels ?? []
-        ).map((model) => modelOption(model as ModelOption))
-      : ((await deps.availableModels?.(false, owner.cwd)) ?? []);
+  async function modelsFor(
+    owner: { sessionId?: string; cwd: string },
+    refresh = false,
+  ): Promise<{ models: ModelOption[]; modelsWarning?: string }> {
+    try {
+      const models = owner.sessionId
+        ? refresh
+          ? (await deps.runtime.refreshModels(owner.sessionId)).models
+          : (
+              (await deps.runtime.snapshot(owner.sessionId)).active
+                ?.availableModels ?? []
+            ).map((model) => modelOption(model as ModelOption))
+        : ((await deps.availableModels?.(refresh, owner.cwd)) ?? []);
+      return { models };
+    } catch {
+      return {
+        models: [],
+        modelsWarning:
+          "Model availability could not load. Saved configuration is still editable; refresh models to retry.",
+      };
+    }
   }
   app.get("/api/model-settings", async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
     if (!deps.modelSettings)
       throw requestError("Model settings are unavailable on this Host", 503);
     const owner = await context(request.query);
-    response.json(
-      await deps.modelSettings.read(owner.cwd, await modelsFor(owner)),
-    );
+    const { models, modelsWarning } = await modelsFor(owner);
+    response.json({
+      ...(await deps.modelSettings.read(owner.cwd, models)),
+      ...(modelsWarning ? { modelsWarning } : {}),
+    });
   });
   app.patch("/api/model-settings", async (request, response) => {
     const body = z
@@ -135,10 +151,9 @@ export function registerModelSettingsRoutes(
     if (!deps.modelSettings)
       throw requestError("Model settings are unavailable", 503);
     const owner = await context(request.query);
-    const models = await modelsFor(owner);
     await deps.modelSettings.savePreferences(body.revision, body.patch);
     deps.invalidateModels?.();
-    response.json(await savedSnapshot(owner.cwd, models));
+    response.json(await savedSnapshot(owner.cwd, await modelsFor(owner)));
   });
   app.patch("/api/model-settings/config", async (request, response) => {
     const body = z
@@ -148,7 +163,6 @@ export function registerModelSettingsRoutes(
     if (!deps.modelSettings)
       throw requestError("Model settings are unavailable", 503);
     const owner = await context(request.query);
-    let models = await modelsFor(owner);
     await deps.modelSettings.saveConfig(
       owner.cwd,
       body.revision,
@@ -156,27 +170,19 @@ export function registerModelSettingsRoutes(
     );
     deps.invalidateModels?.();
     // Refresh the edited reader; invalidated workspace catalogs reload on demand.
-    let warning: string | undefined;
-    try {
-      models = owner.sessionId
-        ? (await deps.runtime.refreshModels(owner.sessionId)).models
-        : ((await deps.availableModels?.(true, owner.cwd)) ?? []);
-    } catch {
-      warning =
-        "Configuration saved. Model availability could not refresh; refresh models to retry.";
-    }
-    response.json(await savedSnapshot(owner.cwd, models, warning));
+    response.json(await savedSnapshot(owner.cwd, await modelsFor(owner, true)));
   });
   async function savedSnapshot(
     cwd: string,
-    models: ModelOption[],
-    warning?: string,
+    { models, modelsWarning }: Awaited<ReturnType<typeof modelsFor>>,
   ): Promise<import("../shared/model-settings.js").ModelSettingsWriteResult> {
     try {
       return {
         saved: true,
-        snapshot: await deps.modelSettings!.read(cwd, models),
-        ...(warning ? { warning } : {}),
+        snapshot: {
+          ...(await deps.modelSettings!.read(cwd, models)),
+          ...(modelsWarning ? { modelsWarning } : {}),
+        },
       };
     } catch {
       return {

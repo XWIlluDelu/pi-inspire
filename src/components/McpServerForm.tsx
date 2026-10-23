@@ -1,11 +1,13 @@
 import { Plus, Trash2, Undo2 } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   MCP_EXPOSURES,
   type McpConfigEntry,
   type McpConfigScope,
   type McpConfigSnapshot,
   type McpConfigValues,
+  type McpConnectionRead,
+  type McpConnectionValues,
   type McpExposure,
   mcpOAuthError,
 } from "../../shared/mcp";
@@ -178,6 +180,7 @@ export function McpServerForm({
   busy,
   error,
   onSave,
+  onReadConnection,
   onCancel,
 }: {
   entry: McpConfigEntry | null;
@@ -192,6 +195,7 @@ export function McpServerForm({
     name: string,
     values: McpConfigValues,
   ) => void;
+  onReadConnection: (input: McpConnectionRead) => Promise<McpConnectionValues>;
   onCancel: () => void;
 }) {
   const policyOnly = Boolean(entry?.policyOnly || policyName);
@@ -205,6 +209,22 @@ export function McpServerForm({
   const [headerRows, setHeaderRows] = useState(() =>
     storedPairs(entry?.headerKeys ?? []),
   );
+  const [connection, setConnection] = useState<McpConnectionValues | null>(
+    null,
+  );
+  const connectionInput = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    if (connection) connectionInput.current?.focus();
+  }, [connection]);
+  const [readingConnection, setReadingConnection] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [replaceArgs, setReplaceArgs] = useState(false);
   const [args, setArgs] = useState<string[]>([]);
   const [toolRules, setToolRules] = useState(
@@ -228,6 +248,38 @@ export function McpServerForm({
     value: McpConfigValues[K],
   ) => setPatch((current) => ({ ...current, [key]: value }));
   const file = snapshot.files.find((file) => file.scope === scope)!;
+  const currentRevision = useRef(file.revision);
+  currentRevision.current = file.revision;
+  async function showConnection() {
+    if (!entry) return;
+    setReadingConnection(true);
+    setConnectionError(null);
+    const revision = file.revision;
+    try {
+      const value = await onReadConnection({
+        scope,
+        name: entry.name,
+        revision,
+      });
+      if (!mounted.current) return;
+      if (currentRevision.current !== revision)
+        throw new Error("Configuration changed. Show the saved values again.");
+      setConnection(value);
+      if (transport === "stdio") {
+        setArgs(value.args ?? []);
+        setReplaceArgs(true);
+      }
+    } catch (error) {
+      if (mounted.current)
+        setConnectionError(
+          error instanceof Error
+            ? error.message
+            : "Saved connection values could not be read.",
+        );
+    } finally {
+      if (mounted.current) setReadingConnection(false);
+    }
+  }
   const enabled = patch.enabled === undefined ? entry?.enabled : patch.enabled;
   const exposure =
     patch.exposure === undefined ? entry?.exposure : patch.exposure;
@@ -254,12 +306,19 @@ export function McpServerForm({
     Boolean(policyName) && !Object.values(patch).some((value) => value != null);
   const rulesChanged = (rules: typeof toolRules) => {
     setToolRules(rules);
-    change(
-      "toolExposure",
-      Object.fromEntries(
-        rules.filter((rule) => rule.key).map((rule) => [rule.key, rule.value]),
-      ),
+    const toolExposure = Object.fromEntries(
+      rules.filter((rule) => rule.key).map((rule) => [rule.key, rule.value]),
     );
+    setPatch((current) => {
+      const next = { ...current };
+      if (
+        JSON.stringify(toolExposure) ===
+        JSON.stringify(entry?.toolExposure ?? {})
+      )
+        delete next.toolExposure;
+      else next.toolExposure = toolExposure;
+      return next;
+    });
   };
   return (
     <form
@@ -342,8 +401,8 @@ export function McpServerForm({
           </p>
           {hasStoredPrivateValues ? (
             <p className="models-status models-form__wide mcp-fields-hint">
-              Stored values stay on the Host. Leave protected fields blank to
-              keep them; use their remove actions to clear them.
+              Saved connection values are hidden until requested and may contain
+              secrets. Blank credential fields keep their saved values.
             </p>
           ) : null}
           {!entry && !policyName && (
@@ -363,25 +422,43 @@ export function McpServerForm({
             </div>
           )}
           {policyOnly ? null : transport === "http" ? (
-            <label className="models-form__wide">
-              Server URL
-              <input
-                type="text"
-                autoComplete="new-password"
-                value={patch.url ?? ""}
-                onChange={(event) =>
-                  change("url", event.target.value || undefined)
-                }
-                required={!entry?.urlConfigured}
-                disabled={busy}
-                autoFocus={Boolean(entry)}
-                placeholder={
-                  entry?.urlConfigured
-                    ? "Stored URL · leave blank to keep"
-                    : "https://example.com/mcp"
-                }
-              />
-            </label>
+            <div className="models-form__field models-form__wide">
+              <label>
+                Server URL
+                <input
+                  type="text"
+                  autoComplete="new-password"
+                  ref={connectionInput}
+                  value={patch.url ?? connection?.url ?? ""}
+                  onChange={(event) =>
+                    change(
+                      "url",
+                      connection
+                        ? event.target.value
+                        : event.target.value || undefined,
+                    )
+                  }
+                  required={Boolean(connection) || !entry?.urlConfigured}
+                  disabled={busy}
+                  autoFocus={Boolean(entry)}
+                  placeholder={
+                    entry?.urlConfigured
+                      ? "Stored URL · leave blank to keep"
+                      : "https://example.com/mcp"
+                  }
+                />
+              </label>
+              {entry?.urlConfigured && !connection ? (
+                <button
+                  type="button"
+                  className="models-text-button"
+                  disabled={busy || readingConnection || Boolean(file.error)}
+                  onClick={() => void showConnection()}
+                >
+                  {readingConnection ? "Loading saved URL…" : "Show saved URL"}
+                </button>
+              ) : null}
+            </div>
           ) : (
             <>
               <label className="models-form__wide">
@@ -405,21 +482,22 @@ export function McpServerForm({
                     <button
                       type="button"
                       className="models-text-button"
-                      disabled={busy}
-                      onClick={() => {
-                        setReplaceArgs(true);
-                        change("args", []);
-                      }}
+                      disabled={
+                        busy || readingConnection || Boolean(file.error)
+                      }
+                      onClick={() => void showConnection()}
                     >
-                      Replace arguments
+                      {readingConnection
+                        ? "Loading saved arguments…"
+                        : "Show saved arguments"}
                     </button>
                   </>
                 ) : (
                   <>
                     {entry ? (
                       <p className="models-status">
-                        Replaces all stored arguments. An empty list removes
-                        them.
+                        Edit individual arguments below. An empty list removes
+                        them all.
                       </p>
                     ) : null}
                     {args.map((arg, index) => (
@@ -429,6 +507,7 @@ export function McpServerForm({
                           <input
                             type="text"
                             autoComplete="off"
+                            ref={index === 0 ? connectionInput : undefined}
                             value={arg}
                             disabled={busy}
                             onChange={(event) => {
@@ -812,9 +891,9 @@ export function McpServerForm({
             {entry.extraFieldCount} additional fields will be preserved.
           </p>
         ) : null}
-        {file.error || error || oauthError ? (
+        {file.error || error || oauthError || connectionError ? (
           <p className="settings__error" role="alert">
-            {oauthError ?? error ?? file.error}
+            {oauthError ?? connectionError ?? error ?? file.error}
           </p>
         ) : null}
       </div>
@@ -824,6 +903,7 @@ export function McpServerForm({
           className="button button--primary"
           disabled={
             busy ||
+            readingConnection ||
             Boolean(file.error) ||
             Boolean(oauthError) ||
             unchangedPolicy

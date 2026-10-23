@@ -64,7 +64,10 @@ export interface ModelSettingsSnapshot {
   commonModels: CommonModelOption[];
   savedCommonEntries: Array<{ pattern: string; models: CommonModelOption[] }>;
   settingsError?: string;
+  /** Project overrides failed to load; global preferences are still editable. */
+  projectSettingsError?: string;
   configError?: string;
+  modelsWarning?: string;
 }
 export type ModelPreferencesPatch = Partial<PiModelPreferences>;
 export interface ModelSettingsWriteResult {

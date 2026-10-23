@@ -18,6 +18,8 @@ import {
   type McpConfigScope,
   type McpConfigSnapshot,
   type McpConfigValues,
+  type McpConnectionRead,
+  type McpConnectionValues,
   mcpOAuthError,
 } from "../shared/mcp.js";
 import { configurationEditLockPaths } from "./configuration-edit-locks.js";
@@ -64,15 +66,17 @@ const valuesSchema = z
     oauth: oauthSchema.optional(),
   })
   .strict();
-export const mcpConfigEditSchema = z
+export const mcpConnectionReadSchema = z
   .object({
     scope: z.enum(["user", "project"]),
     revision: z.string().regex(/^[a-f0-9]{64}$/),
     name: z.string().min(1).max(256),
-    operation: z.enum(["add", "update", "remove"]),
-    values: valuesSchema.optional(),
   })
   .strict();
+export const mcpConfigEditSchema = mcpConnectionReadSchema.extend({
+  operation: z.enum(["add", "update", "remove"]),
+  values: valuesSchema.optional(),
+});
 const normalExposure = (value: unknown) =>
   value === "codemode-deferred" ? "codemode" : exposure.safeParse(value).data;
 const strings = (value: unknown) => (isObject(value) ? Object.keys(value) : []);
@@ -378,6 +382,39 @@ export class McpConfigService {
     );
     return { cwd, files };
   }
+  async readConnection(
+    cwd: string | null,
+    input: McpConnectionRead,
+  ): Promise<McpConnectionValues> {
+    const request = mcpConnectionReadSchema.parse(input);
+    const target = await this.target(cwd, request.scope);
+    const source = await readText(target);
+    if (revisionOf(target, source) !== request.revision)
+      throw requestError(
+        "MCP configuration changed elsewhere. Refresh files before viewing saved values.",
+        409,
+      );
+    const parsed = parse(source);
+    const servers = isObject(parsed.mcpServers) ? parsed.mcpServers : {};
+    const entry = Object.hasOwn(servers, request.name)
+      ? servers[request.name]
+      : undefined;
+    if (!isObject(entry))
+      throw requestError(
+        "That server is no longer available in this file",
+        409,
+      );
+    // Return only literal connection values, never execute hooks or include credentials
+    // from unrelated fields. URL/arguments themselves may contain user-saved secrets.
+    return {
+      ...(typeof entry.url === "string" ? { url: entry.url } : {}),
+      ...(Array.isArray(entry.args) &&
+      entry.args.every((arg) => typeof arg === "string")
+        ? { args: entry.args as string[] }
+        : {}),
+    };
+  }
+
   async save(cwd: string | null, input: McpConfigEdit): Promise<void> {
     const edit = mcpConfigEditSchema.parse(input);
     const path = this.path(cwd, edit.scope);

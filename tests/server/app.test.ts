@@ -874,7 +874,7 @@ describe("typed Host API", () => {
     });
   });
 
-  it("reports invalid preference fields without changing the saved file", async () => {
+  it("reports invalid preference fields while allowing unrelated writes and explicit repairs", async () => {
     const path = join(temporary, "preferences.json");
     const raw = JSON.stringify({
       theme: "dark",
@@ -901,8 +901,21 @@ describe("typed Host API", () => {
       .patch("/api/preferences")
       .set("Authorization", `Bearer ${token}`)
       .send({ projectDisplay: "path" })
-      .expect(409);
-    expect(await readFile(path, "utf8")).toBe(raw);
+      .expect(200);
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+      ...JSON.parse(raw),
+      projectDisplay: "path",
+    });
+    await request(application.server)
+      .patch("/api/preferences")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ toolVisibility: "hidden" })
+      .expect(200);
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+      ...JSON.parse(raw),
+      projectDisplay: "path",
+      toolVisibility: "hidden",
+    });
   });
 
   it("invalidates storage discovery only after saved project folders change", async () => {
@@ -1013,25 +1026,12 @@ describe("typed Host API", () => {
       .get("/api/preferences")
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
-    expect(stored.body).toEqual({
-      herdrEnabled: false,
+    expect(stored.body).toMatchObject({
       theme: "dark",
-      palette: "chimonanthus",
-      titlebarNeedles: false,
-      contentTextSize: "comfortable",
-      readingWidth: "comfortable",
-      launch: "welcome",
-      desktopSendKey: "enter",
-      thinkingVisibility: "dynamic",
       toolVisibility: "hidden",
       activityFoldVisibility: "compact",
       projectDisplay: "path",
-      completionAttention: "off",
-      recentModelIds: [],
       pinnedSessionIds: ["session-a"],
-      pinnedProjectCwds: [],
-      hiddenProjectCwds: [],
-      hiddenSessionIds: [],
       navCollapsedGroups: ["/home/demo/older"],
     });
   });

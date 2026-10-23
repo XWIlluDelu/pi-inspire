@@ -31,6 +31,16 @@ export interface McpConfigValues {
     authServerMetadataUrl?: string | null;
   };
 }
+/** Read only on explicit user request; never resolved or included in list snapshots. */
+export interface McpConnectionValues {
+  url?: string;
+  args?: string[];
+}
+export interface McpConnectionRead {
+  scope: McpConfigScope;
+  name: string;
+  revision: string;
+}
 export interface McpConfigEntry {
   name: string;
   transport: "stdio" | "http" | null;
@@ -43,7 +53,7 @@ export interface McpConfigEntry {
   /** Null means inherited from user configuration for a policy-only entry. */
   enabled: boolean | null;
   exposure: McpExposure | null;
-  /** Stored URL, arguments and credential-bearing values never cross to the browser. */
+  /** List snapshots omit connection values; the editor can explicitly request URL/args. */
   urlConfigured: boolean;
   argumentCount: number;
   envKeys: string[];

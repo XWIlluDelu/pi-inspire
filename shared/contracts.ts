@@ -230,6 +230,15 @@ export function isSessionRuntimeStatus(
   );
 }
 
+export const SESSION_ACTION_IDS = [
+  "rename",
+  "copy-id",
+  "clone",
+  "terminal",
+  "export",
+] as const;
+export type SessionActionId = (typeof SESSION_ACTION_IDS)[number];
+
 export interface InspirePreferences {
   /** Optional Herdr-managed background workers; changes apply on Host restart. */
   herdrEnabled: boolean;
@@ -251,6 +260,8 @@ export interface InspirePreferences {
   activityFoldVisibility: ActivityFoldVisibilityPreference;
   /** How the topbar shows the session's project location. */
   projectDisplay: ProjectDisplayPreference;
+  /** Session title menu order, including actions revealed by More actions. */
+  sessionActionOrder: SessionActionId[];
   /** Opt-in attention for terminal transitions that were not visible. */
   completionAttention: CompletionAttentionPreference;
   /** Successful model choices, newest first. This is ordering metadata only. */
@@ -285,6 +296,7 @@ export const defaultInterfaceSettings = {
   toolVisibility: "dynamic",
   activityFoldVisibility: "dynamic",
   projectDisplay: "folder",
+  sessionActionOrder: [...SESSION_ACTION_IDS],
   completionAttention: "off",
 } satisfies Pick<
   InspirePreferences,
@@ -300,6 +312,7 @@ export const defaultInterfaceSettings = {
   | "toolVisibility"
   | "activityFoldVisibility"
   | "projectDisplay"
+  | "sessionActionOrder"
   | "completionAttention"
 >;
 

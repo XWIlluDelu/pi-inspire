@@ -691,6 +691,46 @@ describe("MCP HTTP ownership", () => {
     );
     return app;
   }
+  it("reveals only the requested connection at its reviewed revision and supports partial edits", async () => {
+    const before = await readFile(join(agent, "mcp.json"), "utf8");
+    const config = await service.read(cwd);
+    const revision = config.files[0]!.revision;
+    const reveal = (name: string) =>
+      request(app())
+        .post("/api/mcp-config/connection")
+        .query({ sessionId: "open", cwd: root })
+        .send({ scope: "user", name, revision });
+    const url = await reveal("docs").expect(200);
+    expect(url.headers["cache-control"]).toBe("no-store");
+    expect(url.body).toEqual({ url: fixture.mcpServers.docs.url });
+    const args = await reveal("local").expect(200);
+    expect(args.body).toEqual({ args: fixture.mcpServers.local.args });
+    expect(await readFile(join(agent, "mcp.json"), "utf8")).toBe(before);
+    await request(app())
+      .post("/api/mcp-config/connection")
+      .query({ sessionId: "closed", cwd })
+      .send({ scope: "user", name: "docs", revision })
+      .expect(409);
+    await request(app())
+      .post("/api/mcp-config/connection")
+      .send({ scope: "user", name: "docs", revision, path: "/arbitrary" })
+      .expect(400);
+    await service.save(cwd, {
+      scope: "user",
+      name: "local",
+      revision,
+      operation: "update",
+      values: { args: [args.body.args[0], "new-value"] },
+    });
+    expect((await json()).mcpServers.local).toEqual({
+      ...fixture.mcpServers.local,
+      args: ["--token", "new-value"],
+    });
+    const stale = await reveal("local").expect(409);
+    expect(stale.body.error).toContain("Refresh files");
+    expect(JSON.stringify(stale.body)).not.toContain("argument-secret");
+  });
+
   it.each(["unselected", "missing", "not-directory"] as const)(
     "keeps user reads and add/update/remove independent of the %s project",
     async (project) => {

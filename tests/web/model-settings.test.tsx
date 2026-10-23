@@ -66,6 +66,50 @@ beforeEach(() => {
 });
 
 describe("Models settings configuration and ownership", () => {
+  it("shows catalog failure without disabling saved declarations or preferences", async () => {
+    const warning =
+      "Model availability could not load. Saved configuration is still editable; refresh models to retry.";
+    fixture.host.readModelSettings.mockResolvedValue(
+      modelSettingsSnapshot({
+        models: [],
+        modelsWarning: warning,
+      }),
+    );
+    render(<ModelsSettings />);
+    expect(await screen.findByRole("status")).toHaveTextContent(warning);
+    expect(
+      screen.queryByText("No models available yet."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Connect a provider" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Default thinking" }),
+    ).toBeEnabled();
+    await openDeclarations();
+    const details = screen
+      .getByRole("button", { name: "Edit declared model custom/local" })
+      .closest("details")!;
+    details.open = true;
+    fireEvent.click(
+      screen.getByRole("button", { name: "Edit declared model custom/local" }),
+    );
+    fireEvent.change(screen.getByLabelText("Display name"), {
+      target: { value: "Repaired" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(fixture.host.editModelConfig).toHaveBeenCalledWith(
+        { sessionId: "one" },
+        "b".repeat(64),
+        expect.objectContaining({
+          kind: "model",
+          provider: "custom",
+          values: expect.objectContaining({ name: "Repaired" }),
+        }),
+      ),
+    );
+  });
   it("uses provider headings instead of repeated prefixes and keeps model controls when identity captions are deduplicated", async () => {
     fixture.host.readModelSettings.mockResolvedValue(
       modelSettingsSnapshot({
@@ -178,6 +222,32 @@ describe("Models settings configuration and ownership", () => {
     ).toHaveTextContent("xhigh");
     expect(screen.getByText(/This project uses GPT 5\./)).toBeInTheDocument();
     expect(screen.getByText(/This project uses low\./)).toBeInTheDocument();
+  });
+
+  it("reports a project settings failure without disabling global preference edits", async () => {
+    fixture.host.readModelSettings.mockResolvedValue(
+      modelSettingsSnapshot({
+        projectSettingsError:
+          "Project settings could not be loaded. Global settings remain editable.",
+      }),
+    );
+    render(<ModelsSettings />);
+    await screen.findByText(/Project settings could not be loaded/);
+    expect(
+      screen.getByRole("combobox", { name: "Default thinking" }),
+    ).toBeEnabled();
+    const defaultChoice = screen.getByRole("radio", {
+      name: "Default: Claude Haiku",
+    });
+    expect(defaultChoice).toBeEnabled();
+    fireEvent.click(defaultChoice);
+    await waitFor(() =>
+      expect(fixture.host.saveModelPreferences).toHaveBeenCalledWith(
+        { sessionId: "one" },
+        expect.any(String),
+        { defaultModel: { provider: "anthropic", id: "claude-haiku" } },
+      ),
+    );
   });
 
   it("never labels unreadable preferences as unset and recovers failed initial reads", async () => {
