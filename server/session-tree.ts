@@ -6,6 +6,7 @@ import type {
   BranchTreeQuery,
 } from "../shared/contracts.js";
 import { fencedMarkdown } from "../shared/markdown-fence.js";
+import { userMessagePreviewText } from "../shared/user-message.js";
 import { requestError } from "./request-error.js";
 import { projectSafeValue } from "./safe-projection.js";
 
@@ -79,6 +80,7 @@ export function branchMessageSource(entry: SessionEntry): string {
 function* branchTextParts(
   entry: SessionEntry,
   imagePresentation: "describe" | "separate",
+  presentation: "source" | "preview" = "source",
 ): Generator<string> {
   if (
     entry.type === "message" &&
@@ -104,10 +106,22 @@ function* branchTextParts(
     ].filter(Boolean);
     return;
   }
-  const content =
+  let content =
     entry.type === "compaction" || entry.type === "branch_summary"
       ? entry.summary
       : branchEntryContent(entry);
+  if (
+    presentation === "preview" &&
+    entry.type === "message" &&
+    entry.message.role === "user"
+  ) {
+    content = [
+      { type: "text", text: userMessagePreviewText(content) },
+      ...(Array.isArray(content)
+        ? content.filter((block) => block?.type === "image")
+        : []),
+    ];
+  }
   if (typeof content === "string") yield content;
   else if (Array.isArray(content)) {
     for (const block of content) {
@@ -153,7 +167,7 @@ function previewPrefix(entry: SessionEntry): string {
   const parts =
     entry.type === "message" && entry.message.role === "bashExecution"
       ? [entryPreviewText(entry)]
-      : branchTextParts(entry, "describe");
+      : branchTextParts(entry, "describe", "preview");
   let text = "";
   let space = false;
   for (const part of parts) {

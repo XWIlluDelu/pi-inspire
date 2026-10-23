@@ -192,6 +192,14 @@ export class AppStore {
   private state: AppState = createInitialAppState();
   private listeners = new Set<() => void>();
   private api: Api | null = null;
+  private readonly pendingExports = new Map<
+    string,
+    {
+      api: Api;
+      generation: number;
+      promise: Promise<void>;
+    }
+  >();
   private readonly notifications = new TaskNotificationController({
     state: () => this.state,
     patch: (patch) => this.set(patch),
@@ -690,7 +698,8 @@ export class AppStore {
     // cannot schedule a retry with the superseded credential or API.
     this.connectionController.stop();
     const generation = ++this.transportGeneration;
-    this.set({ transportGeneration: generation });
+    this.pendingExports.clear();
+    this.set({ transportGeneration: generation, exportingSessions: {} });
     this.bootstrapRequest?.abort();
     this.bootstrapRequest = null;
     this.invalidateTransportControllers();
@@ -1437,24 +1446,51 @@ export class AppStore {
     this.api?.piChangelog() ??
     Promise.reject(new Error("The Host is unavailable"));
 
-  exportSession = async (
+  exportSession = (
     sessionId: string,
     format: "html" | "jsonl",
   ): Promise<void> => {
     const api = this.api;
     const generation = this.transportGeneration;
-    if (!api) throw new Error("The Host is unavailable");
-    try {
-      const exported = await api.exportSession({ sessionId, format });
-      const blob = await api.exportDownload(sessionId, exported.downloadId);
-      if (this.api !== api || this.transportGeneration !== generation)
-        throw new Error("The Host connection changed during export");
-      downloadExportBlob(blob, exported.fileName);
-    } catch (error) {
-      if (this.api === api && error instanceof ApiError && error.status === 401)
-        this.handleAuthFailure();
-      throw error;
-    }
+    if (!api) return Promise.reject(new Error("The Host is unavailable"));
+    const existing = this.pendingExports.get(sessionId);
+    if (existing?.api === api && existing.generation === generation)
+      return existing.promise;
+    const promise: Promise<void> = Promise.resolve().then(async () => {
+      try {
+        const exported = await api.exportSession({ sessionId, format });
+        const blob = await api.exportDownload(sessionId, exported.downloadId);
+        if (this.api !== api || this.transportGeneration !== generation)
+          throw new Error("The Host connection changed during export");
+        downloadExportBlob(blob, exported.fileName);
+        this.notify("info", `Downloaded ${exported.fileName}`);
+      } catch (error) {
+        if (this.api === api && this.transportGeneration === generation) {
+          if (error instanceof ApiError && error.status === 401)
+            this.handleAuthFailure();
+          this.notify(
+            "error",
+            error instanceof Error ? error.message : "Export failed",
+          );
+        }
+        throw error;
+      } finally {
+        if (this.pendingExports.get(sessionId)?.promise === promise) {
+          this.pendingExports.delete(sessionId);
+          const exportingSessions = { ...this.state.exportingSessions };
+          delete exportingSessions[sessionId];
+          this.set({ exportingSessions });
+        }
+      }
+    });
+    this.pendingExports.set(sessionId, { api, generation, promise });
+    this.set({
+      exportingSessions: {
+        ...this.state.exportingSessions,
+        [sessionId]: format,
+      },
+    });
+    return promise;
   };
 
   downloadCommandExport = async (

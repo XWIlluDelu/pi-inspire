@@ -1,5 +1,6 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
+import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context.js";
 import {
   BRANCH_TREE_MAX_BYTES,
   BRANCH_TREE_MAX_NODES,
@@ -64,6 +65,29 @@ describe("bounded session branch tree", () => {
       label: "Chosen path",
     });
     expect(JSON.stringify(tree)).not.toContain("apiKey");
+  });
+
+  it("separates readable user outlines from retained search, detail and edit source", () => {
+    const source = `Review this report\n\n${ATTACHMENT_CONTEXT_HEADING}\n- "/demo/report.csv"\n\n[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]`;
+    const entry = message("files", null, "user", "");
+    Object.assign(
+      (entry as Extract<SessionEntry, { type: "message" }>).message,
+      {
+        content: [
+          { type: "text", text: source },
+          { type: "image", mimeType: "image/png", data: "unused" },
+        ],
+      },
+    );
+    expect(branchNode(entry, true, true).snippet).toBe(
+      "Review this report report.csv [Image: image/png]",
+    );
+    expect(branchEntryText(entry, "separate")).toBe(source);
+    expect(boundedUserText(entry, 10_000)).toBe(source);
+    const search = projectSessionTree([entry], entry.id, {
+      query: "/demo/report.csv",
+    });
+    expect(search.nodes[0]?.snippet).toContain("/demo/report.csv");
   });
 
   it("bounds deep and large histories by node count and serialized bytes", () => {

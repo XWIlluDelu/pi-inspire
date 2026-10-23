@@ -685,6 +685,7 @@ export interface GenericExtensionDisplay extends ExtensionDisplayBase {
 
 export type ExtensionDisplay = ExtensionWidgetDisplay | GenericExtensionDisplay;
 
+/** Length/truncation describe readable preview text, not the exact PendingInput source. */
 export interface PendingMessageSummary {
   id: string;
   textPreview: string;

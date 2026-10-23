@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { store } from "../store";
+import { store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { ButtonLabel } from "./ButtonLabel";
 
@@ -16,8 +16,11 @@ export function ExportDialog({
   onClose: () => void;
 }) {
   const [format, setFormat] = useState<"html" | "jsonl">("html");
-  const selectedFormat = readOnly ? "jsonl" : format;
-  const [busy, setBusy] = useState(false);
+  const pendingFormat = useAppState(
+    (state) => state.exportingSessions[sessionId],
+  );
+  const selectedFormat = pendingFormat ?? (readOnly ? "jsonl" : format);
+  const busy = pendingFormat !== undefined;
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(false);
   useEffect(() => {
@@ -26,11 +29,10 @@ export function ExportDialog({
       mounted.current = false;
     };
   }, []);
-  const ref = useModalFocus<HTMLFormElement>(active, sessionId, () => {
-    if (!busy) onClose();
-  });
+  const ref = useModalFocus<HTMLFormElement>(active, sessionId, onClose);
   const download = async () => {
-    setBusy(true);
+    if (busy) return;
+    const generation = store.getState().transportGeneration;
     setError(null);
     let failure: string | null = null;
     try {
@@ -38,8 +40,8 @@ export function ExportDialog({
     } catch (error) {
       failure = error instanceof Error ? error.message : "Export failed";
     }
-    if (!mounted.current) return;
-    setBusy(false);
+    if (!mounted.current || store.getState().transportGeneration !== generation)
+      return;
     if (failure !== null) setError(failure);
     else onClose();
   };
@@ -49,7 +51,7 @@ export function ExportDialog({
       role="presentation"
       style={active ? undefined : { display: "none" }}
       aria-hidden={!active || undefined}
-      onClick={busy ? undefined : onClose}
+      onClick={onClose}
     >
       <form
         ref={ref}
@@ -72,7 +74,6 @@ export function ExportDialog({
             type="button"
             className="icon-button"
             aria-label="Close export"
-            disabled={busy}
             onClick={onClose}
           >
             <X size={15} aria-hidden />
@@ -120,6 +121,12 @@ export function ExportDialog({
             a writable session.
           </p>
         ) : null}
+        {busy ? (
+          <p className="export-dialog__hint" role="status">
+            You can close this dialog. The download will start when the export
+            is ready.
+          </p>
+        ) : null}
         {error !== null ? (
           <p className="export-dialog__error" role="alert">
             {error}
@@ -129,10 +136,9 @@ export function ExportDialog({
           <button
             className="button button--quiet"
             type="button"
-            disabled={busy}
             onClick={onClose}
           >
-            Cancel
+            {busy ? "Close" : "Cancel"}
           </button>
           <button
             className="button button--primary"

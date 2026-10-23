@@ -233,6 +233,8 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   /** Selection failures stay with the session navigation/start surface rather
    * than competing with transcript integrity errors in the topbar. */
   sessionActionError: string | null;
+  /** Downloads outlive their dialog; reopening observes the same pending export. */
+  exportingSessions: Record<string, "html" | "jsonl">;
   /** Destructive-action failures stay inside the confirmation dialog. */
   sessionDeleteError: string | null;
   sessionDeleteReviewRequired: boolean;
@@ -392,6 +394,7 @@ export function createInitialAppState(): AppState {
     sessionListError: null,
     sessionListIssues: [],
     sessionActionError: null,
+    exportingSessions: {},
     sessionDeleteError: null,
     sessionDeleteReviewRequired: false,
     sessionStatuses: {},
