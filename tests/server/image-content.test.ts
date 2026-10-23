@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalBase64DecodedSize,
   decodeCanonicalBase64,
-  isSupportedPromptImageMimeType,
 } from "../../server/image-content.js";
+import { isSupportedPromptImageMimeType } from "../../shared/image-types.js";
 
 describe("image content", () => {
   it("accepts canonical padded or unpadded base64", () => {

@@ -14,7 +14,6 @@ import { join, parse } from "node:path";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
-import { macosSessionTrashDirectories } from "../../server/macos-trash.js";
 import { windowsPowerShellCommand } from "../../server/platform-environment.mjs";
 import { deleteSessionFile } from "../../server/session-delete.js";
 import { SessionMetadataIndex } from "../../server/session-metadata.js";
@@ -37,7 +36,6 @@ it.runIf(enabled)(
       await mkdtemp(join(homedir(), ".inspire-native-trash-ci-")),
     );
     const store = new AttachmentStore(join(root, "uploads"), null, {
-      sessionDirectories: [root],
       sweepIntervalMs: 0,
     });
     try {
@@ -72,19 +70,18 @@ it.runIf(enabled)(
           .map((value) => JSON.stringify(value))
           .join("\n") + "\n";
       await writeFile(original, text);
-      await store.registerSession(original);
-      await store.releaseConsumed([doc.id], original);
+      await store.releaseConsumed([doc.id]);
       const [session] = await new SessionMetadataIndex().list(root);
       expect(session?.path).toBe(original);
       expect(await deleteSessionFile(session!)).toBe("trashed");
       await expect(access(original)).rejects.toMatchObject({ code: "ENOENT" });
 
-      const collection = await store.sessionDeleted(original);
+      const collection = await store.collectStaged();
       expect(collection.reclaimed).toEqual([]);
       await expect(access(upload)).resolves.toBeUndefined();
       const trash =
         process.platform === "darwin"
-          ? await macosSessionTrashDirectories([root])
+          ? [join(homedir(), ".Trash")]
           : [
               join(
                 parse(root).root,
@@ -137,7 +134,6 @@ it.runIf(enabled)(
         }
       }
       if (!bundle && privacyBlocked) {
-        expect(collection.deferred).toBeTruthy();
         skip(
           "Native Trash move succeeded; OS privacy blocks the runner from inspecting recovery contents",
         );
@@ -151,7 +147,7 @@ it.runIf(enabled)(
       await expect(recoverSessionBundle(bundle!)).rejects.toThrow(
         "already exists",
       );
-      expect((await store.collectUnreferenced()).reclaimed).toEqual([]);
+      expect((await store.collectStaged()).reclaimed).toEqual([]);
       // The complete bundle stays with the OS until this disposable runner is
       // destroyed. Do not edit private Windows $I or Finder restoration metadata.
     } finally {

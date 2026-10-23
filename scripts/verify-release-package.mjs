@@ -322,9 +322,6 @@ try {
     "build/server/session-recovery-entry.js",
     "build/server/terminal-control-entry.js",
     "build/server/terminal-daemon-control.js",
-    "build/server/attachment-retention-entry.js",
-    "build/server/attachment-retention-identity.js",
-    "build/server/storage-volume.js",
     "connections/dispatch.mjs",
     "connections/ssh-reverse/manifest.json",
     "connections/ssh-reverse/runner.mjs",
@@ -1159,80 +1156,6 @@ try {
   await waitForExit(host);
   if (host.exitCode !== 0)
     throw new Error(`Packaged real host exited with ${host.exitCode}`);
-
-  // Exercise the installed offline migration entry with no source loader/SDK
-  // and no Host sharing its completely separate attachment parent.
-  const retentionHome = join(temporary, "retention-home");
-  const retentionEnvironment = {
-    ...realEnvironment,
-    HOME: retentionHome,
-    USERPROFILE: retentionHome,
-    XDG_STATE_HOME: join(retentionHome, "state"),
-    LOCALAPPDATA: join(retentionHome, "local"),
-    APPDATA: join(retentionHome, "roaming"),
-  };
-  const installedPaths = await import(
-    pathToFileURL(join(installedRoot, "build/server/platform-paths.mjs")).href
-  );
-  const retentionParent = join(
-    installedPaths.inspireStateDirectory({
-      environment: retentionEnvironment,
-      home: retentionHome,
-    }),
-    "attachments",
-  );
-  const retainedRoot = join(retentionParent, "98765431-1234-installed-smoke");
-  const retainedSessions = join(temporary, "retained sessions");
-  await mkdir(retainedRoot, { recursive: true });
-  await mkdir(retainedSessions);
-  const retainedRegistryPath = join(retainedRoot, ".session-directories.json");
-  const legacyRegistry = JSON.stringify({
-    version: 2,
-    directories: [retainedSessions],
-    linuxMounts: {},
-  });
-  await writeFile(retainedRegistryPath, legacyRegistry);
-  const preview = await execFile(
-    process.execPath,
-    [bin, "uploads", "trust-session-directory", "retained sessions"],
-    {
-      cwd: temporary,
-      env: retentionEnvironment,
-      timeout: 30_000,
-    },
-  );
-  if (
-    !preview.stdout.includes("No files changed") ||
-    (await readFile(retainedRegistryPath, "utf8")) !== legacyRegistry
-  )
-    throw new Error("Packaged retention preview changed storage");
-  await execFile(
-    process.execPath,
-    [
-      bin,
-      "uploads",
-      "trust-session-directory",
-      process.platform === "win32"
-        ? "~\\..\\retained sessions"
-        : "~/../retained sessions",
-      "--confirm",
-    ],
-    {
-      cwd: temporary,
-      env: retentionEnvironment,
-      timeout: 30_000,
-    },
-  );
-  const trustedRegistry = JSON.parse(
-    await readFile(retainedRegistryPath, "utf8"),
-  );
-  if (
-    trustedRegistry.version !== 3 ||
-    !trustedRegistry.identities?.[retainedSessions]?.volume
-  )
-    throw new Error(
-      "Packaged retention migration did not bind volume/namespace continuity",
-    );
 
   const previousDaemonInfo = await terminalClient.daemonInfo();
   const terminalStatus = await execFile(

@@ -11,7 +11,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { moveToDesktopTrash } from "../../server/desktop-trash.js";
-import { macosSessionTrashDirectories } from "../../server/macos-trash.js";
 import { RECOVERY_MANIFEST } from "../../server/session-recovery.js";
 
 const native = vi.hoisted(() => ({ run: vi.fn() }));
@@ -35,28 +34,6 @@ afterEach(async () => {
 });
 
 describe("native Trash command boundaries", () => {
-  it("asks Foundation for exact known-session volume URLs without interpolating paths", async () => {
-    const root = join(tmpdir(), "inspire-native-volume-layout");
-    const home = join(root, "home");
-    const sessions = join(root, "external", "sessions");
-    const homeVolume = join(root, "data");
-    const externalVolume = join(root, "external");
-    native.run.mockImplementation(async (command: string, args: string[]) => {
-      expect(command).toBe("/usr/bin/osascript");
-      expect(args[3]).toContain("NSURLVolumeURLKey");
-      expect(args[3]).toContain("getResourceValueForKeyError");
-      expect(args[3]).not.toContain(sessions);
-      expect(args.slice(4)).toEqual([home, sessions]);
-      return JSON.stringify([homeVolume, externalVolume]);
-    });
-    await expect(
-      macosSessionTrashDirectories([sessions], { home, uid: 501 }),
-    ).resolves.toEqual([
-      join(home, ".Trash"),
-      join(externalVolume, ".Trashes", "501"),
-    ]);
-  });
-
   it.each([
     { platform: "darwin", key: "SystemRoot" },
     { platform: "win32", key: "ProgramFiles" },

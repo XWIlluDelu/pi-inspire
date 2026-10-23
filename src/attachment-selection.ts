@@ -4,16 +4,11 @@ import {
   MAX_ATTACHMENT_UPLOAD_BYTES,
   MAX_PROMPT_IMAGE_BYTES,
 } from "../shared/contracts";
+import { isSupportedPromptImageMimeType } from "../shared/image-types";
 
 interface StagedAttachmentSize {
   size: number;
   kind: "image" | "file";
-}
-
-function isImage(value: StagedAttachmentSize | File): boolean {
-  return "kind" in value
-    ? value.kind === "image"
-    : /^image\//iu.test(value.type);
 }
 
 function limitLabel(bytes: number): string {
@@ -27,14 +22,14 @@ export function selectAttachmentFiles(
   let count = existing.length;
   let totalBytes = existing.reduce((sum, item) => sum + item.size, 0);
   let imageBytes = existing.reduce(
-    (sum, item) => sum + (isImage(item) ? item.size : 0),
+    (sum, item) => sum + (item.kind === "image" ? item.size : 0),
     0,
   );
   const accepted: File[] = [];
   let warning: string | null = null;
 
   for (const file of candidates) {
-    const image = isImage(file);
+    const image = isSupportedPromptImageMimeType(file.type);
     if (count >= MAX_ATTACHMENTS) {
       warning ??= `At most ${MAX_ATTACHMENTS} attachments per message`;
       continue;

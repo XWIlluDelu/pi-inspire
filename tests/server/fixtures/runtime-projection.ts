@@ -249,10 +249,7 @@ export async function setupNewSession(
   );
   directories.push(directory);
   const path = join(directory, "future-session.jsonl");
-  const attachments = workerAttachmentStore(
-    join(directory, "uploads"),
-    directory,
-  );
+  const attachments = workerAttachmentStore(join(directory, "uploads"));
   stores.push(attachments);
   let worker!: NewSessionRpc;
   const runtime = new RuntimeController(catalog([]), attachments, (options) => {
@@ -313,10 +310,7 @@ export async function setup(
     firstMessage: "original",
   };
   const source = catalog([record]);
-  const attachments = workerAttachmentStore(
-    join(directory, "uploads"),
-    directory,
-  );
+  const attachments = workerAttachmentStore(join(directory, "uploads"));
   stores.push(attachments);
   const workers: ProjectionRpc[] = [];
   const sequence: string[] = [];

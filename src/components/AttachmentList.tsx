@@ -23,7 +23,7 @@ export function AttachmentList({
     <ImageGallery>
       <ul className="composer__attachments" aria-label="Attachments">
         {items.map((item) => {
-          const image = item.kind === "image";
+          const image = item.kind === "image" || Boolean(item.previewUrl);
           const FileIcon = fileIconForPath(item.fileName);
           const fileDetails =
             item.recalledArtifact?.type === "file"

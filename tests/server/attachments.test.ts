@@ -165,6 +165,20 @@ describe("attachment consumption lifecycle", () => {
     );
   });
 
+  it("delivers previewable BMP and SVG uploads as files without consuming the image budget", async () => {
+    const size = Math.floor(MAX_PROMPT_IMAGE_BYTES / 2) + 1;
+    const attachments = await store.addMany([
+      upload("one.bmp", "image/bmp", size),
+      upload("two.svg", "image/svg+xml", size),
+    ]);
+    expect(attachments.map((item) => item.kind)).toEqual(["file", "file"]);
+    const resolved = await store.resolveForPrompt(
+      attachments.map((item) => item.id),
+    );
+    expect(resolved.images).toEqual([]);
+    expect(resolved.files).toHaveLength(2);
+  });
+
   it("enforces aggregate upload and prompt-image budgets before leasing files", async () => {
     await expect(
       store.add(

@@ -553,9 +553,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     private readonly stageFork: StageSessionFork = stageSessionFork,
   ) {
     super();
-    this.attachments.discoverSessionDirectories(
-      async () => (await this.catalog.sessionDirectories?.()) ?? [],
-    );
     this.persistenceOwnership = new RuntimePersistenceOwnershipController(
       {
         readNewSessionEntries: (slot, rpc) =>
@@ -602,30 +599,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.catalog.refresh(force, { requireComplete: true }),
       invalidateCatalog: () => this.catalog.invalidate(),
       validateSessionRecord: (session) => this.validateSessionRecord(session),
-      deleteSessionRecord: async (session, version) => {
-        await this.attachments.registerSession(session.path);
-        const disposition = await this.deleteSessionRecord(session, version);
-        // Reclamation scans retained history and Trash, not just this session.
-        // Its outcome cannot delay or invalidate the committed deletion.
-        void this.attachments
-          .sessionDeleted(session.path)
-          .then((collection) => {
-            if (collection.deferred)
-              this.logRuntimeError(
-                session.id,
-                new Error(collection.deferred),
-                "attachment_reclamation_deferred",
-              );
-          })
-          .catch((error) =>
-            this.logRuntimeError(
-              session.id,
-              error,
-              "attachment_reclamation_deferred",
-            ),
-          );
-        return disposition;
-      },
+      deleteSessionRecord: (session, version) =>
+        this.deleteSessionRecord(session, version),
     });
     this.extensionUi = new RuntimeExtensionUiController({
       withMaintenance: (operation) => this.withMaintenanceOperation(operation),
@@ -745,9 +720,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         assertNotClosing: () => this.assertNotClosing(),
         createProcess: (options) => this.createProcess(options),
         assertWriterAvailable: async (slot) => {
-          // Maintenance writes belong to writer admission, not history preview.
-          if (slot.sessionPath)
-            await this.attachments.registerSession(slot.sessionPath);
           this.rememberProjectCwd(slot.cwd);
           await this.assertExternalWriterAvailable(slot);
         },
@@ -2196,7 +2168,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         : this.terminalSessions.has(session.id)
           ? "terminal"
           : null;
-      this.attachments.observeSession(session.path);
       const { projection, preview } = await this.openProjection(session, cwd);
       if (this.closing) {
         await projection.close();
@@ -2686,7 +2657,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (pathCollision) throw new Error("Pi created a duplicate session path");
       slot.id = sessionId;
       slot.sessionPath = reportedPath;
-      if (reportedPath) await this.attachments.registerSession(reportedPath);
       this.assertNotClosing();
       let projection: SessionProjectionView;
       if (slot.sessionPath) {
@@ -2976,11 +2946,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
 
     let enteredGate = false;
-    const historyFileReleases: Array<() => void> = [];
-    let recalledPaths: string[] = [];
     try {
-      if (slot.sessionPath)
-        await this.attachments.registerSession(slot.sessionPath);
       const deliver = async () => {
         enteredGate = true;
         // Pi's resource dispatcher splits on a literal space. The Host must
@@ -2989,7 +2955,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           ? `/${invocation.name}${invocation.argument ? ` ${invocation.argument}` : ""}`
           : entered;
         let accepted = false;
-        let handled = false;
         let imageDelivery: PendingImageDelivery | null = null;
         let imageOwner: PendingImageRecovery | null = null;
         const acceptedUploadIds = () =>
@@ -3003,15 +2968,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             slot,
             request,
             this.attachments,
-          );
-          recalledPaths = [
-            ...new Set([
-              ...history.files.map((file) => file.path),
-              ...this.attachments.referencedPromptFiles(message),
-            ]),
-          ];
-          historyFileReleases.push(
-            this.attachments.leasePromptFiles(recalledPaths),
           );
           const readySlot = directDelivery
             ? slot
@@ -3227,7 +3183,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
                 : {}),
             });
             accepted = true;
-            handled = receipt?.disposition === "handled";
             if (imageDelivery)
               imageOwner!.accepted(imageDelivery, receipt?.disposition);
             // Commands and input hooks can handle a prompt without starting
@@ -3359,16 +3314,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             // Pi accepted the prompt, or may have accepted it before losing the
             // response. Restaging would invite a duplicate prompt on retry.
             if (request.attachmentIds?.length)
-              await this.attachments.releaseConsumed(
-                acceptedUploadIds(),
-                slot.sessionPath,
-                !handled,
-              );
-            if (!handled)
-              this.attachments.retainPromptFiles(
-                recalledPaths,
-                slot.sessionPath,
-              );
+              await this.attachments.releaseConsumed(acceptedUploadIds());
             throw error;
           }
           // Failed delivery hands leased attachments back to the staged state,
@@ -3394,7 +3340,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         // paths are part of the conversation text).
         if (request.attachmentIds?.length)
           await this.attachments
-            .releaseConsumed(acceptedUploadIds(), slot.sessionPath, !handled)
+            .releaseConsumed(acceptedUploadIds())
             .catch((error) =>
               this.logRuntimeError(
                 slot.id,
@@ -3402,10 +3348,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
                 "accepted_prompt_cleanup_failed",
               ),
             );
-        // A handled input has no future prompt reference to wait for. Any
-        // reference the hook actually appended is protected by the normal scan.
-        if (!handled)
-          this.attachments.retainPromptFiles(recalledPaths, slot.sessionPath);
         return acceptedHistoryEntry;
       };
       return directDelivery
@@ -3423,8 +3365,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           this.attachments.restage(request.attachmentIds);
       }
       throw error;
-    } finally {
-      for (const release of historyFileReleases) release();
     }
   }
 
@@ -3934,7 +3874,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           );
         }
 
-        await this.attachments.registerSession(destinationPath);
         await publishStagedSessionFork(staged);
         published = true;
         const destinationRecord: SessionRecord = {

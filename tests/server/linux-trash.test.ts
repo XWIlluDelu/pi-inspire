@@ -18,7 +18,6 @@ import {
   type LinuxMount,
   linuxDirectoryAuthority,
   linuxMounts,
-  linuxSessionTrashDirectories,
   parseLinuxMountInfo,
   selectLinuxTrash,
 } from "../../server/linux-trash.js";
@@ -145,22 +144,13 @@ describe.skipIf(process.platform !== "linux")(
       );
     });
 
-    it("prefers validated sticky shared Trash and enumerates both current-user layouts", async () => {
-      const { volume, payload, original, options, mounts } = await fixture();
+    it("prefers validated sticky shared Trash", async () => {
+      const { volume, payload, original, options } = await fixture();
       const shared = join(volume, ".Trash");
       await mkdir(shared);
       await chmod(shared, 0o1777);
       const selection = await selectLinuxTrash(payload, original, options);
       expect(selection.root).toBe(join(shared, String(uid)));
-      const alternate = join(volume, ".Trash-" + uid);
-      await mkdir(join(alternate, "files"), { recursive: true, mode: 0o700 });
-      expect(await linuxSessionTrashDirectories(mounts, options)).toEqual([
-        join(options.home, "data", "Trash", "files"),
-        join(options.home, ".Trash", String(uid), "files"),
-        join(options.home, ".Trash-" + uid, "files"),
-        join(shared, String(uid), "files"),
-        join(alternate, "files"),
-      ]);
     });
 
     it.each(["non-sticky", "symlink", "unusable-user-directory"])(
