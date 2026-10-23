@@ -18,6 +18,7 @@ export interface TaskAlertSettings {
   mode: CompletionAttentionPreference | null;
   publicKey: string;
   subscribed: boolean;
+  /** Active endpoint, or the last endpoint rejected as expired by the push service. */
   endpoint: string | null;
   error: string | null;
 }

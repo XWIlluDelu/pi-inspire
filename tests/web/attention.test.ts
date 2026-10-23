@@ -35,8 +35,30 @@ const subscribe = vi.fn(async () => subscription!);
 let mode: "off" | "title" | "desktop";
 let subscribed: boolean;
 let subscriptionEndpoint: string;
+let expiredEndpoint: string | null;
 let mutations: Record<string, unknown>[];
 let acknowledgments: string[];
+let testResponse: Promise<RouteResponse> | undefined;
+
+function browserSubscription(endpoint = subscriptionEndpoint) {
+  const local = {
+    endpoint,
+    expirationTime: null,
+    getKey: () => null,
+    unsubscribe: vi.fn(async () => true),
+    options: {
+      userVisibleOnly: true,
+      applicationServerKey: Uint8Array.from(atob(publicKey), (ch) =>
+        ch.charCodeAt(0),
+      ).buffer,
+    },
+    toJSON: () => ({
+      endpoint: local.endpoint,
+      keys: { p256dh: "B".repeat(87), auth: "A".repeat(22) },
+    }),
+  };
+  return local;
+}
 
 function visibleFocused(value: boolean) {
   Object.defineProperty(document, "visibilityState", {
@@ -71,7 +93,7 @@ async function initialized(
           installationId: "device-one",
           mode,
           subscribed,
-          endpoint: subscribed ? subscriptionEndpoint : null,
+          endpoint: subscribed ? subscriptionEndpoint : expiredEndpoint,
           publicKey,
           error: null,
         },
@@ -82,7 +104,9 @@ async function initialized(
       return { body: { ok: true } };
     }
     if (url === "/api/notifications/test")
-      return { body: { transport: subscribed ? "push" : "page" } };
+      return (
+        testResponse ?? { body: { transport: subscribed ? "push" : "page" } }
+      );
     if (url.startsWith("/api/bootstrap"))
       return {
         body: bootstrapPayload({
@@ -141,8 +165,10 @@ beforeEach(() => {
   workerMessages = [];
   mutations = [];
   acknowledgments = [];
+  testResponse = undefined;
   subscribed = false;
   subscriptionEndpoint = "https://fcm.googleapis.com/endpoint";
+  expiredEndpoint = null;
   subscription = {
     toJSON: () => ({
       expirationTime: null,
@@ -357,6 +383,23 @@ describe("device-local task alerts", () => {
     );
   });
 
+  it("keeps display acceptance when push delivery beats the test HTTP response", async () => {
+    const { store } = await initialized();
+    const response = deferred<RouteResponse>();
+    testResponse = response.promise;
+    const pending = store.testTaskNotification();
+    worker.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "inspire-notification-shown", test: true },
+      }),
+    );
+    response.resolve({ body: { transport: "push" } });
+    await pending;
+    expect(store.getState().taskAlerts.testResult).toBe(
+      "Display request accepted. Check your system notifications.",
+    );
+  });
+
   it.each(["resolves", "rejects"] as const)(
     "keeps another window's Off choice when pending enrollment %s",
     async (settlement) => {
@@ -396,29 +439,21 @@ describe("device-local task alerts", () => {
     },
   );
 
-  it("leaves a healthy subscription alone and repairs rotation without rewriting intent", async () => {
+  it("recovers interrupted Host enrollment, leaves it healthy, and repairs rotation without rewriting intent", async () => {
     const { store } = await initialized();
-    subscribed = true;
-    const local = {
-      endpoint: subscriptionEndpoint,
-      expirationTime: null,
-      getKey: () => null,
-      unsubscribe: async () => true,
-      options: {
-        userVisibleOnly: true,
-        applicationServerKey: Uint8Array.from(atob(publicKey), (ch) =>
-          ch.charCodeAt(0),
-        ).buffer,
-      },
-      toJSON: () => ({
-        endpoint: local.endpoint,
-        keys: { p256dh: "B".repeat(87), auth: "A".repeat(22) },
-      }),
-    };
+    const local = browserSubscription();
     const registration = (await navigator.serviceWorker.getRegistration())!;
     vi.spyOn(registration.pushManager, "getSubscription").mockResolvedValue(
       local,
     );
+    // The browser retained the subscription after the initial registration
+    // request failed. The Host has neither its endpoint nor subscribed=true.
+    await store.refreshTaskAlerts();
+    expect(mutations).toEqual([{ subscription: local.toJSON() }]);
+    expect(store.getState().taskAlerts.subscribed).toBe(true);
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(Permission.requestPermission).not.toHaveBeenCalled();
+    mutations = [];
     await store.refreshTaskAlerts();
     expect(mutations).toEqual([]);
     local.endpoint += "-rotated";
@@ -428,6 +463,28 @@ describe("device-local task alerts", () => {
       mode: "desktop",
       subscribed: true,
     });
+  });
+
+  it("replaces an expired browser subscription only when the user enables notifications", async () => {
+    const { store } = await initialized();
+    const local = browserSubscription();
+    expiredEndpoint = local.endpoint;
+    const registration = (await navigator.serviceWorker.getRegistration())!;
+    vi.spyOn(registration.pushManager, "getSubscription").mockResolvedValue(
+      local,
+    );
+    await store.refreshTaskAlerts();
+    expect(mutations).toEqual([]);
+    expect(store.getState().taskAlerts.subscribed).toBe(false);
+    expect(subscribe).not.toHaveBeenCalled();
+
+    const renewed = browserSubscription(local.endpoint + "-renewed");
+    subscribe.mockResolvedValueOnce(renewed);
+    await expect(store.setCompletionAttention("desktop")).resolves.toBe(true);
+    expect(local.unsubscribe).toHaveBeenCalledOnce();
+    expect(subscribe).toHaveBeenCalledOnce();
+    expect(mutations.at(-1)).toEqual({ subscription: renewed.toJSON() });
+    expect(store.getState().taskAlerts.subscribed).toBe(true);
   });
 
   it("refreshes enrollment health when the browser has lost its subscription", async () => {

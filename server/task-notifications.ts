@@ -55,6 +55,7 @@ interface Device {
   origin: string;
   mode: CompletionAttentionPreference;
   subscription?: NotificationSubscription;
+  expiredEndpoint?: string;
   error?: string;
 }
 interface Pending {
@@ -255,7 +256,8 @@ export class TaskNotifications {
       mode: device?.mode ?? null,
       publicKey: this.saved.vapid.publicKey,
       subscribed: Boolean(device?.subscription),
-      endpoint: device?.subscription?.endpoint ?? null,
+      endpoint:
+        device?.subscription?.endpoint ?? device?.expiredEndpoint ?? null,
       error: this.storageError ?? device?.error ?? null,
     };
   }
@@ -269,10 +271,20 @@ export class TaskNotifications {
     mode ??= previous?.mode ?? "off";
     if (!previous && Object.keys(this.saved.devices).length >= 64)
       throw requestError("Too many notification devices registered", 409);
-    if (subscription) pushSubscriptionSchema.parse(subscription);
+    if (subscription) {
+      pushSubscriptionSchema.parse(subscription);
+      if (subscription.endpoint === previous?.expiredEndpoint)
+        throw requestError(
+          "Background subscription expired. Enable notifications again.",
+          409,
+        );
+    }
     this.saved.devices[principal.id] = {
       origin: principal.origin,
       mode,
+      ...(!subscription && previous?.expiredEndpoint
+        ? { expiredEndpoint: previous.expiredEndpoint }
+        : {}),
       ...(previous?.error &&
       mode === "desktop" &&
       subscription !== null &&
@@ -471,7 +483,11 @@ export class TaskNotifications {
       status === 404 || status === 410
         ? "Background subscription expired. Enable notifications again."
         : "The Host could not reach the browser push service. Check its network connection and retry.";
-    if (status === 404 || status === 410) delete device.subscription;
+    if (status === 404 || status === 410) {
+      device.expiredEndpoint =
+        device.subscription?.endpoint ?? device.expiredEndpoint;
+      delete device.subscription;
+    }
   }
   async close(): Promise<void> {
     this.closed = true;

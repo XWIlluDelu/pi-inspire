@@ -720,9 +720,7 @@ export default function (pi: ExtensionAPI) {
     if (!context || event.message.role !== "assistant") return;
     const message = event.message;
     taskOutcome =
-      message.stopReason === "aborted" ||
-      (message.stopReason === "error" &&
-        message.errorMessage?.trim() === "This operation was aborted")
+      message.stopReason === "aborted"
         ? "aborted"
         : message.stopReason === "error" || message.stopReason === "length"
           ? "failed"

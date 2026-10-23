@@ -7,6 +7,10 @@ import type {
 import type { Api } from "./api";
 import type { AppState } from "./app-state";
 import { migrateTaskAlertIntent } from "./browser-auth";
+import {
+  browserNotificationPermission,
+  requestBrowserNotificationPermission,
+} from "./browser-notifications";
 import type { SessionOpenResult } from "./controllers/session-selection-controller";
 
 function deadline<T>(
@@ -50,12 +54,7 @@ export class TaskNotificationController {
     });
   }
   refreshPermission = (): void => {
-    this.patch({
-      permission:
-        typeof Notification === "undefined"
-          ? "unavailable"
-          : Notification.permission,
-    });
+    this.patch({ permission: browserNotificationPermission() });
   };
   private listen(): void {
     if (this.listening) return;
@@ -182,7 +181,7 @@ export class TaskNotificationController {
         });
         if (generation !== this.generation || this.host.api() !== api) return;
       }
-      if (settings.mode === "desktop" && settings.subscribed) {
+      if (settings.mode === "desktop") {
         const registration = await navigator.serviceWorker?.getRegistration();
         const subscription = await registration?.pushManager?.getSubscription();
         const key = subscription?.options.applicationServerKey;
@@ -194,13 +193,18 @@ export class TaskNotificationController {
           : null;
         if (generation !== this.generation || this.host.api() !== api) return;
         if (
-          typeof Notification === "undefined" ||
-          Notification.permission !== "granted" ||
+          browserNotificationPermission() !== "granted" ||
           encoded !== settings.publicKey
-        )
-          settings = await this.save(undefined, null);
-        else if (subscription!.endpoint !== settings.endpoint)
+        ) {
+          if (settings.subscribed) settings = await this.save(undefined, null);
+        } else if (subscription!.endpoint !== settings.endpoint) {
+          // Browser enrollment can succeed even if its Host registration fails
+          // or times out. Reconcile the existing subscription, not a new one:
+          // no permission prompt, no subscribe(), and no rewrite of intent.
+          // A retained endpoint with subscribed=false was explicitly expired;
+          // only a different browser subscription can repair that destination.
           settings = await this.save(undefined, subscription!.toJSON());
+        }
         if (generation !== this.generation || this.host.api() !== api) return;
       }
       this.patch({
@@ -248,15 +252,9 @@ export class TaskNotificationController {
     if (mode === "off") this.host.clear();
     // Request permission before awaiting Host I/O: iOS needs this user gesture.
     const permission =
-      mode === "desktop" &&
-      typeof Notification !== "undefined" &&
-      Notification.permission === "default"
-        ? Notification.requestPermission()
-        : Promise.resolve(
-            typeof Notification === "undefined"
-              ? ("unavailable" as const)
-              : Notification.permission,
-          );
+      mode === "desktop"
+        ? requestBrowserNotificationPermission()
+        : Promise.resolve(browserNotificationPermission());
     try {
       const granted = await permission;
       if (generation !== this.generation) return false;
@@ -292,6 +290,7 @@ export class TaskNotificationController {
         if (subscription) {
           const existing = subscription.options.applicationServerKey;
           if (
+            (!saved.subscribed && subscription.endpoint === saved.endpoint) ||
             !existing ||
             new Uint8Array(existing).some((value, i) => value !== bytes[i]) ||
             existing.byteLength !== bytes.length
@@ -356,11 +355,7 @@ export class TaskNotificationController {
       await api?.acknowledgeTaskAlert(event.id).catch(() => {});
       return;
     }
-    if (
-      typeof Notification === "undefined" ||
-      Notification.permission !== "granted"
-    )
-      return;
+    if (browserNotificationPermission() !== "granted") return;
     try {
       const registration = await this.registration();
       // A newer device choice or connection retires this pending display.
@@ -407,7 +402,9 @@ export class TaskNotificationController {
     this.patch({ busy: true, testResult: null, error: null });
     try {
       const result = await this.host.api()?.testTaskAlert();
-      if (result)
+      // Push delivery can beat the HTTP response. Do not downgrade a worker's
+      // display acceptance to the earlier "sent" stage when that response arrives.
+      if (result && this.host.state().taskAlerts.testResult === null)
         this.patch({
           testResult:
             result.transport === "push"

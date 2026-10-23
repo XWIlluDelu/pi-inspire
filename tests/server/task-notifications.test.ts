@@ -184,7 +184,25 @@ describe("installation-owned notification delivery", () => {
     );
     expect(await service.settings(principal)).toMatchObject({
       subscribed: false,
+      endpoint: subscription.endpoint,
       error: expect.stringContaining("expired"),
+    });
+    // A refresh must not resurrect an endpoint already rejected by the vendor.
+    await expect(
+      service.configure(principal, undefined, subscription),
+    ).rejects.toThrow("subscription expired");
+    expect(await service.configure(principal, "desktop")).toMatchObject({
+      subscribed: false,
+      endpoint: subscription.endpoint,
+    });
+    await service.configure(principal, undefined, {
+      ...subscription,
+      endpoint: subscription.endpoint + "-renewed",
+    });
+    await service.test(principal);
+    expect(await service.settings(principal)).toMatchObject({
+      subscribed: true,
+      error: null,
     });
   });
 

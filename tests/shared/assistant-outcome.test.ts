@@ -9,16 +9,6 @@ describe("assistant outcomes", () => {
       stopReason: "aborted",
       errorMessage: "Request was aborted",
     },
-    {
-      role: "assistant",
-      stopReason: "error",
-      errorMessage: "This operation was aborted",
-    },
-    {
-      role: "assistant",
-      stopReason: "error",
-      errorMessage: "  This operation was aborted\n",
-    },
   ])(
     "recognizes explicit cancellation without changing its source (%j)",
     (message) => {
@@ -47,20 +37,16 @@ describe("assistant outcomes", () => {
     expect(assistantOutcome(message)).toBeNull();
   });
 
-  it.each([
-    undefined,
-    "",
-    "fetch failed",
-    "Request timed out: This operation was aborted",
-    "This operation was aborted\nProvider connection failed",
-    "The server aborted the connection",
-  ])("preserves actual or ambiguous errors (%j)", (errorMessage) => {
-    expect(
-      assistantOutcome({
-        role: "assistant",
-        stopReason: "error",
-        errorMessage,
-      }),
-    ).toBe("error");
-  });
+  it.each([undefined, "fetch failed", "This operation was aborted"])(
+    "preserves native errors independently of diagnostic text (%j)",
+    (errorMessage) => {
+      expect(
+        assistantOutcome({
+          role: "assistant",
+          stopReason: "error",
+          errorMessage,
+        }),
+      ).toBe("error");
+    },
+  );
 });
