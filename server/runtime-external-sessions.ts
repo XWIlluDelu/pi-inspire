@@ -1,7 +1,7 @@
 import type {
   NativeModelCatalog,
   NativeModelSelection,
-} from "../docs/examples/session-activity.js";
+} from "../extensions/inspire-session-bridge.js";
 import {
   type ComposerHistoryEntry,
   isBusyRunState,
@@ -107,7 +107,7 @@ export class RuntimeExternalSessions {
       );
     if (!this.supportsModels(slot))
       throw requestError(
-        "Load the updated session-activity extension with /reload in the original Pi terminal.",
+        "Load the updated Inspire session bridge extension with /reload in the original Pi terminal.",
         409,
         { code: "NATIVE_ACTIONS_UNAVAILABLE" },
       );

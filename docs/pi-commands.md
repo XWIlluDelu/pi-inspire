@@ -64,7 +64,7 @@ current model and thinking level. If discovery fails, the picker keeps cached ch
 that locally; `/reload` is not needed just to refresh model catalogs.
 
 Connected native Pi sessions use their own catalog and public model/thinking functions through the
-updated session-activity extension. The returned selection, including extension changes and supported
+updated Inspire session bridge extension. The returned selection, including extension changes and supported
 effort adjustment, is authoritative. Busy state does not itself remove these capabilities. Native
 model cycling remains a terminal operation; use the model picker for explicit selection in Inspire.
 Settings for model files, defaults and credentials remain independent of live-control support.

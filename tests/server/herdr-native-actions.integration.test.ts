@@ -6,7 +6,7 @@ import { expect, it, vi } from "vitest";
 import {
   nativeActionFrame,
   piActivityDirectory,
-} from "../../docs/examples/session-activity.js";
+} from "../../extensions/inspire-session-bridge.js";
 import { AttachmentStore } from "../../server/attachments.js";
 import type { HerdrClient } from "../../server/herdr-client.js";
 import { HerdrNativeSession } from "../../server/herdr-native-session.js";
@@ -129,7 +129,7 @@ it.skipIf(process.platform !== "linux")(
         "-e",
         resolve("tests/fixtures/pi-model-workflow-extension.ts"),
         "-e",
-        resolve("docs/examples/session-activity.ts"),
+        resolve("extensions/inspire-session-bridge.ts"),
         "-e",
         extension,
         "--no-skills",

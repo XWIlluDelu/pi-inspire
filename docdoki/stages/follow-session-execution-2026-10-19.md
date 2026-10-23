@@ -6,7 +6,7 @@ scope:
   - server/herdr-*.ts
   - shared/contracts.ts
   - src/App.tsx
-  - docs/examples/session-activity.ts
+  - extensions/inspire-session-bridge.ts
   - tests/server/runtime-external-*.test.ts
   - tests/server/herdr-native-session*.test.ts
   - tests/server/pi-session-{activity,occupancy}*.test.ts
@@ -27,7 +27,9 @@ interfaces and process evidence, not a particular external host's control API.
 
 - Herdr native discovery remains the existing optional execution integration. Its process-birth
   evidence, unavailable-owner fence, cold settings admission and shutdown detach/drain are retained.
-- The optional single-file Pi reporter covers TUI/RPC/JSON/print. It reports process-bound session
+- The optional single-file Inspire session bridge lives in `extensions/inspire-session-bridge.ts`;
+  the former `docs/examples/session-activity.ts` path forwards existing installations to it.
+  It covers TUI/RPC/JSON/print and reports process-bound session
   presence separately from busy/input activity, and excludes the loaded Inspire-owned RPC bridge.
   In Herdr TUI only, the same installed entry also receives scope-bound native action frames through
   existing Herdr control; observation outside that connection remains read-only.
@@ -82,7 +84,10 @@ rewrite unchanged retained presence. [[follow-project-quality-2026-10-21]] track
   with a controlled later hook and busy session double, now keeps admission blocked both before
   disposal and afterward while the process is alive. Activity stop hints never authorize a writer.
 - Producer tests cover all replacement reasons, wrong/ambiguous targets, old-manager reuse,
-  same-file replacement, reload/late cleanup and shutdown overtaking startup publication.
+  same-file replacement, reload/late cleanup and shutdown overtaking startup publication. Native
+  task results publish only at final settlement, retain consecutive short runs and stay scoped to
+  their receiver. Loader coverage checks that legacy/current entries share one reporter per session
+  while independent SDK sessions and reload keep their own lifecycles.
 - The overlapping-admission regression also failed before its fix: a paused old cache rename could
   overwrite a newer binding, losing that protection after report loss and Host reconstruction.
   Serialized observation/commit now preserves the newer holder across that sequence.

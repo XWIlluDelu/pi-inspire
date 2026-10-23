@@ -20,7 +20,7 @@ import {
   type PiActivityRecord,
   piActivityDirectory,
   piActivityProcessIdentity,
-} from "../docs/examples/session-activity.js";
+} from "../extensions/inspire-session-bridge.js";
 import { isPiActivityRecord } from "./pi-session-activity.js";
 import { requestError } from "./request-error.js";
 
@@ -72,7 +72,7 @@ export class PiNativeActions {
     }
     if (matches.length !== 1)
       throw requestError(
-        "Load the updated Inspire session-activity extension in the original Pi terminal with /reload, then reselect this session.",
+        "Load the updated Inspire session bridge extension in the original Pi terminal with /reload, then reselect this session.",
         409,
         { code: "NATIVE_ACTIONS_UNAVAILABLE" },
       );
@@ -127,7 +127,7 @@ export class PiNativeActions {
       !record.nativeActions?.images
     )
       throw requestError(
-        "Reload the session-activity extension in the original Pi terminal before sending images.",
+        "Reload the Inspire session bridge extension in the original Pi terminal before sending images.",
         409,
         { code: "NATIVE_ACTIONS_UNAVAILABLE" },
       );
@@ -136,7 +136,7 @@ export class PiNativeActions {
     );
     if (modelAction && record.nativeActions?.models !== true)
       throw requestError(
-        "Reload the updated session-activity extension in the original Pi terminal before changing its model or thinking level.",
+        "Reload the updated Inspire session bridge extension in the original Pi terminal before changing its model or thinking level.",
         409,
         { code: "NATIVE_ACTIONS_UNAVAILABLE" },
       );

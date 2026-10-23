@@ -3,7 +3,7 @@ import type {
   NativeModelCatalog,
   NativeModelSelection,
   NativeTaskRuns,
-} from "../docs/examples/session-activity.js";
+} from "../extensions/inspire-session-bridge.js";
 
 /** A connection to an externally owned Pi, not an Inspire-owned worker. */
 export interface ExternalSessionState {

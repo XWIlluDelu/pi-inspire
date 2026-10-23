@@ -4,7 +4,7 @@ progress: done
 covers:
   - server/herdr-*.ts
   - server/pi-{rpc*,native-actions}.ts
-  - docs/examples/session-activity.ts
+  - extensions/inspire-session-bridge.ts
   - server/{runtime,runtime-worker-lifecycle,runtime-worker-pool,runtime-external-sessions,external-session}.ts
   - server/index.ts
   - server/preferences.ts
@@ -135,7 +135,7 @@ other applications' unreported or later launches remain outside its authority.
   An unviewed session does not start a replacement worker. Metadata mismatch alone keeps the
   connection unavailable. Transient transport failures do not establish retirement, and uncertain
   input is never automatically resent.
-- Reuse the installed `docs/examples/session-activity.ts` in Herdr TUI instances. Herdr supplies
+- Reuse the installed `extensions/inspire-session-bridge.ts` in Herdr TUI instances. Herdr supplies
   existing terminal-control authority and status; a consumed, receiver-bound action frame invokes
   public Pi `sendUserMessage`, `ctx.abort`, `setSessionName`, `setModel` or `setThinkingLevel` in that same process. Neither user
   keybindings nor terminal screen geometry establish an action or editor state. The Host transport

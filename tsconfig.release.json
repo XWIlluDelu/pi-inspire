@@ -8,6 +8,6 @@
     "declaration": false,
     "sourceMap": false
   },
-  "include": ["server/**/*.ts", "shared/**/*.ts"],
+  "include": ["server/**/*.ts", "shared/**/*.ts", "extensions/**/*.ts"],
   "exclude": ["tests/**"]
 }

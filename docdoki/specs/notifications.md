@@ -3,7 +3,7 @@ purpose: Device-local task notifications that report normal completion and error
 covers:
   - server/{runtime,runtime-events,runtime-external-sessions,herdr-native-session,runtime-event-sockets,browser-auth,preferences,task-notifications}.ts
   - shared/{contracts,assistant-outcome,notifications}.ts
-  - docs/examples/session-activity.ts
+  - extensions/inspire-session-bridge.ts
   - src/{main,browser-auth,browser-notifications,notifications}.ts*
   - src/controllers/{runtime-event,preference,connection,session-selection}-controller.ts
   - src/components/Settings.tsx

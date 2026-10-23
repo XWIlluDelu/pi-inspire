@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type PiActivityRecord,
   piActivityProcessIdentity,
-} from "../../docs/examples/session-activity.js";
+} from "../../extensions/inspire-session-bridge.js";
 import { HerdrNativeSession } from "../../server/herdr-native-session.js";
 import { captureHerdrHostIdentity } from "../../server/herdr-process-group.js";
 import type { PiRpcProcess } from "../../server/pi-rpc.js";
