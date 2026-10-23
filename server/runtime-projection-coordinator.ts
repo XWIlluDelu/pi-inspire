@@ -6,17 +6,11 @@ import {
 import type { DiagnosticLogger } from "./diagnostics.js";
 import { requestError } from "./request-error.js";
 import { describeSessionEntry } from "./runtime-entry-descriptor.js";
-import type {
-  OwnershipDecision,
-  PendingPartialPersistence,
-  RuntimeSlot,
-} from "./runtime-slot.js";
+import type { OwnershipDecision, RuntimeSlot } from "./runtime-slot.js";
 import type {
   ProjectionReconcileResult,
   SessionProjectionView,
 } from "./session-projection.js";
-
-export const PARTIAL_PERSISTENCE_TIMEOUT_MS = 2_000;
 
 /**
  * RuntimeController remains the owner of the slot registry, writer commands,
@@ -167,8 +161,6 @@ export class RuntimeProjectionCoordinator {
   }
 
   clearPartialPersistence(slot: RuntimeSlot): void {
-    if (!slot.pendingPartialPersistence) return;
-    clearTimeout(slot.pendingPartialPersistence.timer);
     slot.pendingPartialPersistence = null;
   }
 
@@ -207,44 +199,15 @@ export class RuntimeProjectionCoordinator {
     >,
   ): void {
     if (result.uncommittedBytes <= 0 || !result.uncommittedFingerprint) return;
-    const prior = slot.pendingPartialPersistence;
-    if (prior) clearTimeout(prior.timer);
-    const deadline =
-      prior?.deadline ?? Date.now() + PARTIAL_PERSISTENCE_TIMEOUT_MS;
-    let lease: PendingPartialPersistence;
-    const timer = setTimeout(
-      () => {
-        if (slot.pendingPartialPersistence !== lease) return;
-        void this.reconcile(slot, true)
-          .then(() => {
-            if (slot.pendingPartialPersistence === lease) {
-              return this.failPartialPersistence(
-                slot,
-                "Session persistence stopped with an incomplete JSONL entry; the worker was stopped",
-              );
-            }
-          })
-          .catch(() =>
-            this.failPartialPersistence(
-              slot,
-              "Session persistence could not verify an incomplete JSONL entry; the worker was stopped",
-            ),
-          );
-      },
-      Math.max(0, deadline - Date.now()),
-    );
-    timer.unref();
-    lease = {
+    // This records provenance, not a lease on how quickly Pi must persist.
+    slot.pendingPartialPersistence = {
       committedBytes: result.committedBytes,
       bytes: result.uncommittedBytes,
       fingerprint: result.uncommittedFingerprint,
       sourceIdentity: result.sourceIdentity,
       sourceVersion: result.sourceVersion,
       observedBytes: result.committedBytes + result.uncommittedBytes,
-      deadline,
-      timer,
     };
-    slot.pendingPartialPersistence = lease;
   }
 
   private async handle(
@@ -317,7 +280,7 @@ export class RuntimeProjectionCoordinator {
     const metadataContinuation =
       slot.process !== null &&
       slot.conflict === null &&
-      result.health.status === "ok" &&
+      result.health.status !== "error" &&
       !result.changed &&
       result.sourceChanged &&
       result.previousRevision === slot.workerProjectionRevision &&
@@ -361,7 +324,7 @@ export class RuntimeProjectionCoordinator {
         priorPartial !== null ||
         isBusyRunState(slot.runState) ||
         // Direct Bash can run idle and Pi persists it without an append event.
-        // Its lease still requires strict byte progress and a final entry witness.
+        // It still requires exact byte continuity and a final entry witness.
         slot.nativeBash?.worker === writer ||
         slot.persistenceExpectations.length > 0;
       const exactPrior =
@@ -521,6 +484,8 @@ export class RuntimeProjectionCoordinator {
       throw requestError("Session projection changed while reconciling", 409);
     if (startupAttestation) {
       this.recordReconcile(slot, result, true);
+      // Source replacement invalidates reading views even before Pi starts.
+      if (result.messageChange === "replace") this.host.renewView(slot);
       this.host.reconcileOverlay(slot, result.appendedEntries);
     }
     return result;

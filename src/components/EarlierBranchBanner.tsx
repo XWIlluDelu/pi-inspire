@@ -1,5 +1,6 @@
 import { GitBranch } from "lucide-react";
 import { memo, useLayoutEffect, useRef } from "react";
+import { branchCopiesBlocked } from "../controllers/branch-controller";
 import { shallowEqual, store, useAppState } from "../store";
 import { PiLoader } from "./PiLoader";
 
@@ -9,17 +10,24 @@ import { PiLoader } from "./PiLoader";
  * History pane, so returning to the durable leaf never depends on a drawer.
  */
 export const EarlierBranchBanner = memo(function EarlierBranchBanner() {
-  const { durableLeafId, effectiveLeafId, treeLoading, actionId, treeError } =
-    useAppState(
-      (state) => ({
-        durableLeafId: state.transcriptDurableLeafId,
-        effectiveLeafId: state.transcriptEffectiveLeafId,
-        treeLoading: state.branchTreeLoading,
-        actionId: state.branchActionId,
-        treeError: state.branchTreeError,
-      }),
-      shallowEqual,
-    );
+  const {
+    durableLeafId,
+    effectiveLeafId,
+    treeLoading,
+    actionId,
+    treeError,
+    copyBlocked,
+  } = useAppState(
+    (state) => ({
+      durableLeafId: state.transcriptDurableLeafId,
+      effectiveLeafId: state.transcriptEffectiveLeafId,
+      treeLoading: state.branchTreeLoading,
+      actionId: state.branchActionId,
+      treeError: state.branchTreeError,
+      copyBlocked: branchCopiesBlocked(state),
+    }),
+    shallowEqual,
+  );
   const viewingEarlierBranch = Boolean(
     durableLeafId && durableLeafId !== effectiveLeafId,
   );
@@ -82,7 +90,7 @@ export const EarlierBranchBanner = memo(function EarlierBranchBanner() {
         <button
           type="button"
           className="button button--quiet"
-          disabled={busy}
+          disabled={copyBlocked}
           aria-busy={cloning || undefined}
           title="Copy through this point into a new session with an empty draft"
           onClick={() => void store.cloneCurrentBranch()}

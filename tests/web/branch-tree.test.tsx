@@ -257,6 +257,37 @@ async function previewAnswer() {
 }
 
 describe("read-only History inspection", () => {
+  it.each(["fork", "clone"] as const)(
+    "allows %s from an externally read-only source while keeping navigation disabled",
+    async (mode) => {
+      (store as unknown as { set(value: unknown): void }).set({
+        readOnlyReason: "external-active",
+      });
+      render(<BranchTree />);
+      fireEvent.click(
+        within(history()).getByRole("button", { name: "Root question" }),
+      );
+      const fork = await screen.findByRole("button", {
+        name: "Fork to new session",
+      });
+      await waitFor(() => expect(fork).toBeEnabled());
+      expect(
+        screen.getByRole("button", { name: "Edit in this session" }),
+      ).toBeDisabled();
+      const clone = screen.getByRole("button", { name: "Clone through here" });
+      expect(clone).toBeEnabled();
+      fireEvent.click(mode === "fork" ? fork : clone);
+      await waitFor(() =>
+        expect(store.getState().sessionId).toBe(
+          mode === "fork" ? "forked" : "cloned",
+        ),
+      );
+      expect(requests.some(({ url }) => url === "/api/branches/navigate")).toBe(
+        false,
+      );
+    },
+  );
+
   it("copies the complete retained entry without expanding its bounded preview", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
@@ -854,7 +885,7 @@ describe("explicit History actions", () => {
       ).toBeDisabled();
       expect(
         screen.getByRole("button", { name: "Clone from here" }),
-      ).toBeDisabled();
+      ).toBeEnabled();
       expect(
         document.querySelector(".earlier-branch-banner .pi-loading"),
       ).toBeNull();

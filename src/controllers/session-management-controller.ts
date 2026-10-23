@@ -276,7 +276,8 @@ export class SessionManagementController {
       this.host.state().sessionListLoading ||
       this.host.state().sessionListLoadingOlder ||
       this.host.state().sessionListHydrating ||
-      this.host.state().sessionListError
+      this.host.state().sessionListError ||
+      this.host.state().sessionListIssues.length > 0
     )
       return null;
     const preserveQuery = this.host.state().sessionQuery;

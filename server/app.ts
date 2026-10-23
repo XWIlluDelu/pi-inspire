@@ -65,11 +65,6 @@ import { installedPiChangelog } from "./pi-changelog.js";
 import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
 import type { PreferencesStore } from "./preferences.js";
 import {
-  TaskNotifications,
-  pushSubscriptionSchema,
-  type NotificationPrincipal,
-} from "./task-notifications.js";
-import {
   invalidateProjectFiles,
   listProjectDirectory,
   searchProjectFiles,
@@ -80,6 +75,11 @@ import type { ResourceStore } from "./resources.js";
 import type { RuntimeLike } from "./runtime.js";
 import { createRuntimeEventSockets } from "./runtime-event-sockets.js";
 import type { SessionCatalogLike } from "./session-catalog.js";
+import {
+  type NotificationPrincipal,
+  pushSubscriptionSchema,
+  TaskNotifications,
+} from "./task-notifications.js";
 import { createTerminalGateway } from "./terminal-gateway.js";
 import type { TerminalService } from "./terminal-service.js";
 import type {
@@ -391,12 +391,12 @@ const branchNavigateSchema = z
 const branchForkSchema = z
   .object({
     sessionId: sessionIdField,
-    revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    viewId: z.string().min(1).max(200),
     targetId: z.string().min(1).max(200),
   })
   .strict();
 const branchCloneSchema = branchForkSchema.extend({
-  targetId: z.string().min(1).max(200).optional(),
+  targetId: z.string().min(1).max(200).nullable(),
 });
 const gitStatusSchema = z.object({ sessionId: sessionIdField });
 const gitDiffSchema = z.object({

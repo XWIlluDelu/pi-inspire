@@ -237,7 +237,7 @@ describe("branch request view ownership", () => {
   );
 
   it.each(["navigate", "fork"] as const)(
-    "releases a %s action made stale by an ordinary append",
+    "releases a failed %s action after an ordinary append",
     async (kind) => {
       const pending = deferred<RouteResponse | undefined>();
       const store = await setup((url) =>
@@ -258,14 +258,14 @@ describe("branch request view ownership", () => {
           },
         }),
       );
-      pending.resolve({ status: 409, body: { error: "Old branch revision" } });
+      pending.resolve({ status: 409, body: { error: "Source changed" } });
       await expect(acting).resolves.toBe(false);
       expect(store.getState().branchActionId).toBeNull();
-      // Navigation owns the original leaf; endpoint cloning can survive an
-      // append, so its failed response keeps the native revision error.
+      // Navigation owns the original leaf; independent copying survives an
+      // append, so its failure retains the server diagnostic.
       if (kind === "navigate")
         expect(store.getState().branchTreeError).toMatch(/stale|changed/);
-      else expect(store.getState().branchTreeError).toBe("Old branch revision");
+      else expect(store.getState().branchTreeError).toBe("Source changed");
       expect(store.getState().sessionId).toBe("s1");
       expect(store.getState().transcriptEffectiveLeafId).toBe("a2");
       expect(store.getState().branchTree?.revision).toBe(1);
@@ -286,7 +286,7 @@ describe("branch request view ownership", () => {
     expect(store.getState().branchActionId).toBeNull();
   });
 
-  it("forks a transcript input only after refreshing tree capability and revision", async () => {
+  it("forks a transcript input without requiring a History refresh", async () => {
     let treeReads = 0;
     let forks = 0;
     const store = await setup((url) => {
@@ -308,10 +308,57 @@ describe("branch request view ownership", () => {
     });
 
     await expect(store.forkFromEntry("u1")).resolves.toBe(true);
-    expect(treeReads).toBe(1);
+    expect(treeReads).toBe(0);
     expect(forks).toBe(1);
     expect(store.getState().sessionId).toBe("forked");
   });
+
+  it.each(["fork", "clone"] as const)(
+    "keeps a %s target when the source appends without replacing its view",
+    async (mode) => {
+      const response = deferred<RouteResponse>();
+      let request: Record<string, unknown> | undefined;
+      const store = await setup((url, init) => {
+        if (url === `/api/branches/${mode}`) {
+          request = jsonBody(init);
+          return response.promise;
+        }
+      });
+      const internal = store as unknown as {
+        applySnapshot(snapshot: unknown): void;
+      };
+      internal.applySnapshot(
+        activeSnapshot({
+          effectiveLeafId: "a1",
+          transcriptPage: { effectiveLeafId: "a1" },
+        }),
+      );
+      const copying =
+        mode === "fork"
+          ? store.forkFromEntry("u1")
+          : store.cloneCurrentBranch();
+      internal.applySnapshot(
+        activeSnapshot({
+          effectiveLeafId: "a2",
+          transcriptPage: { revision: 2, effectiveLeafId: "a2" },
+        }),
+      );
+      response.resolve({
+        body: {
+          sessionId: "forked",
+          snapshot: activeSnapshot({ sessionId: "forked" }),
+          editorText: "",
+        },
+      });
+      await expect(copying).resolves.toBe(true);
+      expect(request).toEqual({
+        sessionId: "s1",
+        viewId: "view-s1",
+        targetId: mode === "fork" ? "u1" : "a1",
+      });
+      expect(store.getState().sessionId).toBe("forked");
+    },
+  );
 
   it("ignores delayed fork success after reconnect invalidates ownership", async () => {
     const fork = deferred<RouteResponse | undefined>();

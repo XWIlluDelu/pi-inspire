@@ -963,11 +963,13 @@ export class AppStore {
     const projectionConflict = active?.projectionConflict ?? null;
     const projectionError =
       projectionConflict?.message ??
-      (projectionHealth.status === "error"
-        ? (projectionHealth.message ?? "Session projection failed")
+      (projectionHealth.status !== "ok"
+        ? (projectionHealth.message ??
+          "Session persistence is not yet confirmed")
         : null);
     const projectionSeverity =
-      projectionConflictSeverity(projectionConflict) === "attention"
+      projectionConflictSeverity(projectionConflict) === "attention" ||
+      (!projectionConflict && projectionHealth.status === "pending")
         ? "warning"
         : "error";
     const sessionStatuses = snapshot.sessionStatuses;

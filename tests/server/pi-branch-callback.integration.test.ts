@@ -77,7 +77,7 @@ it.each(["custom", "custom_message"])(
       (options) => {
         const worker = new PiRpcProcess({
           ...options,
-          env: { ...options.env, ...f.env },
+          env: { ...f.env, ...options.env },
           args: ["--no-extensions", ...(options.args ?? []), "-e", extension],
         });
         workers.push(worker);

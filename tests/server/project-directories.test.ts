@@ -59,6 +59,85 @@ describe("durable project discovery roots", () => {
     }
   });
 
+  it("keeps catalog reads independent of seed persistence while reporting unreadable discovery sources", async () => {
+    const preferences = new PreferencesStore(join(root, "preferences.json"));
+    await mkdir(join(root, "sessions"));
+    await writeFile(
+      join(root, "sessions", "session.jsonl"),
+      `${JSON.stringify({ type: "session", version: 3, id: "healthy", cwd: root, timestamp: new Date().toISOString() })}\n`,
+    );
+    vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", "sessions");
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const remember = vi
+      .spyOn(preferences.projectDirectories, "remember")
+      .mockRejectedValue(new Error("Discovery hints cannot be saved"));
+    const catalog = createHostSessionCatalog(root, preferences);
+    try {
+      expect((await catalog.list()).sessions.map((row) => row.id)).toEqual([
+        "healthy",
+      ]);
+      expect(warning).toHaveBeenCalled();
+      await expect(
+        catalog.refresh(true, { requireComplete: true }),
+      ).resolves.toHaveLength(1);
+      await writeFile(preferences.projectDirectories.path, "not json");
+      await catalog.refresh(true);
+      expect(await catalog.list()).toMatchObject({
+        sessions: [{ id: "healthy" }],
+        issues: [{ path: preferences.projectDirectories.path }],
+      });
+      await expect(
+        catalog.refresh(false, { requireComplete: true }),
+      ).rejects.toMatchObject({ code: "SESSION_CATALOG_INCOMPLETE" });
+      expect(await readFile(preferences.projectDirectories.path, "utf8")).toBe(
+        "not json",
+      );
+    } finally {
+      remember.mockRestore();
+      warning.mockRestore();
+    }
+  });
+
+  it("keeps newly used project roots in memory after a failed save and persists them on refresh after repair", async () => {
+    const preferences = new PreferencesStore(join(root, "preferences.json"));
+    const project = join(root, "new-project");
+    await mkdir(join(project, "sessions"), { recursive: true });
+    await writeFile(
+      join(project, "sessions", "session.jsonl"),
+      `${JSON.stringify({ type: "session", version: 3, id: "new-session", cwd: project, timestamp: new Date().toISOString() })}\n`,
+    );
+    vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", "sessions");
+    const saving = vi
+      .spyOn(preferences.projectDirectories, "remember")
+      .mockRejectedValue(new Error("Read-only hint storage"));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const catalog = createHostSessionCatalog(root, preferences);
+    try {
+      await expect(catalog.rememberProjectCwds([project])).rejects.toThrow(
+        "Read-only hint storage",
+      );
+      expect(
+        (await catalog.list()).sessions.map((session) => session.id),
+      ).toEqual(["new-session"]);
+      await expect(
+        catalog.refresh(true, { requireComplete: true }),
+      ).resolves.toHaveLength(1);
+      saving.mockRestore();
+      await catalog.refresh(true);
+      expect(await preferences.projectDirectories.read()).toContain(project);
+      const restarted = createHostSessionCatalog(
+        root,
+        new PreferencesStore(preferences.path),
+      );
+      expect(
+        (await restarted.list()).sessions.map((session) => session.id),
+      ).toEqual(["new-session"]);
+    } finally {
+      saving.mockRestore();
+      warning.mockRestore();
+    }
+  });
+
   it("retains startup roots across startup-directory changes without scanning unknown projects", async () => {
     const preferencesPath = join(root, "preferences.json");
     const startup = join(root, "previous-startup");

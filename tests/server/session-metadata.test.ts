@@ -3,6 +3,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -11,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SessionMetadataIndex } from "../../server/session-metadata.js";
+import type { SessionCatalogIssue } from "../../shared/contracts.js";
 
 const directories: string[] = [];
 
@@ -69,7 +71,7 @@ describe("SessionMetadataIndex", () => {
     expect(await index.list([root, root, alias])).toHaveLength(1);
   });
 
-  it("retains every root's cached metadata and aborts on any failed root", async () => {
+  it("keeps strict enumeration available to callers requiring a complete set", async () => {
     const root = await directory();
     const first = join(root, "first");
     const second = join(root, "second");
@@ -100,6 +102,45 @@ describe("SessionMetadataIndex", () => {
       "one",
       "two",
     ]);
+  });
+
+  it("lists healthy sources and retains known rows from an unavailable root", async () => {
+    const root = await directory();
+    const healthy = join(root, "healthy");
+    const offline = join(root, "offline");
+    await mkdir(healthy);
+    await mkdir(offline);
+    await writeFile(
+      join(healthy, "one.jsonl"),
+      `${JSON.stringify(header("one"))}\n`,
+    );
+    await writeFile(
+      join(offline, "two.jsonl"),
+      `${JSON.stringify(header("two"))}\n`,
+    );
+    const index = new SessionMetadataIndex();
+    expect(await index.list([healthy, offline])).toHaveLength(2);
+    await rename(offline, `${offline}-saved`);
+    await writeFile(offline, "not a directory");
+    const issues: SessionCatalogIssue[] = [];
+    expect(
+      (await index.list([healthy, offline], issues)).map((row) => row.id),
+    ).toEqual(["one", "two"]);
+    expect(issues).toEqual([expect.objectContaining({ path: offline })]);
+    const coldIssues: SessionCatalogIssue[] = [];
+    expect(
+      (
+        await new SessionMetadataIndex().list([healthy, offline], coldIssues)
+      ).map((row) => row.id),
+    ).toEqual(["one"]);
+    expect(coldIssues).toHaveLength(1);
+    await rm(offline);
+    await rename(`${offline}-saved`, offline);
+    const recoveredIssues: SessionCatalogIssue[] = [];
+    expect(await index.list([healthy, offline], recoveredIssues)).toHaveLength(
+      2,
+    );
+    expect(recoveredIssues).toEqual([]);
   });
 
   it("does not promote a symlinked JSONL into the session catalog", async () => {
@@ -134,9 +175,13 @@ describe("SessionMetadataIndex", () => {
       await chmod(path, 0o000);
       try {
         if (process.getuid?.() !== 0) {
-          await expect(
-            new SessionMetadataIndex().list(root),
-          ).rejects.toMatchObject({ code: "EACCES" });
+          const index = new SessionMetadataIndex();
+          await expect(index.list(root)).rejects.toMatchObject({
+            code: "EACCES",
+          });
+          const issues: SessionCatalogIssue[] = [];
+          await expect(index.list(root, issues)).resolves.toEqual([]);
+          expect(issues).toEqual([expect.objectContaining({ path })]);
         }
       } finally {
         await chmod(path, 0o600);

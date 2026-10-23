@@ -16,7 +16,8 @@ import type { ProjectionReconcileResult } from "./session-projection.js";
  */
 interface RuntimeWorkerLifecycleHost {
   selectedSessionId(): string | null;
-  createProcess(options: PiRpcOptions): PiRpcProcess;
+  assertNotClosing(): void;
+  createProcess(options: PiRpcOptions): PiRpcProcess | Promise<PiRpcProcess>;
   assertWriterAvailable(slot: RuntimeSlot): Promise<void>;
   workerOptions(
     cwd: string,
@@ -103,7 +104,8 @@ export class RuntimeWorkerLifecycle {
     slot.compactionReturnState = null;
     this.host.clearWriterBaseline(slot);
     slot.bridge = null;
-    this.host.renewView(slot);
+    // Pre-start preparation has not acquired a Pi view to retire.
+    if (slot.startupPhase !== "idle") this.host.renewView(slot);
     if (slot.navigationLease) slot.branchRevision += 1;
     slot.navigationLease = null;
     if (slot.pendingBranchBridge) {
@@ -202,9 +204,9 @@ export class RuntimeWorkerLifecycle {
     await projection.suspendReconciliation();
     const baseline = this.startupAttestor.capture(projection);
     const bridge = this.host.newBridgeIdentity();
-    let rpc: PiRpcProcess;
+    let rpc: PiRpcProcess | undefined;
     try {
-      rpc = this.host.createProcess({
+      rpc = await this.host.createProcess({
         ...this.host.workerOptions(
           slot.cwd,
           ["--session", slot.sessionPath],
@@ -212,7 +214,9 @@ export class RuntimeWorkerLifecycle {
         ),
         sessionId: slot.id,
       });
+      this.host.assertNotClosing();
     } catch (error) {
+      await rpc?.stop();
       projection.resumeReconciliation();
       throw error;
     }
@@ -235,6 +239,8 @@ export class RuntimeWorkerLifecycle {
     slot.toolActivity = {};
     slot.availableModels = null;
     slot.commands = null;
+    let checkingWriterAvailability = false;
+    let started = false;
     try {
       this.host.attachProcess(slot, rpc);
       await this.startupAttestor.requireUnchangedPreStartBaseline(
@@ -243,8 +249,11 @@ export class RuntimeWorkerLifecycle {
       );
       // Recheck presence after asynchronous projection preparation, before Pi
       // can open the session. The external process is never adopted or stopped.
+      checkingWriterAvailability = true;
       await this.host.assertWriterAvailable(slot);
+      checkingWriterAvailability = false;
       slot.startupPhase = "starting";
+      started = true;
       await rpc.start();
       if (slot.startupError) throw slot.startupError;
       await this.startupAttestor.attest(slot, rpc, baseline);
@@ -256,6 +265,7 @@ export class RuntimeWorkerLifecycle {
           503,
         );
       slot.ready = true;
+      slot.readOnlyReason = null;
       slot.startupPhase = "complete";
       if (slot.runState === "failed" || slot.runState === "aborted")
         slot.runState = "idle";
@@ -277,20 +287,27 @@ export class RuntimeWorkerLifecycle {
       return slot;
     } catch (error) {
       const failure = slot.startupError ?? error;
+      // Session startup hooks may have run. Leave further startup attempts to
+      // an explicit action instead of repeating them through owner recovery.
+      if (started) slot.readOnlyReason = null;
       if (slot.process === rpc) {
-        this.host.logRuntimeError(slot.id, failure, "worker_start_failed");
         await this.stop(slot);
-        slot.runState = slot.conflict ? "conflict" : "failed";
-        if (!slot.conflict) {
-          slot.attention =
-            this.host.selectedSessionId() === slot.id ? null : "failed";
+        // Ownership observation retains read-only state; actual preparation or
+        // startup failures still need their attributable runtime error.
+        if (!checkingWriterAvailability) {
+          this.host.logRuntimeError(slot.id, failure, "worker_start_failed");
+          slot.runState = slot.conflict ? "conflict" : "failed";
+          if (!slot.conflict) {
+            slot.attention =
+              this.host.selectedSessionId() === slot.id ? null : "failed";
+          }
+          this.host.emitSlotEvent(slot, {
+            type: "runtime_error",
+            error: failure instanceof Error ? failure.message : String(failure),
+            extensionDisplays: slot.extensionDisplays,
+            extensionStatuses: slot.extensionStatuses,
+          });
         }
-        this.host.emitSlotEvent(slot, {
-          type: "runtime_error",
-          error: failure instanceof Error ? failure.message : String(failure),
-          extensionDisplays: slot.extensionDisplays,
-          extensionStatuses: slot.extensionStatuses,
-        });
       } else {
         await rpc.stop();
       }

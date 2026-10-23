@@ -128,6 +128,7 @@ async function exerciseOwner(connectHerdr: boolean) {
   const runtime = new RuntimeController(catalog, attachments, create)
     .setExternalSessionConnector(async () => null)
     .setExternalSessionGuard((id, file) => guard.assertWritable(id, file));
+  const releaseView = runtime.retainSessionView(sessionId);
   try {
     await external.start();
     const pid = external.pid;
@@ -284,11 +285,10 @@ async function exerciseOwner(connectHerdr: boolean) {
       guard.assertWritable(otherId, otherFile),
     ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
     const occupancy = vi.spyOn(guard, "assertWritable");
-    await vi.waitFor(async () => {
-      await runtime.openSession(sessionId);
-      expect(create).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(create).toHaveBeenCalledOnce(), {
+      timeout: 5_000,
     });
-    if (closed) expect(closed).toHaveBeenCalledOnce();
+    if (native) await expect(native.read()).resolves.toBeNull();
     expect(occupancy).toHaveBeenCalledWith(sessionId, sessionFile);
     expect(external.pid).toBe(pid);
     await external.stop();
@@ -296,6 +296,7 @@ async function exerciseOwner(connectHerdr: boolean) {
       guard.assertWritable(otherId, otherFile),
     ).resolves.toBeUndefined();
   } finally {
+    releaseView();
     await runtime.close();
     await attachments.close();
     await external.stop();

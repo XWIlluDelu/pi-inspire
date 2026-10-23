@@ -10,6 +10,7 @@ import {
   type BranchControllerPatch,
   type BranchControllerState,
   branchActionsBlocked,
+  branchCopiesBlocked,
 } from "../../src/controllers/branch-controller";
 import { deferred, branchTree as tree } from "./helpers";
 
@@ -18,7 +19,7 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
     sessionId: "s1",
     transcriptViewId: "view-1",
     transcriptDurableLeafId: "a1",
-    transcriptEffectiveLeafId: null,
+    transcriptEffectiveLeafId: "a1",
     branchTree: tree(),
     branchTreeLoading: false,
     branchTreeError: null,
@@ -97,20 +98,27 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
 
 describe("BranchController", () => {
   it.each([
-    { branchTreeError: "History is unavailable" },
-    { branchTreeLoading: true },
     { branchActionId: "another-action" },
+    {
+      projectionHealth: {
+        status: "error" as const,
+        message: "Unreadable source",
+      },
+    },
+    { readOnlyReason: "workspace-unavailable" as const },
   ])(
     "shares unavailable clone state with menu entry points: %j",
     async (initial) => {
       const harness = createHarness(initial);
-      expect(branchActionsBlocked(harness.state())).toBe(true);
+      expect(branchCopiesBlocked(harness.state())).toBe(true);
       expect(await harness.controller.clone()).toBe(false);
       expect(harness.cloneBranch).not.toHaveBeenCalled();
       harness.patch({
         branchTreeError: null,
         branchTreeLoading: false,
         branchActionId: null,
+        projectionHealth: { status: "ok" },
+        readOnlyReason: null,
       });
       expect(branchActionsBlocked(harness.state())).toBe(false);
     },
@@ -202,7 +210,8 @@ describe("BranchController", () => {
     await expect(harness.controller.clone()).resolves.toBe(true);
     expect(harness.cloneBranch).toHaveBeenCalledWith({
       sessionId: "s1",
-      revision: tree().revision,
+      viewId: "view-1",
+      targetId: "a1",
     });
     expect(harness.navigateBranch).not.toHaveBeenCalled();
     expect(harness.applyFork).toHaveBeenCalledTimes(1);
@@ -216,11 +225,12 @@ describe("BranchController", () => {
         branchTree: currentTree,
       });
       const oldTree = deferred<BranchTreeResponse>();
-      harness.branchTree
-        .mockReturnValueOnce(oldTree.promise)
-        .mockResolvedValue(currentTree);
-      harness.forkBranch.mockResolvedValue({} as BranchForkResponse);
-      harness.cloneBranch.mockResolvedValue({} as BranchForkResponse);
+      harness.branchTree.mockResolvedValue(currentTree);
+      if (action === "latest")
+        harness.branchTree.mockReturnValueOnce(oldTree.promise);
+      const copyResponse = deferred<BranchForkResponse>();
+      harness.forkBranch.mockReturnValue(copyResponse.promise);
+      harness.cloneBranch.mockReturnValue(copyResponse.promise);
       harness.navigateBranch.mockResolvedValue({} as BranchNavigateResponse);
       const pending =
         action === "fork"
@@ -236,9 +246,14 @@ describe("BranchController", () => {
       harness.patch({ sessionId: "s1" });
       await harness.controller.loadTree();
       oldTree.resolve(currentTree);
+      copyResponse.resolve({} as BranchForkResponse);
       expect(await pending).toBe(false);
-      expect(harness.forkBranch).not.toHaveBeenCalled();
-      expect(harness.cloneBranch).not.toHaveBeenCalled();
+      expect(harness.forkBranch).toHaveBeenCalledTimes(
+        action === "fork" ? 1 : 0,
+      );
+      expect(harness.cloneBranch).toHaveBeenCalledTimes(
+        action === "clone" ? 1 : 0,
+      );
       expect(harness.navigateBranch).not.toHaveBeenCalled();
       expect(harness.applyFork).not.toHaveBeenCalled();
     },

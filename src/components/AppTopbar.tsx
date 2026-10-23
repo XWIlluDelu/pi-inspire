@@ -22,7 +22,7 @@ import {
   projectNameFromCwd,
   type RunState,
 } from "../../shared/contracts";
-import { branchActionsBlocked } from "../controllers/branch-controller";
+import { branchCopiesBlocked } from "../controllers/branch-controller";
 import { type ChatMessage, userMessageDisplayText } from "../events";
 import { gitChangeCount, gitHeadLabel } from "../git-presentation";
 import { isComposingKeyboardEvent } from "../keyboard-input";
@@ -195,7 +195,7 @@ const SessionIdent = memo(function SessionIdent({
       project: state.cwd ? projectNameFromCwd(state.cwd) : null,
       projectDisplay: state.prefs.projectDisplay,
       sessionActionOrder: state.prefs.sessionActionOrder,
-      cloneDisabled: branchActionsBlocked(state),
+      cloneDisabled: branchCopiesBlocked(state),
       readOnlyReason: state.readOnlyReason,
       externallyOwned: Boolean(
         state.sessionId && state.sessionStatuses[state.sessionId]?.external,

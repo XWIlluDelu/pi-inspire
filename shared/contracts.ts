@@ -349,7 +349,16 @@ export interface SessionSummary {
   parentSessionId?: string;
 }
 
+export interface SessionCatalogIssue {
+  /** Directory or file whose contents could not be observed. */
+  path: string;
+  message: string;
+}
+
 export interface SessionListResponse {
+  /** Incomplete totals count known summaries/matches, not the complete catalog.
+   * Diagnostics are bounded to the first 20 unavailable sources. */
+  issues?: SessionCatalogIssue[];
   sessions: SessionSummary[];
   total: number;
   offset: number;
@@ -953,7 +962,7 @@ export function parsePendingExtensionUiRequest(
 }
 
 export interface ProjectionHealth {
-  status: "ok" | "error";
+  status: "ok" | "pending" | "error";
   message?: string;
 }
 
@@ -1161,15 +1170,15 @@ export interface BranchNavigateResponse {
 
 export interface BranchForkRequest {
   sessionId: string;
-  revision: number;
+  viewId: string;
   targetId: string;
 }
 
 export interface BranchCloneRequest {
   sessionId: string;
-  revision: number;
-  /** Omitted clones the recorded effective endpoint, including a null root. */
-  targetId?: string;
+  viewId: string;
+  /** The endpoint selected at invocation; null explicitly copies an empty path. */
+  targetId: string | null;
 }
 
 export interface BranchForkResponse {

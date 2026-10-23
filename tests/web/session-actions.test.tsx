@@ -163,6 +163,16 @@ describe("Session actions", () => {
       name: "Move Export session… up",
     });
     expect(moveUp).toHaveFocus();
+    expect(
+      within(
+        screen.getByRole("menu", { name: "Move options for Export session…" }),
+      )
+        .getAllByRole("menuitem")
+        .map((item) => item.getAttribute("aria-label")),
+    ).toEqual(["Move Export session… up", "Move Export session… down"]);
+    expect(
+      screen.getByRole("menuitem", { name: "Move Export session… down" }),
+    ).toBeDisabled();
     await user.keyboard("{Enter}");
     expect(exportHandle).toHaveFocus();
     expect(actionLabels()).toEqual([
@@ -194,5 +204,14 @@ describe("Session actions", () => {
     expect(copyUp).toHaveFocus();
     await user.keyboard("{Enter}");
     expect(actionLabels()[0]).toBe("Copy session ID");
+    fireEvent.click(copyHandle);
+    expect(
+      screen.getByRole("menuitem", { name: "Move Copy session ID up" }),
+    ).toBeDisabled();
+    await user.click(
+      screen.getByRole("menuitem", { name: "Move Copy session ID down" }),
+    );
+    expect(actionLabels()[1]).toBe("Copy session ID");
+    expect(copyHandle).toHaveFocus();
   });
 });

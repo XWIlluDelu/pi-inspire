@@ -27,8 +27,8 @@ import { isTouchFirstDevice } from "../input-device";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { paletteTextMatchRanges, rankPaletteItems } from "../palette-search";
 import { PALETTE_LABELS, preferenceChoiceLabel } from "../preference-labels";
-import { shallowEqual, store, useAppState } from "../store";
 import { modelControlsSupported } from "../session-controls";
+import { shallowEqual, store, useAppState } from "../store";
 import {
   queueTerminalAction,
   type TerminalUiAction,
@@ -406,7 +406,7 @@ export const CommandPalette = memo(function CommandPalette({
         });
       }
     }
-    if (state.sessionId && !state.readOnlyReason) {
+    if (state.sessionId && state.readOnlyReason !== "workspace-unavailable") {
       actions.push({
         id: "clone",
         group: "Workspace",
@@ -414,6 +414,8 @@ export const CommandPalette = memo(function CommandPalette({
         aliases: ["/clone"],
         run: () => void store.cloneCurrentBranch(),
       });
+    }
+    if (state.sessionId && !state.readOnlyReason) {
       actions.push({
         id: "rename",
         group: "Actions",
