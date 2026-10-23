@@ -454,7 +454,7 @@ describe("composer meta row", () => {
     fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
     const listbox = screen.getByRole("listbox", { name: "Thinking level" });
     expect(
-      within(listbox).getByRole("option", { name: "high" }),
+      within(listbox).getByRole("option", { name: "High" }),
     ).toBeInTheDocument();
     expect(
       within(listbox).queryByRole("option", { name: "xhigh" }),

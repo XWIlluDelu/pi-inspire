@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -27,6 +27,78 @@ afterEach(async () => {
 });
 
 describe("ToolPresentationConfigStore", () => {
+  it("composes external adapters beside a symlinked profile and removes disabled contributions", async () => {
+    const { root, path, store } = await fixture();
+    const profileDirectory = join(root, "profiles");
+    await mkdir(profileDirectory);
+    await writeFile(
+      join(profileDirectory, "module.json"),
+      JSON.stringify({
+        version: 1,
+        rules: {},
+        mappings: {},
+        hiddenStatuses: ["example-state"],
+        controls: [
+          {
+            id: "user.example.mode",
+            slot: "thinking",
+            label: "Mode",
+            command: "/mode:2",
+            state: { key: "example-state", value: "mode" },
+            options: [
+              { value: "normal", label: "Normal" },
+              { value: "quick", label: "Quick" },
+            ],
+          },
+        ],
+        checkpoints: [
+          {
+            source: "example",
+            title: "Archived",
+            tokensLabel: "Chunk",
+            tokensDescription: "Input chunk",
+          },
+        ],
+      }),
+    );
+    await writeFile(
+      join(profileDirectory, "profile.json"),
+      JSON.stringify({
+        version: 1,
+        rules: {},
+        mappings: {},
+        adapters: [
+          { id: "example", name: "Example", path: "./module.json" },
+          {
+            id: "unavailable",
+            name: "Unavailable",
+            path: "./missing.json",
+            enabled: false,
+          },
+        ],
+      }),
+    );
+    await symlink(join(profileDirectory, "profile.json"), path);
+    const active = await store.inspect();
+    expect(active.warning).toBeUndefined();
+    expect(active.configuration.hiddenStatuses).toEqual(["example-state"]);
+    expect(active.configuration.controls?.[0]?.command).toBe("/mode:2");
+    expect(active.configuration.checkpoints?.[0]?.source).toBe("example");
+    const disabled = await store.inspect({ example: false });
+    expect(disabled.configuration).toEqual({
+      version: 1,
+      rules: {},
+      mappings: {},
+    });
+    expect(disabled.adapters?.map((adapter) => adapter.enabled)).toEqual([
+      false,
+      false,
+    ]);
+    const broken = await store.inspect({ unavailable: true });
+    expect(broken.warning).toMatch(/Unavailable/);
+    expect(broken.configuration.hiddenStatuses).toEqual(["example-state"]);
+  });
+
   it("reloads custom-message declarations and fails invalid profiles back to the empty user layer", async () => {
     const { path, store } = await fixture();
     const configuration = {

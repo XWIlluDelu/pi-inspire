@@ -84,6 +84,180 @@ function pick(id: string) {
   fireEvent.click(screen.getByRole("button", { name: "Model" }));
   fireEvent.click(screen.getByRole("option", { name: new RegExp(id) }));
 }
+
+it("recovers a transient directory/model precheck without creating a session or changing input", async () => {
+  vi.useFakeTimers();
+  const queries = vi
+    .spyOn(store, "readNewSessionModels")
+    .mockRejectedValueOnce(new ApiError(503, "Directory service unavailable"))
+    .mockResolvedValue({ models, defaults });
+  const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
+  render(
+    <Welcome showRecent={false} inherited={{ ...inherit, model: null }} />,
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
+    target: { value: "Preserve this message" },
+  });
+  await act(() => vi.advanceTimersByTimeAsync(220));
+  expect(queries).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  await act(() => vi.advanceTimersByTimeAsync(1_000));
+  expect(queries).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
+  expect(screen.getByRole("textbox", { name: "First message" })).toHaveValue(
+    "Preserve this message",
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(start).not.toHaveBeenCalled();
+});
+
+it("does not let an inherited model bypass unverified directory checks or their exhausted recovery", async () => {
+  vi.useFakeTimers();
+  const queries = vi
+    .spyOn(store, "readNewSessionModels")
+    .mockRejectedValue(new ApiError(503, "Directory service unavailable"));
+  const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
+  render(<Welcome showRecent={false} inherited={inherit} />);
+  fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
+    target: { value: "Wait for the directory check" },
+  });
+  expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+  await act(() => vi.advanceTimersByTimeAsync(14_220));
+  expect(queries).toHaveBeenCalledTimes(4);
+  expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+  expect(screen.getByText("Directory service unavailable")).toBeVisible();
+  queries.mockResolvedValue({ models, defaults });
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
+  expect(screen.queryByText("Directory service unavailable")).toBeNull();
+  queries.mockRejectedValue(
+    new ApiError(503, "Replacement directory service unavailable"),
+  );
+  await act(() => store.init("replacement-token"));
+  expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+  await act(() => vi.advanceTimersByTimeAsync(14_220));
+  expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+  expect(start).not.toHaveBeenCalled();
+});
+
+it("does not retire an in-flight check for whitespace-only directory edits", async () => {
+  vi.useFakeTimers();
+  const result = deferred<ModelCatalogResponse>();
+  const queries = vi
+    .spyOn(store, "readNewSessionModels")
+    .mockReturnValue(result.promise);
+  render(<Welcome showRecent={false} inherited={inherit} />);
+  fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
+    target: { value: "Keep validation" },
+  });
+  await act(() => vi.advanceTimersByTimeAsync(220));
+  fireEvent.change(screen.getByRole("textbox", { name: "Project directory" }), {
+    target: { value: " /one " },
+  });
+  await act(async () => result.resolve({ models, defaults }));
+  expect(queries).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
+});
+
+it("retains confirmed readiness and choices when an optional catalog refresh stays unavailable", async () => {
+  vi.useFakeTimers();
+  const queries = vi
+    .spyOn(store, "readNewSessionModels")
+    .mockResolvedValue({ models, defaults });
+  render(
+    <Welcome showRecent={false} inherited={{ ...inherit, model: null }} />,
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
+    target: { value: "Keep the resolved default" },
+  });
+  await act(() => vi.advanceTimersByTimeAsync(220));
+  expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
+  queries.mockRejectedValue(new ApiError(503, "Directory service unavailable"));
+  fireEvent.click(screen.getByRole("button", { name: "Model" }));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
+  await act(() => vi.advanceTimersByTimeAsync(14_000));
+  expect(queries).toHaveBeenCalledTimes(5);
+  expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
+    "ordinary",
+  );
+  expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
+  expect(screen.getByRole("textbox", { name: "First message" })).toHaveValue(
+    "Keep the resolved default",
+  );
+  await act(() => vi.advanceTimersByTimeAsync(30_000));
+  expect(queries).toHaveBeenCalledTimes(5);
+});
+
+it.each(["directory", "transport", "unmount"] as const)(
+  "retires a queued directory/model retry on %s change",
+  async (change) => {
+    vi.useFakeTimers();
+    const queries = vi
+      .spyOn(store, "readNewSessionModels")
+      .mockRejectedValueOnce(new ApiError(503, "Old scope unavailable"))
+      .mockResolvedValue({ models, defaults });
+    const view = render(
+      <Welcome showRecent={false} inherited={{ ...inherit, model: null }} />,
+    );
+    await act(() => vi.advanceTimersByTimeAsync(220));
+    expect(queries).toHaveBeenCalledTimes(1);
+    if (change === "directory") {
+      fireEvent.change(
+        screen.getByRole("textbox", { name: "Project directory" }),
+        {
+          target: { value: "/two" },
+        },
+      );
+    } else if (change === "transport") {
+      await act(() => store.init("replacement-token"));
+    } else {
+      view.unmount();
+    }
+    await act(() => vi.advanceTimersByTimeAsync(2_000));
+    expect(queries).toHaveBeenCalledTimes(change === "unmount" ? 1 : 2);
+    if (change === "directory")
+      expect(queries).toHaveBeenLastCalledWith(undefined, "/two");
+  },
+);
+
+it.each([false, true])(
+  "recovers explicit-model effort preview unless manual effort supersedes it (manual=%s)",
+  async (manual) => {
+    vi.useFakeTimers();
+    const policy = vi
+      .spyOn(store, "resolveNewSessionThinking")
+      .mockRejectedValueOnce(new ApiError(503, "Thinking preview unavailable"))
+      .mockResolvedValue("medium");
+    render(<Welcome showRecent={false} inherited={inherit} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
+      target: { value: "Use the selected effort" },
+    });
+    await act(() => vi.advanceTimersByTimeAsync(220));
+    pick("ordinary");
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(policy).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByRole("button", { name: "Start session" }),
+    ).toBeDisabled();
+    if (manual) {
+      fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
+      fireEvent.click(screen.getByRole("option", { name: /^Low$/ }));
+    }
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    expect(policy).toHaveBeenCalledTimes(manual ? 1 : 2);
+    expect(
+      screen.getByRole("combobox", { name: "Thinking level" }),
+    ).toHaveTextContent(manual ? "Low" : "Medium");
+    expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  },
+);
+
 it("inherits the selected router and its effective effort without reapplying workspace/model policy", async () => {
   const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
   const policy = vi.fn(() => "xhigh" as ThinkingLevel);
@@ -166,7 +340,7 @@ it("waits for a pending source selection instead of applying workspace defaults"
   );
 });
 
-it("keeps unresolved source feedback and retry alongside missing-folder creation", async () => {
+it("recovers inherited selection before allowing missing-folder creation", async () => {
   let source = deferred<ModelCatalogResponse>();
   const queries = vi
     .spyOn(store, "readNewSessionModels")
@@ -204,20 +378,16 @@ it("keeps unresolved source feedback and retry alongside missing-folder creation
   });
   expect(create).toBeDisabled();
   expect(screen.getByText("Resolving model…")).toBeInTheDocument();
+  vi.useFakeTimers();
   await act(async () =>
     source.reject(new ApiError(503, "The source model is unavailable")),
   );
-  expect(
-    screen.getByText("The source model is unavailable"),
-  ).toBeInTheDocument();
+  expect(screen.queryByText("The source model is unavailable")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   expect(create).toBeDisabled();
   source = deferred<ModelCatalogResponse>();
-  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-  await waitFor(() =>
-    expect(queries.mock.calls.filter(([, , inherit]) => inherit)).toHaveLength(
-      2,
-    ),
-  );
+  await act(() => vi.advanceTimersByTimeAsync(1_000));
+  expect(queries.mock.calls.filter(([, , inherit]) => inherit)).toHaveLength(2);
   expect(screen.getByText("Resolving model…")).toBeInTheDocument();
   expect(create).toBeDisabled();
   await act(async () =>
@@ -226,16 +396,14 @@ it("keeps unresolved source feedback and retry alongside missing-folder creation
       selection: { cwd: "/one", model: extended, thinkingLevel: "max" },
     }),
   );
-  await waitFor(() => expect(create).toBeEnabled());
+  expect(create).toBeEnabled();
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-  fireEvent.click(create);
-  await waitFor(() =>
-    expect(start).toHaveBeenCalledWith("/missing", {
-      createDirectory: true,
-      model: { provider: "fixture", id: "extended" },
-      thinkingLevel: "max",
-    }),
-  );
+  await act(async () => fireEvent.click(create));
+  expect(start).toHaveBeenCalledWith("/missing", {
+    createDirectory: true,
+    model: { provider: "fixture", id: "extended" },
+    thinkingLevel: "max",
+  });
 });
 
 it("refreshes the displayed workspace default but omits preview overrides at startup", async () => {
@@ -294,7 +462,7 @@ it("keeps a newer catalog refresh when an older default preview arrives late", a
   );
   expect(
     screen.getByRole("combobox", { name: "Thinking level" }),
-  ).toHaveTextContent("max");
+  ).toHaveTextContent("Max");
 });
 it("keeps a manual default effort across workspace changes and submits only that effort override", async () => {
   const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
@@ -308,7 +476,7 @@ it("keeps a manual default effort across workspace changes and submits only that
     ),
   );
   fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
-  fireEvent.click(screen.getByRole("option", { name: /^low$/ }));
+  fireEvent.click(screen.getByRole("option", { name: /^Low$/ }));
   defaults = { cwd: "/two", model: ordinary, thinkingLevel: "medium" };
   fireEvent.change(screen.getByRole("textbox", { name: "Project directory" }), {
     target: { value: "/two" },
@@ -320,7 +488,7 @@ it("keeps a manual default effort across workspace changes and submits only that
   );
   expect(
     screen.getByRole("combobox", { name: "Thinking level" }),
-  ).toHaveTextContent("low");
+  ).toHaveTextContent("Low");
   fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
     target: { value: "intentional effort" },
   });
@@ -368,7 +536,7 @@ it.each(["xhigh", "max"])(
     await waitFor(() =>
       expect(
         screen.getByRole("combobox", { name: "Thinking level" }),
-      ).toHaveTextContent("high"),
+      ).toHaveTextContent("High"),
     );
   },
 );
@@ -385,7 +553,7 @@ it("settles model readiness when manual effort supersedes policy, including acro
   await waitFor(() => expect(policy).toHaveBeenCalledTimes(1));
   expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
   fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
-  fireEvent.click(screen.getByRole("option", { name: /^low$/ }));
+  fireEvent.click(screen.getByRole("option", { name: /^Low$/ }));
   expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
   fireEvent.change(screen.getByRole("textbox", { name: "Project directory" }), {
     target: { value: "/two" },
@@ -394,8 +562,10 @@ it("settles model readiness when manual effort supersedes policy, including acro
   expect(policy).toHaveBeenCalledTimes(1);
   expect(
     screen.getByRole("combobox", { name: "Thinking level" }),
-  ).toHaveTextContent("low");
-  expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
+  ).toHaveTextContent("Low");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled(),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Start session" }));
   await waitFor(() =>
     expect(start).toHaveBeenCalledWith("/two", {
@@ -419,7 +589,7 @@ it("ignores an old model response after another model is chosen", async () => {
   await act(async () => pending.resolve("medium"));
   expect(
     screen.getByRole("combobox", { name: "Thinking level" }),
-  ).toHaveTextContent("unavailable");
+  ).toHaveTextContent("Unavailable");
   expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
     "plain",
   );
@@ -440,12 +610,12 @@ it("ignores an old workspace response and uses the new workspace's configured le
   await waitFor(() =>
     expect(
       screen.getByRole("combobox", { name: "Thinking level" }),
-    ).toHaveTextContent("minimal"),
+    ).toHaveTextContent("Minimal"),
   );
   await act(async () => pending.resolve("high"));
   expect(
     screen.getByRole("combobox", { name: "Thinking level" }),
-  ).toHaveTextContent("minimal");
+  ).toHaveTextContent("Minimal");
 });
 it("keeps a same-cwd catalog read alive across same-model snapshot objects and effort input", async () => {
   vi.useFakeTimers();
@@ -468,7 +638,7 @@ it("keeps a same-cwd catalog read alive across same-model snapshot objects and e
   await act(() => vi.advanceTimersByTimeAsync(220));
   expect(refresh).toHaveBeenCalledExactlyOnceWith("current", "/one");
   fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
-  fireEvent.click(screen.getByRole("option", { name: /^xhigh$/ }));
+  fireEvent.click(screen.getByRole("option", { name: /^Xhigh$/ }));
   for (let i = 0; i < 3; i++) {
     act(emit);
     await act(() => vi.advanceTimersByTimeAsync(90));
@@ -480,7 +650,7 @@ it("keeps a same-cwd catalog read alive across same-model snapshot objects and e
   );
   expect(
     screen.getByRole("combobox", { name: "Thinking level" }),
-  ).toHaveTextContent("xhigh");
+  ).toHaveTextContent("Xhigh");
   const next = deferred<ModelOption[]>();
   catalog = () => next.promise;
   fireEvent.click(screen.getByRole("button", { name: "Model" }));
@@ -510,10 +680,10 @@ it("refreshes prospective choices without replacing an explicitly chosen model o
   await waitFor(() =>
     expect(
       screen.getByRole("combobox", { name: "Thinking level" }),
-    ).toHaveTextContent("high"),
+    ).toHaveTextContent("High"),
   );
   fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
-  fireEvent.click(screen.getByRole("option", { name: /^low$/ }));
+  fireEvent.click(screen.getByRole("option", { name: /^Low$/ }));
   catalog = () => [{ provider: "fixture", id: "fresh", reasoning: true }];
   fireEvent.click(screen.getByRole("button", { name: "Model" }));
   await screen.findByRole("option", { name: /^fresh/ });
@@ -522,5 +692,5 @@ it("refreshes prospective choices without replacing an explicitly chosen model o
   );
   expect(
     screen.getByRole("combobox", { name: "Thinking level" }),
-  ).toHaveTextContent("low");
+  ).toHaveTextContent("Low");
 });

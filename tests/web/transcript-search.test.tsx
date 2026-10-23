@@ -3,8 +3,11 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Transcript } from "../../src/components/Transcript";
 import { findLiteralMatches } from "../../src/components/transcript-search";
+import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
+import { checkpointAdapterConfiguration } from "./fixtures/extension-adapters";
 
 afterEach(() => {
+  configureToolPresentationRegistry();
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -12,6 +15,7 @@ afterEach(() => {
 
 describe("settled transcript search", () => {
   it("indexes displayed shell output and checkpoint text rather than their hidden control data", () => {
+    configureToolPresentationRegistry(checkpointAdapterConfiguration);
     render(
       <Transcript
         sessionId="normalized-content"

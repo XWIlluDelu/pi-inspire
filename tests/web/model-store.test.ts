@@ -320,6 +320,49 @@ describe("native model controls", () => {
     };
   }
 
+  it("uses refreshed capabilities for thinking commands and cycles without changing the selected identity", async () => {
+    const model: ModelOption = {
+      provider: "fixture",
+      id: "reasoner",
+      reasoning: false,
+    };
+    const catalog: ModelOption[] = [
+      {
+        ...model,
+        reasoning: true,
+        thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+      },
+    ];
+    let thinkingLevel = "high";
+    const levels: string[] = [];
+    const snapshot = () =>
+      activeSnapshot({ model, thinkingLevel, availableModels: [] });
+    installFetch((url, init) => {
+      if (url.startsWith("/api/bootstrap"))
+        return { body: bootstrapPayload({ snapshot: snapshot() }) };
+      if (url.startsWith("/api/snapshot")) return { body: snapshot() };
+      if (url.startsWith("/api/models")) return { body: { models: catalog } };
+      if (url.startsWith("/api/control/thinking")) {
+        thinkingLevel = String(jsonBody(init).level);
+        levels.push(thinkingLevel);
+        return { body: { model, thinkingLevel } };
+      }
+      return baseRoutes(url, init);
+    });
+    const store = new AppStore();
+    await store.init("token");
+    await store.refreshModels();
+    await store.cycleThinking();
+    expect(levels).toEqual(["xhigh"]);
+    await store.sendPrompt("/thinking max");
+    await vi.waitFor(() => expect(store.getState().thinkingLevel).toBe("max"));
+    expect(levels).toEqual(["xhigh", "max"]);
+    expect(store.getState().model).toMatchObject({
+      provider: model.provider,
+      id: model.id,
+    });
+  });
+
   it("cycles cached native scope in configured order, serializes rapid model/thinking keys, and adopts committed scope without changing the current model", async () => {
     const host = controlHost(),
       store = new AppStore();

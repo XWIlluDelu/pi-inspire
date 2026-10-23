@@ -49,6 +49,10 @@ import type {
   UserTurnIndexPage,
   UserTurnTranscriptPage,
 } from "../shared/contracts";
+import type {
+  ToolPresentationConfiguration,
+  PresentationAdapterInfo,
+} from "../shared/tool-presentation-config";
 import type { HerdrEnhancementStatus } from "../shared/herdr";
 import type {
   HostRestartOperation,
@@ -1285,6 +1289,16 @@ export function createApi(token: string | null = null) {
     ) => fetchResourceContent(token, id, sessionId, options),
     respondExtensionUi: (payload: Record<string, unknown>) =>
       post<{ ok: boolean }>(token, "/api/extension-ui", payload),
+    setPresentationAdapterEnabled: (id: string, enabled: boolean) =>
+      request<{
+        configuration: ToolPresentationConfiguration;
+        adapters?: PresentationAdapterInfo[];
+        warning?: string;
+        preferences: InspirePreferences;
+      }>(token, "/api/presentation-adapters/" + encodeURIComponent(id), {
+        method: "PATCH",
+        body: JSON.stringify({ enabled }),
+      }),
     preferences: () => request<InspirePreferences>(token, "/api/preferences"),
     savePreferences: (patch: Partial<InspirePreferences>) =>
       request<InspirePreferences>(token, "/api/preferences", {

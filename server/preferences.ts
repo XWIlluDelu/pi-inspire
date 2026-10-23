@@ -13,6 +13,7 @@ import {
   READING_WIDTHS,
   SESSION_ACTION_IDS,
 } from "../shared/contracts.js";
+import { adapterIdSchema } from "../shared/tool-presentation-config.js";
 import { acquireFileLock } from "./file-lock.mjs";
 import { inspireConfigDirectory } from "./platform-paths.mjs";
 import { ProjectDirectoryStore } from "./project-directories.js";
@@ -22,6 +23,10 @@ import { requestError } from "./request-error.js";
 // so a patch schema derived from defaulted fields would fill absent keys and
 // clobber stored values on every patch.
 const preferenceFields = {
+  adapterEnabled: z
+    .record(adapterIdSchema, z.boolean())
+    .refine((value) => Object.keys(value).length <= 32)
+    .optional(),
   herdrEnabled: z.boolean(),
   theme: z.enum(["system", "light", "dark"]),
   palette: z
@@ -280,7 +285,17 @@ export class PreferencesStore {
 
   async patch(value: unknown): Promise<InspirePreferences> {
     const patch = preferencesPatchSchema.parse(value);
-    return this.mutate(() => patch);
+    return this.mutate((current) => ({
+      ...patch,
+      ...(patch.adapterEnabled
+        ? {
+            adapterEnabled: {
+              ...current.adapterEnabled,
+              ...patch.adapterEnabled,
+            },
+          }
+        : {}),
+    }));
   }
 
   /** The read/transform/write stays in one serialized preference operation,

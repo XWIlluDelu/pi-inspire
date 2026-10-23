@@ -44,6 +44,7 @@ import { Transcript, type TranscriptNavigation } from "./components/Transcript";
 import { Welcome, type WelcomeInheritance } from "./components/Welcome";
 import { BrandLogo, Wordmark } from "./components/Wordmark";
 import { isComposingKeyboardEvent } from "./keyboard-input";
+import { thinkingLevelLabel } from "./model-options";
 import { shallowEqual, store, useAppState } from "./store";
 import { useInspectionHistory } from "./use-inspection-history";
 import { hasActiveModal } from "./use-modal-focus";
@@ -421,7 +422,7 @@ const ConversationStage = memo(function ConversationStage() {
             </div>
             <div>
               <dt>Thinking</dt>
-              <dd>{state.thinkingLevel}</dd>
+              <dd>{thinkingLevelLabel(state.thinkingLevel)}</dd>
             </div>
           </dl>
           {state.readOnlyReason === "terminal" ? (

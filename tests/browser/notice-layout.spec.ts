@@ -39,6 +39,16 @@ for (const touch of [false, true]) {
       });
       const notice = page.locator(".notice--error");
       await expect(notice).toContainText(error);
+      await page.setViewportSize({ width: 1280, height: 844 });
+      await expect
+        .poll(() =>
+          page.locator(".notices").evaluate((el) => {
+            const search = document.querySelector(".transcript-search")!;
+            return el.getBoundingClientRect().top - search.getBoundingClientRect().bottom;
+          }),
+        )
+        .toBeCloseTo(8, 0);
+      await page.setViewportSize({ width: 568, height: 420 });
       const startNew = async () => {
         await page
           .getByRole("button", { name: "Toggle navigation", exact: true })

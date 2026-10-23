@@ -160,8 +160,8 @@ describe("Models settings configuration and ownership", () => {
     });
     expect(snapshot.saved.defaultThinkingLevel).toBeNull();
     fireEvent.click(thinking);
-    fireEvent.click(screen.getByRole("option", { name: "xhigh" }));
-    await waitFor(() => expect(thinking).toHaveTextContent("xhigh"));
+    fireEvent.click(screen.getByRole("option", { name: "Xhigh" }));
+    await waitFor(() => expect(thinking).toHaveTextContent("Xhigh"));
     fireEvent.click(
       screen.getByRole("radio", { name: "Default: Claude Haiku" }),
     );
@@ -179,7 +179,7 @@ describe("Models settings configuration and ownership", () => {
     const reloadedThinking = await screen.findByRole("combobox", {
       name: "Default thinking",
     });
-    expect(reloadedThinking).toHaveTextContent("xhigh");
+    expect(reloadedThinking).toHaveTextContent("Xhigh");
     expect(
       document.querySelector(".models-default-value__name"),
     ).toHaveTextContent("Claude Haiku");
@@ -222,9 +222,9 @@ describe("Models settings configuration and ownership", () => {
     await screen.findByTitle("missing/gpt-5 · Not currently available");
     expect(
       screen.getByRole("combobox", { name: "Default thinking" }),
-    ).toHaveTextContent("xhigh");
+    ).toHaveTextContent("Xhigh");
     expect(screen.getByText(/This project uses GPT 5\./)).toBeInTheDocument();
-    expect(screen.getByText(/This project uses low\./)).toBeInTheDocument();
+    expect(screen.getByText(/This project uses Low\./)).toBeInTheDocument();
   });
 
   it("reports a project settings failure without disabling global preference edits", async () => {
@@ -1026,7 +1026,7 @@ describe("Models settings configuration and ownership", () => {
       );
       expect(
         screen.getByRole("combobox", { name: "Default thinking" }),
-      ).toHaveTextContent("xhigh");
+      ).toHaveTextContent("Xhigh");
       expect(screen.queryByText("Old worker warning")).not.toBeInTheDocument();
 
       fixture.state =
@@ -1037,7 +1037,7 @@ describe("Models settings configuration and ownership", () => {
       await screen.findByText("Current worker warning");
       expect(
         screen.getByRole("combobox", { name: "Default thinking" }),
-      ).toHaveTextContent("low");
+      ).toHaveTextContent("Low");
       expect(fixture.host.readModelSettings).toHaveBeenLastCalledWith({
         sessionId: transition === "session switch" ? "two" : "one",
       });
@@ -1045,7 +1045,7 @@ describe("Models settings configuration and ownership", () => {
       await act(async () => readback.resolve(oldSettings));
       expect(
         screen.getByRole("combobox", { name: "Default thinking" }),
-      ).toHaveTextContent("low");
+      ).toHaveTextContent("Low");
       expect(screen.getByText("Current worker warning")).toBeInTheDocument();
       expect(screen.queryByText("Old worker warning")).not.toBeInTheDocument();
     },

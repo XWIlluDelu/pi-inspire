@@ -113,7 +113,7 @@ it.each([
     const settings = within(screen.getByLabelText("Session settings"));
     expect(settings.getByText("example/session-model")).toBeInTheDocument();
     expect(settings.getByText("Thinking")).toBeInTheDocument();
-    expect(settings.getByText("xhigh")).toBeInTheDocument();
+    expect(settings.getByText("Xhigh")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Model" })).toBeNull();
     expect(
       screen.queryByRole("combobox", { name: "Thinking level" }),
@@ -268,7 +268,7 @@ it("retains session settings through terminal handoff until explicit continuatio
 
   const settings = within(await screen.findByLabelText("Session settings"));
   expect(settings.getByText("example/terminal-model")).toBeVisible();
-  expect(settings.getByText("high")).toBeVisible();
+  expect(settings.getByText("High")).toBeVisible();
   expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
   expect(
     fetch.mock.calls.some(([url]) => url === "/api/sessions/execution"),
@@ -304,6 +304,6 @@ it("does not substitute a catalog model when read-only selection is unknown", as
 
   const settings = within(await screen.findByLabelText("Session settings"));
   expect(settings.getByText("Model unavailable")).toBeInTheDocument();
-  expect(settings.getByText("off")).toBeInTheDocument();
+  expect(settings.getByText("Off")).toBeInTheDocument();
   expect(settings.queryByText("Kimi K3")).toBeNull();
 });

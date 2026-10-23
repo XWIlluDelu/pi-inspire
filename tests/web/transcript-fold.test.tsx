@@ -1,8 +1,14 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Transcript } from "../../src/components/Transcript";
 import { ResponseActivityFold } from "../../src/components/transcript-fold";
+import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
+import { checkpointAdapterConfiguration } from "./fixtures/extension-adapters";
+
+beforeEach(() =>
+  configureToolPresentationRegistry(checkpointAdapterConfiguration),
+);
 
 function transcript(
   messages: React.ComponentProps<typeof Transcript>["messages"],
@@ -24,6 +30,7 @@ function transcript(
 }
 
 afterEach(() => {
+  configureToolPresentationRegistry();
   vi.useRealTimers();
 });
 

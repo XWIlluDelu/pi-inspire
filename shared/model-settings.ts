@@ -1,3 +1,4 @@
+import type { PiCommand } from "./commands.js";
 import type {
   ModelIdentity,
   ModelOption,
@@ -20,6 +21,8 @@ export interface CommonModelOption extends ModelIdentity {
 }
 export interface ModelCatalogResponse {
   models: ModelOption[];
+  /** Registered extension commands observable before starting a session. */
+  commands?: PiCommand[];
   defaults?: NewSessionDefaults;
   /** Addressed source selection, requested only for pending New inheritance. */
   selection?: NewSessionDefaults;
