@@ -653,7 +653,7 @@ export function ModelList({
             </div>
           ))}
         </div>
-        {!options.length ? (
+        {!options.length && !status ? (
           <div className="picker__empty">
             <p>{query ? "No matching models" : "No models available yet."}</p>
             {!query && emptyAction ? emptyAction : null}

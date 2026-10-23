@@ -82,6 +82,17 @@ describe("preference persistence", () => {
     },
   );
 
+  it("persists session action order as its own preference field", async () => {
+    const store = new AppStore();
+    await store.init("token");
+    const order = ["copy-id", "export", "rename", "clone", "terminal"] as const;
+    store.setSessionActionOrder([...order]);
+    expect(store.getState().prefs.sessionActionOrder).toEqual(order);
+    await vi.waitFor(() =>
+      expect(saved.at(-1)).toEqual({ sessionActionOrder: order }),
+    );
+  });
+
   it("queues rapid changes in order, each patch carrying only its own field", async () => {
     const store = new AppStore();
     await store.init("token");

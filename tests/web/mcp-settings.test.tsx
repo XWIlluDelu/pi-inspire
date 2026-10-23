@@ -24,6 +24,7 @@ const fixture = vi.hoisted(() => ({
   },
   host: {
     readMcpConfig: vi.fn(),
+    readMcpConnection: vi.fn(),
     editMcpConfig: vi.fn(),
     runPaletteNativeCommand: vi.fn(),
     getState: vi.fn(),
@@ -298,6 +299,93 @@ it.each(["unselected", "unavailable"] as const)(
   },
 );
 
+it("loads a saved URL only on request and keeps it out of untouched edits", async () => {
+  fixture.host.readMcpConnection.mockResolvedValue({
+    url: "https://docs.example.com/mcp",
+  });
+  render(<McpSettings active owner={{ sessionId: "one" }} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Edit user server docs" }),
+  );
+  expect(screen.getByLabelText("Server URL")).toHaveValue("");
+  expect(fixture.host.readMcpConnection).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Show saved URL" }));
+  await waitFor(() =>
+    expect(screen.getByLabelText("Server URL")).toHaveValue(
+      "https://docs.example.com/mcp",
+    ),
+  );
+  expect(fixture.host.readMcpConnection).toHaveBeenCalledWith(
+    { sessionId: "one" },
+    { scope: "user", name: "docs", revision: "a".repeat(64) },
+  );
+  fireEvent.submit(
+    screen.getByRole("button", { name: "Save" }).closest("form")!,
+  );
+  await waitFor(() =>
+    expect(fixture.host.editMcpConfig).toHaveBeenCalledWith(
+      { sessionId: "one" },
+      expect.objectContaining({ values: {} }),
+    ),
+  );
+});
+
+it("loads saved arguments for a single-item edit without replacing unrelated fields", async () => {
+  const config = snapshot();
+  Object.assign(config.files[0]!.entries[0]!, {
+    transport: "stdio",
+    command: "npx",
+    urlConfigured: false,
+    argumentCount: 4,
+  });
+  fixture.host.readMcpConfig.mockResolvedValue(config);
+  fixture.host.readMcpConnection.mockResolvedValue({
+    args: ["-y", "@example/mcp", "--port", "3000"],
+  });
+  render(<McpSettings active owner={{ sessionId: "one" }} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Edit user server docs" }),
+  );
+  expect(screen.queryByLabelText("Argument 1")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Show saved arguments" }));
+  await screen.findByLabelText("Argument 4");
+  expect(screen.getByLabelText("Argument 1")).toHaveFocus();
+  expect(screen.getByLabelText("Argument 2")).toHaveValue("@example/mcp");
+  fireEvent.change(screen.getByLabelText("Argument 4"), {
+    target: { value: "4000" },
+  });
+  fireEvent.submit(
+    screen.getByRole("button", { name: "Save" }).closest("form")!,
+  );
+  await waitFor(() =>
+    expect(fixture.host.editMcpConfig).toHaveBeenCalledWith(
+      { sessionId: "one" },
+      expect.objectContaining({
+        values: { args: ["-y", "@example/mcp", "--port", "4000"] },
+      }),
+    ),
+  );
+});
+
+it("withdraws a pending connection reveal when the Settings owner changes", async () => {
+  const pending = deferred<{ url: string }>();
+  fixture.host.readMcpConnection.mockReturnValue(pending.promise);
+  const view = render(<McpSettings active owner={{ sessionId: "one" }} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Edit user server docs" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Show saved URL" }));
+  fixture.state.sessionId = "two";
+  view.rerender(<McpSettings active owner={{ sessionId: "two" }} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Edit user server docs" }),
+  );
+  await act(async () => {
+    pending.resolve({ url: "https://old-owner.example/mcp" });
+  });
+  expect(screen.getByLabelText("Server URL")).toHaveValue("");
+});
+
 it("preserves secret drafts across transport changes and saves only the selected transport", () => {
   const save = vi.fn();
   render(
@@ -308,6 +396,7 @@ it("preserves secret drafts across transport changes and saves only the selected
       busy={false}
       error={null}
       onSave={save}
+      onReadConnection={fixture.host.readMcpConnection}
       onCancel={() => {}}
     />,
   );
@@ -388,6 +477,7 @@ it("shows CIMD registration, keeps incompatible client fields out of valid edits
       busy={false}
       error={null}
       onSave={save}
+      onReadConnection={fixture.host.readMcpConnection}
       onCancel={() => {}}
     />,
   );
@@ -423,6 +513,7 @@ it("shows CIMD registration, keeps incompatible client fields out of valid edits
       busy={false}
       error={null}
       onSave={save}
+      onReadConnection={fixture.host.readMcpConnection}
       onCancel={() => {}}
     />,
   );
@@ -465,6 +556,7 @@ it("saves tool rules in displayed order and removes deleted rules", () => {
       busy={false}
       error={null}
       onSave={save}
+      onReadConnection={fixture.host.readMcpConnection}
       onCancel={() => {}}
     />,
   );
@@ -533,7 +625,17 @@ it("starts a project customization with inherited policy and saves only the chos
     screen.queryByRole("combobox", { name: "Configuration target" }),
   ).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Server URL")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  const save = screen.getByRole("button", { name: "Save" });
+  expect(save).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Add tool rule" }));
+  fireEvent.change(screen.getByLabelText("Tool name or pattern"), {
+    target: { value: "read_*" },
+  });
+  expect(save).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Remove tool rule 1" }));
+  expect(save).toBeDisabled();
+  fireEvent.submit(save.closest("form")!);
+  expect(fixture.host.editMcpConfig).not.toHaveBeenCalled();
   fireEvent.click(enabled);
   fireEvent.click(screen.getByRole("option", { name: "Disabled" }));
   fireEvent.submit(

@@ -1,22 +1,43 @@
-import { type RefObject, useCallback, useEffect, useRef } from "react";
+import { ChevronDown, ChevronUp, GripVertical } from "lucide-react";
+import {
+  type RefObject,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
+import type { SessionActionId } from "../../shared/contracts";
 import { isComposingKeyboardEvent } from "../keyboard-input";
+import {
+  SESSION_ACTION_LABELS,
+  SESSION_ACTION_VISIBLE_COUNT,
+} from "../session-actions";
+import { useCopied } from "../use-copied";
 import {
   type FloatingMenuConstraints,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
+import { useSessionActionReorder } from "../use-session-action-reorder";
 
 const CONSTRAINTS: FloatingMenuConstraints = {
   gap: 4,
   horizontalMargin: 8,
   verticalMargin: 4,
-  maxWidth: 216,
-  maxHeight: 240,
+  maxWidth: 268,
+  maxHeight: 320,
   preferredDirection: "down",
 };
 
+const EXPANDED_CONSTRAINTS = { ...CONSTRAINTS, maxHeight: 360 };
+
 export function SessionActionsMenu({
   anchorRef,
+  sessionId,
+  actionOrder,
+  onOrderChange,
+  onCopyError,
   cloneDisabled,
   renameDisabled = false,
   onRename,
@@ -27,6 +48,10 @@ export function SessionActionsMenu({
   onClose,
 }: {
   anchorRef: RefObject<HTMLButtonElement | null>;
+  sessionId: string;
+  actionOrder: readonly SessionActionId[];
+  onOrderChange: (order: SessionActionId[]) => void;
+  onCopyError: (message: string) => void;
   cloneDisabled: boolean;
   renameDisabled?: boolean;
   onRename: () => void;
@@ -37,6 +62,50 @@ export function SessionActionsMenu({
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const overflowRef = useRef<HTMLButtonElement | null>(null);
+  const focusRevealed = useRef(false);
+  const [expanded, setExpanded] = useState(false);
+  const { copied, copying, copy } = useCopied({
+    scope: sessionId,
+    onError: onCopyError,
+  });
+  const actions: Record<
+    SessionActionId,
+    { run: () => void; disabled?: boolean }
+  > = {
+    rename: { run: onRename, disabled: renameDisabled },
+    "copy-id": {
+      run: () => {
+        if (!copying) void copy(sessionId);
+      },
+    },
+    clone: { run: onClone, disabled: cloneDisabled },
+    terminal: {
+      run: () => onTerminal?.(),
+      disabled: terminalDisabled || !onTerminal,
+    },
+    export: { run: onExport },
+  };
+  const reorder = useSessionActionReorder({
+    order: actionOrder,
+    onChange: onOrderChange,
+    containerRef: menuRef,
+    onReorderStart: () => setExpanded(true),
+  });
+  const visibleActions = expanded
+    ? reorder.order
+    : reorder.order.slice(0, SESSION_ACTION_VISIBLE_COUNT);
+
+  useLayoutEffect(() => {
+    if (expanded && focusRevealed.current) {
+      focusRevealed.current = false;
+      const firstRevealed = menuRef.current?.querySelector<HTMLButtonElement>(
+        "[data-overflow-action]:not(:disabled)",
+      );
+      (firstRevealed ?? overflowRef.current)?.focus({ preventScroll: true });
+      firstRevealed?.scrollIntoView({ block: "nearest" });
+    }
+  }, [expanded]);
   const resolveTarget = useCallback(() => {
     const anchor = anchorRef.current;
     if (!anchor) return null;
@@ -47,11 +116,15 @@ export function SessionActionsMenu({
       observe: [anchor],
     };
   }, [anchorRef]);
-  const placement = useFloatingMenuPlacement(true, resolveTarget, CONSTRAINTS);
+  const placement = useFloatingMenuPlacement(
+    true,
+    resolveTarget,
+    expanded ? EXPANDED_CONSTRAINTS : CONSTRAINTS,
+  );
   const attachMenu = useCallback((node: HTMLDivElement | null) => {
     menuRef.current = node;
     node
-      ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+      ?.querySelector<HTMLButtonElement>("[data-session-action]:not(:disabled)")
       ?.focus({ preventScroll: true });
   }, []);
 
@@ -86,8 +159,17 @@ export function SessionActionsMenu({
         width: placement.width,
         maxHeight: placement.maxHeight,
       }}
+      onPointerMove={reorder.onPointerMove}
+      onPointerUp={reorder.onPointerUp}
+      onPointerCancel={reorder.onPointerCancel}
+      onLostPointerCapture={reorder.onPointerCancel}
       onKeyDown={(event) => {
         if (isComposingKeyboardEvent(event.nativeEvent)) return;
+        if (reorder.onKeyDown(event)) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         if (event.key === "Escape" || event.key === "Tab") {
           if (event.key === "Escape") {
             event.preventDefault();
@@ -121,33 +203,69 @@ export function SessionActionsMenu({
         }
       }}
     >
-      <button
-        type="button"
-        role="menuitem"
-        disabled={renameDisabled}
-        onClick={onRename}
-      >
-        Rename session
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        disabled={cloneDisabled}
-        onClick={onClone}
-      >
-        Clone current branch
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        onClick={onTerminal}
-        disabled={terminalDisabled || !onTerminal}
-      >
-        Use in terminal…
-      </button>
-      <button type="button" role="menuitem" onClick={onExport}>
-        Export session…
-      </button>
+      {visibleActions.map((id, index) => (
+        <div
+          key={id}
+          role="none"
+          className="session-actions-menu__row"
+          data-session-action-id={id}
+          data-dragging={reorder.draggingId === id || undefined}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            data-session-action
+            data-copied={id === "copy-id" && copied ? "true" : undefined}
+            data-overflow-action={
+              index >= SESSION_ACTION_VISIBLE_COUNT || undefined
+            }
+            disabled={actions[id].disabled}
+            aria-disabled={id === "copy-id" ? copying : undefined}
+            aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+            onClick={actions[id].run}
+          >
+            {id === "copy-id" && copied
+              ? "ID copied"
+              : SESSION_ACTION_LABELS[id]}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="session-actions-menu__handle"
+            aria-label={`Reorder ${SESSION_ACTION_LABELS[id]}`}
+            aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+            title="Drag to reorder · Alt+↑/↓ to move"
+            onPointerDown={(event) => reorder.startDrag(event, id)}
+          >
+            <GripVertical size={14} aria-hidden />
+          </button>
+        </div>
+      ))}
+      {actionOrder.length > SESSION_ACTION_VISIBLE_COUNT ? (
+        <>
+          <div className="session-actions-menu__separator" aria-hidden />
+          <button
+            key="overflow"
+            ref={overflowRef}
+            type="button"
+            role="menuitem"
+            className="session-actions-menu__overflow"
+            aria-expanded={expanded}
+            onClick={() => {
+              focusRevealed.current = !expanded;
+              setExpanded(!expanded);
+            }}
+          >
+            <span>{expanded ? "Fewer actions" : "More actions"}</span>
+            <span className="session-actions-menu__overflow-icon" aria-hidden>
+              {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </span>
+          </button>
+        </>
+      ) : null}
+      <span className="sr-only" role="status">
+        {copied ? "Session ID copied" : ""}
+      </span>
     </div>,
     document.body,
   );

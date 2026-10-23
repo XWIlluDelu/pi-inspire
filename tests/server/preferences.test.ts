@@ -8,7 +8,10 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { acquireFileLock } from "../../server/file-lock.mjs";
 import { PreferencesStore } from "../../server/preferences.js";
-import { defaultPreferences } from "../../shared/contracts.js";
+import {
+  defaultPreferences,
+  SESSION_ACTION_IDS,
+} from "../../shared/contracts.js";
 
 const roots: string[] = [];
 
@@ -124,12 +127,34 @@ describe("PreferencesStore validation", () => {
     });
   });
 
-  it("loads valid fields in memory but refuses to overwrite one invalid field", async () => {
+  it("persists session action order and appends actions absent from an older saved order", async () => {
+    const { path, store } = await fixture();
+    expect((await store.read()).sessionActionOrder).toEqual(SESSION_ACTION_IDS);
+    await store.patch({
+      theme: "dark",
+      sessionActionOrder: ["export", "rename", "clone", "terminal"],
+    });
+    const order = ["export", "rename", "clone", "terminal", "copy-id"];
+    expect(await new PreferencesStore(path).read()).toMatchObject({
+      theme: "dark",
+      sessionActionOrder: order,
+    });
+    await expect(
+      store.patch({ sessionActionOrder: ["rename", "rename"] }),
+    ).rejects.toBeDefined();
+    await expect(
+      store.patch({ sessionActionOrder: ["unknown"] }),
+    ).rejects.toBeDefined();
+    expect((await store.read()).sessionActionOrder).toEqual(order);
+  });
+
+  it("preserves invalid and unknown fields while saving unrelated settings and allows field repair", async () => {
     const { path, store } = await fixture();
     const raw = JSON.stringify({
       theme: "dark",
       launch: "continue",
       toolVisibility: "impossible",
+      futurePreference: { retained: true },
       pinnedSessionIds: ["session-a"],
     });
     await writeFile(path, raw);
@@ -142,10 +167,51 @@ describe("PreferencesStore validation", () => {
       pinnedSessionIds: ["session-a"],
     });
     expect(inspected.warning).toMatch(/toolVisibility.*left unchanged/);
-    await expect(store.patch({ projectDisplay: "path" })).rejects.toMatchObject(
-      { status: 409 },
-    );
-    expect(await readFile(path, "utf8")).toBe(raw);
+    await expect(
+      store.patch({ projectDisplay: "path" }),
+    ).resolves.toMatchObject({
+      projectDisplay: "path",
+      toolVisibility: "dynamic",
+    });
+    await store.setTerminalSession("terminal-a", true);
+    await store.removeSession("session-a");
+    expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
+      toolVisibility: "impossible",
+      futurePreference: { retained: true },
+      projectDisplay: "path",
+      pinnedSessionIds: [],
+      terminalSessionIds: ["terminal-a"],
+    });
+    await store.patch({ toolVisibility: "compact" });
+    expect((await store.inspect()).warning).toBeUndefined();
+    expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
+      toolVisibility: "compact",
+      futurePreference: { retained: true },
+    });
+    await expect(
+      store.patch({ futurePreference: false }),
+    ).rejects.toBeDefined();
+  });
+
+  it("stores only valid model identity from a full model selection", async () => {
+    const { path, store } = await fixture();
+    const identity = { provider: "fixture", id: "model" };
+    await store.patch({
+      recentModelIds: [
+        {
+          ...identity,
+          name: "Display name",
+          reasoning: true,
+          thinkingLevelMap: { high: "high" },
+        },
+      ],
+    });
+    expect(JSON.parse(await readFile(path, "utf8")).recentModelIds).toEqual([
+      identity,
+    ]);
+    await expect(
+      store.patch({ recentModelIds: [{ ...identity, id: "" }] }),
+    ).rejects.toBeDefined();
   });
 
   it("reports malformed JSON repeatedly and leaves its bytes untouched", async () => {

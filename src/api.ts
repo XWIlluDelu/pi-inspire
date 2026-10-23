@@ -60,6 +60,8 @@ import type {
   McpConfigEdit,
   McpConfigSnapshot,
   McpConfigWriteResult,
+  McpConnectionRead,
+  McpConnectionValues,
 } from "../shared/mcp";
 import type {
   ModelCatalogResponse,
@@ -860,6 +862,15 @@ export function createApi(token: string | null = null) {
       request<McpConfigSnapshot>(
         token,
         `/api/mcp-config?${settingsQuery(owner)}`,
+      ),
+    mcpConnection: (
+      owner: { sessionId?: string; cwd?: string },
+      input: McpConnectionRead,
+    ) =>
+      request<McpConnectionValues>(
+        token,
+        `/api/mcp-config/connection?${settingsQuery(owner)}`,
+        { method: "POST", body: JSON.stringify(input) },
       ),
     editMcpConfig: (
       owner: { sessionId?: string; cwd?: string },

@@ -322,7 +322,6 @@ describe("model settings routes", () => {
     expect(response.status).toBe(200);
     expect(response.body.snapshot.models).toEqual(models);
     expect(runtime.refreshModels).toHaveBeenCalledWith("fixture");
-    expect(runtime.snapshot).toHaveBeenCalledOnce();
     expect(read).toHaveBeenCalledOnce();
     expect(availableModels).not.toHaveBeenCalled();
     expect(catalog.peek(cwd)).toBeUndefined();
@@ -332,6 +331,67 @@ describe("model settings routes", () => {
     expect((await catalog.read(cwd)).defaults.model?.id).toBe("first");
     expect(query).toHaveBeenCalledTimes(2);
   });
+
+  it.each(["workspace", "session"])(
+    "keeps file edits available when the %s model catalog fails",
+    async (target) => {
+      const { app, runtime, availableModels } = routes();
+      const error = new Error("PRIVATE CATALOG DETAIL");
+      availableModels.mockRejectedValue(error);
+      runtime.snapshot.mockRejectedValue(error);
+      runtime.refreshModels.mockRejectedValue(error);
+      const owner = target === "session" ? { sessionId: "fixture" } : { cwd };
+      const before = await request(app)
+        .get("/api/model-settings")
+        .query(owner)
+        .expect(200);
+      expect(before.body.models).toEqual([]);
+      expect(before.body.providers).toContainEqual(
+        expect.objectContaining({ id: "fixture" }),
+      );
+      expect(before.body.modelsWarning).toMatch(
+        /Saved configuration is still editable/,
+      );
+      expect(JSON.stringify(before.body)).not.toContain(
+        "PRIVATE CATALOG DETAIL",
+      );
+      const saved = await request(app)
+        .patch("/api/model-settings/config")
+        .query(owner)
+        .send({
+          revision: before.body.configRevision,
+          edit: {
+            kind: "model",
+            provider: "fixture",
+            originalId: "first",
+            values: { id: "first", name: "Repaired" },
+          },
+        })
+        .expect(200);
+      expect(saved.body.saved).toBe(true);
+      expect(saved.body.snapshot.providers[0].models[0].name).toBe("Repaired");
+      expect(saved.body.snapshot.modelsWarning).toBe(before.body.modelsWarning);
+      const preferences = await request(app)
+        .patch("/api/model-settings")
+        .query(owner)
+        .send({
+          revision: saved.body.snapshot.settingsRevision,
+          patch: { defaultThinkingLevel: "medium" },
+        })
+        .expect(200);
+      expect(preferences.body.saved).toBe(true);
+      expect(preferences.body.snapshot.saved.defaultThinkingLevel).toBe(
+        "medium",
+      );
+      expect(
+        (await readJson(join(agent, "models.json"))).providers.fixture.models[0]
+          .name,
+      ).toBe("Repaired");
+      expect(
+        (await readJson(join(agent, "settings.json"))).defaultThinkingLevel,
+      ).toBe("medium");
+    },
+  );
 
   it("keeps committed saves when the worker or readback retires", async () => {
     const { app, runtime } = routes();
@@ -356,7 +416,9 @@ describe("model settings routes", () => {
       });
     expect(saved.status).toBe(200);
     expect(saved.body.saved).toBe(true);
-    expect(saved.body.warning).toMatch(/Configuration saved/);
+    expect(saved.body.snapshot.modelsWarning).toMatch(
+      /Model availability could not load/,
+    );
     expect(saved.body.snapshot.providers[0].models[0].name).toBe("Committed");
     expect(runtime.sessionCwd).toHaveBeenCalledOnce();
 
@@ -382,6 +444,23 @@ describe("model settings routes", () => {
 });
 
 describe("native configuration round trips", () => {
+  it("keeps global preferences editable when trusted project settings cannot be parsed", async () => {
+    new ProjectTrustStore(agent).set(cwd, true);
+    const projectPath = join(cwd, ".pi", "settings.json");
+    await writeFile(projectPath, "{broken project settings");
+    const before = await snapshot();
+    expect(before.settingsError).toBeUndefined();
+    expect(before.projectSettingsError).toMatch(/Project settings/);
+    expect(before.saved.defaultThinkingLevel).toBe("high");
+    await service.savePreferences(before.settingsRevision, {
+      defaultThinkingLevel: "medium",
+    });
+    expect((await snapshot()).saved.defaultThinkingLevel).toBe("medium");
+    expect(await readFile(projectPath, "utf8")).toBe(
+      "{broken project settings",
+    );
+  });
+
   it("keeps saved defaults distinct from project precedence, per-model thinking and ordered native patterns", async () => {
     new ProjectTrustStore(agent).set(cwd, true);
     await writeFile(

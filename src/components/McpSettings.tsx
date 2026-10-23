@@ -217,6 +217,7 @@ function McpConfiguration({
             busy={busy}
             error={error}
             onSave={submit}
+            onReadConnection={(input) => store.readMcpConnection(owner, input)}
             onCancel={closeEditor}
           />
         </section>

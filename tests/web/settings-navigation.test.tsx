@@ -91,6 +91,7 @@ describe("Settings component UX and navigation", () => {
       .map((region) => region.getAttribute("id"));
     expect(behaviorRegions).toEqual([
       "settings-section-behavior",
+      "settings-section-session-actions",
       "settings-section-pi-settings",
     ]);
 

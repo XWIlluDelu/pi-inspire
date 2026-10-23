@@ -174,6 +174,7 @@ const SessionIdent = memo(function SessionIdent({
     cwd,
     project,
     projectDisplay,
+    sessionActionOrder,
     cloneDisabled,
     readOnlyReason,
     externallyOwned,
@@ -193,6 +194,7 @@ const SessionIdent = memo(function SessionIdent({
       cwd: state.cwd,
       project: state.cwd ? projectNameFromCwd(state.cwd) : null,
       projectDisplay: state.prefs.projectDisplay,
+      sessionActionOrder: state.prefs.sessionActionOrder,
       cloneDisabled: branchActionsBlocked(state),
       readOnlyReason: state.readOnlyReason,
       externallyOwned: Boolean(
@@ -341,6 +343,10 @@ const SessionIdent = memo(function SessionIdent({
         {menuOpen ? (
           <SessionActionsMenu
             anchorRef={titleRef}
+            sessionId={sessionId}
+            actionOrder={sessionActionOrder}
+            onOrderChange={store.setSessionActionOrder}
+            onCopyError={store.reportCopyError}
             cloneDisabled={cloneDisabled}
             renameDisabled={Boolean(readOnlyReason)}
             onClose={closeMenu}

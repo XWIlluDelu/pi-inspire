@@ -68,6 +68,7 @@ test("unavailable-project history keeps its reading surface at desktop and phone
     await expect(
       page.getByRole("menuitem", { name, exact: true }),
     ).toBeDisabled();
+  await page.getByRole("menuitem", { name: "More actions" }).click();
   await page
     .getByRole("menuitem", { name: "Export session…", exact: true })
     .click();
