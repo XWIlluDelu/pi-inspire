@@ -142,12 +142,6 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
           : [
               ["--user", "enable", "inspire-terminal.service"],
               ["--user", "enable", "--now", "inspire-host.service"],
-              [
-                "--user",
-                "enable",
-                "--now",
-                "inspire-idle-maintenance-restart.timer",
-              ],
             ],
       );
       expect(controls.some((args) => args.includes("stop"))).toBe(false);

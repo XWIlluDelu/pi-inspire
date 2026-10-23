@@ -148,6 +148,46 @@ describe.runIf(process.platform === "linux")(
         );
       },
     );
+    it("keeps inherited default instance values under the installed service", async () => {
+      const f = await fixture(false);
+      const { inspireRuntimeDirectory } = await import(
+        "../server/platform-paths.mjs"
+      );
+      const { createHash } = await import("node:crypto");
+      const stateName = createHash("sha256")
+        .update(f.root)
+        .update("\0")
+        .update("127.0.0.1")
+        .update("\0")
+        .update("4587")
+        .digest("hex");
+      // The child uses this fixture's runtime directory, not the real user instance.
+      f.env.XDG_RUNTIME_DIR = f.root;
+      f.env.INSPIRE_HOST = "127.0.0.1";
+      f.env.INSPIRE_PORT = "4587";
+      f.env.INSPIRE_STATE_PATH = join(
+        inspireRuntimeDirectory({ environment: f.env }),
+        stateName + ".json",
+      );
+      const output = f.run(["restart"]);
+      expect(output).toContain(
+        "Restarted INSΠRE Host. Terminals remain running.",
+      );
+      const mutations = (await f.log())
+        .split("\n")
+        .filter((line) => /--user (stop|restart)/u.test(line));
+      expect(mutations).toEqual(["--user restart inspire-host.service"]);
+    });
+    it("enables the Host without opting into scheduled restarts", async () => {
+      const f = await fixture(false);
+      f.run(["service", "enable-host"]);
+      expect(await f.log()).toContain(
+        "--user enable --now inspire-host.service",
+      );
+      expect(await f.log()).not.toContain(
+        "inspire-idle-maintenance-restart.timer",
+      );
+    });
     it("rejects unknown flags before service inspection", async () => {
       const f = await fixture(false);
       expect(() => f.run(["restart", "--unknown"])).toThrow(

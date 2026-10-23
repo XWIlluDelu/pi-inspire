@@ -251,14 +251,37 @@ function openUrl(url) {
   attempt(0);
 }
 
-function explicitInstanceEnvironment() {
-  return [
-    "INSPIRE_STATE_PATH",
-    "INSPIRE_HOST",
-    "INSPIRE_PORT",
-    "INSPIRE_TOKEN",
-    "INSPIRE_MOCK",
-  ].some((key) => Object.hasOwn(process.env, key));
+function defaultInstanceStatePath(host, port) {
+  const key = createHash("sha256")
+    .update(root)
+    .update("\0")
+    .update(host)
+    .update("\0")
+    .update(String(port))
+    .digest("hex");
+  return join(inspireRuntimeDirectory(), `${key}.json`);
+}
+
+async function targetsServiceInstance() {
+  const context = instanceContext();
+  if (
+    context.host !== "127.0.0.1" ||
+    context.port !== 4587 ||
+    resolve(context.statePath) !==
+      resolve(defaultInstanceStatePath(context.host, context.port)) ||
+    process.env.INSPIRE_MOCK === "1"
+  )
+    return false;
+  // Inherited defaults still address the installed service. A credential override
+  // can delegate only when the authenticated running instance already uses it.
+  if (process.env.INSPIRE_TOKEN) {
+    const current = await inspect(context);
+    return (
+      current.kind === "healthy" &&
+      current.state.token === process.env.INSPIRE_TOKEN
+    );
+  }
+  return true;
 }
 
 function isHostServiceExec() {
@@ -268,16 +291,16 @@ function isHostServiceExec() {
   );
 }
 
-function shouldManageHostService() {
+async function shouldManageHostService() {
   return (
     process.platform === "linux" &&
     !isHostServiceExec() &&
-    !explicitInstanceEnvironment()
+    (await targetsServiceInstance())
   );
 }
 
 async function manageHostService(action, quiet = false) {
-  if (!shouldManageHostService()) return { code: 3, output: "" };
+  if (!(await shouldManageHostService())) return { code: 3, output: "" };
   const result = await childResult(
     process.execPath,
     [hostServiceController, "--root", root, action],
@@ -293,16 +316,8 @@ function instanceContext() {
   const port = Number.parseInt(process.env.INSPIRE_PORT ?? "4587", 10);
   if (!Number.isInteger(port) || port < 1 || port > 65_535)
     throw new Error("INSPIRE_PORT must be a valid TCP port");
-  const key = createHash("sha256")
-    .update(root)
-    .update("\0")
-    .update(host)
-    .update("\0")
-    .update(String(port))
-    .digest("hex");
   const statePath =
-    process.env.INSPIRE_STATE_PATH ??
-    join(inspireRuntimeDirectory(), `${key}.json`);
+    process.env.INSPIRE_STATE_PATH ?? defaultInstanceStatePath(host, port);
   return {
     root,
     host,
@@ -332,9 +347,13 @@ function reportUnavailableHost(state) {
   if (state.httpControlVersion !== 1) {
     console.error("The running Host predates authenticated readiness.");
     if (state.shutdownControlVersion === 1 || process.platform === "linux") {
-      console.error("Use 'inspire restart' to upgrade it through safe local controls.");
+      console.error(
+        "Use 'inspire restart' to upgrade it through safe local controls.",
+      );
     } else {
-      console.error("Stop it through its existing service manager or inspected process controls before starting the new Host.");
+      console.error(
+        "Stop it through its existing service manager or inspected process controls before starting the new Host.",
+      );
     }
     return;
   }
@@ -346,7 +365,9 @@ async function showInstanceUrl(result, open = false) {
   const url = await instanceLaunchUrl(result.state);
   console.log(url ?? result.url);
   if (!url) {
-    console.error("Could not authenticate a local pairing link. Retry after checking the Host.");
+    console.error(
+      "Could not authenticate a local pairing link. Retry after checking the Host.",
+    );
     return;
   }
   if (open) openUrl(url);
@@ -364,7 +385,9 @@ async function showExisting(context, mock) {
     return "blocked";
   }
   if (result.kind === "mode-conflict") {
-    console.error("This port is occupied by INSΠRE in a different runtime mode.");
+    console.error(
+      "This port is occupied by INSΠRE in a different runtime mode.",
+    );
     console.error("Use 'inspire stop' before switching modes.");
     return "blocked";
   }
@@ -430,10 +453,7 @@ function terminalRuntimeCommand() {
 
 function runtimeCommand() {
   if (distribution) return [process.execPath, [releaseRuntime]];
-  return [
-    process.execPath,
-    ["--import", "tsx", sourceRuntime],
-  ];
+  return [process.execPath, ["--import", "tsx", sourceRuntime]];
 }
 
 async function superviseHost(context, mock, lease) {
@@ -472,7 +492,8 @@ async function superviseHost(context, mock, lease) {
   try {
     for (;;) {
       await lease.assertOwned();
-      if (stopping || (await consumeStopRequest(context.stopRequestPath))) return 0;
+      if (stopping || (await consumeStopRequest(context.stopRequestPath)))
+        return 0;
       if (restarting) await requireFreePort(context);
       if (stopping) return 0;
       const [command, args] = runtimeCommand();
@@ -489,7 +510,9 @@ async function superviseHost(context, mock, lease) {
         cwd: root,
         env: environment,
         windowsHide: true,
-        stdio: pageRestart ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
+        stdio: pageRestart
+          ? ["inherit", "inherit", "inherit", "ipc"]
+          : "inherit",
       });
       const restart = createLauncherRestartSupervisor(child, {
         enabled: pageRestart,
@@ -740,17 +763,27 @@ async function stopHost(allowService = true) {
 async function prepareRestart() {
   await ensureDependencies();
   await ensureBuild();
-  const entry = join(supportRoot, distribution ? "restart-preflight.js" : "restart-preflight.ts");
-  const args = distribution ? [entry] : [join(root, "node_modules", "tsx", "dist", "cli.mjs"), entry];
-  if (await runInherited(process.execPath, args) !== 0)
-    throw new Error("Restart preparation failed. The running Host was not stopped.");
+  const entry = join(
+    supportRoot,
+    distribution ? "restart-preflight.js" : "restart-preflight.ts",
+  );
+  const args = distribution
+    ? [entry]
+    : [join(root, "node_modules", "tsx", "dist", "cli.mjs"), entry];
+  if ((await runInherited(process.execPath, args)) !== 0)
+    throw new Error(
+      "Restart preparation failed. The running Host was not stopped.",
+    );
 }
 
 async function restartHost(all = false) {
   // Refuse unsupported full restarts before any build or process mutation.
   const inspected = await manageHostService("status", true);
   if (all && inspected.code !== 0 && inspected.code !== 5) {
-    console.error(inspected.output || "Full restart requires this installation's Linux systemd services. No service was restarted.");
+    console.error(
+      inspected.output ||
+        "Full restart requires this installation's Linux systemd services. No service was restarted.",
+    );
     return 1;
   }
   if (![0, 3, 5].includes(inspected.code)) {
@@ -764,7 +797,9 @@ async function restartHost(all = false) {
   if (service.code === 0) return 0;
   if (service.code !== 3) return service.code;
   if (all) {
-    console.error("The managed services changed. No local fallback restart was attempted.");
+    console.error(
+      "The managed services changed. No local fallback restart was attempted.",
+    );
     return 1;
   }
 
@@ -785,7 +820,10 @@ async function statusHost() {
       return 0;
     }
     if (result.kind === "unavailable") reportUnavailableHost(result.state);
-    else console.error("INSΠRE system service is active, but its Host is not reachable.");
+    else
+      console.error(
+        "INSΠRE system service is active, but its Host is not reachable.",
+      );
     return 1;
   }
   if (service.code !== 3 && service.code !== 5) {
@@ -807,8 +845,7 @@ async function statusHost() {
     await showInstanceUrl(result);
     return 0;
   }
-  if (result.kind === "unavailable")
-    reportUnavailableHost(result.state);
+  if (result.kind === "unavailable") reportUnavailableHost(result.state);
   else console.error("INSΠRE is not running.");
   return 1;
 }
@@ -819,7 +856,9 @@ async function waitReady() {
     const result = await inspect(context, false);
     if (result.kind === "healthy") return 0;
     if (result.kind === "mode-conflict") {
-      console.error("The system service started in the wrong INSΠRE runtime mode.");
+      console.error(
+        "The system service started in the wrong INSΠRE runtime mode.",
+      );
       return 1;
     }
     const mainPid = Number.parseInt(process.env.MAINPID ?? "", 10);
@@ -848,7 +887,9 @@ function requireLinuxService() {
 }
 
 function printHelp() {
-  console.log(`Usage:\n  inspire                 start the configured service or local Host\n  inspire restart         prepare and restart Host; keep terminals running\n  inspire restart --all   prepare and restart Host + terminals (Linux services)\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire token           show the verified Host token for manual pairing\n  inspire recover-session <folder>  restore a session recovery bundle\n  inspire terminal <status|stop|restart> [--force]  manage this instance\'s terminals\n  inspire mock            run the UI-only mock Host\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`);
+  console.log(
+    `Usage:\n  inspire                 start the configured service or local Host\n  inspire restart         prepare and restart Host; keep terminals running\n  inspire restart --all   prepare and restart Host + terminals (Linux services)\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire token           show the verified Host token for manual pairing\n  inspire recover-session <folder>  restore a session recovery bundle\n  inspire terminal <status|stop|restart> [--force]  manage this instance\'s terminals\n  inspire mock            run the UI-only mock Host\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`,
+  );
 }
 
 async function main() {
@@ -881,9 +922,17 @@ async function main() {
         return 64;
       }
       await ensureDependencies();
-      const entry = join(supportRoot, distribution ? "session-recovery-entry.js" : "session-recovery-entry.ts");
+      const entry = join(
+        supportRoot,
+        distribution
+          ? "session-recovery-entry.js"
+          : "session-recovery-entry.ts",
+      );
       const recoveryArgs = distribution ? [entry] : ["--import", "tsx", entry];
-      return runInherited(process.execPath, [...recoveryArgs, resolveUserPath(args[0], invocationCwd)]);
+      return runInherited(process.execPath, [
+        ...recoveryArgs,
+        resolveUserPath(args[0], invocationCwd),
+      ]);
     }
     case "prepare-restart":
       if (args.length) return 64;
@@ -896,7 +945,10 @@ async function main() {
       const result = await inspect(instanceContext());
       if (result.kind !== "healthy") {
         if (result.kind === "unavailable") reportUnavailableHost(result.state);
-        else console.error("No authenticated matching Host; no token was displayed.");
+        else
+          console.error(
+            "No authenticated matching Host; no token was displayed.",
+          );
         return 1;
       }
       console.log(result.state.token);
@@ -925,8 +977,17 @@ async function main() {
       return 0;
     case "terminal": {
       await ensureDependencies();
-      const entry = join(supportRoot, distribution ? "terminal-control-entry.js" : "terminal-control-entry.ts");
-      return runInherited(process.execPath, [...(distribution ? [] : ["--import", "tsx"]), entry, ...args]);
+      const entry = join(
+        supportRoot,
+        distribution
+          ? "terminal-control-entry.js"
+          : "terminal-control-entry.ts",
+      );
+      return runInherited(process.execPath, [
+        ...(distribution ? [] : ["--import", "tsx"]),
+        entry,
+        ...args,
+      ]);
     }
     case "terminal-daemon": {
       await ensureDependencies();
@@ -948,7 +1009,9 @@ async function main() {
         "status-host": "status",
       };
       if (!controls[action]) {
-        console.error("Use: inspire service [install-host|enable-host|disable-host|status-host]");
+        console.error(
+          "Use: inspire service [install-host|enable-host|disable-host|status-host]",
+        );
         return 64;
       }
       return runNodeEntry(hostServiceController, [controls[action]]);

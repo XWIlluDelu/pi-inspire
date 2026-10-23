@@ -6,6 +6,7 @@ import { HostRestartSettings } from "../../src/components/HostRestartSettings";
 const fixture = vi.hoisted(() => ({
   state: {} as Record<string, unknown>,
   start: vi.fn(async () => {}),
+  clearRecovery: vi.fn(async () => {}),
 }));
 vi.mock("../../src/controllers/host-restart-controller", () => ({
   hostRestartClient: {
@@ -13,6 +14,7 @@ vi.mock("../../src/controllers/host-restart-controller", () => ({
     snapshot: () => fixture.state,
     refresh: async () => {},
     start: fixture.start,
+    clearRecovery: fixture.clearRecovery,
   },
 }));
 beforeEach(() => {
@@ -30,8 +32,12 @@ beforeEach(() => {
     notice: null,
   };
   fixture.start.mockClear();
+  fixture.clearRecovery.mockClear();
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 describe("Settings restart controls", () => {
   it("uses concise confirmation, cancels without mutation, and binds the selected scope", () => {
     render(<HostRestartSettings />);
@@ -165,6 +171,35 @@ describe("Settings restart controls", () => {
       screen.getByRole("alertdialog").querySelector(".button--danger")!,
     );
     expect(fixture.start).toHaveBeenCalledWith("host", "fixture-host", false);
+  });
+
+  it("requires confirmation to clear local tracking and keeps an active Host restart fenced", () => {
+    fixture.state.blocked = true;
+    fixture.state.error = "Browser restart recovery is unreadable";
+    fixture.state.status = {
+      hostId: "fixture-host",
+      available: true,
+      allAvailable: true,
+      operation: { id: "already-sent", scope: "host", phase: "submitted" },
+    };
+    const confirm = vi
+      .fn()
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    vi.stubGlobal("confirm", confirm);
+    render(<HostRestartSettings />);
+    const clear = screen.getByRole("button", {
+      name: "Clear local restart record…",
+    });
+    fireEvent.click(clear);
+    expect(fixture.clearRecovery).not.toHaveBeenCalled();
+    fireEvent.click(clear);
+    expect(fixture.clearRecovery).toHaveBeenCalledOnce();
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining("does not cancel"),
+    );
+    expect(fixture.start).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Restart Host" })).toBeDisabled();
   });
 
   it("blocks controls when service ownership is unavailable", () => {

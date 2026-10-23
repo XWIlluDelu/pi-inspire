@@ -69,13 +69,16 @@ export class HostRestartClient {
         )
           throw new Error();
         this.patch({ pending: value });
+      } else {
+        this.patch({ pending: null });
       }
       this.loaded = true;
+      this.patch({ blocked: false, error: null });
     } catch {
       this.patch({
         blocked: true,
         error:
-          "Restart storage is unavailable or invalid. Controls are blocked.",
+          "The browser's restart recovery record is unreadable. Restart requests are disabled; Host status remains available.",
       });
       throw new Error("Restart storage unavailable");
     }
@@ -84,10 +87,13 @@ export class HostRestartClient {
     try {
       if (pending) this.storage().setItem(KEY, JSON.stringify(pending));
       else this.storage().removeItem(KEY);
+      this.patch({ blocked: false, error: null });
     } catch {
+      this.loaded = false;
       this.patch({
         blocked: true,
-        error: "Restart storage is unavailable. Controls are blocked.",
+        error:
+          "The browser could not save its restart recovery record. Recheck status or clear the local record before trying another restart.",
       });
       throw new Error("Restart storage unavailable");
     }
@@ -100,9 +106,17 @@ export class HostRestartClient {
     return this.observation;
   };
   private async observe(): Promise<void> {
+    let restored = false;
     try {
       this.restore();
+      restored = true;
+    } catch {
+      // Recovery bookkeeping cannot prevent a read of the actual Host state.
+    }
+    try {
       const status = await this.api.hostRestartStatus();
+      this.patch({ status, ...(restored ? { error: null } : {}) });
+      if (!restored) return;
       const pending = this.state.pending;
       if (pending && pending.hostId !== status.hostId) {
         this.persist(null);
@@ -118,7 +132,6 @@ export class HostRestartClient {
         this.persist(null);
         this.patch({ pending: null });
       }
-      this.patch({ status, error: null });
     } catch {
       if (!this.state.blocked)
         this.patch({
@@ -127,6 +140,22 @@ export class HostRestartClient {
         });
     }
   }
+  /** Explicitly discard browser tracking, never cancel or resend a Host restart. */
+  clearRecovery = async (): Promise<void> => {
+    if (this.state.sending) return;
+    try {
+      this.persist(null);
+      this.loaded = true;
+      this.patch({
+        pending: null,
+        notice:
+          "Local restart tracking cleared. This does not cancel a restart already sent.",
+      });
+      await this.refresh();
+    } catch {
+      // The storage error remains visible; do not discard an in-memory identity.
+    }
+  };
   start = async (
     scope: HostRestartScope,
     hostId: string,
@@ -177,7 +206,10 @@ export class HostRestartClient {
         });
       }
     } catch {
-      this.patch({ error: "Restart request not confirmed. Check its status." });
+      if (!this.state.blocked)
+        this.patch({
+          error: "Restart request not confirmed. Check its status.",
+        });
     } finally {
       this.patch({ sending: false });
       await this.refresh();
