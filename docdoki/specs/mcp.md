@@ -36,6 +36,8 @@ remains decided but deferred until public runtime interfaces can support it.
 
 ## File configuration
 
+### Editing and inheritance
+
 Settings → MCP groups file entries under **User** and **Project**, with quiet source-path captions.
 Rows show name, transport, file-disabled state and an understated same-name project override, not
 connection health. Add sits beside the section title; entry rows share Models' quiet Edit/Remove
@@ -56,6 +58,8 @@ without copying its URL, program, environment or credentials. Existing project e
 ordinary Edit/Remove actions. Removing a policy override restores user inheritance; saving or removing
 still affects files only, with the existing new-session/explicit Reload boundary.
 
+### File scope and trust
+
 The Host derives the user file from public `getAgentDir()/mcp.json`. The project file is
 `<cwd>/.pi/mcp.json`; an addressed session's Host-resolved directory wins over a supplied directory.
 The start surface uses its selected directory. Clients cannot supply arbitrary configuration paths.
@@ -69,6 +73,8 @@ inherit the user connection and override `enabled`, `exposure`, and `toolExposur
 preserves that shape. Absent enabled/exposure fields display **Inherit from user**, and choosing it
 removes the corresponding project field. Pi applies project configuration only when the project is
 trusted. Reading or saving a project file grants no trust and loads no project code.
+
+### Native fields and protected values
 
 The form supports stdio command, argument rows, working directory and environment; streamable HTTP
 URL, headers and OAuth client fields; description, request timeout in seconds, file-enabled state,
@@ -97,6 +103,8 @@ values when blank; removal is explicit. Argument edits replace that list while p
 fields. Exposure rule editing replaces its ordered map in displayed order, including
 removed/re-added patterns; other edits leave it untouched. Configuration removal does not delete
 Pi's separate OAuth credential store.
+
+### Saving and applying
 
 Writes validate the edited native fields, use revision-checked locks and atomic restrictive-mode
 replacement, and preserve legitimate user-file symlinks. Regular files lock their native resolved
@@ -143,20 +151,14 @@ Configured MCP tools and Codemode composition continue through Pi.
 
 ## Checks
 
-- `tests/server/mcp-config.test.ts`: secret-safe projections, unexecuted hooks, source-preserving
-  edits, policy-only inheritance, sequential/concurrent namespace collisions, invalid files, conflicts,
-  path authority, revision-scoped explicit connection reads, user-file independence from missing
-  or unselected projects, and merged OAuth registration validation.
-- `tests/server/mcp-native.integration.test.ts`: native file consumption, trusted precedence,
-  policy creation from an absent override, editing and removal back to user inheritance without
-  credential duplication, file/loaded-worker separation, and native
-  loading of saved CIMD, dynamic and pre-registered OAuth combinations.
-- `tests/web/mcp-settings.test.tsx`: stale-owner withdrawal, HTTP add, duplicate keys, displayed
-  rule order, inherited policy creation/editing and explicit OAuth registration changes with incompatible-field removal.
-- `tests/browser/mcp-settings.spec.ts`: desktop and narrow Chromium with isolated real file
-  service, scoped edits, protected values, draft/category continuity, conflict refresh, explicit
-  Reload, stdio arguments, and narrow policy creation, editing and removal.
-Use isolated configuration and local fixtures, not personal credentials or external accounts.
+Use isolated native configuration and local fixtures to verify:
+
+- source-preserving edits, policy inheritance, namespace collisions, merged OAuth validation and
+  revision/file/symlink authority;
+- secret-safe snapshots and explicit revision-bound value reads without executing hooks;
+- draft retention across category changes/conflicts, withdrawal on owner changes, and scoped edits
+  in desktop and narrow layouts;
+- native loading after save, with a distinct explicit Reload boundary for existing workers.
 
 ## Related interfaces
 

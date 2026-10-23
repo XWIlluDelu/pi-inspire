@@ -48,21 +48,12 @@ from tab-session storage for the same Host origin; New has a separate text parti
 project references remain memory-only. Handoff, explicit clear and deletion remove saved text;
 failed/unknown-delivery recovery uses the same draft path. Denied browser storage leaves in-memory
 editing and sending usable. Empty partitions are discarded; non-empty work remains until sent or
-removed. `ComposerController` owns artifact partitions and delivery through `AppStore`, the sole
-browser snapshot and cross-domain commit authority. Append-only transcript updates preserve the
-active textarea, focus and selection.
+removed. Draft partitions, artifact handoff and snapshot commits share one browser authority.
+Append-only transcript updates preserve the active textarea, focus and selection.
 
-The compact input keeps its vertical spacing, control order and icon-only send button. Input text,
-the Steer/Queue control's outer edge and the model label share one horizontal content anchor,
-including on phones; selector hit areas retain their padding. Controls wrap only as needed;
-phone Steer/Queue buttons split their delivery row equally. At widths up to 420px, Model and
-Thinking sit together with an 8px token gap on the selector row. Model shrinks without growing into
-spare space; long labels truncate while Thinking keeps its full width. Send is the rightmost action
-in both idle and busy states; Stop appears immediately to its left in visual and DOM/tab order.
-The Send element stays mounted across idle/busy transitions. Stop retains its square icon, compact
-geometry and filled error-color treatment, including cancel-compaction and shell Stop. Conflict
-recovery keeps its warning treatment and remains the sole action when delivery is unavailable.
-Send colors and delivery behavior are unchanged.
+The input, delivery row and toolbar follow [[design-system]]. Send remains mounted across idle/busy
+transitions. Conflict recovery is abortable and remains the sole action when delivery is unavailable.
+
 The textarea grows with content.
 Expand appears at the top right only when actual compact layout requires internal scrolling. The same
 input expands within the main column, preserving text, artifacts, focus and selection. Collapse
@@ -108,15 +99,11 @@ The explicit picker recovers transient search failures with bounded backoff in i
 query and visibility scope; dismissal or transport replacement retires old work. Recovery only reads
 candidates and never adds a reference. Persistent failures retain local feedback.
 
-The explicit project-file picker (Composer and Welcome) keeps its compact single-line rows and
-existing placement/keyboard behavior. Each result uses the shared 13px monochrome file-type icon,
-filename at weight 500, and parent directory without repeating the filename; root files have no
-directory caption. Same-line directory captions have a secondary `@` cue; it is visual only,
-not part of path values, titles, accessibility labels, or search matches. Literal query-term matches
-use weight 600 and inherited colors with no background.
-Full relative paths remain in titles/accessibility labels. Long filenames elide without overflowing;
-other picker surfaces and referenced-file chips are unchanged. The search row owns its full-width
-bottom boundary across the input and hidden-files toggle; only input focus applies the accent color.
+The explicit picker in Composer and Welcome uses compact single-line rows with weight-500 filenames
+and parent-directory labels under [[design-system]]. A secondary `@` cue precedes same-line directory
+captions; it is visual only, excluded from paths, titles, accessible names and matching. Long filenames
+elide without overflowing. The search row's bottom boundary spans the input and hidden-files toggle;
+only input focus applies its accent color.
 
 Both searches offer default-off Show hidden files for dot names and native hidden attributes,
 independently of Git ignore. Incomplete scans are reported; Git failure does not block discovery.
@@ -125,13 +112,10 @@ revalidates canonical regular files within the workspace at the prompt boundary 
 Selected paths become JSON string literals under an explicit context heading, so filename newlines
 and list markers cannot manufacture instructions.
 
-Inline `@` completion shares the picker/Files file-type icons, parent-only directory captions and
-literal-term emphasis. Full relative paths remain in titles and accessible option labels; root files
-omit directory captions. Its existing desktop two-column/narrow stacked layout and virtualized
-candidate handling are retained. A wrapping filename keeps its file-type icon centered on the first
-line; same-row directory captions share that line's text baseline. Slash command titles keep the
-command name in the primary color and render native argument hints at weight 400 in the muted color;
-descriptions and model/thinking argument candidates are unchanged.
+Inline `@` completion uses the same file labels, with a desktop two-column and narrow stacked
+layout and a virtualized candidate list. A wrapping filename keeps its icon centered on the first
+line; same-row directory captions share that line's baseline. Slash command titles use primary ink
+for the command name and muted, weight-400 text for native argument hints.
 
 `@` insertion replaces only the active token, preserving sentence position and repeated references.
 Paths with spaces are quoted; unfinished and quoted queries accept spaces. Committed references stay
@@ -262,10 +246,9 @@ unverified owners, unknown metadata and possible deliveries are not deletion evi
 private upload copies can be removed, never original user/project files. Initial storage failures
 may be retried on the same Host after repair.
 
-There is no session/Trash reference scan, directory registration, volume continuity proof or offline
-trust migration. Ordinary session reads, startup, sending and deletion do not depend on these former
-maintenance writes. Delivered-file reclamation is an explicit operator choice with a warning that
-all surviving references will break; see [cleanup operations](../../docs/host.md#uploaded-file-retention-and-cleanup).
+Delivered-file reclamation requires an explicit operator action that warns all surviving references
+will break. Ordinary startup, session reads, sending and deletion do not depend on reference scans
+or retention-maintenance writes. See [cleanup operations](../../docs/host.md#uploaded-file-retention-and-cleanup).
 
 Preview failure does not invalidate an otherwise current staging handle. Ready handles survive
 same-Host reconnect. Changed Host authority invalidates old handles in every partition, including
@@ -278,15 +261,9 @@ automatic upload recovery. Upload cleanup cannot revoke confirmed prompt accepta
 
 ## Delivery and Pending
 
-The writing surface uses a 12px radius and a quiet border. Spacing, not an internal divider rule,
-separates writing/delivery from the metadata/action row. Attachments stay compact with control-radius
-corners; Steer/Queue keep their dedicated row rather than joining the model toolbar. Command feedback
-uses neutral surfaces and semantic status icons/text, not whole-panel status washes or competing
-running glows. Failed command receipts are unframed inline feedback, with bounded wrapping and an
-independent compact Dismiss action; action-rich results can still use local containers. Extension widgets retain
-Pi's above/below placement, with a small identity/copy header and readable preformatted content.
-Extension questions remain distinct forms with a clear source label and directly selectable options;
-keyboard focus, deadlines, cancellation, and touch targets are unchanged.
+[[design-system]] owns Composer geometry, state halos and command-feedback presentation. Extension
+widgets retain Pi's above/below-editor placement; questions remain separately attributed forms with
+their own keyboard focus, deadlines and cancellation under [[pi-integration]].
 
 Submission synchronously hands the exact draft/artifacts to an independent operation, including the
 first Welcome message, leaving the editor ready for the next input. Delayed receipts cannot clear
@@ -304,13 +281,8 @@ Unchanged-draft retries after uncertain acceptance preserve the exact operation 
 [[session-transport]], even when the default delivery mode has since changed.
 
 `running`, `retrying`, `queued` and `compacting` share Host/browser delivery authority. Active work
-exposes equal-width Steer / Queue choices in their own compact mode row; the selection controls placeholder and send
-accessible name. Compaction accepts bounded Host-held input at Pi's actual boundary under
-[[pi-integration]]. Only Running gives the whole Composer a slow theme-colored breathing halo.
-A pointer-transparent pseudo-element carries a close, low-opacity halo without a broad outer wash.
-Its 3.6-second cycle animates opacity, not the Composer's geometry or shadow properties. The underlying
-surface keeps its normal border and its independent focus border while typing. Reduced-motion Running
-keeps the static low-intensity halo; Retry/Compaction retain their separate static semantic halos.
+exposes Steer / Queue; the selected mode controls the placeholder and Send's accessible name.
+Compaction accepts bounded Host-held input at Pi's actual boundary under [[pi-integration]].
 Conflict recovery remains abortable but is not active busy ownership.
 
 The adjacent activity surface names Retry/Compaction from session state, including automatic work and
@@ -318,21 +290,18 @@ reconnect. Available attempt/reason details enrich the label; missing details ne
 Ordinary, compaction and summary retry keep short status separate from wrapping reasons. Executing
 and failed tools remain in their chronological activity entries.
 
-Pending sits at Transcript's end, immediately showing ordered Steer/Queue input. As secondary
-information, the panel deliberately uses 0.75 overall opacity, a transparent background and a quiet
-border at rest; hover or focus within restores full opacity, the shared surface and normal hairline.
-One header contains the total and actions ordered Copy, Return, Clear. All header and item actions
-use emphasized presentation: they remain visible and inherit the panel's 0.75-to-1 opacity without
-additional button-level dimming. [[design-system]] owns the shared presentation model. A fully supplied
-single-mode queue names its mode in that header; mixed queues use quiet group labels without group
-counts or per-row S/Q badges. Bounded previews with omitted entries retain a generic header and visible
-group labels, since the supplied groups cannot establish the whole queue's mode. ActivityBar keeps its
-compact text count as a native Jump to Pending button, with a neutral interaction background. Activation aligns the current queue's
-start below the floating reading controls, scrolls only the transcript and focuses the Pending
-region without focusing the editor. It releases latest-follow; keyboard and pointer activation
-share the same action. The region adds no ordinary Tab stop and retains the existing focus-within
-emphasis and idle dimming. The count disappears when the queue is empty. Text previews preserve beginning and end, up to three leading lines and one trailing
-line within 512 characters, with explicit middle ellipsis.
+Pending sits at Transcript's end, immediately showing ordered Steer/Queue input. Its header contains
+the total and actions ordered Copy, Return, Clear; panel emphasis and action visibility follow
+[[design-system]]. A fully supplied single-mode queue names its mode in that header. Mixed queues use
+quiet group labels without group counts or per-row S/Q badges. Bounded previews with omitted entries
+retain a generic header and visible group labels, because they cannot establish the whole queue's mode.
+
+The activity surface's compact count is a native Jump to Pending button with neutral interaction
+feedback; it disappears when the queue is empty. Pointer and keyboard activation align the queue's
+start below floating reading controls, scroll only Transcript and focus the Pending region, not the
+editor. Latest-follow remains active only when the destination is at the latest boundary. The region
+adds no ordinary Tab stop. Text previews retain up to three leading lines and one trailing line within
+512 characters, separated by an explicit middle ellipsis.
 Short text stays whole; omitted rows retain total and omitted counts. Previews use the shared
 user-content projection, showing file names instead of model-facing transport instructions.
 Preview length and truncation describe this readable text; Copy and Return retain the exact input.
@@ -393,7 +362,7 @@ available without cancelling the operation. Reopening observes the same task and
 submission. Completion downloads the file and reports the result even while the dialog is closed;
 replacing the Host connection retires the old task's UI ownership.
 
-Resource commands use one transient `ComposerInput` preparation step with review and explicit submit.
+Resource commands use one transient preparation editor with review and explicit submit.
 It does not replace or consume message partitions. Initial caret follows `/command ` without resetting
 later selections. Current command text determines semantics: extension handlers execute immediately;
 template/skill prompts expose Steer/Queue only during applicable work. Failed preparation stays open
@@ -439,9 +408,8 @@ after-token receipt estimates stay labelled and are not fabricated after reload.
 
 ## Model controls and New
 
-Toolbar order is model, thinking, project files and attachments, then context, optional Stop and
-rightmost Send (with conflict recovery following the exception above).
-[[design-system]] owns sizing; project identity is in the topbar under [[workbench]].
+[[design-system]] owns toolbar order and picker geometry; [[workspace-layout]] owns project identity
+in the topbar.
 
 Read-only history, including sessions handed to the terminal, retains a static readout of the viewed
 session's selected provider/model identity and thinking effort above its read-only notice, sharing
@@ -454,8 +422,7 @@ a catalog choice. These readouts neither expose selection controls nor initiate 
 or ownership acquisition.
 
 The model picker groups/searches Pi choices by provider/ID/display name, with Common first and a
-bounded successful-only provider-local MRU; unavailable MRU stays saved but hidden. Its popover is
-capped at 384px wide and 456px high, further constrained by the live viewport. Thinking labels and
+bounded successful-only provider-local MRU; unavailable MRU stays saved but hidden. Thinking labels and
 option generation are shared by Welcome, the active composer, read-only settings, and model defaults;
 only their display labels are capitalized, not their native values. Welcome and the active composer
 also share the selector's sizing, capability filter and display logic. Configurable extension controls

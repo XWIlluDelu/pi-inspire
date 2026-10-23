@@ -83,49 +83,35 @@ process from its profile. Host restart reconnects to the daemon. Machine restart
 as exited, without rerunning commands. Live and restored tabs share headless-state setup; failed PTY
 creation disposes emulator resources before publishing a tab.
 
-The daemon receives the user's exported environment through direct and installed-service launch paths
-under [[host-lifecycle]]. User-supplied `NODE_ENV` remains authoritative. Host restart leaves existing
-terminal environments unchanged.
+The daemon receives exported variables under [[host-lifecycle]]; Host restart leaves existing
+terminal environments unchanged. Profile discovery accepts executable files without implicit cwd
+lookup. Copied Windows environments preserve case-insensitive names and quoted PATH entries containing
+spaces or semicolons.
 
-Shell profiles are discovered from that environment. Windows variable names remain case-insensitive
-in copied environments, and quoted PATH entries can contain spaces and semicolons. Discovery accepts
-executable files, not directories, without adding implicit cwd lookup. POSIX shells, PowerShell,
-Command Prompt, and WSL use `node-pty` with true-color xterm metadata. Supported wrappers preserve normal shell initialization
-and emit cwd/command markers. Unsupported or failed integration still provides an ordinary PTY.
+POSIX shells, PowerShell, Command Prompt and WSL use a PTY with true-color xterm metadata. Shell
+integration preserves native initialization and user bindings while reporting cwd/command boundaries.
+Unsupported integration provides an ordinary PTY. Backend selection must preserve marker/output
+ordering; Windows uses the selected bundled ConPTY without silently falling back to the OS backend.
+[[platform-compatibility#PTY backends and command markers]] records the package, rationale and native evidence.
 
-PowerShell loads the app-owned integration with a process-only execution policy, including on a
-Windows client inheriting Restricted. It never writes CurrentUser/LocalMachine policy; enforced
-Group Policy retains precedence. A failed cmdlet cannot inherit a stale zero native exit code and
-report success. Zsh follows user changes to ZDOTDIR at each startup stage, restores its native
-unset/exported state before user files and after startup, and respects RCS/readonly controls.
-User login/logout files run through their normal locations, without a second replay.
+- PowerShell loads app-owned integration with a process-only execution policy. User/machine policy
+  is unchanged and enforced Group Policy takes precedence. The execution marker follows the accepted
+  command returned by `PSConsoleHostReadLine`, preserving PSReadLine bindings, multiline input,
+  profiles, launch flags and the original prompt. A failed cmdlet cannot inherit a stale successful
+  native exit code.
+- Zsh follows ZDOTDIR at each startup stage, restoring its native unset/exported state for user files
+  and the final shell. RCS/readonly controls and normal login/logout locations remain authoritative;
+  user files run once.
+- Bash retains a real login shell and native profile/logout selection. Integration may not replay
+  profiles from a non-login shell, change HOME/ENV, inject stdin/history commands or discard
+  non-exported state through re-exec. Its first-prompt bootstrap respects user PROMPT_COMMAND;
+  overridden/readonly hooks may leave an ordinary PTY. Non-login shells retain native bashrc behavior.
+  Accepted-command labels come from the accepted history entry, using PS0 where available and the
+  best-effort DEBUG path otherwise. Preserve original prompt status, tracing and inheritance;
+  unavailable markers must not invent command boundaries.
 
-Bash login profiles retain a real login shell and native profile/logout selection. Integration must
-not simulate login by replaying profile files from a non-login rcfile, change HOME/ENV, inject a
-command into stdin/history, or re-exec away non-exported shell state. A first-prompt bootstrap
-installs markers after native login startup when the user's PROMPT_COMMAND permits it. A user
-override/readonly hook may prevent integration; preserve that configuration and provide an ordinary
-PTY rather than reporting invented command boundaries. Non-login Bash uses its normal bashrc path,
-not login profiles. Both modern PS0 and legacy DEBUG hooks read the accepted history entry for the
-command label; fc-based relative lookup can select a previous line while expanding command substitutions.
-
-The native dependency is pinned to `@lydell/node-pty@1.2.0-beta.15`, with per-platform prebuilt binaries.
-Windows explicitly uses its bundled ConPTY (`useConptyDll: true`) so shell markers and rendered output
-remain ordered; there is no silent OS-backend fallback. The sampled win32-x64 payload is Microsoft
-ConPTY `1.25.260303002-preview`. This tested prerelease/experimental backend choice avoids the observed
-cleanup hang and Linux build requirements of upstream stable `node-pty@1.1.0`.
-
-PowerShell wraps the existing `PSConsoleHostReadLine` and emits the execution marker only after the
-reader returns the accepted command. It does not rebind Enter or emit execution markers for unfinished
-multiline input. Existing PSReadLine handlers, profiles, launch flags and the original prompt remain
-in charge. Backend ordering and this post-input boundary are both required for exact last-output copy.
-
-Shell verification follows current installed dependencies, not a historical-version matrix.
-Windows prefers the available PowerShell 7 profile; explicit profile selections remain available.
-Bash uses `PS0` for accepted-command markers and preserves each prompt callback's original status.
-The existing DEBUG-based path is best-effort for shells without that interface: it must not invent
-command boundaries or change user tracing/inheritance. Dedicated old-Bash builds are not part of
-the support baseline.
+Verification targets installed, supported shells. Windows prefers available PowerShell 7 while
+retaining explicit profile choices; dedicated historical-Bash builds are outside the support baseline.
 
 Close and restart require confirmed PTY exit. A bounded output-drain allowance follows hard
 termination, and the Host RPC deadline covers the daemon's stop budget. Unconfirmed exit retains the
@@ -169,18 +155,14 @@ untracked writes. Every control mutation requires an operation identity and rece
 identity is refused before dispatch. Valid identified requests rejected during route validation carry
 the matching operation ID and definite rejected outcome, including nested terminal routes.
 
-The in-process development owner follows the same mutation contract. Ordinary Host launch leaves
-an unverified listening owner's PTYs running. Diagnostics distinguish an absent endpoint from an
-unverified connection, retain the connection error, and never equate missing lifecycle controls with
-incompatible data. Terminal errors reuse the shared notice card, with complete Copy and a separate
-Dismiss action; selecting text does not dismiss them.
+The in-process development owner follows the same mutation contract. Diagnostics distinguish absent
+endpoints, unverified connections and data-protocol incompatibility. Terminal errors use the shared
+notice card with complete Copy and separate Dismiss; text selection does not dismiss them.
 
-A genuinely incompatible owner needs an explicit upgrade after its work is finished. Recovery
-guidance names the portable read-only status control before any replacement decision. An owner
-without verified maintenance controls needs its existing service manager or an inspected manual
-shutdown; commands never infer authority from an unverified listener's claimed PID.
-Settings → System → Host → Restart all remains limited to installed Linux services and is not a
-migration shortcut for an independently owned transient daemon.
+An incompatible daemon requires an explicit upgrade after its work is finished. Without verified
+maintenance controls, use its existing service owner or an inspected manual shutdown, never a PID
+claimed by an unverified listener. [Maintenance guidance](../../docs/host.md#connection-recovery-and-upgrades)
+covers this boundary and the installed-service scope of Restart all.
 
 Catalog loads, polling, and mutations belong to one pane project/reload generation. Switching projects,
 reloading, or unmounting retires old response/error/loading/selection/rollback writebacks, while completed
@@ -366,10 +348,9 @@ Writes run one batch at a time; output arriving during a slow write stays in the
 Browser-local preferences never become process authority.
 
 Source, npm-release, direct-launch, and installed Linux service paths include the daemon and its runtime
-dependencies. The terminal user service is separate from `inspire-host.service`: Host-only stop/restart
-preserves PTYs; disabling the terminal service owns their shutdown. Explicit Restart all uses one ordered
-systemd transaction for the verified installed services. Ordinary and automatic maintenance restart only
-the Host.
+dependencies. The terminal user service is separate from `inspire-host.service`, so Host-only
+lifecycle operations preserve PTYs. Disabling the terminal service ends them. [[host-lifecycle]] defines CLI stop and
+Restart all, which address both installed services, and Host-only ordinary/automatic restart.
 
 ## Boundaries
 

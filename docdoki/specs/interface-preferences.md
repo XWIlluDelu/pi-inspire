@@ -14,9 +14,6 @@ covers:
 
 # Interface preferences and task alerts
 
-The retired `assistantRoundDisplay` field is ignored when reading existing preferences and omitted
-on the next successful write. Its Details/Divider UI and command-palette actions are removed.
-
 ## Goal
 
 Keep persistent preferences easy to find and save each change without overwriting newer intent.
@@ -31,14 +28,8 @@ scrolling within a category does not change the selection. Drafts, model browsin
 login attempts remain intact across category switches. Model and credential destinations reveal their
 owning category before locating the requested section.
 
-Section headings and descriptions sit above independent bordered field cards, not inside tinted
-header bands. Card-level empty and error messages share the field rows' content inset; helper-text
-typography alone does not provide layout. Fields with asynchronous text feedback anchor their
-description at the top and keep actions before feedback. They may reserve space for their common
-short states; longer feedback remains fully readable in normal flow, without an inner scrollbox.
-Cards do not clip menus or keyboard focus. Checked switches use the shared accent fill
-and its contrasting foreground role in both luminosities; category and palette choices keep explicit
-selected-state markers. These are presentation choices, not changes to preference saving behavior.
+[[design-system]] owns field-card layout, shared control sizing, selection markers and feedback
+presentation. These rules also apply to Terminal settings.
 
 | Category | Controls |
 | --- | --- |
@@ -72,27 +63,12 @@ interface-default set (including Herdr, titlebar needles and session action orde
 runtime settings, models, credentials, MCP servers, update observations, navigation curation, pane
 state, and other direct work state unchanged.
 
-Settings and Terminal settings share field, switch, stepper and segmented-control styling: 32px
-controls for a mouse, 40px for touch. Ordinary dropdowns, segmented choices and the named palette grid
-share a choice-column width. Segments use a recessed group with a neutral selected surface and edge.
-Named palette choices retain independent bordered tiles with an accent-tinted selected surface and
-accent border, not a shared recessed tray. Both use stronger selected weight and theme-accent text as
-specified in [[design-system]]; palette names and hue markers remain visible. Section icons use theme-accent ink, while heading
-text stays neutral. Category selection, switches and keyboard focus retain their functional emphasis.
-Ordinary fields wrap controls according to available space, rather than per-field wide flags;
-descriptions retain a readable column. Narrow cards let wrapped controls fill the row. Switches, font-size steppers and model
-identity summaries keep their compact layouts. Segment labels do not wrap. Herdr availability and
-pending-restart notes remain unboxed, with each message and its associated action wrapping as
-separate items rather than running together. Terminal settings uses the same category
-navigation for Appearance, Interaction and Saved output under [[terminal]]. Category and subsection
+Terminal settings uses the same category navigation for Appearance, Interaction and Saved output
+under [[terminal]]. Category and subsection
 navigation scroll only dialog content, keeping the header, navigation and utility footer in place.
-The narrow horizontal category strip uses one accent underline for selection, with visible keyboard focus and
-reachable offscreen categories; the desktop sidebar retains its existing treatment. Resizing keeps
-the selected category and its label visible, clear of the strip's fading edges, without resetting
-page scroll or forcing a deliberately browsed strip back on each scroll event. Unknown runtime
-values show Unavailable rather than a confirmed state.
-Open menus can extend beyond cards without clipping. Disabled controls remain legible and distinct
-from selected, available controls.
+Offscreen categories remain reachable in the narrow horizontal strip. Resizing keeps the selected
+category and its label visible, clear of the fading edges, without resetting page scroll or snapping
+back a deliberately browsed strip. Unknown runtime values show Unavailable rather than a confirmed state.
 
 ## Session action order
 
@@ -115,11 +91,9 @@ menu's behavior.
 ## Loaded extension names
 
 System must list the current session's complete loaded-extension names when Pi exposes that
-worker-owned inventory. This remains blocked in Pi 1.0.0 and the installed 1.1.0: neither RPC nor
-`ExtensionAPI`/`ExtensionContext` exposes it. `get_commands` and `getAllTools()` describe registered
-capabilities, not extensions that register neither. A fresh SDK resource scan would describe another
-runtime, not this worker. The narrow missing interface is a current-worker loaded-extension identity
-read, including command-free extensions. Package update results remain separate from membership.
+worker-owned inventory, including extensions without commands or tools. Registered capabilities,
+a fresh resource scan and package update results cannot establish current-worker membership.
+[[pi-capability-gaps]] records the missing interface; the requirement remains open.
 
 ## Modal focus
 
@@ -128,9 +102,11 @@ read, including command-free extensions. Package update results remain separate 
   controls belong to their containing modal's stacking, focus and logical tab order.
 - A nested menu consumes Escape before its containing modal. Otherwise, Escape belongs to the
   topmost modal; an attributed extension request yields it only for projection-conflict recovery.
-- Settings and Command Palette are mutually exclusive. An extension request takes modal ownership;
-  Settings closes, while an open Palette stays mounted but hidden and inactive. Its preparation text
-  and rejection remain available when the extension dialog closes.
+- Settings and Command Palette are mutually exclusive. An extension request takes modal ownership
+  and suspends Settings together with its subordinate confirmations, preserving the selected page,
+  project owner and unsaved forms. An open Palette stays mounted but hidden and inactive, retaining
+  preparation text and rejection feedback. The suspended surface resumes after the question closes
+  without implicitly saving configuration or restarting the Host.
 
 ## Preference persistence
 
@@ -149,7 +125,8 @@ read, including command-free extensions. Package update results remain separate 
   reject. Recent models store only provider/ID, accepting extra discovery metadata without retaining it.
 - Malformed JSON or a non-object root uses the full default projection and blocks writes to avoid
   discarding unreadable settings. The warning names the file to repair or remove; reads never rewrite it.
-- Every transient right-corner notice, including information notices, offers Copy and dismissal.
+- The retired `assistantRoundDisplay` field is ignored on read and omitted on the next successful
+  write; no Details/Divider preference or palette action remains.
 
 ## Update observations
 
@@ -216,15 +193,12 @@ Behavior, using the existing field-card layout with contextual status and action
 Notification permission and enrollment are installation-local, unlike ordinary Host preferences.
 Reset preferences also resets alerts on this installation, not other devices. Legacy
 `completionAttention` values supply migration intent; they do not establish permission or push
-enrollment. The earlier browser-start-event-only design is superseded: page refresh and reconnect
-must not discard a Host-observed run's notification eligibility.
-
-The Host-owned coordinator, device-local settings and worker display are implemented.
-[[follow-notifications-2026-10-22]] records verification and remaining platform acceptance.
+enrollment. Page refresh and reconnect preserve a Host-observed run's notification eligibility.
 
 ## Checks
 
 Preference tests cover field ownership, refusal rollback, migrations, and invalid-file protection.
 Settings and modal tests cover navigation, loading, menu dismissal, and focus restoration; Chromium
 checks menu reachability and persistence. Update tests cover their observation lifecycle; task-alert
-conformance follows the checks in [[notifications]].
+conformance follows [[notifications]], with device evidence and remaining acceptance in
+[[follow-notifications-2026-10-22]].
