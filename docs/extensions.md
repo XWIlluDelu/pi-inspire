@@ -1,6 +1,6 @@
 # Adapting Pi extensions to Inspire
 
-Pi loads your extensions and owns their tools, commands, state, and lifecycle. Inspire presents their RPC-visible data in the browser. Start with commands, dialogs, and text widgets; use [tool-presentation rules](tool-presentations.md) for custom cards. Dedicated buttons, panels, and shortcuts currently require source changes.
+Pi loads your extensions and owns their tools, commands, state, and lifecycle. Inspire presents their RPC-visible data in the browser. Start with commands, dialogs, and text widgets; use [tool-presentation rules](tool-presentations.md) for custom cards. Use [extension adapters](tool-presentations.md#extension-adapters) for composable cards, status visibility, status-bound Thinking-menu choices and source-specific context records. Configure and toggle them together in Settings → Adapters; no custom build is needed. Arbitrary panels and shortcuts still require source changes.
 
 Inspire ships native cards for `read`, `write`, `edit`, `bash`, `powershell`, `grep`, `find`, and `ls`. Other tools get generic cards with arguments, output, images, and expandable structured details. Inspire also loads an internal GUI bridge for branch navigation, model-catalog refresh, effective retry settings, and authentication; it adds no model tools.
 
@@ -128,7 +128,8 @@ To activate an updated implementation, update/restart the Inspire Host **and** r
 restart each external Pi through its own host. They load code independently. An external Pi that
 never loaded the reporter has no presence record to inspect; the extension does not discover
 arbitrary uninstrumented processes or take control of them. Do not clear the cache to bypass a
-live-holder warning. Once the other Pi releases the session, reselect it in Inspire to retry.
+live-holder warning. A session being viewed in Inspire automatically becomes writable after
+confirmed release; switching sessions or reloading the page is not required.
 
 ### Control the same Herdr Pi terminal
 

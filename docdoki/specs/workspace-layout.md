@@ -6,14 +6,14 @@ covers:
   - src/store.ts
   - src/controllers/{git,workspace}-controller.ts
   - src/components/{AppTopbar,SessionActionsMenu,Composer,ExtensionDisplays,ContextPane,ContextPaneShell,ContextSplitBody,FilesPane,ChangesPane,WorkspaceBrowser,BranchTree,PaneResizeHandle}.tsx
-  - src/{git-presentation,source-diff,use-modal-focus}.ts
+  - src/{git-presentation,source-diff,use-modal-focus,use-session-action-reorder}.ts
   - server/git-inspection.ts
   - shared/contracts.ts
   - tests/integration/git-long-prefix.test.ts
   - tests/web/source-diff.test.ts
   - src/styles/*.css
   - tests/web/{app,workspace-controller,pane-resize,branch-tree,modal-focus}.test.ts*
-  - tests/browser/composer.spec.ts
+  - tests/browser/{composer,session-actions}.spec.ts
 ---
 
 # Workspace layout and contextual panes
@@ -89,6 +89,19 @@ independent project shells in [[terminal]].
   their existing order. Normal-width desktop panes retain the single-row toolbar and narrow-screen
   startup composition keeps its existing responsive arrangement.
 
+## Short-window input and extension content
+
+Transcript and the complete Composer dock share the reading stage's height budget. Preserve a reading
+area while the draft and Pi's aboveEditor/belowEditor widgets yield through their own scrolling.
+Input text keeps its normal size; toolbars and Send/Stop retain their full targets. The minimum
+editor line and focusable widget scrollports bound compression, including touch and short landscape
+windows. Normal-height windows retain their spacing and natural widget heights.
+
+In short windows, widget cards spend their height on text rather than repeat the generic Extension
+heading; their accessible labels and Copy actions remain. Transcript's vertical breathing space
+belongs inside its scroll content, so it cannot force the scrollport across the dock boundary.
+The editor's existing Expand/Collapse, selection, draft and completion behavior remain intact.
+
 ## Session identity and Git observation
 
 - The topbar owns session identity — an explicit Pi name is the rename value, while an unnamed
@@ -120,7 +133,7 @@ independent project shells in [[terminal]].
   hover strengthens their text and keyboard focus retains its outline. The text-only title opens
   the session menu on both desktop and phones, with no chevron or separate More control.
   Its hover feedback and keyboard focus outline retain the interactive affordance.
-  Rename is the first menu action and opens the inline editor. Extension text uses the available
+  Rename opens the inline editor and is first in the default order. Extension text uses the available
   space at every width, with full statuses
   available by click, tap or keyboard when truncated. No status takes no space. Secondary project and
   Git details yield before the title and primary navigation. Narrow layouts retain Settings in the
@@ -135,11 +148,24 @@ independent project shells in [[terminal]].
   submit carries the explicit session id rather than reading a newer visible selection, and a
   rejected rename leaves the current identity intact while emitting a non-blocking warning notice.
 
-  The title menu also offers Clone and Export while leaving the title visible. It opens with
-  Rename focused; arrows, Enter and Escape operate the menu, and keyboard dismissal returns focus
-  to the title. Export opens the shared format-and-download dialog without reading or changing
-  the message draft. Clone shares History's readiness checks. Refusal or failure leaves the menu
-  open; successful navigation closes it without stealing focus from a newer choice.
+  The title menu defaults to Rename, Copy session ID, Clone, Use in terminal, and Export, with order
+  configurable in Settings under Behavior. It initially shows the first three actions; More actions
+  reveals the rest in the same menu, and Fewer actions collapses them. Reopening starts compact.
+  Expansion focuses the first enabled newly revealed action; the full menu remains bounded and
+  scrollable within the viewport. The menu opens with its first enabled action focused; arrows,
+  Home/End, Enter and Escape operate it, and keyboard dismissal returns focus to the title.
+  Each action has a right-side drag handle, including actions unavailable for execution. A mouse
+  or touch drag previews the order and automatically reveals overflow; dropping inside the menu
+  saves the same preference used by Settings. Escape, pointer cancellation or a drop outside the
+  menu discards the preview. Grabbing or moving a handle never runs its session action.
+  Handles remain keyboard-reachable; Alt+Up/Down moves the focused action and retains its focus.
+
+  Copy session ID writes the complete selected Pi session ID, including for read-only history.
+  Successful clipboard completion shows ID copied in place; failure uses the existing copy-error
+  notice and allows retry. Copy does not execute a session operation or dismiss the menu.
+  Export opens the shared format-and-download dialog without reading or changing the message draft.
+  Clone shares History's readiness checks. Refusal or failure leaves the menu open; successful
+  navigation closes it without stealing focus from a newer choice.
   `/clone`, the command palette and the earlier-branch notice's `Clone from here` reach the same
   endpoint-inclusive action. It creates an independent copy of the recorded active branch without
   sending a model prompt or changing the source's work, pending input or draft. [[session-branches]]
@@ -163,12 +189,10 @@ independent project shells in [[terminal]].
   against displayed rows and use literal escaped text when unavailable or changed between reads.
   `git-long-prefix.test.ts` covers real Git through Host HTTP and source/change navigation projection.
 
-## Workspace explorer and contextual modes
+## Contextual modes
 
-- The navigation column’s lower half offers a compact, collapsible workspace explorer labeled by the
-  visible project basename. It intentionally omits search and secondary pane actions in the
-  constrained column. Its lazy tree shares cwd-scoped expansion and selection with the right Files
-  browser, and a file row opens the same session-bound preview as a conversation reference.
+- Workspace file browsing lives in the contextual Files pane; the session navigation column does
+  not duplicate its tree.
 
 - The contextual region primarily hosts Files, Changes, History, and Terminal through equal-width
   mode controls that preserve every label at the pane's minimum width. Files uses the complete

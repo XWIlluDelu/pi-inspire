@@ -4,11 +4,11 @@ covers:
   - shared/contracts.ts
   - server/{preferences,update-checker,pi-update-checker,update-coordinator}.ts
   - src/controllers/{preference,update,runtime-event}-controller.ts
-  - src/{visual-preferences,update-availability,use-modal-focus}.ts
-  - src/components/{Settings,SettingsControls,SettingsDialog,SettingsSection,SystemVersionsCard}.tsx
+  - src/{visual-preferences,session-actions,update-availability,use-modal-focus}.ts
+  - src/components/{Settings,SettingsControls,SettingsDialog,SettingsSection,SessionActionsSettings,SystemVersionsCard}.tsx
   - src/styles/{settings-overlays,responsive}.css
   - tests/server/{preferences,update-checker,pi-update-checker,update-coordinator}.test.ts
-  - tests/web/{settings-navigation,settings-loading,system-versions,notices,update-controller,attention,modal-focus}.test.ts*
+  - tests/web/{preferences,session-actions,settings-navigation,settings-loading,system-versions,notices,update-controller,attention,modal-focus}.test.ts*
   - tests/browser/{settings-layout,loading-states}.spec.ts
 ---
 
@@ -25,14 +25,18 @@ Keep persistent preferences easy to find and save each change without overwritin
 ## Settings organization
 
 Settings opens from the topbar as a modal, leaving session navigation in place. Display, Conversation,
-Behavior, Models, MCP and System are separate category views. Only the selected category is visible,
+Behavior, Models, MCP, Adapters and System are separate category views. Only the selected category is visible,
 focusable and exposed to assistive technology. Category navigation starts its content at the top;
 scrolling within a category does not change the selection. Drafts, model browsing state and pending
 login attempts remain intact across category switches. Model and credential destinations reveal their
 owning category before locating the requested section.
 
 Section headings and descriptions sit above independent bordered field cards, not inside tinted
-header bands. Cards do not clip menus or keyboard focus. Checked switches use the shared accent fill
+header bands. Card-level empty and error messages share the field rows' content inset; helper-text
+typography alone does not provide layout. Fields with asynchronous text feedback anchor their
+description at the top and keep actions before feedback. They may reserve space for their common
+short states; longer feedback remains fully readable in normal flow, without an inner scrollbox.
+Cards do not clip menus or keyboard focus. Checked switches use the shared accent fill
 and its contrasting foreground role in both luminosities; category and palette choices keep explicit
 selected-state markers. These are presentation choices, not changes to preference saving behavior.
 
@@ -40,9 +44,10 @@ selected-state markers. These are presentation choices, not changes to preferenc
 | --- | --- |
 | Display | One field group: `Theme`, `Color palette`, `Content text size`, `Reading width`, `Project location`, then `Titlebar needles`. The workbench header and installed-window title bar have distinct scopes, explained beside their controls rather than combined under a location-based heading. |
 | Conversation | One field group: activity visibility (`Reasoning detail`, `Tool activity`, `Activity groups`), then `Send key`. |
-| Behavior | App behavior (`On launch`, `Task alerts`) and `Pi session settings` (`Steering delivery`, `Follow-up delivery`, `Automatic context compaction`, `Automatic retry`). |
+| Behavior | App behavior (`On launch`, `Task alerts`), `Session actions` ordering, then `Pi session settings` (`Steering delivery`, `Follow-up delivery`, `Automatic context compaction`, `Automatic retry`). |
 | Models | Pi defaults, common scope/cycling, graphical model/provider configuration, and nearby login/logout under [[model-settings]]. |
 | MCP | Scoped native-file configuration, protected-value edits and explicit selected-worker Reload under [[mcp]]; not a connection inventory. |
+| Adapters | Unified enablement of externally configured GUI adapters under [[tool-presentations]]; not Pi extension execution management. |
 | System | Component versions, Docs/Changelog release references and unified update check; then `Host`, with `Herdr enhancement` followed by Host restart under [[host-lifecycle]]. |
 
 Pi controls follow [[pi-integration]]. A dedicated `Pi session settings` section and concise scope note
@@ -63,9 +68,9 @@ Titlebar needles is an opt-in persisted switch for installed-window animation. T
 brand toggles the same preference; refresh restores the saved choice. See [[design-system]] for motion.
 
 Reset preferences opens a confirmation dialog stating its exact scope before patching the complete
-interface-default set (including Herdr and titlebar needles) while leaving Pi runtime settings, models,
-credentials, MCP servers, update observations, navigation curation, pane state, and other direct work
-state unchanged.
+interface-default set (including Herdr, titlebar needles and session action order) while leaving Pi
+runtime settings, models, credentials, MCP servers, update observations, navigation curation, pane
+state, and other direct work state unchanged.
 
 Settings and Terminal settings share field, switch, stepper and segmented-control styling: 32px
 controls for a mouse, 40px for touch. Ordinary dropdowns, segmented choices and the named palette grid
@@ -88,6 +93,24 @@ page scroll or forcing a deliberately browsed strip back on each scroll event. U
 values show Unavailable rather than a confirmed state.
 Open menus can extend beyond cards without clipping. Disabled controls remain legible and distinct
 from selected, available controls.
+
+## Session action order
+
+Behavior includes an ordered list of the session title menu's actions, with a drag handle on
+the right of each row. Mouse and touch dragging and Alt+Up/Down shortcuts preserve the focused
+action while it moves. Clicking or keyboard-activating a Settings handle opens move options
+(up and down); Escape closes those options and restores the handle without closing
+Settings. Starting a drag dismisses the move options.
+A disclosure boundary separates the first three actions, shown immediately in the compact menu,
+from the remainder revealed by More actions. Behavior settings use quiet, unboxed ordinal numbers
+and a sentence-case boundary hint between thin rules, without a shaded strip or stacked row borders.
+Row and drag-handle targets retain their existing sizes. Both surfaces edit the same saved order.
+Ordering changes only presentation, not action eligibility or execution.
+
+The order is a Host-persisted interface preference, saved through the existing field-owned write
+path and included in Reset preferences. An older saved order keeps its relative order and gains
+newly introduced actions at the end; sorting never removes actions. [[workspace-layout]] owns the
+menu's behavior.
 
 ## Loaded extension names
 
@@ -119,10 +142,13 @@ read, including command-free extensions. Package update results remain separate 
   advanced since that operation began; deletion cleanup therefore preserves newer settings.
 - Palette identifiers and their legacy migration follow [[design-system]]. Theme and palette changes
   own separate fields; resetting preferences returns to Chimonanthus with System luminosity.
-- Missing stored fields receive migration defaults. For invalid fields, use defaults only for those
-  fields; malformed JSON or a non-object root uses the full default projection. Preserve the saved
-  file unchanged, warn during bootstrap, and refuse preference writes with a recoverable conflict
-  until the user repairs or removes it.
+- Missing stored fields receive migration defaults. Invalid fields use defaults in the displayed
+  projection and produce a bootstrap warning; other settings remain editable. Field-scoped writes
+  preserve unedited invalid values and unknown fields, and a valid edit repairs its addressed field.
+  Known migrations canonicalize valid saved values on the next write. Unknown patch fields still
+  reject. Recent models store only provider/ID, accepting extra discovery metadata without retaining it.
+- Malformed JSON or a non-object root uses the full default projection and blocks writes to avoid
+  discarding unreadable settings. The warning names the file to repair or remove; reads never rewrite it.
 - Every transient right-corner notice, including information notices, offers Copy and dismissal.
 
 ## Update observations

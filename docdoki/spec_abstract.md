@@ -42,12 +42,19 @@ and untracked.
   [[composer]], [[session-continuity]] and [[herdr-enhancement]] own the contracts;
   [[follow-session-execution-2026-10-19]] records native continuity evidence and the separate Host/Pi
   activation boundary.
+- **Unobtrusive recovery:** background catalog, snapshot, History and file reads recover automatically
+  while retaining confirmed content. Unsent uploads retain their browser-held bytes; recovery never
+  replays branch commands or prompts with uncertain acceptance. [[workbench]], [[session-continuity]],
+  [[session-transport]], [[session-branches]], [[composer]] and [[resource-preview]] define the scope.
 - **Reading and workspace tools:** rich conversation/activity readers, source-backed Copy, Files and
   Changes with in-place refresh, previews and persistent project terminals. Responsive inspection
-  preserves the reading context and supports terminal quoting back to the draft.
+  preserves the reading context and supports terminal quoting back to the draft. Session actions
+  include full-ID copy and a compact menu whose drag handles share saved ordering with Behavior
+  settings under [[interface-preferences]].
   See [[conversation]], [[workspace-layout]], [[resource-preview]], [[terminal]] and [[workbench]].
-- **Extension adaptation:** standard RPC dialogs, status and text widgets, declarative presentations
-  and a source-DIY task-board example. [[pi-integration]] and
+- **Extension adaptation:** standard RPC dialogs, status and text widgets, composable external GUI
+  adapters with Settings enablement, status-bound composer choices and declarative presentations,
+  plus a source-DIY task-board example. [[pi-integration]] and
   [the extension guide](../docs/extensions.md#choose-the-smallest-integration) describe reuse while
   Pi retains behavior and commands.
 - **Host operation:** authenticated local/remote browser access, per-instance lifecycle controls,
@@ -59,8 +66,9 @@ and untracked.
 
 | State | Work |
 | --- | --- |
-| Implemented; phone acceptance open | Host-owned task outcomes, device-local alert settings and Web Push. Linux Chrome delivery and installed-PWA refresh continuity are verified. [[notifications]] defines the contract; [[follow-notifications-2026-10-22]] records remaining Android/iOS acceptance and separate manual activation. |
-| Tagged | Annotated tag v0.6.0 points to f67d6ee, which passes complete Linux/macOS/Windows CI and three installed-package checks. [[follow-project-quality-2026-10-21]] and [[follow-release-0-6-0-2026-10-21]] retain that evidence and release documentation. There is no GitHub Release or uploaded release-asset distribution; activation is a separate operator action. |
+| Integrated | Repairable settings, independently readable/copyable history, durable delivered attachments, operation recovery, configurable adapters and responsive workbench improvements are consolidated from `auto-dev`. [[follow-project-quality-2026-10-21]] records the scope and verification. |
+| Implemented; device acceptance partial | Host-owned task outcomes, device-local alert settings and Web Push. Linux Chrome delivery, installed-PWA refresh continuity and Android system display of a manual test are verified. [[notifications]] defines the contract; [[follow-notifications-2026-10-22]] records remaining Android background-task/click and iOS acceptance. |
+| Tagged | Annotated tag v0.6.0 points to f67d6ee, with Linux/macOS/Windows CI and three installed-package checks recorded in [[follow-release-0-6-0-2026-10-21]]. The release uses the source tag without uploaded release assets. |
 | Blocked on Pi | Backward model cycling, native TUI shell interruption, worker-owned settings-save results, resource omission diagnostics, request-attributed dialog cancellation, complete loaded-extension inventory, generic argument completion and structured current-worker MCP management. [[pi-capability-gaps]] identifies the missing interfaces. |
 | Deferred | Holistic Files layout work in [[file-browsing]]. The current layout remains the implemented contract. |
 | Undecided | Additional History, usage, configuration and palette enhancements in [[pi-capability-gaps]]. Source-level extension UI reuse follows [[northstar]]; further framework-level expansion has no decided requirement. |

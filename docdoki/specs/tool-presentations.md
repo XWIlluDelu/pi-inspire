@@ -2,6 +2,9 @@
 purpose: Declarative presentations project tool and Thinking activity and select custom-message reading content while retaining generic inspection.
 covers:
   - shared/tool-presentation-config.ts
+  - src/presentation-adapters.ts
+  - src/components/{ComposerThinkingControl,StatusChoice,PresentationAdapterSettings,Dropdown,ExtensionDisplays}.tsx
+  - src/styles/status-choice.css
   - shared/tool-activity.ts
   - server/tool-presentation-config.ts
   - server/{runtime-events,session-projection}.ts
@@ -11,7 +14,7 @@ covers:
   - src/components/{Transcript,transcript-cards,ChildCalls,CodeModeResult,ImagePreview}.tsx
   - src/components/ResourcePathLabel.tsx
   - src/child-call-summary.ts
-  - tests/web/child-call-summary.test.ts
+  - tests/web/{child-call-summary,status-choice}.test.ts*
   - src/styles/activity-cards.css
   - tests/browser/{tool-presentations,custom-message}.spec.ts
   - tests/server/{app,app-events}.test.ts
@@ -175,6 +178,36 @@ versioned personal profiles are documented in [Custom tool presentations](../../
 Personal profiles share the product codebase and may live in a separate configuration repository.
 An empty version-1 profile selects shipped rules and generic cards; it does not disable extensions.
 Runtime state and credentials stay outside presentation configuration.
+
+## Extension adapter composition
+
+- One normal web build supplies generic capabilities. Extension-specific rules, commands, source
+  names and text remain in external modules; no source patching or alternate adapter build exists.
+- The selected profile declares ordered adapter references with stable IDs, names, paths and default
+  enablement. Settings → Adapters persists per-ID overrides and updates the current browser without
+  discarding drafts, attachments or Pi state. Module files remain unchanged.
+- Relative paths resolve beside the physical profile. Disabled modules are not read; malformed
+  modules warn independently. Later exact identities replace earlier declarations, hidden status
+  keys union, and the combined configuration remains bounded. Nested module inclusion is unsupported.
+- Status-bound discrete choices compose above the native Thinking options in both New and active
+  sessions. A shared capability filter uses each lifecycle's command inventory and the same native-name
+  precedence as completion; pages do not separately decide which adapters exist. New discovers
+  registrations from its prospective directory without starting a session or reading another worker's
+  mutable status. Unchanged choices retain Pi defaults; explicit choices remain draft intent until
+  creation and must be confirmed before first input delivery. A failed or uncertain application leaves
+  that input and artifacts in the created session rather than sending with an unintended setting.
+  Controls retain confirmation text, commit pointer selection on release and use one Pi-state
+  confirmation boundary for initial and live changes. Pending state survives closing the menu;
+  session/transport changes retire it.
+  Effort availability does not disable an independently supported extension choice. A delayed
+  confirmation clears its obsolete timeout hint as soon as Pi publishes the requested value.
+  Missing status is neutral unavailability, not evidence that the extension needs reloading;
+  confirmation timeout does not prescribe connection repair or redispatch a command.
+- Exact hidden status keys affect display only. Configurable checkpoint titles, prefix elision and
+  metric wording do not change the original summary, source identity or complete Copy.
+- Cards, messages, controls and checkpoint rules use the same composition and enablement mechanism.
+  Disabling restores native/generic display, not extension execution control.
+- The reference and data format are documented in [Custom presentations](../../docs/tool-presentations.md).
 
 ## Checks
 

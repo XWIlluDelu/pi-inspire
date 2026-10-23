@@ -19,11 +19,25 @@ In **Settings → Behavior → Task alerts**, choose **System notification** on 
 should receive alerts. Normal completion and errors notify you when you are away from the
 conversation; confirmed Stop does not. **Mark tab** stays local to open pages.
 
-Allow the browser permission, then check for **Background notifications enabled**. **Send test
-notification** exercises the configured delivery channel, including Web Push when enrolled.
+The selected mode alone does not grant browser permission or register a push destination. If the
+mode is already **System notification**, click **Enable notifications** on that device, allow the
+browser permission, then check for **Background notifications enabled**. **While Inspire is open**
+means there is no background delivery. **Send test notification** exercises the configured delivery
+channel, including Web Push when enrolled.
 A sent/display-accepted status is separate from a visible system banner; browser and OS
 notification policies still apply. If setup fails, granted notifications continue while Inspire
-is open, and the setting explains the background failure.
+is open, and the setting explains the background failure. If the browser created a subscription but
+could not register it with the Host, reopening Inspire or Settings reconciles that existing
+subscription without asking for permission again. An expired subscription is different: click
+**Enable notifications** to replace it.
+
+To verify a device, first send a test and look for **Inspire test notification** in its system
+notification center. Then move away from a running conversation (or close Inspire's page without
+force-stopping the browser) and let the task finish; expect **Task completed** or **Task failed**.
+A focused view of the same conversation suppresses the ordinary task alert, but not the test.
+If a display was accepted but no banner appears, check site permission, the OS notification center,
+Do Not Disturb/Focus, and the browser's notification settings. Repeat on each desktop browser and
+phone: permission and enrollment do not transfer between origins, browser profiles, or devices.
 
 The Host must stay running and reach the browser's HTTPS push service. It uses `HTTPS_PROXY`
 when configured; do not put credentials in project files. Push does not need public inbound
@@ -60,6 +74,11 @@ without claiming a successful result.
 
 A CLI restart stops Inspire-owned Pi workers; connected external Herdr sessions keep running.
 In **Settings → System → Host**, restart first checks for unfinished work. A refusal offers a separately confirmed **Stop work and restart**, which interrupts Pi work and discards Pending input. An idle worker does not block this check. Preparation failure leaves the current Host running; after a disconnect, the browser observes the submitted restart instead of sending another one.
+
+**Recheck status** still reads the Host when this browser's local restart recovery record is
+unreadable. If storage recovers, Recheck restores the controls. **Clear local restart record…**
+lets you explicitly discard broken or unwanted browser tracking; it does not send or cancel a
+restart. A restart already pending on the Host still blocks a new one.
 
 **Restart Host** works from the page on native Windows, macOS, and Linux when started through
 `inspire` (or `npm run inspire`), as well as with the installed Linux service. Direct page restart keeps
@@ -172,9 +191,9 @@ upgrades use the authenticated `inspire terminal` controls.
 ./inspire service enable-host
 ```
 
-Installation writes `inspire-host.service`, `inspire-terminal.service`, and an idle-maintenance timer. The launcher delegates lifecycle commands after verifying that the units belong to this installation. Stop or disable shuts down both services; enabling/disabling the Host also enables/disables its timer.
+Installation writes `inspire-host.service`, `inspire-terminal.service`, and an optional idle-maintenance timer. The launcher delegates lifecycle commands after verifying that the units belong to this installation. Inheriting the same default host, port, and instance-state path does not create a separately managed instance. Stop or disable shuts down both services; enabling the Host does not enable scheduled maintenance. Disabling the Host also disables its maintenance timer.
 
-At 04:00, maintenance checks whether the installed Pi version or clean source revision differs from the running one. It restarts only an idle Host and never downloads updates. Busy work, a dirty checkout, or an indeterminate state skips that run.
+If you explicitly want automatic maintenance, enable it separately with `systemctl --user enable --now inspire-idle-maintenance-restart.timer`; use `disable --now` to turn it off. At 04:00, the enabled timer checks whether the installed Pi version or clean source revision differs from the running one. It restarts only an idle Host and never downloads updates. Busy work, a dirty checkout, or an indeterminate state skips that run.
 
 For service recovery before graphical login:
 
@@ -239,8 +258,7 @@ inspire recover-session "<bundle-folder>"
 
 In a source checkout, use `node <path-to-inspire.mjs> recover-session "<bundle-folder>"`.
 Relative folders resolve from the directory where you invoked the command. Typed `~`/`~/` (and
-Windows `~\`) resolve against the Host account's home; the same rules apply to upload-storage trust
-paths and project-directory input. Recovery starts no Host
+Windows `~\`) resolve against the Host account's home; the same rules apply to project-directory input. Recovery starts no Host
 or Pi worker. It validates the manifest and exact payload, supports a source on another volume, and
 atomically restores the original physical session path without overwriting any existing file.
 The original storage directory must still exist and support hard links for atomic no-clobber
@@ -248,58 +266,38 @@ publication; unsupported storage fails without overwriting the destination. The 
 folder remains after success;
 verify the recovered session before removing that folder. Hidden/pinned preferences are not restored.
 
-Recover promptly after moving a folder outside known Pi storage/Trash locations: arbitrary external
-folders are not scanned to retain uploaded attachments. On macOS, native per-volume Trash is included;
-denied or indeterminate Trash access defers upload collection instead of deleting uncertain content.
+Delivered ordinary attachments are retained independently of session storage and Trash. Moving a
+recovery folder or keeping an offline backup does not release its referenced upload copies.
 
 Linux uses the home Freedesktop Trash when it shares the source mount; otherwise it uses validated
 current-user Trash on the session volume. The desktop's normal Restore action returns the original
 session path. If no safe compatible Trash is available, confirmed deletion still uses the permanent
 fallback.
 
-### Uploaded-file retention and storage migration
+### Uploaded-file retention and cleanup
 
-Upload collection includes known source-volume Trash. Registered session directories carry a small,
-non-secret `.inspire-upload-retention-root.json` continuity marker. Keep it when backing up or moving
-the complete directory. The upload registry retains the expected marker identity across Host restarts
-on every platform; an existing path, drive letter, device number or valid Pi header alone cannot
-establish continuity. The marker identifies the directory namespace, not physical disk hardware. The registry separately
-binds its volume/Trash scope: Windows uses the volume GUID plus filesystem-format identity, macOS the
-volume UUID, and Linux an independent private volume marker outside the session tree. A copied
-session directory alone cannot establish continuity of the old volume's Trash.
+Unsent uploads are temporary. Withdrawing a staged upload or shutting down its owner removes its
+copy. Periodic cleanup also reclaims recorded, explicitly unsubmitted uploads after their owning
+process has exited. A live or unverified owner keeps its staging.
 
-A missing, replaced, unreadable or unverified root defers collection. So do unreadable Trash and
-a storage change during scanning. Opening/sending sessions does not fail solely because a read-only
-directory cannot accept the marker. Registered markers are never silently recreated or rebound.
-Reconnect/restore the original directory including its marker first.
+Before handing an upload to Pi, the Host records that delivery is possible. Ordinary files then
+remain durable assets across restart, forks, session deletion, backups and native Trash. Lost
+receipts and interrupted sends preserve those copies too. Accepted images live in Pi history and
+release their temporary upload copies. Existing ownership records are retained without rewriting
+paths or requiring migration.
 
-Older registries have no historical marker identity. Stop **every Host sharing this upload store**,
-make sure the complete original sessions and their Trash references are available, then preview and
-explicitly accept the verified directory:
+This favors reliable references over automatic disk reclamation. To reclaim delivered assets,
+explicitly select the files you no longer need under the per-user state directory's
+`attachments/<owner-directory>/` (platform locations are listed under Diagnostics). Stop work using
+those files, then remove the selected UUID-prefixed payload and its matching `<uuid>.json` ownership
+record. Removing a payload breaks **every** session, backup or tool reference to it; Inspire does
+not claim to discover all such references. Do not remove an entire attachment directory unless all
+its contents are disposable.
 
-```sh
-inspire uploads trust-session-directory "<session-directory>"
-inspire uploads trust-session-directory "<session-directory>" --confirm
-```
-
-Relative paths resolve from the invocation directory. Preview writes nothing. Confirmation updates
-all affected retained upload registries under the same user-state attachment parent. It refuses
-active owners and conflicting valid markers; the maintenance lock coordinates current-version
-writers. Legacy Hosts without that lock protocol must be stopped by the operator. New session
-activity does not automatically migrate an old registry. Mistaken trust of incomplete/replacement
-storage can release uploaded files; do not remove the registry to bypass the refusal.
-
-For a deliberately replaced/migrated namespace, first recover any sessions you still need from the
-old native Trash and include all their references in the new storage. Inspect the preview's previous
-identities and current volume, then explicitly accept replacement only after that verification:
-
-```sh
-inspire uploads trust-session-directory "<session-directory>" --confirm --accept-replacement
-```
-
-Replacement acceptance updates registry expectations; it does not overwrite existing valid directory
-or volume markers. Unidentified native/network volumes, or Linux volumes with no safe independent
-anchor location, defer collection instead of falling back to a pathname/device-number guess.
+Session-directory registries, continuity markers and volume anchors from older versions are no
+longer used or updated; no offline upload-storage trust migration is required. Upgrade Hosts sharing
+the store to apply the durable-asset policy: older versions retain their earlier automatic collection
+behavior. Leave legacy metadata alone until those older Hosts have been stopped or upgraded.
 
 ## Diagnostics
 

@@ -28,7 +28,9 @@ boundary. Catalog and navigation obligations remain in [[session-continuity]]; b
 
 - Opening an unopened session first projects its active branch through Pi’s read-only parser and
   context builder, without waiting for extensions or writing the JSONL; transcript virtualization
-  avoids mounting every entry in a large history at once.
+  avoids mounting every entry in a large history at once. Auxiliary project-discovery writes are
+  not prerequisites for this preview. Upload lifetime is independent of session-directory
+  registration; neither history reads nor writer admission need an upload-retention registry.
 
 - History readability does not depend on the original project directory. If that directory is
   missing, is not a directory, or cannot be resolved, a valid retained JSONL still opens through the
@@ -125,11 +127,13 @@ selected/running work retains its worker.
   persistence expectations that arrive during witness lookup are consumed only through the observed
   prefix, while later claims remain queued. Matched claims retire by identity, not by a count of
   current queue heads: an earlier claim may be cancelled while a later receipt is still pending.
-  Owned partial persistence must advance that same lineage by strictly growing bytes with exact
-  prefix/tail continuity, preserving its original two-second lease deadline and requiring exact
-  final entry provenance. Direct native Bash can hold this bounded lease while its owning worker
-  remains current, even with an idle run state and no persistence event; the final entry still
-  requires the ordinary exact worker/claim witness. While the sole worker has an exact pending
+  Owned partial persistence preserves exact prefix/tail continuity and requires exact final entry
+  provenance. Elapsed observation time is not evidence of corruption and never stops the writer.
+  Until the write completes, retain the last complete history and report persistence as pending;
+  operations that require complete persistence wait or refuse without restarting the worker.
+  Direct native Bash can hold this pending state while its owning worker remains current, even
+  with an idle run state and no persistence event; the final entry still requires the ordinary
+  exact worker/claim witness. While the sole worker has an exact pending
   append claim, the projection extends its verified SHA-256 state and immutable normalized
   entry/message prefix; without that provenance it rereads and verifies the committed bytes before
   parsing a suffix.
@@ -175,9 +179,8 @@ selected/running work retains its worker.
   reports before creating a worker and recheck immediately before Pi startup. A report matching
   native session identity and physical file, from a still-live process incarnation, keeps history
   read-only as `external-active` and vetoes all cold writer-backed actions, including settings.
-  Activity (`idle`, `working`, `blocked`) and heartbeat age do not release this fence. Explicit
-  reselect retries admission after release. Existing supported Herdr control stays on its original
-  process rather than starting a local writer.
+  Activity (`idle`, `working`, `blocked`) and heartbeat age do not release this fence.
+  Existing supported Herdr control stays on its original process rather than starting a local writer.
 - Retain known presence through missing, malformed or unreadable reports. Release only on a
   completed producer rebind or confirmed process retirement, including birth mismatch after PID reuse.
   Neither an activity-stop hint nor the legacy `released` flag proves writer retirement: Pi emits
@@ -189,9 +192,25 @@ selected/running work retains its worker.
   Legacy activity-only records without birth evidence are treated conservatively while their PID
   exists. Reload preserves presence; it is not a teardown of the writer.
 - Discovery/observation failure retains readable history and fences execution as
-  `external-unavailable`. A retained connection can recover by observation; explicit reselect
-  retries discovery. Connection loss alone never proves writer retirement. `read() === null`
+  `external-unavailable`. Connection loss alone never proves writer retirement. `read() === null`
   requires confirmation that the owner no longer writes this session.
+- External read-only sessions with active browser detail subscriptions automatically recheck
+  availability. Browsers viewing the same session share one check; the last subscription leaving
+  stops recovery observation. Established native connections keep their existing owner polling.
+  After confirmed release, ordinary discovery, occupancy checks and the slot's writer-admission
+  gate govern continuation, including any other holder. Successful recovery clears the read-only
+  boundary when native control reconnects or the local writer completes startup, not when an
+  occupancy check passes. Observation and pre-start preparation failures remain retryable; a
+  deletion reservation pauses attempts rather than ending recovery. Once Pi startup has begun,
+  startup or attestation failure requires explicit retry so extension startup hooks are not
+  repeated by the observation loop. A view abandoned during discovery stays read-only, and
+  resubscribing resumes observation. Unchanged observations do not repeatedly refresh the page.
+  Manual reselection remains an immediate check, not a prerequisite for recovery.
+- Recovery updates the current session in place, preserving its transcript view, reading position,
+  unsent draft and attachments. Pre-start cleanup alone preserves the reading view; history
+  replacement still invalidates it. A pre-start read-only refusal is not a failed Pi run.
+  Recovery does not select a session, replay input or bypass startup attestation. Explicit
+  terminal handoff and missing-workspace read-only states keep their own continuation rules.
 - Native connections remain outside the owned-worker pool. Host shutdown detaches them and
   drains admitted delivery operations without terminating the external process. Input retains
   artifact validation, file-backed image references and final Stop/session fences. Unsupported

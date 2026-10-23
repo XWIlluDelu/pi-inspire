@@ -11,7 +11,7 @@ covers:
   - server/runtime-worker-pool.ts
   - shared/{contracts,assistant-stream,tool-argument-updates}.ts
   - server/{tool-argument-stream,tool-argument-batches,runtime-stream-budget}.ts
-  - src/{api,events,store,snapshot-transition,transport-performance}.ts
+  - src/{api,events,store,snapshot-transition,transport-performance,recovery-backoff}.ts
   - src/controllers/{connection,session-selection,runtime-event,transcript-data}-controller.ts
   - tests/server/{app-events,app-prompt-delivery,runtime-worker-pool}.test.ts
   - tests/browser/native-pi-continuity.spec.ts
@@ -62,6 +62,12 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
   record before opening. Ambiguous identity and continuing source changes still refuse the read;
   recovery neither replaces a live owned projection nor retries a write. A missing open target
   refreshes the browser list without replacing the currently visible conversation.
+
+- Background snapshot observations retain confirmed content through transient read failures and
+  retry with bounded backoff under the same API, transport, selection and branch-view owner. A fresh
+  full snapshot or valid unchanged acknowledgement retires pending recovery. Superseded reads cannot
+  publish a warning or restart an obsolete retry. This read recovery never replays Pi commands or
+  prompt delivery. Persistent synchronization loss follows the workspace feedback scope in [[workbench]].
 
 - Refreshing or reconnecting reconciles live events against an authoritative Pi snapshot without
   duplicating settled messages or letting a delayed snapshot replace a newer selection. Bootstrap,

@@ -145,7 +145,9 @@ receives no POSIX signal argument.
 Browser mutations carry one immutable operation identity through Host and daemon. Same-content retries
 share the running operation or retained result; reuse with different parameters is refused. Lost
 responses, deadlines, and disconnects leave the outcome unresolved, rather than cancelling work.
-Read-only catalog/settings reads and attachment/input continuity remain independent.
+Read-only catalog/settings reads and attachment/input continuity remain independent. A confirmed
+completion or rejection remains authoritative even if the browser cannot remove its recovery record.
+Report that local cleanup failure separately; retrying cleanup sends no terminal mutation.
 
 | Receipt bound | Value |
 | --- | --- |
@@ -157,7 +159,12 @@ Read-only catalog/settings reads and attachment/input continuity remain independ
 Running operations are not evicted. Before forgetting an identity, reclamation fences its admission
 epoch; daemon replacement also changes the epoch. Unknown old identities are refused. The browser
 retains unresolved controls across pane, project, and reload generations, offers same-operation checks,
-and releases them after a confirmed result or definite refusal. Unavailable or malformed storage blocks
+and releases them after a confirmed result or definite refusal. After inspecting current terminals,
+users may explicitly stop tracking an unresolved result, including an expired receipt or retired epoch.
+Confirmation explains that this neither cancels the old work nor establishes its outcome. It sends no
+mutation, persists retirement before releasing the local identity, and is unavailable during a check.
+A subsequent deliberate action gets a new identity; retries never silently become new work.
+Unavailable or malformed storage blocks
 untracked writes. Every control mutation requires an operation identity and receipt support; missing
 identity is refused before dispatch. Valid identified requests rejected during route validation carry
 the matching operation ID and definite rejected outcome, including nested terminal routes.
@@ -344,7 +351,11 @@ Marker eviction, buffer replacement/reset, or column reflow invalidates that ran
 preserve it. Other copy paths remain independent.
 
 Shell completion coalesces Git refresh. Optional, user-gesture-authorized bell and long-task notifications
-describe the outcome without exposing output content.
+describe the outcome without exposing output content. They share browser permission discovery,
+requests and permission messages with task alerts, while keeping terminal delivery and preferences
+independent. A denied, dismissed or unavailable permission leaves long-task alerts off or falls back
+to a tab-marking bell, with an explanation beside the initiating setting. A delayed permission result
+updates only its setting, preserving newer browser preference edits.
 
 ## Persistence and installation
 

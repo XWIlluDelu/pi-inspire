@@ -79,7 +79,10 @@ Extensions keep their Pi RPC compatibility requirements.
   its provisional reservation until retirement, even before Pi reports its native session file.
 - Recovery processes old leases even when enhancement is disabled. A live previous Host retains
   ownership; otherwise the old worker scope must be empty before a new writer starts. A same-boot
-  granted legacy lease without scope evidence remains blocked.
+  granted legacy lease without scope evidence remains blocked. A failed recovery is retried on
+  the next worker-start request, sharing an in-flight attempt with other starts. Successful
+  recovery stays established for the Host lifetime; later owned workers are not old recovery
+  candidates. Status inspection reports the current result without starting recovery or cleanup.
 - Host shutdown/restart ends its Pi workers; [[host-lifecycle]] defines Host-only and full restart.
   A shared Herdr server launched by a Linux Host service uses a separate user unit so it survives
   Host replacement. Failure to establish that unit fails startup instead of attaching it to Host.
@@ -123,12 +126,15 @@ other applications' unreported or later launches remain outside its authority.
   Herdr server, missing agent/pane, or vanished session metadata does not establish that Pi exited.
   Keep its history read-only while ownership is unverified; an explicit reselect may connect through
   fresh discovery, never reused pane IDs from an obsolete connection. Original-process retirement
-  releases that connection. A completed reporter rebind may also retire it: the same captured
-  producer and process birth must transfer the exact old file/session to the newly observed native
-  target. Commit that verified binding before release so report loss cannot restore an old fence.
-  Then perform ordinary occupancy admission, including any other holder. Metadata mismatch alone
-  keeps the connection unavailable. Transient transport failures do not establish retirement, and
-  uncertain input is never automatically resent.
+  releases that connection; late reads cannot restore its availability or apply run state.
+  A completed reporter rebind may also retire it: the same captured producer and process birth
+  must transfer the exact old file/session to the newly observed native target. Commit that
+  verified binding before release so report loss cannot restore an old fence.
+  For a session still viewed in a browser, release automatically resumes ordinary writer
+  admission, including any other holder, without navigation, input replay or another polling delay.
+  An unviewed session does not start a replacement worker. Metadata mismatch alone keeps the
+  connection unavailable. Transient transport failures do not establish retirement, and uncertain
+  input is never automatically resent.
 - Reuse the installed `docs/examples/session-activity.ts` in Herdr TUI instances. Herdr supplies
   existing terminal-control authority and status; a consumed, receiver-bound action frame invokes
   public Pi `sendUserMessage`, `ctx.abort`, `setSessionName`, `setModel` or `setThinkingLevel` in that same process. Neither user

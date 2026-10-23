@@ -1,15 +1,12 @@
 ---
 purpose: "Session deletion is a deliberate second-tier Hidden action whose entire target set passes pinned-object and ownership preflight before destructive I/O."
 covers:
-  - server/{runtime-session-deletion,session-delete,desktop-trash,linux-trash,macos-trash,session-recovery,session-recovery-entry,attachments,attachment-retention-identity,attachment-retention-entry,storage-volume,preferences}.ts
+  - server/{runtime-session-deletion,session-delete,desktop-trash,linux-trash,session-recovery,session-recovery-entry,preferences}.ts
   - inspire.mjs
   - server/runtime.ts
   - src/controllers/session-management-controller.ts
   - src/components/{HiddenClearDialog,SessionDeleteDialog}.tsx
-  - tests/server/{session-delete,desktop-trash,desktop-trash-native,native-session-trash-smoke,linux-trash,macos-trash,session-recovery,session-recovery-launcher,runtime-session-deletion}.test.ts
-  - tests/server/*attachment-retention.test.ts
-  - tests/server/{attachment-retention-identity,attachment-retention-entry,attachment-retention-launcher,storage-volume}.test.ts
-  - tests/fixtures/attachment-retention-lock.ts
+  - tests/server/{session-delete,desktop-trash,desktop-trash-native,native-session-trash-smoke,linux-trash,session-recovery,session-recovery-launcher,runtime-session-deletion}.test.ts
   - tests/web/{store-deletion,session-deletion-recovery,nav-render}.test.ts*
 ---
 
@@ -28,7 +25,7 @@ files, and newer browser preferences. Navigation curation remains in [[session-c
   single-line title treatment, does not repeat unlabeled project metadata already established by the
   navigation context, and separates the Trash outcome, permanent-delete fallback, and non-cascading
   fork/project-file scope into three explicit lines. The browser sends only the bounded session id;
-  the host resolves it from its last complete catalog projection and keeps a catalog-wide scan out
+  the host resolves it from its last known catalog projection and keeps a catalog-wide scan out
   of the normal individual interaction path, then relies on the deletion adapter's path-local
   inode/version/header revalidation immediately before its Trash-first operation.
 
@@ -71,13 +68,9 @@ files, and newer browser preferences. Navigation curation remains in [[session-c
   to Trash or been unlinked, failure to remove its now-empty private container cannot turn that
   committed outcome into a retryable deletion failure. Success clears catalog, resource handles,
   browser drafts/status, and navigation identity without touching project files or separately stored
-  forks. Ordinary uploaded files follow [[composer]] reference retention: Trash preserves their
-  references, a surviving fork or branch prevents reclamation, and permanent deletion releases
-  only the deleted session's references. Private indeterminate-deletion payloads also retain files;
-  attachment collection runs in the background after each committed deletion, outside the response
-  and Hidden-batch critical paths. Deferred or failed collection is recorded diagnostically, not
-  returned as a deletion failure; periodic sweeps can retry it. Host shutdown still drains active
-  collection. A collection outcome cannot turn committed deletion into a retryable operation.
+  forks. Ordinary uploaded files are durable assets under [[composer]]: neither permanent deletion
+  nor emptying native Trash deletes them. There is no reference scan or collection callback on the
+  deletion path. Explicit asset cleanup is separate from deleting a session.
 
   If durable preference cleanup fails after the file outcome is known, the response marks that
   failure and the browser warns without retrying the destructive operation. Observed external Pi
@@ -93,8 +86,9 @@ files, and newer browser preferences. Navigation curation remains in [[session-c
   individually hidden sessions and every catalog session whose exact cwd is curated as a hidden
   folder.
 
-  At route admission the host reads the current curation, then takes one authoritative catalog
-  snapshot and reconstructs that union itself; changed membership rejects before any move rather
+  At route admission the host reads the current curation, then takes a fresh complete catalog
+  snapshot and reconstructs that union itself. Unavailable sources reject this complete-set operation
+  before any move, even though ordinary browsing and path-local single deletion remain available; changed membership rejects before any move rather
   than omitting an off-page target or silently expanding the confirmation. It reserves every target
   identity and rejects the entire batch before any move if a target is opening, running, queued,
   dialog-blocked, persistence-unknown, branch-leased, forking, or conflicted. Once admitted,
@@ -155,107 +149,9 @@ The existing all-target, public-to-private quarantine and fresh-name purge check
 Native Trash failures that leave the exact private payload allow the normal permanent-delete
 fallback; a modified or replaced payload remains isolated. After a committed outcome, cleanup
 removes only fixed recovery metadata and empty private containers, never unknown entries or a
-replacement payload. Upload retention continues to find session references recursively inside
-native Trash bundles and indeterminate quarantine folders. On macOS this includes the home Trash
-and current-user `.Trashes/<uid>` on volumes holding known session roots, resolved through
-Foundation's documented volume-URL resource rather than a mount-table or arbitrary directory crawl.
-Linux retention includes both standard layouts on known source mounts. Windows resolves storage
-aliases and actual mounted-folder volume roots before choosing current-user Recycle Bin directories.
-An unreadable or unidentified candidate volume defers collection instead of supplying negative
-reference evidence. If a user moves a recovery folder outside known session/Trash roots, recover it
-promptly: an arbitrary external folder is not a retention root.
-
-## Retention storage continuity and migration
-
-Negative reference evidence requires both the registered session namespace and its native Trash
-volume to remain identifiable across Host restarts. Path existence, a valid current Pi header,
-device numbers, inode numbers and Linux mount topology alone do not establish that continuity.
-
-Each registered long-lived session directory has a non-secret
-`.inspire-upload-retention-root.json` UUID sidecar. Inspire never changes Pi JSONL to establish
-retention identity. Marker creation uses exclusive no-clobber creation and sync; bounded reads pin
-the regular non-symlink file and revalidate its inode/version and containing directory. Every sweep
-checks the marker before and after reference scanning. A missing, malformed, changed, unsafe or
-unreadable marker defers collection; normal session registration never recreates or replaces an
-already-registered marker automatically.
-
-A copied session marker is not sufficient: native Trash lies outside the session directory. The
-registry also records an independent volume proof:
-
-- **Windows:** the documented volume GUID path plus the filesystem serial returned by
-  `GetVolumeInformationW`. The combination detects ordinary filesystem reformatting even when
-  Mount Manager preserves the GUID. `GetVolumePathNameW` resolves mounted-folder volumes rather
-  than assuming a drive-letter root. UNC/storage without a verified local GUID and format proof
-  defers collection.
-- **macOS:** Foundation's `volumeUUIDStringKey`, not the mount-lifetime `volumeIdentifierKey`.
-  Unsupported or unavailable filesystem UUIDs defer collection.
-- **Linux:** an independent private random anchor on the same current filesystem, outside the
-  session directory **and its entire subtree**. Inspire first uses private metadata under the
-  actual attachment-state parent when it shares that filesystem. An external filesystem can use
-  `.inspire-retention-<uid>` at its known mount top directory. The anchor is never placed in Trash.
-  Device values only check current same-filesystem placement; they are not persisted as identity.
-  The anchor UUID and location persist, together with mountpoint/root scope so a changed bind
-  subtree cannot hide its previous Trash. No Python, privileged block-device access or new-kernel
-  UUID ioctl is required. If no safe independent writable location is available, first binding
-  remains unknown and collection pauses. Existing readable markers/anchors can be checked without
-  writing to the source filesystem.
-
-Windows/macOS UUID queries run in bounded, ordered batches before and after a complete sweep.
-Character/byte and root-count budgets keep long root collections below native environment/argument
-and output limits. Opening an already-registered session does not spawn another native volume query.
-
-Copying only a session directory, including its marker, onto replacement storage cannot authorize
-collection against an empty replacement Trash. A complete filesystem namespace clone can preserve
-its UUID or anchor; it must preserve the original Trash references too. These are storage-namespace
-identifiers, not hardware attestation or protection against deliberate identifier cloning.
-
-The version-3 upload registry preserves all registered paths and binds marker IDs to volume proofs.
-Legacy arrays, version-2 mount-only registries and marker-only records lack sufficient historical
-evidence and remain unverified. Current directory/Pi-header contents do not silently migrate them.
-A conflicting or unverified sibling registry also prevents negative evidence; another Host's
-verified record cannot legitimize it automatically. New registration remembers the unknown path
-before attempting marker/volume binding. Read-only or failed identity setup pauses collection,
-not ordinary session opening, sending or deletion. Registry persistence errors retain their existing
-visible failure behavior.
-
-An unused missing default/configured root remains optional. Actual validated uploaded-file
-references discovered outside registered storage cause the corresponding long-lived storage root
-to be remembered before a later sweep can reclaim uploads. Catalog-path existence alone creates no
-identity authority. Native Trash/recovery folders and private deletion-quarantine subdirectories
-are never registered as long-lived marker roots. Removing a registered directory, even a Linux
-subdirectory on an otherwise mounted volume, now defers collection until storage continuity is
-restored or explicitly accepted.
-
-Operator recovery uses:
-
-```sh
-inspire uploads trust-session-directory "<absolute-session-directory>"
-inspire uploads trust-session-directory "<absolute-session-directory>" --confirm
-# Only for a deliberately verified replacement namespace:
-inspire uploads trust-session-directory "<absolute-session-directory>" --confirm --accept-replacement
-```
-
-Preview makes no changes and shows previous/current identities. Confirmation asserts that the
-directory and its volume contain the complete original session **and native Trash references**
-that must be retained; mistaken trust can release uploaded files. Ordinary confirmation binds
-legacy/unknown storage or repairs missing markers/anchors, reusing a consistent expected random ID
-where available. A different existing valid marker or volume proof requires the additional
-replacement flag. Replacement acceptance updates registry expectations, never overwrites valid
-marker or anchor contents, and still requires a currently verified volume proof. Missing storage
-trees are not invented. Partial/corrupt metadata is not silently reset.
-
-Migration covers every affected registry in the same actual attachment-state parent. All Hosts
-sharing that parent must be stopped. A parent-wide exclusive maintenance gate coordinates current
-Host lease publication, normal registry writers and explicit trust. The established file-lock
-protocol uses a kernel lock on Linux and process-birth-bound participants elsewhere, so a crashed
-owner does not leave a permanent global gate. New Host leases and upload-owner metadata record
-process-birth identity; a reused PID alone cannot keep a stale known owner active. Unavailable
-birth identity and old/unknown metadata remain conservative. Legacy default-root Host PIDs supply
-an additional check, but finite legacy PID evidence cannot prove that every mixed-version Host has
-stopped. Offline migration therefore remains an operator requirement, not a claim of complete
-old-version concurrency control. Registry replacement is atomic per file; partial multi-registry
-failure leaves unknown/conflicting evidence deferred and can be resumed explicitly after correcting
-the operational failure.
+replacement payload. Delivered attachments remain available regardless of the recovery folder's
+location or accessibility. Recovery does not require an upload registry, directory marker or
+volume-identity migration.
 
 ### Native API references
 
@@ -266,13 +162,3 @@ the operational failure.
   supplies `SendToRecycleBin` but no independent original-location override.
 - [Apple FileManager.trashItem](https://developer.apple.com/documentation/foundation/filemanager/trashitem(at:resultingitemurl:))
   moves the supplied item to native Trash, not an independently named restore path.
-- [Apple volumeURLKey](https://developer.apple.com/documentation/foundation/urlresourcekey/volumeurlkey)
-  identifies the mounted volume holding each known session root.
-- [Apple volumeUUIDStringKey](https://developer.apple.com/documentation/foundation/urlresourcekey/volumeuuidstringkey)
-  supplies the filesystem UUID used across restarts.
-- [Windows GetVolumeNameForVolumeMountPointW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumenameforvolumemountpointw)
-  supplies the mounted volume GUID path.
-- [Windows GetVolumeInformationW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumeinformationw)
-  supplies the format-time filesystem serial used together with that GUID.
-- [Windows GetVolumePathNameW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumepathnamew)
-  resolves the actual volume mount root for a filesystem path.

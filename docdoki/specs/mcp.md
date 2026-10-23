@@ -24,8 +24,9 @@ remains decided but deferred until public runtime interfaces can support it.
 - Add starts with name, target and HTTP URL or stdio program/arguments. Edit shows the fixed
   identity/scope/transport as text rather than disabled controls and leads with the editable URL or
   program. Environment, headers, timeout, exposure and OAuth client settings are advanced controls.
-- Preserve unedited fields. Never return stored or resolved authentication secrets to the browser
-  or execute value-resolution hooks to display configuration.
+- Preserve unedited fields. List snapshots omit saved connection values and authentication secrets.
+  An explicit editor action can reveal the saved URL or argument list, which may itself contain
+  secrets. Never execute value-resolution hooks to display configuration.
 - Distinguish file source and precedence from the addressed worker's loaded state. Extension
   registrations retain their native source and mutation semantics.
 - Saving and applying are distinct. Offer existing explicit Reload when needed, without permanent
@@ -37,8 +38,10 @@ remains decided but deferred until public runtime interfaces can support it.
 
 Settings → MCP groups file entries under **User** and **Project**, with quiet source-path captions.
 Rows show name, transport, file-disabled state and an understated same-name project override, not
-connection health. Add, focused Edit and confirmed Remove use the established Settings controls,
-with Save/Cancel reachable while the form body scrolls. Policy-only Edit enters the first policy
+connection health. Add sits beside the section title; entry rows share Models' quiet Edit/Remove
+icon actions with explicit accessible names and tooltips. Advanced fields use the shared Settings
+disclosure chevron. Focused Edit and confirmed Remove keep their existing behavior, with Save/Cancel
+reachable while the form body scrolls. Policy-only Edit enters the first policy
 control (Tool exposure) without opening its menu; ordinary edits still enter the URL or program.
 Project trust is explained briefly in the project editor, not repeated as a policy/status block in each group.
 
@@ -46,6 +49,8 @@ A user server with no same-name project entry offers **Customize for this projec
 project file is editable. This opens the existing policy form with a fixed name/project target and
 inherited defaults, not a copied server definition. Save becomes available after choosing a policy
 override; only explicitly overridden `enabled`, `exposure` and `toolExposure` fields are stored.
+Undoing draft tool-rule changes restores the original policy rather than storing an empty map.
+An explicit edit that clears existing rules still stores an empty map under Pi's replacement semantics.
 The Host validates a new policy entry against the same-name user configuration, just as for edits,
 without copying its URL, program, environment or credentials. Existing project entries retain their
 ordinary Edit/Remove actions. Removing a policy override restores user inheritance; saving or removing
@@ -79,12 +84,19 @@ Transport and identity of an existing entry stay fixed; remove/add replaces them
 While adding a server, switching transport retains its visible header/environment draft; submission
 uses the selected transport's displayed edits, never an invisible discarded value.
 
-Stored URLs, argument contents, environment/header values and OAuth values other than the
-registration method stay on the Host. The browser receives presence/keys/counts, never secret
-values or masked replacements that could overwrite them. Blank protected inputs retain stored
-values; removal is explicit. Replacing arguments replaces the entire list. Exposure rule editing replaces that ordered map in displayed
-order, including removed/re-added patterns; other edits leave it untouched. Configuration removal
-does not delete Pi's separate OAuth credential store.
+List snapshots expose presence/keys/counts instead of stored URLs, argument contents,
+environment/header values or OAuth values other than the registration method. In an existing
+editor, **Show saved URL** or **Show saved arguments** explicitly reads only that entry's literal
+connection values at the displayed file revision. The authenticated response is non-cacheable,
+does not resolve hooks and includes no unrelated credentials. Changed files require Refresh before
+revealing values; late reads cannot populate a different Settings owner or revision.
+
+Revealing values alone does not make a write. The user can edit the loaded URL or individual
+arguments without re-entering the remaining list. Hidden URL and credential inputs retain stored
+values when blank; removal is explicit. Argument edits replace that list while preserving other
+fields. Exposure rule editing replaces its ordered map in displayed order, including
+removed/re-added patterns; other edits leave it untouched. Configuration removal does not delete
+Pi's separate OAuth credential store.
 
 Writes validate the edited native fields, use revision-checked locks and atomic restrictive-mode
 replacement, and preserve legitimate user-file symlinks. Regular files lock their native resolved
@@ -133,8 +145,8 @@ Configured MCP tools and Codemode composition continue through Pi.
 
 - `tests/server/mcp-config.test.ts`: secret-safe projections, unexecuted hooks, source-preserving
   edits, policy-only inheritance, sequential/concurrent namespace collisions, invalid files, conflicts,
-  path authority, user-file independence from missing or unselected projects, and merged OAuth
-  registration validation.
+  path authority, revision-scoped explicit connection reads, user-file independence from missing
+  or unselected projects, and merged OAuth registration validation.
 - `tests/server/mcp-native.integration.test.ts`: native file consumption, trusted precedence,
   policy creation from an absent override, editing and removal back to user inheritance without
   credential duplication, file/loaded-worker separation, and native
