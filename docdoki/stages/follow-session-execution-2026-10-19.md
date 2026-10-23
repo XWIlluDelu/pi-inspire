@@ -46,13 +46,18 @@ interfaces and process evidence, not a particular external host's control API.
   prevents shutdown during startup I/O from rearming a timer. SDK quit/dispose while its process
   lives has no reporter-visible persistence-drain completion signal and stays conservatively held.
 
-## Delivery state
+## Viewed-session recovery
 
-The native-action implementation is complete and verified on the isolated `review-native-actions`
-branch. Main integration, push and installation are paused pending explicit publication approval;
-this is a delivery boundary, not an implementation defect. Host restart remains operator-owned.
+Following [[session-persistence]], subscribed external read-only sessions
+recover automatically through existing writer admission after release. Ordinary presence checks
+share one bounded observation timer; retained Herdr connections keep their existing polling.
+The browser receives availability events without navigation or a new transcript view.
 
-## Verification
+Confirmed native retirement triggers admission immediately;
+ordinary presence is checked every two seconds while viewed. Observation does not replay input or
+rewrite unchanged retained presence. [[follow-project-quality-2026-10-21]] tracks integration into `main`.
+
+## Existing verification
 
 - `herdr-native-actions.integration.test.ts` uses real offline Pi TUI/PTY with non-default Follow-up
   and Interrupt keys: native queueing, agent abort/queue restoration, below-editor widget/draft
@@ -86,9 +91,19 @@ this is a delivery boundary, not an implementation defect. Host restart remains 
   A verified control-connection rebind commits its new retained binding before retirement; losing
   the report and reconstructing the Host cannot restore the old binding. A separate holder still
   blocks admission after that connection retires.
-- Runtime regressions cover cold settings admission, a second pre-start check, release/reselection,
-  and preserving existing Herdr control. UI checks retain history and inspection while withholding
-  execution controls, with recovery on explicit reselect.
+- Runtime regressions cover cold settings admission, second-check refusal with the reading view
+  retained, preparation failure, startup failure without automatic restarts, deletion
+  reservations, and shared subscriptions that leave during an observation and return.
+  Unavailable observations retry without repeated UI events. Startup attestation invalidates
+  a view whose history was replaced before Pi started. Late native state after retirement cannot
+  restore the connection or its run state. Recovery does not change the Host's global selection.
+  Existing Herdr control recovers in place rather than creating a local worker.
+- A real PTY Pi exits through `/quit`; its still-viewed session then starts one RPC writer with
+  the same transcript view, no replayed input, and a successful subsequent prompt.
+- Browser-store checks cover draft/attachment preservation for both external read-only reasons.
+  Isolated Chromium checks with real Pi cover ordinary presence (native control disabled) and Herdr
+  retirement. Both retain the same transcript DOM, reading position, content and unsent materials,
+  then persist exactly one explicitly submitted input and answer after recovery.
 - Existing worker lifecycle/pool, startup attestation, persistence ownership, branch/settings and
   native Herdr tests remain part of the targeted verification.
 

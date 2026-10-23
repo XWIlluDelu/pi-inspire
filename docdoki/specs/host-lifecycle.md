@@ -4,7 +4,7 @@ covers:
   - inspire
   - inspire.mjs
   - deploy/systemd/**
-  - scripts/{build-release,build-web,source-build-hash,write-build-stamp,verify-release-package,web-build-output,start-dev,start-dev-host}.mjs
+  - scripts/{build-release,build-web,source-build-hash,verify-release-package,web-build-output,start-dev,start-dev-host}.mjs
   - scripts/vite-dev-launch.ts
   - vite.config.ts
   - tests/server/dev-launcher.integration.test.ts
@@ -280,8 +280,13 @@ capture mechanism and service handoff.
   additionally requires the live authenticated Host rather than treating an active process as
   availability. The unit's own `ExecStart` bypasses delegation so it cannot recurse; explicit
   alternate-instance inputs and checkouts without the unit retain direct-launcher behavior.
-  Installing the host also installs its attached 04:00 user timer, and enabling/disabling the host
-  enables/disables that timer in the same command.
+  Instance selection compares the effective host, port, and state path with the installed default;
+  merely inheriting those same values does not bypass its service manager. An explicit credential
+  delegates only after authenticating the same running instance and matching that credential.
+  A foreign or outdated installed unit still fails closed, rather than falling back to reparenting
+  the same Host. Installing the host also installs an optional 04:00 user timer, but enabling the
+  Host does not enable that timer. Scheduled maintenance requires separate operator opt-in;
+  disabling the Host also stops/disables its timer so it cannot restart a disabled service.
 
   The timer never fetches updates: it restarts only if the installed external Pi version or a clean
   source revision differs from the running identity, Inspire-owned workers have no active
@@ -371,8 +376,13 @@ capture mechanism and service handoff.
   required. A lost launcher acceptance cannot trigger shutdown from a late reply or turn a later
   normal exit into a restart.
 - The browser persists identity in tab-session storage before POST; invalid or unavailable storage
-  blocks dispatch. Recheck is read-only and explicit retry keeps the same identity. A rejected
-  receipt is labelled **last attempt**, because it is historical rather than a current busy check.
+  blocks dispatch, not read-only Host observation. Recheck retries local recovery and clears the
+  browser's blocked state once storage recovers. Explicit retry keeps the same identity.
+  **Clear local restart record…** requires confirmation and discards only browser tracking; it neither
+  sends nor cancels a restart. The Host's pending operation continues to fence new admission.
+  Failed local cleanup preserves the record and reports a storage problem, not an unknown restart.
+  A rejected receipt is labelled **last attempt**, because it is historical rather than a current
+  busy check.
 - The CLI checks readiness after restart; the browser reports reconnection to a new Host. Preflight
   checks dependencies, build, and imports in its execution environment.
 

@@ -76,7 +76,7 @@ covers:
   - scripts/build-web.mjs
   - scripts/verify-release-package.mjs
   - scripts/web-build-output.mjs
-  - scripts/write-build-stamp.mjs
+  - scripts/source-build-hash.mjs
   - tests/server/app*.test.ts
   - tests/server/preferences.test.ts
   - tests/portable/file-lock.test.mjs
@@ -165,17 +165,23 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   and assistive-technology use. A collapsed group containing the visible
   session carries the active highlight on its header, and active search results remain visible
   regardless of saved collapse state. Hidden is a bottom curation drawer outside the session list's
-  scroll area, below the workspace explorer when present. Both drawers use the same neutral header
-  surface, height, typography, icon alignment, and trailing disclosure indicator. Hidden places its
-  count at the trailing edge before the indicator. Each header precedes its own content; Hidden's
-  independently scrolling body is bounded to leave room for ordinary navigation. Project identity
+  scroll area. Its neutral 44px header leaves space around the label and aligned icons, with the
+  count at the trailing edge before the disclosure indicator. The header precedes its content; Hidden's
+  independently scrolling body is bounded to leave room for ordinary navigation. Both scrollports
+  retain enough height for complete rows in short windows, including safe-area insets. When those
+  minimums cannot fit alongside New/Search and the drawer header, navigation itself scrolls rather
+  than compressing a list into a sliver. Opening Hidden reveals its body without transferring focus;
+  normal-height navigation retains independent list scrolling and its existing spacing. Project identity
   remains on cross-project Hidden rows as quiet text rather than a filled badge. On phone-width or
   non-hover layouts, all cross-project rows (Pinned, search and Hidden) place project and age beneath
   the title so persistent actions do not
   crowd it. Selection and search highlights cover the whole row, including its action area.
   The drawer opens on demand, starts closed
   again, and search reveals matching hidden sessions inside it instead of returning them to their
-  folders. With no hidden results the drawer is absent. Ordinary rows keep Pin and Hide; Hidden rows
+  folders. Ordinary session-entry surfaces, including Welcome recents and the command palette's
+  recents/search, share the hidden-session/project filter. Hidden sessions remain available through
+  the explicit Hidden drawer rather than reappearing as ordinary recommendations.
+  With no hidden results the drawer is absent. Ordinary rows keep Pin and Hide; Hidden rows
   reuse those same two action slots for Restore and Delete, making individual deletion a deliberate
   second-stage action rather than a third always-present icon. Every hidden session, including a
   child of a hidden folder, has both Restore and Delete in those fixed columns. Restoring a child
@@ -232,10 +238,11 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   server order. Curated, selected, and live-session hydration is deduplicated and chunked within the
   host route bounds; it can add visible rows but never advances the chronological cursor.
 
-  Hydration or preservation failure retains the last confirmed union, identifies the operation
-  truthfully, and retries that same operation; a standalone live-row failure is labeled session
-  hydration and never resets already loaded base pages. Loading and failure states suppress the
-  empty-result message until a successful empty response.
+  Hydration and preservation failures retain the last confirmed union and recover automatically in
+  a bounded, generation-owned window. Supplemental catalog reads do not create warning/retry tasks;
+  a not-yet-materialized live row is expected and never resets loaded base pages. Initial/search and
+  older-page failures stay beside their explicit navigation action. Foreground loading and failure
+  states suppress the empty-result message until a successful empty response.
 
 ## Startup, welcome, and directory selection
 
@@ -321,10 +328,16 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 
 ## Feedback scope
 
-- Top banners describe a current workspace condition: lost connection, an unavailable session
-  refresh, projection failure, or a recoverable ownership conflict. Their action retries the
-  relevant read, reconnects, or recovers that condition. A successful authoritative observation
-  clears a refresh warning; a cached-state acknowledgement does so only when no projection
+- Recover internal read state automatically while retaining confirmed content. Catalog backfill,
+  History revalidation, snapshot refresh and file probes use bounded, ownership-checked retry;
+  branch commands and prompts with uncertain acceptance are never automatically replayed.
+- Top banners describe a condition that affects the workspace: persistent loss of synchronization,
+  an unavailable address, projection failure, or a recoverable ownership conflict. A normal stream
+  interruption starts with the existing topbar reconnect status; it gains a banner only after ten
+  seconds. A more specific reachability diagnosis may appear immediately. A single transient
+  background snapshot failure does not become a global warning; persistent failure can do so after
+  bounded automatic recovery. Banner actions retry the relevant read, reconnect, or recover that
+  condition. A successful authoritative observation clears a refresh warning; a cached-state acknowledgement does so only when no projection
   problem remains. An unrelated successful operation does not clear a synchronization warning.
 - Operation failures belong beside an available retry surface, such as deletion confirmation,
   an extension question, a form, or a resource pane. Otherwise they use the existing notification
@@ -334,9 +347,11 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   request, selection, or transport replacement cannot inherit it.
 - Expected lifecycle transitions do not report obsolete background reads as failures.
   [[session-deletion]] owns the deletion boundary; real deletion failure and authentication loss
-  remain visible. Notifications remain bottom-right on desktop. On phones they stay below the
-  workspace header, clear of any current multiline banner and its controls, rather than moving
-  over the editor. [[design-system]] owns their visual treatment and dwell.
+  remain visible. General notifications use one floating stack across welcome and conversation
+  views; they do not become full-width welcome-page content. They stay top-right at every width,
+  below the workspace header, current banners and horizontally overlapping transcript search/tools.
+  An overflowing stack remains scrollable above the editor rather than moving the anchor with
+  editor height. [[design-system]] owns their compact visual treatment and dwell.
 
 ## Session-owned controls and command palette
 

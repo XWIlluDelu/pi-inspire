@@ -1,19 +1,19 @@
 ---
 purpose: One composer owns editing, drafts, prompt artifacts, input handoff, Pending recovery, and command feedback.
 covers:
-  - server/{attachments,attachment-references,composer-history,runtime-composer-artifacts,runtime-pending*,project-files,image-content,assistant-text}.ts
-  - shared/{contracts,pending-preview,composer-artifact-references,resource-references,image-dimension-notes,attachment-context}.ts
+  - server/{attachments,composer-history,runtime-composer-artifacts,runtime-pending*,project-files,image-content,assistant-text}.ts
+  - shared/{contracts,pending-preview,composer-artifact-references,resource-references,image-dimension-notes,image-types,attachment-context}.ts
   - src/{App,api,store,app-state,clipboard-files,keyboard-input,composer-*,session-drafts,model-options}.ts*
   - src/controllers/{composer,pending-recovery}-controller.ts
   - server/pending-operation-receipts.ts
   - tests/server/app-pending-recovery.test.ts
   - tests/integration/{pending-deferred-images,recovered-image-user-intent}.test.ts
-  - src/components/{ActivityBar,AttachmentList,Composer,ComposerInput,ImagePreview,ImageLightbox,ImageGallery,ModelSelector,ProjectFiles,Transcript,transcript-rows,Welcome,ExportDialog}.tsx
+  - src/components/{ActivityBar,AttachmentList,Composer,ComposerInput,ImagePreview,ImageLightbox,ImageGallery,ModelSelector,ProjectFiles,Transcript,transcript-rows,Welcome,DirectoryPicker,ExportDialog}.tsx
   - src/{image-viewport,use-image-viewport,use-image-history}.ts
   - src/styles/*.css
   - tests/server/{attachments,attachment-file-names,attachment-retention,composer-history*,runtime-composer-artifacts,runtime-pending*,runtime-compaction,app}.test.ts
   - tests/shared/{composer-artifact-references,pending-contracts}.test.ts
-  - tests/web/{composer*,session-drafts,native-commands,readonly-session,transcript-actions,welcome*,model-selector,model-store}.test.ts*
+  - tests/web/{composer*,session-drafts,native-commands,readonly-session,transcript-actions,welcome*,directory-picker,project-file-picker,model-selector,model-store}.test.ts*
   - tests/web/{image-viewport,image-gallery,attachments}.test.ts*
   - tests/browser/{composer,file-attachments,usage-facts,model-selection,project-file-picker,pending-input,image-preview,image-interactions}.spec.ts
 ---
@@ -52,8 +52,10 @@ removed. `ComposerController` owns artifact partitions and delivery through `App
 browser snapshot and cross-domain commit authority. Append-only transcript updates preserve the
 active textarea, focus and selection.
 
-The compact input keeps its padding, control order and icon-only send button. Controls wrap only as
-needed; phone Steer/Queue buttons split their delivery row equally. At widths up to 420px, Model and
+The compact input keeps its vertical spacing, control order and icon-only send button. Input text,
+the Steer/Queue control's outer edge and the model label share one horizontal content anchor,
+including on phones; selector hit areas retain their padding. Controls wrap only as needed;
+phone Steer/Queue buttons split their delivery row equally. At widths up to 420px, Model and
 Thinking sit together with an 8px token gap on the selector row. Model shrinks without growing into
 spare space; long labels truncate while Thinking keeps its full width. Send is the rightmost action
 in both idle and busy states; Stop appears immediately to its left in visual and DOM/tab order.
@@ -101,6 +103,10 @@ addresses its immutable workspace. New searches the typed or inherited prospecti
 creating a session. Picker selections bind to its canonical root; changing the directory clears them,
 and creation uses that root. New's inline selections use absolute canonical-workspace paths so a
 later directory change cannot retarget them.
+
+The explicit picker recovers transient search failures with bounded backoff in its current workspace,
+query and visibility scope; dismissal or transport replacement retires old work. Recovery only reads
+candidates and never adds a reference. Persistent failures retain local feedback.
 
 The explicit project-file picker (Composer and Welcome) keeps its compact single-line rows and
 existing placement/keyboard behavior. Each result uses the shared 13px monochrome file-type icon,
@@ -161,6 +167,11 @@ repeating inline; errors retain their diagnostic and removal guidance. Filenames
 squeezing status/removal controls, and file chips do not stretch to adjacent image-tile height. Clipboard
 `files` is the complete source when non-empty; only an empty list falls back to file-kind `items`.
 Do not combine these projections or deduplicate distinct files by coincident metadata.
+
+Preview capability does not determine delivery kind. Browser-previewable image files such as BMP
+and SVG retain their local thumbnail but travel as ordinary files. Browser selection and Host
+validation share the Pi prompt-image MIME classification (PNG, JPEG, GIF, WebP); only those images
+consume the prompt-image budget. All attachments still count toward the file/count/total budgets.
 
 Sent image thumbnails stay subordinate to the message: 4:3 previews grow from 104 × 78px on narrow
 screens to 160 × 120px on desktop. Staged attachment tiles are 64 × 64px with a fine pointer and
@@ -226,29 +237,44 @@ rules without renaming payloads or rewriting session references.
 Resolution rechecks totals and encodes images
 sequentially within the Base64 budget; RPC rejects excess commands before stdin. Upload observation
 covers headers/body for 120 seconds plus allowance at 128 KiB/s. Transport replacement cancels
-observation; withdrawing the batch's last attachment cancels it. Timeout marks remaining chips failed
-with remove/re-add guidance, without resending. Late handles are reclaimed even when cancellation is
-ignored. Switching sessions preserves the upload owner. Inspire never silently uploads elsewhere.
+observation; withdrawing the batch's last attachment cancels it. The browser retains each original
+`File` while its unsent staging exists. Transient upload failures keep the chip pending and recover
+with bounded backoff; persistent failures offer local retry without requiring removal or file
+reselection. Late handles are reclaimed even when cancellation is ignored. Removing staging or its
+partition retires its retry and releases the retained bytes. Switching sessions preserves the upload
+owner. Recovery stays on the configured connection and never silently switches destinations.
 
 Withdrawing staging deletes its owned copy. Delivered images remain in Pi and release upload copies;
-sent ordinary files and ownership metadata survive Host restart. Shutdown drains uploads/runtime work
-before withdrawing staging and preserves accepted ordinary files.
+ordinary files become durable assets rather than reference-counted caches. They survive Host restart,
+session deletion, forks, native Trash and offline backups, including native `handled` inputs whose
+extension may keep a path outside Pi history. Shutdown drains uploads/runtime work, removes known
+staging and preserves possible deliveries.
 
-Collection follows references across all entries/branches in default, configured and remembered
-custom Pi storage, recoverable desktop Trash and private deletion recovery. Shared forks retain an
-upload until the last reference disappears. Confirmed deletion triggers background collection without
-delaying the deletion response or later targets in a Hidden batch; periodic sweeps also trigger it.
-Incomplete, unreadable or changing Pi sources defer it; unrelated valid non-Pi JSONL in Trash does not
-block it. Staged, in-flight, accepted-but-unpersisted and recalled resend owners stay protected.
-Native `handled` input adds no future-reference hold, but persisted hook references still count.
-Scanning/resend leases recognize literal paths and Inspire's exact JSON-string form. Only
-ownership-recorded upload copies can be removed, never original user/project files.
+Version-3 ownership records begin as `unsubmitted`. Resolution atomically marks each copy as
+`possible` delivery before returning it to a caller that can send it to Pi. A lost receipt or crash
+therefore cannot authorize automatic deletion. Failure to record this handoff refuses dispatch and
+restores the staging handles. Existing unversioned/version-2 records remain durable and recallable
+without changing paths or metadata.
+
+Periodic cleanup is limited to explicitly unsubmitted copies whose process-birth-bound owner is
+confirmed retired. It re-reads the record after retirement to observe a final handoff. Live or
+unverified owners, unknown metadata and possible deliveries are not deletion evidence. Only recorded
+private upload copies can be removed, never original user/project files. Initial storage failures
+may be retried on the same Host after repair.
+
+There is no session/Trash reference scan, directory registration, volume continuity proof or offline
+trust migration. Ordinary session reads, startup, sending and deletion do not depend on these former
+maintenance writes. Delivered-file reclamation is an explicit operator choice with a warning that
+all surviving references will break; see [cleanup operations](../../docs/host.md#uploaded-file-retention-and-cleanup).
 
 Preview failure does not invalidate an otherwise current staging handle. Ready handles survive
-same-Host reconnect. Changed Host authority invalidates them in every partition,
-including saved history drafts and failed deliveries; a definite expiry refusal names only affected
-uploads. Invalid chips explain remove/re-add and block send. Recovery does not silently reupload or
-resend acceptance-unknown input. Upload cleanup cannot revoke confirmed prompt acceptance.
+same-Host reconnect. Changed Host authority invalidates old handles in every partition, including
+saved history drafts and failed deliveries. Unsent browser-held bytes are staged again after the
+new authority is confirmed; a definite expiry refusal restages only affected files. A restored
+attachment does not resubmit its message. Artifacts without retained bytes explain when reselection
+is necessary. Unusable attachments block send. Once an attachment enters a prompt whose acceptance
+is unknown, its original operation and handles remain fenced: neither its bytes nor the prompt enter
+automatic upload recovery. Upload cleanup cannot revoke confirmed prompt acceptance.
 
 ## Delivery and Pending
 
@@ -307,7 +333,10 @@ region without focusing the editor. It releases latest-follow; keyboard and poin
 share the same action. The region adds no ordinary Tab stop and retains the existing focus-within
 emphasis and idle dimming. The count disappears when the queue is empty. Text previews preserve beginning and end, up to three leading lines and one trailing
 line within 512 characters, with explicit middle ellipsis.
-Short text stays whole; omitted rows retain total and omitted counts. Known images have wrapping,
+Short text stays whole; omitted rows retain total and omitted counts. Previews use the shared
+user-content projection, showing file names instead of model-facing transport instructions.
+Preview length and truncation describe this readable text; Copy and Return retain the exact input.
+Known images have wrapping,
 clickable thumbnails from retained handles through the attachment endpoint. Until handles arrive,
 count-only rows show Image / N images; unknown empty rows imply no image. Consumed image admissions
 leave the public view even if Pi retains empty captions. Display, full-copy and recovery share that
@@ -359,6 +388,10 @@ direct-shell input reject staged artifacts without discarding them. Palette-nati
 draft; Fork/Clone behavior follows [[session-branches]]. Graphical Export opens the same standalone
 format/download dialog from title menu or palette, with no command editor or draft mutation. Failure
 retains its chosen format; an extension question keeps foreground ownership without discarding it.
+Pending exports belong to application state, not the dialog: Close, Escape and the backdrop remain
+available without cancelling the operation. Reopening observes the same task and prevents duplicate
+submission. Completion downloads the file and reports the result even while the dialog is closed;
+replacing the Host connection retires the old task's UI ownership.
 
 Resource commands use one transient `ComposerInput` preparation step with review and explicit submit.
 It does not replace or consume message partitions. Initial caret follows `/command ` without resetting
@@ -421,9 +454,19 @@ a catalog choice. These readouts neither expose selection controls nor initiate 
 or ownership acquisition.
 
 The model picker groups/searches Pi choices by provider/ID/display name, with Common first and a
-bounded successful-only provider-local MRU; unavailable MRU stays saved but hidden. Only the catalog
-scrolls. Viewport placement precedes opening; search receives focus and selection/dismissal restores
-the trigger, including mutation failure. Escape precedes Stop. Refresh retains highlighted identity
+bounded successful-only provider-local MRU; unavailable MRU stays saved but hidden. Its popover is
+capped at 384px wide and 456px high, further constrained by the live viewport. Thinking labels and
+option generation are shared by Welcome, the active composer, read-only settings, and model defaults;
+only their display labels are capitalized, not their native values. Welcome and the active composer
+also share the selector's sizing, capability filter and display logic. Configurable extension controls
+compose with it before and after creation; [[tool-presentations]] defines local preselection and
+confirmed application before first input. Current-session selectors, argument completion, commands and keyboard
+cycling resolve model capabilities from the matching catalog identity, falling back to the current
+runtime model when no catalog entry exists; refresh does not change the selected identity or effort.
+The bare `/model` command opens the same picker even with an empty catalog, retaining refresh and
+Manage models as recovery/configuration entry points. Explicit model arguments still validate the
+available choices. Only the catalog scrolls. Viewport placement precedes opening; search receives
+focus and selection/dismissal restores the trigger, including mutation failure. Escape precedes Stop. Refresh retains highlighted identity
 unless a newer query/pointer/key choice intervenes. Cached choices appear immediately while the
 owning worker refreshes without interruption or selection change; failure keeps cache and local
 status. Changes commit selection/recency only on success; failed thinking rolls back and both warn.
@@ -431,7 +474,10 @@ status. Changes commit selection/recency only on success; failed thinking rolls 
 New uses the same editor/artifacts, with a full-width editable directory address/browser below the
 toolbar. Its filled bordered input expresses path editability and remains separate from the message.
 The first-message editor receives initial autofocus. Directory Enter does not implicitly submit
-creation; IME confirmation remains native.
+creation; IME confirmation remains native. The directory browser recovers temporary level/drive
+reads without switching the requested target to Home; only a confirmed invalid or inaccessible initial
+path permits that fallback. Same-scope reloads retain a successful listing, and drive discovery never
+blocks selection. Navigation, visibility, transport changes and dismissal retire obsolete reads.
 A missing typed directory offers one contextual **Create folder and start** action, without another
 confirmation. Only that action authorizes recursive directory creation; Send, Enter, browsing and
 model/file observations do not create directories. A file or inaccessible path is not offered as
@@ -441,13 +487,19 @@ normal defaults after creation in that directory, without substituting another e
 Changing the path immediately retires the old action and late observations cannot restore it.
 Failure preserves staged work. Opening retained history never creates its missing directory.
 
-Readiness distinguishes pending/failed model resolution and in-flight creation; errors offer Retry
-and Pi's `unknown/unknown` means no model. While cwd matches and the source workspace is available,
-the inherited worker supplies model and resource completion; changing directory clears its commands
-until the new worker loads. Read-only sources retain known choices, but New queries the prospective
-directory rather than starting source discovery. Unresolved source selection keeps its loading/error
-feedback and Retry alongside the missing-folder action. Existing-
-session built-ins appear after creation; Host Compact also works before the first message.
+Readiness distinguishes unresolved model/directory checks from in-flight creation. Transient read-only
+prechecks recover automatically without creating a directory/session or delivering input; persistent
+failures and configuration problems retain local recovery. Pi's `unknown/unknown` means no model.
+While cwd matches and the source workspace is available, the inherited worker supplies model and
+resource completion. Prospective-directory metadata discovery returns extension commands,
+prompt templates and skill commands from Pi's public registries, respecting its resource and trust
+settings without session-start hooks. Controls and first-message completion use that shared
+target-owned inventory; directory/transport changes immediately retire stale observations.
+Fresh discovery replaces the inherited inventory, including resources removed from that directory. Read-only
+sources retain known choices, but New queries the prospective directory rather than starting source
+discovery. Unresolved source selection keeps its loading feedback alongside the missing-folder action
+while recovering, and offers Retry only after persistent failure. Existing-session built-ins appear
+after creation; Host Compact also works before the first message.
 
 Files stay browser-local until Pi supplies a session identity, then use ordinary upload lifecycle.
 Completion sends the first prompt only while that session remains selected; otherwise work remains

@@ -39,7 +39,9 @@ The Models category has three sections:
    The provider directory, method selection and login attempt replace one another. Back preserves the
    directory query; finishing login returns to saved providers.
 3. **Custom providers:** a collapsed-by-default configuration card with provider/model counts and
-   Add provider. Each provider owns its connection fields and a collapsible model list with Add model.
+   Add provider beside the section title. Each provider owns its connection fields and a collapsible
+   model list with Add model. Counts, common order and advanced fields share the Settings disclosure
+   chevron; provider and declared-model rows share the quiet Edit/Remove icon actions used by MCP.
 
 Available-model and provider lists window large result sets while keeping every result reachable by
 search and keyboard. Provider headings are quiet, unboxed labels within the Models card; compact
@@ -66,6 +68,9 @@ directory. General control and focus styling follows [[design-system]].
 
 Settings edits global Pi preferences and displays effective project overrides alongside them. Saved
 identities and patterns remain visible when unavailable. A failed read has its own error state.
+Read failures retain their file scope: an unreadable project settings file reports that its overrides
+are unavailable, but does not disable editing the separate global preferences. Global reads/writes
+still require a valid global file and preserve the project file.
 
 Common choices use Pi's ordered model-cycle patterns. Exact entries, including thinking-effort
 suffixes, toggle directly. Rule-covered rows show a separate “Via rule” edit action instead of a
@@ -120,15 +125,24 @@ effort is left to native startup rather than guessed. A manual effort choice rem
 
 One metadata query returns available choices and startup-default previews for the prospective cwd.
 It includes global and already-trusted project extension registrations, using Pi's stored/inherited
-trust and global default trust rule. Skipped project resources produce a warning; failed discovery
-produces an error. Fresh trust decisions remain part of Pi startup.
+trust and global default trust rule. Skipped project resources and individual extension-load failures
+produce warnings while retaining the models Pi can load. Invalid model configuration and persistent
+metadata-query failures produce local errors. Fresh trust decisions remain part of Pi startup.
 
 Discovery completes extension registration before resolving defaults. The short-lived SDK process
 creates no persistent session, emits no session-start event and makes no agent/model request.
-Refresh replaces an older preview without replacing explicit or inherited choices. Retrying a failed
-directory check shows pending feedback and keeps Start unavailable until that check succeeds; an
-inherited or explicit model cannot turn a failed directory retry into readiness. Process lifetime,
-shared queries and cache invalidation are described in [[state-ownership]].
+Refresh replaces an older preview without replacing explicit or inherited choices. Directory/catalog,
+inherited-selection and per-model thinking reads use bounded automatic recovery for transient failure.
+Each attempt stays bound to its directory, source, input intent and browser transport; changing these
+owners or unmounting retires old waits and responses. Manual effort retires a pending thinking preview.
+Successful reads clear their obsolete errors without creating a session or submitting a message.
+
+An unverified or known-invalid directory keeps Start unavailable until a successful check; an inherited
+or explicit model cannot bypass that check. A failed observation preserves a known missing/invalid
+path rather than reclassifying it. Optional refresh of the same confirmed directory retains its model,
+effort and readiness; changing directory or transport requires fresh validation. Persistent failure
+keeps staged work and local recovery. Process lifetime, shared queries and cache invalidation are
+described in [[state-ownership]].
 
 ## Provider and model configuration
 
@@ -139,7 +153,9 @@ optional endpoint overrides stay compact. Custom API types are accepted.
 
 Forms retain untouched providers, model metadata, overrides and advanced fields under Pi's schema.
 Removing a declaration affects `models.json`, independently of built-in catalog entries and saved
-login credentials. Configured declarations remain editable when their models are unavailable.
+login credentials. Configured declarations and saved preferences remain editable when model discovery
+is unavailable. Settings reports the availability failure separately from file errors; catalog
+discovery is not a prerequisite for reading or saving configuration.
 
 Provider/model creation and editing open a focused subview inside the Models category, replacing
 the browsing sections without unmounting their state. The header identifies the edit target and
@@ -159,8 +175,9 @@ returns to the entry point, and Common/Default saves retain row focus unless the
 Candidate declarations are validated in the existing isolated metadata worker against the same
 agent directory, selected working directory and project-trust policy as Pi. Extension provider
 registration precedes validation so legal inherited API/endpoint declarations remain valid, including
-when editing an unrelated provider. Validation starts no model turn or persistent session and keeps
-factory errors and credentials out of responses. Revision and atomic-publication checks still apply
+when editing an unrelated provider. Unrelated extension-load failures do not veto valid declarations;
+Pi still validates the complete candidate against the providers that loaded. Validation starts no
+model turn or persistent session and keeps factory errors and credentials out of responses. Revision and atomic-publication checks still apply
 before publishing the validated candidate.
 
 Writes detect conflicting external edits, accept native file syntax and follow existing configuration
@@ -174,7 +191,9 @@ A configuration save invalidates cached workspace metadata. For an addressed ses
 that worker only; other workspaces rediscover on demand. Without a session, it refreshes the edited
 workspace catalog. Refresh preserves ongoing work and the current selection. The explicit Refresh
 control rereads external changes while Settings remains open. Earlier catalog/settings reads cannot
-replace a newer published write snapshot in the picker or Common scope.
+replace a newer published write snapshot in the picker or Common scope, including its error state.
+Only the current catalog observation may publish warnings or errors; an obsolete warmup cannot
+restore feedback after a configuration snapshot has been accepted.
 
 ## Authentication
 

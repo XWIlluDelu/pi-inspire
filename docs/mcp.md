@@ -54,11 +54,15 @@ or client name; switching to it requires explicitly removing any stored values i
 A custom CIMD callback must use `http://localhost` or `http://127.0.0.1` with the path `/callback`.
 Invalid combinations are rejected without changing the file.
 
-Stored URLs, arguments, environment/header values and OAuth values other than the registration
-method are not sent to the browser.
-Leave a protected input blank to keep its value. Type a replacement or use the explicit removal
-control. **Replace arguments** replaces the complete stored list. Other fields and native metadata
-that you do not edit remain intact.
+Saved URLs and arguments are hidden by default. In an existing server's editor, choose
+**Show saved URL** or **Show saved arguments** to load them from the Host. They may contain secrets;
+use this action only when you want those values displayed in this browser. You can then edit the
+URL or individual argument rows without re-entering the other arguments. Merely showing values
+does not change the file.
+
+Environment/header values and OAuth values other than the registration method remain protected.
+Leave a hidden input blank to keep its value, type a replacement or use its explicit removal
+control. Other fields and native metadata that you do not edit remain intact.
 
 If a file changes elsewhere, your draft stays open. **Refresh MCP files** in the editor reads the
 latest revision while retaining the draft; review it, then explicitly save again. Invalid files

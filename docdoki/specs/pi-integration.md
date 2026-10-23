@@ -282,7 +282,13 @@ Select dialogs support arrow-key choice and Enter, alongside direct pointer/touc
 Confirmation has two visible choices, No and Yes; Escape cancels. On narrow viewports, browser Back
 uses the same cancellation path, preserving any suspended Settings or Context surface. Pending or
 failed cancellation keeps the question visible and its return layer usable. Input and multiline dialogs retain
-Submit and Save. A request with a deadline shows its remaining time without restarting the expiry on
+Submit and Save. Dialogs stay within the available overlay height; multiline editors and choice
+lists yield space before the action row. Editors retain a four-line minimum, scrolling their content
+without replacing the draft or moving focus. Rejection text stays before the relevant actions and,
+for input/editor requests, inside the same form; long diagnostics remain keyboard-focusable and
+scroll rather than overlap the editor or retry buttons. An oversized title, diagnostic or request body remains
+reachable through the bounded dialog's own scrolling. Normal-height desktop geometry is unchanged.
+A request with a deadline shows its remaining time without restarting the expiry on
 reopen or reconnect. Pi 1.3.0 does not send request-attributed extension cancellation to RPC
 clients. Aggregate `ui_prompt_start/end` callbacks carry kind/title but no RPC request ID; concurrent
 same-title dialogs cannot be distinguished. A request-ID-bearing dismissal event is still needed.

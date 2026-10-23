@@ -3,141 +3,86 @@ scope:
   - server/**
   - shared/**
   - src/**
-  - connections/**
   - tests/**
   - docdoki/**
 ---
 
-# Project quality review
+# Main integration quality
 
 ## Objective
 
-Review high-value workflows across the project against [[northstar]], preserving the user's native
-Pi settings, sessions and extensions. Fix demonstrated problems with clear repair directions,
-retain useful regressions, and ask before changing product semantics or adding capabilities.
-Continue until no demonstrated major correctness, reliability or performance problem remains worth
-addressing; do not expand into cosmetic changes or classify an isolated flake as a product defect.
+Review and integrate the `auto-dev` changes newer than the current `main` tree against
+[[northstar]]. Keep changes that solve material correctness, maintenance or workflow problems,
+and organize the result into coherent commits on `main`. [[performance]] owns reproducible
+measurements.
 
-## Current state
+## Implemented decisions
 
-- The reviewed source `f67d6eef659ca4500bf39167c8460813d5d2a85d` passes all seven jobs in
-  [CI run 39574685523](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39574685523), including
-  Linux/macOS/Windows workflows and three installed-package checks. Annotated tag
-  [v0.6.0](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.0) points to that source; there is no
-  GitHub Release or uploaded release-asset distribution. No demonstrated major
-  issue remains from this review. The earlier failed runs below retain their diagnostic context;
-  they are not outstanding release blockers. Production activation is separate.
-- Resource preview observations now share the bounded transfer/cancellation boundary with uploads
-  (`f1c9169`). Loaded Pi command names, including Unicode and punctuation, remain executable through
-  preparation and normalized delivery (`1ff7a1e`). Their new tests pass in the Linux, macOS and
-  Windows jobs of [CI run 39532239217](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39532239217).
-- That run still fails on older platform assumptions and browser fixtures also present at
-  `0740654`. SSH CLI entry detection now follows filesystem aliases. Native RPC presence/rebind
-  runs portably, with Linux Herdr ownership as an additional scenario rather than a prerequisite.
-- Browser fixtures now route the native `model-cycle` action, recognize addressed unchanged
-  snapshot confirmations, and identify an explicit Stop refusal with its failed Host receipt.
-  A bare server failure represents uncertainty and cannot stand in for that terminal refusal.
-- Local targeted checks pass: 16 SSH/native lifecycle cases, Chromium/Firefox model and layout
-  cases, Stop presentation/receipt cases, types, formatting and lint. Local WebKit cannot start
-  because a system library is missing; updated CI must supply its cross-engine/platform evidence.
-- No Pi runtime source or native cancellation behavior changes belong to these repairs. The
-  initial review retained existing bounded/incremental read paths rather than adding another cache
-  without evidence of material cost. [[performance]] owns the maintained measurement procedures.
+- Independent Fork/Clone captures a source view and target, not the latest whole-tree
+  revision or control of the source writer. Project discovery and history-source failures
+  remain visible without becoming execution or readable-history gates.
+- Global preferences and model settings remain repairable despite unrelated invalid
+  fields, discovery failures or unreadable project settings. MCP supports reversible
+  draft rules and explicit inspection/editing of saved connection values.
+- Terminal and Host restart recovery distinguish confirmed outcomes from local tracking
+  failures. Users can explicitly end tracking without replaying or cancelling remote work.
+- Owned partial persistence waits for completion rather than stopping Pi on a two-second
+  observation deadline. Confirmed file replacement, truncation and writer conflicts still
+  fence execution.
+- Automatic attachment cleanup covers unclaimed staging only. Delivered or possibly
+  delivered files remain assets; reference scanning, root registration, volume continuity
+  and trust migration are retired. Search owns documented query semantics rather than
+  importing Pi's private interactive matcher.
+- Export work outlives its dialog without duplicate downloads. UI consolidation removes
+  the duplicate navigation file tree, preserves Files, and improves notifications,
+  short workbenches and Models/MCP controls. Relevant specs own the lasting contracts.
 
-## Current review evidence
+## Integration scope
 
-- Session switching and recovery: addressed writes, latest-selection ownership, unavailable-workspace
-  history, restored-workspace admission and confirmed worker retirement pass the targeted Runtime
-  and browser-store checks. No new major defect was demonstrated in these paths.
-- Native execution: isolated real-Pi checks confirm receipt reobservation does not execute a shell
-  twice, shell Stop uses `abort_bash`, hook dialogs remain answerable, and unexpected worker exit
-  retains an unknown outcome without fabricated terminal metadata. These test the existing owned-RPC
-  contract; they do not add shell control to native TUI connections.
-- Real Herdr/browser continuity passes with a disposable native Pi: prompt and follow-up, page reload,
-  isolated Host replacement without page refresh, retained browser draft, stable transcript view,
-  resumed input and agent Stop all preserve the original Pi process. The browser fixture now gives
-  its Host the same isolated report cache as Pi, matching the native Runtime fixture; a wrong test
-  cache previously produced the correct missing-receiver refusal instead of exercising control.
-- Transport/history/resources: addressed snapshot barriers, heartbeat/backlog bounds, retained-content
-  search/cancellation, incremental catalog summaries, byte ranges and disconnect-time file release
-  pass their focused suites. Existing projection measurements and bounded/incremental paths do not
-  justify another cache. Public DNS/TLS/proxy latency is not measured by these loopback fixtures.
-- CI run 39537796587: macOS passes all phases, including native WebKit; Windows passes Chromium,
-  Trash/recovery and launcher checks. Its sole unit failure is the installed SSH runner silently
-  skipping `init` through a directory junction. Entry detection now uses Node's `import.meta.main`
-  (available before the supported Node 22.19 baseline); both real CLI assertions remain unchanged,
-  and the targeted SSH package/lifecycle suites pass locally. Windows Chromium's one successful
-  layout retry is a separate flake, not evidence of a major product defect. Linux unit/integration
-  and launcher checks pass; its 426-case, single-worker browser run was still progressing when the
-  35-minute aggregate job ceiling cancelled it, with no failed-test artifacts. The Linux budget
-  now allows 50 minutes for build, core and three browser engines; individual deadlines, assertions
-  and scenario coverage are unchanged.
-- [CI run 39541401547](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39541401547) confirms
-  Windows direct/junction CLI startup, all three packaged releases, complete Linux quality and
-  macOS native/browser checks, and Windows Chromium. Its only failure is the unchanged terminal
-  history slow-storage fixture exceeding five seconds on Windows (previously passing there).
-  A local phase probe attributes about 720 ms to generic deep equality of the 768 KiB Buffer,
-  versus about 0.6 ms for flush/read. The fixture now uses native complete-byte equality and advances
-  gated chunk-arrival timers synchronously. Real filesystem writes, every byte/batch assertion and
-  the five-second deadline remain. Clock simplification alone was not the dominant cost repair.
-  The complete history-store suite passes locally; no terminal-runtime change is indicated.
-  [CI run 39545599095](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39545599095) confirms
-  the corrected Windows history fixture, all Windows/macOS phases, three packaged releases and
-  size report. Its sole failure is Linux WebKit's notebook execution-count baseline measurement
-  (7.75 px on both attempts); expected 503 fixtures are not additional failures.
-- Reader baseline sampling compared viewport coordinates from separate evaluations. A controlled
-  8 px preview scroll demonstrates the measurement defect: the old assertion reports 8 px while
-  the prompt and source remain aligned relative to their output row. Both samples now use the
-  existing row-relative helper, with that scroll retained as a deterministic regression. All five
-  reader-baseline cases pass across Chromium, Firefox and WebKit in an isolated matching Playwright
-  container, without retries or host-library installation; all gutter/overflow assertions and the
-  1 px threshold remain. The original CI's precise 7.75 px movement was not reproduced, so its
-  dynamic cause is not claimed. No product CSS or component change is indicated by these results.
+The starting `origin/main` commit is `b259032d`. Its tree equals `auto-dev` commit `010a0402`,
+despite their different histories. The candidate source is `62240169`: 55 later `auto-dev`
+commits. Tree and behavior differences therefore define this integration, rather than the
+unrelated commit ancestry. Development history stays on `auto-dev`; reviewed outcomes become
+new commits on `main`.
 
-- [CI run 39552440372](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39552440372) confirms
-  complete Linux quality, including the reader repair, all macOS phases, Windows Chromium and
-  three packaged releases. Its sole failure is the Windows New-session settings ownership test's
-  wait for Settings navigation; no product-open failure has been demonstrated. Delaying the real
-  Settings module import reproduces that exact failure. The workspace-ownership case now preloads
-  the actual surface before opening it, preserving Models/MCP interactions and directory assertions
-  without increasing timeouts. The temporary delay is removed; all 22 cases in the file pass.
-- The terminal follow-up finds three concrete lifecycle gaps: a startup connection failure was
-  frozen for the Host lifetime; service start/enable silently stopped a transient owner; and a
-  confirmed duplicate listener exited like a recoverable crash, allowing endless systemd retries.
-  Recovery now shares demand-driven, connection-only initialization, fences close/late results and
-  never replays input or dispatched controls. Service startup preserves existing work; duplicate
-  ownership has exit 78 and a no-retry unit policy without suppressing ordinary crash recovery.
-- Terminal errors now reuse the shared notice card with complete Copy and explicit Dismiss.
-  Diagnostics distinguish absent endpoints, unverified data and unavailable maintenance; missing
-  optional lifecycle support does not block compatible data. Mutual authentication and the wire
-  protocol remain required; legacy plaintext fallback is not introduced.
-- Focused native/service/UI checks pass, including a real TLS endpoint recovering after initial
-  failure, initialization concurrency, close races, no idle retries, no input replay, duplicate-owner
-  process exit, non-destructive service controls and installed CLI delegation. Browser Copy,
-  layout boundaries and light/dark desktop/390px QA pass. Isolated installed-package verification
-  passes with a live daemon PTY surviving Host restart and scoped maintenance. No production service
-  or existing terminal process was operated on.
+The candidate also includes configurable GUI adapters, source-preserving user-input summaries,
+automatic recovery of read operations and unsent uploads, and viewed external-session recovery.
+Their contracts remain in the relevant specs. Review fixes belong with the result they repair,
+including its tests and documentation.
 
-## Next actions
+## Review and verification
 
-- [x] Confirm exact final CI for the terminal, Settings and test-fixture corrections: all seven
-  jobs pass at f67d6ee. No long-running local watch or repeated whole-suite run was needed.
-- [x] Complete the requested terminal design review and focused repairs without broadening into a
-  negotiation framework. Public network latency and arbitrary extensions remain outside these checks.
-- [x] Complete [[follow-release-0-6-0-2026-10-21]] with annotated tag v0.6.0, documentation and
-  screenshots. Production activation is distinct from tagging; no Host restart or terminal
-  migration was performed. An upgrade ending existing PTYs requires approval.
+Review preserved the Pi-owned execution boundary and removed obsolete deployment history,
+unused UI exports and assertions tied to superseded recovery behavior. External-session recovery
+now keeps its read-only boundary until writer startup completes, fences retired connections,
+and reports source-attestation failures. Replaced history invalidates its reading view even when
+admission stops before Pi starts. Once Pi startup has begun, failure requires an explicit retry
+rather than automatically repeating extension startup hooks. Adapter controls accept Pi's
+registered command names, including collision suffixes. Compact touch notices use consistent
+control alignment.
 
-## Decisions
+The Linux candidate passes formatting, lint, typechecking, unused-code checks, web and server
+release compilation, 41 portable tests, and the frontend/server/native and launcher regression
+suites with affected failures rechecked. The selected 95 Chromium scenarios pass after correcting
+obsolete expectations and the touch notice defect; they cover desktop/touch settings, History,
+session actions, attachments, reading/search and feedback. Two initial browser timing failures
+passed focused reruns without implementation changes. DocDoki's private-boundary check passes.
 
-- Pi owns model-cycle order and extension effects. The shortcut fixture grants both directions to
-  test key delivery; this does not claim that the installed Pi RPC supports reverse cycling.
-- Snapshot synchronization can confirm an unchanged digest without repeating snapshot data. A
-  fixture needing the selected subscription must check its addressed owner rather than require data.
-- Independent RPC presence is portable; Linux process-group identity is a Herdr-specific boundary.
+These checks cover the integration candidate, not macOS/Windows execution or physical-device
+notification delivery. Each reorganized implementation commit also passes typechecking.
 
-## Handoff
+The tagged 0.6.0 source has historical cross-platform evidence in
+[CI run 39574685523](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39574685523).
+[[follow-release-0-6-0-2026-10-21]] owns that release record.
 
-Read [[northstar]], [[spec_abstract]] and the relevant contracts before continuing from Next actions.
-Use the current tree and CI results, not the old failed run, as the next review baseline. Do not
-repeat whole suites merely to increase coverage counts, or turn a test fixture into a second runtime.
+## Delivery
+
+The reviewed changes are organized by outcome: repairable configuration and session actions;
+native session ownership; durable attachments; source-preserving history; managed lifecycle;
+shared responsive UI; configurable adapters; read/upload recovery; notifications; and consolidated
+documentation. Corrections and their regression tests belong to the outcome they protect.
+
+Physical Android/iOS Web Push acceptance remains in [[follow-notifications-2026-10-22]].
+Publishing source does not activate a running Host or reload external Pi processes;
+[Host operations](../../docs/host.md) and [extension activation](../../docs/extensions.md#show-external-session-activity)
+describe those separate operations.

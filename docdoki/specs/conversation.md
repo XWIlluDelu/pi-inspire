@@ -142,10 +142,10 @@ custom messages remain independent readable boundaries in this contract.
 
 ## View-local search and Prompt Map
 
-- View-local search explicitly covers only already-loaded settled messages, not the whole branch.
-  A full-History action carries its query to the existing complete saved-history search, whose
-  scope includes other branches and tool activity. Do not preload all messages or build a new index
-  merely to make this local utility look exhaustive.
+- View-local search covers already-loaded settled messages, not the whole branch; its input tooltip
+  describes that limit without a persistent scope disclaimer or a second History-search action.
+  History retains complete saved-history search across branches and tool activity in its own surface.
+  Do not preload all messages or build a new index merely to make this local utility look exhaustive.
   View-local search performs case-insensitive literal matching over settled conversation text and
   can scope results to all searchable turns, user input only, or model output only. It wraps
   previous/next navigation and jumps by transcript row through virtualization. The streaming tail
@@ -161,16 +161,18 @@ custom messages remain independent readable boundaries in this contract.
   Shell output and context summaries use the same display normalization for search and rendering:
   terminal control sequences and removed summary prefixes do not add invisible matches.
 
-  Desktop search rests as an explicit compact launcher at the top-right of the reading measure,
-  rather than covering the first message with an always-open input. Its open opaque surface fill is subtly
+  Desktop search remains a compact single-row input at the top-right of the reading measure,
+  without a launcher or a Close control. Its opaque surface fill is subtly
   distinct from the reading stage, with a quiet boundary and no elevation at rest. Hover strengthens
   the boundary and adds the existing light elevation; focus or a non-empty query retains the accent
   boundary. These states do not change its geometry or let scrolling text show through.
   Search and narrow navigation surfaces do not reserve layout height; opening controls preserves the scrollport and reading
-  position. Desktop Escape collapses search without clearing its query or selected match; reopening
-  restores the query. The local scope note remains beside the full-History action.
-  When latest-follow is released, a bottom-centered floating text button, `Jump to latest`, restores
-  follow. Search and narrow launchers precede messages in keyboard order; Latest follows them.
+  position. Desktop Escape releases input focus without clearing its query or selected match.
+  A bottom-centered floating text button, `Jump to latest`, appears only when the scrollport is
+  actually away from its latest boundary, independently of automatic-follow or search ownership.
+  It restores follow at the complete Transcript bottom, including Pending and extension content
+  after virtualized message rows. Search and narrow launchers precede messages in keyboard order;
+  Latest follows them.
 
   On a narrow workbench, Search is an explicit 44px launcher in an idle control with no shared
   backdrop that floats over Transcript without reserving layout height; activating it replaces the
@@ -254,11 +256,10 @@ custom messages remain independent readable boundaries in this contract.
 
 - Cancellation is a normal terminal outcome, not a Pi failure. An assistant with
   `stopReason: "aborted"` displays **Stopped** after its partial content,
-  outside activity folding. Pi also persists some native cancellations as `stopReason: "error"`
-  with the standalone default reason `This operation was aborted`; this exact reason has the same
-  presentation. Do not use substring matching: timeout, connection and other diagnostics remain
-  errors even when they mention abortion. Runtime settlement, attention indicators and the browser
-  agree on cancellation as `aborted`, so it does not activate the Composer's failed styling.
+  outside activity folding. `stopReason: "error"` remains an error, including the standalone
+  diagnostic `This operation was aborted`: diagnostic text does not establish cancellation.
+  Runtime settlement, attention indicators and the browser use native cancellation evidence,
+  not error-message wording, to determine an `aborted` run without failed Composer styling.
   Native `agent_settled.aborted` determines the run's cancellation outcome even when retry ended
   unsuccessfully or the last assistant message already completed. This leaves original message stop
   reasons, earlier diagnostics and projection conflicts intact. Retry-failure feedback waits for
@@ -331,11 +332,11 @@ custom messages remain independent readable boundaries in this contract.
 - Durable Pi `compaction` and `branch_summary` entries are projected as dedicated, collapsed
   context-event rows with recorded token counts and searchable Markdown bodies. Pi compaction
   shows `Context compacted` and `Before ≈ … tokens` for its pre-compaction context estimate.
-  Magic Context shows `Magic Context compacted` and `History chunk ≈ … tokens`: its marker writes
-  the historian input chunk estimate into Pi's `tokensBefore` field. Source is read from the public
-  compaction entry's `details.source` and projected as `__inspireCompactionSource`; cached source-less
-  snapshots also recognize the extension's known marker prefix. Its redundant `Magic Context compacted:`
-  body prefix is omitted in display, while Copy retains the recorded summary. No savings ratio is derived.
+  Source-specific titles, metric meanings and redundant-prefix elision come from external
+  checkpoint declarations under [[tool-presentations]], not extension-name tests in the renderer.
+  Source is read from the public compaction entry's `details.source` and projected as
+  `__inspireCompactionSource`; optional declared prefixes cover cached source-less snapshots.
+  Copy retains the recorded summary. No savings ratio is derived.
   These unframed context events use a leading disclosure chevron, source icon, quiet label,
   secondary metric, and an adjacent Copy only while expanded. Closed rows have no Copy gap or tab
   stop. The metric wraps to the label's reading anchor in a narrow column, and expanded Markdown
@@ -390,7 +391,10 @@ history keep one result per native execution. [[pi-integration]] owns execution 
   reconnect retention and cleanup. Model settlement does not dismiss an independent command's dialog.
 
 - Pending sits at the end of Transcript; the composer-adjacent activity surface provides a compact
-  count and Jump to Pending action. [[composer]] owns previews, visual emphasis, copying, recovery
+  count and Jump to Pending action. That surface keeps the Composer’s full measure and left alignment
+  for Pending, retry and compaction states, including in short windows. Jump to Pending focuses
+  its region and retains latest-follow when the destination is already at the latest boundary.
+  [[composer]] owns previews, visual emphasis, copying, recovery
   and discard. Pending remains a projection of Pi/Host-owned input, not a browser-owned queue.
   Retry/compaction feedback belongs to the activity surface; running and failed tools remain in
   their chronological cards.
@@ -413,8 +417,11 @@ history keep one result per native execution. [[pi-integration]] owns execution 
   revision, and effective leaf remain on the cursor's append-compatible branch lineage, then restore
   the same visible message at the same viewport offset through virtualization. Same-view append
   snapshots preserve loaded pages, pending ranges, and an in-flight older load behind a changed
-  older cursor, while a rewrite or view change cancels and replaces them. Ordinary page failure
-  pauses automatic loading and exposes an explicit retry; a stale cursor still resyncs from the
+  older cursor, while a rewrite or view change cancels and replaces them. Transient page-read failure
+  retains the same load promise, continuous loading state, confirmed messages and viewport anchor
+  through bounded automatic backoff. Each retry rechecks its cursor and append-compatible owner;
+  navigation or transport replacement retires it. Only persistent or non-transient failures expose
+  local retry, and successful loading clears that error. A stale cursor still resyncs from the
   authoritative snapshot. Deferred range pages retain the same per-message and per-page transport
   bounds and accept an append-only continuation of their owning branch without accepting a sibling
   view.

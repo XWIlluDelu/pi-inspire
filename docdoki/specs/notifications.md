@@ -4,7 +4,7 @@ covers:
   - server/{runtime,runtime-events,runtime-external-sessions,herdr-native-session,runtime-event-sockets,browser-auth,preferences,task-notifications}.ts
   - shared/{contracts,assistant-outcome,notifications}.ts
   - docs/examples/session-activity.ts
-  - src/{main,browser-auth,notifications}.ts*
+  - src/{main,browser-auth,browser-notifications,notifications}.ts*
   - src/controllers/{runtime-event,preference,connection,session-selection}-controller.ts
   - src/components/Settings.tsx
   - public/{service-worker.js,manifest.webmanifest}
@@ -51,7 +51,9 @@ the browser leaves; it does not depend on which session another browser selected
 
 Keep the existing standalone manual-compaction completion/failure behavior, using its own operation
 identity. Terminal bell and long-command notifications remain under [[terminal]]; this work does
-not add terminal triggers. Waiting-for-input/approval alerts are outside this design.
+not add terminal triggers. Both use the same browser permission request and status vocabulary;
+permission is separate from each feature's delivery intent and enrollment. Waiting-for-input/approval
+alerts are outside this design.
 
 ## Viewing and delivery
 
@@ -127,6 +129,10 @@ or subscription result applies only while that installation's choice is still cu
 Off during setup cannot be undone by a late success; failed setup must not overwrite a newer choice.
 All windows of the installation observe the same current choice and delivery health. Subscription
 reconciliation cannot restore an older choice; a healthy refresh need not rewrite enrollment.
+Initialization and Settings refresh must also recover a valid browser subscription whose initial
+Host registration failed, without creating a subscription or requesting permission again. The Host
+retains an endpoint rejected as expired by the push service: refresh cannot resurrect it, and an
+explicit Enable replaces that browser subscription before registering a new one.
 
 Migration preserves the legacy choice as initial intent. A legacy Desktop selection is not proof
 that this installation has enrolled for background push: keep existing granted page delivery while

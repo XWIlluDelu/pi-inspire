@@ -16,17 +16,18 @@ scope:
 
 # Desktop and mobile task notifications
 
-## Objective and authorization
+## Objective
 
 Notify a user who leaves a Pi conversation when work completes or stops with an error.
-[[notifications]] holds the decided design. The user approved implementation after the design
-review. Production restart remains a separate manual operator action.
+[[notifications]] holds the decided design.
 
 ## Current state
 
 The first implementation is complete. The Host, device settings, worker display and Web Push
 path are connected; Linux Chrome delivery has been exercised with an isolated Host and browser
-profile. Android and iOS device acceptance remains open. Production was not restarted.
+profile. A user-provided Android screenshot confirms that a manual test notification appears in
+the system notification shade. Android background delivery of real task outcomes and tap-to-return,
+and iOS device acceptance, remain open.
 
 ### Implemented
 
@@ -100,20 +101,25 @@ constructor stub:
   A fresh test push again reached GNOME. The foreground checks used browser-reported focus;
   Playwright enables focus emulation for its windows.
 
-These checks establish Linux Chrome delivery through the configured network. They do not replace
-phone testing. The exact historical reason this user's old installation never displayed a banner
-was not attributed to a single cause.
+These checks establish Linux Chrome delivery through the configured network.
+
+### Android system display
+
+On 2026-10-23, a user-provided notification-shade screenshot confirmed that Chrome displayed
+**Inspire test notification** in Android's system UI. This verifies visible delivery of the manual test.
+
+Background delivery of real task outcomes and tapping a notification to return to its conversation
+remain unverified on this device.
 
 ## Remaining acceptance and activation
 
-1. Verify Android and iOS Home Screen apps on actual devices, including background/lock-screen
-   delivery and tapping a notification with no page open. Confirm foreground coordination under
-   WebKit's visible-push policy.
-2. Exercise a native OS notification click on the user's regular installation after activation.
-3. On the operator's next manual Host update/restart, use Settings → Behavior to enable and test
-   this device. Reload updated external native Pi reporters in their original idle terminals;
-   restarting the Host does not reload those processes.
+1. On Android, verify real task notifications while the app is backgrounded or the device is locked,
+   and tap a notification with no page open to return to the intended conversation.
+2. Verify an iOS Home Screen app on an actual device, including background/lock-screen delivery,
+   tap-to-return, and foreground coordination under WebKit's visible-push policy.
+3. Exercise a native OS notification click on a desktop installation.
 
-No notification inbox, approval workflow, cross-device arbitration or third-party messaging service
-was introduced. [The Host guide](../../docs/host.md#task-notifications) documents setup, network
-requirements and protected notification state.
+[The Host guide](../../docs/host.md#task-notifications) documents setup, network requirements and
+protected notification state. Enabling notifications requires a gesture on each installation.
+Updated external Pi reporters load through their original terminals' reload/restart path;
+restarting the Host does not reload those processes.
