@@ -9,9 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { piInstallation, SessionManager } from "../../server/pi-runtime.js";
 import {
   newestPerCwd,
   orderSessionRecords,
@@ -20,6 +18,7 @@ import {
 } from "../../server/session-catalog.js";
 import { SessionMetadataIndex } from "../../server/session-metadata.js";
 import { searchSessionRecords } from "../../server/session-search.js";
+import { MAX_SESSION_DISPLAY_TITLE_CHARS } from "../../shared/contracts.js";
 
 function record(id: string, cwd: string, modified: string): SessionRecord {
   return {
@@ -318,50 +317,37 @@ async function withSearchFixture(
 }
 
 describe("catalog retained-content search", () => {
-  it("matches native query forms over complete retained user/assistant text, with chronological pages and bounded listings", async () => {
+  it("searches complete retained text with defined query syntax and chronological pages", async () => {
     await withSearchFixture(async (root, index, catalog) => {
-      const native = await import(
-        pathToFileURL(
-          join(
-            piInstallation.packageRoot,
-            "dist/modes/interactive/components/session-selector-search.js",
-          ),
-        ).href
-      );
-      const nativeRows = await SessionManager.list(
-        "/work/quantum-project",
-        root,
-      );
-      const queries = [
-        "first-body-tail",
-        "later-only",
-        "assistant-only",
-        "search-owner",
-        "/work/quantum-project",
-        "Qmgrv",
-        "zirconium cobalt",
-        '"exact retained phrase"',
-        '"cobalt exact"',
-        "re:assistant-only.*cobalt",
-        "re:SEARCH-OWNER",
-        "re:Quantum.*zirconium",
-        "re:[",
-        "re:",
-        '"retained',
-        '"NEVER_INDEX_TOOL_OUTPUT"',
-        '"NEVER_INDEX_REASONING"',
-        '"NEVER_INDEX_EXTENSION_CONTENT"',
+      const cases: Array<[string, string[]]> = [
+        ["first-body-tail", ["search-owner"]],
+        ["later-only", ["search-owner"]],
+        ["assistant-only", ["search-owner"]],
+        ["search-owner", ["search-owner"]],
+        [
+          "/work/quantum-project",
+          ["search-newer", "search-owner", "unrelated"],
+        ],
+        ["Qmgrv", ["search-owner"]],
+        ["zirconium cobalt", ["search-owner"]],
+        ['"exact retained phrase"', ["search-owner"]],
+        ['"cobalt exact"', ["search-owner"]],
+        ["re:assistant-only.*cobalt", ["search-owner"]],
+        ["re:SEARCH-OWNER", ["search-owner"]],
+        ["re:Quantum.*zirconium", ["search-owner"]],
+        ["re:[", []],
+        ["re:", []],
+        ['"retained', []],
+        ['"NEVER_INDEX_TOOL_OUTPUT"', []],
+        ['"NEVER_INDEX_REASONING"', []],
+        ['"NEVER_INDEX_EXTENSION_CONTENT"', []],
       ];
-      for (const query of queries) {
+      for (const [query, expected] of cases) {
         const page = await catalog.list({ query });
         expect(
           page.sessions.map((session) => session.id),
           query,
-        ).toEqual(
-          native
-            .filterAndSortSessions(nativeRows, query, "recent")
-            .map((session: { id: string }) => session.id),
-        );
+        ).toEqual(expected);
       }
       expect(
         (await catalog.list({ query: '"exact retained phrase"' })).sessions.map(
@@ -387,7 +373,7 @@ describe("catalog retained-content search", () => {
       const summaries = await index.list(root);
       expect(
         summaries.find((row) => row.id === "search-owner")?.firstMessage,
-      ).toHaveLength(10_000);
+      ).toHaveLength(MAX_SESSION_DISPLAY_TITLE_CHARS);
       expect(
         summaries.every((row) => !Object.hasOwn(row, "allMessagesText")),
       ).toBe(true);

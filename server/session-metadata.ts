@@ -12,7 +12,9 @@ import {
   type SessionCatalogIssue,
 } from "../shared/contracts.js";
 import { stripImageDimensionNotes } from "../shared/image-dimension-notes.js";
+import { userMessageTitle } from "../shared/user-message.js";
 import { JsonlObjectDecoder, PersistedJsonlError } from "./session-jsonl.js";
+import { sessionSearchMatcher } from "./session-search-query.js";
 
 const MAX_INDEXED_TEXT_CHARS = 10_000;
 const MAX_SESSION_PATH_CHARS = 32_768;
@@ -84,32 +86,21 @@ function timestamp(value: unknown): number | null {
     : null;
 }
 
-function messageText(
-  message: Record<string, unknown>,
-  limit = MAX_INDEXED_TEXT_CHARS,
-): string {
+function searchMessageText(message: Record<string, unknown>): string {
   const content = message.content;
-  if (typeof content === "string") return content.slice(0, limit);
+  if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-  let text = "";
   const imageCount = content.filter(
     (value) => recordValue(value)?.type === "image",
   ).length;
-  let hasTextBlock = false;
-  for (const value of content) {
-    const block = recordValue(value);
-    if (block?.type !== "text" || typeof block.text !== "string") continue;
-    const separator = hasTextBlock ? " " : "";
-    const remaining = limit - text.length;
-    if (remaining <= 0) break;
-    text +=
-      `${separator}${stripImageDimensionNotes(block.text, imageCount)}`.slice(
-        0,
-        remaining,
-      );
-    hasTextBlock = true;
-  }
-  return text;
+  return content
+    .flatMap((value) => {
+      const block = recordValue(value);
+      return block?.type === "text" && typeof block.text === "string"
+        ? [stripImageDimensionNotes(block.text, imageCount)]
+        : [];
+    })
+    .join(" ");
 }
 
 function emptyState(): SessionMetadataState {
@@ -192,8 +183,7 @@ function applyEntry(
   if (activity !== null)
     state.lastActivity = Math.max(state.lastActivity ?? activity, activity);
   if (!state.firstMessage && message.role === "user") {
-    const text = messageText(message);
-    if (text.trim()) state.firstMessage = text;
+    state.firstMessage = userMessageTitle(message.content);
   }
 }
 
@@ -493,27 +483,9 @@ export class SessionMetadataIndex {
   async scanSearch(
     sessions: readonly SessionRecord[],
     query: string,
-    nativeSearchPath: string,
     issues?: SessionCatalogIssue[],
   ): Promise<SessionRecord[]> {
-    // This internal Pi dependency is deliberately loaded only inside search.
-    // The parsed object remains opaque; Pi owns both parsing and matching.
-    const { parseSearchQuery, matchSession } = (await import(
-      nativeSearchPath
-    )) as {
-      parseSearchQuery(query: string): { error?: string };
-      matchSession(
-        session: {
-          id: string;
-          cwd: string;
-          name?: string;
-          allMessagesText: string;
-        },
-        parsed: { error?: string },
-      ): { matches: boolean };
-    };
-    const parsed = parseSearchQuery(query);
-    if (parsed.error) return [];
+    const matchesQuery = sessionSearchMatcher(query);
     const matches: SessionRecord[] = [];
     for (const session of sessions) {
       let handle: FileHandle | undefined;
@@ -554,7 +526,7 @@ export class SessionMetadataIndex {
             const message = recordValue(entry.message);
             if (message?.role !== "user" && message?.role !== "assistant")
               return;
-            const text = messageText(message, Number.POSITIVE_INFINITY);
+            const text = searchMessageText(message);
             if (text) messages.push(text);
           },
         );
@@ -567,15 +539,12 @@ export class SessionMetadataIndex {
           throw new Error("Session source changed while searching; try again");
         }
         if (
-          matchSession(
-            {
-              id: session.id,
-              cwd: session.cwd,
-              name,
-              allMessagesText: messages.join(" "),
-            },
-            parsed,
-          ).matches
+          matchesQuery({
+            id: session.id,
+            cwd: session.cwd,
+            name,
+            allMessagesText: messages.join(" "),
+          })
         )
           matches.push(session);
       } catch (error) {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context";
 import {
   mergePendingQueues,
   pendingQueuesFromContent,
@@ -50,6 +51,29 @@ describe("Pending wire contracts", () => {
         .totalImageCount,
     ).toBeUndefined();
   });
+
+  it.each(["Review this report", ""])(
+    "projects file references consistently in Pi and Host queues for %j",
+    (text) => {
+      const trailer = `${ATTACHMENT_CONTEXT_HEADING}\n- "/demo/report.csv"`;
+      const message = text ? `${text}\n\n${trailer}` : trailer;
+      const preview = text ? `${text}\n\nreport.csv` : "report.csv";
+      const pi = pendingQueuesFromTexts([message], [], 0);
+      const queue = mergePendingQueues(
+        pi,
+        [{ message, behavior: "followUp" }],
+        pi.revision,
+      );
+      const expected = {
+        textPreview: preview,
+        textLength: preview.length,
+        textTruncated: false,
+      };
+      expect(queue.steering[0]).toMatchObject(expected);
+      expect(queue.followUp[0]).toMatchObject(expected);
+      expect(parsePendingQueues(queue)).toEqual(queue);
+    },
+  );
 
   it("rejects invalid format counts without requiring new metadata from older Hosts", () => {
     const base = {
