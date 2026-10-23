@@ -173,6 +173,29 @@ describe("attachment presentation", () => {
     ).toBe(true);
   });
 
+  it("keeps an ordinary image file's local preview after the Host confirms file delivery", () => {
+    render(
+      <AttachmentList
+        sessionId="s"
+        items={[
+          {
+            localId: "diagram",
+            fileName: "diagram.svg",
+            mimeType: "image/svg+xml",
+            size: 42,
+            kind: "file",
+            previewUrl: "blob:diagram",
+            status: "ready",
+          },
+        ]}
+        onRemove={() => {}}
+      />,
+    );
+    const preview = screen.getByRole("button", { name: "Preview diagram.svg" });
+    expect(preview).toBeEnabled();
+    expect(preview.querySelector("img")).toHaveAttribute("src", "blob:diagram");
+  });
+
   it("normalizes a recalled image without a projection incarnation", async () => {
     const originalLoad = store.loadEmbeddedImage;
     const load = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
@@ -235,6 +258,19 @@ function file(
 }
 
 describe("attachment selection budgets", () => {
+  it("budgets BMP and SVG as ordinary files even though the browser can preview them", () => {
+    const size = Math.floor(MAX_PROMPT_IMAGE_BYTES / 2) + 1;
+    const bitmap = file("one.bmp", size, "image/bmp");
+    const diagram = file("two.svg", size, "image/svg+xml");
+    expect(selectAttachmentFiles([], [bitmap, diagram])).toEqual({
+      accepted: [bitmap, diagram],
+      warning: null,
+    });
+    expect(selectAttachmentFiles([{ size, kind: "file" }], [diagram])).toEqual({
+      accepted: [diagram],
+      warning: null,
+    });
+  });
   it("accepts candidates in order while enforcing count, file, total, and image limits", () => {
     const oversized = file("oversized.bin", MAX_ATTACHMENT_FILE_BYTES + 1);
     const acceptedFile = file("accepted.bin", 1);
