@@ -13,6 +13,7 @@
       "scripts/**/*.{ts,mjs}",
       "src/**/*.{ts,tsx}",
       "server/**/*.ts",
+      "extensions/**/*.ts",
       "docs/examples/**/*.{ts,tsx}",
       "shared/**/*.ts",
       "tests/**/*.{ts,tsx,mjs}",

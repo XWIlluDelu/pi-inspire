@@ -80,9 +80,12 @@ Keep state scoped to its Pi session and reconstruct it from persisted entries du
 
 ## Show external session activity
 
-The optional [session activity extension](examples/session-activity.ts) lets Inspire show busy,
-waiting-for-input and idle state for local external Pi sessions, including independent RPC hosts
-and terminal, JSON or print modes. Waiting follows Pi’s aggregate `ui_prompt_start/end` events,
+The optional [Inspire session bridge](../extensions/inspire-session-bridge.ts) connects external
+Pi sessions to Inspire: activity and presence reporting in all supported modes, plus native control
+in Herdr TUI sessions. It ships as a directly installable single file with Inspire.
+
+Activity reporting covers independent RPC hosts and terminal, JSON or print modes, showing busy,
+waiting-for-input and idle state. Waiting follows Pi’s aggregate `ui_prompt_start/end` events,
 so concurrent native dialogs keep the reporter blocked until all settle. Pi’s TUI dialog stack
 and Inspire’s browser RPC dialogs are separate implementations.
 
@@ -94,15 +97,27 @@ instead of starting a second writer, even when the other Pi is idle.
 Enable the extension once through Pi's normal user configuration. From an Inspire checkout:
 
 ```sh
-pi install /absolute/path/to/inspire/docs/examples/session-activity.ts
+pi install /absolute/path/to/inspire/extensions/inspire-session-bridge.ts
 ```
 
-The same file ships in the installed Inspire package. Use its absolute path there, or copy it into
-your Pi user extensions directory. New Pi sessions load it automatically. In an existing terminal
+Use its absolute path in a checkout or installed Inspire package, or copy this file into your Pi
+user extensions directory. New Pi sessions load it automatically. In an existing terminal
 session, run `/reload` when idle to activate it. An existing RPC session needs its original host's
 supported reload or a later normal restart; restarting Inspire does not reload an external Pi.
 Remove the configured file with `pi remove` (or remove your copied extension) and reload to disable
-reporting.
+the bridge.
+
+Existing installations pointing to `docs/examples/session-activity.ts` keep working through a
+forwarding entry in the same checkout/package. To move the configured path, replace the old entry:
+
+```sh
+pi remove /absolute/path/to/inspire/docs/examples/session-activity.ts
+pi install /absolute/path/to/inspire/extensions/inspire-session-bridge.ts
+```
+
+Then reload the original Pi as described above. If you previously copied the extension, replace that
+copy with the new bridge file; the forwarding entry depends on the package layout and is not a
+standalone copy. Keep one configured entry or copied file for the bridge.
 
 Reporting adds no tools, model prompts or session entries and makes no network requests. It writes
 small, private records into the local user's Inspire cache. Busy indicators expire after

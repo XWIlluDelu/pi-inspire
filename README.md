@@ -111,7 +111,7 @@ with `cgroup.kill`. The saved choice takes effect after a Host restart.
 
 With it enabled, Inspire connects to sessions already running in a Herdr Pi terminal: send text and
 images, read replies, select models/thinking, and stop agent generation in the same process. Install
-the matching [session-activity extension](docs/extensions.md#control-the-same-herdr-pi-terminal) in
+the matching [Inspire session bridge extension](docs/extensions.md#control-the-same-herdr-pi-terminal) in
 that Pi. Reload, Compact, model cycling and shell interruption remain in its terminal. Closing or
 restarting Inspire leaves those external Pi sessions running.
 

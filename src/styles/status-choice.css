@@ -10,7 +10,7 @@
   cursor: pointer;
 }
 .dropdown__menu--composed > .dropdown__option[aria-pressed="true"] { background: var(--accent-tint); color: var(--accent-deep); }
-.dropdown__menu--composed > .dropdown__option:hover { background: var(--bg-hover); }
+.dropdown__menu--composed > .dropdown__option:hover { background: var(--accent-tint); }
 .dropdown__menu--composed > .dropdown__option:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: -2px; }
 .dropdown__unavailable { padding: 6px 10px; color: var(--muted); font-size: var(--text-xs); }
 .status-choice {

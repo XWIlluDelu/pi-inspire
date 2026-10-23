@@ -123,7 +123,7 @@ describe("continue an externally owned Pi", () => {
       await runtime.snapshot("a");
       expect(connect).not.toHaveBeenCalled();
       await expect(runtime.setModel("a", "test", "model")).rejects.toThrow(
-        "session-activity extension",
+        "Inspire session bridge extension",
       );
       expect(connect).toHaveBeenCalledOnce();
       expect(create).not.toHaveBeenCalled();

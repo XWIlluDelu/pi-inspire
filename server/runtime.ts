@@ -2327,8 +2327,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     try {
       const connected = (await this.externalSessions?.connect(slot)) === true;
       if (!connected) await this.assertExternalWriterAvailable(slot);
-      // A free occupancy check admits startup without yet clearing the
-      // read-only boundary.
+      // A free occupancy check admits startup; only a connected native owner
+      // or a fully attested local writer clears the read-only boundary.
       return connected;
     } catch (error) {
       // An unavailable observer is not evidence that nobody owns this file.

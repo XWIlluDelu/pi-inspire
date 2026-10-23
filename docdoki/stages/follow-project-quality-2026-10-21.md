@@ -7,14 +7,14 @@ scope:
   - docdoki/**
 ---
 
-# Integration quality and activation
+# Main integration quality
 
 ## Objective
 
-Integrate the authorized parallel work against [[northstar]], fixing demonstrated
-correctness, maintenance and workflow problems. Reuse completed design reviews:
-code/spec/test agreement alone does not establish a requirement, and complexity
-alone does not establish a defect. [[performance]] owns reproducible measurements.
+Review and integrate the `auto-dev` changes newer than the current `main` tree against
+[[northstar]]. Keep changes that solve material correctness, maintenance or workflow problems,
+and organize the result into coherent commits on `main`. [[performance]] owns reproducible
+measurements.
 
 ## Implemented decisions
 
@@ -37,45 +37,52 @@ alone does not establish a defect. [[performance]] owns reproducible measurement
   the duplicate navigation file tree, preserves Files, and improves notifications,
   short workbenches and Models/MCP controls. Relevant specs own the lasting contracts.
 
-## Integration verification
+## Integration scope
 
-The integration baseline is shared `auto-dev` commit `010a040`. Parallel contributors
-retain their work and identities; only later unshared commits may be regrouped, after
-each active contributor freezes. `main`, remote branches and release tags are unchanged.
+The starting `origin/main` commit is `b259032d`. Its tree equals `auto-dev` commit `010a0402`,
+despite their different histories. The candidate source is `62240169`: 55 later `auto-dev`
+commits. Tree and behavior differences therefore define this integration, rather than the
+unrelated commit ancestry. Development history stays on `auto-dev`; reviewed outcomes become
+new commits on `main`.
 
-The first complete integration pass exposed stale adjacent tests: old copy admission,
-synchronous auxiliary-index writes, terminal-draft blocking and the removed navigation
-tree. Tests now exercise the decided behavior. Native fixtures preserve newly generated
-worker control identities while clearing inherited environment; browser resource fixtures
-retain the URL constructor. Reporter tests no longer inherit a real Herdr pane identity.
-The mobile outside-click listener is installed directly, avoiding a deferred registration
-gap. Its regression uses an actual narrow media-query environment.
+The candidate also includes configurable GUI adapters, source-preserving user-input summaries,
+automatic recovery of read operations and unsent uploads, and viewed external-session recovery.
+Their contracts remain in the relevant specs. Review fixes belong with the result they repair,
+including its tests and documentation.
 
-Linux core/native, launcher and portable checks pass, together with the integrated
-desktop/touch browser flows. Typechecking, lint, formatting and unused-code checks pass.
-The final candidate includes the unchanged personal Fast UI; its desktop/touch layouts,
-three tier states and selective status hiding pass. Service-side release compilation
-and isolated compiled-Host startup also pass. History regrouping preserves the tested tree. Prior cross-platform evidence remains the seven
-successful jobs in [CI run 39574685523](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39574685523)
-for the tagged 0.6.0 source; it is not evidence for the current unshared changes.
+## Review and verification
 
-## Activation boundary and remaining acceptance
+Review preserved the Pi-owned execution boundary and removed obsolete deployment history,
+unused UI exports and assertions tied to superseded recovery behavior. External-session recovery
+now keeps its read-only boundary until writer startup completes, fences retired connections,
+and reports source-attestation failures. Replaced history invalidates its reading view even when
+admission stops before Pi starts. Once Pi startup has begun, failure requires an explicit retry
+rather than automatically repeating extension startup hooks. Adapter controls accept Pi's
+registered command names, including collision suffixes. Compact touch notices use consistent
+control alignment.
 
-Implementation and integration verification are complete. Local deployment is a separate
-operational transaction; its report records the actual running PID and source/frontend/
-customization identities. A prepared candidate or successful restart request is not
-activation evidence.
+The Linux candidate passes formatting, lint, typechecking, unused-code checks, web and server
+release compilation, 41 portable tests, and the frontend/server/native and launcher regression
+suites with affected failures rechecked. The selected 95 Chromium scenarios pass after correcting
+obsolete expectations and the touch notice defect; they cover desktop/touch settings, History,
+session actions, attachments, reading/search and feedback. Two initial browser timing failures
+passed focused reruns without implementation changes. DocDoki's private-boundary check passes.
 
-- [x] Finish integrated checks and regroup unshared commits with a recoverable old ref.
-- [x] Prepare a matching Host/frontend candidate, including local personal customizations,
-  and report its commit before activation.
-- Activation uses the independent systemd Host-only restart path at an idle boundary.
-  A Host-owned Pi must not run a local stop/start sequence that kills its own launcher.
-  Do not interrupt in-flight work, restart independent terminals, or enable the daily timer.
-- Verify the new Host instance and served frontend separately after activation.
-  Existing Pi processes retain their loaded extensions until an explicitly coordinated idle
-  reload; replacing files or restarting only the Host does not update external Pi processes.
+These checks cover the integration candidate, not macOS/Windows execution or physical-device
+notification delivery. Each reorganized implementation commit also passes typechecking.
+
+The tagged 0.6.0 source has historical cross-platform evidence in
+[CI run 39574685523](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39574685523).
+[[follow-release-0-6-0-2026-10-21]] owns that release record.
+
+## Delivery
+
+The reviewed changes are organized by outcome: repairable configuration and session actions;
+native session ownership; durable attachments; source-preserving history; managed lifecycle;
+shared responsive UI; configurable adapters; read/upload recovery; notifications; and consolidated
+documentation. Corrections and their regression tests belong to the outcome they protect.
 
 Physical Android/iOS Web Push acceptance remains in [[follow-notifications-2026-10-22]].
-Annotated tag v0.6.0 remains the release marker, without a GitHub Release or uploaded assets;
-[[follow-release-0-6-0-2026-10-21]] owns that completed release scope.
+Publishing source does not activate a running Host or reload external Pi processes;
+[Host operations](../../docs/host.md) and [extension activation](../../docs/extensions.md#show-external-session-activity)
+describe those separate operations.

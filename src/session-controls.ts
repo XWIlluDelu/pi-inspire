@@ -20,4 +20,4 @@ export function modelControlsSupported(state: SessionControlsState): boolean {
 }
 
 export const NATIVE_MODEL_GUIDANCE =
-  "Load the updated session-activity extension with /reload in the original Pi terminal, then reselect this session.";
+  "Load the updated Inspire session bridge extension with /reload in the original Pi terminal, then reselect this session.";

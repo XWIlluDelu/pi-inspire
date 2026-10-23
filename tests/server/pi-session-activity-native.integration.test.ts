@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { expect, it, vi } from "vitest";
-import type { PiActivityRecord } from "../../docs/examples/session-activity.js";
+import type { PiActivityRecord } from "../../extensions/inspire-session-bridge.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
 import { PiSessionActivity } from "../../server/pi-session-activity.js";
 import { newBridgeIdentity } from "../../server/runtime-branch-bridge.js";
@@ -78,7 +78,7 @@ it.each([false, true])(
         "--no-tools",
         "--no-approve",
         "--extension",
-        resolve("docs/examples/session-activity.ts"),
+        resolve("extensions/inspire-session-bridge.ts"),
         "--extension",
         resolve("tests/fixtures/pi-model-workflow-extension.ts"),
         "--extension",

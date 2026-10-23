@@ -33,17 +33,12 @@ preview; Changes owns Git comparisons. [[composer]] owns file attachment and the
 With no file selected, Files shows up to five deduplicated **Recent in this chat** references from
 one 16-reference Host page, followed by the workspace filesystem tree. Search replaces both sections
 while a query is present. Recent rows use an icon, filename, subdued parent path, and fixed trailing
-Git state on one line. Recent, workspace-tree and search file rows reuse Changes' filename-based
-monochrome Lucide icon mapping at 13px. Directory icons,
-Git decorations, file labels and row geometry are unchanged. Search results show the filename above
-its parent directory, without repeating the filename; root-level files have no directory caption.
-Both the row and directory caption keep the full file path in their hover title, while the row's
-accessible name and open target also retain the full path. Workspace search keeps its themed clear
-button and suppresses the duplicate WebKit-native cancel button. Other search fields keep their
-native clear controls; the transcript search close action remains distinct. Search-only text matches
-use weight 600 with inherited foreground and no background. Matching follows Host lowercase,
-whitespace-separated substring terms on the full path; ranges project into the filename and
-parent-directory fields, including path-spanning terms, without changing titles or bidi isolation.
+Git state on one line. File icons, filename/parent labels and match emphasis follow [[design-system]].
+Search stacks the filename above its parent directory; both the row and caption retain full-path
+hover titles, and the row's accessible name and open target keep that exact path. Workspace search
+has one explicit clear/loading control. Matching uses Host lowercase, whitespace-separated substring
+terms on the full path, projected into filename and parent fields, including path-spanning terms,
+without changing titles or bidi isolation.
 
 On desktop, selecting a recent, search, or tree entry opens a fixed index/detail stack: the workspace tree stays
 above the preview, while Search and Recent yield space. **← project-folder** returns to Browse with
@@ -230,8 +225,8 @@ Notebook cells highlight recognized languages up to 64 Ki characters per leaf; l
 text and copying without highlighting. Markdown Preview and Notebook prose follow Content text size;
 resource headers and controls keep their independent UI sizing.
 
-Host-owned Preview, Source, and Changes use a luminosity-aware neutral canvas across all botanical palettes.
-Authored backgrounds and semantic source/diff colors remain intact. Images use a neutral checkerboard
+Host-owned reading canvases follow the palette-independent neutral roles in [[design-system]],
+preserving authored backgrounds and semantic source/diff colors. Images use a neutral checkerboard
 behind their pixels; full-viewer background options follow [[composer]]. The bounded media button
 respects intrinsic aspect ratio, including viewBox-only SVGs, without tinting letterboxing.
 
@@ -351,8 +346,8 @@ paths. The lower region shows Source with the selected comparison's inline addit
 counts, and non-wrapping previous/next change controls. The current change uses an edge marker
 without replacing the addition/deletion background colors. The old/new line numbers and change sign
 share a sticky gutter with an opaque matching row tint, keeping code from showing beneath it;
-the active edge marker stays visible during horizontal scrolling. Changed-file rows use filename-appropriate
-monochrome Lucide icons with a generic document fallback, retaining their size and Git decoration.
+the active edge marker stays visible during horizontal scrolling. Changed-file rows use the shared
+file icons from [[design-system]] alongside their Git decoration.
 
 Source comparisons reuse the Source highlighting palette and 64 Ki-character bound per revision.
 Highlight old and new source independently with full Git context, then render balanced token spans

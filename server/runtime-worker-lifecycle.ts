@@ -239,6 +239,7 @@ export class RuntimeWorkerLifecycle {
     slot.toolActivity = {};
     slot.availableModels = null;
     slot.commands = null;
+    let checkingWriterAvailability = false;
     let started = false;
     try {
       this.host.attachProcess(slot, rpc);
@@ -248,7 +249,9 @@ export class RuntimeWorkerLifecycle {
       );
       // Recheck presence after asynchronous projection preparation, before Pi
       // can open the session. The external process is never adopted or stopped.
+      checkingWriterAvailability = true;
       await this.host.assertWriterAvailable(slot);
+      checkingWriterAvailability = false;
       slot.startupPhase = "starting";
       started = true;
       await rpc.start();
@@ -284,14 +287,14 @@ export class RuntimeWorkerLifecycle {
       return slot;
     } catch (error) {
       const failure = slot.startupError ?? error;
-      // Once Pi has run, use ordinary startup-failure handling, not the
-      // external observation loop: session_start hooks may already have run.
+      // Session startup hooks may have run. Leave further startup attempts to
+      // an explicit action instead of repeating them through owner recovery.
       if (started) slot.readOnlyReason = null;
       if (slot.process === rpc) {
         await this.stop(slot);
-        // A pre-start refusal already explained by a read-only boundary is
-        // not a failed Pi run. Unexpected startup errors still surface.
-        if (!slot.readOnlyReason) {
+        // Ownership observation retains read-only state; actual preparation or
+        // startup failures still need their attributable runtime error.
+        if (!checkingWriterAvailability) {
           this.host.logRuntimeError(slot.id, failure, "worker_start_failed");
           slot.runState = slot.conflict ? "conflict" : "failed";
           if (!slot.conflict) {

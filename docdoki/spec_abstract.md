@@ -37,7 +37,8 @@ and untracked.
   execution is unavailable, including saved-only JSONL export. [[pi-integration]], [[model-settings]],
   [[mcp]] and [[session-branches]] define the boundaries.
 - **Session continuity:** background work, draft-preserving Pending recovery, independent copies and
-  explicit terminal handoff. With Herdr, browser input, images, agent Stop and model/thinking selection
+  explicit terminal handoff. The optional [Inspire session bridge](../extensions/inspire-session-bridge.ts)
+  reports external Pi activity and presence. With Herdr, browser input, images, agent Stop and model/thinking selection
   reuse the existing native Pi process. Reload, Compact and model cycling stay in that terminal.
   [[composer]], [[session-continuity]] and [[herdr-enhancement]] own the contracts;
   [[follow-session-execution-2026-10-19]] records native continuity evidence and the separate Host/Pi
@@ -66,9 +67,9 @@ and untracked.
 
 | State | Work |
 | --- | --- |
-| Integrated; local activation separate | Repairable settings, independently readable/copyable history, staging-only attachment cleanup, explicit operation recovery and responsive workbench improvements are implemented and verified. [[follow-project-quality-2026-10-21]] records the integration and the separate Host/frontend activation boundary. |
-| Implemented; device acceptance partial | Host-owned task outcomes, device-local alert settings and Web Push. Linux Chrome delivery, installed-PWA refresh continuity and Android system display of a manual test are verified. [[notifications]] defines the contract; [[follow-notifications-2026-10-22]] records remaining Android background-task/click and iOS acceptance, plus separate manual activation. |
-| Tagged | Annotated tag v0.6.0 points to f67d6ee, which passes complete Linux/macOS/Windows CI and three installed-package checks. [[follow-project-quality-2026-10-21]] and [[follow-release-0-6-0-2026-10-21]] retain that evidence and release documentation. There is no GitHub Release or uploaded release-asset distribution; activation is a separate operator action. |
+| Integrated | Repairable settings, independently readable/copyable history, durable delivered attachments, operation recovery, configurable adapters and responsive workbench improvements are consolidated from `auto-dev`. [[follow-project-quality-2026-10-21]] records the scope and verification. |
+| Implemented; device acceptance partial | Host-owned task outcomes, device-local alert settings and Web Push. Linux Chrome delivery, installed-PWA refresh continuity and Android system display of a manual test are verified. [[notifications]] defines the contract; [[follow-notifications-2026-10-22]] records remaining Android background-task/click and iOS acceptance. |
+| Tagged | Annotated tag v0.6.0 points to f67d6ee, with Linux/macOS/Windows CI and three installed-package checks recorded in [[follow-release-0-6-0-2026-10-21]]. The release uses the source tag without uploaded release assets. |
 | Blocked on Pi | Backward model cycling, native TUI shell interruption, worker-owned settings-save results, resource omission diagnostics, request-attributed dialog cancellation, complete loaded-extension inventory, generic argument completion and structured current-worker MCP management. [[pi-capability-gaps]] identifies the missing interfaces. |
 | Deferred | Holistic Files layout work in [[file-browsing]]. The current layout remains the implemented contract. |
 | Undecided | Additional History, usage, configuration and palette enhancements in [[pi-capability-gaps]]. Source-level extension UI reuse follows [[northstar]]; further framework-level expansion has no decided requirement. |

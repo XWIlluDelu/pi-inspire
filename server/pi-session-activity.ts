@@ -4,7 +4,7 @@ import {
   ACTIVITY_STALE_MS,
   piActivityDirectory,
   type PiActivityRecord,
-} from "../docs/examples/session-activity.js";
+} from "../extensions/inspire-session-bridge.js";
 import type {
   ExternalSessionActivities,
   ExternalSessionActivity,

@@ -145,10 +145,6 @@ export function userMessageDisplayContent(message: ChatMessage) {
   return userMessageContent(message.content);
 }
 
-export function userMessageDisplayText(message: ChatMessage): string {
-  return userMessageDisplayContent(message).text;
-}
-
 export function userMessageSearchText(message: ChatMessage): string {
   const { text, references } = userMessageDisplayContent(message);
   return [...references.map(fileReferenceName), text]

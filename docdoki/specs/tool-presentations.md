@@ -190,9 +190,9 @@ Runtime state and credentials stay outside presentation configuration.
   modules warn independently. Later exact identities replace earlier declarations, hidden status
   keys union, and the combined configuration remains bounded. Nested module inclusion is unsupported.
 - Status-bound discrete choices compose above the native Thinking options in both New and active
-  sessions. A shared capability filter uses each lifecycle\'s command inventory and the same native-name
+  sessions. A shared capability filter uses each lifecycle's command inventory and the same native-name
   precedence as completion; pages do not separately decide which adapters exist. New discovers
-  registrations from its prospective directory without starting a session or reading another worker\'s
+  registrations from its prospective directory without starting a session or reading another worker's
   mutable status. Unchanged choices retain Pi defaults; explicit choices remain draft intent until
   creation and must be confirmed before first input delivery. A failed or uncertain application leaves
   that input and artifacts in the created session rather than sending with an unintended setting.

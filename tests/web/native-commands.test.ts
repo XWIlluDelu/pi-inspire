@@ -806,10 +806,10 @@ describe("Pi native command dispatch", () => {
     const activities = store.getState().commandActivities.s1!;
     expect(
       activities.find((item) => item.command === "model")?.message,
-    ).toContain("session-activity extension");
+    ).toContain("Inspire session bridge extension");
     expect(
       activities.find((item) => item.command === "thinking")?.message,
-    ).toContain("session-activity extension");
+    ).toContain("Inspire session bridge extension");
     expect(activities.find((item) => item.command === "reload")).toMatchObject({
       status: "info",
       message: "Run /reload in the original Pi terminal.",

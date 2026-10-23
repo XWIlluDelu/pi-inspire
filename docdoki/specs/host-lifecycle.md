@@ -49,22 +49,18 @@ Launch, pair, package, diagnose, and stop one trusted local Host without exposin
 making deployment machinery a second Pi runtime. Typed runtime integration is specified in
 [[pi-integration]]; optional ingress is specified in [[connection-modules]].
 
-The support baseline is current supported systems and reasonably recent dependencies, not a
-historical-version matrix. Windows native operations use PowerShell 7, resolved from named PATH
-locations or its standard Program Files installation. They do not silently select the legacy
-inbox engine. Missing PowerShell is a dependency failure, not permission to weaken identity or
-storage checks.
+The support baseline follows [[northstar]]. Windows native operations require PowerShell 7 from
+named PATH locations or the standard Program Files installation; missing PowerShell is a dependency
+failure, with no legacy-engine fallback.
 
 ## Runtime installation and release packaging
 
-- INSΠRE targets the latest Pi release. Pi's coding-agent and TUI packages are pinned exactly as
-  deterministic development dependencies for type-checking, browser bundling, and installed-Pi
-  integration suites; the checkout copy is not a production runtime. Older Pi versions have no
-  maintained compatibility branches. Optional capabilities beyond the current public protocol remain
-  inactive unless explicitly negotiated; absence follows current public behavior rather than version
-  guessing. Production releases require zero `npm audit --omit=dev` advisories, without root
-  overrides or downgrades that conceal the affected dependency. [[dependency-boundaries]] explains
-  runtime selection and release checks.
+- Target the latest Pi release, with exactly pinned coding-agent/TUI development dependencies for
+  typechecking, bundling and integration checks. Production uses external Pi; older versions have
+  no maintained compatibility branches. Additional protocol capabilities require explicit
+  negotiation; missing capabilities follow current public behavior.
+  Production releases require zero `npm audit --omit=dev` advisories, without overrides or downgrades
+  that conceal an affected dependency. [[dependency-boundaries]] owns runtime selection and licensing.
 
 - The npm release is a standalone cross-platform CLI/application package, not a Pi resource package:
   it intentionally declares no `pi` manifest or `pi-package` keyword and contains no Pi runtime
@@ -93,23 +89,20 @@ storage checks.
   installed services and inherit for direct launches. `INSPIRE_SHELL` overrides `SHELL` and the
   account's default shell for export discovery. Unsupported shells or platforms fail explicitly
   rather than silently substituting an incomplete environment. Windows direct launch inherits.
-- Discovery invokes the selected shell's normal login/interactive initialization in the user's home,
-  without a PTY, then exports a uniquely framed record through its stdout pipe. Startup output is
-  discarded without counting toward the 1 MiB export limit. The entire probe has a ten-second
-  deadline, terminates its isolated group on failure, and never logs or persists shell
-  output or environment values. Failed or incomplete discovery prevents the new launch. User
-  unsets are preserved; service identity and explicit Inspire controls survive shell initialization.
-  Probe-only state is not propagated, and children inherit the resolved environment without probing
-  again. Actual terminal tabs retain their own normal initialization.
+- Discovery runs normal login/interactive initialization from the user's home without a PTY.
+  The export record is limited to 1 MiB, excluding discarded startup output; the whole probe has a
+  ten-second deadline and terminates its isolated group on failure. Failed/incomplete discovery
+  prevents launch. Never log or persist shell output or environment values. Preserve user unsets,
+  service identity and explicit Inspire controls; omit probe-only state. Children inherit the result
+  without probing again, while terminal tabs retain their own initialization.
 - Application-specific settings must not rewrite unrelated user variables. Inspire does not force
   `NODE_ENV`; an unset, empty, or user-supplied value is preserved through Host, Pi, and project
   terminals. Express owns its production HTTP mode locally. An explicit
   `INSPIRE_TERMINAL_IN_PROCESS` flag, not a user's NODE_ENV, selects the test-only in-process owner.
-- Transient terminal services carry the supplied exports through systemd without placing values in
-  command arguments or reusing the Host's service identity. Installed services do not snapshot
-  credentials or the installer's PATH in unit files. Existing units require reinstallation to remove
-  the former terminal NODE_ENV override; applying that change to a running terminal daemon requires
-  an explicit terminal restart, never an implicit interruption of its PTYs.
+- Transient terminal services carry exports through systemd without command-line values or the
+  Host's service identity. Installed unit files must not snapshot credentials or the installer's PATH.
+  Changing a running daemon's environment requires an explicit terminal restart. The
+  [operator guide](../../docs/host.md#shell-startup-problems) covers older units with a NODE_ENV override.
 
 This contract covers exported variables and executable lookup, not aliases, shell functions, or
 virtual environments activated only in another terminal tab. [[platform-compatibility]] explains the
@@ -248,12 +241,11 @@ capture mechanism and service handoff.
   disappearance or a result alone is insufficient. Failed/unknown cleanup and a blocked event loop
   do not authorize PID killing or replacement. The launcher lease still fences handoff.
 
-  Network shutdown sends normal WebSocket close notifications before runtime teardown. After the
-  existing event-loop drain opportunity, it terminates remaining upgraded connections, including
-  pre-attach and already-closing sockets; a missing browser acknowledgement cannot hold Host exit
-  until the WebSocket library's close-handshake timeout. Wait for endpoint close callbacks, including
-  terminal detach, before closing their service clients. This network fence does not replace
-  owned-worker or PTY exit confirmation.
+  Send WebSocket close notifications before runtime teardown, then terminate remaining upgraded
+  connections after the event-loop drain opportunity. Include pre-attach and already-closing peers
+  so a missing browser acknowledgement cannot hold Host exit until the library handshake timeout.
+  Endpoint close callbacks, including terminal detach, precede service-client close; owned-worker
+  and PTY exit still require separate confirmation.
 
   A stop racing dependency installation or build cancels that pending start. Hosts predating the
   HTTP protocol can still use their advertised authenticated shutdown mailbox. No automatic CLI
@@ -261,10 +253,7 @@ capture mechanism and service handoff.
   another connection can reach a replacement listener. Legacy Linux may stop only after `/proc`
   verifies exact birth, cwd and command line. Other legacy Hosts without cooperative controls need
   their existing service/inspected process controls for the one-time upgrade and otherwise fail
-  closed. An unknown port occupant is never killed automatically. A source build and the launcher share one hash of browser-build inputs: an ordinary
-  successful `build:web` writes a source-checkout stamp, a changed input forces exactly one
-  replacement build, and a current stamp avoids redundant rebuilding before startup. The stamp is
-  excluded from the npm distribution, whose launcher uses its packaged build directly.
+  closed. An unknown port occupant is never killed automatically.
 
   Launcher lock ownership is explicit and scoped: `restart` retains exactly one lock from its stop
   boundary through the replacement start, including when no managed instance existed, while
@@ -294,33 +283,27 @@ capture mechanism and service handoff.
   block maintenance; a Host submission to it still does. A busy, dirty, indeterminate, or old Host
   is skipped without force or same-day retry.
 
-  Scheduled restart uses an authenticated, single-owner prepare/commit handoff, not a boolean idle
-  check. `POST /api/maintenance/restart` grants a unique, opaque `leaseId` and a 30-second `expiresAt`;
-  this preparation blocks new work but does not authorize restart. After all systemd ownership
-  inspections, the runner submits that exact identity to `/api/maintenance/restart/commit`. The Host
-  synchronously validates the current, unexpired preparing lease and idle runtime, then commits the
-  drain before responding. Only the matching `committed` response authorizes one external restart.
-  Expired, released, foreign, previous-Host, and duplicate commits cannot authorize another restart.
-  A preparation can expire and reopen admission; a committed drain **never auto-expires**, even if
-  the external command or its caller is delayed beyond the preparation deadline.
+  Scheduled restart uses an authenticated, single-owner prepare/commit handoff:
 
-  The lease owner does not retry commit or consume a late response after timeout. Before restart
-  issuance, cancellation, failed inspection, or a lost commit response triggers owner-bound
-  `/api/maintenance/restart/release` with the same `leaseId`. Release invalidates the identity, so a
-  reordered commit cannot restore authorization. A proven failure to spawn systemctl permits the
-  same release. An exit failure, signal, or lost result after command issuance does not prove that
-  systemd rejected the restart: the runner reports recovery required and retains the committed
-  drain. Lost release acknowledgement is also reported conservatively. Owner identities are neither
-  logged nor persisted by the runner; admission diagnostics contain no lease capabilities.
-
-  Recovery deliberately favors safety over automatic availability. If the runner dies or the
-  restart outcome is unknown, do not reopen admission merely because time passed, the runner exited,
-  or the service currently appears active. First establish that the lease owner cannot later issue
-  its command **and** that no submitted systemd restart job can still execute. Only then may a
-  retained owner explicitly release its lease, or an operator perform a separately authorized Host
-  replacement to clear the in-memory drain when the owner identity is lost. Do not replace the Host
-  and admit work while an old runner/job can still restart that replacement. This is a bounded
-  maintenance handoff, not a durable transaction across independent/manual Host replacements.
+  1. `POST /api/maintenance/restart` grants an opaque `leaseId` and 30-second `expiresAt`.
+     Preparation blocks new work but does not authorize restart. After systemd ownership checks,
+     `/api/maintenance/restart/commit` validates that current, unexpired lease and idle runtime,
+     then synchronously commits the drain. Only its matching `committed` response authorizes one
+     external restart; duplicate, expired, released, foreign and previous-Host leases cannot do so.
+     Preparation may expire and reopen admission; a committed drain never auto-expires.
+  2. Do not retry commit or consume a late response after timeout. Before command issuance,
+     cancellation, failed inspection or a lost commit response triggers owner-bound
+     `/api/maintenance/restart/release`. Release invalidates the identity, including reordered
+     commits. Proven failure to spawn systemctl also permits release. Once issued, an exit failure,
+     signal or lost result leaves restart uncertain: retain the drain and report recovery required.
+     Report lost release acknowledgement too. Lease capabilities stay out of logs and persisted
+     runner state.
+  3. Recovery requires establishing both that the owner can no longer issue its command and that
+     no submitted systemd restart job can still execute. Only then may the retained owner release
+     its lease, or an operator replace the Host if the identity is lost. Time passed, runner exit
+     or an active service alone is insufficient: an old runner/job could restart the replacement
+     after new work begins. The handoff does not provide a durable transaction across manual Host
+     replacements.
 
 ## Explicit restart controls
 
@@ -383,10 +366,13 @@ capture mechanism and service handoff.
   Failed local cleanup preserves the record and reports a storage problem, not an unknown restart.
   A rejected receipt is labelled **last attempt**, because it is historical rather than a current
   busy check.
-- The CLI checks readiness after restart; the browser reports reconnection to a new Host. Preflight
-  checks dependencies, build, and imports in its execution environment.
+- The CLI checks readiness after restart; the browser reports reconnection to a new Host.
 
 ## Atomic browser-build publication
+
+- Source builds and the launcher share one browser-input hash. Successful `build:web` writes a
+  checkout stamp; changed inputs require one replacement build, while a current stamp avoids
+  rebuilding at startup. The npm distribution omits the stamp and uses its packaged build.
 
 - Ordinary source builds serialize publication per installation, stage Vite output away from the
   live `dist`, snapshot the outgoing build's complete content-addressed JavaScript, CSS, and
@@ -415,8 +401,6 @@ capture mechanism and service handoff.
   `0700`/`0600`; Windows uses the current user-profile ACL boundary. A configured path is accepted
   only inside an existing private current-user directory.
 
-- The mock host is a deterministic presentation fixture, not a second Pi implementation or
-  runtime-conformance oracle; security and lifecycle guarantees are witnessed against
-  `RuntimeController` and `PiRpcProcess` directly. Browser acceptance pins a bounded mock stream
-  cadence and one worker so delivery controls are observed without overlapping prompts through the
-  shared mock projection.
+- The mock Host is a deterministic presentation fixture. Runtime/security/lifecycle checks use
+  `RuntimeController` and `PiRpcProcess` directly. Browser acceptance uses bounded mock delivery
+  and one worker to avoid overlapping prompts through its shared projection.

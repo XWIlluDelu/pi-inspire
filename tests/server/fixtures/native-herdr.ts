@@ -132,7 +132,7 @@ export async function nativeHerdrFixture(
       "-e",
       reporter,
       "-e",
-      resolve("docs/examples/session-activity.ts"),
+      resolve("extensions/inspire-session-bridge.ts"),
       "-e",
       resolve("tests/fixtures/pi-model-workflow-extension.ts"),
       "--no-skills",
