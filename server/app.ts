@@ -1122,14 +1122,17 @@ export function createInspireServer(deps: AppDependencies): {
 
   app.get("/api/bootstrap", async (request, response) => {
     const startedAt = performance.now();
+    const preferenceRead = deps.preferences.inspect();
     const [preferenceState, toolPresentationState, updateStatus, snapshot] =
       await Promise.all([
-        deps.preferences.inspect(),
-        deps.toolPresentations
-          ? deps.toolPresentations.inspect()
-          : Promise.resolve<ToolPresentationConfigurationState>({
-              configuration: emptyToolPresentationConfiguration(),
-            }),
+        preferenceRead,
+        preferenceRead.then(({ preferences }) =>
+          deps.toolPresentations
+            ? deps.toolPresentations.inspect(preferences.adapterEnabled)
+            : Promise.resolve<ToolPresentationConfigurationState>({
+                configuration: emptyToolPresentationConfiguration(),
+              }),
+        ),
         updateCoordinator.status(),
         deps.runtime.snapshot(requestedDetail(request.query.detail)),
       ]);
@@ -1149,6 +1152,9 @@ export function createInspireServer(deps: AppDependencies): {
         ? { preferencesWarning: preferenceState.warning }
         : {}),
       toolPresentations: toolPresentationState.configuration,
+      ...(toolPresentationState.adapters
+        ? { presentationAdapters: toolPresentationState.adapters }
+        : {}),
       ...(toolPresentationState.warning
         ? { toolPresentationsWarning: toolPresentationState.warning }
         : {}),
@@ -1902,6 +1908,23 @@ export function createInspireServer(deps: AppDependencies): {
         .json({ error: "The resource preview is no longer available" });
     }
   }
+
+  app.patch("/api/presentation-adapters/:id", async (request, response) => {
+    const { enabled } = z
+      .object({ enabled: z.boolean() })
+      .strict()
+      .parse(request.body);
+    const current = await deps.toolPresentations?.inspect();
+    if (!current?.adapters?.some((adapter) => adapter.id === request.params.id))
+      throw requestError("The adapter is not configured", 404);
+    const preferences = await deps.preferences.patch({
+      adapterEnabled: { [request.params.id]: enabled },
+    });
+    const state = await deps.toolPresentations!.inspect(
+      preferences.adapterEnabled,
+    );
+    response.json({ ...state, preferences });
+  });
 
   app.get("/api/preferences", async (_request, response) =>
     response.json(await deps.preferences.read()),

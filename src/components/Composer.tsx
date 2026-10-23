@@ -20,7 +20,10 @@ import {
 } from "../composer-history";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import { isComposingKeyboardEvent } from "../keyboard-input";
-import { supportedThinkingLevels } from "../model-options";
+import {
+  resolveModelMetadata,
+  supportedThinkingLevels,
+} from "../model-options";
 import {
   modelControlsSupported,
   NATIVE_MODEL_GUIDANCE,
@@ -34,7 +37,7 @@ import { shallowEqual, store, useAppState } from "../store";
 import { hasActiveModal } from "../use-modal-focus";
 import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
-import { Dropdown } from "./Dropdown";
+import { ComposerThinkingControl } from "./ComposerThinkingControl";
 import { ModelSelector } from "./ModelSelector";
 import { ProjectFileChips, ProjectFilePicker } from "./ProjectFiles";
 
@@ -435,13 +438,7 @@ export const Composer = memo(function Composer() {
     void store.addFiles(files);
   };
 
-  const activeModel = state.model
-    ? (state.availableModels.find(
-        (model) =>
-          model.provider === state.model?.provider &&
-          model.id === state.model?.id,
-      ) ?? state.model)
-    : null;
+  const activeModel = resolveModelMetadata(state.model, state.availableModels);
   const modelControls = modelControlsSupported(state);
   const thinkingSupported = activeModel?.reasoning !== false;
   const thinkingLevels = supportedThinkingLevels(activeModel);
@@ -585,7 +582,8 @@ export const Composer = memo(function Composer() {
             refreshModels={store.refreshModels}
             onChange={(provider, id) => void store.setModel(provider, id)}
           />
-          <Dropdown
+          <ComposerThinkingControl
+            thinkingSupported={thinkingSupported}
             key={`thinking-${sessionId ?? "none"}`}
             label="Thinking level"
             title={
@@ -597,12 +595,9 @@ export const Composer = memo(function Composer() {
             }
             direction="up"
             value={state.thinkingLevel}
-            display={thinkingSupported ? state.thinkingLevel : "unavailable"}
+            display={thinkingSupported ? undefined : "Unavailable"}
             disabled={
-              Boolean(state.readOnlyReason) ||
-              !modelControls ||
-              !thinkingSupported ||
-              sessionOpening
+              Boolean(state.readOnlyReason) || !modelControls || sessionOpening
             }
             openRequest={
               state.nativeCommandUiRequest?.sessionId === state.sessionId &&
@@ -611,10 +606,7 @@ export const Composer = memo(function Composer() {
                 : undefined
             }
             onOpenRequestHandled={store.consumeNativeCommandUiRequest}
-            options={thinkingLevels.map((level) => ({
-              value: level,
-              label: level,
-            }))}
+            levels={thinkingLevels}
             onChange={(value) => void store.setThinkingLevel(value)}
           />
         </div>

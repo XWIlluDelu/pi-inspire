@@ -5,6 +5,7 @@ import {
   Monitor,
   Moon,
   Palette,
+  Puzzle,
   RefreshCw,
   ScrollText,
   Server,
@@ -54,6 +55,7 @@ import { HerdrSettings } from "./HerdrSettings";
 import { HostRestartSettings } from "./HostRestartSettings";
 import { McpSettings } from "./McpSettings";
 import { ModelsSettings } from "./ModelsSettings";
+import { PresentationAdapterSettings } from "./PresentationAdapterSettings";
 import { SessionActionsSettings } from "./SessionActionsSettings";
 import {
   type SettingsChoice as Choice,
@@ -195,6 +197,7 @@ export type SettingsCategoryId =
   | "behavior"
   | "models"
   | "mcp"
+  | "adapters"
   | "updates";
 type CategoryId = SettingsCategoryId;
 
@@ -228,6 +231,7 @@ const CATEGORIES: Array<{
     label: "MCP",
     icon: <Server size={14} aria-hidden />,
   },
+  { id: "adapters", label: "Adapters", icon: <Puzzle size={14} aria-hidden /> },
   {
     id: "updates",
     label: "System",
@@ -762,6 +766,14 @@ export const SettingsContent = memo(function SettingsContent({
               active={activeCategory === "mcp"}
               owner={workspaceOwner}
             />
+          </div>
+
+          <div
+            className="settings__page"
+            data-category="adapters"
+            hidden={activeCategory !== "adapters"}
+          >
+            <PresentationAdapterSettings />
           </div>
 
           <div

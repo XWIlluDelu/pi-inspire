@@ -1,4 +1,7 @@
-import type { ToolPresentationConfiguration } from "./tool-presentation-config.js";
+import type {
+  PresentationAdapterInfo,
+  ToolPresentationConfiguration,
+} from "./tool-presentation-config.js";
 
 export const VISIBILITY_PREFERENCES = [
   "dynamic",
@@ -240,6 +243,8 @@ export const SESSION_ACTION_IDS = [
 export type SessionActionId = (typeof SESSION_ACTION_IDS)[number];
 
 export interface InspirePreferences {
+  /** GUI adapter overrides; Pi continues to own extension loading. */
+  adapterEnabled?: Record<string, boolean>;
   /** Optional Herdr-managed background workers; changes apply on Host restart. */
   herdrEnabled: boolean;
   theme: ThemePreference;
@@ -1318,6 +1323,7 @@ export interface BootstrapResponse {
    * bootstrap but the original file was left unchanged and writes are blocked. */
   preferencesWarning?: string;
   toolPresentations: ToolPresentationConfiguration;
+  presentationAdapters?: PresentationAdapterInfo[];
   /** Invalid user declarations never replace shipped rules or block startup. */
   toolPresentationsWarning?: string;
   /** Already-known choices; addressed model queries discover missing inventory. */

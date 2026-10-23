@@ -23,6 +23,65 @@ Every configuration requires `version`, `rules`, and `mappings`. An empty profil
 
 Presentation profiles do not change which Pi extensions run.
 
+## Extension adapters
+
+One selected profile composes independent adapter files:
+
+```json
+{
+  "version": 1,
+  "rules": {},
+  "mappings": {},
+  "adapters": [
+    { "id": "example", "name": "Example", "path": "../modules/example.json", "enabled": true }
+  ]
+}
+```
+
+Use **Settings → Adapters** to toggle each module immediately, without rebuilding the web app or
+reloading Pi. Overrides persist in Inspire preferences; module files stay unchanged. These are GUI
+adapters, not Pi extension installers. Disable an adapter to restore native/generic rendering.
+
+Adapter files use this same version-1 declaration format but cannot include other adapters.
+Paths resolve relative to the physical profile file, including through a profile symlink. Modules
+compose in profile order: later exact rule IDs, tool mappings, custom-message types, control IDs
+and checkpoint sources replace earlier ones. Hidden status keys combine; the last Thinking
+declaration wins. Disabled files are not read. A broken module warns and leaves other adapters
+active. The combined profile retains the same configuration-size bounds.
+
+In addition to cards, modules may declare:
+
+- `hiddenStatuses`: exact RPC status keys to omit from the top bar without deleting their state.
+- `controls`: status-bound discrete choices in the `thinking` slot. Each declaration has a namespaced
+  `id`, a `label`, an exact slash `command`, a `state` selector (`key`, `value`, optional
+  `supported` and `active` field paths), and two to eight `options`. Each option has a safe command
+  `value`, compact `label`, optional full `title`, `description`, `confirmation`, and
+  `indicator` (`bolt` or `double-bolt`). Controls appear only when the corresponding extension
+  command is available. Pi status confirms changes; a command receipt does not.
+- `checkpoints`: exact compaction `source`, `title`, `tokensLabel` and `tokensDescription`.
+  Optional `summaryPrefix` elides a redundant displayed prefix while retaining source Copy.
+  `legacySummaryPrefix` matches cached source-less records at a word/colon boundary.
+
+For example, a generic control declaration is:
+
+```json
+{
+  "id": "user.example.mode",
+  "slot": "thinking",
+  "label": "Response mode",
+  "command": "/response-mode",
+  "state": { "key": "example-mode", "value": "mode" },
+  "options": [
+    { "value": "normal", "label": "Normal" },
+    { "value": "quick", "label": "Quick", "indicator": "bolt" }
+  ]
+}
+```
+
+Put it in a module's `controls` array. The extension publishes JSON such as `{"mode":"normal"}`
+under `example-mode`. Inspire sends `/response-mode quick` only after a user selects it.
+These declarations execute no JavaScript and contain no application-source substitutions.
+
 ## Example
 
 This custom search tool returns an unindented file path followed by numbered match/context lines:

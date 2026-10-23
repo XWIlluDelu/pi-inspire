@@ -48,8 +48,9 @@ and untracked.
   include full-ID copy and a compact menu whose drag handles share saved ordering with Behavior
   settings under [[interface-preferences]].
   See [[conversation]], [[workspace-layout]], [[resource-preview]], [[terminal]] and [[workbench]].
-- **Extension adaptation:** standard RPC dialogs, status and text widgets, declarative presentations
-  and a source-DIY task-board example. [[pi-integration]] and
+- **Extension adaptation:** standard RPC dialogs, status and text widgets, composable external GUI
+  adapters with Settings enablement, status-bound composer choices and declarative presentations,
+  plus a source-DIY task-board example. [[pi-integration]] and
   [the extension guide](../docs/extensions.md#choose-the-smallest-integration) describe reuse while
   Pi retains behavior and commands.
 - **Host operation:** authenticated local/remote browser access, per-instance lifecycle controls,

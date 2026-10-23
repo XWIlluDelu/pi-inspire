@@ -36,6 +36,10 @@ import {
 import { fileIconForPath } from "../file-icons";
 import { messageCopyLoader } from "../message-copy";
 import { store } from "../store";
+import {
+  checkpointPresentation,
+  usePresentationAdapters,
+} from "../presentation-adapters";
 import { hasActiveModal } from "../use-modal-focus";
 import { CopyAction } from "./CopyAction";
 import { ImageGallery } from "./ImageGallery";
@@ -470,32 +474,27 @@ export const UnpairedToolResultRow = memo(function UnpairedToolResultRow({
 });
 
 /** Shared display content, so search does not index the elided event prefix. */
-export function contextCheckpointContent(message: ChatMessage) {
-  const compacted = message.role === "compactionSummary";
-  const summary = typeof message.summary === "string" ? message.summary : "";
-  const magicContext =
-    compacted &&
-    (message.__inspireCompactionSource === "magic-context" ||
-      (!message.__inspireCompactionSource &&
-        /^Magic Context compacted(?:[:\s]|$)/.test(summary)));
-  const displaySummary = magicContext
-    ? summary.replace(/^Magic Context compacted:\s*/, "")
-    : summary;
-  return { compacted, summary, magicContext, displaySummary };
-}
+export const contextCheckpointContent = checkpointPresentation;
 
 export const ContextCheckpointRow = memo(function ContextCheckpointRow({
   message,
 }: {
   message: ChatMessage;
 }) {
-  const { compacted, summary, magicContext, displaySummary } =
-    contextCheckpointContent(message);
+  usePresentationAdapters();
+  const {
+    compacted,
+    summary,
+    displaySummary,
+    title,
+    tokensLabel,
+    tokensDescription,
+  } = contextCheckpointContent(message);
   const tokens =
     compacted &&
     typeof message.tokensBefore === "number" &&
     Number.isFinite(message.tokensBefore)
-      ? `${magicContext ? "History chunk" : "Before"} ≈ ${Math.round(message.tokensBefore).toLocaleString()} tokens`
+      ? `${tokensLabel} ≈ ${Math.round(message.tokensBefore).toLocaleString()} tokens`
       : null;
   const [open, setOpen] = useState(false);
   const searchReveal = useContext(TranscriptSearchReveal);
@@ -504,11 +503,6 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
   }, [searchReveal]);
   const bodyId = useId();
   const metricId = `${bodyId}-metric`;
-  const title = compacted
-    ? magicContext
-      ? "Magic Context compacted"
-      : "Context compacted"
-    : "Branch context";
   return (
     <div className="turn turn--checkpoint">
       <div className="context-checkpoint">
@@ -540,11 +534,7 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
                 <span
                   id={metricId}
                   className="context-checkpoint__metric"
-                  title={
-                    magicContext
-                      ? "Estimated tokens in the history chunk sent to Magic Context for processing."
-                      : "Estimated context size before compaction."
-                  }
+                  title={tokensDescription}
                 >
                   {tokens}
                 </span>

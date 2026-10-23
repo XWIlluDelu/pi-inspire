@@ -294,7 +294,7 @@ it("keeps a newer catalog refresh when an older default preview arrives late", a
   );
   expect(
     screen.getByRole("combobox", { name: "Thinking level" }),
-  ).toHaveTextContent("max");
+  ).toHaveTextContent("Max");
 });
 it("keeps a manual default effort across workspace changes and submits only that effort override", async () => {
   const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
@@ -308,7 +308,7 @@ it("keeps a manual default effort across workspace changes and submits only that
     ),
   );
   fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
-  fireEvent.click(screen.getByRole("option", { name: /^low$/ }));
+  fireEvent.click(screen.getByRole("option", { name: /^Low$/ }));
   defaults = { cwd: "/two", model: ordinary, thinkingLevel: "medium" };
   fireEvent.change(screen.getByRole("textbox", { name: "Project directory" }), {
     target: { value: "/two" },
@@ -320,7 +320,7 @@ it("keeps a manual default effort across workspace changes and submits only that
   );
   expect(
     screen.getByRole("combobox", { name: "Thinking level" }),
-  ).toHaveTextContent("low");
+  ).toHaveTextContent("Low");
   fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
     target: { value: "intentional effort" },
   });
@@ -368,7 +368,7 @@ it.each(["xhigh", "max"])(
     await waitFor(() =>
       expect(
         screen.getByRole("combobox", { name: "Thinking level" }),
-      ).toHaveTextContent("high"),
+      ).toHaveTextContent("High"),
     );
   },
 );
@@ -385,7 +385,7 @@ it("settles model readiness when manual effort supersedes policy, including acro
   await waitFor(() => expect(policy).toHaveBeenCalledTimes(1));
   expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
   fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
-  fireEvent.click(screen.getByRole("option", { name: /^low$/ }));
+  fireEvent.click(screen.getByRole("option", { name: /^Low$/ }));
   expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
   fireEvent.change(screen.getByRole("textbox", { name: "Project directory" }), {
     target: { value: "/two" },
@@ -394,7 +394,7 @@ it("settles model readiness when manual effort supersedes policy, including acro
   expect(policy).toHaveBeenCalledTimes(1);
   expect(
     screen.getByRole("combobox", { name: "Thinking level" }),
-  ).toHaveTextContent("low");
+  ).toHaveTextContent("Low");
   expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
   fireEvent.click(screen.getByRole("button", { name: "Start session" }));
   await waitFor(() =>
@@ -419,7 +419,7 @@ it("ignores an old model response after another model is chosen", async () => {
   await act(async () => pending.resolve("medium"));
   expect(
     screen.getByRole("combobox", { name: "Thinking level" }),
-  ).toHaveTextContent("unavailable");
+  ).toHaveTextContent("Unavailable");
   expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
     "plain",
   );
@@ -440,12 +440,12 @@ it("ignores an old workspace response and uses the new workspace's configured le
   await waitFor(() =>
     expect(
       screen.getByRole("combobox", { name: "Thinking level" }),
-    ).toHaveTextContent("minimal"),
+    ).toHaveTextContent("Minimal"),
   );
   await act(async () => pending.resolve("high"));
   expect(
     screen.getByRole("combobox", { name: "Thinking level" }),
-  ).toHaveTextContent("minimal");
+  ).toHaveTextContent("Minimal");
 });
 it("keeps a same-cwd catalog read alive across same-model snapshot objects and effort input", async () => {
   vi.useFakeTimers();
@@ -468,7 +468,7 @@ it("keeps a same-cwd catalog read alive across same-model snapshot objects and e
   await act(() => vi.advanceTimersByTimeAsync(220));
   expect(refresh).toHaveBeenCalledExactlyOnceWith("current", "/one");
   fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
-  fireEvent.click(screen.getByRole("option", { name: /^xhigh$/ }));
+  fireEvent.click(screen.getByRole("option", { name: /^Xhigh$/ }));
   for (let i = 0; i < 3; i++) {
     act(emit);
     await act(() => vi.advanceTimersByTimeAsync(90));
@@ -480,7 +480,7 @@ it("keeps a same-cwd catalog read alive across same-model snapshot objects and e
   );
   expect(
     screen.getByRole("combobox", { name: "Thinking level" }),
-  ).toHaveTextContent("xhigh");
+  ).toHaveTextContent("Xhigh");
   const next = deferred<ModelOption[]>();
   catalog = () => next.promise;
   fireEvent.click(screen.getByRole("button", { name: "Model" }));
@@ -510,10 +510,10 @@ it("refreshes prospective choices without replacing an explicitly chosen model o
   await waitFor(() =>
     expect(
       screen.getByRole("combobox", { name: "Thinking level" }),
-    ).toHaveTextContent("high"),
+    ).toHaveTextContent("High"),
   );
   fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
-  fireEvent.click(screen.getByRole("option", { name: /^low$/ }));
+  fireEvent.click(screen.getByRole("option", { name: /^Low$/ }));
   catalog = () => [{ provider: "fixture", id: "fresh", reasoning: true }];
   fireEvent.click(screen.getByRole("button", { name: "Model" }));
   await screen.findByRole("option", { name: /^fresh/ });
@@ -522,5 +522,5 @@ it("refreshes prospective choices without replacing an explicitly chosen model o
   );
   expect(
     screen.getByRole("combobox", { name: "Thinking level" }),
-  ).toHaveTextContent("low");
+  ).toHaveTextContent("Low");
 });

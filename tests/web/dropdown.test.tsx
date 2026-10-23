@@ -48,6 +48,7 @@ describe("dropdown interactions", () => {
       <Dropdown
         label="Effort"
         value="medium"
+        menuClassName="effort-options"
         options={["low", "medium", "high"].map((value) => ({
           value,
           label: value,
@@ -58,6 +59,7 @@ describe("dropdown interactions", () => {
     const trigger = screen.getByRole("combobox", { name: "Effort" });
     trigger.focus();
     fireEvent.click(trigger);
+    expect(screen.getByRole("listbox")).toHaveClass("effort-options");
     const [low, medium, high] = screen.getAllByRole("option");
     expect(medium).toHaveClass("dropdown__option--active");
     expect(medium).toHaveAttribute("aria-selected", "true");

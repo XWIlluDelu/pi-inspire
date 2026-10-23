@@ -133,6 +133,8 @@ interface TranscriptRowProjectionOptions {
   preserveActivityAnchorRef: RefObject<PreserveActivityAnchor>;
 }
 
+import { usePresentationAdapters } from "../presentation-adapters";
+
 export function useTranscriptRows({
   messages,
   activityRanges,
@@ -149,6 +151,8 @@ export function useTranscriptRows({
   onMaterializeActivityRanges,
   preserveActivityAnchorRef,
 }: TranscriptRowProjectionOptions) {
+  const { configuration: presentationConfiguration } =
+    usePresentationAdapters();
   // Activity runs are semantic groups even while
   // older pages extend them from the left or live events extend them from the
   // right. Member aliases retain the already-mounted disclosure owners.
@@ -874,6 +878,7 @@ export function useTranscriptRows({
     flushActivity(false, true);
     return { rows: built, foldIdentityClaims };
   }, [
+    presentationConfiguration,
     projectionMessages,
     activeAssistantMessageKey,
     activeStreamingMessage,

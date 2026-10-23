@@ -270,12 +270,95 @@ const customMessagePresentationDeclarationSchema = z
   })
   .strict();
 
+export const adapterIdSchema = z
+  .string()
+  .min(1)
+  .max(80)
+  .regex(/^[a-z][a-z0-9.-]*$/)
+  .refine((value) => !["constructor", "prototype"].includes(value));
+
+const adapterReferenceSchema = z
+  .object({
+    id: adapterIdSchema,
+    name: z.string().trim().min(1).max(80),
+    path: z.string().min(1).max(4096),
+    enabled: z.boolean().optional(),
+  })
+  .strict();
+
+const controlOptionSchema = z
+  .object({
+    value: z
+      .string()
+      .min(1)
+      .max(80)
+      .regex(/^[A-Za-z0-9_-]+$/),
+    label: z.string().min(1).max(24),
+    title: z.string().min(1).max(80).optional(),
+    indicator: z.enum(["bolt", "double-bolt"]).optional(),
+    description: z.string().max(512).optional(),
+    confirmation: z.string().min(1).max(512).optional(),
+  })
+  .strict();
+
+export const statusControlSchema = z
+  .object({
+    id: userRuleIdSchema,
+    slot: z.literal("thinking"),
+    label: z.string().min(1).max(80),
+    command: z.string().regex(/^\/[A-Za-z][A-Za-z0-9_-]*$/),
+    state: z
+      .object({
+        key: z.string().min(1).max(128),
+        value: safeFieldPathSchema,
+        supported: safeFieldPathSchema.optional(),
+        active: safeFieldPathSchema.optional(),
+      })
+      .strict(),
+    options: z.array(controlOptionSchema).min(2).max(8),
+  })
+  .strict()
+  .superRefine((control, context) => {
+    if (
+      new Set(control.options.map((option) => option.value)).size !==
+      control.options.length
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Control option values must be unique",
+      });
+  });
+
+const checkpointPresentationSchema = z
+  .object({
+    source: z.string().min(1).max(128),
+    title: z.string().min(1).max(80),
+    summaryPrefix: z.string().min(1).max(128).optional(),
+    legacySummaryPrefix: z.string().min(1).max(128).optional(),
+    tokensLabel: z.string().min(1).max(80),
+    tokensDescription: z.string().min(1).max(512),
+  })
+  .strict();
+
+export interface PresentationAdapterInfo {
+  id: string;
+  name: string;
+  enabled: boolean;
+  warning?: string;
+}
+
+export type StatusControlDeclaration = z.infer<typeof statusControlSchema>;
+
 export const toolPresentationConfigurationSchema = z
   .object({
     version: z.literal(1),
     rules: z.record(userRuleIdSchema, toolPresentationRuleDeclarationSchema),
     mappings: z.record(toolNameSchema, ruleIdSchema),
     thinking: thinkingPresentationRuleDeclarationSchema.optional(),
+    adapters: z.array(adapterReferenceSchema).max(32).optional(),
+    hiddenStatuses: z.array(z.string().min(1).max(128)).max(100).optional(),
+    controls: z.array(statusControlSchema).max(16).optional(),
+    checkpoints: z.array(checkpointPresentationSchema).max(32).optional(),
     customMessages: z
       .record(
         z.string().min(1).max(128),
@@ -285,6 +368,18 @@ export const toolPresentationConfigurationSchema = z
   })
   .strict()
   .superRefine((value, context) => {
+    for (const [field, values] of [
+      ["adapters", value.adapters?.map((item) => item.id)],
+      ["controls", value.controls?.map((item) => item.id)],
+      ["checkpoints", value.checkpoints?.map((item) => item.source)],
+    ] as const) {
+      if (values && new Set(values).size !== values.length)
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: "Identifiers must be unique",
+        });
+    }
     if (Object.keys(value.rules).length > MAX_RULES)
       context.addIssue({
         code: "custom",

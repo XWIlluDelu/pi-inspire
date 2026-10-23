@@ -92,7 +92,7 @@ import { TranscriptDataController } from "./controllers/transcript-data-controll
 import { UpdateController } from "./controllers/update-controller";
 import { WorkspaceController } from "./controllers/workspace-controller";
 import { appendNotice, type Notice, parseExtensionDisplays } from "./events";
-import { supportedThinkingLevels } from "./model-options";
+import { resolveModelMetadata, supportedThinkingLevels } from "./model-options";
 import {
   isExternalSession,
   modelControlsSupported,
@@ -810,7 +810,10 @@ export class AppStore {
         boot.preferences,
         preferenceOwners,
       );
-      configureToolPresentationRegistry(boot.toolPresentations);
+      configureToolPresentationRegistry(
+        boot.toolPresentations,
+        boot.presentationAdapters,
+      );
       const updateProjection = this.updates.bootstrap(boot.updateStatus);
       this.set({
         prefs: preferences,
@@ -1870,6 +1873,10 @@ export class AppStore {
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "model") {
+      if (!command.argument) {
+        this.requestNativeCommandUi(sessionId, "model");
+        return ACCEPTED_NATIVE_COMMAND;
+      }
       if (this.state.availableModels.length === 0) {
         this.presentCommandActivity(
           sessionId,
@@ -1878,10 +1885,6 @@ export class AppStore {
           "warning",
           "Pi did not report any available models for this session.",
         );
-        return ACCEPTED_NATIVE_COMMAND;
-      }
-      if (!command.argument) {
-        this.requestNativeCommandUi(sessionId, "model");
         return ACCEPTED_NATIVE_COMMAND;
       }
       const needle = command.argument.toLocaleLowerCase();
@@ -1921,7 +1924,11 @@ export class AppStore {
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "thinking") {
-      if (this.state.model?.reasoning === false) {
+      const activeModel = resolveModelMetadata(
+        this.state.model,
+        this.state.availableModels,
+      );
+      if (activeModel?.reasoning === false) {
         this.presentCommandActivity(
           sessionId,
           input,
@@ -1936,12 +1943,6 @@ export class AppStore {
         return ACCEPTED_NATIVE_COMMAND;
       }
       const level = command.argument.toLocaleLowerCase();
-      const activeModel =
-        this.state.availableModels.find(
-          (model) =>
-            model.provider === this.state.model?.provider &&
-            model.id === this.state.model.id,
-        ) ?? this.state.model;
       const levels = supportedThinkingLevels(activeModel);
       if (!levels.some((candidate) => candidate === level)) {
         this.presentCommandActivity(
@@ -2787,7 +2788,9 @@ export class AppStore {
   cycleThinking = (): Promise<void> =>
     this.queueModelCycle(async () => {
       if (!this.state.model || this.state.readOnlyReason) return;
-      const levels = supportedThinkingLevels(this.state.model);
+      const levels = supportedThinkingLevels(
+        resolveModelMetadata(this.state.model, this.state.availableModels),
+      );
       const index = levels.indexOf(this.state.thinkingLevel as ThinkingLevel);
       await this.setThinkingLevel(levels[(index + 1) % levels.length]!);
     });
@@ -3089,6 +3092,24 @@ export class AppStore {
   };
 
   // --- Preferences ---
+
+  setPresentationAdapterEnabled = async (
+    id: string,
+    enabled: boolean,
+  ): Promise<void> => {
+    const api = this.api;
+    if (!api) throw new Error("Connect to the Host before changing adapters.");
+    const result = await api.setPresentationAdapterEnabled(id, enabled);
+    if (api !== this.api) return;
+    this.set({
+      prefs: {
+        ...this.state.prefs,
+        adapterEnabled: result.preferences.adapterEnabled,
+      },
+    });
+    configureToolPresentationRegistry(result.configuration, result.adapters);
+    if (result.warning) this.notify("warning", result.warning);
+  };
 
   setTheme = (value: ThemePreference): void => this.preferences.setTheme(value);
   setPalette = (value: PalettePreference): void =>

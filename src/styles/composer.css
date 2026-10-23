@@ -426,6 +426,8 @@
 }
 
 .composer {
+  /* Align writing and delivery with the model label, inside its trigger border. */
+  --composer-content-inset: calc(var(--space-2) + 1px);
   position: relative;
   max-width: var(--composer-max);
   margin: 0 auto;
@@ -577,11 +579,16 @@
   max-height: 40dvh;
 }
 
+.composer .composer__input {
+  padding-inline: calc(var(--composer-content-inset) - var(--space-1));
+}
+
 .composer__input::placeholder {
   color: var(--faint);
 }
 
 .composer__delivery {
+  padding-inline: var(--composer-content-inset);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -648,6 +655,12 @@
 
 .composer__selectors {
   display: contents;
+}
+
+/* Pixel-stable labels belong to both composers, independent of adapters. */
+.composer__selectors .model-picker__trigger-copy,
+.composer__selectors .dropdown__value {
+  width: calc-size(max-content, round(up, size, 1px));
 }
 
 /* Dropdown: the themed replacement for native selects. The trigger is the
@@ -725,6 +738,22 @@
 .dropdown__menu--floating {
   position: fixed;
   min-width: 0;
+}
+
+/* Both native and composed Thinking menus use the same reading rhythm. */
+.dropdown__menu.thinking-selector__menu {
+  padding: 4px 0;
+}
+
+.thinking-selector__menu > .dropdown__option {
+  width: calc(100% - 12px);
+  margin-inline: 6px;
+  min-height: 30px;
+  padding: 0 6px;
+}
+
+@media (pointer: coarse) {
+  .thinking-selector__menu > .dropdown__option { min-height: 44px; }
 }
 
 .dropdown__option {
@@ -1393,9 +1422,7 @@
 .model-picker__menu {
   position: fixed;
   display: flex;
-  width: min(520px, calc(100vw - var(--space-8)));
   min-width: 0;
-  max-height: min(440px, 60dvh);
   flex-direction: column;
   padding: 0;
   overflow: hidden;
@@ -1435,8 +1462,9 @@
   flex: 1 1 auto;
   overflow-y: auto;
   overscroll-behavior: contain;
-  /* Inset row highlights without changing virtual row heights/offsets. */
-  padding: 0 var(--space-1);
+  /* Match Thinking's highlight inset while preserving the 12px text edge
+     and the virtual row heights/offsets. */
+  padding: 0 6px;
 }
 
 .model-picker__rows {
@@ -1444,7 +1472,7 @@
 }
 
 .model-picker__heading {
-  padding: 5px var(--space-2);
+  padding: 5px 6px;
   border-bottom: 1px solid var(--hairline);
   background: transparent;
   line-height: 17px;
@@ -1454,6 +1482,7 @@
 }
 
 .model-picker__option {
+  padding-inline: 6px;
   white-space: normal;
 }
 
