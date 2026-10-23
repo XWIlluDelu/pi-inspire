@@ -170,9 +170,11 @@ describe("composer caret completion", () => {
       reasoning: true,
       thinkingLevelMap: { xhigh: "xhigh", max: null },
     };
-    const values = commandArgumentCandidates(token, [model], model).map(
-      (candidate) => candidate.value,
-    );
+    const values = commandArgumentCandidates(token, [model], {
+      ...model,
+      reasoning: false,
+      thinkingLevelMap: undefined,
+    }).map((candidate) => candidate.value);
     expect(values).toContain("xhigh");
     expect(values).not.toContain("max");
     expect(

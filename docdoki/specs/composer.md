@@ -52,8 +52,10 @@ removed. `ComposerController` owns artifact partitions and delivery through `App
 browser snapshot and cross-domain commit authority. Append-only transcript updates preserve the
 active textarea, focus and selection.
 
-The compact input keeps its padding, control order and icon-only send button. Controls wrap only as
-needed; phone Steer/Queue buttons split their delivery row equally. At widths up to 420px, Model and
+The compact input keeps its vertical spacing, control order and icon-only send button. Input text,
+the Steer/Queue control's outer edge and the model label share one horizontal content anchor,
+including on phones; selector hit areas retain their padding. Controls wrap only as needed;
+phone Steer/Queue buttons split their delivery row equally. At widths up to 420px, Model and
 Thinking sit together with an 8px token gap on the selector row. Model shrinks without growing into
 spare space; long labels truncate while Thinking keeps its full width. Send is the rightmost action
 in both idle and busy states; Stop appears immediately to its left in visual and DOM/tab order.
@@ -437,9 +439,18 @@ a catalog choice. These readouts neither expose selection controls nor initiate 
 or ownership acquisition.
 
 The model picker groups/searches Pi choices by provider/ID/display name, with Common first and a
-bounded successful-only provider-local MRU; unavailable MRU stays saved but hidden. Only the catalog
-scrolls. Viewport placement precedes opening; search receives focus and selection/dismissal restores
-the trigger, including mutation failure. Escape precedes Stop. Refresh retains highlighted identity
+bounded successful-only provider-local MRU; unavailable MRU stays saved but hidden. Its popover is
+capped at 384px wide and 456px high, further constrained by the live viewport. Thinking labels and
+option generation are shared by Welcome, the active composer, read-only settings, and model defaults;
+only their display labels are capitalized, not their native values. Welcome and the active composer
+also share the selector's sizing and display logic; session-bound extension controls compose with
+it only for an active session. Current-session selectors, argument completion, commands and keyboard
+cycling resolve model capabilities from the matching catalog identity, falling back to the current
+runtime model when no catalog entry exists; refresh does not change the selected identity or effort.
+The bare `/model` command opens the same picker even with an empty catalog, retaining refresh and
+Manage models as recovery/configuration entry points. Explicit model arguments still validate the
+available choices. Only the catalog scrolls. Viewport placement precedes opening; search receives
+focus and selection/dismissal restores the trigger, including mutation failure. Escape precedes Stop. Refresh retains highlighted identity
 unless a newer query/pointer/key choice intervenes. Cached choices appear immediately while the
 owning worker refreshes without interruption or selection change; failure keeps cache and local
 status. Changes commit selection/recency only on success; failed thinking rolls back and both warn.

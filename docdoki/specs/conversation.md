@@ -332,11 +332,11 @@ custom messages remain independent readable boundaries in this contract.
 - Durable Pi `compaction` and `branch_summary` entries are projected as dedicated, collapsed
   context-event rows with recorded token counts and searchable Markdown bodies. Pi compaction
   shows `Context compacted` and `Before ≈ … tokens` for its pre-compaction context estimate.
-  Magic Context shows `Magic Context compacted` and `History chunk ≈ … tokens`: its marker writes
-  the historian input chunk estimate into Pi's `tokensBefore` field. Source is read from the public
-  compaction entry's `details.source` and projected as `__inspireCompactionSource`; cached source-less
-  snapshots also recognize the extension's known marker prefix. Its redundant `Magic Context compacted:`
-  body prefix is omitted in display, while Copy retains the recorded summary. No savings ratio is derived.
+  Source-specific titles, metric meanings and redundant-prefix elision come from external
+  checkpoint declarations under [[tool-presentations]], not extension-name tests in the renderer.
+  Source is read from the public compaction entry's `details.source` and projected as
+  `__inspireCompactionSource`; optional declared prefixes cover cached source-less snapshots.
+  Copy retains the recorded summary. No savings ratio is derived.
   These unframed context events use a leading disclosure chevron, source icon, quiet label,
   secondary metric, and an adjacent Copy only while expanded. Closed rows have no Copy gap or tab
   stop. The metric wraps to the label's reading anchor in a narrow column, and expanded Markdown

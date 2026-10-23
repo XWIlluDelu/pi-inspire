@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { openMockEventSession } from "./support/mock-host";
+import { checkpointAdapterConfiguration } from "../web/fixtures/extension-adapters";
 
-const configuration = { version: 1 as const, rules: {}, mappings: {} };
+const configuration = checkpointAdapterConfiguration;
 const current = () => {
   const range = CSS.highlights.get("transcript-current-match")?.values().next()
     .value as Range | undefined;

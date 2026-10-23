@@ -1,0 +1,74 @@
+/* Generic status-bound choices composed with a native selector. */
+.dropdown--composed .dropdown__trigger { gap: 3px; }
+.dropdown .dropdown__trigger .status-choice-indicator svg { color: inherit; transform: none; transition: none; }
+.dropdown__menu.dropdown__menu--composed { padding: 0 0 4px; }
+.dropdown__menu--composed > .dropdown__option {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+.dropdown__menu--composed > .dropdown__option[aria-pressed="true"] { background: var(--accent-tint); color: var(--accent-deep); }
+.dropdown__menu--composed > .dropdown__option:hover { background: var(--bg-hover); }
+.dropdown__menu--composed > .dropdown__option:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: -2px; }
+.dropdown__unavailable { padding: 6px 10px; color: var(--muted); font-size: var(--text-xs); }
+.status-choice {
+  font: var(--text-xs)/1.45 var(--font-sans);
+  color: var(--body);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+.status-choice__track { height: 20px; position: relative; }
+.status-choice__line {
+  position: absolute;
+  left: calc(50% / var(--choice-count));
+  right: calc(50% / var(--choice-count));
+  top: 50%;
+  transform: translateY(-50%);
+  height: 1px;
+  background: var(--line-strong);
+}
+.status-choice__dots, .status-choice__labels { display: grid; grid-template-columns: repeat(var(--choice-count), 1fr); }
+.status-choice__dots { position: relative; height: 100%; align-items: center; justify-items: center; }
+.status-choice__dots span { width: 5px; height: 5px; box-sizing: border-box; border-radius: 50%; background: var(--muted); }
+.status-choice__dots span[data-selected="true"] { width: 10px; height: 10px; background: var(--accent-deep); box-shadow: 0 0 0 2px var(--bg-surface); }
+.status-choice input {
+  position: absolute;
+  left: calc(50% / var(--choice-count) - 12px);
+  top: -4px;
+  width: calc(100% - 100% / var(--choice-count) + 24px);
+  height: 28px; margin: 0; appearance: none; background: transparent; cursor: pointer; touch-action: pan-y;
+}
+.status-choice input::-webkit-slider-runnable-track { background: transparent; height: 24px; }
+.status-choice input::-webkit-slider-thumb { appearance: none; width: 24px; height: 24px; background: transparent; border: 0; }
+.status-choice input::-moz-range-track { background: transparent; }
+.status-choice input::-moz-range-thumb { width: 24px; height: 24px; background: transparent; border: 0; }
+.status-choice input:focus-visible { outline: none; }
+.status-choice__track:has(input:focus-visible) .status-choice__dots [data-selected="true"] {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: 3px;
+}
+.status-choice input:disabled { cursor: default; }
+.status-choice__labels { text-align: center; color: var(--muted); }
+.status-choice__labels span { cursor: pointer; padding: 0; }
+.status-choice__labels [data-selected="true"] { color: var(--accent-deep); font-weight: 600; }
+.status-choice__hint { margin: 7px 4px 0; font-size: var(--text-xs); color: var(--muted); }
+.status-choice[data-pending="true"] .status-choice__track, .status-choice[data-unknown="true"] .status-choice__track { opacity: .4; }
+.status-choice-indicator { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; color: inherit; vertical-align: middle; }
+.status-choice-indicator[data-inactive="true"] { color: var(--faint); }
+.status-choice__confirmation { color: var(--body); font-size: var(--text-sm); }
+.status-choice__confirmation button {
+  margin: 4px; padding: 6px 8px; border: 1px solid var(--hairline); border-radius: var(--radius-control);
+  background: var(--bg-control); color: var(--body); font: inherit; cursor: pointer;
+}
+@media (pointer: coarse) {
+  .dropdown__menu--composed > .dropdown__option { min-height: 44px; }
+  .status-choice__track { height: 36px; }
+  .status-choice input { top: -4px; height: 44px; }
+  .status-choice__dots span:not([data-selected="true"]) { width: 6px; height: 6px; }
+}
+@media (forced-colors: active) {
+  .status-choice__line, .status-choice__dots span { background: CanvasText; }
+  .status-choice__dots [data-selected="true"] { background: Highlight; outline: 2px solid Highlight; }
+}

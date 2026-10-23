@@ -2,6 +2,9 @@
 purpose: Declarative presentations project tool and Thinking activity and select custom-message reading content while retaining generic inspection.
 covers:
   - shared/tool-presentation-config.ts
+  - src/presentation-adapters.ts
+  - src/components/{ComposerThinkingControl,StatusChoice,PresentationAdapterSettings,Dropdown,ExtensionDisplays}.tsx
+  - src/styles/status-choice.css
   - shared/tool-activity.ts
   - server/tool-presentation-config.ts
   - server/{runtime-events,session-projection}.ts
@@ -175,6 +178,26 @@ versioned personal profiles are documented in [Custom tool presentations](../../
 Personal profiles share the product codebase and may live in a separate configuration repository.
 An empty version-1 profile selects shipped rules and generic cards; it does not disable extensions.
 Runtime state and credentials stay outside presentation configuration.
+
+## Extension adapter composition
+
+- One normal web build supplies generic capabilities. Extension-specific rules, commands, source
+  names and text remain in external modules; no source patching or alternate adapter build exists.
+- The selected profile declares ordered adapter references with stable IDs, names, paths and default
+  enablement. Settings → Adapters persists per-ID overrides and updates the current browser without
+  discarding drafts, attachments or Pi state. Module files remain unchanged.
+- Relative paths resolve beside the physical profile. Disabled modules are not read; malformed
+  modules warn independently. Later exact identities replace earlier declarations, hidden status
+  keys union, and the combined configuration remains bounded. Nested module inclusion is unsupported.
+- Status-bound discrete choices compose above the native Thinking options. They use available
+  extension commands, retain confirmation text, commit pointer selection on release and confirm
+  through Pi state. Pending state survives closing the menu; session/transport changes retire it.
+  Effort availability does not disable an independently supported extension choice.
+- Exact hidden status keys affect display only. Configurable checkpoint titles, prefix elision and
+  metric wording do not change the original summary, source identity or complete Copy.
+- Cards, messages, controls and checkpoint rules use the same composition and enablement mechanism.
+  Disabling restores native/generic display, not extension execution control.
+- The reference and data format are documented in [Custom presentations](../../docs/tool-presentations.md).
 
 ## Checks
 

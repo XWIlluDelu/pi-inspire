@@ -6,7 +6,7 @@ import {
 } from "../shared/commands";
 import type { ModelOption } from "../shared/contracts";
 import type { ProjectFileResult } from "./api";
-import { supportedThinkingLevels } from "./model-options";
+import { resolveModelMetadata, supportedThinkingLevels } from "./model-options";
 
 export interface PiCommand {
   name: string;
@@ -167,6 +167,7 @@ export function commandArgumentCandidates(
   activeModel: ModelOption | null,
 ): CommandArgumentCandidate[] {
   if (token.name === "thinking") {
+    activeModel = resolveModelMetadata(activeModel, models);
     if (activeModel?.reasoning === false) return [];
     return fuzzyFilter(
       supportedThinkingLevels(activeModel),

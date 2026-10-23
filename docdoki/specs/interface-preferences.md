@@ -25,7 +25,7 @@ Keep persistent preferences easy to find and save each change without overwritin
 ## Settings organization
 
 Settings opens from the topbar as a modal, leaving session navigation in place. Display, Conversation,
-Behavior, Models, MCP and System are separate category views. Only the selected category is visible,
+Behavior, Models, MCP, Adapters and System are separate category views. Only the selected category is visible,
 focusable and exposed to assistive technology. Category navigation starts its content at the top;
 scrolling within a category does not change the selection. Drafts, model browsing state and pending
 login attempts remain intact across category switches. Model and credential destinations reveal their
@@ -47,6 +47,7 @@ selected-state markers. These are presentation choices, not changes to preferenc
 | Behavior | App behavior (`On launch`, `Task alerts`), `Session actions` ordering, then `Pi session settings` (`Steering delivery`, `Follow-up delivery`, `Automatic context compaction`, `Automatic retry`). |
 | Models | Pi defaults, common scope/cycling, graphical model/provider configuration, and nearby login/logout under [[model-settings]]. |
 | MCP | Scoped native-file configuration, protected-value edits and explicit selected-worker Reload under [[mcp]]; not a connection inventory. |
+| Adapters | Unified enablement of externally configured GUI adapters under [[tool-presentations]]; not Pi extension execution management. |
 | System | Component versions, Docs/Changelog release references and unified update check; then `Host`, with `Herdr enhancement` followed by Host restart under [[host-lifecycle]]. |
 
 Pi controls follow [[pi-integration]]. A dedicated `Pi session settings` section and concise scope note

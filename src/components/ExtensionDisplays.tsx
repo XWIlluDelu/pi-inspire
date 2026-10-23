@@ -13,6 +13,7 @@ import type {
   ExtensionWidgetDisplay,
 } from "../../shared/contracts";
 import { stripTerminalSequences } from "../ansi";
+import { usePresentationAdapters } from "../presentation-adapters";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { shallowEqual, useAppState } from "../store";
 import {
@@ -59,7 +60,9 @@ export const ExtensionStatus = memo(function ExtensionStatus() {
     (state) => ({ statuses: state.statuses, sessionId: state.sessionId }),
     shallowEqual,
   );
+  const hidden = usePresentationAdapters().configuration.hiddenStatuses ?? [];
   const entries = Object.entries(statuses)
+    .filter(([key]) => !hidden.includes(key))
     .map(([key, text]) => [key, stripTerminalSequences(text)] as const)
     .filter(([, text]) => text.trim().length > 0)
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));

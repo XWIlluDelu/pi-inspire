@@ -59,6 +59,7 @@ import {
   toolResultImage,
 } from "../tool-presentations/model";
 import { codeModeResultBlocks } from "../tool-presentations/pi-native";
+import { usePresentationAdapters } from "../presentation-adapters";
 import {
   thinkingPresentationRegistry,
   toolPresentationRegistry,
@@ -301,6 +302,7 @@ export function ThinkingCard({
 }) {
   // Stored thinking can carry terminal color sequences; clean only here, at
   // the display boundary, for both the summary line and the card body.
+  usePresentationAdapters();
   const clean = stripTerminalSequences(text);
   const firstLine = clean.split("\n").find((line) => line.trim()) ?? "";
   const presentation = useMemo(
@@ -1644,6 +1646,7 @@ export function ToolCard({
   onDynamicClosed?: () => void;
   onManualOpenChange?: (open: boolean) => void;
 }) {
+  usePresentationAdapters();
   const owner = useContext(EmbeddedImageOwnerContext);
   const status = toolStatus(result, activity, live, call);
   const complete = toolComplete(result, activity) || dynamicActive === false;
@@ -1773,6 +1776,7 @@ export function CollapsedActivityStrip({
   live: boolean;
 }) {
   const owner = useContext(EmbeddedImageOwnerContext);
+  const { configuration } = usePresentationAdapters();
   const visibleActivityIds = useVisibleActivityItemIds();
   const visibleActivityCount =
     visibleActivityIds === null
@@ -1795,7 +1799,7 @@ export function CollapsedActivityStrip({
       activities.map((activity) =>
         collapsedActivityPresentation(activity, live),
       ),
-    [activities, live],
+    [activities, live, configuration],
   );
   const renderedPresentation = useMemo(
     () =>
@@ -1805,7 +1809,7 @@ export function CollapsedActivityStrip({
             result: rendered.result,
           })
         : null,
-    [rendered],
+    [rendered, configuration],
   );
 
   // Keep the last detail mounted for the brief grid-collapse transition; it is

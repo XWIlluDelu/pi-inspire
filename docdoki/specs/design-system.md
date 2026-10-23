@@ -582,8 +582,10 @@ disabled/noninteractive but keep opacity 1: a recorded task state is not an unav
 
 ## Model-list hierarchy
 
-The Composer model popover is capped at 360 × 320px, with viewport-aware placement. The composed
-Thinking popover starts at 192px wide and uses 26px desktop option rows, retaining 44px touch rows.
+The Composer model popover is capped at 384 × 456px, with viewport-aware placement. The shared
+Thinking popover starts at 208px wide and uses 30px desktop option rows, retaining 44px touch rows.
+Both pickers inset row highlights by 6px and keep a 12px text edge. Composed Thinking controls add
+8px vertical padding around the status-bound choice group without changing the native option rhythm.
 Its range input shows keyboard focus around the selected dot, not a clipped rectangle across the labels.
 Their different content densities need different bounds, not identical boxes; neither reduces text
 size or removes model identity to fit.

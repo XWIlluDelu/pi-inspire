@@ -34,7 +34,7 @@ import { shallowEqual, store, useAppState } from "../store";
 import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
 import { DirectoryPicker } from "./DirectoryPicker";
-import { Dropdown } from "./Dropdown";
+import { ThinkingSelector } from "./ComposerThinkingControl";
 import { ModelSelector } from "./ModelSelector";
 import { visibleSessions } from "./nav-model";
 import { PiLoader } from "./PiLoader";
@@ -760,7 +760,7 @@ export const Welcome = memo(function Welcome({
                 setModelKey(modelIdentityKey({ provider, id }));
               }}
             />
-            <Dropdown
+            <ThinkingSelector
               label="Thinking level"
               title={
                 selectedModel?.reasoning === false
@@ -771,18 +771,15 @@ export const Welcome = memo(function Welcome({
               value={thinkingDefault ? "" : thinkingLevel}
               display={
                 thinkingDefault
-                  ? "default"
+                  ? "Default"
                   : selectedModel?.reasoning === false
-                    ? "unavailable"
-                    : thinkingLevel
+                    ? "Unavailable"
+                    : undefined
               }
               disabled={
                 starting || !selectedModel || selectedModel.reasoning === false
               }
-              options={thinkingLevels.map((level) => ({
-                value: level,
-                label: level,
-              }))}
+              levels={thinkingLevels}
               onChange={(value) => {
                 ++thinkingInputGeneration.current;
                 setThinkingTouched(true);
