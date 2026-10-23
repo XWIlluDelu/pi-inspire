@@ -1250,6 +1250,7 @@ export function createInspireServer(deps: AppDependencies): {
         : [];
     response.json({
       models: result.models,
+      ...("commands" in result ? { commands: result.commands } : {}),
       ...("defaults" in result ? { defaults: result.defaults } : {}),
       ...("selection" in result ? { selection: result.selection } : {}),
       ...("warning" in result && result.warning

@@ -5,6 +5,16 @@ export type PiNativeCommandExecution =
   | "terminal"
   | "informational";
 
+/** Native command identity shared by discovery, completion and adapter controls. */
+export interface PiCommand {
+  name: string;
+  description?: string;
+  source?: string;
+  argumentHint?: string;
+  /** Browser adaptation, not a capability claimed by Pi. */
+  execution?: PiNativeCommandExecution;
+}
+
 interface PiNativeCommandDescriptor {
   name: string;
   description: string;

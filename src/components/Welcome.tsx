@@ -24,6 +24,10 @@ import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import type { PendingAttachment } from "../controllers/composer-controller";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { clampThinkingLevel, supportedThinkingLevels } from "../model-options";
+import {
+  availableStatusControls,
+  usePresentationAdapters,
+} from "../presentation-adapters";
 import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 import {
   sessionDraft,
@@ -34,7 +38,7 @@ import {
 import { shallowEqual, store, useAppState } from "../store";
 import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
-import { ThinkingSelector } from "./ComposerThinkingControl";
+import { ThinkingControl } from "./ComposerThinkingControl";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { ModelSelector } from "./ModelSelector";
 import { visibleSessions } from "./nav-model";
@@ -160,6 +164,10 @@ export const Welcome = memo(function Welcome({
   const [modelStatus, setModelStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >(inheritedModel ? "ready" : sourcePending ? "loading" : "idle");
+  const { configuration } = usePresentationAdapters();
+  const [controlValues, setControlValues] = useState<Record<string, string>>(
+    {},
+  );
   const [thinkingTouched, setThinkingTouched] = useState(false);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(() =>
     THINKING_LEVELS.includes(inheritedThinkingLevel as ThinkingLevel)
@@ -217,6 +225,11 @@ export const Welcome = memo(function Welcome({
   const [catalogRecovery] = useState(() => new RecoveryBackoff());
   const catalogRequest = useRef<AbortController | null>(null);
   const [catalog, setCatalog] = useState<ModelOption[] | null>(null);
+  const [catalogCommands, setCatalogCommands] = useState<{
+    cwd: string;
+    transport: number;
+    commands: PiCommand[];
+  } | null>(null);
   const [pickedModel, setPickedModel] = useState<ModelOption | null>(null);
   const [commonModels, setCommonModels] = useState<ModelIdentity[]>([]);
   const catalogGeneration = useRef(0);
@@ -329,6 +342,15 @@ export const Welcome = memo(function Welcome({
     };
     setDirectoryIssue(null);
     setCatalog(result.models);
+    setCatalogCommands(
+      result.commands
+        ? {
+            cwd: effectiveDirectory,
+            transport: transportGeneration,
+            commands: result.commands,
+          }
+        : null,
+    );
     setCommonModels(result.commonModels ?? []);
     if (!modelOwnedRef.current && result.defaults) {
       const defaults = result.defaults;
@@ -632,6 +654,15 @@ export const Welcome = memo(function Welcome({
   const commandScopeMatches = Boolean(
     inheritance && effectiveDirectory === inheritance.cwd,
   );
+  // Both completion and configurable controls consume this target-owned inventory.
+  const inheritedCommands = commandScopeMatches
+    ? (inheritance?.commands ?? [])
+    : [];
+  const workspaceCommands =
+    catalogCommands?.cwd === effectiveDirectory &&
+    catalogCommands.transport === state.transportGeneration
+      ? catalogCommands.commands
+      : inheritedCommands;
   const hasInput = Boolean(
     draft.trim() || attachments.length > 0 || projectFiles.length > 0,
   );
@@ -682,6 +713,15 @@ export const Welcome = memo(function Welcome({
     // that produced it, so a symlink retarget cannot reinterpret the path.
     const target = projectFileRoot || directory.trim();
     const model = selectedModel;
+    const selections = availableStatusControls(
+      configuration,
+      workspaceCommands,
+    ).flatMap((control) => {
+      const value = controlValues[control.id];
+      return value && control.options.some((option) => option.value === value)
+        ? [{ control, value }]
+        : [];
+    });
     if (!model && !createDirectory) return;
     setStarting(true);
     try {
@@ -716,6 +756,14 @@ export const Welcome = memo(function Welcome({
       store.replaceComposerText(message);
       for (const path of referencedProjectFiles) store.addProjectFile(path);
       if (files.length > 0) await store.addFiles(files);
+      if (
+        store.getState().sessionId !== opened ||
+        sessionDraft(opened) !== message
+      )
+        return;
+      // Creation has transferred the draft and artifacts. Do not deliver the first
+      // input until Pi confirms each explicit choice; failure leaves that draft intact.
+      if (!(await store.applyInitialStatusControls(opened, selections))) return;
       if (
         store.getState().sessionId !== opened ||
         sessionDraft(opened) !== message
@@ -792,7 +840,7 @@ export const Welcome = memo(function Welcome({
         <ComposerInput
           value={draft}
           onChange={updateDraft}
-          commands={commandScopeMatches ? (inheritance?.commands ?? []) : []}
+          commands={workspaceCommands}
           includeNativeCommands={false}
           completionDisabled={starting}
           completionScope={`new-session:${effectiveDirectory}`}
@@ -872,7 +920,20 @@ export const Welcome = memo(function Welcome({
                 setModelKey(modelIdentityKey({ provider, id }));
               }}
             />
-            <ThinkingSelector
+            <ThinkingControl
+              scope={{
+                kind: "new-session",
+                commands: workspaceCommands,
+                values: controlValues,
+                onSelect: (id, value) =>
+                  setControlValues((previous) => ({
+                    ...previous,
+                    [id]: value,
+                  })),
+              }}
+              thinkingSupported={Boolean(
+                selectedModel?.reasoning !== false && selectedModel,
+              )}
               label="Thinking level"
               title={
                 selectedModel?.reasoning === false
@@ -888,9 +949,7 @@ export const Welcome = memo(function Welcome({
                     ? "Unavailable"
                     : undefined
               }
-              disabled={
-                starting || !selectedModel || selectedModel.reasoning === false
-              }
+              disabled={starting || !selectedModel}
               levels={thinkingLevels}
               onChange={(value) => {
                 ++thinkingInputGeneration.current;

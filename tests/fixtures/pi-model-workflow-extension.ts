@@ -1,11 +1,11 @@
 import { appendFileSync } from "node:fs";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   type AssistantMessage,
   createAssistantMessageEventStream,
   type Model,
   type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export function registerModelWorkflow(
   pi: ExtensionAPI,
@@ -20,6 +20,17 @@ export function registerModelWorkflow(
       );
   };
   mark("factory");
+  pi.registerCommand(`${scope}-mode`, {
+    description: `${scope} response mode`,
+    handler: async (value, ctx) => {
+      mark("command");
+      ctx.ui.setStatus(`${scope}-mode`, JSON.stringify({ mode: value }));
+    },
+  });
+  pi.registerCommand("shared-mode", {
+    description: "Shared command name",
+    handler: async () => {},
+  });
   const models: Model<"openai-completions">[] = ["a", "b"].map((id, index) => ({
     provider: `${scope}-native`,
     id,

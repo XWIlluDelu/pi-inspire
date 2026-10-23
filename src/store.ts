@@ -47,6 +47,7 @@ import type {
   ModelSettingsSnapshot,
 } from "../shared/model-settings";
 import type { ProviderAuthOperation } from "../shared/provider-auth-bridge";
+import type { StatusControlDeclaration } from "../shared/tool-presentation-config";
 import {
   type Api,
   ApiError,
@@ -93,6 +94,8 @@ import { UpdateController } from "./controllers/update-controller";
 import { WorkspaceController } from "./controllers/workspace-controller";
 import { appendNotice, type Notice, parseExtensionDisplays } from "./events";
 import { resolveModelMetadata, supportedThinkingLevels } from "./model-options";
+import { controlState } from "./presentation-adapters";
+import { isTransientFailure, RecoveryBackoff } from "./recovery-backoff";
 import {
   isExternalSession,
   modelControlsSupported,
@@ -109,7 +112,6 @@ import {
   snapshotLifecyclePatch,
 } from "./snapshot-transition";
 import { configureToolPresentationRegistry } from "./tool-presentations/registry";
-import { isTransientFailure, RecoveryBackoff } from "./recovery-backoff";
 
 export type {
   ActivityMaterializationMode,
@@ -1756,6 +1758,85 @@ export class AppStore {
       undefined,
       true,
     );
+  };
+
+  /** Shared confirmation boundary for both live controls and pre-session selections. */
+  selectStatusControl = async (
+    control: StatusControlDeclaration,
+    value: string,
+    sessionId: string | null,
+  ): Promise<boolean> => {
+    const transport = this.transportGeneration;
+    const current = () =>
+      this.state.sessionId === sessionId &&
+      this.transportGeneration === transport;
+    if (!sessionId || !current()) return false;
+    if (
+      !control.options.some((option) => option.value === value) ||
+      !resolveCommandInventory(this.state.commands).some(
+        (command) =>
+          command.source === "extension" &&
+          "/" + command.name === control.command,
+      )
+    )
+      throw new Error("This control is not available in this session.");
+    const confirmed = () =>
+      controlState(control, this.state.statuses[control.state.key])?.value ===
+      value;
+    if (confirmed()) return true;
+    return new Promise<boolean>((resolve, reject) => {
+      let settled = false;
+      const finish = (result: boolean, error?: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        unsubscribe();
+        if (error) reject(error);
+        else resolve(result);
+      };
+      const unsubscribe = this.subscribe(() => {
+        if (!current()) finish(false);
+        else if (confirmed()) finish(true);
+      });
+      const timer = setTimeout(
+        () =>
+          finish(false, new Error("The selection has not been confirmed yet.")),
+        10_000,
+      );
+      void this.sendPreparedCommand(control.command + " " + value).then(
+        (receipt) => {
+          if (!current()) finish(false);
+          else if (confirmed()) finish(true);
+          else if (!receipt)
+            finish(false, new Error("The change was not accepted."));
+        },
+        (error) => {
+          if (!current()) finish(false);
+          else if (confirmed()) finish(true);
+          else finish(false, error);
+        },
+      );
+    });
+  };
+
+  applyInitialStatusControls = async (
+    sessionId: string,
+    selections: readonly { control: StatusControlDeclaration; value: string }[],
+  ): Promise<boolean> => {
+    for (const { control, value } of selections) {
+      try {
+        if (!(await this.selectStatusControl(control, value, sessionId)))
+          return false;
+      } catch (error) {
+        if (this.state.sessionId === sessionId)
+          this.notify(
+            "warning",
+            `${control.label}: ${error instanceof Error ? error.message : "Could not apply selection."} Your first message is still in the composer.`,
+          );
+        return false;
+      }
+    }
+    return true;
   };
 
   private executeNativeCommand(

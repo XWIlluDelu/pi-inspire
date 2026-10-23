@@ -45,7 +45,7 @@
 .status-choice input::-moz-range-track { background: transparent; }
 .status-choice input::-moz-range-thumb { width: 24px; height: 24px; background: transparent; border: 0; }
 .status-choice input:focus-visible { outline: none; }
-.status-choice__track:has(input:focus-visible) .status-choice__dots [data-selected="true"] {
+.status-choice__track:has(input:focus-visible) .status-choice__dots [data-focus-target="true"] {
   outline: 2px solid var(--accent-focus);
   outline-offset: 3px;
 }
@@ -54,7 +54,7 @@
 .status-choice__labels span { cursor: pointer; padding: 0; }
 .status-choice__labels [data-selected="true"] { color: var(--accent-deep); font-weight: 600; }
 .status-choice__hint { margin: 7px 4px 0; font-size: var(--text-xs); color: var(--muted); }
-.status-choice[data-pending="true"] .status-choice__track, .status-choice[data-unknown="true"] .status-choice__track { opacity: .4; }
+.status-choice[data-pending="true"] .status-choice__track, .status-choice[data-unknown="true"]:has(input:disabled) .status-choice__track { opacity: .4; }
 .status-choice-indicator { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; color: inherit; vertical-align: middle; }
 .status-choice-indicator[data-inactive="true"] { color: var(--faint); }
 .status-choice__confirmation { color: var(--body); font-size: var(--text-sm); }

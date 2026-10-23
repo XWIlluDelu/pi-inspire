@@ -27,8 +27,6 @@ async function discover(cwd: string, validationPath?: string) {
     cwd,
     agentDir,
     settingsManager: settings,
-    noSkills: true,
-    noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
   });
@@ -72,6 +70,25 @@ async function discover(cwd: string, validationPath?: string) {
       warnings.push("Model refresh incomplete; showing Pi's available models.");
     return {
       models,
+      // Use the same public registries as native get_commands, including Pi's
+      // resolved invocation names for colliding extension commands.
+      commands: [
+        ...session.extensionRunner.getRegisteredCommands().map((command) => ({
+          name: command.invocationName,
+          description: command.description,
+          source: "extension",
+        })),
+        ...session.promptTemplates.map((template) => ({
+          name: template.name,
+          description: template.description,
+          source: "prompt",
+        })),
+        ...loader.getSkills().skills.map((skill) => ({
+          name: `skill:${skill.name}`,
+          description: skill.description,
+          source: "skill",
+        })),
+      ],
       defaults,
       virtualModels: runtime
         .getModels()

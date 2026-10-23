@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { StatusControlDeclaration } from "../../shared/tool-presentation-config";
 import { StatusChoice } from "../../src/components/StatusChoice";
+import { availableStatusControls } from "../../src/presentation-adapters";
 import { store } from "../../src/store";
 import { deferred } from "./helpers";
 
@@ -17,6 +18,23 @@ const control: StatusControlDeclaration = {
   ],
 };
 
+it("uses completion command ownership rather than advertising a shadowed extension control", () => {
+  expect(
+    availableStatusControls(
+      {
+        version: 1,
+        rules: {},
+        mappings: {},
+        controls: [control, { ...control, id: "model", command: "/model" }],
+      },
+      [
+        { name: "choice", source: "extension" },
+        { name: "model", source: "extension" },
+      ],
+    ),
+  ).toEqual([control]);
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
@@ -26,10 +44,15 @@ it("retires a confirmation warning when the requested selection arrives late", a
   vi.useFakeTimers();
   const initial = store.getState();
   vi.spyOn(store, "getState").mockReturnValue({ ...initial, sessionId: "s1" });
-  vi.spyOn(store, "sendPreparedCommand").mockResolvedValue({
-    accepted: true,
-    historyEntry: null,
-  });
+  vi.spyOn(store, "selectStatusControl").mockImplementation(
+    () =>
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error("The selection has not been confirmed yet.")),
+          10_000,
+        ),
+      ),
+  );
   const props = {
     control,
     disabled: false,
@@ -52,14 +75,14 @@ it("retires a confirmation warning when the requested selection arrives late", a
   expect(
     screen.queryByText("The selection has not been confirmed yet."),
   ).toBeNull();
-  expect(store.sendPreparedCommand).toHaveBeenCalledTimes(1);
+  expect(store.selectStatusControl).toHaveBeenCalledTimes(1);
 });
 
 it("keeps confirmed Pi state when its command observation fails later", async () => {
   const initial = store.getState();
   vi.spyOn(store, "getState").mockReturnValue({ ...initial, sessionId: "s1" });
   const pending = deferred<never>();
-  vi.spyOn(store, "sendPreparedCommand").mockReturnValue(pending.promise);
+  vi.spyOn(store, "selectStatusControl").mockReturnValue(pending.promise);
   const props = {
     control,
     disabled: false,
@@ -81,6 +104,25 @@ it("keeps confirmed Pi state when its command observation fails later", async ()
     "aria-valuetext",
     "High",
   );
+});
+
+it("can choose the first draft value by keyboard without claiming a current native value", () => {
+  const onSelect = vi.fn();
+  render(
+    <StatusChoice
+      control={control}
+      disabled={false}
+      draft={{ value: null, onSelect }}
+    />,
+  );
+  const slider = screen.getByRole("slider", { name: "Choice" });
+  expect(slider).toBeEnabled();
+  expect(slider).toHaveAttribute("aria-valuetext", "Pi default");
+  expect(
+    document.querySelector('.status-choice__dots [data-focus-target="true"]'),
+  ).not.toHaveAttribute("data-selected", "true");
+  fireEvent.keyDown(slider, { key: "Home" });
+  expect(onSelect).toHaveBeenCalledWith("low");
 });
 
 it("keeps missing status neutral instead of prescribing an extension reload", () => {

@@ -453,8 +453,9 @@ bounded successful-only provider-local MRU; unavailable MRU stays saved but hidd
 capped at 384px wide and 456px high, further constrained by the live viewport. Thinking labels and
 option generation are shared by Welcome, the active composer, read-only settings, and model defaults;
 only their display labels are capitalized, not their native values. Welcome and the active composer
-also share the selector's sizing and display logic; session-bound extension controls compose with
-it only for an active session. Current-session selectors, argument completion, commands and keyboard
+also share the selector\'s sizing, capability filter and display logic. Configurable extension controls
+compose with it before and after creation; [[tool-presentations]] defines local preselection and
+confirmed application before first input. Current-session selectors, argument completion, commands and keyboard
 cycling resolve model capabilities from the matching catalog identity, falling back to the current
 runtime model when no catalog entry exists; refresh does not change the selected identity or effort.
 The bare `/model` command opens the same picker even with an empty catalog, retaining refresh and
@@ -485,7 +486,11 @@ Readiness distinguishes unresolved model/directory checks from in-flight creatio
 prechecks recover automatically without creating a directory/session or delivering input; persistent
 failures and configuration problems retain local recovery. Pi's `unknown/unknown` means no model.
 While cwd matches and the source workspace is available, the inherited worker supplies model and
-resource completion; changing directory clears its commands until the new worker loads. Read-only
+resource completion. Prospective-directory metadata discovery returns extension commands,
+prompt templates and skill commands from Pi's public registries, respecting its resource and trust
+settings without session-start hooks. Controls and first-message completion use that shared
+target-owned inventory; directory/transport changes immediately retire stale observations.
+Fresh discovery replaces the inherited inventory, including resources removed from that directory. Read-only
 sources retain known choices, but New queries the prospective directory rather than starting source
 discovery. Unresolved source selection keeps its loading feedback alongside the missing-folder action
 while recovering, and offers Retry only after persistent failure. Existing-session built-ins appear
