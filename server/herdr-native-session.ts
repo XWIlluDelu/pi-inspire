@@ -5,7 +5,7 @@ import type {
   NativeImageReference,
   NativeModelCatalog,
   NativeModelSelection,
-} from "../docs/examples/session-activity.js";
+} from "../extensions/inspire-session-bridge.js";
 import { parseNativeCommand } from "../shared/commands.js";
 import type {
   ExternalSessionConnection,

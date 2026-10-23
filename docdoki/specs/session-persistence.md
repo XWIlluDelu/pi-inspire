@@ -4,7 +4,7 @@ covers:
   - server/runtime*.ts
   - server/external-session.ts
   - server/pi-session-occupancy.ts
-  - docs/examples/session-activity.ts
+  - extensions/inspire-session-bridge.ts
   - tests/server/pi-session-occupancy*.test.ts
   - server/pi-rpc.ts
   - server/session-{projection,preview,jsonl}.ts

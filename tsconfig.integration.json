@@ -9,6 +9,7 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     "shared/**/*.ts",
+    "extensions/**/*.ts",
     "docs/examples/*.ts",
     "tests/integration/**/*.ts",
     "tests/server/fixtures/**/*.ts",

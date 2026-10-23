@@ -6,7 +6,7 @@ covers:
   - shared/user-message.ts
   - server/pi-session-activity.ts
   - server/pi-session-occupancy.ts
-  - docs/examples/session-activity.ts
+  - extensions/inspire-session-bridge.ts
   - tests/server/pi-session-activity*.test.ts
   - tests/web/session-activity.test.tsx
   - shared/assistant-stream.ts

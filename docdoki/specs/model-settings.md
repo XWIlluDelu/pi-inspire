@@ -90,7 +90,7 @@ use the selected identity; response metadata and usage describe the actual respo
 Router in the existing model list. A physical response does not replace the selected router.
 
 Live selection comes from the owning Pi, including after branch navigation. A connected native TUI
-supplies its own available catalog and selection through the session-activity receiver. Model and
+supplies its own available catalog and selection through the Inspire session bridge receiver. Model and
 thinking setters return actual state, including native adjustment and extension changes, without a
 second setter overriding that decision or changing saved defaults. Native model cycling stays in the
 original terminal; explicit selection and supported thinking-cycle gestures use the GUI controls.

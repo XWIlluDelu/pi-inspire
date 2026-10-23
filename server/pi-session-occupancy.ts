@@ -14,7 +14,7 @@ import {
   type PiActivityRecord,
   piActivityDirectory,
   piActivityProcessIdentity,
-} from "../docs/examples/session-activity.js";
+} from "../extensions/inspire-session-bridge.js";
 import { isPiActivityRecord } from "./pi-session-activity.js";
 import { requestError } from "./request-error.js";
 

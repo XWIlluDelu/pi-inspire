@@ -48,7 +48,7 @@ only on the current device. Protected notification state sits beside the Host pr
 secrets and must not be published. Pending alerts expire after 15 minutes rather than becoming
 an inbox.
 
-Connected native Pi uses the updated [session-activity extension](extensions.md#control-the-same-herdr-pi-terminal)
+Connected native Pi uses the updated [Inspire session bridge extension](extensions.md#control-the-same-herdr-pi-terminal)
 to distinguish completion, failure and cancellation. Reload it in the original idle terminal after
 updating; a Host restart does not reload an external Pi. Older integrations can report **Task ended**
 without claiming a successful result.

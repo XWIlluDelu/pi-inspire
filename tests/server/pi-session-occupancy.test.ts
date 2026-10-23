@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PiActivityRecord } from "../../docs/examples/session-activity.js";
+import type { PiActivityRecord } from "../../extensions/inspire-session-bridge.js";
 import { PiSessionOccupancy } from "../../server/pi-session-occupancy.js";
 
 vi.mock("node:fs/promises", async (original) => {

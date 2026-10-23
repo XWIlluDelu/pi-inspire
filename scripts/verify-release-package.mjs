@@ -331,6 +331,8 @@ try {
     "docs/ssh-reverse.md",
     "docs/examples/native-ui.ts",
     "docs/examples/session-activity.ts",
+    "extensions/inspire-session-bridge.ts",
+    "build/extensions/inspire-session-bridge.js",
     "dist/index.html",
     "dist/THIRD_PARTY_NOTICES.txt",
     "inspire",
@@ -356,7 +358,8 @@ try {
       path.startsWith("server/") ||
       (/\.(?:[cm]?ts|tsx)$/u.test(path) &&
         path !== "docs/examples/native-ui.ts" &&
-        path !== "docs/examples/session-activity.ts"),
+        path !== "docs/examples/session-activity.ts" &&
+        path !== "extensions/inspire-session-bridge.ts"),
   );
   if (forbidden.length > 0)
     throw new Error(

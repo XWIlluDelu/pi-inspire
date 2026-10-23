@@ -3,7 +3,7 @@ scope:
   - docdoki/specs/{notifications,interface-preferences}.md
   - server/{app,browser-auth,runtime,runtime-external-sessions,runtime-event-sockets,herdr-native-session,external-session,pi-native-actions,task-notifications}.ts
   - docs/{host,extensions}.md
-  - docs/examples/session-activity.ts
+  - extensions/inspire-session-bridge.ts
   - shared/notifications.ts
   - src/{main,api,app-state,store,browser-auth,notifications}.ts*
   - src/controllers/{runtime-event,preference,connection,session-selection}-controller.ts

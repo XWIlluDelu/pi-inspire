@@ -37,7 +37,8 @@ and untracked.
   execution is unavailable, including saved-only JSONL export. [[pi-integration]], [[model-settings]],
   [[mcp]] and [[session-branches]] define the boundaries.
 - **Session continuity:** background work, draft-preserving Pending recovery, independent copies and
-  explicit terminal handoff. With Herdr, browser input, images, agent Stop and model/thinking selection
+  explicit terminal handoff. The optional [Inspire session bridge](../extensions/inspire-session-bridge.ts)
+  reports external Pi activity and presence. With Herdr, browser input, images, agent Stop and model/thinking selection
   reuse the existing native Pi process. Reload, Compact and model cycling stay in that terminal.
   [[composer]], [[session-continuity]] and [[herdr-enhancement]] own the contracts;
   [[follow-session-execution-2026-10-19]] records native continuity evidence and the separate Host/Pi
