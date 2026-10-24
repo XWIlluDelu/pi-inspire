@@ -139,8 +139,9 @@ a fresh resource scan and package update results cannot establish current-worker
   source references, not embedded release notes.
 - Versions offers Copy beside its check action whenever updates are available, including while
   the update notice is snoozed. It shares the notice's exact report: available version transitions,
-  sorted extension package names, update commands and release links. A check in progress disables
-  copying the previous observation; clipboard failures stay in this section and can be retried.
+  sorted extension package names, update commands and release links. Background checks preserve the
+  known notice and its copyable report; only the check action is busy. Clipboard failures stay in
+  this section and can be retried.
 - Explicit checks bypass the cache and reread the installed Pi identity without importing its SDK.
   Pi availability and copied version transitions compare that installation with the latest release,
   not the version recorded at Host startup. The main row shows the installed version. When it differs
@@ -161,8 +162,13 @@ a fresh resource scan and package update results cannot establish current-worker
   check.
 - Available Pi, extension, and INSΠRE updates share one notice that opens Settings at System.
   Host snapshots, status events, and results own execution state. Browser request-pending state
-  separately prevents duplicate clicks and shows `Pending` until Host execution is observed; HTTP
-  failure or disconnection does not mark a running check finished.
+  separately prevents duplicate clicks until Host execution is observed; the button uses one
+  `Checking…` state throughout. Transient request failures recover with bounded backoff while retaining
+  previous results. Observed Host execution ends request recovery, including when its HTTP response
+  arrives late or is lost. A persistent or non-transient request failure is reported once in Versions
+  without replacing known results. A new request or observed Host check clears that request error;
+  transport replacement retires the old request and its recovery. HTTP failure or disconnection does
+  not mark a running Host check finished.
 - Observations and the exact-set 24-hour snooze belong to the Host deployment. Bootstrap and events
   reconcile local and forwarded views; dismissal anywhere hides the notice everywhere. Host restart
   preserves the remaining interval, and a changed version or extension set bypasses the snooze.

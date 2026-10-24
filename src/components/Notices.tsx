@@ -105,8 +105,6 @@ export const Notices = memo(function Notices({
       error: source.error,
       connection: source.connection,
       readOnlyReason: source.readOnlyReason,
-      inspireUpdateChecking: source.inspireUpdateChecking,
-      piUpdateChecking: source.piUpdateChecking,
       updateSnoozedUntil: source.updateSnoozedUntil,
       inspireUpdateCheck: source.inspireUpdateCheck,
       piUpdateCheck: source.piUpdateCheck,
@@ -114,11 +112,7 @@ export const Notices = memo(function Notices({
     shallowEqual,
   );
   const updates =
-    !state.inspireUpdateChecking &&
-    !state.piUpdateChecking &&
-    state.updateSnoozedUntil === null
-      ? availableUpdates(state)
-      : null;
+    state.updateSnoozedUntil === null ? availableUpdates(state) : null;
   const ref = useRef<HTMLDivElement>(null);
   // Keep one top-right anchor below the visible workspace controls. Rebind
   // after feedback changes can replace those nodes.

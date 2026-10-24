@@ -24,7 +24,7 @@
   visibility: hidden;
 }
 
-.system-versions__copy-error {
+.system-versions__error {
   margin: 0;
   padding: var(--set-row-pad);
   border-bottom: 1px solid var(--hairline);

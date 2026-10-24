@@ -208,8 +208,11 @@ preserves query and focus. Long login captions wrap without squeezing status or 
 
 Login operates on the connected Host's Pi credentials. Switching Settings categories leaves the
 attempt running and preserves entered responses. The browser displays native links, codes,
-prompts and outcomes. Supported methods offer Remote login help on demand, following the selected
-method's device-code, pasted-code or redirect interaction.
+prompts and outcomes. One status position shows the latest native progress message while pending,
+falling back to a concise login status; the settled outcome replaces progress rather than leaving a
+second progress line. Authorization links, codes and prompts remain available. Supported methods
+offer Remote login help on demand, following the selected method's device-code, pasted-code or
+redirect interaction.
 
 Attempts retain their originating worker. Cancellation or supersession prevents an older attempt
 from replacing a newer credential choice. Status-read failures resume observation; failed cancellation
