@@ -53,11 +53,17 @@ function flushAnimationFrames(): void {
   for (const callback of callbacks) callback(Date.now());
 }
 
-function ViewportHarness({ viewId = "view" }: { viewId?: string }) {
+function ViewportHarness({
+  sessionId = "session",
+  viewId = "view",
+}: {
+  sessionId?: string;
+  viewId?: string;
+}) {
   const searchOwnsViewportRef = useRef(false);
   const viewport = useTranscriptViewport({
     rows: ROWS,
-    sessionId: "session",
+    sessionId,
     viewId,
     hasOlder: false,
     olderError: null,
@@ -323,7 +329,29 @@ describe("transcript viewport geometry", () => {
     expect(log.scrollTop).toBe(400);
   });
 
-  it("treats another branch view as a new latest-follow projection", () => {
+  it("keeps the final boundary when geometry changes before updates flush", () => {
+    render(<ViewportHarness />);
+    const log = screen.getByRole("log");
+    setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
+    act(() => {
+      for (const top of [500, 600, 500, 600]) {
+        fireEvent.wheel(log);
+        log.scrollTop = top;
+        fireEvent.scroll(log);
+      }
+    });
+    expect(log).toHaveAttribute("data-at-latest", "true");
+
+    fireEvent.wheel(log);
+    log.scrollTop = 500;
+    fireEvent.scroll(log);
+    expect(log).toHaveAttribute("data-at-latest", "false");
+  });
+
+  it.each([
+    { sessionId: "session", viewId: "branch-b" },
+    { sessionId: "another-session", viewId: "branch-a" },
+  ])("resets the latest boundary for a new projection %j", (projection) => {
     const { rerender } = render(<ViewportHarness viewId="branch-a" />);
     const log = screen.getByRole("log");
     setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
@@ -332,10 +360,18 @@ describe("transcript viewport geometry", () => {
     log.scrollTop = 300;
     fireEvent.scroll(log);
     expect(log).toHaveAttribute("data-pinned", "false");
+    expect(log).toHaveAttribute("data-at-latest", "false");
 
-    rerender(<ViewportHarness viewId="branch-b" />);
+    rerender(<ViewportHarness {...projection} />);
     expect(log).toHaveAttribute("data-pinned", "true");
+    expect(log).toHaveAttribute("data-at-latest", "true");
     expect(log.scrollTop).toBe(600);
+
+    // A later gesture must still publish the new projection's boundary change.
+    fireEvent.wheel(log);
+    log.scrollTop = 300;
+    fireEvent.scroll(log);
+    expect(log).toHaveAttribute("data-at-latest", "false");
   });
 
   it.each([

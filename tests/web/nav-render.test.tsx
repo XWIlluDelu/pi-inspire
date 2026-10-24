@@ -838,6 +838,40 @@ describe("session navigation controls", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
+  it("clears session search by pointer or keyboard and returns focus without opening a result", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(
+      <Nav
+        onToggleNavigation={vi.fn()}
+        collapsed={false}
+        onNewSession={vi.fn()}
+        onSelectSession={onSelect}
+      />,
+    );
+    const search = screen.getByRole("searchbox", { name: "Search sessions" });
+    await user.type(search, "session");
+    await user.click(
+      screen.getByRole("button", { name: "Clear session search" }),
+    );
+    expect(search).toHaveValue("");
+    expect(search).toHaveFocus();
+    expect(document.querySelector(".nav__row--highlighted")).toBeNull();
+
+    await user.type(search, "session");
+    await user.tab();
+    expect(
+      screen.getByRole("button", { name: "Clear session search" }),
+    ).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(search).toHaveValue("");
+    expect(search).toHaveFocus();
+    expect(document.querySelector(".nav__row--highlighted")).toBeNull();
+    await user.keyboard("{Enter}");
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(store.getState().sessionId).toBe("alpha");
+  });
+
   it("selects search results in visual order, retaining session identity across pages and curation", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();

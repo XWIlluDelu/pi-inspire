@@ -1,6 +1,9 @@
 import {
   AlertTriangle,
+  ArrowLeft,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   FileText,
   GitBranch,
@@ -234,6 +237,8 @@ const ChangeRow = memo(function ChangeRow({
       type="button"
       className={`res__row ${selected ? "res__row--active" : ""}`}
       aria-current={selected || undefined}
+      data-git-path={change.path.id}
+      data-git-side={side}
       aria-label={[pathName(change), sideLabel, sourceLabel]
         .filter(Boolean)
         .join(", ")}
@@ -413,9 +418,13 @@ function ChangesIndexHeader({ state }: { state: ContextPaneView }) {
 function ChangesDetail({
   state,
   readingPositions,
+  navigation,
+  hidden,
 }: {
   state: ContextPaneView;
   readingPositions: ChangesReadingPositions;
+  navigation: ReactNode;
+  hidden: boolean;
 }) {
   const sourceRef = useRef<HTMLDivElement>(null);
   const [activeChange, setActiveChange] = useState<number | null>(null);
@@ -581,7 +590,8 @@ function ChangesDetail({
   }
 
   return (
-    <div className="changes__detail">
+    <div className="changes__detail" hidden={hidden}>
+      {navigation}
       <div className="file-detail-header">
         <div className="file-detail-header__path">
           {path ? <PathCopyButton path={path} /> : <span>Source</span>}
@@ -626,7 +636,7 @@ function ChangesDetail({
           </button>
         </div>
       </div>
-      <div className="changes__content">
+      <div className="changes__content" tabIndex={-1}>
         {diffView?.status === "ready" && diffView.refreshError ? (
           <p className="changes__projection-note" role="status">
             Source refresh failed; showing the last known source.{" "}
@@ -642,14 +652,168 @@ function ChangesDetail({
 export function ChangesPane({
   state,
   readingPositions,
+  narrow = false,
 }: {
   state: ContextPaneView;
   readingPositions?: ChangesReadingPositions;
+  narrow?: boolean;
 }) {
   const localReadings = useRef<ChangesReadingPositions>(new Map());
+  const backRef = useRef<HTMLButtonElement>(null);
+  const selected = Boolean(
+    state.selectedGitPathId || state.selectedResourceReference,
+  );
+  const previousView = useRef({
+    narrow,
+    selected: false,
+    pathId: state.selectedGitPathId,
+    side: state.selectedGitSide,
+    sessionId: state.sessionId,
+    cwd: state.cwd,
+    transportGeneration: state.transportGeneration,
+  });
+  useLayoutEffect(() => {
+    const previous = previousView.current;
+    const root = backRef.current?.closest(".res__body");
+    const activeDialog = document.activeElement?.closest(
+      '[role="dialog"][aria-modal="true"]',
+    );
+    const canMoveFocus = !activeDialog || (root && activeDialog.contains(root));
+    const sameScope =
+      previous.sessionId === state.sessionId &&
+      previous.cwd === state.cwd &&
+      previous.transportGeneration === state.transportGeneration;
+    if (
+      canMoveFocus &&
+      narrow &&
+      selected &&
+      (!previous.selected || !previous.narrow)
+    ) {
+      backRef.current?.focus({ preventScroll: true });
+    } else if (
+      canMoveFocus &&
+      narrow &&
+      !selected &&
+      previous.selected &&
+      sameScope
+    ) {
+      const rows = root?.querySelectorAll<HTMLButtonElement>("[data-git-path]");
+      const row = Array.from(rows ?? []).find(
+        (item) =>
+          item.dataset.gitPath === previous.pathId &&
+          item.dataset.gitSide === previous.side,
+      );
+      (
+        row ??
+        root
+          ?.closest(".ctx")
+          ?.querySelector<HTMLElement>('[aria-label="Changes"]')
+      )?.focus({
+        preventScroll: true,
+      });
+    } else if (
+      !narrow &&
+      previous.narrow &&
+      root
+        ?.querySelector(".changes__navigation")
+        ?.contains(document.activeElement)
+    ) {
+      root.querySelector<HTMLElement>(".changes__content")?.focus({
+        preventScroll: true,
+      });
+    }
+    previousView.current = {
+      narrow,
+      selected,
+      pathId: state.selectedGitPathId,
+      side: state.selectedGitSide,
+      sessionId: state.sessionId,
+      cwd: state.cwd,
+      transportGeneration: state.transportGeneration,
+    };
+  }, [
+    narrow,
+    selected,
+    state.selectedGitPathId,
+    state.selectedGitSide,
+    state.sessionId,
+    state.cwd,
+    state.transportGeneration,
+  ]);
+  const status = state.gitStatus;
+  const comparisons = useMemo(() => {
+    if (status?.kind !== "repository") return [];
+    // Match the index's group order; both sides of one path remain reachable.
+    return [
+      ...status.files
+        .filter((file) => file.conflict)
+        .map((file) => ({ file, side: "unstaged" as const })),
+      ...status.files
+        .filter((file) => !file.conflict && (file.unstaged || file.untracked))
+        .map((file) => ({ file, side: "unstaged" as const })),
+      ...status.files
+        .filter((file) => !file.conflict && file.staged)
+        .map((file) => ({ file, side: "staged" as const })),
+    ];
+  }, [status]);
+  const selectedIndex = comparisons.findIndex(
+    ({ file, side }) =>
+      file.path.id === state.selectedGitPathId &&
+      side === state.selectedGitSide,
+  );
+  const moveFile = (direction: -1 | 1) => {
+    const next = comparisons[selectedIndex + direction];
+    if (selectedIndex >= 0 && next)
+      void store.openGitDiff(next.file.path.id, next.side);
+  };
+  const navigation = (
+    <div
+      className="changes__navigation"
+      role="group"
+      aria-label="Changed file navigation"
+      hidden={!narrow}
+    >
+      <button
+        ref={backRef}
+        type="button"
+        className="changes__back"
+        onClick={() => store.showChangesBrowser()}
+      >
+        <ArrowLeft size={14} aria-hidden />
+        All changes{status?.kind === "repository" ? ` (${status.total})` : ""}
+      </button>
+      <span className="changes__comparison" aria-live="polite">
+        {selectedIndex >= 0
+          ? `${state.selectedGitSide === "staged" ? "Staged" : "Working"} ${selectedIndex + 1}/${comparisons.length}`
+          : "Source"}
+      </span>
+      <button
+        type="button"
+        className="icon-button"
+        aria-label="Previous file change"
+        title="Previous file change"
+        disabled={selectedIndex <= 0}
+        onClick={() => moveFile(-1)}
+      >
+        <ChevronLeft size={16} aria-hidden />
+      </button>
+      <button
+        type="button"
+        className="icon-button"
+        aria-label="Next file change"
+        title="Next file change"
+        disabled={selectedIndex < 0 || selectedIndex >= comparisons.length - 1}
+        onClick={() => moveFile(1)}
+      >
+        <ChevronRight size={16} aria-hidden />
+      </button>
+    </div>
+  );
   return (
     <ContextSplitBody
       mode="changes"
+      className={selected ? "res__body--detail" : ""}
+      indexHidden={narrow && selected}
       header={<ChangesIndexHeader state={state} />}
       index={
         <>
@@ -665,6 +829,8 @@ export function ChangesPane({
         <ChangesDetail
           state={state}
           readingPositions={readingPositions ?? localReadings.current}
+          navigation={navigation}
+          hidden={narrow && !selected}
         />
       }
     />

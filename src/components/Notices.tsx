@@ -124,15 +124,32 @@ export const Notices = memo(function Notices({
         "main > .topbar, main > .banner",
       ),
     ];
-    const tools = [
-      ...document.querySelectorAll<HTMLElement>(
-        "main .transcript-search, main .transcript-mobile-toolbar",
-      ),
-    ];
+    const observedTools = new Set<HTMLElement>();
+    let observer: ResizeObserver | null = null;
     const composer = document.querySelector<HTMLElement>(
       "main .composer, main .composer-readonly",
     );
     const measure = () => {
+      // Find is replaced by the search row and recreated when search closes.
+      // Rediscover controls when their sizes change rather than retaining the
+      // previous launcher's detached node as the notice anchor.
+      const tools = new Set(
+        document.querySelectorAll<HTMLElement>(
+          "main .transcript-search, main .transcript-search-launcher, main .transcript-mobile-toolbar",
+        ),
+      );
+      for (const tool of observedTools) {
+        if (!tools.has(tool)) {
+          observer?.unobserve(tool);
+          observedTools.delete(tool);
+        }
+      }
+      for (const tool of tools) {
+        if (!observedTools.has(tool)) {
+          observer?.observe(tool);
+          observedTools.add(tool);
+        }
+      }
       const stackBounds = element.getBoundingClientRect();
       const overlapsHorizontally = (bounds: DOMRect) =>
         bounds.width > 0 &&
@@ -178,14 +195,13 @@ export const Notices = memo(function Notices({
       element.classList.toggle("notices--scrollable", overflowing);
       if (overflowing) element.scrollTop = scrollTop;
     };
-    measure();
-    const observer =
+    observer =
       typeof ResizeObserver === "undefined"
         ? null
         : new ResizeObserver(measure);
+    measure();
     [
       ...boundaries,
-      ...tools,
       element,
       ...element.children,
       composer,

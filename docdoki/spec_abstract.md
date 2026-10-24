@@ -69,6 +69,7 @@ and untracked.
 
 | State | Work |
 | --- | --- |
+| Completed | External frontend review triage, on-demand desktop search, phone Changes navigation, shared search/copy fixes and related focus/viewport repairs are verified in [[follow-frontend-review-2026-10-24]]. Overall style and deferred interaction proposals remain undecided. |
 | Integrated | Repairable settings, independently readable/copyable history, durable delivered attachments, operation recovery, configurable adapters and responsive workbench improvements are consolidated from `auto-dev`. [[follow-project-quality-2026-10-21]] records the scope and verification. |
 | Implemented; device acceptance partial | Host-owned task outcomes, device-local alert settings and Web Push. Linux Chrome delivery, installed-PWA refresh continuity and Android system display of a manual test are verified. [[notifications]] defines the contract; [[follow-notifications-2026-10-22]] records remaining Android background-task/click and iOS acceptance. |
 | Tagged | Annotated tag v0.6.0 points to f67d6ee, with Linux/macOS/Windows CI and three installed-package checks recorded in [[follow-release-0-6-0-2026-10-21]]. The release uses the source tag without uploaded release assets. |

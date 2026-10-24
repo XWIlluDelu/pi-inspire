@@ -6,15 +6,21 @@ export function ContextSplitBody({
   header,
   index,
   detail,
+  className = "",
+  indexHidden = false,
 }: {
   mode: "files" | "changes";
   header: ReactNode;
   index: ReactNode;
   detail: ReactNode;
+  className?: string;
+  indexHidden?: boolean;
 }) {
   return (
-    <div className={`res__body res__body--${mode} res__body--split`}>
-      <div className="res__index">
+    <div
+      className={`res__body res__body--${mode} res__body--split ${className}`}
+    >
+      <div className="res__index" hidden={indexHidden}>
         {header}
         <div className="res__list" data-pane-scroll-active="true">
           {index}

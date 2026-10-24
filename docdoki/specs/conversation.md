@@ -161,13 +161,18 @@ custom messages remain independent readable boundaries in this contract.
   Shell output and context summaries use the same display normalization for search and rendering:
   terminal control sequences and removed summary prefixes do not add invisible matches.
 
-  Desktop search remains a compact single-row input at the top-right of the reading measure,
-  without a launcher or a Close control. Its opaque surface fill is subtly
+  Desktop search rests as a compact Find launcher at the top-right of the reading measure. Activating
+  it or pressing Ctrl/Cmd+F in the conversation, its composer or header opens the single-row input
+  and focuses/selects its text. Modal and contextual surfaces retain their keyboard ownership.
+  A non-empty query keeps search visible. Close clears query/match ownership, collapses the row and
+  restores focus to Find. Its opaque surface fill is subtly
   distinct from the reading stage, with a quiet boundary and no elevation at rest. Hover strengthens
   the boundary and adds the existing light elevation; focus or a non-empty query retains the accent
   boundary. These states do not change its geometry or let scrolling text show through.
   Search and narrow navigation surfaces do not reserve layout height; opening controls preserves the scrollport and reading
   position. Desktop Escape releases input focus without clearing its query or selected match.
+  Session/view changes retire search state. Width changes keep an active query visible in the
+  corresponding desktop or narrow tool; neither layout retains an invisible active search.
   A bottom-centered floating text button, `Jump to latest`, appears only when the scrollport is
   actually away from its latest boundary, independently of automatic-follow or search ownership.
   It restores follow at the complete Transcript bottom, including Pending and extension content

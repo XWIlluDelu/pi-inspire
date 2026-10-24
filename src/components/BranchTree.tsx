@@ -36,6 +36,7 @@ import { ImageGallery } from "./ImageGallery";
 import { ImagePreview } from "./ImagePreview";
 import { PiLoader } from "./PiLoader";
 import { RichText } from "./RichText";
+import { SearchField } from "./SearchField";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 
 interface Turn {
@@ -592,34 +593,31 @@ export function BranchTree({
         </div>
       ) : null}
       <div className="history-outline" hidden={selected !== null}>
-        <label className="branch-tree__search">
-          <Search size={14} aria-hidden />
-          <input
-            type="search"
-            value={query}
-            placeholder="Find in history"
-            aria-label="Find in history"
-            onChange={(event) => {
-              setQuery(event.target.value);
+        <SearchField
+          className="branch-tree__search"
+          clearLabel="Clear history search"
+          loading={reading}
+          loadingLabel="Searching history"
+          value={query}
+          placeholder="Find in history"
+          aria-label="Find in history"
+          onValueChange={(value) => {
+            setQuery(value);
+            setPage(null);
+            loadedSearchRef.current = null;
+            outlineScrollRef.current = 0;
+          }}
+          onKeyDown={(event) => {
+            if (isComposingKeyboardEvent(event.nativeEvent)) return;
+            if (event.key === "Escape" && query) {
+              event.preventDefault();
+              event.stopPropagation();
+              setQuery("");
               setPage(null);
               loadedSearchRef.current = null;
-              outlineScrollRef.current = 0;
-            }}
-            onKeyDown={(event) => {
-              if (isComposingKeyboardEvent(event.nativeEvent)) return;
-              if (event.key === "Escape" && query) {
-                event.preventDefault();
-                event.stopPropagation();
-                setQuery("");
-                setPage(null);
-                loadedSearchRef.current = null;
-              }
-            }}
-          />
-          {reading ? (
-            <PiLoader size={13} aria-label="Searching history" />
-          ) : null}
-        </label>
+            }
+          }}
+        />
         {routeLeaf && !searching ? (
           <div className="history-route-notice">
             <span>Inspecting another route</span>

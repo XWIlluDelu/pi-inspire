@@ -1,9 +1,20 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Transcript } from "../../src/components/Transcript";
+import {
+  Transcript,
+  type TranscriptNavigation,
+} from "../../src/components/Transcript";
 import { findLiteralMatches } from "../../src/components/transcript-search";
 import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
+import * as modalFocus from "../../src/use-modal-focus";
 import { checkpointAdapterConfiguration } from "./fixtures/extension-adapters";
 
 afterEach(() => {
@@ -14,6 +25,148 @@ afterEach(() => {
 });
 
 describe("settled transcript search", () => {
+  it("leaves Find to modal and expanded scope-menu owners", () => {
+    render(
+      <Transcript
+        sessionId="owned-find"
+        messages={[{ role: "user", content: "find this prompt", timestamp: 1 }]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+    const launcher = screen.getByRole("button", {
+      name: "Find in conversation",
+    });
+    const modal = vi.spyOn(modalFocus, "hasActiveModal").mockReturnValue(true);
+    expect(fireEvent.keyDown(launcher, { key: "f", ctrlKey: true })).toBe(true);
+    expect(launcher).toBeInTheDocument();
+    modal.mockReturnValue(false);
+    fireEvent.click(launcher);
+    const scope = screen.getByRole("combobox", { name: "Search scope" });
+    fireEvent.click(scope);
+    scope.focus();
+    expect(fireEvent.keyDown(scope, { key: "f", ctrlKey: true })).toBe(true);
+    expect(scope).toHaveFocus();
+    expect(scope).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("opens desktop Find on demand and clears its match before restoring the launcher", async () => {
+    const ref = createRef<TranscriptNavigation>();
+    const props = {
+      ref,
+      sessionId: "desktop-find",
+      messages: [{ role: "user", content: "find this prompt", timestamp: 1 }],
+      streaming: false,
+      thinkingVisibility: "collapsed" as const,
+      toolVisibility: "collapsed" as const,
+    };
+    const { rerender } = render(<Transcript {...props} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Find in conversation" }),
+    );
+    const input = screen.getByRole("searchbox", {
+      name: "Search conversation",
+    });
+    expect(input).toHaveFocus();
+    fireEvent.change(input, { target: { value: "find" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("1 of 1");
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(input).not.toHaveFocus();
+    expect(input).toHaveValue("find");
+    act(() => ref.current?.openSearch());
+    expect(input).toHaveFocus();
+    expect((input as HTMLInputElement).selectionEnd).toBe(4);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close conversation search" }),
+    );
+    expect(input).toHaveValue("");
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toBeEmptyDOMElement();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Find in conversation" }),
+      ).toHaveFocus(),
+    );
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: "Find in conversation" }),
+      {
+        key: "f",
+        ctrlKey: true,
+      },
+    );
+    expect(input).toHaveFocus();
+    fireEvent.change(input, { target: { value: "find" } });
+    rerender(<Transcript {...props} viewId="other-view" />);
+    expect(input).toHaveValue("");
+    expect(
+      screen.getByRole("button", { name: "Find in conversation" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps an active query visible when crossing between desktop and narrow search", () => {
+    let narrow = false;
+    let syncLayout: (() => void) | undefined;
+    const matchMedia = window.matchMedia;
+    vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+      ...matchMedia(query),
+      get matches() {
+        return query === "(max-width: 900px)" && narrow;
+      },
+      addEventListener: (_type: string, callback: unknown) => {
+        if (query === "(max-width: 900px)") syncLayout = callback as () => void;
+      },
+    }));
+    render(
+      <Transcript
+        sessionId="responsive-find"
+        messages={[{ role: "user", content: "find this prompt", timestamp: 1 }]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Find in conversation" }),
+    );
+    const input = screen.getByRole("searchbox", {
+      name: "Search conversation",
+    });
+    fireEvent.change(input, { target: { value: "find" } });
+    act(() => {
+      narrow = true;
+      syncLayout?.();
+    });
+    expect(input).toHaveFocus();
+    expect(
+      screen.getByRole("search", { name: "Search conversation" }),
+    ).toHaveClass("transcript-search--mobile-open");
+    act(() => {
+      narrow = false;
+      syncLayout?.();
+    });
+    expect(input).toHaveValue("find");
+    expect(
+      screen.queryByRole("button", { name: "Find in conversation" }),
+    ).not.toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "" } });
+    expect(input).toHaveFocus();
+    expect(
+      screen.queryByRole("button", { name: "Find in conversation" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close conversation search" }),
+    );
+    expect(input).toHaveValue("");
+    expect(
+      screen.getByRole("button", { name: "Find in conversation" }),
+    ).toBeInTheDocument();
+  });
+
   it("indexes displayed shell output and checkpoint text rather than their hidden control data", () => {
     configureToolPresentationRegistry(checkpointAdapterConfiguration);
     render(

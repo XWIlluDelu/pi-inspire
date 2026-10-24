@@ -199,10 +199,14 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
   Browse preserves its query, expansions and scroll. Changes uses that same desktop upper
   height, divider, and lower-header geometry without an internal resize control: repository identity
   and grouped changed paths stay above complete selected-file Source with inline Git changes and
-  navigation. Changes retains its existing index/detail hierarchy on narrow screens.
+  navigation. Narrow Changes uses a full-height list until a path is selected, then gives the
+  selected Source the available height with All changes and adjacent-comparison controls. Those
+  controls follow the index's conflict, working and staged order, including both sides of the same
+  path. Returning to the list preserves its scroll and restores the selected row's focus; reopening
+  a comparison restores its source reading position. Desktop retains the shared index/detail split.
 
-  Narrow Context, navigation and Settings participate in transient browser history. Files detail
-  adds one nested level: Back returns to the list, then closes the panel, then leaves the application.
+  Narrow Context, navigation and Settings participate in transient browser history. Files and Changes
+  detail add one nested level: Back returns to the list, then closes the panel, then leaves the application.
   Same-level tabs reuse their entry and explicit close consumes the owned levels without an empty
   Back stop. Image inspection uses the same small history owner, independently of panel depth;
   this is not a URL router or a second navigation model.
