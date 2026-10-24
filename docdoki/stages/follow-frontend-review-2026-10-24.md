@@ -4,7 +4,7 @@ scope:
   - src/components/{Transcript,TranscriptUtilities,SearchField,Nav,WorkspaceBrowser,BranchTree,ChangesPane,ContextPane,ContextSplitBody,AppTopbar,FilePreview,Notices}.tsx
   - src/store.ts
   - src/components/transcript-viewport.ts
-  - src/styles/{foundation,navigation,responsive,transcript}.css
+  - src/styles/{foundation,navigation,responsive,transcript,composer,workbench}.css
   - tests/web/**
   - tests/browser/**
 ---
@@ -15,8 +15,9 @@ scope:
 
 Evaluate the complete external frontend review and its two sketches/four reference screenshots
 against the current product. Implement useful local improvements within delegated authority;
-leave overall visual direction for the user's decision. Work stays on `auto-dev`; no release,
-main-branch integration or production activation is part of this work.
+follow the user's subsequent item-by-item visual decisions. Work stays on `auto-dev`; no release,
+main-branch integration or remote deployment is part of this work. The user authorized updating
+the existing local build without restarting its services.
 
 ## Decisions
 
@@ -32,8 +33,8 @@ working interfaces. Current specifications and source support the following narr
 | 2.1 Phone tools / Latest | Keep the current positions pending a coherent header/reading-tool decision. The reference phone header already contains navigation, identity, Git, palette, Settings and context; inserting two 44px targets would require a real priority tradeoff. Moving Latest to the edge shifts its overlap rather than proving a zero-obstruction reading area. |
 | 2.2 Phone Changes | Implement list/detail drill-down, Back, previous/next comparisons and browser-history depth. This is a local navigation improvement, not a missing CSS selector: the previous contract explicitly retained the split. Keep desktop hierarchy, list state and per-comparison reading positions. |
 | 2.3 Welcome directory | Keep current order. The screenshot shows a popover covering content, not demonstrated clipping or an unreachable control. Directory-first composition is a valid workflow alternative but not an established fault. |
-| 3.1 Context straight edge | Defer with the visual system. Desktop panes intentionally use gutters and resize hit bands; a rounded inset pane is not inherently a broken seam. Decide its edge together with the frame and resizing treatment. |
-| 3.2 Global geometry / type | Defer. Warm surfaces, restrained boundaries and content dominance are already current goals. Smaller radii, Witness Bars, font replacement and stronger surface separation would change overall character. Current wordmark is IBM Plex Sans SC; Rajdhani is deliberately structural, so the report's claim that it primarily brands the wordmark is inaccurate. |
+| 3.1 Context straight edge | The user declined the boundary-only comparison. Keep the current desktop gutters, resize hit bands and rounded inset context pane. Do not add side-pane borders or square its corners. |
+| 3.2 Global geometry / type | The user subsequently accepted the narrower radius scale and unfilled resource tabs with an underline. Preserve the existing Rajdhani tab labels, weights, uppercase/tracking and type sizes. Warm surfaces and content dominance are already current goals. Witness Bars and font replacement are not accepted. Current wordmark is IBM Plex Sans SC; Rajdhani is deliberately structural, so the report's claim that it primarily brands the wordmark is inaccurate. |
 | 4.1 SearchField | Share clear/focus/loading presentation for Nav, Workspace and History while preserving their keyboard/query rules. Native search clearing already existed; the material gaps are consistent explicit access and Workspace's clear action disappearing during loading. Leave model/file pickers' distinct interaction contracts intact. |
 | 4.2 Path copy | Fix the two missing `store.copyOwnership()` arguments. Both paths already share `useCopied`; context-specific feedback is explicitly retained by [[design-system]]. A new variant component would add API without solving another defect. Changes also benefits through its existing `PathCopyButton`. |
 | 4.3 History alignment | Do not force a Files-style header. Changes has a repository summary, not a search bar; History uses whole-pane outline/detail navigation, not the Files split. Its Back target must retain phone touch size. Reuse search behavior through 4.1 only. |
@@ -59,9 +60,25 @@ This does not establish how often a real network would reproduce that scheduling
 
 ## Current state
 
-Local changes are implemented and verified for delivery on `auto-dev`.
-The full review, original report and all six images have been read/viewed. No overall style tokens,
-read-only presentation, Welcome ordering or topbar action layout have changed.
+The functional repair pass was committed as `489c78aa` and its local build was updated without
+restarting the Host. The full review, original report and all six images have been read/viewed.
+Read-only presentation, Welcome ordering and topbar action layout remain unchanged.
+
+The user's subsequent visual selection accepts control/surface/overlay radii of 4/8/10px,
+8px user bubbles and Composer, and unfilled resource modes with a 2px selected underline.
+Keep the tab font family, weights, uppercase/tracking, count styling and all type sizes.
+Existing monospace roles already cover code, paths, identifiers, commands and measurements;
+the selection does not authorize broader font substitutions. The user declined new side-pane borders
+and squared context-pane corners. The accepted refinements are implemented and verified within the
+scope below; structural font comparison remains a preview, not an accepted replacement.
+
+The visual previews use isolated mock content from the same local build, not the historical
+review screenshots. Ordinary-browser and installed WCO layouts must be compared separately:
+WCO hides the navigation lockup but retains its own titlebar identity. The corrected desktop
+comparison activates the existing WCO rules with the repository test's 32px titlebar geometry.
+The 390px phone preview triggers the existing <=420px two-row toolbar rule; a separate 430px
+preview verifies all six tools share one row and the current/proposal Composer height is 101px.
+These window/viewport differences are not proposed product changes.
 
 Combined unit verification passes 19 affected suites / 224 tests. The browser acceptance
 includes both mouse and touch layouts, path-copy feedback, search/IME/modal ownership, phone
@@ -70,7 +87,9 @@ layout fixture now uses a permanent 403 rather than a transient 503 whose retry 
 assertion timeout. The CSS contract checker now recognizes the existing runtime window-scrim owner;
 no theme value was changed to satisfy that check.
 
-## Verification
+## Functional repair verification
+
+These checks describe the initial repair pass before its separately authorized local build update.
 
 - Biome format/lint, import-boundary check, TypeScript build, Knip and `git diff --check` pass.
 - Vite production-mode compilation succeeds in a separate temporary output tree. The normal
@@ -89,9 +108,33 @@ no theme value was changed to satisfy that check.
 - DocDoki privacy-boundary check passes. No main branch, tag, release or production activation
   belongs to this delivery.
 
+## Accepted visual refinement verification
+
+- The production CSS changes are confined to shared radii, the user bubble/Composer radius, and
+  resource-mode surfaces/selection. Font roles, sizes, weights, uppercase/tracking, badge alignment,
+  pane borders, responsive toolbar rows and WCO rules are unchanged.
+- Isolated Vite compilation, Biome format/lint, `git diff --check`, and 49 existing style/palette/theme
+  unit checks pass. The validation build does not activate the actual local `dist`.
+- Twenty-two of 24 selected Chromium cases pass: four structural-label widths (1440/768/390/320),
+  count alignment, narrow Composer controls and running focus, pointer/keyboard header and gutter
+  behavior, installed WCO layout, and ten palette/luminosity combinations.
+- The two remaining theme cases reach and pass the resource-tab selection/contrast checks, then
+  expose an existing terminal danger-menu hover contrast gap: Chimonanthus dark measures 4.4526:1
+  and Classic Amber dark 4.3276:1 against the 4.5:1 requirement. A separate run using the unmodified
+  `489c78aa` CSS reproduces both exact values. Do not weaken the threshold or change unrelated
+  palette values as part of the accepted visual scope; this remains a known accessibility gap.
+- Theme verification now loads the shared menu CSS and renders the real session-action row; the
+  old isolated fixture omitted both and asserted an obsolete button-owned hover surface. The
+  product's session/terminal menu behavior was not changed.
+- The local update uses the existing source installation and normal static build publication;
+  no service restart, push, main integration, tag or release is part of this delivery. Build
+  receipts and visual evidence are retained under `output/playwright/visual-preview-2026-10-24/`.
+
 ## Remaining decisions
 
-The user may decide the deferred visual and interaction proposals separately: title affordance,
-phone tool placement/Latest, Welcome directory ordering, observation actions, pane edges, global
-type/geometry and History header composition. They are not additional implementation obligations
-for this local repair pass. There are no unresolved execution blockers.
+The user may decide the remaining proposals separately: title affordance, phone tool placement/Latest,
+Welcome directory ordering, observation actions and History header composition.
+Existing structural type is retained while the user compares uppercase Rajdhani and Plex; that
+font-only preview does not authorize a replacement. Pane-edge changes were declined after the
+boundary-only comparison. No main/tag/release/push or service
+restart is authorized by the local update request.

@@ -13,9 +13,9 @@
   --prompt-map-list-height: 240px;
   --radius-none: 0px;
   --radius-xs: 2px;
-  --radius-control: 6px;
-  --radius-surface: 10px;
-  --radius-overlay: 12px;
+  --radius-control: 4px;
+  --radius-surface: 8px;
+  --radius-overlay: 10px;
   --radius-sm: var(--radius-control);
   --radius-md: var(--radius-surface);
   --radius-lg: var(--radius-overlay);
