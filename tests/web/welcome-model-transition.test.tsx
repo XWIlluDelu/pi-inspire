@@ -530,6 +530,46 @@ it("treats choosing the displayed default as an explicit selection without reset
     }),
   );
 });
+it.each([
+  { chosen: "Low", effective: "low", shown: "Low" },
+  { chosen: "Max", effective: "high", shown: "High" },
+])(
+  "keeps manual $chosen effort on a model switch, clamping only unsupported levels",
+  async ({ chosen, effective, shown }) => {
+    vi.spyOn(store, "resolveNewSessionThinking").mockResolvedValue("medium");
+    const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
+    render(
+      <Welcome
+        showRecent={false}
+        inherited={{ ...inherit, thinkingLevel: "high" }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
+    fireEvent.click(screen.getByRole("option", { name: chosen }));
+    pick("ordinary");
+    expect(
+      screen.getByRole("combobox", { name: "Thinking level" }),
+    ).toHaveTextContent(shown);
+    fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
+      target: { value: "Keep my effort choice" },
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Start session" }),
+      ).toBeEnabled(),
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Thinking level" }),
+    ).toHaveTextContent(shown);
+    fireEvent.click(screen.getByRole("button", { name: "Start session" }));
+    await waitFor(() =>
+      expect(start).toHaveBeenCalledWith("/one", {
+        model: { provider: "fixture", id: "ordinary" },
+        thinkingLevel: effective,
+      }),
+    );
+  },
+);
 it.each(["xhigh", "max"])(
   "clamps inherited %s to high rather than off on an ordinary model",
   async (level) => {

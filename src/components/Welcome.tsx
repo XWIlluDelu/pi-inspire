@@ -437,9 +437,9 @@ export const Welcome = memo(function Welcome({
       setThinkingLevel(clampThinkingLevel(selectedModel, thinkingLevel));
   }, [thinkingLevel, thinkingLevels, selectedModel]);
 
-  // Model switches apply native defaults even after an earlier effort choice;
-  // input made AFTER this request remains user-owned. Catalog refresh alone is
-  // not a model switch and must not reapply defaults.
+  // Preview native defaults only until effort is chosen explicitly. A manual
+  // choice survives model/directory changes and retires an in-flight preview.
+  // Catalog refresh alone must not reapply defaults.
   useEffect(() => {
     if (!modelTouched || !effectiveDirectory || !pickedModel) return;
     if (thinkingTouched) {
@@ -647,7 +647,6 @@ export const Welcome = memo(function Welcome({
     catalogRecovery.reset();
     confirmedDirectory.current = null;
     setDirectoryIssue(null);
-    setShowHiddenFiles(false);
     setProjectFiles([]);
     setProjectFileRoot(null);
     setPickerOpen(false);
@@ -922,7 +921,6 @@ export const Welcome = memo(function Welcome({
                   return;
                 }
                 setPickedModel(model);
-                setThinkingTouched(false);
                 setModelWarning(null);
                 setThinkingLevel(
                   clampThinkingLevel(model, thinkingRef.current),
