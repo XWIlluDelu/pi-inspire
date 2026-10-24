@@ -39,6 +39,20 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("Settings restart controls", () => {
+  it("keeps initial availability checks in the existing restart controls", () => {
+    const ready = fixture.state.status;
+    fixture.state.status = null;
+    const { container, rerender } = render(<HostRestartSettings />);
+    const restart = screen.getByRole("button", { name: "Restart Host" });
+    expect(restart).toBeDisabled();
+    expect(restart).toHaveAttribute("aria-busy", "true");
+    expect(container.querySelector(".host-restart__status-row")).toBeNull();
+    fixture.state.status = ready;
+    rerender(<HostRestartSettings />);
+    expect(restart).toBeEnabled();
+    expect(restart).toHaveAttribute("aria-busy", "false");
+  });
+
   it("uses concise confirmation, cancels without mutation, and binds the selected scope", () => {
     render(<HostRestartSettings />);
     fireEvent.click(screen.getByRole("button", { name: "Restart Host" }));

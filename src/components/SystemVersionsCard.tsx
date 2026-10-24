@@ -9,7 +9,6 @@ import { SettingsSection } from "./SettingsSection";
 
 const checkLabels = {
   initial: "Check updates",
-  pending: "Submitting…",
   checking: "Checking…",
   checked: "Check again",
 };
@@ -70,7 +69,6 @@ function VersionValue({
   version,
   versionTitle,
   restartRequired = false,
-  activity,
   status,
   update,
   command,
@@ -78,7 +76,6 @@ function VersionValue({
   version: string | null;
   versionTitle?: string;
   restartRequired?: boolean;
-  activity: string | null;
   status: string;
   update?: { version: string; url: string };
   command?: string;
@@ -89,7 +86,7 @@ function VersionValue({
         {version ? `v${version}` : "Version unavailable"}
       </span>
       <span aria-hidden>·</span>
-      {!activity && update ? (
+      {update ? (
         <>
           <a href={update.url} target="_blank" rel="noreferrer noopener">
             v{update.version} available ↗
@@ -98,9 +95,7 @@ function VersionValue({
           {restartRequired ? <span>Restart Host to apply</span> : null}
         </>
       ) : (
-        <span>
-          {activity || (restartRequired ? "Restart Host to apply" : status)}
-        </span>
+        <span>{restartRequired ? "Restart Host to apply" : status}</span>
       )}
     </div>
   );
@@ -139,23 +134,8 @@ export function SystemVersionsCard() {
     state.piUpdateRequestPending || state.inspireUpdateRequestPending;
   const checking = state.piUpdateChecking || state.inspireUpdateChecking;
   const bothChecked = state.piUpdateCheck !== null && inspire !== null;
-  const checkState = pending
-    ? "pending"
-    : checking
-      ? "checking"
-      : bothChecked
-        ? "checked"
-        : "initial";
-  const piActivity = state.piUpdateRequestPending
-    ? "Submitting…"
-    : state.piUpdateChecking
-      ? "Checking…"
-      : null;
-  const inspireActivity = state.inspireUpdateRequestPending
-    ? "Submitting…"
-    : state.inspireUpdateChecking
-      ? "Checking…"
-      : null;
+  const checkState =
+    pending || checking ? "checking" : bothChecked ? "checked" : "initial";
 
   return (
     <SettingsSection
@@ -240,7 +220,6 @@ export function SystemVersionsCard() {
                 : undefined
             }
             restartRequired={piRestartRequired}
-            activity={piActivity}
             status={
               pi?.kind === "current"
                 ? "Up to date"
@@ -259,9 +238,7 @@ export function SystemVersionsCard() {
 
         <VersionRow label="Extensions">
           <div className="system-versions__value">
-            {piActivity ? (
-              <span>{piActivity}</span>
-            ) : extensions?.kind === "available" ? (
+            {extensions?.kind === "available" ? (
               <>
                 <span>
                   {extensions.updates.length} package{" "}
@@ -279,7 +256,7 @@ export function SystemVersionsCard() {
               </span>
             )}
           </div>
-          {!piActivity && extensions?.kind === "available" ? (
+          {extensions?.kind === "available" ? (
             <ul
               className="system-versions__packages"
               aria-label="Packages with updates"
@@ -310,7 +287,6 @@ export function SystemVersionsCard() {
         <VersionRow label="INSΠRE">
           <VersionValue
             version={state.version}
-            activity={inspireActivity}
             status={
               inspire?.kind === "current"
                 ? "Up to date"

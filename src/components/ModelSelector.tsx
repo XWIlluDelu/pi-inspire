@@ -13,6 +13,7 @@ import {
 } from "../use-floating-menu";
 import { useModalPortal } from "../use-modal-focus";
 import { ModelList } from "./ModelList";
+import { PiLoader } from "./PiLoader";
 
 const EMPTY_IDENTITIES: readonly ModelIdentity[] = [];
 const MODEL_MENU_CONSTRAINTS: FloatingMenuConstraints = {
@@ -29,6 +30,7 @@ export function ModelSelector({
   onChange,
   emptyLabel = "Model unavailable",
   disabled = false,
+  loading = false,
   title,
   openRequest,
   onOpenRequestHandled,
@@ -43,6 +45,7 @@ export function ModelSelector({
   onChange: (provider: string, id: string) => void | Promise<unknown>;
   emptyLabel?: string;
   disabled?: boolean;
+  loading?: boolean;
   title?: string;
   openRequest?: { id: number; query?: string };
   onOpenRequestHandled?: (id: number) => void;
@@ -58,6 +61,7 @@ export function ModelSelector({
   const [open, setOpen] = useState(false);
   const [initialQuery, setInitialQuery] = useState("");
   const [refreshStatus, setRefreshStatus] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const refreshGeneration = useRef(0);
   const isDisabled =
     disabled || (!models.length && !refreshModels && !onManageModels);
@@ -97,16 +101,24 @@ export function ModelSelector({
   }, [disabled, openRequest, onOpenRequestHandled, show]);
   useEffect(() => {
     const generation = ++refreshGeneration.current;
-    if (!open || isDisabled || !refreshModels) return;
-    setRefreshStatus("Refreshing models…");
+    if (!open || isDisabled || !refreshModels) {
+      setRefreshing(false);
+      return;
+    }
+    setRefreshing(true);
+    setRefreshStatus(null);
     void refreshModels().then(
       (warning) => {
-        if (refreshGeneration.current === generation)
+        if (refreshGeneration.current === generation) {
+          setRefreshing(false);
           setRefreshStatus(warning ?? null);
+        }
       },
       () => {
-        if (refreshGeneration.current === generation)
+        if (refreshGeneration.current === generation) {
+          setRefreshing(false);
           setRefreshStatus("Could not refresh models");
+        }
       },
     );
     return () => {
@@ -181,6 +193,7 @@ export function ModelSelector({
         aria-haspopup="listbox"
         aria-expanded={open}
         disabled={isDisabled}
+        aria-busy={loading}
         title={
           title ??
           (value?.reasoning === false
@@ -199,7 +212,11 @@ export function ModelSelector({
         <span className="model-picker__trigger-copy">
           <span className="dropdown__value">{display}</span>
         </span>
-        <ChevronDown size={11} aria-hidden />
+        {loading ? (
+          <PiLoader size={11} aria-hidden />
+        ) : (
+          <ChevronDown size={11} aria-hidden />
+        )}
       </button>
       {open && placement
         ? createPortal(
@@ -207,6 +224,7 @@ export function ModelSelector({
               ref={menuRef}
               className="model-picker__menu dropdown__menu"
               data-placement={placement.direction}
+              aria-busy={refreshing && models.length === 0}
               style={{
                 left: placement.left,
                 top: placement.top,
@@ -222,7 +240,10 @@ export function ModelSelector({
                 recent={recent}
                 common={common}
                 initialQuery={initialQuery}
-                status={refreshStatus}
+                status={
+                  refreshStatus ??
+                  (refreshing && !models.length ? "Loading models…" : null)
+                }
                 onSelect={pick}
                 onKeyDown={onMenuKey}
                 autoFocus

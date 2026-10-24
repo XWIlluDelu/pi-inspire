@@ -28,6 +28,12 @@ Settings manages Pi's startup defaults, common-model scope, `models.json` declar
 credentials. The session picker changes the current selection. Both use Pi's available models;
 configuration editing and login remain independent.
 
+The picker opens cached choices immediately and refreshes them without a separate progress row.
+Initial discovery with no choices keeps a concise loading state; a failed refresh remains visible
+without discarding usable choices. New-session preparation stays in the model/start controls rather
+than narrating directory checks and model resolution. Blocking errors and required choices retain
+local guidance. Provider lists likewise retain loaded content during a background refresh.
+
 ## Interface
 
 Models settings separates three tasks:

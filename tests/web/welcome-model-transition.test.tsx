@@ -313,9 +313,15 @@ it("waits for a pending source selection instead of applying workspace defaults"
   );
   await waitFor(() => expect(queries).toHaveBeenCalledWith("source", "/one"));
   expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
-    "Resolving model",
+  expect(screen.getByRole("button", { name: "Model" })).toHaveAttribute(
+    "aria-busy",
+    "true",
   );
+  expect(screen.getByRole("button", { name: "Start session" })).toHaveAttribute(
+    "aria-busy",
+    "true",
+  );
+  expect(document.querySelector(".welcome__readiness")).toBeNull();
   await act(async () =>
     source.resolve({
       models,
@@ -377,7 +383,8 @@ it("recovers inherited selection before allowing missing-folder creation", async
     name: "Create folder and start",
   });
   expect(create).toBeDisabled();
-  expect(screen.getByText("Resolving model…")).toBeInTheDocument();
+  expect(create).toHaveAttribute("aria-busy", "true");
+  expect(document.querySelector(".welcome__readiness")).toBeNull();
   vi.useFakeTimers();
   await act(async () =>
     source.reject(new ApiError(503, "The source model is unavailable")),
@@ -388,7 +395,7 @@ it("recovers inherited selection before allowing missing-folder creation", async
   source = deferred<ModelCatalogResponse>();
   await act(() => vi.advanceTimersByTimeAsync(1_000));
   expect(queries.mock.calls.filter(([, , inherit]) => inherit)).toHaveLength(2);
-  expect(screen.getByText("Resolving model…")).toBeInTheDocument();
+  expect(create).toHaveAttribute("aria-busy", "true");
   expect(create).toBeDisabled();
   await act(async () =>
     source.resolve({

@@ -197,8 +197,9 @@ Runtime state and credentials stay outside presentation configuration.
   creation and must be confirmed before first input delivery. A failed or uncertain application leaves
   that input and artifacts in the created session rather than sending with an unintended setting.
   Controls retain confirmation text, commit pointer selection on release and use one Pi-state
-  confirmation boundary for initial and live changes. Pending state survives closing the menu;
-  session/transport changes retire it.
+  confirmation boundary for initial and live changes. Pending state stays in the control's busy/disabled
+  presentation without an extra progress line, retaining option guidance and errors. It survives closing
+  the menu; session/transport changes retire it.
   Effort availability does not disable an independently supported extension choice. A delayed
   confirmation clears its obsolete timeout hint as soon as Pi publishes the requested value.
   Missing status is neutral unavailability, not evidence that the extension needs reloading;

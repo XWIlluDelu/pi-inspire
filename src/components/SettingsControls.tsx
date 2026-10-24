@@ -34,27 +34,16 @@ export function SettingField({
   );
 }
 
-/** Reserve common short states without constraining longer feedback. */
+/** Keep related feedback together without reserving empty progress rows. */
 export function SettingsFeedback({
   label,
-  reserveLines,
   children,
 }: {
   label: string;
-  reserveLines?: number;
   children: ReactNode;
 }) {
   return (
-    <div
-      className="settings__feedback"
-      role="group"
-      aria-label={label}
-      style={
-        reserveLines
-          ? { minBlockSize: `calc(${reserveLines}lh + var(--space-1))` }
-          : undefined
-      }
-    >
+    <div className="settings__feedback" role="group" aria-label={label}>
       {children}
     </div>
   );
@@ -97,12 +86,14 @@ export function SettingsSwitch({
   checked,
   onChange,
   disabled = false,
+  busy = false,
   state,
 }: {
   label: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
+  busy?: boolean;
   state?: string;
 }) {
   return (
@@ -113,6 +104,7 @@ export function SettingsSwitch({
         aria-label={label}
         checked={checked}
         disabled={disabled}
+        aria-busy={busy}
         onChange={(event) => onChange(event.currentTarget.checked)}
       />
       <span className="settings-switch__track" aria-hidden>

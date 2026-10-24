@@ -673,23 +673,28 @@ export const Welcome = memo(function Welcome({
   const sourceUnresolved = sourcePending && !modelTouched;
   const thinkingDefault =
     directoryMissing && !thinkingTouched && modelStatus !== "ready";
+  const preparing = Boolean(
+    effectiveDirectory &&
+      !directoryProblem &&
+      modelStatus !== "error" &&
+      ((!directoryConfirmed && !directoryMissing) ||
+        modelStatus === "loading" ||
+        sourceUnresolved),
+  );
+  const startBusy = starting || (hasInput && preparing && !directoryMissing);
   const startReadiness =
     directoryProblem ??
-    (directoryMissing && !sourceUnresolved
+    ((directoryMissing && !sourceUnresolved) ||
+    starting ||
+    !effectiveDirectory ||
+    !hasInput ||
+    preparing
       ? null
-      : starting
-        ? "Starting session…"
-        : !effectiveDirectory || !hasInput
-          ? null
-          : !directoryConfirmed && !directoryMissing
-            ? "Checking project directory…"
-            : modelStatus === "loading"
-              ? "Resolving model…"
-              : modelStatus === "error"
-                ? (modelWarning ?? "Model resolution failed")
-                : !selectedModel
-                  ? "Select a model"
-                  : null);
+      : modelStatus === "error"
+        ? (modelWarning ?? "Models are unavailable")
+        : !selectedModel
+          ? "Select a model"
+          : null);
   const canStart = Boolean(
     hasInput &&
       effectiveDirectory &&
@@ -891,16 +896,19 @@ export const Welcome = memo(function Welcome({
                 })
               }
               emptyLabel={
-                directoryMissing
+                directoryMissing && !sourceUnresolved
                   ? "Pi default"
-                  : modelStatus === "loading" ||
-                      (modelStatus === "idle" &&
-                        effectiveDirectory &&
-                        !modelTouched)
-                    ? "Resolving model…"
-                    : modelStatus === "error"
-                      ? "Model unavailable"
-                      : "Select model"
+                  : modelStatus === "error"
+                    ? "Model unavailable"
+                    : "Select model"
+              }
+              loading={
+                !selectedModel &&
+                (sourceUnresolved ||
+                  modelStatus === "loading" ||
+                  (modelStatus === "idle" &&
+                    Boolean(effectiveDirectory) &&
+                    !modelTouched))
               }
               disabled={starting}
               refreshModels={refreshModels}
@@ -991,9 +999,10 @@ export const Welcome = memo(function Welcome({
             className="composer__send"
             disabled={!canStart}
             aria-label="Start session"
+            aria-busy={startBusy}
             title="Start session"
           >
-            {starting ? (
+            {startBusy ? (
               <PiLoader size={14} aria-hidden />
             ) : (
               <Send size={14} aria-hidden />
@@ -1039,12 +1048,15 @@ export const Welcome = memo(function Welcome({
               type="button"
               className="button welcome__dir-action-btn"
               disabled={!canCreate}
+              aria-busy={starting || sourceUnresolved}
               onClick={() => void start(true)}
               title={
                 !hasInput ? "Add a message or attachment to start" : undefined
               }
             >
-              {starting ? <PiLoader size={13} aria-hidden /> : null}
+              {starting || sourceUnresolved ? (
+                <PiLoader size={13} aria-hidden />
+              ) : null}
               {starting
                 ? "Creating folder and starting…"
                 : "Create folder and start"}

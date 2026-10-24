@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import type { HostRestartScope } from "../../shared/host-restart";
 import { hostRestartClient } from "../controllers/host-restart-controller";
 import { useModalFocus } from "../use-modal-focus";
+import { PiLoader } from "./PiLoader";
 import { SettingField } from "./SettingsControls";
 
 function RestartConfirmation({
@@ -103,6 +104,7 @@ export function HostRestartSettings({
       clearTimeout(timer);
     };
   }, []);
+  const loading = !state.status && !state.error;
   const operation = state.status?.operation;
   const active = operation && operation.phase !== "rejected";
   const disabled =
@@ -158,6 +160,7 @@ export function HostRestartSettings({
             type="button"
             className="button button--danger-outline"
             aria-label="Restart Host"
+            aria-busy={loading}
             disabled={hostDisabled}
             onClick={() =>
               setConfirmation({
@@ -167,7 +170,11 @@ export function HostRestartSettings({
               })
             }
           >
-            <RefreshCw size={13} aria-hidden />
+            {loading ? (
+              <PiLoader size={13} aria-hidden />
+            ) : (
+              <RefreshCw size={13} aria-hidden />
+            )}
             Restart
           </button>
         )}
@@ -199,6 +206,7 @@ export function HostRestartSettings({
             type="button"
             className="button button--danger-outline"
             aria-label="Restart all"
+            aria-busy={loading}
             disabled={allDisabled}
             onClick={() =>
               setConfirmation({
@@ -208,13 +216,16 @@ export function HostRestartSettings({
               })
             }
           >
-            <RefreshCw size={13} aria-hidden />
+            {loading ? (
+              <PiLoader size={13} aria-hidden />
+            ) : (
+              <RefreshCw size={13} aria-hidden />
+            )}
             Restart all
           </button>
         )}
       </SettingField>
-      {!state.status ||
-      !state.status.available ||
+      {(state.status && !state.status.available) ||
       message ||
       unobserved ||
       state.error ||
@@ -222,9 +233,7 @@ export function HostRestartSettings({
       active ? (
         <div className="host-restart__status-row">
           <div className="host-restart__status-copy">
-            {!state.status ? (
-              <p className="settings__field-help">Checking availability…</p>
-            ) : !state.status.available ? (
+            {state.status && !state.status.available ? (
               <p className="settings__field-help">{state.status.reason}</p>
             ) : null}
             {message ? (

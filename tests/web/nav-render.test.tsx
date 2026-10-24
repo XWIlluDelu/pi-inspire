@@ -180,6 +180,33 @@ describe("session navigation controls", () => {
     await waitFor(() => expect(store.getState().sessions).toHaveLength(2));
   });
 
+  it("refreshes a populated session list quietly but explains an empty initial wait", () => {
+    const state = store.getState();
+    const snapshot = vi.spyOn(store, "getState").mockReturnValue({
+      ...state,
+      sessionListLoading: true,
+      sessionListOperation: "refresh",
+    });
+    const props = {
+      collapsed: false,
+      onToggleNavigation: vi.fn(),
+      onNewSession: vi.fn(),
+      onSelectSession: vi.fn(),
+    };
+    const { unmount } = render(<Nav {...props} />);
+    expect(list().getByText("Alpha session")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Refreshing sessions…" }),
+    ).toBeNull();
+    unmount();
+    snapshot.mockReturnValue({ ...snapshot(), sessions: [] });
+    render(<Nav {...props} />);
+    expect(
+      screen.getByRole("button", { name: "Refreshing sessions…" }),
+    ).toBeDisabled();
+    expect(screen.queryByText("No sessions yet")).toBeNull();
+  });
+
   it("renders brand lockup and provides new session action in both nav widths", () => {
     const onNewSession = vi.fn();
     const { container, rerender } = render(

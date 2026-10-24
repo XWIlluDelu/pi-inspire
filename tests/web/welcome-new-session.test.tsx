@@ -1092,7 +1092,7 @@ describe("new-session start surface", () => {
     await waitFor(() => expect(defaultModelCwd).toBe("/no-model"));
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent(
-        "Model resolution failed",
+        "Models are unavailable",
       ),
     );
     expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
