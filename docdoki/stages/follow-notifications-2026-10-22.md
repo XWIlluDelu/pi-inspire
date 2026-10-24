@@ -1,7 +1,7 @@
 ---
 scope:
   - docdoki/specs/{notifications,interface-preferences}.md
-  - server/{app,browser-auth,runtime,runtime-external-sessions,runtime-event-sockets,herdr-native-session,external-session,pi-native-actions,task-notifications}.ts
+  - server/{app,browser-auth,runtime,runtime-external-sessions,runtime-event-sockets,herdr-native-session,external-session,pi-native-actions,session-catalog,session-metadata,task-notifications}.ts
   - docs/{host,extensions}.md
   - extensions/inspire-session-bridge.ts
   - shared/notifications.ts
@@ -10,7 +10,7 @@ scope:
   - src/components/Settings.tsx
   - src/styles/settings-overlays.css
   - public/service-worker.js
-  - tests/server/{task-notifications,app-auth,runtime-external-sessions,pi-session-activity,herdr-native-actions.integration}.test.ts
+  - tests/server/{task-notifications,session-catalog,session-metadata,app-auth,runtime-external-sessions,pi-session-activity,herdr-native-actions.integration}.test.ts
   - tests/web/{attention,preferences,task-notification-worker}.test.ts
 ---
 
@@ -27,6 +27,11 @@ are implemented. Linux Chrome delivery and an Android manual-test notification a
 Android real-task background delivery/click-through, iOS acceptance and desktop OS-banner clicking
 remain open.
 
+System notifications replace older results by session ID and include the saved session name.
+Host pending delivery coalesces each device/session. The worker retains the latest result across
+restarts, suppresses stale local offers and silently redraws current content for late pushes under
+WebKit's visible-delivery rule. Legacy per-run display slots retire on successful replacement.
+
 The native reporter records receiver-bound runs and explicit outcomes, including short runs between
 polls. Enrollment recovery, device isolation and delivery deduplication follow [[notifications]];
 that spec owns the detailed contract. Pending sends are retained for at most 15 minutes.
@@ -39,7 +44,10 @@ Regression coverage includes:
 - authenticated device scoping, endpoint validation, persistence, expiry and delivery recovery;
 - concurrent enrollment/disable changes, subscription renewal, worker deduplication, foreground
   suppression and authenticated click navigation;
-- Settings, connection and native-session behavior.
+- Settings, connection and native-session behavior;
+- targeted saved-name metadata reads without rebuilding dormant transcripts, same-session replacement,
+  separate sessions and tests, legacy-slot cleanup, foreground consumption, delayed pushes and worker
+  restart ordering.
 
 ### Linux Chrome delivery
 
@@ -58,6 +66,13 @@ and GNOME's notification service. Verified outcomes:
 - Cold navigation and worker-to-page click messages reached the intended conversation. Actual
   OS-banner clicking remains an acceptance item.
 - Desktop and 390-pixel Settings layouts were inspected without overflow.
+
+### Session grouping and worker persistence
+
+An isolated headless Chrome registration verified notification-slot replacement and legacy-slot
+cleanup, separate slots for same-named sessions, and IndexedDB migration from version 1 to 2 with
+prior handled identities preserved. After stopping the worker, a CDP-injected delayed push restarted
+it and silently displayed the newer failed result rather than restoring the old completion.
 
 ### Android system display
 

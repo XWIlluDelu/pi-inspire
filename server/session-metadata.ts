@@ -388,6 +388,23 @@ async function sessionFiles(
 export class SessionMetadataIndex {
   private readonly cache = new Map<string, CachedSessionRecord>();
 
+  /** Refresh one already-discovered identity without enumerating storage or
+   * materializing its transcript. Dormant native sessions use this for titles. */
+  async readCurrent(session: SessionRecord): Promise<SessionRecord | null> {
+    const current = await this.read(session.path, await realpath(session.path));
+    if (
+      !current ||
+      current.id !== session.id ||
+      current.cwd !== session.cwd ||
+      (session.source &&
+        (!current.source ||
+          current.source.dev !== session.source.dev ||
+          current.source.ino !== session.source.ino))
+    )
+      return null;
+    return current;
+  }
+
   async list(
     directories: string | readonly (string | undefined)[] = [undefined],
     issues?: SessionCatalogIssue[],

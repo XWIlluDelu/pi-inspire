@@ -27,7 +27,9 @@ const subscription = {
   endpoint: "https://fcm.googleapis.com/fcm/send/test",
   keys: { p256dh: "B".repeat(87), auth: "A".repeat(22) },
 };
-async function fixture() {
+async function fixture(
+  sessionName?: (id: string) => Promise<string | undefined>,
+) {
   const directory = await mkdtemp(join(tmpdir(), "inspire-notifications-"));
   directories.push(directory);
   const path = join(directory, "notifications.json");
@@ -36,7 +38,7 @@ async function fixture() {
     headers: {},
     body: "",
   }));
-  const service = new TaskNotifications(path, send);
+  const service = new TaskNotifications(path, send, sessionName);
   services.push(service);
   return { path, service, send };
 }
@@ -46,6 +48,7 @@ function run(service: TaskNotifications, id = "s1", failed = false) {
     type: "agent_settled",
     sessionId: id,
     taskProject: "research",
+    taskSessionName: "Review results",
     sessionStatus: { runState: failed ? "failed" : "idle" },
     title: "PRIVATE PROMPT",
   });
@@ -64,11 +67,13 @@ describe("Host task outcome ownership", () => {
     const result = observe("agent_settled", {
       sessionStatus: { runState: "failed" },
       taskProject: "project",
+      taskSessionName: "  Review\n results  ",
       title: "PRIVATE",
     });
     expect(result).toMatchObject({
       outcome: "failed",
       project: "project",
+      sessionName: "Review results",
       sessionId: "s",
     });
     expect(JSON.stringify(result)).not.toContain("PRIVATE");
@@ -86,6 +91,16 @@ describe("Host task outcome ownership", () => {
     ).toBe("failed");
     observe("agent_start");
     expect(observe("runtime_error")?.outcome).toBe("failed");
+  });
+
+  it("orders results even when the clock does not advance", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const tracker = new TaskOutcomeTracker();
+    tracker.observe({ type: "agent_start", sessionId: "s" });
+    const first = tracker.observe({ type: "agent_settled", sessionId: "s" })!;
+    tracker.observe({ type: "agent_start", sessionId: "s" });
+    const second = tracker.observe({ type: "agent_settled", sessionId: "s" })!;
+    expect(second.createdAt).toBeGreaterThan(first.createdAt);
   });
 
   it("retains unknown native endings and deduplicates explicit reporter evidence", () => {
@@ -161,10 +176,68 @@ describe("installation-owned notification delivery", () => {
       type: "inspire-task",
       outcome: "failed",
       sessionId: "s2",
+      sessionName: "Review results",
     });
     expect(send.mock.calls[0]![1]).not.toContain("PRIVATE PROMPT");
     await service.configure(principal, "off", null);
     expect((await service.settings(principal)).subscribed).toBe(false);
+  });
+
+  it("resolves current saved names without relying on a live browser or transcript", async () => {
+    const name = vi.fn(async () => "  Native\n renamed  ");
+    const { service, path } = await fixture(name);
+    run(service);
+    await service.settings(principal);
+    expect(name).not.toHaveBeenCalled();
+    await service.configure(principal, "desktop", subscription);
+    run(service);
+    await vi.waitFor(async () =>
+      expect(
+        JSON.parse(await readFile(path, "utf8")).pending[0]?.event.sessionName,
+      ).toBe("Native renamed"),
+    );
+    expect(name).toHaveBeenCalledWith("s1");
+    name.mockRejectedValueOnce(new Error("Temporary metadata read failure"));
+    run(service);
+    await vi.waitFor(async () =>
+      expect(
+        JSON.parse(await readFile(path, "utf8")).pending[0]?.event.sessionName,
+      ).toBe("Review results"),
+    );
+  });
+
+  it("retains only the latest undelivered result per device/session across restart", async () => {
+    const { service, path, send } = await fixture();
+    await service.configure(principal, "desktop", subscription);
+    run(service);
+    await vi.waitFor(async () =>
+      expect(JSON.parse(await readFile(path, "utf8")).pending).toHaveLength(1),
+    );
+    run(service, "s1", true);
+    await vi.waitFor(async () =>
+      expect(
+        JSON.parse(await readFile(path, "utf8")).pending[0].event.outcome,
+      ).toBe("failed"),
+    );
+    run(service, "s2");
+    await vi.waitFor(async () =>
+      expect(JSON.parse(await readFile(path, "utf8")).pending).toHaveLength(2),
+    );
+    await service.close();
+    const restarted = new TaskNotifications(path, send);
+    services.push(restarted);
+    const received: TaskNotification[] = [];
+    restarted.attach(principal, (event) => {
+      if (event.type === "task_notification") received.push(event.notification);
+      return true;
+    });
+    await vi.waitFor(() => expect(received).toHaveLength(2));
+    expect(
+      received.map(({ sessionId, outcome }) => [sessionId, outcome]),
+    ).toEqual([
+      ["s1", "failed"],
+      ["s2", "completed"],
+    ]);
   });
 
   it("retains known transport failures through refresh, recovers, and retires expired subscriptions", async () => {
