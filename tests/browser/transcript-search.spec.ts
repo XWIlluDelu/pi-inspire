@@ -120,6 +120,7 @@ test("composition keys do not navigate transcript matches or dismiss search", as
     type: "message_end",
     message: { role: "user", content: "测量一，测量二。", timestamp: 1 },
   });
+  await page.getByRole("button", { name: "Find in conversation" }).click();
   const input = page.getByRole("searchbox", {
     name: "Search conversation",
     exact: true,
@@ -189,6 +190,7 @@ test("search counts only visible shell and checkpoint text", async ({
       },
     },
   );
+  await page.getByRole("button", { name: "Find in conversation" }).click();
   const search = page.getByRole("search", {
     name: "Search conversation",
   });
@@ -279,6 +281,7 @@ test("literal highlights follow scope, occurrences and disclosure without changi
   await expect(
     page.getByRole("heading", { name: "Searchable answer" }),
   ).toBeAttached();
+  await page.getByRole("button", { name: "Find in conversation" }).click();
   const input = page.getByRole("searchbox", { name: "Search conversation" });
   const count = page.getByLabel("Transcript search matches");
   await input.fill("precise match");
@@ -404,8 +407,17 @@ test("highlights recover when a searched virtual row mounts and clear on session
     })),
   );
   await expect(page.locator(".transcript__column--virtual")).toBeVisible();
+  await page.getByRole("button", { name: "Find in conversation" }).click();
   const input = page.getByRole("searchbox", { name: "Search conversation" });
+  // Count the whole projection, including rows outside the virtual DOM window.
+  await input.fill("Ordinary prompt");
+  await expect(
+    page.getByRole("status", { name: "Transcript search matches" }),
+  ).toHaveText("79 matches");
   await input.fill("unique older");
+  await expect(
+    page.getByRole("status", { name: "Transcript search matches" }),
+  ).toHaveText("1 match");
   await input.press("Enter");
   await expect
     .poll(() => page.evaluate(current))

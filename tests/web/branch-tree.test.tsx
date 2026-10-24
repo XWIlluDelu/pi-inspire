@@ -557,7 +557,13 @@ describe("read-only History inspection", () => {
     const search = screen.getByRole("searchbox", { name: "Find in history" });
     fireEvent.change(search, { target: { value: "old keyword" } });
     await screen.findByLabelText("Searching history");
-    fireEvent.change(search, { target: { value: "" } });
+    fireEvent.keyDown(search, { key: "Escape", isComposing: true });
+    expect(search).toHaveValue("old keyword");
+    const clear = screen.getByRole("button", { name: "Clear history search" });
+    expect(clear).toBeEnabled();
+    fireEvent.click(clear);
+    expect(search).toHaveValue("");
+    expect(search).toHaveFocus();
     await waitFor(() =>
       expect(history()).not.toHaveAttribute("aria-busy", "true"),
     );

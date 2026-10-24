@@ -30,6 +30,7 @@ import {
   type TranscriptActivityRangeState,
 } from "../store";
 import { transcriptProjectionKey } from "../transcript-projection-key";
+import { hasActiveModal } from "../use-modal-focus";
 import { EarlierBranchBanner } from "./EarlierBranchBanner";
 import { EmbeddedImageOwnerContext } from "./ImagePreview";
 import { PiLoader } from "./PiLoader";
@@ -55,6 +56,7 @@ const EMPTY_TOOL_ACTIVITY: Record<string, ActivityTool> = {};
 
 export interface TranscriptNavigation {
   jumpToPending: () => void;
+  openSearch: () => void;
 }
 
 export const Transcript = memo(function Transcript({
@@ -132,6 +134,8 @@ export const Transcript = memo(function Transcript({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const promptLauncherRef = useRef<HTMLButtonElement>(null);
   const searchLauncherRef = useRef<HTMLButtonElement>(null);
+  const desktopSearchLauncherRef = useRef<HTMLButtonElement>(null);
+  const [desktopSearchOpen, setDesktopSearchOpen] = useState(false);
   const [mobileTranscriptTool, setMobileTranscriptTool] =
     useState<MobileTranscriptTool>(null);
   const projectionViewKey = transcriptProjectionKey(
@@ -287,17 +291,53 @@ export const Transcript = memo(function Transcript({
   const searchQueryRef = useRef(search.query);
   searchQueryRef.current = search.query;
 
-  useLayoutEffect(() => {
-    if (mobileTranscriptTool !== "search") return;
+  const openSearch = () => {
+    if (window.matchMedia("(max-width: 900px)").matches)
+      setMobileTranscriptTool("search");
+    else setDesktopSearchOpen(true);
+    // Already-open search needs to refocus/select too. The layout effect handles
+    // the initially hidden input after its launcher has been replaced.
     searchInputRef.current?.focus();
     searchInputRef.current?.select();
-  }, [mobileTranscriptTool]);
+  };
+
+  const closeSearch = (restoreFocus = false) => {
+    if (window.matchMedia("(max-width: 900px)").matches) {
+      closeMobileTranscriptTool(restoreFocus);
+      return;
+    }
+    search.clear();
+    setDesktopSearchOpen(false);
+    if (restoreFocus) {
+      const owner = imageOwner;
+      requestAnimationFrame(() => {
+        if (
+          promptNavigationOwnerRef.current === owner &&
+          !hasActiveModal() &&
+          !window.matchMedia("(max-width: 900px)").matches
+        )
+          desktopSearchLauncherRef.current?.focus();
+      });
+    }
+  };
+
+  useLayoutEffect(() => {
+    if (!desktopSearchOpen && mobileTranscriptTool !== "search") return;
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  }, [desktopSearchOpen, mobileTranscriptTool]);
 
   useEffect(() => {
     const narrow = window.matchMedia("(max-width: 900px)");
     const syncLayout = () => {
-      if (!narrow.matches) setMobileTranscriptTool(null);
-      else if (searchQueryRef.current) setMobileTranscriptTool("search");
+      if (!narrow.matches) {
+        setDesktopSearchOpen((open) => open || !!searchQueryRef.current);
+        setMobileTranscriptTool(null);
+      } else {
+        setDesktopSearchOpen(false);
+        if (searchQueryRef.current) setMobileTranscriptTool("search");
+        else searchInputRef.current?.blur();
+      }
     };
     syncLayout();
     narrow.addEventListener("change", syncLayout);
@@ -378,6 +418,7 @@ export const Transcript = memo(function Transcript({
     setActivePromptOrdinal(null);
     setPendingPromptOrdinal(null);
     setMobileTranscriptTool(null);
+    setDesktopSearchOpen(false);
   }, [sessionId, projectionViewKey]);
 
   useLayoutEffect(() => {
@@ -467,6 +508,7 @@ export const Transcript = memo(function Transcript({
   ]);
 
   useImperativeHandle(ref, () => ({
+    openSearch,
     jumpToPending() {
       const pending = pendingRef.current;
       const scroller = viewport.scrollRef.current;
@@ -522,13 +564,28 @@ export const Transcript = memo(function Transcript({
       className={`transcript-wrap transcript-wrap--mobile-${mobileTranscriptTool ?? "idle"} ${viewingEarlierBranch ? "transcript-wrap--earlier-branch" : ""}`}
       tabIndex={-1}
       onKeyDownCapture={(event) => {
-        if (isComposingKeyboardEvent(event.nativeEvent)) return;
-        if (event.key === "f" && (event.metaKey || event.ctrlKey)) {
+        if (
+          event.defaultPrevented ||
+          isComposingKeyboardEvent(event.nativeEvent) ||
+          event.getModifierState("AltGraph")
+        )
+          return;
+        if (
+          event.key.toLowerCase() === "f" &&
+          event.metaKey !== event.ctrlKey &&
+          !event.altKey &&
+          !event.shiftKey
+        ) {
+          if (
+            hasActiveModal() ||
+            (event.target instanceof Element &&
+              event.target.closest(
+                '[role=menu], [role=listbox], [role=combobox][aria-expanded="true"]',
+              ))
+          )
+            return;
           event.preventDefault();
-          if (window.matchMedia("(max-width: 900px)").matches)
-            setMobileTranscriptTool("search");
-          searchInputRef.current?.focus();
-          searchInputRef.current?.select();
+          openSearch();
         } else if (
           viewport.scrollRef.current?.contains(event.target as Node) &&
           [
@@ -551,10 +608,13 @@ export const Transcript = memo(function Transcript({
         search={search}
         inputRef={searchInputRef}
         searchLauncherRef={searchLauncherRef}
+        desktopSearchLauncherRef={desktopSearchLauncherRef}
         promptLauncherRef={promptLauncherRef}
+        desktopSearchOpen={desktopSearchOpen}
+        onOpenSearch={openSearch}
         mobileTool={mobileTranscriptTool}
         onOpenMobile={setMobileTranscriptTool}
-        onClose={closeMobileTranscriptTool}
+        onClose={closeSearch}
       />
       <PromptMap
         key={`prompt-map:${sessionId}\u0000${projectionViewKey}`}

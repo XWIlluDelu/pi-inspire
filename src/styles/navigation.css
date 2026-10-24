@@ -932,36 +932,9 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
   font: var(--text-sm)/var(--leading-ui) var(--font-sans);
 }
 
-/* This field already provides a themed clear button. */
-.workspace-search input::-webkit-search-cancel-button {
-  display: none;
-}
-
 .workspace-search input::placeholder {
   color: var(--muted);
   opacity: 1;
-}
-
-.workspace-search__clear {
-  display: inline-flex;
-  width: 20px;
-  height: 20px;
-  flex: 0 0 20px;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--faint);
-  cursor: pointer;
-  transition:
-    background var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard);
-}
-
-.workspace-search__clear:hover {
-  background: var(--bg-inset);
-  color: var(--ink);
 }
 
 .git-rollup {

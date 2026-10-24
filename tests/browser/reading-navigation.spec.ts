@@ -255,7 +255,10 @@ for (const narrow of [false, true]) {
       await page
         .getByRole("button", { name: "Open conversation search" })
         .click();
-    else await search.focus();
+    else {
+      await expect(search).toBeHidden();
+      await page.getByRole("button", { name: "Find in conversation" }).click();
+    }
     await expect(search).toBeFocused();
     expect(await anchor()).toEqual(beforeSearch);
     expect(await geometry()).toEqual(original);
@@ -283,6 +286,20 @@ for (const narrow of [false, true]) {
       await expect(
         page.getByRole("button", { name: "Open prompt navigation" }),
       ).toBeFocused();
+    } else {
+      await search.fill("formula");
+      await page
+        .getByRole("button", { name: "Close conversation search" })
+        .click();
+      await expect(search).toBeHidden();
+      await expect(
+        page.getByRole("button", { name: "Find in conversation" }),
+      ).toBeFocused();
+      expect(await anchor()).toEqual(beforeSearch);
+      expect(await geometry()).toEqual(original);
+      await wrap.press("Control+f");
+      await expect(search).toBeFocused();
+      await expect(search).toHaveValue("");
     }
 
     const fold = log.locator("[data-activity-fold]").first();

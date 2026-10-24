@@ -1,6 +1,7 @@
 import {
   lazy,
   memo,
+  type RefObject,
   Suspense,
   useCallback,
   useDeferredValue,
@@ -315,11 +316,14 @@ function useMediaQuery(query: string): boolean {
   return matches;
 }
 
-const ConversationStage = memo(function ConversationStage() {
-  const transcriptRef = useRef<TranscriptNavigation>(null);
+const ConversationStage = memo(function ConversationStage({
+  transcriptRef,
+}: {
+  transcriptRef: RefObject<TranscriptNavigation | null>;
+}) {
   const jumpToPending = useCallback(
     () => transcriptRef.current?.jumpToPending(),
-    [],
+    [transcriptRef],
   );
   const state = useAppState(
     (source) => ({
@@ -465,6 +469,7 @@ function focusedTerminalLaunchRequested(): boolean {
 }
 
 export function App() {
+  const transcriptRef = useRef<TranscriptNavigation>(null);
   const state = useAppState(
     (source) => ({
       needsToken: source.needsToken,
@@ -487,6 +492,8 @@ export function App() {
       nativeCommandUiRequest: source.nativeCommandUiRequest,
       readOnlyReason: source.readOnlyReason,
       fileBrowserView: source.fileBrowserView,
+      selectedGitPathId: source.selectedGitPathId,
+      selectedResourceReference: source.selectedResourceReference,
     }),
     shallowEqual,
   );
@@ -608,6 +615,10 @@ export function App() {
           state.fileBrowserView === "preview"
             ? ["file"]
             : []),
+          ...(state.contextMode === "changes" &&
+          (state.selectedGitPathId || state.selectedResourceReference)
+            ? ["change"]
+            : []),
         ]
       : []),
     ...(mobileNavOpen ? ["navigation"] : []),
@@ -631,6 +642,8 @@ export function App() {
       if (!remaining.includes("context")) store.setResourcesOpen(false);
       else if (!remaining.includes("file") && state.contextMode === "files")
         store.showFileBrowser();
+      else if (!remaining.includes("change") && state.contextMode === "changes")
+        store.showChangesBrowser();
     },
     "__inspireWorkbench",
   );
@@ -871,6 +884,17 @@ export function App() {
       if (mod && event.key.toLowerCase() === "k") {
         event.preventDefault();
         openCommandPalette();
+      } else if (
+        mod &&
+        event.key.toLowerCase() === "f" &&
+        transcriptRef.current &&
+        target?.closest(".center") &&
+        !target.closest(
+          '[role=menu], [role=listbox], .model-picker__menu, [role=combobox][aria-expanded="true"]',
+        )
+      ) {
+        event.preventDefault();
+        transcriptRef.current.openSearch();
       } else if (mod && event.key.toLowerCase() === "b") {
         event.preventDefault();
         toggleNavigation();
@@ -1031,7 +1055,7 @@ export function App() {
           </div>
         ) : null}
         {state.sessionId ? (
-          <ConversationStage />
+          <ConversationStage transcriptRef={transcriptRef} />
         ) : (
           <Welcome
             showRecent={narrowViewport ? !mobileNavOpen : navCollapsed}

@@ -28,7 +28,8 @@ test("History read errors wrap literal paths and leave preview retry reachable",
     "Cannot preview /workspace/calibration/instrument_calibration_reference_acquisition_results_archive.jsonl. Restore access and retry.";
   await page.route("**/api/branches/entry?**", (route) =>
     route.fulfill({
-      status: 503,
+      // Exercise error layout immediately; transient 5xx reads recover first.
+      status: 403,
       json: { error: diagnostic },
     }),
   );

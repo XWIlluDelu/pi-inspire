@@ -572,9 +572,11 @@ filled badge.
 
 ## Session and command search presentation
 
-Native search-clear glyphs use the field's theme ink and a consistent cross; clear and Escape
-semantics remain owned by each field. Workspace search keeps its explicit clear/loading control,
-without a second native clear button.
+Session, workspace and History search share an explicit clear control. It remains available while
+search is loading, restores input focus and does not add a second native clear button. Loading uses
+the leading icon slot without displacing Clear. Each search retains its own query, Escape, navigation
+and IME semantics, surface geometry and loading announcements. Narrow inputs use 16px text to avoid
+focus zoom. Other search surfaces retain themed native clearing and their own keyboard rules.
 
 Session titles and visible project names/context emphasize matching text at weight 600, without
 changing colors, backgrounds, ellipsis or direct Pin/Hide controls. Visible token emphasis uses Pi's

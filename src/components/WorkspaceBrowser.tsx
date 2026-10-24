@@ -1,11 +1,4 @@
-import {
-  AlertTriangle,
-  ChevronRight,
-  Folder,
-  RefreshCw,
-  Search,
-  X,
-} from "lucide-react";
+import { AlertTriangle, ChevronRight, Folder, RefreshCw } from "lucide-react";
 import {
   Fragment,
   memo,
@@ -31,6 +24,7 @@ import {
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
 import { PiLoader } from "./PiLoader";
 import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
+import { SearchField } from "./SearchField";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 
 export function WorkspaceVisibilityToggle() {
@@ -80,40 +74,28 @@ export function WorkspaceFileSearch() {
     store.resumeWorkspaceSearch();
   }, [state.cwd, state.sessionId]);
   return (
-    <label className="workspace-search">
-      <Search size={13} aria-hidden />
-      <input
-        type="search"
-        aria-label="Search workspace files"
-        placeholder="Search workspace"
-        value={state.workspaceQuery}
-        onChange={(event) => store.setWorkspaceQuery(event.target.value)}
-        onKeyDown={(event) => {
-          if (
-            isComposingKeyboardEvent(event.nativeEvent) ||
-            event.key !== "Escape"
-          )
-            return;
-          event.preventDefault();
-          event.stopPropagation();
-          if (state.workspaceQuery) store.setWorkspaceQuery("");
-          else event.currentTarget.blur();
-        }}
-      />
-      {state.workspaceSearchLoading ? (
-        <PiLoader size={12} aria-label="Searching workspace" />
-      ) : state.workspaceQuery ? (
-        <button
-          type="button"
-          className="workspace-search__clear"
-          aria-label="Clear workspace search"
-          title="Clear search"
-          onClick={() => store.setWorkspaceQuery("")}
-        >
-          <X size={12} aria-hidden />
-        </button>
-      ) : null}
-    </label>
+    <SearchField
+      className="workspace-search"
+      aria-label="Search workspace files"
+      placeholder="Search workspace"
+      value={state.workspaceQuery}
+      onValueChange={store.setWorkspaceQuery}
+      clearLabel="Clear workspace search"
+      iconSize={13}
+      loading={state.workspaceSearchLoading}
+      loadingLabel="Searching workspace"
+      onKeyDown={(event) => {
+        if (
+          isComposingKeyboardEvent(event.nativeEvent) ||
+          event.key !== "Escape"
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (state.workspaceQuery) store.setWorkspaceQuery("");
+        else event.currentTarget.blur();
+      }}
+    />
   );
 }
 

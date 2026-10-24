@@ -383,7 +383,7 @@ const SessionIdent = memo(function SessionIdent({
           <button
             type="button"
             className="topbar__project"
-            onClick={() => void copy(cwd)}
+            onClick={() => void copy(cwd, store.copyOwnership())}
             title={copied ? "Copied" : `Copy path — ${cwd}`}
             aria-label="Copy project path"
           >

@@ -148,6 +148,37 @@
   display: none;
 }
 
+.transcript-search-launcher {
+  display: none;
+}
+
+@media (min-width: 901px) {
+  .transcript-search-launcher {
+    position: absolute;
+    z-index: 3;
+    top: var(--space-3);
+    right: max(var(--space-6), calc((100% - var(--content-max)) / 2));
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-height: 32px;
+    padding: 0 var(--space-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-control);
+    background: var(--bg-surface);
+    color: var(--muted);
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+
+  .transcript-search-launcher:hover,
+  .transcript-search-launcher:focus-visible {
+    border-color: var(--line-strong);
+    background: var(--bg-raised);
+    color: var(--ink);
+  }
+}
+
 .transcript ::highlight(transcript-match) {
   background-color: var(--selection);
 }
@@ -280,8 +311,10 @@
   opacity: 0.35;
 }
 
-.transcript-search > .transcript-search__close {
-  display: none;
+@media (min-width: 901px) {
+  .transcript-search--desktop-closed {
+    display: none;
+  }
 }
 
 .transcript__column {

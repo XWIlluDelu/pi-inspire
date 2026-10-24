@@ -99,11 +99,16 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   const [pinned, setPinned] = useState(true);
   // Follow ownership and the visible latest boundary are different facts.
   const [atLatest, setAtLatest] = useState(true);
+  const atLatestRef = useRef(true);
   const measureLatest = useCallback(() => {
     const element = scrollRef.current;
     const latest =
       !element ||
       element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
+    // Stream commits can arrive before React flushes passive-effect updates.
+    // Do not keep enqueueing the same boundary while those updates are pending.
+    if (atLatestRef.current === latest) return;
+    atLatestRef.current = latest;
     setAtLatest(latest);
   }, []);
   const virtualize = rows.length >= VIRTUALIZE_AT;
