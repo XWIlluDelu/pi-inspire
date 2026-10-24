@@ -64,6 +64,10 @@ it("retires a confirmation warning when the requested selection arrives late", a
   );
   const input = screen.getByRole("slider", { name: "Choice" });
   fireEvent.change(input, { target: { value: "1" } });
+  expect(input).toBeDisabled();
+  expect(input).toHaveAttribute("aria-valuetext", "Low");
+  expect(input.closest(".status-choice")).toHaveAttribute("aria-busy", "true");
+  expect(input.closest(".status-choice")?.querySelector("p")).toBeNull();
   await act(async () => {
     await vi.advanceTimersByTimeAsync(10_000);
   });
@@ -76,6 +80,33 @@ it("retires a confirmation warning when the requested selection arrives late", a
     screen.queryByText("The selection has not been confirmed yet."),
   ).toBeNull();
   expect(store.selectStatusControl).toHaveBeenCalledTimes(1);
+});
+
+it("retains meaningful option guidance while a different selection is pending", async () => {
+  const state = store.getState();
+  vi.spyOn(store, "getState").mockReturnValue({ ...state, sessionId: "s1" });
+  const pending = deferred<boolean>();
+  vi.spyOn(store, "selectStatusControl").mockReturnValue(pending.promise);
+  render(
+    <StatusChoice
+      control={{
+        ...control,
+        options: [
+          { ...control.options[0]!, description: "Uses standard limits." },
+          control.options[1]!,
+        ],
+      }}
+      status='{"value":"low"}'
+      disabled={false}
+      owner="s1"
+      generation={state.transportGeneration}
+    />,
+  );
+  fireEvent.change(screen.getByRole("slider", { name: "Choice" }), {
+    target: { value: "1" },
+  });
+  expect(screen.getByText("Uses standard limits.")).toBeVisible();
+  await act(async () => pending.resolve(false));
 });
 
 it("keeps confirmed Pi state when its command observation fails later", async () => {

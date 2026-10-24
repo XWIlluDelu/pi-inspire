@@ -62,6 +62,18 @@ describe("provider directory", () => {
       screen.getByRole("button", { name: "Connect provider" }),
     ).toBeEnabled();
     expect(screen.getByText("No connected providers.")).toBeVisible();
+    view.rerender(
+      <ProviderAuthentication
+        {...props}
+        loaded
+        loading
+        providers={loginProviders()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Manage Anthropic" }),
+    ).toBeEnabled();
+    expect(screen.queryByText("Loading providers…")).toBeNull();
   });
 
   it("emphasizes directory name matches and explains ID-only results without changing method titles", () => {

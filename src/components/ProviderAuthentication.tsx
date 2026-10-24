@@ -455,7 +455,7 @@ function AuthenticationPanel({
           {loadError}
         </p>
       ) : null}
-      {loading ? (
+      {loading && !loaded ? (
         <p className="models-status" role="status">
           Loading providers…
         </p>

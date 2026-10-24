@@ -132,7 +132,7 @@ describe("System versions", () => {
     ).toHaveAttribute("href", "https://github.com/example/pi-tools");
   });
 
-  it("distinguishes request submission from execution and retains known versions", () => {
+  it("uses one checking state and preserves known updates throughout a refresh", () => {
     availableUpdates();
     fixture.state.piUpdateRequestPending = true;
     fixture.state.inspireUpdateChecking = true;
@@ -142,14 +142,19 @@ describe("System versions", () => {
       check.querySelector(
         '.system-versions__check-label > [aria-hidden="false"]',
       );
-    expect(activeLabel()).toHaveTextContent(/^Submitting…$/);
+    expect(activeLabel()).toHaveTextContent(/^Checking…$/);
     expect(check).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "Copy update details" }),
     ).toBeDisabled();
-    expect(row("Pi").getByText("Submitting…")).toBeVisible();
-    expect(row("Extensions").getByText("Submitting…")).toBeVisible();
-    expect(row("INSΠRE").getByText("Checking…")).toBeVisible();
+    const result = document.querySelector(".system-versions__list")!;
+    const resultText = result.textContent;
+    expect(row("Pi").getByRole("link", { name: /available/ })).toBeVisible();
+    expect(
+      row("INSΠRE").getByRole("link", { name: /available/ }),
+    ).toBeVisible();
+    expect(row("Extensions").getByText("2 package updates")).toBeVisible();
+    expect(row("Extensions").getByRole("list")).toBeVisible();
     expect(row("Pi").getByText("v1.0.0")).toBeVisible();
     expect(row("INSΠRE").getByText("v0.4.0")).toBeVisible();
     fireEvent.click(check);
@@ -162,13 +167,13 @@ describe("System versions", () => {
     rerender(<SystemVersionsCard />);
     expect(activeLabel()).toHaveTextContent(/^Checking…$/);
     expect(check).toBeDisabled();
-    expect(row("Pi").getByText("Checking…")).toBeVisible();
-    expect(row("Extensions").getByText("Checking…")).toBeVisible();
+    expect(result.textContent).toBe(resultText);
 
     fixture.state.piUpdateChecking = false;
     rerender(<SystemVersionsCard />);
     expect(activeLabel()).toHaveTextContent(/^Check again$/);
     expect(check).toBeEnabled();
+    expect(result.textContent).toBe(resultText);
     expect(
       screen.getByRole("link", { name: "v1.1.0 available ↗" }),
     ).toHaveAttribute("href", "https://pi.dev/changelog");

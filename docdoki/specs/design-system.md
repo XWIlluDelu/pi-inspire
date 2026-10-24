@@ -385,6 +385,16 @@ remain distinct attributed forms with directly selectable options.
 
 ## Feedback and notices
 
+- Choose feedback by the user's task, not by the number of internal states. Where ordinary selections
+  or saves need feedback, use the existing control's busy/disabled state. Do not append progress
+  sentences or reserve empty rows for routine internal work. Keep useful option guidance visible while waiting.
+  Distinguish internal request and execution phases only when that distinction changes the user's
+  available action or understanding of the outcome.
+- Retain usable content during background work. An empty initial view or a materially blocked task
+  may need concise loading feedback; a populated picker, provider list or update result does not need
+  a second progress announcement. Preserve actionable errors, consequential confirmations, genuine
+  task progress and notices that a saved change needs a reload or restart.
+
 - Session and usage use the shared Info command receipt: the information icon, command/INFO heading
   and subtle semantic tint remain consistent with other informational results. Only message count,
   total tokens, cost and context occupancy appear as compact inline label/value pairs, wrapping with
@@ -483,7 +493,8 @@ coordinates and reserved window chrome.
 Settings and Terminal settings share a safe-area-aware narrow frame with fixed navigation/footer.
 Narrow category selection uses an accent underline and keyboard outline, without card fill, border
 or shadow. Update rows use the standard section/card geometry, with Pi, Extensions and INSΠRE; the
-check action reserves its longest state label.
+check action reserves its longest state label. Update checks use one `Checking…` button state from
+request through completion, while the rows retain the last observed versions and available updates.
 
 Deferred surfaces keep one interactive shell and focus owner through loading, ready and failure.
 Loading visuals appear after 250ms, immediately under reduced motion, without delaying ready content
@@ -498,9 +509,9 @@ of document/help content; it does not repeat the unavailable title as a hint.
 Section headings and descriptions sit above independent bordered field cards, without tinted header
 bands. General and Terminal settings share shell/content insets across viewport sizes; card-level
 empty/error messages use the field rows' content inset. Asynchronous descriptions anchor at the top,
-with actions before feedback; common short states may reserve space, while longer feedback remains readable in
-normal flow. Cards and sections do not clip menus or focus. Checked switches use the shared accent
-fill/foreground pair, and category/palette selection retains explicit markers.
+with actions before feedback; meaningful feedback remains readable in normal flow without reserving
+blank space for routine progress. Cards and sections do not clip menus or focus. Checked switches use
+the shared accent fill/foreground pair, and category/palette selection retains explicit markers.
 
 Settings and Terminal settings share 32px mouse and 40px touch fields, switches, steppers and
 segmented controls. Ordinary dropdowns, segments and the palette grid share a choice-column width.

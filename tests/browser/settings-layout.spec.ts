@@ -14,7 +14,7 @@ import { textMarkOffsets } from "./support/text-baseline";
 // These suites own mocked Host responses, not Service Worker fetch handling.
 test.use({ serviceWorkers: "block" });
 
-test("update-check labels keep button geometry stable through submission, checking and results", async ({
+test("update checks keep button geometry stable throughout checking and results", async ({
   page,
 }) => {
   let status: HostUpdateStatus = {
@@ -93,7 +93,7 @@ test("update-check labels keep button geometry stable through submission, checki
           release = resolve;
         });
         await button.click();
-        await stable("Submitting…");
+        await stable("Checking…");
         status = {
           ...status,
           revision: status.revision + 1,

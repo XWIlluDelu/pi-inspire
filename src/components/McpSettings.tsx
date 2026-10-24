@@ -265,7 +265,7 @@ function McpConfiguration({
             ) : null}
             {busy && !snapshot ? (
               <p className="models-status" role="status">
-                Reading MCP files…
+                Loading servers…
               </p>
             ) : null}
             {saved ? (
@@ -284,7 +284,7 @@ function McpConfiguration({
                   <p className="models-status">
                     {nativeReload
                       ? "Run /reload in the original Pi terminal to apply the saved configuration."
-                      : "New Pi workers read the saved configuration."}
+                      : "New sessions use the saved configuration."}
                   </p>
                 )}
                 {canReload && reloadBlocked ? (

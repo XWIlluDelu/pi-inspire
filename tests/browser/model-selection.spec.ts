@@ -161,15 +161,17 @@ test("cached model choices open immediately and background updates preserve sele
   const list = page.getByRole("listbox", { name: "Available models" });
   await expect(list).toBeVisible();
   await expect(list.getByRole("option").first()).toBeVisible();
-  await expect(
-    page.getByRole("status").filter({ hasText: "Refreshing models" }),
-  ).toBeVisible();
+  const menu = page.locator(".model-picker__menu");
+  await expect(menu).toHaveAttribute("aria-busy", "false");
+  await expect(menu.getByRole("status")).toHaveCount(0);
   const search = page.getByRole("combobox", { name: "Search models" });
   await search.fill("fresh-model");
   release();
   await expect(list.getByRole("option", { name: /Fresh model/ })).toBeVisible();
+  await expect(menu).toHaveAttribute("aria-busy", "false");
   await expect(search).toBeFocused();
   await expect(search).toHaveValue("fresh-model");
+  await expect(menu.getByRole("status")).toHaveCount(0);
   await expect(trigger).toHaveText(selected!);
   await expect(draft).toHaveValue("Catalog refresh must preserve this draft");
 
@@ -233,10 +235,10 @@ test("the first-message model transition clamps max to high and sends explicit s
     .getByRole("textbox", { name: "First message" })
     .fill("Start with native clamped thinking");
   const thinking = page.getByRole("combobox", { name: "Thinking level" });
-  await expect(thinking).toHaveText("max");
+  await expect(thinking).toHaveText("Max");
   await page.getByRole("button", { name: "Model", exact: true }).click();
   await page.getByRole("option", { name: /Ordinary fixture/ }).click();
-  await expect(thinking).toHaveText("high");
+  await expect(thinking).toHaveText("High");
   await expect(
     page.getByRole("button", { name: "Start session", exact: true }),
   ).toBeEnabled();

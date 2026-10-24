@@ -542,7 +542,10 @@ export const SettingsContent = memo(function SettingsContent({
                 label="Task alerts"
                 description="This device · Notify when a background task finishes or stops with an error."
               >
-                <div className="settings__notification-control">
+                <div
+                  className="settings__notification-control"
+                  aria-busy={state.taskAlerts.busy}
+                >
                   <Dropdown
                     label="Task alerts"
                     className="dropdown--field"
@@ -585,21 +588,15 @@ export const SettingsContent = memo(function SettingsContent({
                           Send test notification
                         </button>
                       </div>
-                      <SettingsFeedback
-                        label="Notification status"
-                        reserveLines={3}
-                      >
+                      <SettingsFeedback label="Notification status">
                         <span role="status">
-                          {state.taskAlerts.busy
-                            ? "Updating notifications…"
-                            : (notificationPermissionMessage(
-                                state.taskAlerts.permission,
-                              ) ??
-                              (state.taskAlerts.subscribed
-                                ? "Background notifications enabled"
-                                : "While Inspire is open"))}
-                          {!state.taskAlerts.busy &&
-                          state.taskAlerts.permission === "unavailable"
+                          {notificationPermissionMessage(
+                            state.taskAlerts.permission,
+                          ) ??
+                            (state.taskAlerts.subscribed
+                              ? "Background notifications enabled"
+                              : "While Inspire is open")}
+                          {state.taskAlerts.permission === "unavailable"
                             ? " On iPhone or iPad, add Inspire to the Home Screen and enable them there."
                             : null}
                         </span>
