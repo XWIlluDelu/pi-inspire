@@ -237,14 +237,15 @@ enabled state; disabled styling takes precedence over local action styles.
 | --- | --- |
 | IBM Plex Sans SC | Interface controls, prose, Chinese/Latin flow and wordmark. |
 | Flux Mono SC | Code, paths, identifiers, timestamps, shortcuts and machine data. |
-| Rajdhani (`--font-label`) | Activity headers/boundaries, resource tabs, Settings section headings and model-list section labels; Sans SC handles other scripts. |
+| Rajdhani (`--font-label`) | Activity headers/boundaries, resource tabs, Settings section headings and command-palette group headings; Sans SC handles other scripts. |
 | Bundled KaTeX faces | Mathematical glyphs. |
 
 Latin core faces load with the shell. The complete checksum-pinned CJK registry loads after
 authoritative bootstrap, avoiding competition with first render while fetching only used Unicode
 subsets. Rajdhani supplies local 500/600 faces; structural labels use 500, uppercase Latin and
-restrained tracking, with 600 for selected resource tabs. Other navigation, file, palette and
-completion/model-choice headings retain authored casing; technical identifiers retain exact spelling.
+restrained tracking, with 600 for selected resource tabs and command-palette groups. Other navigation,
+file and completion/model-choice headings retain authored casing; explicit authored-case spans and
+technical identifiers retain their spelling.
 
 The type scale is 11.5, 12.5, 14, 15.5, 17, 21, 26 and 32px, with maximum weight 600. CJK running
 text has no tracking; short uppercase Latin labels may use restrained tracking. Compact, Comfortable
@@ -253,7 +254,11 @@ previews; interface controls keep fixed tiers.
 
 Resource tabs use four equal columns, 13px labels (12.5px untracked in the smallest groups), and
 28px desktop / 34px compact-touch height with adjacent 32px actions. Complete labels fit without
-cropping or distortion. Count capsules use `--accent-tint`/`--accent-deep`, smaller text on the label
+cropping or distortion. The group is unfilled and has no visible enclosing border. Selected modes
+use a straight 2px inset accent underline instead of a filled tile; Rajdhani, uppercase tracking,
+500/600 weights, accent ink and existing focus/disabled states remain unchanged. This treatment
+is specific to resource modes; other segmented controls retain their own selection surfaces.
+Count capsules use `--accent-tint`/`--accent-deep`, smaller text on the label
 baseline and a distinct gap. When a complete label/count pair cannot fit, omit the count while
 retaining the exact Changes total in its title.
 
@@ -263,8 +268,9 @@ independent of that group. Dialog titles, prose and deletion errors wrap long pa
 within their content edges. Settings status and Host availability explanations stay within their
 text columns, preserving payload text, field widths and action geometry.
 
-Shared geometry follows a 4px spacing scale: 2px inline corners, 6px controls, 10px resting surfaces
-and 12px overlays. Fully round `999px` radii are for capsules, status geometry, scroll thumbs and
+Shared geometry follows a 4px spacing scale: 2px inline corners, 4px controls, 8px resting surfaces
+and 10px overlays. User message bubbles and Composer both use the 8px surface radius.
+Fully round `999px` radii are for capsules, status geometry, scroll thumbs and
 thin resize strokes. Inset menu highlights and compact file/search/terminal actions, including PDF Fit, use the
 control radius; model-list highlight insets leave virtual-row heights unchanged. Nested radii account
 for parent padding/borders; provider fills use outer radius minus border thickness. Focus follows the
