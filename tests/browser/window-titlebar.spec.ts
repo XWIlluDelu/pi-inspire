@@ -377,14 +377,34 @@ test("Overlay chrome and needle colors follow every palette and luminosity, and 
         .poll(() =>
           page.evaluate(() => {
             const root = document.documentElement;
+            const rail = getComputedStyle(root)
+              .getPropertyValue("--bg-rail")
+              .trim();
+            const scrim = getComputedStyle(root)
+              .getPropertyValue("--bg-overlay")
+              .trim();
+            const hint = document.querySelector<HTMLMetaElement>(
+              'meta[name="theme-color"]',
+            )!.content;
+            const base = rail
+              .slice(1)
+              .match(/../g)!
+              .map((value) => parseInt(value, 16));
+            const rgba = scrim.match(/[\d.]+/g)!.map(Number);
+            const actual = hint.match(/[\d.]+/g)?.map(Number) ?? [];
             return (
-              document
-                .querySelector<HTMLMetaElement>('meta[name="theme-color"]')!
-                .content.toLowerCase() ===
-              getComputedStyle(root)
-                .getPropertyValue("--bg-rail")
-                .trim()
-                .toLowerCase()
+              actual.length === 3 &&
+              actual.every(
+                (value, index) =>
+                  Math.abs(
+                    value -
+                      (base[index]! * (1 - rgba[3]!) + rgba[index]! * rgba[3]!),
+                  ) <= 1,
+              ) &&
+              getComputedStyle(
+                document.querySelector(".window-titlebar")!,
+                "::after",
+              ).backgroundImage.includes(scrim)
             );
           }),
         )
