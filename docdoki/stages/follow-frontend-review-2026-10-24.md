@@ -70,7 +70,8 @@ Keep the tab font family, weights, uppercase/tracking, count styling and all typ
 Existing monospace roles already cover code, paths, identifiers, commands and measurements;
 the selection does not authorize broader font substitutions. The user declined new side-pane borders
 and squared context-pane corners. The accepted refinements are implemented and verified within the
-scope below; structural font comparison remains a preview, not an accepted replacement.
+scope below. After reviewing the font-only comparison, the user confirmed keeping the existing
+Rajdhani and uppercase Activity/resource-tab labels; no font replacement is pending.
 
 The visual previews use isolated mock content from the same local build, not the historical
 review screenshots. Ordinary-browser and installed WCO layouts must be compared separately:
@@ -134,7 +135,7 @@ These checks describe the initial repair pass before its separately authorized l
 
 The user may decide the remaining proposals separately: title affordance, phone tool placement/Latest,
 Welcome directory ordering, observation actions and History header composition.
-Existing structural type is retained while the user compares uppercase Rajdhani and Plex; that
-font-only preview does not authorize a replacement. Pane-edge changes were declined after the
+Existing structural type is retained by the user's final choice after comparing uppercase Rajdhani
+and Plex. Pane-edge changes were declined after the
 boundary-only comparison. No main/tag/release/push or service
 restart is authorized by the local update request.
