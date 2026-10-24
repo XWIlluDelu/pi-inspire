@@ -252,6 +252,49 @@ describe("right-corner notices", () => {
     );
   });
 
+  it("keeps the same update notice through background checks and still honors snooze", async () => {
+    updateResponse = {
+      kind: "available",
+      update: {
+        currentVersion: "1.0.0",
+        latestVersion: "1.1.0",
+        releaseUrl: "https://example.com/release",
+      },
+    };
+    await initialize();
+    render(<Notices onViewUpdates={() => undefined} />);
+    store.checkInspireUpdate();
+    const notice = (await screen.findByText("Updates available")).closest(
+      ".notice",
+    );
+    const socket = FakeWebSocket.instances.at(-1)!;
+    for (const checking of [true, false, true]) {
+      act(() =>
+        socket.emit({
+          type: "update_status",
+          updateStatus: {
+            ...updateStatus(),
+            revision: ++updateRevision,
+            inspireUpdateChecking: checking,
+            piUpdateChecking: checking,
+          },
+        }),
+      );
+      expect(screen.getByText("Updates available").closest(".notice")).toBe(
+        notice,
+      );
+      expect(
+        screen.getByRole("button", { name: "Copy update details" }),
+      ).toBeEnabled();
+    }
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close updates for 24 hours" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("Updates available")).toBeNull(),
+    );
+  });
+
   it("copies an available release and closes only its status for 24 hours", async () => {
     updateResponse = {
       kind: "available",

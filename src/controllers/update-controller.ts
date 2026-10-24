@@ -5,6 +5,7 @@ import {
 } from "../../shared/contracts";
 import type { Api } from "../api";
 import type { WireEvent } from "../events";
+import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 
 interface UpdateControllerState {
   inspireUpdateCheck: UpdateCheckResponse | null;
@@ -13,6 +14,8 @@ interface UpdateControllerState {
   piUpdateChecking: boolean;
   inspireUpdateRequestPending: boolean;
   piUpdateRequestPending: boolean;
+  inspireUpdateRequestError: string | null;
+  piUpdateRequestError: string | null;
   availableUpdateIdentity: string | null;
   updateSnoozedUntil: number | null;
 }
@@ -64,12 +67,16 @@ function projection(status: HostUpdateStatus): Partial<UpdateControllerState> {
   };
 }
 
-/** Projects the Host-owned update state and owns only browser request races. */
+/** Projects Host-owned checks and owns browser request feedback and recovery. */
 export class UpdateController {
   private requestGeneration = 0;
   private readonly checkRequests: Record<UpdateKind, number> = {
     inspire: 0,
     pi: 0,
+  };
+  private readonly checkRecoveries = {
+    inspire: new RecoveryBackoff(),
+    pi: new RecoveryBackoff(),
   };
   private snoozeRequest = 0;
   private statusRevision = -1;
@@ -81,6 +88,8 @@ export class UpdateController {
     this.requestGeneration += 1;
     this.checkRequests.inspire += 1;
     this.checkRequests.pi += 1;
+    this.checkRecoveries.inspire.reset();
+    this.checkRecoveries.pi.reset();
     this.snoozeRequest += 1;
     this.statusRevision = -1;
     this.snoozing = false;
@@ -88,6 +97,8 @@ export class UpdateController {
     this.host.patch({
       inspireUpdateRequestPending: false,
       piUpdateRequestPending: false,
+      inspireUpdateRequestError: null,
+      piUpdateRequestError: null,
     });
   }
 
@@ -95,7 +106,11 @@ export class UpdateController {
   bootstrap(status: unknown): Partial<UpdateControllerState> {
     const checked = checkedStatus(status);
     this.statusRevision = checked.revision;
-    return projection(checked);
+    return {
+      ...projection(checked),
+      inspireUpdateRequestError: null,
+      piUpdateRequestError: null,
+    };
   }
 
   /** Reconciles the update witness carried beside every runtime snapshot so a
@@ -176,37 +191,58 @@ export class UpdateController {
     const request = ++this.checkRequests[kind];
     const requestGeneration = this.requestGeneration;
     const transportGeneration = this.host.transportGeneration();
-    const patchRequest = (value: boolean) =>
+    const recovery = this.checkRecoveries[kind];
+    const owns = () =>
+      request === this.checkRequests[kind] &&
+      this.owns(api, requestGeneration, transportGeneration);
+    const pending = () => this.host.state()[`${kind}UpdateRequestPending`];
+    const patchRequest = (value: boolean, error: string | null = null) =>
       this.host.patch(
         kind === "inspire"
-          ? { inspireUpdateRequestPending: value }
-          : { piUpdateRequestPending: value },
+          ? {
+              inspireUpdateRequestPending: value,
+              inspireUpdateRequestError: error,
+            }
+          : { piUpdateRequestPending: value, piUpdateRequestError: error },
       );
+    const run = async () => {
+      if (!owns() || !pending()) return;
+      try {
+        const result = await perform(api);
+        if (!owns()) return;
+        const status = checkedStatus(result.updateStatus);
+        recovery.reset();
+        patchRequest(false);
+        this.applyStatus(status);
+      } catch (error) {
+        // A Host observation can acknowledge this check before HTTP settles.
+        // Its work remains authoritative even if the response is lost later.
+        if (!owns() || !pending()) return;
+        if (isTransientFailure(error) && recovery.schedule(() => void run()))
+          return;
+        patchRequest(
+          false,
+          kind === "inspire"
+            ? "Couldn't check INSΠRE updates."
+            : "Couldn't check Pi and extension updates.",
+        );
+      }
+    };
+    recovery.reset();
     patchRequest(true);
-    void perform(api).then(
-      (result) => {
-        if (
-          request !== this.checkRequests[kind] ||
-          !this.owns(api, requestGeneration, transportGeneration)
-        )
-          return;
-        patchRequest(false);
-        this.applyStatus(checkedStatus(result.updateStatus));
-      },
-      () => {
-        if (
-          request !== this.checkRequests[kind] ||
-          !this.owns(api, requestGeneration, transportGeneration)
-        )
-          return;
-        patchRequest(false);
-      },
-    );
+    void run();
   }
 
   private applyStatus(status: HostUpdateStatus): void {
     if (status.revision < this.statusRevision) return;
     this.statusRevision = status.revision;
-    this.host.patch(projection(status));
+    const patch = projection(status);
+    for (const kind of ["inspire", "pi"] as const) {
+      if (!status[`${kind}UpdateChecking`]) continue;
+      this.checkRecoveries[kind].reset();
+      patch[`${kind}UpdateRequestPending`] = false;
+      patch[`${kind}UpdateRequestError`] = null;
+    }
+    this.host.patch(patch);
   }
 }

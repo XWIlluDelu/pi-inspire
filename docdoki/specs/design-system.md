@@ -389,11 +389,13 @@ remain distinct attributed forms with directly selectable options.
   or saves need feedback, use the existing control's busy/disabled state. Do not append progress
   sentences or reserve empty rows for routine internal work. Keep useful option guidance visible while waiting.
   Distinguish internal request and execution phases only when that distinction changes the user's
-  available action or understanding of the outcome.
+  available action or understanding of the outcome. Reading an action's availability must not animate
+  that action as if the user had started it.
 - Retain usable content during background work. An empty initial view or a materially blocked task
   may need concise loading feedback; a populated picker, provider list or update result does not need
-  a second progress announcement. Preserve actionable errors, consequential confirmations, genuine
-  task progress and notices that a saved change needs a reload or restart.
+  a second progress announcement. Keep unrelated actions, such as copying the known result, usable.
+  Preserve actionable errors, consequential confirmations, genuine task progress and notices that a
+  saved change needs a reload or restart.
 
 - Session and usage use the shared Info command receipt: the information icon, command/INFO heading
   and subtle semantic tint remain consistent with other informational results. Only message count,

@@ -44,8 +44,9 @@ and untracked.
   [[follow-session-execution-2026-10-19]] records native continuity evidence and the separate Host/Pi
   activation boundary.
 - **Unobtrusive feedback and recovery:** routine selection and preparation feedback stays in the
-  existing controls instead of adding progress lines. Background catalog, snapshot, History and file
-  reads recover automatically while retaining confirmed content. Unsent uploads retain their browser-held bytes; recovery never
+  existing controls instead of adding progress lines. Update checks preserve known notices and copy
+  actions; login progress uses one status position. Catalog, snapshot, History and file reads, together
+  with update-check requests, recover automatically while retaining confirmed content. Unsent uploads retain their browser-held bytes; recovery never
   replays branch commands or prompts with uncertain acceptance. [[workbench]], [[session-continuity]],
   [[session-transport]], [[session-branches]], [[composer]] and [[resource-preview]] define the scope.
 - **Reading and workspace tools:** rich conversation/activity readers, source-backed Copy, Files and

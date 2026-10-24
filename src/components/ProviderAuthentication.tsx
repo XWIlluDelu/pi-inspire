@@ -442,6 +442,12 @@ function AuthenticationPanel({
       </div>
     );
   };
+  const latestEvent = attempt?.events.at(-1);
+  const loginStatus =
+    attempt?.status === "pending"
+      ? (latestEvent?.type === "progress" && latestEvent.message) ||
+        "Login in progress"
+      : attempt?.message;
   return (
     <div className="models-auth" id="model-provider-credentials">
       {error ? (
@@ -484,9 +490,7 @@ function AuthenticationPanel({
                 ?.name ?? attempt.provider}
             </h4>
             <span className="models-status" role="status">
-              {attempt.status === "pending"
-                ? "Login in progress"
-                : attempt.message}
+              {loginStatus}
             </span>
           </div>
           {attempt.events
@@ -520,11 +524,6 @@ function AuthenticationPanel({
                 ))}
               </div>
             ))}
-          {attempt.events.at(-1)?.type === "progress" ? (
-            <p role="status" className="settings__field-help">
-              {attempt.events.at(-1)?.message}
-            </p>
-          ) : null}
           {attempt.prompt ? (
             attempt.prompt.type === "select" ? (
               <div

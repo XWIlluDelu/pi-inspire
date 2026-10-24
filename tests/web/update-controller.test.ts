@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type HostUpdateStatus,
   type InspireUpdateCheckResult,
@@ -7,6 +7,7 @@ import {
   type PiUpdateCheckResult,
   type UpdateCheckResponse,
 } from "../../shared/contracts";
+import { ApiError } from "../../src/api";
 import { UpdateController } from "../../src/controllers/update-controller";
 import { AppStore } from "../../src/store";
 import { sessionPage } from "./fixtures/session-catalog";
@@ -27,6 +28,8 @@ interface State {
   piUpdateChecking: boolean;
   inspireUpdateRequestPending: boolean;
   piUpdateRequestPending: boolean;
+  inspireUpdateRequestError: string | null;
+  piUpdateRequestError: string | null;
   availableUpdateIdentity: string | null;
   updateSnoozedUntil: number | null;
 }
@@ -100,6 +103,8 @@ function harness() {
     piUpdateChecking: false,
     inspireUpdateRequestPending: false,
     piUpdateRequestPending: false,
+    inspireUpdateRequestError: null,
+    piUpdateRequestError: null,
     availableUpdateIdentity: null,
     updateSnoozedUntil: null,
   };
@@ -158,7 +163,100 @@ function harness() {
   };
 }
 
+afterEach(() => vi.useRealTimers());
+
 describe("update status controller", () => {
+  it("recovers a transient check request without replacing known results or surfacing a temporary error", async () => {
+    vi.useFakeTimers();
+    const test = harness();
+    test.bootstrap(updateStatus(1, { inspireUpdateCheck: available("1.0.1") }));
+    test.api.update.mockRejectedValueOnce(new ApiError(503, "Unavailable"));
+    test.controller.refreshInspire();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(test.state().inspireUpdateRequestPending).toBe(true);
+    expect(test.state().inspireUpdateRequestError).toBeNull();
+    expect(test.state().inspireUpdateCheck).toEqual(available("1.0.1"));
+    test.controller.refreshInspire();
+    await vi.runAllTimersAsync();
+    expect(test.api.update).toHaveBeenCalledTimes(2);
+    expect(test.state().inspireUpdateRequestPending).toBe(false);
+    expect(test.state().inspireUpdateRequestError).toBeNull();
+    expect(test.state().inspireUpdateCheck).toEqual(available());
+    expect(test.notify).not.toHaveBeenCalled();
+  });
+
+  it.each([403, 503])(
+    "settles a failed HTTP %s check locally and clears its error on a successful check",
+    async (status) => {
+      vi.useFakeTimers();
+      const test = harness();
+      test.bootstrap(updateStatus(1, { piUpdateCheck: piAvailable("0.84.2") }));
+      test.api.piUpdate.mockRejectedValue(new ApiError(status, "Unavailable"));
+      test.controller.refreshPi();
+      await vi.runAllTimersAsync();
+      expect(test.api.piUpdate).toHaveBeenCalledTimes(status === 503 ? 4 : 1);
+      expect(test.state().piUpdateRequestPending).toBe(false);
+      expect(test.state().piUpdateRequestError).toBe(
+        "Couldn't check Pi and extension updates.",
+      );
+      expect(test.state().piUpdateCheck).toEqual(piAvailable("0.84.2"));
+      test.api.piUpdate.mockResolvedValue(
+        piResult(updateStatus(2, { piUpdateCheck: piAvailable() })),
+      );
+      test.controller.refreshPi();
+      await vi.runAllTimersAsync();
+      expect(test.state().piUpdateRequestError).toBeNull();
+      expect(test.state().piUpdateCheck).toEqual(piAvailable());
+    },
+  );
+
+  it("stops recovery when the Host acknowledges the check and clears only that check's error", async () => {
+    vi.useFakeTimers();
+    const test = harness();
+    test.api.piUpdate.mockRejectedValue(new ApiError(403, "Forbidden"));
+    test.api.update.mockRejectedValue(new ApiError(503, "Unavailable"));
+    test.controller.refreshPi();
+    test.controller.refreshInspire();
+    await vi.advanceTimersByTimeAsync(0);
+    test.controller.applyEvent({
+      type: "update_status",
+      updateStatus: updateStatus(1, { inspireUpdateChecking: true }),
+    });
+    expect(test.state().inspireUpdateRequestPending).toBe(false);
+    expect(test.state().inspireUpdateRequestError).toBeNull();
+    expect(test.state().piUpdateRequestError).not.toBeNull();
+    test.controller.applySnapshot(
+      updateStatus(2, { inspireUpdateCheck: available() }),
+    );
+    await vi.runAllTimersAsync();
+    expect(test.api.update).toHaveBeenCalledTimes(1);
+    expect(test.state().inspireUpdateCheck).toEqual(available());
+    test.controller.applySnapshot(
+      updateStatus(3, {
+        inspireUpdateCheck: available(),
+        piUpdateChecking: true,
+      }),
+    );
+    expect(test.state().piUpdateRequestError).toBeNull();
+  });
+
+  it("retires scheduled recovery when its transport is replaced", async () => {
+    vi.useFakeTimers();
+    const test = harness();
+    test.api.update.mockRejectedValueOnce(new ApiError(503, "Unavailable"));
+    test.controller.refreshInspire();
+    await vi.advanceTimersByTimeAsync(0);
+    test.replaceTransport();
+    await vi.runAllTimersAsync();
+    expect(test.api.update).toHaveBeenCalledTimes(1);
+    expect(test.state().inspireUpdateRequestPending).toBe(false);
+    expect(test.state().inspireUpdateRequestError).toBeNull();
+    test.controller.refreshInspire();
+    await vi.runAllTimersAsync();
+    expect(test.api.update).toHaveBeenCalledTimes(2);
+    expect(test.state().inspireUpdateCheck).toEqual(available());
+  });
+
   it("projects one authoritative bootstrap and the two independent manual checks", async () => {
     const test = harness();
     test.bootstrap(updateStatus(0));
@@ -249,29 +347,38 @@ describe("update status controller", () => {
     expect(test.state().updateSnoozedUntil).toBe(3_000_000);
   });
 
-  it("does not let a failed local request end a Host-owned check", async () => {
-    const test = harness();
-    test.bootstrap(updateStatus(1));
-    let rejectRequest!: (error: Error) => void;
-    test.api.update.mockImplementationOnce(
-      () =>
-        new Promise((_, reject) => {
-          rejectRequest = reject;
-        }),
-    );
-    test.controller.refreshInspire();
-    test.controller.applyEvent({
-      type: "update_status",
-      updateStatus: updateStatus(2, { inspireUpdateChecking: true }),
-    });
-    rejectRequest(new Error("HTTP response lost"));
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(test.state().inspireUpdateChecking).toBe(true);
-    expect(test.state().inspireUpdateRequestPending).toBe(false);
-    test.controller.applySnapshot(updateStatus(3));
-    expect(test.state().inspireUpdateChecking).toBe(false);
-  });
+  it.each([false, true])(
+    "keeps a Host-observed check authoritative after HTTP loss (completed: %s)",
+    async (completed) => {
+      vi.useFakeTimers();
+      const test = harness();
+      test.bootstrap(updateStatus(1));
+      let rejectRequest!: (error: Error) => void;
+      test.api.update.mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectRequest = reject;
+          }),
+      );
+      test.controller.refreshInspire();
+      test.controller.applyEvent({
+        type: "update_status",
+        updateStatus: updateStatus(2, { inspireUpdateChecking: true }),
+      });
+      if (completed)
+        test.controller.applySnapshot(
+          updateStatus(3, { inspireUpdateCheck: available() }),
+        );
+      rejectRequest(new Error("HTTP response lost"));
+      await vi.runAllTimersAsync();
+      expect(test.state().inspireUpdateChecking).toBe(!completed);
+      expect(test.state().inspireUpdateRequestPending).toBe(false);
+      expect(test.state().inspireUpdateRequestError).toBeNull();
+      expect(test.api.update).toHaveBeenCalledTimes(1);
+      test.controller.applySnapshot(updateStatus(3));
+      expect(test.state().inspireUpdateChecking).toBe(false);
+    },
+  );
 
   it("does not publish a response owned by a replaced transport", async () => {
     const test = harness();
