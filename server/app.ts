@@ -776,6 +776,10 @@ export function createInspireServer(deps: AppDependencies): {
   const browserAuth = new BrowserAuth(deps.token);
   const taskNotifications = new TaskNotifications(
     `${deps.preferences.path}.notifications-${browserAuth.notificationNamespace()}.json`,
+    undefined,
+    deps.mock
+      ? undefined
+      : async (id) => (await deps.catalog.get(id, { refresh: true }))?.name,
   );
   deps.runtime.on("event", taskNotifications.observe);
   const launchUrl = (origin: string): string =>

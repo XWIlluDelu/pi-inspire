@@ -4,6 +4,7 @@ export type TaskOutcome = "completed" | "failed" | "ended";
 export interface TaskNotification {
   id: string;
   sessionId: string | null;
+  sessionName?: string;
   outcome: TaskOutcome;
   project?: string;
   createdAt: number;

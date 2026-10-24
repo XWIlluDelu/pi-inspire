@@ -5,23 +5,27 @@ const NOTIFICATION_DB = "inspire-notifications";
 const NOTIFICATION_LIFETIME = 15 * 60 * 1000;
 let notificationQueue = Promise.resolve();
 
-function notificationHistory(id, timestamp) {
+function notificationState(storeName, id, value) {
   return new Promise((resolve, reject) => {
-    const open = indexedDB.open(NOTIFICATION_DB, 1);
-    open.onupgradeneeded = () => open.result.createObjectStore("handled");
+    const open = indexedDB.open(NOTIFICATION_DB, 2);
+    open.onupgradeneeded = () => {
+      for (const name of ["handled", "latest"])
+        if (!open.result.objectStoreNames.contains(name)) open.result.createObjectStore(name);
+    };
     open.onerror = () => reject(open.error);
     open.onsuccess = () => {
       const db = open.result;
-      const tx = db.transaction("handled", timestamp === undefined ? "readonly" : "readwrite");
-      const store = tx.objectStore("handled");
-      const request = timestamp === undefined ? store.get(id) : store.put(timestamp, id);
-      if (timestamp !== undefined) {
+      const tx = db.transaction(storeName, value === undefined ? "readonly" : "readwrite");
+      const store = tx.objectStore(storeName);
+      const request = value === undefined ? store.get(id) : store.put(value, id);
+      if (value !== undefined) {
         const cursor = store.openCursor();
         cursor.onsuccess = () => {
-          const value = cursor.result;
-          if (!value) return;
-          if (value.value < Date.now() - 24 * 60 * 60 * 1000) value.delete();
-          value.continue();
+          const record = cursor.result;
+          if (!record) return;
+          const time = typeof record.value === "number" ? record.value : record.value.recordedAt;
+          if (time < Date.now() - 24 * 60 * 60 * 1000) record.delete();
+          record.continue();
         };
       }
       tx.oncomplete = () => { db.close(); resolve(request.result); };
@@ -57,30 +61,65 @@ function displayTaskNotification(data, pushed) {
         !Number.isFinite(data.createdAt) ||
         (data.sessionId !== null && (typeof data.sessionId !== "string" || data.sessionId.length > 4096)))
       throw new Error("Invalid task notification");
-    // Every received push must display; the sender TTL enforces its expiry.
-    // Stable tags replace retries without renotify. Late or expired local offers
-    // can be acknowledged without displaying, including after page suspension.
-    if (!pushed && (data.createdAt + NOTIFICATION_LIFETIME <= Date.now() ||
-        await notificationHistory(data.id))) return;
+    if (!pushed && data.createdAt + NOTIFICATION_LIFETIME <= Date.now()) return;
+    const grouped = !data.test && Boolean(data.sessionId);
+    const displayed = grouped ? (await self.registration.getNotifications()).filter(
+      (notification) => notification.data?.sessionId === data.sessionId,
+    ) : [];
+    const readState = async (store, key) => {
+      try { return await notificationState(store, key); }
+      catch (error) {
+        // Storage failure may trigger page-to-push recovery, but must not make
+        // an already received push invisible. Visible metadata still orders it.
+        if (!pushed) throw error;
+      }
+    };
+    const handled = await readState("handled", data.id);
+    const previous = grouped ? await readState("latest", data.sessionId) : null;
+    let current = data;
+    for (const candidate of [previous?.notification, ...displayed.map((item) => item.data?.notification)])
+      if (candidate && candidate.createdAt >= current.createdAt) current = candidate;
+    const repeated = Boolean(handled || previous?.notification.id === data.id ||
+      displayed.some((item) => item.data?.notification?.id === data.id));
+    // A received push must display under WebKit's contract. Repaint the latest
+    // known result silently rather than resurrecting a delayed older result.
+    if (!pushed && (repeated || current.id !== data.id)) return;
+    const remember = async () => {
+      if (grouped) await notificationState("latest", data.sessionId, {
+        notification: current, recordedAt: Date.now(),
+      });
+      await notificationState("handled", data.id, Date.now());
+    };
     const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     if (!pushed && !data.test && (await Promise.all(
       windows.map((client) => viewingSession(client, data.sessionId)),
     )).some(Boolean)) {
-      await notificationHistory(data.id, Date.now());
+      await remember();
+      for (const notification of displayed) notification.close();
       return;
     }
-    const title = data.test ? "Inspire test notification" : data.outcome === "failed"
-      ? "Task failed" : data.outcome === "ended" ? "Task ended" : "Task completed";
+    const outcome = current.outcome === "failed"
+      ? "Task failed" : current.outcome === "ended" ? "Task ended" : "Task completed";
+    const name = typeof current.sessionName === "string"
+      ? current.sessionName.replace(/\s+/g, " ").trim().slice(0, 160) : "";
+    const title = current.test ? "Inspire test notification"
+      : outcome + " · " + (name || "Unnamed session");
+    const tag = grouped ? "inspire-session:" + data.sessionId : "inspire-task:" + data.id;
+    // Old releases used per-run tags. Retire only this session's legacy slots,
+    // and only after the replacement has been accepted by the browser.
+    const legacy = displayed.filter((notification) => notification.tag !== tag);
     await self.registration.showNotification(title, {
-      body: data.test ? "Task alerts are using this notification channel."
-        : typeof data.project === "string" && data.project ? "Project: " + data.project.slice(0, 160) : "Pi task",
-      tag: "inspire-task:" + data.id,
-      renotify: false,
+      body: current.test ? "Task alerts are using this notification channel."
+        : typeof current.project === "string" && current.project ? "Project: " + current.project.slice(0, 160) : "Pi task",
+      tag,
+      renotify: !current.test && !repeated && current.id === data.id &&
+        current.createdAt + NOTIFICATION_LIFETIME > Date.now(),
       icon: "/app-icon-192.png",
       badge: "/app-icon-192.png",
-      data: { sessionId: data.sessionId, url: notificationTarget(data) },
+      data: { sessionId: current.sessionId, url: notificationTarget(current), notification: current },
     });
-    await notificationHistory(data.id, Date.now());
+    for (const notification of legacy) notification.close();
+    await remember();
     if (data.test) for (const client of windows)
       client.postMessage({ type: "inspire-notification-shown", test: true });
   });
