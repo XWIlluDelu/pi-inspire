@@ -46,6 +46,7 @@ import type {
   ModelPreferencesPatch,
   ModelSettingsSnapshot,
 } from "../shared/model-settings";
+import type { TaskNotificationGrouping } from "../shared/notifications";
 import type { ProviderAuthOperation } from "../shared/provider-auth-bridge";
 import type { StatusControlDeclaration } from "../shared/tool-presentation-config";
 import {
@@ -3249,6 +3250,9 @@ export class AppStore {
   setCompletionAttention = (
     value: CompletionAttentionPreference,
   ): Promise<boolean> => this.notifications.setMode(value);
+  setTaskNotificationGrouping = (
+    value: TaskNotificationGrouping,
+  ): Promise<boolean> => this.notifications.setGrouping(value);
   refreshTaskAlerts = (): Promise<void> =>
     this.notifications.initialize(this.state.prefs.completionAttention);
   testTaskNotification = (): Promise<void> => this.notifications.test();
@@ -3266,6 +3270,7 @@ export class AppStore {
   restoreDefaultSettings = (): void => {
     this.preferences.restoreDefaults();
     void this.notifications.setMode("off");
+    void this.notifications.setGrouping("session");
   };
   toggleNavGroup = (cwd: string): void => this.preferences.toggleNavGroup(cwd);
   toggleSessionPin = (id: string): void =>

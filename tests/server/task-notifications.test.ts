@@ -28,7 +28,9 @@ const subscription = {
   keys: { p256dh: "B".repeat(87), auth: "A".repeat(22) },
 };
 async function fixture(
-  sessionName?: (id: string) => Promise<string | undefined>,
+  sessionName?: (
+    id: string,
+  ) => Promise<{ name?: string; cwd: string } | undefined>,
 ) {
   const directory = await mkdtemp(join(tmpdir(), "inspire-notifications-"));
   directories.push(directory);
@@ -126,6 +128,98 @@ describe("Host task outcome ownership", () => {
 });
 
 describe("installation-owned notification delivery", () => {
+  it("persists grouping independently of mode/enrollment and decorates delivery with current device policy", async () => {
+    const { service, path, send } = await fixture(async () => ({
+      name: "Review",
+      cwd: "/private/research",
+    }));
+    expect(await service.settings(principal)).toMatchObject({
+      grouping: "session",
+      groupingUpdatedAt: 0,
+    });
+    await service.configure(principal, "desktop", subscription);
+    await service.configure(other, "title");
+    const configured = await service.configure(
+      principal,
+      undefined,
+      undefined,
+      "project",
+    );
+    expect(configured).toMatchObject({
+      mode: "desktop",
+      subscribed: true,
+      grouping: "project",
+    });
+    expect(configured.groupingUpdatedAt).toBeGreaterThan(0);
+    expect(await service.settings(other)).toMatchObject({
+      mode: "title",
+      grouping: "session",
+    });
+    run(service);
+    await vi.waitFor(async () =>
+      expect(JSON.parse(await readFile(path, "utf8")).pending).toHaveLength(2),
+    );
+    await service.configure(other, undefined, undefined, "project");
+    expect(JSON.parse(await readFile(path, "utf8")).pending).toHaveLength(2);
+    await service.close();
+    const restarted = new TaskNotifications(path, send);
+    services.push(restarted);
+    expect(await restarted.settings(principal)).toMatchObject({
+      grouping: "project",
+      subscribed: true,
+    });
+    const events: TaskNotification[] = [];
+    restarted.attach(principal, (event) => {
+      if (event.type === "task_notification") events.push(event.notification);
+      return true;
+    });
+    await vi.waitFor(() => expect(events).toHaveLength(1));
+    expect(events[0]).toMatchObject({
+      grouping: "project",
+      groupingUpdatedAt: configured.groupingUpdatedAt,
+    });
+    expect(events[0]?.notificationOwner).toBe(configured.publicKey);
+    expect(JSON.stringify(events)).not.toContain("/private/");
+    const changed = await restarted.configure(
+      principal,
+      undefined,
+      undefined,
+      "session",
+    );
+    expect(changed.groupingUpdatedAt).toBeGreaterThan(
+      configured.groupingUpdatedAt,
+    );
+    expect(changed).toMatchObject({ mode: "desktop", subscribed: true });
+  });
+
+  it("uses stable private project identities instead of colliding cwd labels", async () => {
+    const { service, path } = await fixture(async (id) => ({
+      cwd: id === "elsewhere" ? "/other/research" : "/private/research",
+    }));
+    await service.configure(principal, "title");
+    for (const id of ["same-one", "same-two", "elsewhere"]) run(service, id);
+    await vi.waitFor(async () =>
+      expect(JSON.parse(await readFile(path, "utf8")).pending).toHaveLength(3),
+    );
+    const events = JSON.parse(await readFile(path, "utf8")).pending.map(
+      (item: { event: TaskNotification }) => item.event,
+    );
+    const bySession = new Map<string, TaskNotification>(
+      events.map((event: TaskNotification) => [event.sessionId, event]),
+    );
+    expect(bySession.get("same-one")?.projectId).toBe(
+      bySession.get("same-two")?.projectId,
+    );
+    expect(bySession.get("same-one")?.projectId).not.toBe(
+      bySession.get("elsewhere")?.projectId,
+    );
+    expect(
+      events.every((event: TaskNotification) => event.project === "research"),
+    ).toBe(true);
+    expect(JSON.stringify(events)).not.toContain("/private/");
+    expect(JSON.stringify(events)).not.toContain("/other/");
+  });
+
   it("retains an outcome across browser and Host reconnect, with device-bound acknowledgment", async () => {
     const { path, service, send } = await fixture();
     await service.configure(principal, "desktop");
@@ -184,7 +278,10 @@ describe("installation-owned notification delivery", () => {
   });
 
   it("resolves current saved names without relying on a live browser or transcript", async () => {
-    const name = vi.fn(async () => "  Native\n renamed  ");
+    const name = vi.fn(async () => ({
+      name: "  Native\n renamed  ",
+      cwd: "/private/research",
+    }));
     const { service, path } = await fixture(name);
     run(service);
     await service.settings(principal);

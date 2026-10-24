@@ -195,6 +195,8 @@ materialized children and local state. A per-card override leaves its saved defa
 [[notifications]] owns task outcomes, device-local intent, delivery, permission/status feedback,
 test notifications and click-through. Keep its Off / Mark tab / System notification control in
 Behavior, using the existing field-card layout with contextual status and actions below the choice.
+The neighboring Notification grouping field selects Session or Project independently, with its own
+save/error state and no permission prompt. [[notifications]] owns grouping and member-count semantics.
 
 Notification permission and enrollment are installation-local, unlike ordinary Host preferences.
 Reset preferences also resets alerts on this installation, not other devices. Legacy

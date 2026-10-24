@@ -17,11 +17,18 @@ or `npm.cmd run inspire -- restart`.
 
 In **Settings → Behavior → Task alerts**, choose **System notification** on each device that
 should receive alerts. Normal completion and errors notify you when you are away from the
-conversation; confirmed Stop does not. Each session keeps one system notification: a newer result
-replaces its older result, while different sessions remain separate. Titles include the saved
-session name (or **Unnamed session**) and can appear on the lock screen; the body identifies the
-project without message text or error details. New results can alert again, but duplicate or delayed
-older delivery does not re-alert. **Mark tab** stays local to open pages.
+conversation; confirmed Stop does not. **Notification grouping** selects **Session** (the default)
+or **Project** on this device. A newer result replaces the group's older notification. Session
+grouping keeps conversations separate; project grouping keeps one notification per project, using
+the session name for one represented conversation or **n sessions** for several. Repeated runs in
+one session count once. Dismissing/clicking the notification starts a fresh count, and viewing one
+session's new result leaves its unread project peers visible. Changing grouping clears existing
+task notifications without changing permission or enrollment.
+
+Titles include the saved session name (or **Unnamed session**) and can appear on the lock screen;
+the body identifies the project without message text or error details. Outcome wording and clicks
+follow the latest represented result. New results can alert again, but duplicate or delayed older
+delivery does not re-alert. **Mark tab** stays local to open pages.
 
 Click **Enable notifications** on that device, allow browser permission, then check for
 **Background notifications enabled**. Selecting **System notification** alone does not complete setup.

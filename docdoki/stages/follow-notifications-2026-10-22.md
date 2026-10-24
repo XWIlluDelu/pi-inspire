@@ -27,10 +27,16 @@ are implemented. Linux Chrome delivery and an Android manual-test notification a
 Android real-task background delivery/click-through, iOS acceptance and desktop OS-banner clicking
 remain open.
 
-System notifications replace older results by session ID and include the saved session name.
-Host pending delivery coalesces each device/session. The worker retains the latest result across
-restarts, suppresses stale local offers and silently redraws current content for late pushes under
-WebKit's visible-delivery rule. Legacy per-run display slots retire on successful replacement.
+System notifications offer installation-local Session (default) and Project grouping. Session slots
+include the saved name; a project slot uses the sole member's name or a distinct-session count.
+Changing grouping clears old task slots without changing alert mode, permission or enrollment.
+The worker keeps unread members with the visible slot, resets counts after dismissal, and removes
+only the viewed session when peers remain. Host pending delivery still coalesces each device/session,
+so bounded individual pushes never need an unbounded list or a stale Host-side unread count.
+Persisted, Host-bound policy revisions prevent delayed pushes from reversing the selection.
+
+The worker retains latest results across restarts and silently redraws current content for late
+pushes under WebKit's visible-delivery rule. Legacy/fallback slots retire after successful replacement.
 
 The native reporter records receiver-bound runs and explicit outcomes, including short runs between
 polls. Enrollment recovery, device isolation and delivery deduplication follow [[notifications]];
@@ -47,7 +53,9 @@ Regression coverage includes:
 - Settings, connection and native-session behavior;
 - targeted saved-name metadata reads without rebuilding dormant transcripts, same-session replacement,
   separate sessions and tests, legacy-slot cleanup, foreground consumption, delayed pushes and worker
-  restart ordering.
+  restart ordering;
+- field-owned grouping saves and stale refresh/echo protection; same-label project isolation, distinct
+  member counts, foreground peer preservation, dismissal reset, policy changes and Host rebinding.
 
 ### Linux Chrome delivery
 

@@ -23,6 +23,7 @@ class Permission {
   );
 }
 let workerMessages: Record<string, unknown>[];
+let workerSettings: Record<string, unknown>[];
 let subscription: {
   toJSON(): object;
   unsubscribe(): Promise<boolean>;
@@ -32,7 +33,10 @@ let worker: EventTarget;
 const publicKey =
   "BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const subscribe = vi.fn(async () => subscription!);
+let hostPublicKey = publicKey;
 let mode: "off" | "title" | "desktop";
+let grouping: "session" | "project";
+let groupingUpdatedAt: number;
 let subscribed: boolean;
 let subscriptionEndpoint: string;
 let expiredEndpoint: string | null;
@@ -82,6 +86,10 @@ async function initialized(
         const body = jsonBody(init);
         mutations.push(body);
         if (body.mode !== undefined) mode = body.mode as typeof mode;
+        if (body.grouping !== undefined && body.grouping !== grouping) {
+          grouping = body.grouping as typeof grouping;
+          groupingUpdatedAt++;
+        }
         if (body.subscription !== undefined)
           subscribed = mode === "desktop" && Boolean(body.subscription);
         if (body.subscription)
@@ -92,9 +100,11 @@ async function initialized(
         body: {
           installationId: "device-one",
           mode,
+          grouping,
+          groupingUpdatedAt,
           subscribed,
           endpoint: subscribed ? subscriptionEndpoint : expiredEndpoint,
-          publicKey,
+          publicKey: hostPublicKey,
           error: null,
         },
       };
@@ -163,6 +173,10 @@ beforeEach(() => {
   Permission.permission = "granted";
   Permission.requestPermission.mockReset().mockResolvedValue("granted");
   workerMessages = [];
+  workerSettings = [];
+  grouping = "session";
+  groupingUpdatedAt = 0;
+  hostPublicKey = publicKey;
   mutations = [];
   acknowledgments = [];
   testResponse = undefined;
@@ -182,7 +196,10 @@ beforeEach(() => {
   const registration = {
     active: {
       postMessage: (message: Record<string, unknown>, ports: MessagePort[]) => {
-        workerMessages.push(message);
+        (message.type === "inspire-notification-settings"
+          ? workerSettings
+          : workerMessages
+        ).push(message);
         ports[0]!.postMessage({ ok: true });
         ports[0]!.close();
       },
@@ -202,6 +219,163 @@ beforeEach(() => {
 });
 
 describe("device-local task alerts", () => {
+  it("retains a failed explicit grouping choice through unchanged refreshes and retries without touching enrollment", async () => {
+    const { store, socket } = await initialized("off");
+    let accept = false;
+    const saved = (choice: "session" | "project", stamp: number) => ({
+      installationId: "device-one",
+      mode: "off",
+      subscribed: false,
+      endpoint: null,
+      publicKey,
+      error: null,
+      grouping: choice,
+      groupingUpdatedAt: stamp,
+    });
+    installFetch((url, init) =>
+      url === "/api/notifications"
+        ? init.method === "PUT"
+          ? accept
+            ? { body: saved("project", 1) }
+            : { status: 503, body: { error: "Host temporarily unavailable" } }
+          : { body: saved("session", 0) }
+        : undefined,
+    );
+    await expect(store.setTaskNotificationGrouping("project")).resolves.toBe(
+      false,
+    );
+    socket.emit({ type: "task_alert_settings", settings: saved("session", 0) });
+    await store.refreshTaskAlerts();
+    const settingsCount = workerSettings.length;
+    worker.dispatchEvent(new Event("controllerchange"));
+    await vi.waitFor(() =>
+      expect(store.getState().taskAlerts).toMatchObject({
+        grouping: "project",
+        groupingError: expect.stringContaining("unavailable"),
+        groupingBusy: false,
+      }),
+    );
+    expect(workerSettings).toHaveLength(settingsCount);
+    accept = true;
+    await expect(store.setTaskNotificationGrouping("project")).resolves.toBe(
+      true,
+    );
+    expect(store.getState().taskAlerts).toMatchObject({
+      mode: "off",
+      grouping: "project",
+      groupingError: null,
+      groupingBusy: false,
+    });
+    expect(Permission.requestPermission).not.toHaveBeenCalled();
+  });
+
+  it("reconciles worker replacement and ignores an older worker's late error", async () => {
+    const { store } = await initialized("off");
+    const registration = await navigator.serviceWorker.getRegistration();
+    let oldReply: MessagePort | undefined;
+    vi.spyOn(registration!.active!, "postMessage").mockImplementationOnce(
+      (_message, ports) => {
+        oldReply = (Array.isArray(ports) ? ports : ports?.transfer)?.[0] as
+          | MessagePort
+          | undefined;
+      },
+    );
+    const oldRefresh = store.refreshTaskAlerts();
+    await vi.waitFor(() => expect(oldReply).toBeDefined());
+    worker.dispatchEvent(new Event("controllerchange"));
+    await store.refreshTaskAlerts();
+    oldReply!.postMessage({ error: "Retired worker error" });
+    oldReply!.close();
+    await oldRefresh;
+    expect(store.getState().taskAlerts.groupingError).toBeNull();
+  });
+
+  it("saves only the grouping choice without requesting permission or altering alert intent", async () => {
+    const { store } = await initialized("off");
+    await expect(store.setTaskNotificationGrouping("project")).resolves.toBe(
+      true,
+    );
+    expect(mutations.at(-1)).toEqual({ grouping: "project" });
+    expect(Permission.requestPermission).not.toHaveBeenCalled();
+    expect(store.getState().taskAlerts).toMatchObject({
+      mode: "off",
+      grouping: "project",
+      groupingBusy: false,
+      groupingError: null,
+    });
+    expect(workerSettings.at(-1)).toMatchObject({
+      grouping: "project",
+      updatedAt: 1,
+      owner: publicKey,
+    });
+    await store.refreshTaskAlerts();
+    expect(store.getState().taskAlerts.grouping).toBe("project");
+  });
+
+  it("takes a newly paired Host's default even when its revision is lower", async () => {
+    const { store } = await initialized("off");
+    await store.setTaskNotificationGrouping("project");
+    hostPublicKey = "replacement-host-public-key";
+    grouping = "session";
+    groupingUpdatedAt = 0;
+    await initialized("off", undefined, store);
+    expect(store.getState().taskAlerts).toMatchObject({
+      grouping: "session",
+      groupingUpdatedAt: 0,
+    });
+    expect(workerSettings.at(-1)).toMatchObject({
+      owner: hostPublicKey,
+      grouping: "session",
+      updatedAt: 0,
+    });
+  });
+
+  it("keeps a new grouping choice when an earlier refresh or settings echo arrives late", async () => {
+    const { store, socket } = await initialized("off");
+    const oldRead = deferred<RouteResponse>();
+    const settings = (choice: "session" | "project", stamp: number) => ({
+      installationId: "device-one",
+      mode: "off",
+      subscribed: false,
+      endpoint: null,
+      publicKey,
+      error: null,
+      grouping: choice,
+      groupingUpdatedAt: stamp,
+    });
+    installFetch((url, init) =>
+      url === "/api/notifications"
+        ? init.method === "PUT"
+          ? { body: settings("project", 10) }
+          : oldRead.promise
+        : undefined,
+    );
+    const refresh = store.refreshTaskAlerts();
+    await store.setTaskNotificationGrouping("project");
+    oldRead.resolve({ body: settings("session", 0) });
+    await refresh;
+    socket.emit({
+      type: "task_alert_settings",
+      settings: settings("session", 0),
+    });
+    expect(store.getState().taskAlerts.grouping).toBe("project");
+    expect(workerSettings.at(-1)).toMatchObject({
+      grouping: "project",
+      updatedAt: 10,
+    });
+    socket.emit({
+      type: "task_alert_settings",
+      settings: settings("session", 20),
+    });
+    await vi.waitFor(() =>
+      expect(workerSettings.at(-1)).toMatchObject({
+        grouping: "session",
+        updatedAt: 20,
+      }),
+    );
+    expect(store.getState().taskAlerts.grouping).toBe("session");
+  });
+
   it("delivers Host outcomes without a browser start event, including after transport replacement", async () => {
     const { store, socket } = await initialized();
     outcome(socket);

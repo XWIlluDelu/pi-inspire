@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 import webPush from "web-push";
 import { z } from "zod";
 import type { CompletionAttentionPreference } from "../shared/contracts.js";
@@ -9,6 +9,7 @@ import type {
   TaskAlertEvent,
   TaskAlertSettings,
   TaskNotification,
+  TaskNotificationGrouping,
   TaskOutcome,
 } from "../shared/notifications.js";
 import { requestError } from "./request-error.js";
@@ -54,6 +55,8 @@ export const pushSubscriptionSchema = z
 interface Device {
   origin: string;
   mode: CompletionAttentionPreference;
+  grouping?: TaskNotificationGrouping;
+  groupingUpdatedAt?: number;
   subscription?: NotificationSubscription;
   expiredEndpoint?: string;
   error?: string;
@@ -220,9 +223,9 @@ export class TaskNotifications {
   constructor(
     private readonly path: string,
     private readonly sendPush = webPush.sendNotification.bind(webPush),
-    private readonly sessionName?: (
+    private readonly sessionContext?: (
       sessionId: string,
-    ) => Promise<string | undefined>,
+    ) => Promise<{ name?: string; cwd: string } | undefined>,
   ) {
     this.ready = this.load();
     // Delivery failures are surfaced by the authenticated Settings endpoint.
@@ -293,6 +296,8 @@ export class TaskNotifications {
     return {
       installationId: id,
       mode: device?.mode ?? null,
+      grouping: device?.grouping ?? "session",
+      groupingUpdatedAt: device?.groupingUpdatedAt ?? 0,
       publicKey: this.saved.vapid.publicKey,
       subscribed: Boolean(device?.subscription),
       endpoint:
@@ -304,9 +309,11 @@ export class TaskNotifications {
     principal: NotificationPrincipal,
     mode: CompletionAttentionPreference | undefined,
     subscription?: NotificationSubscription | null,
+    grouping?: TaskNotificationGrouping,
   ): Promise<TaskAlertSettings> {
     await this.ready;
     const previous = this.saved.devices[principal.id];
+    const modeProvided = mode !== undefined;
     mode ??= previous?.mode ?? "off";
     if (!previous && Object.keys(this.saved.devices).length >= 64)
       throw requestError("Too many notification devices registered", 409);
@@ -321,6 +328,11 @@ export class TaskNotifications {
     this.saved.devices[principal.id] = {
       origin: principal.origin,
       mode,
+      grouping: grouping ?? previous?.grouping ?? "session",
+      groupingUpdatedAt:
+        grouping !== undefined && grouping !== (previous?.grouping ?? "session")
+          ? Math.max(Date.now(), (previous?.groupingUpdatedAt ?? 0) + 1)
+          : (previous?.groupingUpdatedAt ?? 0),
       ...(!subscription && previous?.expiredEndpoint
         ? { expiredEndpoint: previous.expiredEndpoint }
         : {}),
@@ -335,7 +347,7 @@ export class TaskNotifications {
         ? { subscription: subscription ?? previous?.subscription }
         : {}),
     };
-    if (mode !== "desktop" || subscription === null)
+    if ((modeProvided && mode !== "desktop") || subscription === null)
       this.saved.pending = this.saved.pending.filter(
         (item) => item.deviceId !== principal.id,
       );
@@ -367,16 +379,25 @@ export class TaskNotifications {
       )
     )
       return;
-    if (this.sessionName && event.sessionId && !event.test) {
+    if (this.sessionContext && event.sessionId && !event.test) {
       try {
-        event = {
-          ...event,
-          sessionName: notificationSessionName(
-            await this.sessionName(event.sessionId),
-          ),
-        };
+        const context = await this.sessionContext(event.sessionId);
+        if (context)
+          event = {
+            ...event,
+            project: basename(context.cwd),
+            // Stable across Host restarts without exposing filesystem paths or
+            // confusing two directories that share the same display label.
+            projectId: createHmac("sha256", this.saved.vapid.privateKey)
+              .update(context.cwd)
+              .digest("base64url"),
+            ...("name" in context
+              ? { sessionName: notificationSessionName(context.name) }
+              : {}),
+          };
       } catch {
-        // A failed title lookup must not discard the actual task result.
+        // Optional metadata cannot discard the actual task result. Without a
+        // trustworthy project identity the worker keeps this session separate.
       }
     }
     if (this.closed) return;
@@ -418,7 +439,13 @@ export class TaskNotifications {
             item.deviceId === principal.id &&
             item.event.createdAt + LIFETIME > Date.now()
           )
-            send({ type: "task_notification", notification: item.event });
+            send({
+              type: "task_notification",
+              notification: this.delivery(
+                item.event,
+                this.saved.devices[item.deviceId]!,
+              ),
+            });
       })
       .catch(() => {});
     return () => {
@@ -426,10 +453,24 @@ export class TaskNotifications {
       if (!clients.size) this.clients.delete(principal.id);
     };
   }
+  private delivery(event: TaskNotification, device: Device): TaskNotification {
+    return {
+      ...event,
+      grouping: device.grouping ?? "session",
+      groupingUpdatedAt: device.groupingUpdatedAt ?? 0,
+      notificationOwner: this.saved.vapid.publicKey,
+    };
+  }
   private offer(item: Pending): void {
     if (item.event.createdAt + LIFETIME <= Date.now()) return;
     for (const send of this.clients.get(item.deviceId) ?? [])
-      send({ type: "task_notification", notification: item.event });
+      send({
+        type: "task_notification",
+        notification: this.delivery(
+          item.event,
+          this.saved.devices[item.deviceId]!,
+        ),
+      });
   }
   async acknowledge(
     principal: NotificationPrincipal,
@@ -478,7 +519,7 @@ export class TaskNotifications {
     // No redirects: web-push uses https.request directly and exposes non-2xx.
     await this.sendPush(
       device.subscription!,
-      JSON.stringify({ type: "inspire-task", ...event }),
+      JSON.stringify({ type: "inspire-task", ...this.delivery(event, device) }),
       {
         TTL: Math.max(
           1,

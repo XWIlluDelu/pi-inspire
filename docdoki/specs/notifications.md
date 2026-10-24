@@ -56,17 +56,25 @@ Waiting-for-input alerts are outside this design.
 - **Off** disables delivery. **Mark tab** sets the existing title marker. **System notification**
   also marks an open page. Viewing clears the marker while preserving extension-authored titles.
 - Each outcome keeps one identity across live delivery, reconnect and retry; later runs get new
-  identities. Display slots instead use stable session IDs: a new result replaces that session's
-  previous notification, while different sessions remain independent even when their names match.
+  identities. This installation chooses **Session** (the default) or **Project** display slots.
+  A new result replaces the group's older notification. Session slots use stable session IDs;
+  project slots use Host-scoped opaque cwd identities, never possibly colliding display labels.
+  Missing project metadata falls back to a separate session slot while retaining any confirmed binding.
 - Ordinary titles use `Task completed · <session name>`, `Task failed · <session name>` or
   `Task ended · <session name>`. Use the latest saved name at settlement, normalize whitespace,
   and fall back to `Unnamed session`, never the first prompt. Keep the project label in the body.
   Renaming retains the same display slot; system layout handles wrapping and truncation.
+  A project slot containing one notified session uses that session's name; more than one uses
+  `<n> sessions`. Count distinct represented sessions, not runs or every saved session in the project.
+  Outcome wording and click-through follow the latest represented result. Viewing a new result removes
+  only its session from the visible project group, preserving other unread members. Dismissal/click
+  clears the group's cycle: the next fresh notification starts counting again.
 - A new result remains eligible to alert; duplicate delivery and delayed older results do not
   re-alert. Devices and OS policy still control banners and sounds. Test notifications keep a
   separate identity and cannot replace task results.
-- Pending sends retain only the newest result per device/session, expire and use bounded retries,
-  so old outcomes do not form a backlog.
+- Pending sends retain only the newest result per device/session, expire and use bounded retries.
+  Project aggregation happens in the worker, which knows what is still visible: push payloads do not
+  carry an ever-growing member list or let Host backlog counts resurrect dismissed sessions.
 
 The service worker owns display through `ServiceWorkerRegistration.showNotification()` and handles
 clicks. This supports mobile installations where the `Notification` constructor is unavailable.
@@ -76,13 +84,18 @@ uses encrypted Web Push.
 
 A foreground acknowledgement prevents push dispatch. Once sent, a push must display even if the
 user returns: WebKit requires received pushes to produce a visible notification. Retain the latest
-handled result per session across worker restarts, including results consumed by foreground viewing.
+handled result per session/project across worker restarts, including results consumed by foreground viewing.
+Visible project notifications retain their represented sessions across worker restarts. A stale unseen
+member can update the count silently without replacing newer result content; mandatory push repaints
+after dismissal do not count already-handled sessions as fresh members.
 Order results by Host settlement time, distinguishing settlements within one clock tick. A delayed
 local offer is acknowledged without display; a delayed or duplicate push silently redraws the latest
 known result rather than restoring older content. Stable tags and handled outcome identities keep
 display replacement separate from delivery deduplication. Retire that session's legacy per-run slots
-only after its replacement displays successfully. Report transport acceptance and display acceptance
-separately from human receipt.
+only after its replacement displays successfully. Grouping policy is Host/installation-owned and
+revisioned: late pushes cannot revert a newer choice, and a newly paired Host can restore its own
+defaults. Changing grouping clears existing task notifications without replaying old results or
+clearing test notifications. Report transport acceptance and display acceptance separately from human receipt.
 
 ## Settings and activation
 
@@ -100,6 +113,11 @@ status beneath the control:
 | iOS installation required | **Add to Home Screen**, then enable from that app |
 | Required capability unavailable | Explain it; retain Off/Mark tab |
 | Host delivery failed | Show the actionable error |
+
+A neighboring **Notification grouping** field offers **Session / Project**, with this-device scope
+and a warning that changing it clears existing task notifications. Its field-owned save, busy/error
+feedback and retry are independent of alert mode, permission and enrollment. Reset restores Session
+on this installation. Existing installations without a choice retain Session.
 
 Only a user gesture requests permission or creates a subscription. Selecting System notification
 starts enrollment from that gesture; Enable supports migrated or interrupted enrollment. Explain that push
@@ -153,10 +171,11 @@ Disabling a subscription or retiring its authority cancels its pending sends.
   and project documents. Validate subscription shape and endpoints; reject local-network targets,
   embedded credentials and redirect substitution.
 - Push contains outcome wording, the saved session name, a cwd-derived project label, opaque
-  event/session IDs and a same-origin navigation target. Session names may appear on the lock screen.
+  event/session/project IDs, current grouping policy and a same-origin navigation target. Session names may appear on the lock screen.
   Exclude message text, error details, terminal output, full filesystem paths and credentials. The
   worker can display it without fetching from the Host. Short-lived worker state retains handled
-  outcome identities and the latest result per session for 24 hours, separately from shell caches.
+  outcome identities and the latest result per session/project for 24 hours, separately from shell caches.
+  Grouping policy persists independently; visible notification member data lasts with its system slot.
 - Clicking focuses an existing window or opens the installed-app scope, authenticates normally and
   selects the target conversation. Preserve the opaque target through pairing or Host downtime;
   a newer click supersedes an older target. A deleted target shows the selection error. Navigation

@@ -41,6 +41,7 @@ import {
   type VisibilityPreference,
 } from "../../shared/contracts";
 import type { ModelSettingsDestination } from "../../shared/model-settings";
+import type { TaskNotificationGrouping } from "../../shared/notifications";
 import { notificationPermissionMessage } from "../browser-notifications";
 import {
   installAvailability,
@@ -623,6 +624,50 @@ export const SettingsContent = memo(function SettingsContent({
                       {state.taskAlerts.error}
                     </span>
                   ) : undefined}
+                </div>
+              </SettingField>
+              <SettingField
+                label="Notification grouping"
+                description="This device · One notification per session or project. Changing this clears existing task notifications."
+              >
+                <div
+                  className="settings__notification-control"
+                  aria-busy={state.taskAlerts.groupingBusy}
+                >
+                  <Dropdown
+                    label="Notification grouping"
+                    className="dropdown--field"
+                    value={state.taskAlerts.grouping}
+                    options={[
+                      { value: "session", label: "Session" },
+                      { value: "project", label: "Project" },
+                    ]}
+                    disabled={state.taskAlerts.groupingBusy}
+                    onChange={(value) =>
+                      void store.setTaskNotificationGrouping(
+                        value as TaskNotificationGrouping,
+                      )
+                    }
+                  />
+                  {state.taskAlerts.groupingError ? (
+                    <div className="settings__field-status settings__notification-status">
+                      <span className="settings__error" role="alert">
+                        {state.taskAlerts.groupingError}
+                      </span>
+                      <button
+                        type="button"
+                        className="button button--small"
+                        disabled={state.taskAlerts.groupingBusy}
+                        onClick={() =>
+                          void store.setTaskNotificationGrouping(
+                            state.taskAlerts.grouping,
+                          )
+                        }
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               </SettingField>
             </Section>
