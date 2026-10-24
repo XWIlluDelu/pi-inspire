@@ -777,9 +777,10 @@ export function createInspireServer(deps: AppDependencies): {
   const taskNotifications = new TaskNotifications(
     `${deps.preferences.path}.notifications-${browserAuth.notificationNamespace()}.json`,
     undefined,
-    deps.mock
-      ? undefined
-      : async (id) => (await deps.catalog.get(id, { refresh: true }))?.name,
+    async (id) => {
+      const session = await deps.catalog.get(id, { refresh: !deps.mock });
+      return session && (deps.mock ? { cwd: session.cwd } : session);
+    },
   );
   deps.runtime.on("event", taskNotifications.observe);
   const launchUrl = (origin: string): string =>
@@ -966,12 +967,16 @@ export function createInspireServer(deps: AppDependencies): {
     const body = z
       .object({
         mode: z.enum(["off", "title", "desktop"]).optional(),
+        grouping: z.enum(["session", "project"]).optional(),
         subscription: pushSubscriptionSchema.nullable().optional(),
       })
       .strict()
       .refine(
-        (body) => body.mode !== undefined || body.subscription !== undefined,
-        "Provide a mode or subscription update",
+        (body) =>
+          body.mode !== undefined ||
+          body.subscription !== undefined ||
+          body.grouping !== undefined,
+        "Provide a mode, subscription or grouping update",
       )
       .parse(request.body);
     response.json(
@@ -979,6 +984,7 @@ export function createInspireServer(deps: AppDependencies): {
         principal,
         body.mode,
         body.subscription,
+        body.grouping,
       ),
     );
   });

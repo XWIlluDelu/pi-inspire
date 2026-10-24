@@ -55,6 +55,13 @@ and standalone fallback use neutral light/dark `theme-color` hints. Only an acti
 Overlay follows the palette's outer frame color. The overlay uses browser-reported titlebar geometry;
 CSS emulation cannot establish activation. See `src/visual-preferences.ts` and [[design-system]].
 
+`useModalFocus` publishes visible backdrop depth separately from keyboard ownership: a suspended
+Settings shell keeps its focus-restoration owner without adding a second scrim. The titlebar layers
+the same palette scrim without changing hit targets; `applyBrowserTheme` composites an opaque native
+chrome hint. Modal/first-paint tests and isolated Chrome checks cover nesting, close restoration and
+command-palette parity; the titlebar browser suite substitutes only Overlay media/geometry, not native
+activation or OS controls.
+
 The settings wordmark's stitch animation is static geometry: thread and needle follow the current
 tool/thinking identity roles, with reduced-motion and keyboard behavior shared across palettes.
 [[design-system]] owns the visual rules, including theme-specific exceptions.

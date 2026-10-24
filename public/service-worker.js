@@ -7,9 +7,9 @@ let notificationQueue = Promise.resolve();
 
 function notificationState(storeName, id, value) {
   return new Promise((resolve, reject) => {
-    const open = indexedDB.open(NOTIFICATION_DB, 2);
+    const open = indexedDB.open(NOTIFICATION_DB, 3);
     open.onupgradeneeded = () => {
-      for (const name of ["handled", "latest"])
+      for (const name of ["handled", "latest", "groups", "settings"])
         if (!open.result.objectStoreNames.contains(name)) open.result.createObjectStore(name);
     };
     open.onerror = () => reject(open.error);
@@ -18,7 +18,7 @@ function notificationState(storeName, id, value) {
       const tx = db.transaction(storeName, value === undefined ? "readonly" : "readwrite");
       const store = tx.objectStore(storeName);
       const request = value === undefined ? store.get(id) : store.put(value, id);
-      if (value !== undefined) {
+      if (value !== undefined && storeName !== "settings") {
         const cursor = store.openCursor();
         cursor.onsuccess = () => {
           const record = cursor.result;
@@ -54,85 +54,185 @@ async function viewingSession(client, sessionId) {
   });
 }
 
+function notificationWork(operation) {
+  const work = notificationQueue.catch(() => {}).then(operation);
+  notificationQueue = work;
+  return work;
+}
+
+async function readNotificationState(store, key, pushed) {
+  try { return await notificationState(store, key); }
+  catch (error) {
+    // A received push must display even when storage is temporarily unavailable.
+    // Visible notification metadata still protects grouping and ordering.
+    if (!pushed) throw error;
+  }
+}
+
+function taskNotification(notification) {
+  return !notification.data?.notification?.test &&
+    typeof notification.data?.sessionId === "string" &&
+    /^inspire-(task|session|project):/.test(notification.tag);
+}
+
+function notificationMembers(notification) {
+  const members = notification.data?.members;
+  if (Array.isArray(members)) return members.filter((item) => typeof item?.sessionId === "string");
+  const current = notification.data?.notification;
+  return current && !current.test && typeof current.sessionId === "string" ? [current] : [];
+}
+
+function validPolicy(value) {
+  return value && ["session", "project"].includes(value.grouping) &&
+    Number.isSafeInteger(value.updatedAt) && value.updatedAt >= 0;
+}
+
+async function notificationPolicy(incoming, displayed, pushed, authoritative = false) {
+  const saved = await readNotificationState("settings", "grouping", pushed);
+  let known = validPolicy(saved) ? saved : null;
+  for (const notification of displayed) {
+    const policy = notification.data?.policy;
+    if (validPolicy(policy) && (!known ||
+        policy.owner === known.owner && policy.updatedAt > known.updatedAt)) known = policy;
+  }
+  const accepted = validPolicy(incoming) && (!known || !known.owner && incoming.owner ||
+    authoritative && incoming.owner !== known.owner ||
+    incoming.owner === known.owner && incoming.updatedAt > known.updatedAt);
+  const policy = accepted ? incoming : known || { grouping: "session", updatedAt: 0, owner: "" };
+  const changed = accepted && (known
+    ? policy.grouping !== known.grouping || known.owner && policy.owner !== known.owner ||
+      policy.updatedAt > known.updatedAt
+    : policy.grouping !== "session");
+  if (!saved || policy.owner !== saved.owner || policy.updatedAt !== saved.updatedAt) {
+    try { await notificationState("settings", "grouping", policy); }
+    catch (error) { if (!pushed) throw error; }
+  }
+  if (changed) for (const notification of displayed)
+    if (taskNotification(notification)) notification.close();
+  return { policy, displayed: changed ? displayed.filter((item) => !taskNotification(item)) : displayed };
+}
+
+function latestNotification(values) {
+  return values.reduce((latest, candidate) =>
+    candidate && (!latest || candidate.createdAt > latest.createdAt) ? candidate : latest, null);
+}
+
 function displayTaskNotification(data, pushed) {
-  const work = notificationQueue.catch(() => {}).then(async () => {
+  return notificationWork(async () => {
     if (!data || typeof data.id !== "string" || data.id.length > 256 ||
         !["completed", "failed", "ended"].includes(data.outcome) ||
         !Number.isFinite(data.createdAt) ||
         (data.sessionId !== null && (typeof data.sessionId !== "string" || data.sessionId.length > 4096)))
       throw new Error("Invalid task notification");
     if (!pushed && data.createdAt + NOTIFICATION_LIFETIME <= Date.now()) return;
+    const incoming = data.grouping ? { grouping: data.grouping,
+      updatedAt: data.groupingUpdatedAt ?? 0, owner: data.notificationOwner ?? "" } : null;
+    const { policy, displayed: all } = await notificationPolicy(
+      incoming, await self.registration.getNotifications(), pushed,
+    );
+    const previous = !data.test && data.sessionId
+      ? await readNotificationState("latest", data.sessionId, pushed) : null;
+    // Keep confirmed project identity during an optional metadata read failure.
+    const knownIdentity = [previous?.notification, ...all.flatMap(notificationMembers)].find(
+      (item) => item?.sessionId === data.sessionId && item.projectId &&
+        item.notificationOwner === data.notificationOwner,
+    );
+    if (!data.projectId && knownIdentity) data = { ...data,
+      projectId: knownIdentity.projectId, project: data.project || knownIdentity.project };
+    const project = !data.test && policy.grouping === "project" &&
+      typeof data.projectId === "string" && data.projectId.length > 0 && data.projectId.length <= 256;
     const grouped = !data.test && Boolean(data.sessionId);
-    const displayed = grouped ? (await self.registration.getNotifications()).filter(
-      (notification) => notification.data?.sessionId === data.sessionId,
-    ) : [];
-    const readState = async (store, key) => {
-      try { return await notificationState(store, key); }
-      catch (error) {
-        // Storage failure may trigger page-to-push recovery, but must not make
-        // an already received push invisible. Visible metadata still orders it.
-        if (!pushed) throw error;
-      }
-    };
-    const handled = await readState("handled", data.id);
-    const previous = grouped ? await readState("latest", data.sessionId) : null;
-    let current = data;
-    for (const candidate of [previous?.notification, ...displayed.map((item) => item.data?.notification)])
-      if (candidate && candidate.createdAt >= current.createdAt) current = candidate;
+    const tag = project ? "inspire-project:" + data.projectId
+      : grouped ? "inspire-session:" + data.sessionId : "inspire-task:" + data.id;
+    const displayed = grouped ? all.filter((item) => taskNotification(item) &&
+      (item.tag === tag || item.data?.sessionId === data.sessionId ||
+        project && notificationMembers(item).some((member) => member.projectId === data.projectId))) : [];
+    const members = new Map();
+    for (const notification of displayed) for (const member of notificationMembers(notification)) {
+      if (!project && member.sessionId !== data.sessionId) continue;
+      const previous = members.get(member.sessionId);
+      if (!previous || member.createdAt > previous.createdAt) members.set(member.sessionId, member);
+    }
+    const sessionCurrent = latestNotification([previous?.notification, members.get(data.sessionId), data]);
+    const handled = await readNotificationState("handled", data.id, pushed);
     const repeated = Boolean(handled || previous?.notification.id === data.id ||
-      displayed.some((item) => item.data?.notification?.id === data.id));
-    // A received push must display under WebKit's contract. Repaint the latest
-    // known result silently rather than resurrecting a delayed older result.
-    if (!pushed && (repeated || current.id !== data.id)) return;
+      [...members.values()].some((item) => item.id === data.id));
+    if (!pushed && (repeated || sessionCurrent.id !== data.id)) return;
+    const previousGroup = project ? await readNotificationState("groups", data.projectId, pushed) : null;
+    const scopeLatest = latestNotification([
+      previousGroup?.notification, sessionCurrent, ...members.values(), data,
+    ]);
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const viewed = !pushed && !data.test && (await Promise.all(
+      windows.map((client) => viewingSession(client, data.sessionId)),
+    )).some(Boolean);
+    const eligible = !data.test && !viewed && !repeated && sessionCurrent.id === data.id &&
+      (members.size > 0 || data.createdAt >= scopeLatest.createdAt);
+    let changed = false;
+    if (viewed) changed = members.delete(data.sessionId);
+    else if (eligible) {
+      members.set(data.sessionId, data);
+      changed = true;
+    }
     const remember = async () => {
-      if (grouped) await notificationState("latest", data.sessionId, {
-        notification: current, recordedAt: Date.now(),
+      if (grouped && (!previous || data.createdAt >= previous.notification.createdAt))
+        await notificationState("latest", data.sessionId, {
+          notification: sessionCurrent, recordedAt: Date.now(),
+        });
+      if (project) await notificationState("groups", data.projectId, {
+        notification: scopeLatest, recordedAt: Date.now(),
       });
       await notificationState("handled", data.id, Date.now());
     };
-    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-    if (!pushed && !data.test && (await Promise.all(
-      windows.map((client) => viewingSession(client, data.sessionId)),
-    )).some(Boolean)) {
+    // Viewing removes only this session. Dismissed project notifications do not
+    // seed the next cycle with old members, even when a push must be repainted.
+    if (!pushed && (!members.size && viewed || !changed && !data.test)) {
       await remember();
-      for (const notification of displayed) notification.close();
+      if (viewed && !members.size) for (const item of displayed) item.close();
       return;
     }
+    const current = latestNotification([...members.values()]) || scopeLatest;
     const outcome = current.outcome === "failed"
       ? "Task failed" : current.outcome === "ended" ? "Task ended" : "Task completed";
     const name = typeof current.sessionName === "string"
       ? current.sessionName.replace(/\s+/g, " ").trim().slice(0, 160) : "";
-    const title = current.test ? "Inspire test notification"
-      : outcome + " · " + (name || "Unnamed session");
-    const tag = grouped ? "inspire-session:" + data.sessionId : "inspire-task:" + data.id;
-    // Old releases used per-run tags. Retire only this session's legacy slots,
-    // and only after the replacement has been accepted by the browser.
-    const legacy = displayed.filter((notification) => notification.tag !== tag);
+    const label = project && members.size > 1 ? members.size + " sessions" : name || "Unnamed session";
+    const title = current.test ? "Inspire test notification" : outcome + " · " + label;
     await self.registration.showNotification(title, {
       body: current.test ? "Task alerts are using this notification channel."
         : typeof current.project === "string" && current.project ? "Project: " + current.project.slice(0, 160) : "Pi task",
       tag,
-      renotify: !current.test && !repeated && current.id === data.id &&
+      renotify: !current.test && eligible && current.id === data.id &&
         current.createdAt + NOTIFICATION_LIFETIME > Date.now(),
       icon: "/app-icon-192.png",
       badge: "/app-icon-192.png",
-      data: { sessionId: current.sessionId, url: notificationTarget(current), notification: current },
+      data: { sessionId: current.sessionId, url: notificationTarget(current),
+        notification: current, members: [...members.values()], policy },
     });
-    for (const notification of legacy) notification.close();
+    // Retire legacy/fallback slots only after their replacement was accepted.
+    for (const notification of displayed) if (notification.tag !== tag) notification.close();
     await remember();
     if (data.test) for (const client of windows)
       client.postMessage({ type: "inspire-notification-shown", test: true });
   });
-  notificationQueue = work;
-  return work;
 }
 
 self.addEventListener("message", (event) => {
-  if (event.data?.type !== "inspire-notification-display" ||
-      !event.source || new URL(event.source.url).origin !== self.location.origin) return;
-  event.waitUntil(displayTaskNotification(event.data.notification, false).then(
+  if (!event.source || new URL(event.source.url).origin !== self.location.origin) return;
+  let work;
+  if (event.data?.type === "inspire-notification-display")
+    work = displayTaskNotification(event.data.notification, false);
+  else if (event.data?.type === "inspire-notification-settings")
+    work = notificationWork(async () => {
+      if (!validPolicy(event.data)) throw new Error("Invalid notification grouping");
+      await notificationPolicy({ grouping: event.data.grouping,
+        updatedAt: event.data.updatedAt, owner: event.data.owner ?? "" },
+        await self.registration.getNotifications(), false, true);
+    });
+  else return;
+  event.waitUntil(work.then(
     () => event.ports[0]?.postMessage({ ok: true }),
-    () => event.ports[0]?.postMessage({ error: "The browser could not display the system notification." }),
+    () => event.ports[0]?.postMessage({ error: "The browser could not update the system notifications." }),
   ));
 });
 

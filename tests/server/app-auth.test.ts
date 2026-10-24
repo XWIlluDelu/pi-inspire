@@ -1,5 +1,5 @@
 import { generateKeyPairSync, sign } from "node:crypto";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -7,8 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { accessCookieName } from "../../server/app.js";
 import {
-  hostApiFixture,
   closeHostApiFixture,
+  hostApiFixture,
   pairedBrowser,
   socketAdmission,
   token,
@@ -55,6 +55,22 @@ describe("Host browser authentication and asset access", () => {
         .set("Authorization", `Bearer ${bearer}`)
         .send({ mode: "title" });
     await configure(first.bearer).expect(200);
+    const grouped = await request(application.server)
+      .put("/api/notifications")
+      .set("Origin", baseUrl)
+      .set("Authorization", `Bearer ${first.bearer}`)
+      .send({ grouping: "project" })
+      .expect(200);
+    expect(grouped.body).toMatchObject({ mode: "title", grouping: "project" });
+    expect((await settings(second.bearer).expect(200)).body.grouping).toBe(
+      "session",
+    );
+    await request(application.server)
+      .put("/api/notifications")
+      .set("Origin", baseUrl)
+      .set("Authorization", `Bearer ${first.bearer}`)
+      .send({ grouping: "invalid" })
+      .expect(400);
     expect((await settings(first.bearer).expect(200)).body.mode).toBe("title");
     expect((await settings(second.bearer).expect(200)).body.mode).toBeNull();
     await request(application.server)

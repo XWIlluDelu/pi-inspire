@@ -23,6 +23,25 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("Settings component UX and navigation", () => {
+  it("offers per-session or per-project grouping independently of notification permission", () => {
+    const change = vi
+      .spyOn(store, "setTaskNotificationGrouping")
+      .mockResolvedValue(true);
+    render(<Settings onClose={() => undefined} />);
+    fireEvent.click(
+      within(
+        screen.getByRole("navigation", { name: "Settings categories" }),
+      ).getByRole("button", { name: "Behavior" }),
+    );
+    fireEvent.click(
+      screen.getByRole("combobox", {
+        name: "Notification grouping",
+      }),
+    );
+    fireEvent.click(screen.getByRole("option", { name: "Project" }));
+    expect(change).toHaveBeenCalledWith("project");
+  });
+
   it("shows only the selected category and lands at its content top", () => {
     render(<Settings onClose={() => undefined} />);
     const navigation = screen.getByRole("navigation", {
