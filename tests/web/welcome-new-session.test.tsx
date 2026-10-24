@@ -1072,6 +1072,43 @@ describe("new-session start surface", () => {
     );
   });
 
+  it("keeps the hidden-file filter but clears project references when New changes directory", async () => {
+    const search = vi.spyOn(store, "searchNewSessionProjectFiles");
+    render(<Welcome />);
+    fireEvent.change(screen.getByLabelText("Project directory"), {
+      target: { value: "/one" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add project files" }));
+    await screen.findByRole("option", {
+      name: /index\.ts.*src\/index\.ts/,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Show hidden files" }));
+    await waitFor(() =>
+      expect(search).toHaveBeenLastCalledWith("/one", "", true),
+    );
+    fireEvent.click(
+      await screen.findByRole("option", {
+        name: /index\.ts.*src\/index\.ts/,
+      }),
+    );
+    expect(
+      screen.getByRole("list", { name: "Referenced project files" }),
+    ).toHaveTextContent("src/index.ts");
+    fireEvent.change(screen.getByLabelText("Project directory"), {
+      target: { value: "/two" },
+    });
+    expect(
+      screen.queryByRole("list", { name: "Referenced project files" }),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Add project files" }));
+    expect(
+      screen.getByRole("button", { name: "Show hidden files" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() =>
+      expect(search).toHaveBeenLastCalledWith("/two", "", true),
+    );
+  });
+
   it("never submits an unexplained Pi fallback when no model can be resolved", async () => {
     defaultModelAvailable = false;
     defaultModelCwd = null;

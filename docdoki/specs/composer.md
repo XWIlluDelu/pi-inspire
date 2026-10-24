@@ -106,7 +106,8 @@ elide without overflowing. The search row's bottom boundary spans the input and 
 only input focus applies its accent color.
 
 Both searches offer default-off Show hidden files for dot names and native hidden attributes,
-independently of Git ignore. Incomplete scans are reported; Git failure does not block discovery.
+independently of Git ignore. New retains this filter choice across directory edits while clearing
+directory-bound file selections. Incomplete scans are reported; Git failure does not block discovery.
 Picker chips are deduplicated and removable. Search results confer no delivery authority: the Host
 revalidates canonical regular files within the workspace at the prompt boundary and before delivery.
 Selected paths become JSON string literals under an explicit context heading, so filename newlines
