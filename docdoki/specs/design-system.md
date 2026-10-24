@@ -90,6 +90,10 @@ drawers and focused terminals stay below it.
 The uninterrupted strip uses `--bg-rail`, without subdivisions, bottom rule, gradient or shadow;
 the navigation divider stops below it. Its `theme-color` follows palette and resolved luminosity
 before first paint and after Host bootstrap, including system-theme and Overlay-mode changes.
+Modal backgrounds also dim the entire installed titlebar, including its wordmark and decoration,
+with the same palette scrim and stacking depth. Its opaque `theme-color` hint follows that composite
+so browser-owned controls do not retain a bright patch. Closing the last modal restores the frame;
+window drag and native controls remain available. This applies to dialogs and narrow modal drawers.
 Ordinary tabs and standalone fallback use neutral `#F4F5F6` / `#14171A` hints; the manifest keeps its
 neutral light fallback. Browser/OS support determines native controls and installed-icon update timing.
 

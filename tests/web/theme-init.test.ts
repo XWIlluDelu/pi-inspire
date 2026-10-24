@@ -3,12 +3,12 @@ import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { PALETTE_PREFERENCES } from "../../shared/contracts";
-import { paletteTokens } from "./palette-css";
 import {
   applyBrowserTheme,
   cacheVisualPreferences,
   VISUAL_PREFERENCES_STORAGE_KEY,
 } from "../../src/visual-preferences";
+import { paletteTokens } from "./palette-css";
 
 let themeInit = "";
 
@@ -112,7 +112,7 @@ describe("first-paint visual preferences", () => {
       expect(themeColor.content).toBe(color);
       const dataset = {};
       vi.stubGlobal("document", {
-        documentElement: { dataset },
+        documentElement: { dataset, style: { removeProperty: vi.fn() } },
         querySelector: () => themeColor,
       });
       try {
@@ -136,7 +136,10 @@ describe("first-paint visual preferences", () => {
         firstPaint(JSON.stringify({ theme, palette }), false, themeColor, true);
         expect(themeColor.content).toBe(color);
         vi.stubGlobal("document", {
-          documentElement: { dataset: { palette } },
+          documentElement: {
+            dataset: { palette },
+            style: { removeProperty: vi.fn() },
+          },
           querySelector: () => themeColor,
         });
         vi.stubGlobal("getComputedStyle", () => ({
