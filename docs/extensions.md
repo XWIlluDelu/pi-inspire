@@ -281,8 +281,10 @@ Register `/usage` to toggle `usageDetailsOpen`. Fetching, caching, and calculati
 There are three distinct levels:
 
 1. **Native RPC, no frontend changes:** commands, standard dialogs, notices, status and text widgets.
-2. **Declarative presentation:** map stable tool/custom-message data to existing typed blocks and
-   nested properties. These are display rules, not a general subagent manager.
+2. **Declarative presentation:** map stable tool/custom-message data to existing typed blocks, or
+   bind a discrete choice to an extension command and structured RPC status. See the
+   [status-control contract](tool-presentations.md#extension-adapters). Use this before adding
+   source-owned buttons; the extension retains state, persistence, and capability decisions.
 3. **Source DIY:** add purpose-built React controls and a small adapter in a checkout. Pi extensions
    still own state and behavior; Inspire does not supply a scheduler or permission policy.
 
