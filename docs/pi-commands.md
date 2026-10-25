@@ -163,9 +163,10 @@ Choose an `@` completion to keep the file path in its sentence position; paths w
 Repeated references remain inline. **Add project files** instead creates removable chips. On the
 new-session surface, inline selections use absolute paths so a directory change cannot retarget them.
 
-Sent ordinary uploads survive Host restart. Inspire keeps their copies while a retained session,
-branch, fork, or recoverable Trash session references them, then reclaims unreferenced owned copies.
-Deleting a session never removes original project files. Images remain embedded in Pi message data.
+Delivered or possibly delivered ordinary uploads remain stored across Host restarts and session
+deletion. Reclaim them explicitly using [uploaded-file cleanup](host.md#uploaded-file-retention-and-cleanup).
+Deleting a session removes neither these copies nor original project files. Images remain embedded
+in Pi message data.
 
 ## Pending input and stopping
 
