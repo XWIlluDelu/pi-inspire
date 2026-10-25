@@ -3,6 +3,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  readdir,
   rm,
   stat,
   writeFile,
@@ -10,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { buildWeb } from "../../scripts/build-web.mjs";
 import { publishWebBuild } from "../../scripts/web-build-output.mjs";
 import { sourceBuildHash } from "../../scripts/source-build-hash.mjs";
 
@@ -40,6 +42,53 @@ afterEach(async () => {
 });
 
 describe("source build freshness", () => {
+  it("leaves a save during compilation stale until the next build includes it", async () => {
+    const root = await directory("inspire-build-save-");
+    const cacheDirectory = join(root, "cache");
+    const beforeSave = 'console.log("before-save");\n';
+    const afterSave = 'console.log("after-save");\n';
+    await put(root, "package.json", '{"type":"module"}\n');
+    await put(
+      root,
+      "index.html",
+      '<script type="module" src="/src/main.js"></script>\n',
+    );
+    await put(root, "src/main.js", beforeSave);
+    await put(
+      root,
+      "vite.config.ts",
+      `import { writeFile } from "node:fs/promises";
+export default {
+  logLevel: "silent",
+  plugins: [{
+    name: "save-source-after-compilation",
+    async writeBundle() {
+      await writeFile(${JSON.stringify(join(root, "src/main.js"))}, ${JSON.stringify(afterSave)});
+    },
+  }],
+};\n`,
+    );
+    const compiledScript = async () => {
+      const assets = join(root, "dist", "assets");
+      const [script] = (await readdir(assets)).filter((name) =>
+        name.endsWith(".js"),
+      );
+      assert.ok(script);
+      return readFile(join(assets, script), "utf8");
+    };
+    const stamp = async () =>
+      (await readFile(join(root, ".inspire-build"), "utf8")).trim();
+
+    await buildWeb(root, { cacheDirectory });
+    assert.match(await compiledScript(), /before-save/);
+    assert.equal(await readFile(join(root, "src/main.js"), "utf8"), afterSave);
+    assert.notEqual(await stamp(), await sourceBuildHash(root));
+
+    await buildWeb(root, { cacheDirectory, clean: true });
+    assert.match(await compiledScript(), /after-save/);
+    assert.equal(await stamp(), await sourceBuildHash(root));
+  });
+
   it("invalidates the cached build when its asset plugin changes", async () => {
     const root = await directory("inspire-build-inputs-");
     await put(
