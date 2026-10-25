@@ -5,6 +5,7 @@ import {
   type ToolPresentationBlock,
   toolResultImage,
 } from "../tool-presentations/model";
+import { useActivityReaderScroll } from "./transcript-activity-visibility";
 
 /** Only a standalone first-part runner banner is metadata, not user output. */
 export function codeModeDuration(result?: ChatMessage): string | undefined {
@@ -116,9 +117,14 @@ export function CodeModeResult({
   renderImage: (block: ImageBlock) => React.ReactNode;
 }) {
   const parts = useMemo(() => resultParts(result), [result]);
+  const scroll = useActivityReaderScroll<HTMLDivElement>(
+    "codemode-result-scroll",
+    result,
+  );
   return (
     <div
       className="codemode-result"
+      {...scroll.props}
       tabIndex={0}
       role="group"
       aria-label="Result output"

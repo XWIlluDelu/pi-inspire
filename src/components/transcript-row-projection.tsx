@@ -16,7 +16,6 @@ import {
 } from "../../shared/contracts";
 import { messageFallbackCorrelation } from "../../shared/message-identity";
 import { stripTerminalSequences } from "../ansi";
-import { messageCopyLoader } from "../message-copy";
 import {
   type ActivityTool,
   asMessage,
@@ -27,6 +26,7 @@ import {
   type ToolCallContent,
   userMessageSearchText,
 } from "../events";
+import { messageCopyLoader } from "../message-copy";
 import type {
   ActivityMaterializationMode,
   TranscriptActivityRangeState,
@@ -34,7 +34,10 @@ import type {
 import { AssistantError, AssistantStopped } from "./AssistantError";
 import { BashExecution } from "./BashExecution";
 import { CustomMessage } from "./CustomMessage";
-import { ActivitySegmentBoundary } from "./transcript-activity-visibility";
+import {
+  type ActivityReadingChoices,
+  ActivitySegmentBoundary,
+} from "./transcript-activity-visibility";
 import {
   assistantEndsWithToolRun,
   genericContentTitle,
@@ -163,6 +166,7 @@ export function useTranscriptRows({
         byMember: new Map<string, string>(),
       },
       manualFoldPresentation: new Map<string, ActivityFoldPresentation>(),
+      readingChoices: new Map() as ActivityReadingChoices,
     }),
     [projectionViewKey, sessionId],
   );
@@ -299,6 +303,7 @@ export function useTranscriptRows({
     };
 
     const built: Row[] = [];
+    const activityItemKeys = new Set<string>();
     const foldIdentityClaims: ProjectionIdentityClaim[] = [];
     const claimedFoldKeys = new Set<string>();
     // Outer disclosure state must survive live-overlay adoption. Ordinary Pi
@@ -356,8 +361,10 @@ export function useTranscriptRows({
       activityRun.memberKeys.push(key, ...aliases);
       activityRun.nodes.push({ key, node });
       if (deferredRange) activityRun.deferredRanges.push(deferredRange);
-      if (telemetryItems.length > 0)
+      if (telemetryItems.length > 0) {
         activityRun.telemetry.push(...telemetryItems);
+        for (const item of telemetryItems) activityItemKeys.add(item.id);
+      }
       activityRun.live ||= live;
     };
     const flushActivity = (boundaryClosed: boolean, tail = false) => {
@@ -389,6 +396,7 @@ export function useTranscriptRows({
                 next,
               )
             }
+            readingChoices={activityProjectionIdentities.readingChoices}
             deferredRanges={run.deferredRanges}
             telemetry={run.telemetry}
             onMaterializeRanges={onMaterializeActivityRanges}
@@ -876,7 +884,7 @@ export function useTranscriptRows({
     }
 
     flushActivity(false, true);
-    return { rows: built, foldIdentityClaims };
+    return { rows: built, foldIdentityClaims, activityItemKeys };
   }, [
     presentationConfiguration,
     projectionMessages,
@@ -897,7 +905,7 @@ export function useTranscriptRows({
     viewId,
     projectionViewKey,
   ]);
-  const { rows, foldIdentityClaims } = rowProjection;
+  const { rows, foldIdentityClaims, activityItemKeys } = rowProjection;
   useLayoutEffect(() => {
     const commit = (
       registry: ProjectionIdentityRegistry,
@@ -909,7 +917,10 @@ export function useTranscriptRows({
       }
     };
     commit(activityProjectionIdentities.folds, foldIdentityClaims);
-  }, [activityProjectionIdentities, foldIdentityClaims]);
+    for (const id of activityProjectionIdentities.readingChoices.keys())
+      if (!activityItemKeys.has(id))
+        activityProjectionIdentities.readingChoices.delete(id);
+  }, [activityItemKeys, activityProjectionIdentities, foldIdentityClaims]);
 
   return rows;
 }

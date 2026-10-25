@@ -187,8 +187,9 @@ Selectors put Adaptive first, followed by fixed modes from most to least detail:
 | Reasoning | Expanded, Collapsed, Hidden |
 
 Option help describes materialization: Expanded loads every card; Compact presents up to the latest
-24 behind the existing expansion entry; Collapsed shows only the group entry while retaining already
-materialized children and local state. A per-card override leaves its saved default unchanged.
+24 behind the existing expansion entry; Collapsed shows only the group entry and releases child DOM.
+Projection-scoped state preserves deliberate reading choices for reopening. A per-card override leaves
+its saved default unchanged.
 
 ## Task alerts
 
