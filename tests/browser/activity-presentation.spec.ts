@@ -589,9 +589,7 @@ test.describe("touch activity disclosures", () => {
       await copy.tap();
       await expect(toggle).toHaveAttribute("aria-expanded", "true");
       await expect(copy).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-      await row.tap({
-        position: { x: (await row.boundingBox())!.width - 24, y: 12 },
-      });
+      await toggle.tap();
       await expect(toggle).toHaveAttribute("aria-expanded", "false");
       await expect(copy).toHaveCount(0);
       await expect(toggle).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
