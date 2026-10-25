@@ -700,6 +700,7 @@ export class AppStore {
   }
 
   private invalidateTransportControllers(): void {
+    this.notifications.invalidateForTransportReplacement();
     this.composer.invalidateForTransportReplacement();
     this.updates.invalidateForTransportReplacement();
     this.resources.invalidateForTransportReplacement();
@@ -871,8 +872,7 @@ export class AppStore {
         this.notify("warning", boot.preferencesWarning);
       if (boot.toolPresentationsWarning)
         this.notify("warning", boot.toolPresentationsWarning);
-      await this.notifications.initialize(preferences.completionAttention);
-      if (!ownsBootstrap()) return;
+      this.notifications.start(preferences.completionAttention);
       void this.connectionController.connect(reconnectToken);
       void this.loadSessions(this.state.sessionQuery).then(() => {
         if (!ownsBootstrap()) return;

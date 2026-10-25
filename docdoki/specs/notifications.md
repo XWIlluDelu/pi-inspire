@@ -132,13 +132,17 @@ tests Host-to-push delivery.
 ### Installation state
 
 Persist the choice per Host and origin/browser installation. All its windows share current intent
-and delivery health. Recheck on initialization, opening Settings and app resume. Reconcile an
+and delivery health. The initial event connection supplies device settings before notification offers;
+apply that intent synchronously while subscription recovery and worker synchronization run independently
+of the core connection and session catalog. Recheck on opening Settings and app resume. Reconcile an
 existing subscription whose Host registration failed without requesting permission again; healthy
 refreshes need not rewrite enrollment. An endpoint rejected as expired stays retired until explicit
 Enable replaces the browser subscription.
 
 Async permission, subscription and display results belong to the current choice and API owner.
-Late completion cannot re-enable alerts, overwrite another window's choice or restore stale errors.
+Save the gesture's mode choice independently of waiting for browser permission. Later permission and
+subscription results fill in delivery capability without rewriting that choice. Late completion cannot
+re-enable alerts, overwrite another window's choice or restore stale errors.
 Disabling alerts cancels pending sends; re-enabling does not revive them. Reset affects this device
 only. New installations default to Off. Migration preserves the old choice and any usable page
 delivery while showing enrollment as a separate step.

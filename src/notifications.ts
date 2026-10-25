@@ -53,6 +53,9 @@ export class TaskNotificationController {
   private writes: Promise<unknown> = Promise.resolve();
   private enrollment: Promise<unknown> = Promise.resolve();
   private readonly targetKey = "inspire-notification-target";
+  private initialSettingsApi: Api | null = null;
+  private legacyIntent: CompletionAttentionPreference = "off";
+  private modeNeedsMigration = false;
 
   constructor(private readonly host: Host) {}
 
@@ -146,12 +149,39 @@ export class TaskNotificationController {
       if (this.openingTarget === opening) this.openingTarget = null;
     }
   }
+  /** The event connection sends device settings before notification offers.
+   * Browser enrollment is optional work, never a prerequisite for that stream. */
+  start(legacy: CompletionAttentionPreference): void {
+    this.legacyIntent = legacy;
+    this.initialSettingsApi = this.host.api();
+    this.captureTarget();
+    this.refreshPermission();
+  }
+
+  invalidateForTransportReplacement(): void {
+    this.generation++;
+    this.groupingGeneration++;
+    this.groupingSync++;
+    this.initialSettingsApi = null;
+    this.modeNeedsMigration = false;
+    this.pendingSettings = null;
+    this.pendingSettingsApi = null;
+    this.patch({ busy: false, groupingBusy: false });
+  }
+
   private updateEnrollment<T>(operation: () => Promise<T>): Promise<T> {
     const pending = this.enrollment.catch(() => {}).then(operation);
     this.enrollment = pending;
     return pending;
   }
   applySettings(settings: TaskAlertSettings): void {
+    // A real Host choice retires unresolved migration immediately, even while
+    // another control defers displaying settings. Null only renders as Off.
+    const migrationResolved = this.modeNeedsMigration && settings.mode !== null;
+    if (migrationResolved) {
+      this.modeNeedsMigration = false;
+      this.generation++;
+    }
     // Let an in-flight local gesture finish rather than applying its older echo.
     if (
       this.host.state().taskAlerts.busy ||
@@ -161,7 +191,12 @@ export class TaskNotificationController {
       this.pendingSettingsApi = this.host.api();
       return;
     }
-    if (settings.mode !== this.host.state().taskAlerts.mode) this.generation++;
+    if (
+      !migrationResolved &&
+      (settings.mode ?? "off") !== this.host.state().taskAlerts.mode
+    )
+      this.generation++;
+    this.modeNeedsMigration = settings.mode === null;
     const groupingCurrent = this.acceptGroupingSettings(settings);
     this.patch({
       mode: settings.mode ?? "off",
@@ -174,8 +209,14 @@ export class TaskNotificationController {
       subscribed: settings.subscribed,
       error: settings.error,
     });
-    if (settings.mode === "off") this.host.clear();
-    if (groupingCurrent) void this.syncGrouping(settings);
+    if ((settings.mode ?? "off") === "off") this.host.clear();
+    const initial =
+      this.initialSettingsApi !== null &&
+      this.initialSettingsApi === this.host.api();
+    if (initial) {
+      this.initialSettingsApi = null;
+      void this.initialize(this.legacyIntent, settings);
+    } else if (groupingCurrent) void this.syncGrouping(settings);
   }
   private acceptGroupingSettings(settings: TaskAlertSettings): boolean {
     const state = this.host.state().taskAlerts;
@@ -204,24 +245,39 @@ export class TaskNotificationController {
     // Same-choice echoes must not hide a later permission/setup failure.
     if (
       settings &&
-      (settings.mode !== state.mode ||
+      ((this.initialSettingsApi !== null &&
+        this.initialSettingsApi === this.host.api()) ||
+        settings.mode !== state.mode ||
         settings.publicKey !== this.groupingSettings?.publicKey ||
         (settings.groupingUpdatedAt ?? 0) > state.groupingUpdatedAt)
     )
       this.applySettings(settings);
   }
-  async initialize(legacy: CompletionAttentionPreference): Promise<void> {
+  async initialize(
+    legacy: CompletionAttentionPreference,
+    initialSettings?: TaskAlertSettings,
+  ): Promise<void> {
     this.captureTarget();
     this.refreshPermission();
     const api = this.host.api();
     if (!api) return;
-    const generation = this.generation;
+    let generation = this.generation;
     const groupingGeneration = this.groupingGeneration;
     try {
-      let settings = await api.taskAlertSettings();
+      let settings = initialSettings ?? (await api.taskAlertSettings());
       if (generation !== this.generation || this.host.api() !== api) return;
-      if (settings.mode === null)
-        settings = await this.save(await migrateTaskAlertIntent(legacy));
+      this.initialSettingsApi = null;
+      if (this.modeNeedsMigration && settings.mode !== null)
+        generation = ++this.generation;
+      this.modeNeedsMigration = settings.mode === null;
+      if (settings.mode === null) {
+        const mode = await migrateTaskAlertIntent(legacy);
+        if (generation !== this.generation || this.host.api() !== api) return;
+        // Publish the migrated intent before its own settings echo arrives.
+        this.modeNeedsMigration = false;
+        this.patch({ mode });
+        settings = await this.save(mode, undefined, undefined, api);
+      }
       if (generation !== this.generation || this.host.api() !== api) return;
       if (settings.mode === "off" || settings.mode === "title") {
         await this.updateEnrollment(async () => {
@@ -249,14 +305,20 @@ export class TaskNotificationController {
           browserNotificationPermission() !== "granted" ||
           encoded !== settings.publicKey
         ) {
-          if (settings.subscribed) settings = await this.save(undefined, null);
+          if (settings.subscribed)
+            settings = await this.save(undefined, null, undefined, api);
         } else if (subscription!.endpoint !== settings.endpoint) {
           // Browser enrollment can succeed even if its Host registration fails
           // or times out. Reconcile the existing subscription, not a new one:
           // no permission prompt, no subscribe(), and no rewrite of intent.
           // A retained endpoint with subscribed=false was explicitly expired;
           // only a different browser subscription can repair that destination.
-          settings = await this.save(undefined, subscription!.toJSON());
+          settings = await this.save(
+            undefined,
+            subscription!.toJSON(),
+            undefined,
+            api,
+          );
         }
         if (generation !== this.generation || this.host.api() !== api) return;
       }
@@ -300,12 +362,18 @@ export class TaskNotificationController {
     mode: CompletionAttentionPreference | undefined,
     subscription?: PushSubscriptionJSON | null,
     grouping?: TaskNotificationGrouping,
+    api = this.host.api(),
   ): Promise<TaskAlertSettings> {
-    const api = this.host.api();
     if (!api) return Promise.reject(new Error("Connect to the Host first"));
     const operation = this.writes
       .catch(() => {})
-      .then(() => api.configureTaskAlerts(mode, subscription, grouping));
+      .then(() => {
+        if (this.host.api() !== api)
+          throw new Error(
+            "The Host connection changed before notification settings were saved",
+          );
+        return api.configureTaskAlerts(mode, subscription, grouping);
+      });
     this.writes = operation;
     return operation;
   }
@@ -388,7 +456,7 @@ export class TaskNotificationController {
         });
       return false;
     } finally {
-      if (generation === this.groupingGeneration) {
+      if (current()) {
         this.patch({ groupingBusy: false });
         this.flushPendingSettings();
       }
@@ -396,6 +464,11 @@ export class TaskNotificationController {
   }
   async setMode(mode: CompletionAttentionPreference): Promise<boolean> {
     const generation = ++this.generation;
+    const api = this.host.api();
+    const current = () =>
+      generation === this.generation && this.host.api() === api;
+    this.initialSettingsApi = null;
+    this.modeNeedsMigration = false;
     this.pendingSettings = null;
     this.patch({ mode, busy: true, error: null, testResult: null });
     if (mode === "off") this.host.clear();
@@ -405,33 +478,40 @@ export class TaskNotificationController {
         ? requestBrowserNotificationPermission()
         : Promise.resolve(browserNotificationPermission());
     try {
-      const granted = await permission;
-      if (generation !== this.generation) return false;
+      // Save the gesture's intent while permission is pending. Its later
+      // result may fill in transport, but cannot rewrite another window's Off.
+      const [granted, saved] = await Promise.all([
+        permission,
+        this.save(mode, mode === "desktop" ? undefined : null, undefined, api),
+      ]);
+      if (!current()) return false;
       this.patch({ permission: granted });
-      const saved = await this.save(
-        mode,
-        mode === "desktop" && granted === "granted" ? undefined : null,
-      );
-      if (generation !== this.generation) return false;
       this.patch({ subscribed: saved.subscribed });
       return await this.updateEnrollment(async () => {
-        if (generation !== this.generation) return false;
+        if (!current()) return false;
         if (mode !== "desktop") {
           // Disable the server destination first; failure to unsubscribe cannot reactivate it.
           const registration = await navigator.serviceWorker?.getRegistration();
-          await (
-            await registration?.pushManager?.getSubscription()
-          )?.unsubscribe();
-          return true;
+          if (!current()) return false;
+          const subscription =
+            await registration?.pushManager?.getSubscription();
+          if (!current()) return false;
+          await subscription?.unsubscribe();
+          return current();
         }
-        if (granted !== "granted") return false;
+        if (granted !== "granted") {
+          const disabled = await this.save(undefined, null, undefined, api);
+          if (current()) this.patch({ subscribed: disabled.subscribed });
+          return false;
+        }
         const registration = await this.registration();
-        if (generation !== this.generation) return false;
+        if (!current()) return false;
         if (!registration.pushManager)
           throw new Error(
             "Background push is unavailable; notifications work while Inspire is open.",
           );
         let subscription = await registration.pushManager.getSubscription();
+        if (!current()) return false;
         const bytes = Uint8Array.from(
           atob(saved.publicKey.replace(/-/g, "+").replace(/_/g, "/")),
           (c) => c.charCodeAt(0),
@@ -445,6 +525,7 @@ export class TaskNotificationController {
             existing.byteLength !== bytes.length
           ) {
             await subscription.unsubscribe();
+            if (!current()) return false;
             subscription = null;
           }
         }
@@ -456,15 +537,20 @@ export class TaskNotificationController {
           15_000,
           "Background setup timed out. Notifications still work while Inspire is open; retry when the browser can reach its push service.",
         );
-        if (generation !== this.generation) {
+        if (!current()) {
           if (this.host.state().taskAlerts.mode !== "desktop")
             await subscription.unsubscribe();
           return false;
         }
         // Enrollment fills in transport, not intent: another window may have
         // disabled alerts while the browser was creating this subscription.
-        const enrolled = await this.save(undefined, subscription.toJSON());
-        if (generation !== this.generation) return false;
+        const enrolled = await this.save(
+          undefined,
+          subscription.toJSON(),
+          undefined,
+          api,
+        );
+        if (!current()) return false;
         this.patch({ subscribed: enrolled.subscribed, error: enrolled.error });
         if (enrolled.mode !== "desktop") {
           this.pendingSettings = enrolled;
@@ -475,7 +561,7 @@ export class TaskNotificationController {
         return true;
       });
     } catch (error) {
-      if (generation === this.generation)
+      if (current())
         this.patch({
           error:
             error instanceof Error
@@ -484,7 +570,7 @@ export class TaskNotificationController {
         });
       return false;
     } finally {
-      if (generation === this.generation) this.finishUpdate();
+      if (current()) this.finishUpdate();
     }
   }
   async receive(event: TaskNotification): Promise<void> {
