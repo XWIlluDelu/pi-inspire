@@ -199,9 +199,9 @@ body.pane-resizing--vertical .nav {
   align-items: center;
   padding: 2px;
   gap: 2px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-control);
-  background: var(--bg-inset);
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
 }
 
 .ctx__header-actions {
@@ -222,7 +222,7 @@ body.pane-resizing--vertical .nav {
   justify-content: center;
   gap: 4px;
   border: 0;
-  border-radius: calc(var(--radius-control) - 3px);
+  border-radius: 0;
   padding: 0 var(--space-1);
   background: transparent;
   color: var(--muted);
@@ -245,7 +245,8 @@ body.pane-resizing--vertical .nav {
 .ctx__modes button[aria-pressed="true"],
 .ctx__modes button[aria-selected="true"],
 .ctx__modes button.segmented__item--active {
-  background: var(--bg-surface);
+  background: transparent;
+  box-shadow: inset 0 -2px 0 var(--accent);
   font-weight: 600;
 }
 

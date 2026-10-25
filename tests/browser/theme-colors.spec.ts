@@ -7,6 +7,7 @@ const css = (
   await Promise.all(
     [
       "foundation",
+      "menus",
       "choice-input",
       "navigation",
       "topbar",
@@ -182,7 +183,7 @@ for (const palette of PALETTE_PREFERENCES)
             <div class="attachment"><span>Attachment</span><button class="attachment__remove" id="attachment-remove">×</button></div>
             <div class="dirpicker__list"><button class="dirpicker__row" id="directory-row">Folder</button></div>
             <h1 class="topbar__title"><button class="topbar__title-button" id="session-title"><span>Session title</span></button></h1>
-            <div class="session-actions-menu" style="position:static"><button id="clone-action">Clone current branch</button></div>
+            <div class="session-actions-menu" style="position:static"><div class="session-actions-menu__row"><button id="clone-action" data-session-action>Clone current branch</button></div></div>
             <div class="composer__failed-delivery"><button class="button button--quiet" id="restore-action">Restore</button></div>
           </section>
           <section aria-label="Status actions" style="background:var(--bg-stage)">
@@ -364,6 +365,7 @@ for (const palette of PALETTE_PREFERENCES)
         document.body.append(probe);
         const colors = Object.fromEntries(
           [
+            "accent",
             "accent-focus",
             "accent-deep",
             "accent-fill",
@@ -441,12 +443,30 @@ for (const palette of PALETTE_PREFERENCES)
           (el) => getComputedStyle(el).backgroundColor,
         );
         await expect(other).not.toHaveCSS("color", roles["accent-deep"]!);
-        await expect(other).not.toHaveCSS("background-color", selectedFill);
+        if (id === "resource-mode") {
+          await expect(selected).toHaveCSS(
+            "background-color",
+            "rgba(0, 0, 0, 0)",
+          );
+          await expect(other).toHaveCSS("background-color", selectedFill);
+          await expect(selected).toHaveCSS(
+            "box-shadow",
+            `${roles.accent} 0px -2px 0px 0px inset`,
+          );
+          await expect(other).toHaveCSS("box-shadow", "none");
+        } else {
+          await expect(other).not.toHaveCSS("background-color", selectedFill);
+        }
         await selected.focus();
         await selected.hover();
         await page.mouse.down();
         await expect(selected).toHaveCSS("color", roles["accent-deep"]!);
         await expect(selected).toHaveCSS("background-color", selectedFill);
+        if (id === "resource-mode")
+          await expect(selected).toHaveCSS(
+            "box-shadow",
+            `${roles.accent} 0px -2px 0px 0px inset`,
+          );
         await page.mouse.up();
         // Palette buttons are never disabled; native segments and view modes can be.
         if (id !== "palette") {
@@ -479,7 +499,7 @@ for (const palette of PALETTE_PREFERENCES)
       }
 
       const pagination = page.locator("#focus-pagination");
-      await expect(pagination).toHaveCSS("border-radius", "6px");
+      await expect(pagination).toHaveCSS("border-radius", "4px");
       await pagination.hover();
       await expect(pagination).toHaveCSS("border-color", roles["accent-deep"]!);
       await pagination.focus();
@@ -632,10 +652,12 @@ for (const palette of PALETTE_PREFERENCES)
         ["attachment-remove", "faint", "color", roles.error],
         ["directory-row", "faint", "background-color", roles["bg-inset"]],
         ["session-title", "ink", "background-color", roles["bg-inset"]],
-        ["clone-action", "faint", "background-color", roles["bg-inset"]],
+        ["clone-action", "faint", "background-color", roles["accent-tint"]],
         ["restore-action", "faint", "background-color", roles["bg-inset"]],
       ]) {
         const button = page.locator(`#${id}`);
+        const hoverTarget =
+          id === "clone-action" ? button.locator("..") : button;
         const appearance = () =>
           button.evaluate((element) => {
             const style = getComputedStyle(element);
@@ -652,16 +674,26 @@ for (const palette of PALETTE_PREFERENCES)
             );
           });
         await button.hover();
-        await expect(button).toHaveCSS(hoverProperty!, hoverValue!);
+        await expect(hoverTarget).toHaveCSS(hoverProperty!, hoverValue!);
         await button.evaluate((element: HTMLButtonElement) => {
           element.disabled = true;
         });
         await page.mouse.move(0, 0);
+        if (id === "clone-action")
+          await expect(hoverTarget).toHaveCSS(
+            "background-color",
+            "rgba(0, 0, 0, 0)",
+          );
         const disabled = await appearance();
         await expect(button).toHaveCSS("color", roles[ink!]!);
         await expect(button).toHaveCSS("cursor", "default");
         await button.hover({ force: true });
         expect(await appearance(), `${id} disabled hover`).toEqual(disabled);
+        if (id === "clone-action")
+          await expect(hoverTarget).toHaveCSS(
+            "background-color",
+            "rgba(0, 0, 0, 0)",
+          );
         await page.mouse.down();
         try {
           expect(await appearance(), `${id} disabled press`).toEqual(disabled);
