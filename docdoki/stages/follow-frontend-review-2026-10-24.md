@@ -111,6 +111,9 @@ These checks describe the initial repair pass before its separately authorized l
 
 ## Accepted visual refinement verification
 
+These checks describe the initial radius/tab refinement, before the separately approved error-ink
+follow-up below.
+
 - The production CSS changes are confined to shared radii, the user bubble/Composer radius, and
   resource-mode surfaces/selection. Font roles, sizes, weights, uppercase/tracking, badge alignment,
   pane borders, responsive toolbar rows and WCO rules are unchanged.
@@ -123,13 +126,33 @@ These checks describe the initial repair pass before its separately authorized l
   expose an existing terminal danger-menu hover contrast gap: Chimonanthus dark measures 4.4526:1
   and Classic Amber dark 4.3276:1 against the 4.5:1 requirement. A separate run using the unmodified
   `489c78aa` CSS reproduces both exact values. Do not weaken the threshold or change unrelated
-  palette values as part of the accepted visual scope; this remains a known accessibility gap.
+  palette values as part of that accepted visual scope. The subsequent approved global error-ink
+  refinement below resolves this gap.
 - Theme verification now loads the shared menu CSS and renders the real session-action row; the
   old isolated fixture omitted both and asserted an obsolete button-owned hover surface. The
   product's session/terminal menu behavior was not changed.
 - The local update uses the existing source installation and normal static build publication;
   no service restart, push, main integration, tag or release is part of this delivery. Build
   receipts and visual evidence are retained under `output/playwright/visual-preview-2026-10-24/`.
+
+## Approved error-ink refinement — 2026-10-25
+
+After comparing real Chromium captures for Chimonanthus and Amber dark, the user approved changing
+the single shared `--error-ink` mix from 75% error / 25% primary ink to 70% / 30%. This applies to
+all six palettes in both luminosities. No menu-specific or palette-specific override was added;
+base error, error tint, accent tint, solid danger fills, status marks and typography are unchanged.
+Shared error messages, failed-delivery text and text-style danger actions follow the same role.
+
+- All 12 existing Chromium palette/luminosity cases pass, including resting/hover/pressed danger
+  actions, shared error text on neutral/tinted surfaces, disabled styling and semantic mark roles.
+- All 49 existing style/palette/theme unit checks pass; Biome format/lint and `git diff --check` pass.
+- The approved isolated preview measured hover and pressed contrast at 4.7194:1 for Chimonanthus
+  dark and 4.5881:1 for Amber dark. Composer failed-delivery text measured 6.1959:1 and 6.0804:1;
+  its border and Restore button retained their original colors. The production source suite now
+  passes the same 4.5:1 requirement without weakening any assertion.
+- Preview comparisons and measurements are retained under `output/playwright/error-ink-preview-2026-10-25/`;
+  implementation validation and local-build receipts use `output/playwright/error-ink-fix-2026-10-25/`.
+  The local update uses normal static publication without a service restart, push or release.
 
 ## Remaining decisions
 
