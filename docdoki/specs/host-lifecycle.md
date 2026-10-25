@@ -371,8 +371,9 @@ capture mechanism and service handoff.
 ## Atomic browser-build publication
 
 - Source builds and the launcher share one browser-input hash. Successful `build:web` writes a
-  checkout stamp; changed inputs require one replacement build, while a current stamp avoids
-  rebuilding at startup. The npm distribution omits the stamp and uses its packaged build.
+  checkout stamp from the inputs sampled before compilation; saving changed inputs during a build
+  leaves that stamp stale so the next launch rebuilds. A current stamp avoids rebuilding at startup.
+  The npm distribution omits the stamp and uses its packaged build.
 
 - Ordinary source builds serialize publication per installation, stage Vite output away from the
   live `dist`, snapshot the outgoing build's complete content-addressed JavaScript, CSS, and
