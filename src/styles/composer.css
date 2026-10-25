@@ -433,7 +433,7 @@
   margin: 0 auto;
   background: var(--bg-surface);
   border: 1px solid var(--line);
-  border-radius: var(--radius-overlay);
+  border-radius: var(--radius-surface);
   padding: var(--space-3);
   display: flex;
   flex-direction: column;

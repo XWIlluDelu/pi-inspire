@@ -1142,7 +1142,7 @@
   overflow-wrap: break-word;
   background: var(--bg-prompt);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius-surface);
   padding: 10px 14px;
   font-size: var(--text-reading);
   line-height: var(--leading-reading);
