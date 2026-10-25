@@ -205,8 +205,10 @@ enabled state; disabled styling takes precedence over local action styles.
   text use luminosity-aware colors with AA contrast on their neutral or tinted
   reading surfaces.
 - Small status text uses `--success-ink`, `--warning-ink`, `--info-ink` or `--error-ink` on neutral
-  and tinted surfaces. Outlined, quiet and menu danger actions and activity-fold loading failures
-  retain `--error-ink` through hover, press and focus; danger borders/tints use `--error`.
+  and tinted surfaces. The shared `--error-ink` mixes 70% palette error with 30% primary ink in
+  every palette and luminosity, deepening light-mode text and lifting dark-mode text without
+  changing semantic marks or fills. Outlined, quiet and menu danger actions and activity-fold
+  loading failures retain `--error-ink` through hover, press and focus; danger borders/tints use `--error`.
   Successful command badges use `--activity-success-ink`. Status icons, borders and tints keep their semantic color. Text contrast,
   including faint text, holds on its actual surface in every interaction state.
 - Tool and Thinking have distinct theme identities and matching tints; failure never recolors
