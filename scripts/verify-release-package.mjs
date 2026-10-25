@@ -1212,8 +1212,6 @@ try {
         "authenticated scoped status/restart/stop; confirmed clean exit",
       sessionRecoveryCli:
         "original paths from caller-relative and Host-home bundles",
-      retentionMigrationCli:
-        "zero-write preview and explicit namespace/volume trust",
       realPiStartup: "ok",
       sessionForkWorker: "ok",
       publishDryRun: "accepted without metadata correction",
