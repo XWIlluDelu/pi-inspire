@@ -557,6 +557,55 @@ describe("continue an externally owned Pi", () => {
     }
   });
 
+  it("releases an idle native observer reclaimed while its poll fails", async () => {
+    const first = nativeFixture();
+    const second = nativeFixture();
+    const poll = deferredSignal();
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp"), record("b", "/tmp")]),
+      trackedAttachmentStore(),
+      () => {
+        throw new Error("must not launch Pi");
+      },
+      preview,
+    ).setExternalSessionConnector(async (id) =>
+      id === "a" ? first.native : second.native,
+    );
+    vi.useFakeTimers();
+    try {
+      await runtime.openSession("a");
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot("a")).sessionStatuses.a?.external).toBe(
+          true,
+        ),
+      );
+      const read = vi.mocked(first.native.read);
+      read.mockImplementation(async () => {
+        await poll.promise;
+        throw new Error("Control endpoint unavailable");
+      });
+      const beforePoll = read.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(750);
+      expect(read).toHaveBeenCalledTimes(beforePoll + 1);
+
+      await runtime.openSession("b");
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot("b")).sessionStatuses.a).toBeUndefined(),
+      );
+      expect(first.native.close).toHaveBeenCalledOnce();
+      const retiredReads = read.mock.calls.length;
+      poll.resolve();
+      await vi.advanceTimersByTimeAsync(2_250);
+      expect(read).toHaveBeenCalledTimes(retiredReads);
+      expect(first.native.abort).not.toHaveBeenCalled();
+    } finally {
+      poll.resolve();
+      await runtime.close();
+      vi.useRealTimers();
+    }
+    expect(first.native.close).toHaveBeenCalledOnce();
+  });
+
   it("uses version-checked native polling and forced prompt admission", async () => {
     const session = await persistedRecord("a");
     const f = nativeFixture();

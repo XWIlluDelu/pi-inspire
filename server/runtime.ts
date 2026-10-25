@@ -772,6 +772,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         ),
       stopWorker: (slot) => this.stopWriter(slot),
       removeSlot: (slot) => {
+        this.externalSessions?.detach(slot);
         if (this.slots.get(slot.id) === slot) this.slots.delete(slot.id);
       },
       logRuntimeError: (sessionId, error, event) =>
