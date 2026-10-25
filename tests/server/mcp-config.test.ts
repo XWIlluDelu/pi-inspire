@@ -72,6 +72,44 @@ async function edit(value: Omit<McpConfigEdit, "revision">) {
   return service.save(cwd, { ...value, revision: file.revision });
 }
 describe("MCP file configuration", () => {
+  it("reads and edits BOM-prefixed configuration while retaining source revisions", async () => {
+    const path = join(agent, "mcp.json");
+    const original = `\uFEFF${JSON.stringify(fixture)}`;
+    await writeFile(path, original);
+    const file = (await service.read(null)).files[0]!;
+    expect(file.error).toBeUndefined();
+    expect(file.entries.map((entry) => entry.name)).toEqual(["docs", "local"]);
+    expect(await readFile(path, "utf8")).toBe(original);
+
+    await service.save(null, {
+      scope: "user",
+      name: "docs",
+      revision: file.revision,
+      operation: "update",
+      values: { description: "Updated docs" },
+    });
+    expect(await json()).toEqual({
+      ...fixture,
+      mcpServers: {
+        ...fixture.mcpServers,
+        docs: { ...fixture.mcpServers.docs, description: "Updated docs" },
+      },
+    });
+
+    const saved = (await service.read(null)).files[0]!;
+    const changed = `\uFEFF${await readFile(path, "utf8")}`;
+    await writeFile(path, changed);
+    await expect(
+      service.save(null, {
+        scope: "user",
+        name: "docs",
+        revision: saved.revision,
+        operation: "update",
+        values: { description: "Stale edit" },
+      }),
+    ).rejects.toThrow("changed elsewhere");
+    expect(await readFile(path, "utf8")).toBe(changed);
+  });
   it("projects source and policy without resolving hooks or returning credential-bearing fields", async () => {
     const hookMarker = join(root, "hook-ran");
     const source = structuredClone(fixture);

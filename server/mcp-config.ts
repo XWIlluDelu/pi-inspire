@@ -170,7 +170,8 @@ async function readText(path: string): Promise<string | undefined> {
 }
 function parse(source: string | undefined): JsonObject {
   try {
-    const value: unknown = source === undefined ? {} : JSON.parse(source);
+    const value: unknown =
+      source === undefined ? {} : JSON.parse(source.replace(/^\uFEFF/u, ""));
     if (
       !isObject(value) ||
       (value.mcpServers !== undefined && !isObject(value.mcpServers))
