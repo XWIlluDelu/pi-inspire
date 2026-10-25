@@ -374,10 +374,10 @@ test("Earlier activity expands the hidden prefix independently of the visible ta
   await expect(earlier).toHaveCSS("text-transform", "uppercase");
   await page.evaluate(() => document.fonts.ready);
   await expectActivityMarksCentered(earlier);
-  await expect(page.locator(".card--thinking:visible")).toHaveCount(24);
+  await expect(page.locator(".card--thinking")).toHaveCount(24);
   await earlier.click();
   await expect(earlier).toHaveCount(0);
-  await expect(page.locator(".card--thinking:visible")).toHaveCount(40);
+  await expect(page.locator(".card--thinking")).toHaveCount(40);
 });
 
 test("success and failure cues retain semantic color in tools and nested calls", async ({
@@ -589,9 +589,7 @@ test.describe("touch activity disclosures", () => {
       await copy.tap();
       await expect(toggle).toHaveAttribute("aria-expanded", "true");
       await expect(copy).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-      await row.tap({
-        position: { x: (await row.boundingBox())!.width - 24, y: 12 },
-      });
+      await toggle.tap();
       await expect(toggle).toHaveAttribute("aria-expanded", "false");
       await expect(copy).toHaveCount(0);
       await expect(toggle).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");

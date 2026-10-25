@@ -1,11 +1,14 @@
 import { ChevronRight } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
 import type { ChildCall, ChildCallList } from "../../shared/tool-activity";
 import { stripTerminalSequences } from "../ansi";
 import { childCallSummary, isModelCall } from "../child-call-summary";
 import { PiLoader } from "./PiLoader";
 import { PiStatus } from "./PiStatus";
 import { ResourcePathLabel } from "./ResourcePathLabel";
+import {
+  useActivityReaderExpanded,
+  useActivityReaderScroll,
+} from "./transcript-activity-visibility";
 
 const statusLabels: Record<ChildCall["status"], string> = {
   running: "Running",
@@ -25,7 +28,7 @@ export function childCallsSummary(list?: ChildCallList): string {
 }
 
 function CallRow({ call }: { call: ChildCall }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useActivityReaderExpanded(`child-call:${call.key}`);
   const model = isModelCall(call.name);
   const duration =
     call.durationMs !== undefined && call.durationMs >= 1_000
@@ -72,6 +75,7 @@ function CallRow({ call }: { call: ChildCall }) {
   return detail ? (
     <details
       className="child-call"
+      open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary className="child-call__row">
@@ -141,34 +145,35 @@ export function ChildCalls({
   running: boolean;
   onRead: () => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const following = useRef(true);
-  useLayoutEffect(() => {
-    if (running && following.current && ref.current)
-      ref.current.scrollTop = ref.current.scrollHeight;
-  }, [list, running]);
+  const scroll = useActivityReaderScroll<HTMLDivElement>(
+    "child-calls-scroll",
+    list,
+    running,
+  );
   return (
     <>
       <div
         className="child-calls"
-        ref={ref}
+        ref={scroll.props.ref}
         tabIndex={0}
         role="group"
         aria-label="Child calls"
         onFocusCapture={() => {
-          following.current = false;
+          scroll.stopFollowing();
           onRead();
         }}
         onPointerDown={() => {
-          following.current = false;
+          scroll.stopFollowing();
           onRead();
         }}
         onScroll={(event) => {
+          scroll.props.onScroll(event);
           const element = event.currentTarget;
-          following.current =
-            element.scrollHeight - element.scrollTop - element.clientHeight <
-            24;
-          if (!following.current) onRead();
+          if (
+            element.scrollHeight - element.scrollTop - element.clientHeight >=
+            24
+          )
+            onRead();
         }}
       >
         {list.calls.map((call) => (

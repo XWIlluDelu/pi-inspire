@@ -17,7 +17,6 @@ import {
   useContext,
   useEffect,
   useId,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -47,6 +46,7 @@ import {
   toolResultText,
 } from "../events";
 import { messageCopyLoader } from "../message-copy";
+import { usePresentationAdapters } from "../presentation-adapters";
 import { store } from "../store";
 import type {
   ResolvedToolPresentation,
@@ -59,7 +59,6 @@ import {
   toolResultImage,
 } from "../tool-presentations/model";
 import { codeModeResultBlocks } from "../tool-presentations/pi-native";
-import { usePresentationAdapters } from "../presentation-adapters";
 import {
   thinkingPresentationRegistry,
   toolPresentationRegistry,
@@ -87,7 +86,16 @@ import {
   prefersReducedMotion,
   useDynamicCardOpen,
 } from "./transcript-activity";
-import { useVisibleActivityItemIds } from "./transcript-activity-visibility";
+import {
+  ActivityReadingBlock,
+  ActivityReadingOwner,
+  recoverOmittedActivityFocus,
+  useActivityDisclosure,
+  useActivityReaderExpanded,
+  useActivityReaderScroll,
+  useActivityStripSelection,
+  useVisibleActivityItemIds,
+} from "./transcript-activity-visibility";
 
 export type StaticVisibility = Exclude<VisibilityPreference, "dynamic">;
 
@@ -197,7 +205,7 @@ function CollapsibleCard({
   onManualOpenChange,
 }: CardProps) {
   // Per-card override is view-local only; it never mutates saved preferences.
-  const [override, setOverride] = useState<"open" | "closed" | null>(null);
+  const [override, setOverride] = useActivityDisclosure();
   const bodyId = useId();
   const hidden = defaultVisibility === "hidden";
   const open =
@@ -362,22 +370,6 @@ type ToolStatus =
 // Partial paths are readable text, not usable resource identities yet.
 const ToolArgumentPreviewContext =
   createContext<ToolCallContent["__inspireToolCall"]>(undefined);
-
-function useToolOutputScroll(content: unknown, followUpdates: boolean) {
-  const ref = useRef<HTMLPreElement>(null);
-  const following = useRef(true);
-  useLayoutEffect(() => {
-    if (followUpdates && following.current && ref.current)
-      ref.current.scrollTop = ref.current.scrollHeight;
-  }, [content, followUpdates]);
-  return {
-    ref,
-    onScroll(event: React.UIEvent<HTMLPreElement>) {
-      const { scrollTop, scrollHeight, clientHeight } = event.currentTarget;
-      following.current = scrollHeight - scrollTop - clientHeight < 24;
-    },
-  };
-}
 
 function toolSummary(call: ToolCallContent): string {
   const args = call.arguments;
@@ -567,11 +559,15 @@ function statusIcon(status: ToolStatus) {
  * diff is the whole point of an edit result, so it is never truncated. */
 function DiffView({ lines }: { lines: DiffLine[] }) {
   const preview = useContext(ToolArgumentPreviewContext);
-  const scroll = useToolOutputScroll(lines, preview?.phase === "streaming");
+  const scroll = useActivityReaderScroll<HTMLPreElement>(
+    "diff-scroll",
+    lines,
+    preview?.phase === "streaming",
+  );
   return (
     <pre
       className="card__mono diff"
-      {...scroll}
+      {...scroll.props}
       tabIndex={0}
       role="group"
       aria-label="Changes"
@@ -616,10 +612,11 @@ function hasResultData(value: unknown): boolean {
 /** Keep structured payloads inspectable without printing transport metadata or
  * large JSON by default. Serialization is deferred until disclosure. */
 function RawResultData({ value }: { value: unknown }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useActivityReaderExpanded("result-data");
   return (
     <details
       className="tool-result-details"
+      open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <DetailSummary>Result details</DetailSummary>
@@ -699,7 +696,8 @@ function RawArguments({ call }: { call: ToolCallContent }) {
     () => JSON.stringify(call.arguments ?? {}, null, 2),
     [call.arguments],
   );
-  const scroll = useToolOutputScroll(
+  const scroll = useActivityReaderScroll<HTMLPreElement>(
+    "arguments-scroll",
     argumentsText,
     call.__inspireToolCall?.phase === "streaming",
   );
@@ -718,7 +716,7 @@ function RawArguments({ call }: { call: ToolCallContent }) {
       ))}
       <pre
         className="card__mono"
-        {...scroll}
+        {...scroll.props}
         tabIndex={0}
         role="group"
         aria-label="Arguments"
@@ -763,8 +761,12 @@ function RawToolDetails({
 }
 
 function RawToolResult({ result }: { result: ChatMessage }) {
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useActivityReaderExpanded("result-all");
   const output = toolResultText(result);
+  const scroll = useActivityReaderScroll<HTMLPreElement>(
+    "result-scroll",
+    output,
+  );
   const diff = !result.isError ? parseUnifiedDiff(output) : null;
   const truncated = !diff && output.length > 600;
   return (
@@ -777,6 +779,7 @@ function RawToolResult({ result }: { result: ChatMessage }) {
           tabIndex={0}
           role="group"
           aria-label="Result text"
+          {...scroll.props}
         >
           {showAll || !truncated ? output : `${output.slice(0, 600)}…`}
         </pre>
@@ -810,7 +813,11 @@ export function ToolResultCard({
   const output =
     name === "codemode" ? (
       codeModeResultBlocks(result).map((block, index) => (
-        <ToolPresentationBlockView key={index} block={block} />
+        <ToolPresentationBlockView
+          key={index}
+          readingKey={`${block.type}:${index}`}
+          block={block}
+        />
       ))
     ) : (
       <RawToolResult result={result} />
@@ -888,9 +895,13 @@ function StructuredCode({
   lineNumbers?: boolean;
   language?: string;
 }) {
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useActivityReaderExpanded("code-all");
   const partial = useContext(ToolArgumentPreviewContext);
-  const scroll = useToolOutputScroll(text, partial?.phase === "streaming");
+  const scroll = useActivityReaderScroll<HTMLPreElement>(
+    "code-scroll",
+    text,
+    partial?.phase === "streaming",
+  );
   const lines = text.split("\n");
   const clipped = lines.length > STRUCTURED_CODE_PREVIEW_LINES;
   const visible =
@@ -901,7 +912,7 @@ function StructuredCode({
     <>
       <pre
         className="tool-code"
-        {...scroll}
+        {...scroll.props}
         tabIndex={0}
         role="group"
         aria-label="Code"
@@ -957,7 +968,7 @@ function ReplacementDiff({
 }: {
   block: Extract<ToolPresentationBlock, { type: "replacement" }>;
 }) {
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useActivityReaderExpanded("replacement-all");
   const partial = useContext(ToolArgumentPreviewContext);
   const lines: DiffLine[] = [
     ...(block.oldText === undefined ? [] : block.oldText.split("\n")).map(
@@ -1033,6 +1044,20 @@ function ToolImage({
 }
 
 function ToolPresentationBlockView({
+  block,
+  readingKey = block.type,
+}: {
+  block: ToolPresentationBlock;
+  readingKey?: string;
+}) {
+  return (
+    <ActivityReadingBlock name={readingKey}>
+      <ToolPresentationBlockContent block={block} />
+    </ActivityReadingBlock>
+  );
+}
+
+function ToolPresentationBlockContent({
   block,
 }: {
   block: ToolPresentationBlock;
@@ -1283,6 +1308,7 @@ function ThinkingDetails({
         <ToolPresentationBlockView
           block={block}
           key={`${block.type}:${index}`}
+          readingKey={`${block.type}:${index}`}
         />
       ))}
     </div>
@@ -1301,13 +1327,14 @@ function ToolTerminal({
   live?: boolean;
 }) {
   const preview = useContext(ToolArgumentPreviewContext);
-  const scroll = useToolOutputScroll(
+  const scroll = useActivityReaderScroll<HTMLPreElement>(
+    "terminal-scroll",
     text,
     live || preview?.phase === "streaming",
   );
   return (
     <pre
-      {...scroll}
+      {...scroll.props}
       className={`tool-terminal ${error ? "tool-terminal--error" : ""} ${live ? "tool-terminal--live" : ""}`}
       tabIndex={0}
       role="group"
@@ -1351,7 +1378,8 @@ function PhaseToolDetails({
   script?: React.ReactNode;
   codemode?: boolean;
 }) {
-  const [readingCalls, setReadingCalls] = useState(false);
+  const [readingCalls, setReadingCalls] =
+    useActivityReaderExpanded("reading-calls");
   const inspect = useContext(CardInspectionContext);
   const failed =
     calls?.calls.filter((call) => call.status === "error").length ?? 0;
@@ -1400,10 +1428,11 @@ function PhaseToolDetails({
 }
 
 function ToolArguments({ call }: { call: ToolCallContent }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useActivityReaderExpanded("arguments");
   return (
     <details
       className="tool-result-details"
+      open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <DetailSummary>
@@ -1415,11 +1444,12 @@ function ToolArguments({ call }: { call: ToolCallContent }) {
 }
 
 function ToolScript({ call }: { call: ToolCallContent }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useActivityReaderExpanded("script");
   const args = call.arguments as { code: string };
   return (
     <details
       className="tool-result-details"
+      open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <DetailSummary>
@@ -1526,6 +1556,7 @@ function ToolDetailsContent({
             <ToolPresentationBlockView
               block={block}
               key={`${block.type}:${index}`}
+              readingKey={`${block.type}:${index}`}
             />
           ))}
           {!result && showPending ? (
@@ -1783,45 +1814,53 @@ export function CollapsedActivityStrip({
       ? activities.length
       : activities.filter((activity) => visibleActivityIds.has(activity.key))
           .length;
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-  const [renderedIndex, setRenderedIndex] = useState<number | null>(null);
+  const [selectedKey, setSelectedKey] = useActivityStripSelection(
+    activities[0]?.key ?? "empty-strip",
+  );
+  const selectedIndex = activities.findIndex(
+    (activity) => activity.key === selectedKey,
+  );
+  const [renderedKey, setRenderedKey] = useState(selectedKey);
   const [origin, setOrigin] = useState(22);
   const panelId = useId();
   const itemsRef = useRef<HTMLDivElement>(null);
   const rendered =
-    renderedIndex == null ? null : (activities[renderedIndex] ?? null);
+    activities.find((activity) => activity.key === renderedKey) ?? null;
   const selectionVisible =
-    selectedIndex !== null &&
+    selectedIndex >= 0 &&
     (visibleActivityIds === null ||
       visibleActivityIds.has(activities[selectedIndex]?.key ?? ""));
   const activityPresentations = useMemo(
     () =>
       activities.map((activity) =>
-        collapsedActivityPresentation(activity, live),
+        visibleActivityIds === null || visibleActivityIds.has(activity.key)
+          ? collapsedActivityPresentation(activity, live)
+          : null,
       ),
-    [activities, live, configuration],
+    [activities, live, configuration, visibleActivityIds],
   );
   const renderedPresentation = useMemo(
     () =>
-      rendered?.kind === "tool"
+      rendered?.kind === "tool" &&
+      (visibleActivityIds === null || visibleActivityIds.has(rendered.key))
         ? toolPresentationRegistry.resolve({
             call: rendered.call,
             result: rendered.result,
           })
         : null,
-    [rendered, configuration],
+    [rendered, configuration, visibleActivityIds],
   );
 
   // Keep the last detail mounted for the brief grid-collapse transition; it is
   // inert throughout closing and is removed once no pixels remain visible.
   useEffect(() => {
-    if (selectedIndex != null || renderedIndex == null) return;
+    if (selectedKey !== null || renderedKey === null) return;
     const timer = window.setTimeout(
-      () => setRenderedIndex(null),
+      () => setRenderedKey(null),
       CARD_TRANSITION_MS,
     );
     return () => window.clearTimeout(timer);
-  }, [selectedIndex, renderedIndex]);
+  }, [selectedKey, renderedKey]);
 
   if (visibleActivityCount === 0) return null;
 
@@ -1845,10 +1884,11 @@ export function CollapsedActivityStrip({
           )
             return null;
           const active = selectedIndex === index;
-          const presentation = activityPresentations[index];
+          const presentation = activityPresentations[index]!;
           return (
             <button
               key={activity.key}
+              ref={recoverOmittedActivityFocus}
               type="button"
               className={`activity-strip__item ${active ? "activity-strip__item--active" : ""} ${presentation.failed ? "activity-strip__item--failed" : ""}`}
               aria-label={presentation.label}
@@ -1863,10 +1903,10 @@ export function CollapsedActivityStrip({
                     itemBounds.left - itemsBounds.left + itemBounds.width / 2,
                   );
                 if (active) {
-                  setSelectedIndex(null);
+                  setSelectedKey(null);
                 } else {
-                  setRenderedIndex(index);
-                  setSelectedIndex(index);
+                  setRenderedKey(activity.key);
+                  setSelectedKey(activity.key);
                 }
               }}
             >
@@ -1881,80 +1921,87 @@ export function CollapsedActivityStrip({
         inert={!selectionVisible}
       >
         <div className="activity-strip__reveal-inner">
-          {rendered?.kind === "tool" ? (
-            <ToolArgumentPreviewContext value={rendered.call.__inspireToolCall}>
-              <section
-                key={rendered.key}
-                id={panelId}
-                className={`card card--tool ${rendered.call.name === "codemode" ? "card--codemode" : ""} activity-strip__detail ${toolStatus(rendered.result, rendered.activity, live, rendered.call) === "failure" ? "card--failed" : ""}`}
+          {rendered?.kind === "tool" &&
+          (visibleActivityIds === null ||
+            visibleActivityIds.has(rendered.key)) ? (
+            <ActivityReadingOwner id={rendered.key}>
+              <ToolArgumentPreviewContext
+                value={rendered.call.__inspireToolCall}
               >
-                <CardHeader
-                  expanded
-                  icon={toolIcon(rendered.call.name)}
-                  label={
-                    <code className="card__tool-name">
-                      {toolDisplayName(rendered.call.name)}
-                    </code>
-                  }
-                  toggleLabel={`${toolDisplayName(rendered.call.name)} tool details`}
-                  onToggle={() => setSelectedIndex(null)}
-                  summary={
-                    renderedPresentation?.ruleId === "inspire.pi.codemode" ? (
-                      <ToolCardSummary
-                        call={rendered.call}
-                        result={rendered.result}
-                        activity={rendered.activity}
-                        presentation={renderedPresentation}
-                      />
-                    ) : undefined
-                  }
-                  status={statusIcon(
-                    toolStatus(
-                      rendered.result,
-                      rendered.activity,
-                      live,
-                      rendered.call,
-                    ),
-                  )}
-                  copyText={() =>
-                    toolClipboardText(
-                      rendered.call,
-                      rendered.result,
-                      rendered.activity,
-                    )
-                  }
-                  getCopyContent={messageCopyLoader(
-                    rendered.result,
-                    () =>
+                <section
+                  key={rendered.key}
+                  ref={recoverOmittedActivityFocus}
+                  id={panelId}
+                  className={`card card--tool ${rendered.call.name === "codemode" ? "card--codemode" : ""} activity-strip__detail ${toolStatus(rendered.result, rendered.activity, live, rendered.call) === "failure" ? "card--failed" : ""}`}
+                >
+                  <CardHeader
+                    expanded
+                    icon={toolIcon(rendered.call.name)}
+                    label={
+                      <code className="card__tool-name">
+                        {toolDisplayName(rendered.call.name)}
+                      </code>
+                    }
+                    toggleLabel={`${toolDisplayName(rendered.call.name)} tool details`}
+                    onToggle={() => setSelectedKey(null)}
+                    summary={
+                      renderedPresentation?.ruleId === "inspire.pi.codemode" ? (
+                        <ToolCardSummary
+                          call={rendered.call}
+                          result={rendered.result}
+                          activity={rendered.activity}
+                          presentation={renderedPresentation}
+                        />
+                      ) : undefined
+                    }
+                    status={statusIcon(
+                      toolStatus(
+                        rendered.result,
+                        rendered.activity,
+                        live,
+                        rendered.call,
+                      ),
+                    )}
+                    copyText={() =>
                       toolClipboardText(
                         rendered.call,
                         rendered.result,
                         rendered.activity,
-                      ),
-                    owner,
-                  )}
-                  copyLabel={toolClipboardLabel(
-                    rendered.call,
-                    rendered.result,
-                    rendered.activity,
-                  )}
-                />
-                <div className="card__body">
-                  <ToolDetails
-                    call={rendered.call}
-                    result={rendered.result}
-                    status={toolStatus(
+                      )
+                    }
+                    getCopyContent={messageCopyLoader(
+                      rendered.result,
+                      () =>
+                        toolClipboardText(
+                          rendered.call,
+                          rendered.result,
+                          rendered.activity,
+                        ),
+                      owner,
+                    )}
+                    copyLabel={toolClipboardLabel(
+                      rendered.call,
                       rendered.result,
                       rendered.activity,
-                      live,
-                      rendered.call,
                     )}
-                    presentation={renderedPresentation}
-                    activity={rendered.activity}
                   />
-                </div>
-              </section>
-            </ToolArgumentPreviewContext>
+                  <div className="card__body">
+                    <ToolDetails
+                      call={rendered.call}
+                      result={rendered.result}
+                      status={toolStatus(
+                        rendered.result,
+                        rendered.activity,
+                        live,
+                        rendered.call,
+                      )}
+                      presentation={renderedPresentation}
+                      activity={rendered.activity}
+                    />
+                  </div>
+                </section>
+              </ToolArgumentPreviewContext>
+            </ActivityReadingOwner>
           ) : null}
         </div>
       </div>

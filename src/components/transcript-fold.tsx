@@ -25,7 +25,10 @@ import {
   DYNAMIC_FOLD_EXPANDED_MIN_MS,
   useDynamicCardOpen,
 } from "./transcript-activity";
-import { ActivityItemVisibilityProvider } from "./transcript-activity-visibility";
+import {
+  ActivityItemVisibilityProvider,
+  type ActivityReadingChoices,
+} from "./transcript-activity-visibility";
 
 const COMPACT_ACTIVITY_CARD_LIMIT = 24;
 
@@ -114,6 +117,7 @@ export function ResponseActivityFold({
   closeRequested,
   initialManualPresentation = null,
   onManualPresentationChange,
+  readingChoices,
   deferredRanges = [],
   telemetry = [],
   onMaterializeRanges,
@@ -125,6 +129,7 @@ export function ResponseActivityFold({
   closeRequested: boolean;
   initialManualPresentation?: ActivityFoldPresentation | null;
   onManualPresentationChange?: (presentation: ActivityFoldPresentation) => void;
+  readingChoices?: ActivityReadingChoices;
   deferredRanges?: readonly TranscriptActivityRangeState[];
   telemetry?: readonly ActivityTelemetryItem[];
   onMaterializeRanges?: (
@@ -167,7 +172,7 @@ export function ResponseActivityFold({
       ? "compact"
       : defaultPresentation);
   const open = presentation !== "collapsed";
-  const [materialized, setMaterialized] = useState(open);
+  const localReadingChoices = useRef<ActivityReadingChoices>(new Map());
 
   const cardTelemetry = useMemo(
     () => telemetry.filter((item) => !item.deferred),
@@ -245,10 +250,6 @@ export function ResponseActivityFold({
       onPreserveAnchor,
     ],
   );
-
-  useEffect(() => {
-    if (open && !materialized) setMaterialized(true);
-  }, [materialized, open]);
 
   useEffect(() => {
     if (presentation === "collapsed") return;
@@ -383,8 +384,11 @@ export function ResponseActivityFold({
             }}
           />
         ) : null}
-        <ActivityItemVisibilityProvider visibleIds={compactVisibleIds}>
-          {materialized || open ? children : null}
+        <ActivityItemVisibilityProvider
+          visibleIds={compactVisibleIds}
+          readingChoices={readingChoices ?? localReadingChoices.current}
+        >
+          {open ? children : null}
         </ActivityItemVisibilityProvider>
       </div>
       {open ? boundary("lower") : null}
