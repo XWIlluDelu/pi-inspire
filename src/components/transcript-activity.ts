@@ -101,7 +101,9 @@ function useDynamicActivityBatch(
   allCardsClosed: boolean,
 ) {
   const [phase, setPhase] = useState<DynamicActivityPhase>(
-    dynamic && collapseEligible && !lifecycleObserved ? "collapsed" : "cards",
+    dynamic && collapseEligible && !lifecycleObserved && !inspectionHeld
+      ? "collapsed"
+      : "cards",
   );
   const phaseRef = useRef(phase);
   const observedLifecycle = useRef(lifecycleObserved);
@@ -134,6 +136,11 @@ function useDynamicActivityBatch(
       }
     }
 
+    if (inspectionHeld) {
+      if (phase !== "cards") setPhase("cards");
+      return;
+    }
+
     if (!observedLifecycle.current) {
       // Settled history chooses final density without replaying unseen stages.
       if (phase !== "collapsed") setPhase("collapsed");
@@ -141,10 +148,6 @@ function useDynamicActivityBatch(
     }
 
     if (!collapseRequested) return;
-    if (inspectionHeld) {
-      if (phase === "collapsing") setPhase("cards");
-      return;
-    }
     if (!allCardsClosed || phase === "collapsed") return;
 
     if (phase === "collapsing") {
@@ -194,6 +197,7 @@ export function useDynamicActivityGroup(
   collapseRequested: boolean,
   activityKeys: string[],
   collapseEligible: boolean,
+  retainedInspectionHeld = false,
 ) {
   const keySignature = JSON.stringify(activityKeys);
   const currentKeys = useMemo(
@@ -216,7 +220,9 @@ export function useDynamicActivityGroup(
     setClosedActivityIds(retainCurrent);
   }, [currentKeys]);
 
-  const inspectionHeld = [...heldActivityIds].some((id) => currentKeys.has(id));
+  const inspectionHeld =
+    retainedInspectionHeld ||
+    [...heldActivityIds].some((id) => currentKeys.has(id));
   const allCardsClosed =
     activityKeys.length > 0 &&
     activityKeys.every((id) => closedActivityIds.has(id));
