@@ -88,6 +88,19 @@ Put it in a module's `controls` array. The extension publishes JSON such as `{"m
 under `example-mode`. Inspire sends `/response-mode quick` only after a user selects it.
 These declarations execute no JavaScript and contain no application-source substitutions.
 
+The extension must publish this machine-readable state through `ctx.ui.setStatus()` at
+`session_start`, after an accepted selection, and whenever its effective capability changes.
+Publish it independently of optional terminal/footer visibility. If `supported` is selected,
+provide a boolean for every option value; if `active` is selected, provide a boolean. Keep
+the requested value distinct from whether it is active for the current model.
+
+Command discovery alone does not establish this state contract. Missing or invalid state leaves
+live controls unavailable; a pre-session selection cannot release the first message without
+confirmation. A successful command receipt is not a substitute. The extension owns persistence
+and restoration; the adapter only selects fields and sends commands. When upgrading a customized
+extension, verify its published package still provides the required status, not just the command
+name. Keep producer changes in the extension and presentation declarations in its adapter module.
+
 ## Example
 
 This custom search tool returns an unindented file path followed by numbered match/context lines:
