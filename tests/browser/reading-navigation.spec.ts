@@ -346,7 +346,12 @@ for (const narrow of [false, true]) {
     }
     expect(reachedMessages).toBe(true);
     expect(visitedPromptMap).toBe(true);
-    await log.locator("button, a[href]").last().focus({ preventScroll: true });
+    await log
+      .locator("button, a[href]")
+      .last()
+      .evaluate((element: HTMLElement) =>
+        element.focus({ preventScroll: true }),
+      );
     await page.keyboard.press("Tab");
     await expect(latest).toBeFocused();
     await page.keyboard.press("Shift+Tab");
