@@ -33,7 +33,7 @@ their identities inside it. Displayed custom messages break the group and remain
 | --- | --- |
 | Expanded | Every item in source order; individual Thinking/Tool preferences still control its content. |
 | Compact | Latest 24 items; an Earlier activity control reveals an omitted prefix. Equivalent to Expanded for shorter runs. |
-| Collapsed | One left-aligned Activity disclosure. Already materialized item state is retained. |
+| Collapsed | One left-aligned Activity disclosure. Manual item disclosure and strip selection are retained. |
 | Adaptive (`dynamic`) | Historical groups start Collapsed; live groups start Compact and close at the lifecycle boundary below. |
 
 Preferences choose the initial state. Collapsed opens Compact, the Compact prefix opens Expanded,
@@ -101,8 +101,17 @@ Older activity-only messages travel as opaque view-bound ranges:
   the range; Collapsed leaves it unloaded.
 - The same prefix control represents omitted content, loading, and retry with a matching text label. Selecting it requests
   complete Expanded materialization.
-- A projection change invalidates the request. Inserted pages preserve the scroll anchor, and
-  materialized children stay mounted across later density changes.
+- A projection change invalidates the request. Inserted pages preserve the scroll anchor.
+- Compact mounts only its latest 24 activity items; an omitted prefix does not keep tool or
+  Thinking renderers alive. Collapsed unmounts the group's items. Manual card disclosure and
+  selected tool-strip identity belong to the current projection and survive these omissions.
+  Reader choices such as Show all, Arguments/Script and nested-call disclosures, child-call
+  inspection, and tool-output scroll offsets are retained by activity and presentation-block key;
+  rendered trees and clipboard feedback are not retained. Untouched cards continue to follow their preferences. These choices are released with the
+  projection or when their activity disappears.
+- If a live append moves the focused item into the omitted prefix, focus moves to Earlier activity
+  without scrolling the reading viewport. Expanded restores the retained choices; focus remains
+  on the control the reader used.
 
 The Earlier activity control shares the group boundaries’ Rajdhani uppercase structural-label
 role and leading disclosure axis. Its square matrix summarizes the last nine known individual

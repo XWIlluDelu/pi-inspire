@@ -393,14 +393,13 @@ describe("response activity folds", () => {
         ".assistant-doc > .activity-item-boundary",
       ),
     );
-    expect(boundaries).toHaveLength(26);
-    expect(boundaries.filter((boundary) => boundary.hidden)).toHaveLength(2);
-    expect(boundaries.filter((boundary) => !boundary.hidden)).toHaveLength(24);
-    expect(boundaries[0]).toHaveAttribute("hidden");
-    expect(boundaries[1]).toHaveAttribute("hidden");
-    expect(boundaries[2]).not.toHaveAttribute("hidden");
+    expect(boundaries).toHaveLength(24);
+    expect(
+      screen.queryByRole("button", { name: "Expand tool-1 tool" }),
+    ).toBeNull();
+    expect(retainedDisclosure).not.toBeInTheDocument();
 
-    const visibleDisclosure = boundaries[2]!.querySelector(
+    const visibleDisclosure = boundaries[0]!.querySelector(
       ".card__disclosure",
     ) as HTMLButtonElement;
     visibleDisclosure.focus();
@@ -417,8 +416,10 @@ describe("response activity folds", () => {
         name: "Show all earlier assistant activity",
       }),
     ).toBeNull();
-    expect(boundaries.every((boundary) => !boundary.hidden)).toBe(true);
-    expect(retainedDisclosure).toHaveAttribute("aria-expanded", "false");
+    expect(fold.querySelectorAll(".card--tool")).toHaveLength(26);
+    expect(
+      screen.getByRole("button", { name: "Expand tool-1 tool" }),
+    ).toHaveAttribute("aria-expanded", "false");
 
     fireEvent.click(
       within(fold).getByRole("button", {
@@ -454,18 +455,14 @@ describe("response activity folds", () => {
     const fold = container.querySelector("[data-activity-fold]") as HTMLElement;
     const rows = Array.from(fold.querySelectorAll<HTMLElement>(".turn"));
     const boundaries = rows.map((row) => row.parentElement as HTMLElement);
-    expect(rows).toHaveLength(26);
+    expect(rows).toHaveLength(24);
     expect(
       boundaries.every((boundary) =>
         boundary.classList.contains("activity-item-boundary"),
       ),
     ).toBe(true);
-    expect(boundaries.slice(0, 2).every((boundary) => boundary.hidden)).toBe(
-      true,
-    );
-    expect(boundaries.slice(2).every((boundary) => !boundary.hidden)).toBe(
-      true,
-    );
+    expect(screen.queryByText("tool-1 result")).toBeNull();
+    expect(screen.queryByText("tool-2 result")).toBeNull();
   });
 
   it("omits older assistant activity rows without leaving attribution behind", () => {
@@ -498,6 +495,399 @@ describe("response activity folds", () => {
       );
     expect(visiblyOwned(".turn--assistant")).toHaveLength(24);
     expect(fold.querySelector(".turn__divider, .turn__head")).toBeNull();
+  });
+
+  it("bounds long multi-round activity and restores only deliberate card choices", () => {
+    const messages = Array.from({ length: 300 }, (_, index) => ({
+      role: "assistant",
+      timestamp: index + 1,
+      content: [
+        {
+          type: "toolCall",
+          id: `long-${index}`,
+          name: `tool-${index}`,
+          arguments: { path: `file-${index}.ts` },
+        },
+      ],
+    }));
+    const view = (
+      density: "compact" | "expanded",
+      tools: "compact" | "expanded",
+    ) => transcript(messages, density, { toolVisibility: tools });
+    const { container, rerender } = render(view("compact", "compact"));
+    expect(container.querySelectorAll(".card--tool")).toHaveLength(24);
+    expect(container.querySelectorAll(".turn--assistant")).toHaveLength(24);
+    rerender(view("expanded", "compact"));
+    fireEvent.click(screen.getByRole("button", { name: "Expand tool-0 tool" }));
+    expect(
+      screen.getByRole("button", { name: "Collapse tool-0 tool" }),
+    ).toBeVisible();
+    rerender(view("compact", "expanded"));
+    expect(container.querySelectorAll(".card--tool")).toHaveLength(24);
+    rerender(view("expanded", "expanded"));
+    // Explicit tool-0 choice survives omission; untouched tool-1 follows its
+    // new preference rather than a previously observed default.
+    expect(
+      screen.getByRole("button", { name: "Collapse tool-0 tool" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Collapse tool-1 tool" }),
+    ).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Collapse tool-0 tool" }),
+    );
+    rerender(view("compact", "expanded"));
+    rerender(view("expanded", "expanded"));
+    expect(
+      screen.getByRole("button", { name: "Expand tool-0 tool" }),
+    ).toBeVisible();
+  });
+
+  it("restores a selected tool strip item without mounting its omitted detail", () => {
+    const messages = [
+      {
+        role: "assistant",
+        timestamp: 1,
+        content: Array.from({ length: 26 }, (_, index) => ({
+          type: "toolCall",
+          id: `strip-${index}`,
+          name: `tool-${index}`,
+          arguments: { path: `file-${index}.ts` },
+        })),
+      },
+    ];
+    const view = (density: "compact" | "expanded" | "collapsed") =>
+      transcript(messages, density, { toolVisibility: "collapsed" });
+    const { container, rerender } = render(view("expanded"));
+    fireEvent.click(screen.getByRole("button", { name: /^tool-0: / }));
+    expect(
+      screen.getByRole("button", { name: "Collapse tool-0 tool details" }),
+    ).toBeVisible();
+    rerender(view("compact"));
+    expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(
+      24,
+    );
+    expect(container.querySelector(".activity-strip__detail")).toBeNull();
+    rerender(view("expanded"));
+    expect(
+      screen.getByRole("button", { name: "Collapse tool-0 tool details" }),
+    ).toBeVisible();
+    rerender(view("collapsed"));
+    expect(container.querySelector(".activity-strip")).toBeNull();
+    rerender(view("expanded"));
+    expect(
+      screen.getByRole("button", { name: "Collapse tool-0 tool details" }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /^tool-0: / }));
+    rerender(view("collapsed"));
+    rerender(view("expanded"));
+    expect(container.querySelector(".activity-strip__detail")).toBeNull();
+  });
+
+  it("keeps focus in a compact group when a live append evicts the focused card", async () => {
+    const messages = Array.from({ length: 25 }, (_, index) => ({
+      role: "assistant",
+      timestamp: index + 1,
+      content: [
+        {
+          type: "toolCall",
+          id: `focus-${index}`,
+          name: `tool-${index}`,
+          arguments: {},
+        },
+      ],
+    }));
+    const view = (count: number) =>
+      transcript(messages.slice(0, count), "compact", {
+        streaming: true,
+        toolVisibility: "compact",
+      });
+    const { container, rerender } = render(view(24));
+    screen.getByRole("button", { name: "Expand tool-0 tool" }).focus();
+    await act(async () => rerender(view(25)));
+    expect(container.querySelectorAll(".card--tool")).toHaveLength(24);
+    expect(
+      screen.getByRole("button", {
+        name: "Show all earlier assistant activity",
+      }),
+    ).toHaveFocus();
+  });
+
+  it.each(["strip button", "strip detail"])(
+    "recovers focus when an append omits the focused %s within a retained strip",
+    async (target) => {
+      const calls = Array.from({ length: 25 }, (_, index) => ({
+        type: "toolCall",
+        id: `strip-focus-${index}`,
+        name: `tool-${index}`,
+        arguments: { value: index },
+      }));
+      const view = (count: number) =>
+        transcript(
+          [{ role: "assistant", timestamp: 1, content: calls.slice(0, count) }],
+          "compact",
+          { toolVisibility: "collapsed" },
+        );
+      const { container, rerender } = render(view(24));
+      const button = screen.getByRole("button", { name: /^tool-0: / });
+      if (target === "strip detail") {
+        fireEvent.click(button);
+        screen.getByRole("group", { name: "Arguments" }).focus();
+      } else button.focus();
+      await act(async () => rerender(view(25)));
+      expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(
+        24,
+      );
+      expect(container.querySelector(".activity-strip__detail")).toBeNull();
+      expect(
+        screen.getByRole("button", {
+          name: "Show all earlier assistant activity",
+        }),
+      ).toHaveFocus();
+    },
+  );
+
+  it("settles a live compact tool batch without waiting for its omitted cards", () => {
+    vi.useFakeTimers();
+    const message = {
+      role: "assistant",
+      timestamp: 1,
+      __inspireLiveId: "compact-live",
+      content: Array.from({ length: 30 }, (_, index) => ({
+        type: "toolCall",
+        id: `live-${index}`,
+        name: `tool-${index}`,
+        arguments: {},
+      })),
+    };
+    const view = (running: boolean) =>
+      transcript([message], "compact", {
+        streaming: running,
+        runState: running ? "running" : "idle",
+        activeAssistantMessageKey: running ? "live:compact-live" : null,
+        toolVisibility: "dynamic",
+      });
+    const { container, rerender } = render(view(true));
+    expect(container.querySelectorAll(".card--tool")).toHaveLength(24);
+    rerender(view(false));
+    act(() => vi.advanceTimersByTime(1_500));
+    act(() => vi.advanceTimersByTime(1_000));
+    act(() => vi.advanceTimersByTime(200));
+    expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(
+      24,
+    );
+    expect(container.querySelector(".card--tool")).toBeNull();
+  });
+
+  it("restores a manually held dynamic card after its settled group remounts", () => {
+    vi.useFakeTimers();
+    const message = {
+      role: "assistant",
+      timestamp: 1,
+      __inspireLiveId: "held-batch",
+      content: [
+        { type: "toolCall", id: "first", name: "first", arguments: {} },
+        { type: "toolCall", id: "second", name: "second", arguments: {} },
+      ],
+    };
+    const view = (density: "collapsed" | "expanded", running: boolean) =>
+      transcript([message], density, {
+        streaming: running,
+        runState: running ? "running" : "idle",
+        activeAssistantMessageKey: running ? "live:held-batch" : null,
+        toolVisibility: "dynamic",
+      });
+    const { container, rerender } = render(view("expanded", true));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Collapse first tool" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand first tool" }));
+    rerender(view("expanded", false));
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(
+      screen.getByRole("button", { name: "Collapse first tool" }),
+    ).toBeVisible();
+    rerender(view("collapsed", false));
+    expect(container.querySelector(".card--tool")).toBeNull();
+    rerender(view("expanded", false));
+    const held = screen.getByRole("button", { name: "Collapse first tool" });
+    expect(held).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Expand second tool" }),
+    ).toBeVisible();
+    fireEvent.click(held);
+    expect(container.querySelector(".card--tool")).toBeNull();
+    expect(container.querySelectorAll(".activity-strip__item")).toHaveLength(2);
+  });
+
+  it("restores expanded result, arguments and output offsets after omitting a card", async () => {
+    const output = `${"source line\n".repeat(80)}last output line`;
+    const messages = [
+      {
+        role: "assistant",
+        timestamp: 1,
+        content: [
+          {
+            type: "toolCall",
+            id: "reader",
+            name: "mystery",
+            arguments: { query: "retained arguments" },
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        timestamp: 2,
+        toolCallId: "reader",
+        toolName: "mystery",
+        content: output,
+      },
+      ...Array.from({ length: 24 }, (_, index) => ({
+        role: "assistant",
+        timestamp: index + 3,
+        content: [
+          {
+            type: "toolCall",
+            id: `later-${index}`,
+            name: `later-${index}`,
+            arguments: {},
+          },
+        ],
+      })),
+    ];
+    const view = (density: "compact" | "expanded") =>
+      transcript(messages, density, { toolVisibility: "expanded" });
+    const { rerender } = render(view("expanded"));
+    const card = screen
+      .getByRole("button", { name: "Collapse mystery tool" })
+      .closest(".card")!;
+    fireEvent.click(
+      within(card as HTMLElement).getByRole("button", { name: "Show all" }),
+    );
+    const argumentsDetails = card.querySelector("details")!;
+    argumentsDetails.open = true;
+    fireEvent(argumentsDetails, new Event("toggle"));
+    await within(card as HTMLElement).findByRole("group", {
+      name: "Arguments",
+    });
+    const reader = within(card as HTMLElement).getByRole("group", {
+      name: "Result text",
+    });
+    fireEvent.scroll(reader, { target: { scrollTop: 80, scrollLeft: 17 } });
+    rerender(view("compact"));
+    expect(card).not.toBeInTheDocument();
+    rerender(view("expanded"));
+    const restored = screen
+      .getByRole("button", { name: "Collapse mystery tool" })
+      .closest(".card")!;
+    expect(restored).not.toBe(card);
+    const restoredReader = within(restored as HTMLElement).getByRole("group", {
+      name: "Result text",
+    });
+    expect(restoredReader).toHaveTextContent("last output line");
+    expect(restoredReader.scrollTop).toBe(80);
+    expect(restoredReader.scrollLeft).toBe(17);
+    expect(restored.querySelector("details")).toHaveAttribute("open");
+    expect(
+      within(restored as HTMLElement).getByRole("group", { name: "Arguments" }),
+    ).toHaveTextContent("retained arguments");
+  });
+
+  it("restores script and nested-call inspection across outer collapse and settlement", async () => {
+    const assistant = {
+      role: "assistant",
+      timestamp: 1,
+      content: [
+        {
+          type: "toolCall",
+          id: "script",
+          name: "codemode",
+          arguments: { code: "text(await tools.read({path:'a.ts'}))" },
+        },
+      ],
+    };
+    const calls = {
+      source: "codemode" as const,
+      calls: [
+        {
+          key: "codemode:0",
+          name: "read",
+          status: "running" as const,
+          argumentsPreview: '{"path":"a.ts"}',
+        },
+      ],
+      complete: false,
+    };
+    const view = (density: "expanded" | "collapsed", settled = false) =>
+      transcript(
+        [
+          assistant,
+          ...(settled
+            ? [
+                {
+                  role: "toolResult",
+                  timestamp: 2,
+                  toolCallId: "script",
+                  toolName: "codemode",
+                  content: "done",
+                  __inspireCalls: {
+                    ...calls,
+                    complete: true,
+                    calls: calls.calls.map((call) => ({
+                      ...call,
+                      status: "ok" as const,
+                    })),
+                  },
+                },
+              ]
+            : []),
+        ],
+        density,
+        {
+          runState: settled ? "idle" : "running",
+          toolVisibility: "expanded",
+          toolActivity: settled
+            ? {}
+            : {
+                script: {
+                  id: "script",
+                  name: "codemode",
+                  phase: "running",
+                  calls,
+                },
+              },
+        },
+      );
+    const { container, rerender } = render(view("expanded"));
+    const script = container.querySelector<HTMLDetailsElement>(
+      ".tool-call-script details",
+    )!;
+    script.open = true;
+    fireEvent(script, new Event("toggle"));
+    await screen.findByRole("group", { name: "Code" });
+    const child =
+      container.querySelector<HTMLDetailsElement>("details.child-call")!;
+    child.open = true;
+    fireEvent(child, new Event("toggle"));
+    await screen.findByRole("group", { name: "Arguments preview" });
+    fireEvent.focus(screen.getByRole("group", { name: "Child calls" }));
+    rerender(view("collapsed"));
+    expect(container.querySelector(".card--tool")).toBeNull();
+    rerender(view("expanded", true));
+    expect(
+      container.querySelector(".tool-call-script details"),
+    ).toHaveAttribute("open");
+    expect(container.querySelector("details.child-call")).toHaveAttribute(
+      "open",
+    );
+    expect(screen.getByRole("group", { name: "Code" })).toHaveTextContent(
+      "tools.read",
+    );
+    expect(
+      screen.getByRole("group", { name: "Arguments preview" }),
+    ).toHaveTextContent("a.ts");
+    const layout = container.querySelector(".tool-call-layout")!;
+    expect(layout.firstElementChild).toHaveClass("tool-call-list");
   });
 
   it("makes Compact identical to Expanded when at most 24 cards exist", () => {
@@ -1102,7 +1492,9 @@ describe("response activity folds", () => {
       }),
     );
     expect(within(fold).getByText("earlier activity")).toBeVisible();
-    expect(thinkingDisclosure).toHaveAttribute("aria-expanded", "false");
+    expect(
+      within(fold).getByRole("button", { name: "Expand Thinking" }),
+    ).toHaveAttribute("aria-expanded", "false");
     expect(document.activeElement).toBe(
       within(fold).getByRole("button", {
         name: "Collapse assistant activity from the upper boundary",

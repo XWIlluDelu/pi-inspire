@@ -374,10 +374,10 @@ test("Earlier activity expands the hidden prefix independently of the visible ta
   await expect(earlier).toHaveCSS("text-transform", "uppercase");
   await page.evaluate(() => document.fonts.ready);
   await expectActivityMarksCentered(earlier);
-  await expect(page.locator(".card--thinking:visible")).toHaveCount(24);
+  await expect(page.locator(".card--thinking")).toHaveCount(24);
   await earlier.click();
   await expect(earlier).toHaveCount(0);
-  await expect(page.locator(".card--thinking:visible")).toHaveCount(40);
+  await expect(page.locator(".card--thinking")).toHaveCount(40);
 });
 
 test("success and failure cues retain semantic color in tools and nested calls", async ({

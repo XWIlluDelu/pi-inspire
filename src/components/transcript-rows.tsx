@@ -35,11 +35,11 @@ import {
 } from "../events";
 import { fileIconForPath } from "../file-icons";
 import { messageCopyLoader } from "../message-copy";
-import { store } from "../store";
 import {
   checkpointPresentation,
   usePresentationAdapters,
 } from "../presentation-adapters";
+import { store } from "../store";
 import { hasActiveModal } from "../use-modal-focus";
 import { CopyAction } from "./CopyAction";
 import { ImageGallery } from "./ImageGallery";
@@ -47,7 +47,11 @@ import { ImagePreview, PersistedImage } from "./ImagePreview";
 import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { useDynamicActivityGroup } from "./transcript-activity";
-import { ActivityItemBoundary } from "./transcript-activity-visibility";
+import {
+  ActivityItemBoundary,
+  useActivityInspectionHeld,
+  useVisibleActivityItemIds,
+} from "./transcript-activity-visibility";
 import {
   type CollapsedActivity,
   CollapsedActivityStrip,
@@ -293,6 +297,7 @@ export const AssistantTurn = memo(function AssistantTurn({
     toolVisibility,
   );
   const dynamicTools = toolVisibility === "dynamic";
+  const visibleActivityIds = useVisibleActivityItemIds();
   const toolKeys = items.flatMap((item, index) =>
     item.type === "toolCall"
       ? [
@@ -304,12 +309,18 @@ export const AssistantTurn = memo(function AssistantTurn({
   );
   const hasActivities = toolKeys.length > 0;
   const collapseEligible = hasCollapsibleActivityRun(items);
+  const visibleToolKeys =
+    visibleActivityIds === null
+      ? toolKeys
+      : toolKeys.filter((id) => visibleActivityIds.has(id));
+  const retainedInspectionHeld = useActivityInspectionHeld(visibleToolKeys);
   const dynamicBatch = useDynamicActivityGroup(
     dynamicTools,
     dynamicActive,
     !dynamicActive,
-    toolKeys,
+    visibleToolKeys,
     collapseEligible,
+    retainedInspectionHeld,
   );
   const renderedItems: React.ReactNode[] =
     typeof message.content === "string" && message.content.length > 0
