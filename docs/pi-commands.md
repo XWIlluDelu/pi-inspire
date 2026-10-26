@@ -1,5 +1,10 @@
 # Pi commands in Inspire
 
+For initial setup, follow [Your first session](../README.md#your-first-session). This guide covers
+the controls available once you are using the workbench. An **Inspire-owned session** runs in a Pi
+worker started by the Host. A **connected native Pi** keeps running in its original Herdr terminal;
+some actions below therefore direct you back there. Project terminal tabs are separate shells.
+
 Use the Composer's `/` completion or the optional command palette, opened from the topbar or with Ctrl/⌘+K at any screen width. Inspire combines Pi's extension, prompt, and skill commands with browser adaptations of Pi's built-ins. The palette opens with a compact set of actions and recent sessions; search reaches the full inventory, including terminal-only guidance. Aliases such as `/settings`, `/new`, `/resume`, `/tree`, and `/hotkeys` lead to the same graphical destinations rather than duplicate entries.
 
 Graphical actions open their existing controls. Selecting an extension, template, or skill opens a temporary preparation step: review its arguments, then explicitly **Run command** or **Send prepared prompt**. Your message draft and attachments remain untouched. Extension handlers run immediately, including while Pi is busy; only templates and skills use the visible **Steer / Queue** choice during active work. Escape returns to palette search, then closes the palette. **Find a session** focuses the same full Host catalog search as `/resume`, including from the start surface; recent palette shortcuts remain direct jumps. It is not limited to already-loaded palette results.
@@ -163,9 +168,10 @@ Choose an `@` completion to keep the file path in its sentence position; paths w
 Repeated references remain inline. **Add project files** instead creates removable chips. On the
 new-session surface, inline selections use absolute paths so a directory change cannot retarget them.
 
-Sent ordinary uploads survive Host restart. Inspire keeps their copies while a retained session,
-branch, fork, or recoverable Trash session references them, then reclaims unreferenced owned copies.
-Deleting a session never removes original project files. Images remain embedded in Pi message data.
+Delivered or possibly delivered ordinary uploads remain stored across Host restarts and session
+deletion. Reclaim them explicitly using [uploaded-file cleanup](host.md#uploaded-file-retention-and-cleanup).
+Deleting a session removes neither these copies nor original project files. Images remain embedded
+in Pi message data.
 
 ## Pending input and stopping
 
@@ -198,10 +204,6 @@ restoring guessed copies. Ordinary text-only recovery is quiet.
 After `/model `, completion offers Pi-provided `provider/model` candidates. After `/thinking `, it offers the active model's supported levels. Arrow keys, Enter, Tab, or a pointer insert the selected argument without submitting. Free-text built-ins such as `/name`, `/compact`, and `/export` show a concise usage hint. Existing inline `@` search remains available where a prompt needs a project path; export destinations are not suggested from existing project files. Inspire does not guess extension arguments because Pi's public command inventory does not expose completion callbacks.
 
 `/hotkeys` opens browser-specific shortcuts, reflecting the current desktop send-key preference, touch-first Return behavior, completion, history, conversation search, and project-terminal modes. `/changelog` reads the matching release notes shipped with the installed Pi package; it does not open Settings or require a network lookup. Documentation links lead to current upstream documentation.
-
-## Updates
-
-Settings → System checks Pi, Inspire and Pi's globally installed extension packages.
 
 ## Export
 
@@ -245,9 +247,12 @@ prompts and context files, resetting worker-local extension state. Other session
 unchanged. A Host restart replaces all Inspire-owned workers and applies changed Host configuration;
 connected external Pi sessions keep their original processes.
 
+<a id="updates"></a>
+
 ## Update checks
 
-Settings → System checks the installed Pi version and global/user extension packages. After installing
+Settings → System checks Inspire, the installed Pi version and global/user extension packages.
+It reports available releases and installation commands; checking does not install them. After installing
 updates, **Check again** refreshes the result without restarting Inspire. If the Host still has an
 older Pi version loaded, the row shows **Restart Host to apply** instead of another update command.
 Extension **No updates** describes installation only; use `/reload` in an idle session to load changed
