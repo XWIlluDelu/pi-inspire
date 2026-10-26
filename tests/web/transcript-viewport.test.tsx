@@ -125,9 +125,25 @@ function OlderLoadingHarness({
       ref={viewport.scrollRef}
       role="log"
       data-loading-earlier={viewport.loadingEarlier}
+      onScroll={viewport.onScroll}
+      onWheel={viewport.markUserScrollIntent}
     >
       <div ref={viewport.contentRef}>
         <div data-transcript-key="one">message</div>
+        <button
+          type="button"
+          onClick={() => {
+            searchOwnsViewportRef.current = true;
+            viewport.releaseLatestFollow();
+            const log = viewport.scrollRef.current!;
+            log.scrollTop = log.scrollHeight - 500;
+          }}
+        >
+          Navigate search
+        </button>
+        <button type="button" onClick={viewport.jumpToLatest}>
+          Jump to latest
+        </button>
       </div>
     </div>
   );
@@ -248,6 +264,65 @@ describe("transcript viewport geometry", () => {
       "false",
     );
   });
+
+  it.each([
+    { navigation: "search", afterResponse: false },
+    { navigation: "search", afterResponse: true },
+    { navigation: "scroll", afterResponse: false },
+    { navigation: "latest", afterResponse: false },
+  ])(
+    "keeps newer $navigation navigation across an earlier-history completion (after response: $afterResponse)",
+    async ({ navigation, afterResponse }) => {
+      const page = deferred<boolean>();
+      const onLoadOlder = vi.fn(() => page.promise);
+      const view = render(
+        <OlderLoadingHarness hasOlder={false} onLoadOlder={onLoadOlder} />,
+      );
+      const log = screen.getByRole("log");
+      setScrollGeometry(log, { clientHeight: 400, scrollTop: 100 });
+      view.rerender(<OlderLoadingHarness hasOlder onLoadOlder={onLoadOlder} />);
+      expect(onLoadOlder).toHaveBeenCalledOnce();
+
+      const complete = async () => {
+        Object.defineProperty(log, "scrollHeight", {
+          configurable: true,
+          value: 1_400,
+        });
+        await act(async () => page.resolve(true));
+      };
+      if (afterResponse) {
+        await complete();
+        act(() => flushAnimationFrames());
+      }
+      if (navigation === "scroll") {
+        fireEvent.wheel(log);
+        log.scrollTop = 500;
+      } else {
+        fireEvent.click(
+          screen.getByRole("button", {
+            name:
+              navigation === "search" ? "Navigate search" : "Jump to latest",
+          }),
+        );
+      }
+      fireEvent.scroll(log);
+      if (!afterResponse) {
+        // Native anchoring preserves the current row when history prepends.
+        log.scrollTop += 400;
+        await complete();
+      }
+      act(() => {
+        TestResizeObserver.trigger(log);
+        flushAnimationFrames();
+        flushAnimationFrames();
+        flushAnimationFrames();
+      });
+      fireEvent.scroll(log);
+      expect(log.scrollTop).toBe(navigation === "latest" ? 1_000 : 900);
+      expect(log).toHaveAttribute("data-loading-earlier", "false");
+      expect(onLoadOlder).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each([0, 1])(
     "retires an older page's deferred scroll after a view change at frame %s",

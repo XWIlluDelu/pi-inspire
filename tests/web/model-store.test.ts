@@ -575,6 +575,56 @@ describe("recent model preference", () => {
 describe("thinking level control", () => {
   beforeEach(() => installFakeWebSocket());
 
+  it.each(["snapshot", "failure"] as const)(
+    "retires an older resync %s after a confirmed thinking change and permits a fresh read",
+    async (completion) => {
+      const delayed = deferred<RouteResponse>();
+      let thinkingLevel = "medium";
+      let reads = 0;
+      installFetch((url, init) => {
+        if (url.startsWith("/api/snapshot")) {
+          reads += 1;
+          if (reads === 1) return delayed.promise;
+          return {
+            body: activeSnapshot({
+              thinkingLevel,
+              pageMessages: [{ role: "user", content: "Fresh history" }],
+            }),
+          };
+        }
+        if (url === "/api/control/thinking") {
+          thinkingLevel = String(jsonBody(init).level);
+          return {
+            body: {
+              model: { provider: "kimi-coding", id: "kimi-k3" },
+              thinkingLevel,
+            },
+          };
+        }
+        return baseRoutes(url, init);
+      });
+      const { store } = await initStore();
+      const older = store.refreshSession();
+      await store.setThinkingLevel("low");
+      delayed.resolve(
+        completion === "snapshot"
+          ? { body: activeSnapshot({ thinkingLevel: "medium" }) }
+          : { status: 503, body: { error: "Older read failed" } },
+      );
+      await older;
+      expect(store.getState().thinkingLevel).toBe("low");
+      expect(store.getState().error).toBeNull();
+
+      await store.refreshSession();
+      expect(store.getState().thinkingLevel).toBe("low");
+      expect(store.getState().messages).toMatchObject([
+        { role: "user", content: "Fresh history" },
+      ]);
+      expect(store.getState().error).toBeNull();
+      expect(reads).toBe(2);
+    },
+  );
+
   it.each(["picker", "cycle"] as const)(
     "keeps the newer %s selection when an earlier thinking response arrives late",
     async (control) => {

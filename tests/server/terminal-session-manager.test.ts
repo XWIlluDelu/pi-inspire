@@ -430,6 +430,112 @@ describe("TerminalSessionManager", () => {
     }
   });
 
+  it("keeps the current writer when the takeover sink fails during resize", async () => {
+    const { manager, spawns } = setup();
+    try {
+      const terminal = await manager.create({ cwd: process.cwd() });
+      const options = { terminalId: terminal.id, cols: 100, rows: 30 };
+      const firstSink = new FakeSink();
+      const first = await manager.attach(
+        { ...options, clientId: "client-a" },
+        firstSink,
+      );
+      const secondSink = new FakeSink();
+      const second = await manager.attach(
+        { ...options, clientId: "client-b" },
+        secondSink,
+      );
+      vi.spyOn(secondSink, "sendControl").mockImplementation(() => {
+        throw new Error("socket closed during resize");
+      });
+
+      second.control({ type: "take_control", cols: 120, rows: 40 });
+
+      expect(manager.list().terminals[0]).toMatchObject({ viewerCount: 1 });
+      first.writeInput(1, Buffer.from("original writer\r"));
+      expect(spawns[0]!.pty.writes.map(String)).toEqual(["original writer\r"]);
+      expect(
+        firstSink.controls.some(
+          (message) => message.type === "ownership" && !message.writable,
+        ),
+      ).toBe(false);
+    } finally {
+      await manager.close();
+    }
+  });
+
+  it("does not retain a ghost writer when both sinks fail during takeover", async () => {
+    const { manager } = setup(500);
+    try {
+      const terminal = await manager.create({ cwd: process.cwd() });
+      const options = { terminalId: terminal.id, cols: 100, rows: 30 };
+      const firstSink = new FakeSink();
+      await manager.attach({ ...options, clientId: "client-a" }, firstSink);
+      const secondSink = new FakeSink();
+      const second = await manager.attach(
+        { ...options, clientId: "client-b" },
+        secondSink,
+      );
+      vi.spyOn(firstSink, "sendControl").mockImplementation(() => {
+        throw new Error("previous writer disconnected");
+      });
+      vi.spyOn(secondSink, "sendControl").mockImplementation(() => {
+        throw new Error("takeover writer disconnected");
+      });
+      vi.useFakeTimers();
+
+      second.control({ type: "take_control", cols: 100, rows: 30 });
+      await vi.advanceTimersByTimeAsync(501);
+
+      expect(manager.list().terminals[0]).toMatchObject({
+        viewerCount: 0,
+        hasOwner: false,
+      });
+    } finally {
+      vi.useRealTimers();
+      await manager.close();
+    }
+  });
+
+  it.each([30, 40])(
+    "releases a reconnect lease after both sinks fail with %i rows",
+    async (rows) => {
+      const { manager } = setup(500);
+      try {
+        const terminal = await manager.create({ cwd: process.cwd() });
+        const options = {
+          terminalId: terminal.id,
+          clientId: "client-a",
+          cols: 100,
+          rows: 30,
+        };
+        const firstSink = new FakeSink();
+        await manager.attach(options, firstSink);
+        const ownerToken = attachedMessage(firstSink)!.ownerToken;
+        const reconnectSink = new FakeSink();
+        for (const sink of [firstSink, reconnectSink]) {
+          vi.spyOn(sink, "sendControl").mockImplementation(() => {
+            throw new Error("writer disconnected");
+          });
+        }
+        vi.useFakeTimers();
+
+        await expect(
+          manager.attach({ ...options, ownerToken, rows }, reconnectSink),
+        ).rejects.toMatchObject({ code: "attachment_closed" });
+        await vi.advanceTimersByTimeAsync(501);
+
+        expect(manager.list().terminals[0]).toMatchObject({
+          viewerCount: 0,
+          hasOwner: false,
+        });
+      } finally {
+        vi.useRealTimers();
+        await manager.close();
+      }
+    },
+  );
+
   it("tracks shell command boundaries, working directories, and completion", async () => {
     const { manager, spawns } = setup();
     const terminal = await manager.create({ cwd: process.cwd() });
