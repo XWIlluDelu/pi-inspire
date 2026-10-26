@@ -7,6 +7,9 @@ import { type Api, ApiError, ApiTransportError } from "../api";
 interface Handoff {
   request: PendingOperationRequest;
   result?: PendingRecovery;
+  completion: Promise<PendingRecovery>;
+  complete(result: PendingRecovery): void;
+  fail(error: ApiError): void;
   observation?: {
     api: Api;
     generation: number;
@@ -45,6 +48,12 @@ export class PendingRecoveryController {
     ]);
     let handoff = this.intents.get(intent);
     if (!handoff) {
+      let complete!: Handoff["complete"];
+      let fail!: Handoff["fail"];
+      const completion = new Promise<PendingRecovery>((resolve, reject) => {
+        complete = resolve;
+        fail = reject;
+      });
       handoff = {
         request: {
           sessionId,
@@ -52,6 +61,9 @@ export class PendingRecoveryController {
           authorityId,
           operationId: crypto.randomUUID(),
         },
+        completion,
+        complete,
+        fail,
         applied: false,
       };
       this.intents.set(intent, handoff);
@@ -104,6 +116,7 @@ export class PendingRecoveryController {
             } catch (error) {
               if (
                 readOnly ||
+                this.handoffs.get(key) !== handoff ||
                 !(
                   error instanceof ApiTransportError ||
                   (error instanceof ApiError &&
@@ -115,14 +128,22 @@ export class PendingRecoveryController {
               return api.pendingOperation(request);
             }
           })().then((result) => {
-            handoff.result = result;
+            // A receipt observer can finish before the original POST. The
+            // first confirmed result owns restoration; retired handoffs must
+            // not be revived by late transport completions.
+            if (this.handoffs.get(key) === handoff && !handoff.result) {
+              handoff.result = result;
+              handoff.complete(result);
+            }
             return result;
           });
           handoff.observation = { api, generation, promise };
         }
         const observation = handoff.observation;
         try {
-          await observation.promise;
+          // Lightweight socket resume keeps the same API generation. Wake the
+          // initiating Return/Stop too when another observer confirms it.
+          await Promise.race([observation.promise, handoff.completion]);
         } finally {
           if (handoff.observation === observation)
             handoff.observation = undefined;
@@ -148,8 +169,10 @@ export class PendingRecoveryController {
             error.status !== 401 &&
             error.status < 500)) &&
         this.handoffs.get(key) === handoff
-      )
+      ) {
         this.forget(key, handoff);
+        handoff.fail(error);
+      }
       throw error;
     }
   }
