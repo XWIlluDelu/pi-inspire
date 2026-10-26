@@ -111,9 +111,9 @@ and any remote connection must remain available. Enable [task notifications](#ta
 separately on that device.
 
 Page appearance follows Inspire's selected theme. Android's gesture/navigation area belongs to the
-browser and OS: this manifest leaves its theme color unset so Chrome can use its native system
-light/dark surface, while the page supplies a dynamic theme hint. An explicitly selected app theme
-can differ from the system bar. The startup background remains neutral light.
+browser and OS. The manifest leaves its theme color unset, while the page supplies a dynamic theme
+hint; this removes a fixed installed color but does not guarantee that the system bar matches the
+page or system theme. The manifest background remains neutral light for native startup/window use.
 
 An existing Android WebAPK can retain older installed colors after a page reload. After a manifest
 update is deployed, open the installed app to trigger Chrome's update check, then allow its background
@@ -121,7 +121,10 @@ update to complete. Chrome normally waits until the app is closed and the device
 see [Chrome's manifest update process](https://web.dev/articles/manifest-updates#updates_on_chrome_for_android).
 For diagnosis, inspect the matching app in `chrome://webapks` and use **Update** when offered. A current
 package should have no fixed **Theme color**. Preserve the same app URL and installation; clearing
-site data or pairing again is not part of this update.
+site data or pairing again is not part of this update. If the installed metadata is current but the
+gesture area remains light, repeated reinstalls are not an update fix. Compare the same page and
+theme in an ordinary Chrome tab to help distinguish a shared browser issue from the installed-app
+window path.
 
 ## Lifecycle
 

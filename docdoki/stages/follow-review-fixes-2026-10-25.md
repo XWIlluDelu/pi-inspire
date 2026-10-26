@@ -26,9 +26,10 @@ scope:
 Repair the independently reproduced project-review findings that have a clear user or maintenance
 benefit and a well-understood implementation. Keep Pi's ownership boundary and the existing visual
 design. Work belongs on `auto-dev`. The initial repair pass included local client publication;
-the public-trial follow-up permits source changes and local commits only, without client publication,
-Host restart, remote push or release. A finding is not an obligation to add machinery merely because
-it appeared in the review.
+the public-trial follow-up initially permitted source changes and local commits only. Later explicit
+authorization allowed deployment and Host restart, as recorded below; remote push and public release
+remain outside this work. A finding is not an obligation to add machinery merely because it appeared
+in the review.
 
 ## Decisions
 
@@ -158,10 +159,10 @@ Installed WebAPK metadata confirms the manifest's fixed light theme color. Chrom
 `155.0.8059.84` uses that custom installed color on its non-edge-to-edge navigation bar; see
 [WebappIntentDataProvider](https://github.com/chromium/chromium/blob/155.0.8059.84/chrome/android/java/src/org/chromium/chrome/browser/webapps/WebappIntentDataProvider.java#L241)
 and [CustomTabNavigationBarController](https://github.com/chromium/chromium/blob/155.0.8059.84/chrome/android/java/src/org/chromium/chrome/browser/customtabs/features/CustomTabNavigationBarController.java#L134).
-The manifest now omits only `theme_color`, allowing the native system light/dark surface on that
-path. Page theme hints remain dynamic; startup background and application identity remain unchanged.
-No unsupported dark-color manifest fields are added. An explicitly opposite application theme need
-not match the system bar, and the device's edge-to-edge branch is not established by the screenshot.
+The manifest now omits only `theme_color`, removing that custom override. The initial expectation
+that this would expose a matching native light/dark surface was not a device result; subsequent
+device evidence below disproves its sufficiency. Page theme hints remain dynamic; background and
+application identity remain unchanged. No unsupported dark-color manifest fields are added.
 
 The Host guide explains installed-app updates. An existing WebAPK must receive the new manifest
 metadata after a future authorized deployment; reloading the page alone is insufficient. Actual
@@ -183,12 +184,41 @@ navigation appearance in both system themes remains a device check, not a claime
 - DocDoki privacy and Git whitespace checks passed. The full installed-package lifecycle and
   physical mobile acceptance were not rerun; test counts do not certify a release candidate.
 
+## Final candidate and device follow-up
+
+Candidate `72c9dd2a` subsequently passed the complete existing release-package verifier in an isolated
+environment, including production-only installation, first startup, lifecycle and terminal recovery
+checks. A later authorized deployment updated both client and Host. Local and public health, catalog
+reads and event snapshots passed; current served resources matched the deployed build and outgoing
+resources remained available. The separate terminal service retained its process identity. These
+checks do not establish Android system-bar behavior.
+
+A newly installed WebAPK on Android 16 / One UI 8.5 / Chrome `155.0.8059.84`, shell 194, reports an empty
+theme color and a successful update, but still shows a light gesture-navigation area over a dark page
+and system theme. The configuration change therefore did not resolve this device's white bar;
+stale installed metadata is no longer an explanation for that observation.
+The same dark page in an ordinary Chrome tab has no white bar, narrowing the remaining issue to
+the installed window path rather than a styling error shared by both browsing modes.
+
+Chrome 155's [edge-to-edge navigation path](https://github.com/chromium/chromium/blob/155.0.8059.84/chrome/android/java/src/org/chromium/chrome/browser/customtabs/features/CustomTabNavigationBarController.java#L74)
+sets the native bar transparent, bypassing the custom/default-color path. Native inset and window
+background handling remain relevant; transparent system bars do not prove the web viewport covers
+that area. The manifest background enters the initial native window, but Chrome later replaces that
+background after initialization and focus. Neither a static manifest color nor a screenshot alone
+identifies the remaining layer. The page already supplies dark `color-scheme`, a dark body background,
+`viewport-fit=cover` and safe-area handling. No additional runtime styling change is justified yet.
+
+Chrome's [Android architecture notes](https://github.com/chromium/chromium/blob/155.0.8059.84/components/webapps/docs/android_architecture.md#L480)
+describe a separate standalone edge-to-edge path controlled by `WebAppShortEdgesCutoutMode`.
+That browser feature determines whether `viewport-fit=cover` coordinates native window and content
+insets. An ordinary tab's successful appearance therefore does not prove that a WebAPK follows the
+same drawing path. The feature's effective state and final native background on the affected device
+remain unmeasured; website CSS cannot enable the browser feature or remove native wrapper padding.
+
 ## Next actions
 
-The follow-up source changes require the next authorized deployment before existing installations
-receive them; server refinements also wait for an authorized Host restart. Do not restart the Host or
-publish a client as part of this follow-up. Validate the final
-release candidate's installed package separately; the earlier release verification does not certify
-these later changes. Physical mobile/background notification acceptance, real Herdr/systemd integration
-and the conditional optimization proposals remain outside this run. Work stays on `auto-dev` as
-AnoAnonyAnon, without push, merge, tag or release.
+Keep the installed-window limitation explicit until native window/inset behavior can be measured.
+Do not repeat installation solely to refresh already-current
+metadata or claim that omitting `theme_color` fixes the observed bar. Android receipt of the manual
+test notification remains verified; real background-task and notification-click behavior are separate
+checks. Work stays on `auto-dev` as AnoAnonyAnon, without push, merge, tag or public release.
