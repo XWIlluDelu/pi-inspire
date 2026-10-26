@@ -323,16 +323,20 @@ export class RuntimeExternalSessions {
     if (connection.sending > 0 && state.status === "idle") return;
     if (state.status === "unknown") return;
     const previous = slot.runState;
-    slot.runState = slot.conflict
-      ? "conflict"
-      : state.status === "idle"
-        ? state.outcome === "failed" ||
-          state.taskRuns?.settled.at(-1)?.outcome === "failed"
-          ? "failed"
-          : state.taskRuns?.settled.at(-1)?.outcome === "aborted"
-            ? "aborted"
-            : "idle"
-        : "running";
+    if (slot.conflict) {
+      slot.runState = "conflict";
+    } else if (state.status !== "idle") {
+      slot.runState = "running";
+    } else if (
+      state.outcome === "failed" ||
+      state.taskRuns?.settled.at(-1)?.outcome === "failed"
+    ) {
+      slot.runState = "failed";
+    } else if (state.taskRuns?.settled.at(-1)?.outcome === "aborted") {
+      slot.runState = "aborted";
+    } else {
+      slot.runState = "idle";
+    }
     if (
       !force &&
       !changed &&
