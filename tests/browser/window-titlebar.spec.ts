@@ -376,20 +376,21 @@ test("Overlay chrome and needle colors follow every palette and luminosity, and 
       await expect
         .poll(() =>
           page.evaluate(() => {
-            const root = document.documentElement;
-            const rail = getComputedStyle(root)
-              .getPropertyValue("--bg-rail")
-              .trim();
-            const scrim = getComputedStyle(root)
-              .getPropertyValue("--bg-overlay")
-              .trim();
+            // Compare resolved colors, not custom-property source spelling:
+            // minification can turn 0.4 into .4 without changing the scrim.
+            const sample = document.createElement("span");
+            sample.style.transition = "none";
+            document.body.append(sample);
+            sample.style.color = "var(--bg-rail)";
+            const base = getComputedStyle(sample)
+              .color.match(/[\d.]+/g)!
+              .map(Number);
+            sample.style.color = "var(--bg-overlay)";
+            const scrim = getComputedStyle(sample).color;
+            sample.remove();
             const hint = document.querySelector<HTMLMetaElement>(
               'meta[name="theme-color"]',
             )!.content;
-            const base = rail
-              .slice(1)
-              .match(/../g)!
-              .map((value) => parseInt(value, 16));
             const rgba = scrim.match(/[\d.]+/g)!.map(Number);
             const actual = hint.match(/[\d.]+/g)?.map(Number) ?? [];
             return (
