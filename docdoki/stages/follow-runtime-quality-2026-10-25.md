@@ -1,5 +1,6 @@
 ---
 scope:
+  - package*.json
   - src/**
   - server/**
   - tests/**
@@ -45,9 +46,17 @@ formatting, unused-code checks, isolated web/server compilation and the DocDoki 
 Browser color checks compare resolved colors rather than minifier-dependent CSS spelling.
 Physical-device evidence is tracked separately.
 
-The current source includes later quality repairs than the last locally deployed Host. An
-earlier client update restored desktop search without restarting services. Local integration
-does not deploy this source or activate changes in existing Pi processes.
+Version 0.6.5 also passes a local Linux production-only installation check: package contents,
+external Pi startup, authenticated readiness/pairing, session recovery, PTY I/O, terminal
+maintenance and Host restart preserving the same terminal. The production dependency audit is
+clear after compatible request-parser, multipart-upload and schema-validation upgrades; focused
+API, configuration, upload and notification regressions pass. Cross-platform evidence is tracked
+in [[platform-compatibility]].
+
+The 0.6.5 source, dependencies and browser build are staged in the local installation. The new
+entry and retained outgoing assets are served successfully, and the build stamp matches current
+inputs. The running Host and terminal daemon have not been restarted. Their activation remains
+with the operator; external Pi extensions need their own reload in the original idle process.
 
 ## Remaining acceptance
 
