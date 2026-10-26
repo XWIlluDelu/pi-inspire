@@ -413,7 +413,7 @@ Inspire packages the browser client and compiled Node Host as a standalone npm C
 npm ci
 npm run release:verify
 npm pack
-npm install --global ./inspire-pi-gui-0.6.0.tgz
+npm install --global ./inspire-pi-gui-0.6.5.tgz
 inspire
 ```
 

@@ -15,10 +15,11 @@ commands are in [Host operations](../../docs/host.md).
 
 ## Verified native baseline
 
-The latest recorded release evidence is [CI run 39574685523](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39574685523)
+Recorded cross-platform release evidence includes [CI run 39574685523](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39574685523)
 at `f67d6ee` (v0.6.0): all seven jobs pass, including Linux/macOS/Windows and three installed-package
 checks. [[follow-release-0-6-0-2026-10-21]] owns that release record;
 [[follow-project-quality-2026-10-21]] records subsequent integration checks.
+[[follow-runtime-quality-2026-10-25]] records local Linux production-install verification for 0.6.5.
 
 Package checks exercise a real default daemon, PTY I/O, terminal maintenance, Host restart preserving
 terminals, authenticated readiness/pairing and native session recovery. Native filesystem/shell checks
