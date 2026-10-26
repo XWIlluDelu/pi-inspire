@@ -30,6 +30,7 @@ import {
   type TranscriptActivityRangeState,
 } from "../store";
 import { transcriptProjectionKey } from "../transcript-projection-key";
+import { hasActiveModal } from "../use-modal-focus";
 import { EarlierBranchBanner } from "./EarlierBranchBanner";
 import { EmbeddedImageOwnerContext } from "./ImagePreview";
 import { PiLoader } from "./PiLoader";
@@ -55,6 +56,7 @@ const EMPTY_TOOL_ACTIVITY: Record<string, ActivityTool> = {};
 
 export interface TranscriptNavigation {
   jumpToPending: () => void;
+  openSearch: () => void;
 }
 
 export const Transcript = memo(function Transcript({
@@ -287,6 +289,14 @@ export const Transcript = memo(function Transcript({
   const searchQueryRef = useRef(search.query);
   searchQueryRef.current = search.query;
 
+  const openSearch = () => {
+    if (window.matchMedia("(max-width: 900px)").matches)
+      setMobileTranscriptTool("search");
+    // The layout effect focuses a newly opened narrow search after it renders.
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+
   useLayoutEffect(() => {
     if (mobileTranscriptTool !== "search") return;
     searchInputRef.current?.focus();
@@ -296,8 +306,12 @@ export const Transcript = memo(function Transcript({
   useEffect(() => {
     const narrow = window.matchMedia("(max-width: 900px)");
     const syncLayout = () => {
-      if (!narrow.matches) setMobileTranscriptTool(null);
-      else if (searchQueryRef.current) setMobileTranscriptTool("search");
+      if (!narrow.matches) {
+        setMobileTranscriptTool(null);
+      } else {
+        if (searchQueryRef.current) setMobileTranscriptTool("search");
+        else searchInputRef.current?.blur();
+      }
     };
     syncLayout();
     narrow.addEventListener("change", syncLayout);
@@ -467,6 +481,7 @@ export const Transcript = memo(function Transcript({
   ]);
 
   useImperativeHandle(ref, () => ({
+    openSearch,
     jumpToPending() {
       const pending = pendingRef.current;
       const scroller = viewport.scrollRef.current;
@@ -522,13 +537,28 @@ export const Transcript = memo(function Transcript({
       className={`transcript-wrap transcript-wrap--mobile-${mobileTranscriptTool ?? "idle"} ${viewingEarlierBranch ? "transcript-wrap--earlier-branch" : ""}`}
       tabIndex={-1}
       onKeyDownCapture={(event) => {
-        if (isComposingKeyboardEvent(event.nativeEvent)) return;
-        if (event.key === "f" && (event.metaKey || event.ctrlKey)) {
+        if (
+          event.defaultPrevented ||
+          isComposingKeyboardEvent(event.nativeEvent) ||
+          event.getModifierState("AltGraph")
+        )
+          return;
+        if (
+          event.key.toLowerCase() === "f" &&
+          event.metaKey !== event.ctrlKey &&
+          !event.altKey &&
+          !event.shiftKey
+        ) {
+          if (
+            hasActiveModal() ||
+            (event.target instanceof Element &&
+              event.target.closest(
+                '[role=menu], [role=listbox], [role=combobox][aria-expanded="true"]',
+              ))
+          )
+            return;
           event.preventDefault();
-          if (window.matchMedia("(max-width: 900px)").matches)
-            setMobileTranscriptTool("search");
-          searchInputRef.current?.focus();
-          searchInputRef.current?.select();
+          openSearch();
         } else if (
           viewport.scrollRef.current?.contains(event.target as Node) &&
           [

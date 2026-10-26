@@ -102,8 +102,8 @@ export function TranscriptUtilities({
               event.preventDefault();
               event.stopPropagation();
               const mobileSearch = mobileTool === "search";
-              onClose(mobileSearch);
-              if (!mobileSearch) inputRef.current?.blur();
+              if (mobileSearch) onClose(true);
+              else inputRef.current?.blur();
             }
           }}
           placeholder="Search conversation"

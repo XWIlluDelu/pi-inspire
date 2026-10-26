@@ -15,6 +15,51 @@ afterEach(() => {
 });
 
 describe("workbench keyboard ownership", () => {
+  it.each([{ ctrlKey: true }, { metaKey: true }])(
+    "opens conversation search from the draft with %j and respects modal ownership",
+    async (modifier) => {
+      render(<App />);
+      const draft = screen.getByRole("textbox", { name: "Message" });
+      fireEvent.change(draft, { target: { value: "keep this draft" } });
+      expect(fireEvent.keyDown(draft, { key: "f", ...modifier })).toBe(false);
+      const search = screen.getByRole("searchbox", {
+        name: "Search conversation",
+      });
+      expect(search).toHaveFocus();
+      expect(draft).toHaveValue("keep this draft");
+      fireEvent.keyDown(search, { key: "Escape" });
+      expect(search).not.toHaveFocus();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open command palette" }),
+      );
+      const palette = await screen.findByRole("dialog", {
+        name: "Command palette",
+      });
+      const filter = within(palette).getByRole("combobox");
+      filter.focus();
+      expect(fireEvent.keyDown(filter, { key: "f", ...modifier })).toBe(true);
+      expect(filter).toHaveFocus();
+    },
+  );
+
+  it("leaves composing and modified Find chords to their original owners", () => {
+    render(<App />);
+    const draft = screen.getByRole("textbox", { name: "Message" });
+    draft.focus();
+    for (const modifier of [
+      { isComposing: true },
+      { keyCode: 229 },
+      { shiftKey: true },
+      { altKey: true },
+      { metaKey: true },
+    ]) {
+      expect(
+        fireEvent.keyDown(draft, { key: "f", ctrlKey: true, ...modifier }),
+      ).toBe(true);
+      expect(draft).toHaveFocus();
+    }
+  });
+
   it.each(["MacIntel", "Win32", "Linux x86_64"])(
     "cycles from the draft and exposes matching hints on %s",
     async (platform) => {
