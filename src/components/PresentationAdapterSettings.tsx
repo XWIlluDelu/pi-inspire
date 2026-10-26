@@ -53,7 +53,7 @@ export function PresentationAdapterSettings() {
       ) : (
         <SettingsCardMessage>
           No adapters configured. Add adapter files to your custom presentation
-          profile; no rebuild is needed.
+          profile.
         </SettingsCardMessage>
       )}
       {error ? <SettingsCardMessage error>{error}</SettingsCardMessage> : null}

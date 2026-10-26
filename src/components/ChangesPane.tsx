@@ -310,7 +310,6 @@ function ChangesIndex({ state }: { state: ContextPaneView }) {
       <ContextPaneState
         icon={<PiLoader size={17} aria-hidden />}
         title="Reading Git status"
-        hint="Inspecting the active workspace…"
       />
     );
   if (state.gitStatusError && !status)
@@ -326,7 +325,6 @@ function ChangesIndex({ state }: { state: ContextPaneView }) {
       <ContextPaneState
         icon={<History size={17} aria-hidden />}
         title="No Git repository"
-        hint="The active workspace is not inside a Git work tree."
       />
     );
   if (status.files.length === 0)
@@ -334,7 +332,6 @@ function ChangesIndex({ state }: { state: ContextPaneView }) {
       <ContextPaneState
         icon={<History size={17} aria-hidden />}
         title="Working tree clean"
-        hint="No staged, unstaged, or untracked files."
       />
     );
   const conflicts = status.files.filter((file) => file.conflict);

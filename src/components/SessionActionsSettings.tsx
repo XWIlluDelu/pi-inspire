@@ -172,7 +172,7 @@ export function SessionActionsSettings({
       id="session-actions"
       icon={<ListOrdered size={14} />}
       title="Session actions"
-      description={`Order the session title menu actions. The first ${SESSION_ACTION_VISIBLE_COUNT} actions appear immediately in the compact menu; the rest are revealed under More actions.`}
+      description="Reorder the session title menu."
     >
       <ol
         ref={containerRef}

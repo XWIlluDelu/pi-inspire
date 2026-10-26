@@ -172,6 +172,19 @@ Find/Close and retain narrow Search's close control. Native static publication r
 resources; the served homepage and 20 current public resources matched the candidate, and the Host
 and terminal service process identities remained unchanged. No remote push or service restart occurred.
 
+## Interface copy cleanup — 2026-10-26
+
+Starting from `d2ffc4d0`, the requested copy cleanup labels untouched extension choices `Default`,
+including their accessible value. It removes the adapter empty state's rebuild aside, duplicate
+terminal storage-location text, repeated menu-disclosure guidance, redundant Changes loading/empty
+state hints, and the generic connection failure's speculative cause list. Configuration guidance,
+storage scope, destructive-action warnings, distinct error states and recovery controls remain.
+
+The eight relevant existing web suites passed all 51 tests in an isolated copy. Format/lint, import
+boundaries, TypeScript and Knip passed; the existing default-value accessibility assertion was updated.
+This follow-up is source-only. The deployed search-restoration build remains unchanged; no service
+restart, deployment or remote push was performed, and native Pi code and installation were not modified.
+
 ## Remaining decisions
 
 The user may decide the remaining proposals separately: title affordance, phone tool placement/Latest,
