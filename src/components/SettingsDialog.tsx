@@ -79,7 +79,13 @@ export function SettingsDialog({
 }) {
   // Retain the lower modal owner and its outside opener while a native
   // question hides this shell and temporarily owns the top of the focus stack.
-  const ref = useModalFocus<HTMLDivElement>(true, "settings", onClose);
+  const ref = useModalFocus<HTMLDivElement>(
+    true,
+    "settings",
+    onClose,
+    "dialog",
+    !suspended,
+  );
   return (
     <div
       className="overlay settings-overlay"

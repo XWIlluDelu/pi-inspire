@@ -1,4 +1,9 @@
-import { type RefObject, useLayoutEffect, useRef } from "react";
+import {
+  type RefObject,
+  useLayoutEffect,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import { isComposingKeyboardEvent } from "./keyboard-input";
 
 const FOCUSABLE = [
@@ -15,6 +20,7 @@ const FOCUSABLE = [
 interface ModalEntry {
   layer: "drawer" | "dialog";
   dialog: HTMLElement;
+  backdrop: boolean;
   restore: HTMLElement | null;
   portals: Map<HTMLElement, HTMLElement>;
   /** Return false only when a host-level recovery key must take precedence. */
@@ -22,6 +28,22 @@ interface ModalEntry {
 }
 
 const modalStack: ModalEntry[] = [];
+const modalListeners = new Set<() => void>();
+const modalDepth = () => modalStack.filter((entry) => entry.backdrop).length;
+const subscribeModals = (listener: () => void) => {
+  modalListeners.add(listener);
+  return () => {
+    modalListeners.delete(listener);
+  };
+};
+const notifyModals = () => {
+  for (const listener of modalListeners) listener();
+};
+
+/** Chrome shares the same backdrop depth as the focus-owning dialogs/drawers. */
+export function useModalDepth(): number {
+  return useSyncExternalStore(subscribeModals, modalDepth, () => 0);
+}
 
 /** True while any modal focus owner is mounted. Global shortcuts must never
  * act through a modal, even when the focused element does not consume them. */
@@ -103,11 +125,14 @@ export function useModalFocus<T extends HTMLElement>(
   owner: unknown = active,
   onEscape?: (event: KeyboardEvent) => boolean | void,
   layer: ModalEntry["layer"] = "dialog",
+  backdrop = true,
 ): RefObject<T | null> {
   const dialogRef = useRef<T>(null);
   const previousEntryRef = useRef<ModalEntry | null>(null);
   const onEscapeRef = useRef(onEscape);
   onEscapeRef.current = onEscape;
+  const backdropRef = useRef(backdrop);
+  backdropRef.current = backdrop;
 
   useLayoutEffect(() => {
     const dialog = dialogRef.current;
@@ -120,6 +145,7 @@ export function useModalFocus<T extends HTMLElement>(
     const entry: ModalEntry = {
       layer,
       dialog,
+      backdrop: backdropRef.current,
       // StrictMode replays layout effects after focus has entered this same
       // dialog. Preserve its outside opener, not the now-focused close button.
       restore:
@@ -138,6 +164,7 @@ export function useModalFocus<T extends HTMLElement>(
         : -1;
     if (above < 0) modalStack.push(entry);
     else modalStack.splice(above, 0, entry);
+    notifyModals();
 
     if (
       modalStack.at(-1) === entry &&
@@ -225,6 +252,7 @@ export function useModalFocus<T extends HTMLElement>(
       const wasTop = modalStack.at(-1) === entry;
       const index = modalStack.lastIndexOf(entry);
       if (index >= 0) modalStack.splice(index, 1);
+      notifyModals();
       const remaining = modalStack.at(-1);
       if (remaining) {
         // If an underlying modal disappears first, preserve its opener as the
@@ -255,6 +283,10 @@ export function useModalFocus<T extends HTMLElement>(
 
   useLayoutEffect(() => {
     const entry = previousEntryRef.current;
+    if (active && entry && entry.backdrop !== backdrop) {
+      entry.backdrop = backdrop;
+      notifyModals();
+    }
     // A modal can mount while all controls are disabled, then become ready on
     // a later render. Transfer its fallback focus without taking it from a child
     // or from a newer modal, and keep the original restoration owner intact.

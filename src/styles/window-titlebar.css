@@ -24,6 +24,17 @@
     pointer-events: none;
   }
 
+  /* Visual-only scrims leave native controls and the drag surface available.
+     The shared modal stack also accounts for nested dialogs and narrow drawers. */
+  .window-titlebar::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    background: var(--window-scrim, none);
+    pointer-events: none;
+  }
+
   /* Only interactive/drag content needs the native-control exclusion rectangle. */
   .window-titlebar__safe {
     container: window-titlebar / inline-size;
