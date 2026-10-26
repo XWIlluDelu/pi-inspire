@@ -1,13 +1,18 @@
 ---
 scope:
-  - src/{store,notifications}.ts
+  - src/{store,notifications,browser-notifications}.ts
   - src/components/transcript-*.{ts,tsx}
   - src/components/{ChildCalls,CodeModeResult}.tsx
+  - src/components/TerminalPane.tsx
   - server/{runtime,mcp-config}.ts
   - scripts/build-web.mjs
+  - scripts/verify-release-package.mjs
   - tests/**
   - docs/pi-commands.md
+  - docs/{extensions,ssh-reverse}.md
   - docdoki/specs/{notifications,activity-presentation,herdr-enhancement,host-lifecycle}.md
+  - docdoki/specs/terminal.md
+  - docdoki/spec_abstract.md
 ---
 
 # Project review repairs
@@ -16,9 +21,10 @@ scope:
 
 Repair the independently reproduced project-review findings that have a clear user or maintenance
 benefit and a well-understood implementation. Keep Pi's ownership boundary and the existing visual
-design. Work belongs on `auto-dev`; local client build publication is authorized, without publishing
-remote branches or releases. A finding is not an obligation to add machinery merely because it
-appeared in the review.
+design. Work belongs on `auto-dev`. The initial repair pass included local client publication;
+the public-trial follow-up permits source changes and local commits only, without client publication,
+Host restart, remote push or release. A finding is not an obligation to add machinery merely because
+it appeared in the review.
 
 ## Decisions
 
@@ -39,7 +45,7 @@ appeared in the review.
 
 ## Current state
 
-The review baseline is `9e93d2dd`. All seven confirmed findings are repaired; the attachment finding
+The initial review baseline was `9e93d2dd`. All seven original findings are repaired; the attachment finding
 was a documentation contradiction, while the other findings had isolated reproductions. The work
 preserves the existing visual system and `.gitignore`.
 
@@ -91,9 +97,36 @@ source hash. The running Host's homepage, worker, manifest and all current JavaS
 (20 files) matched `dist` byte for byte. The existing large-chunk warning remains; no bundle split
 was justified by this repair pass. Host and real sessions were not restarted or modified.
 
+## Public-trial follow-up
+
+The follow-up baseline is `fad41a98`. The confirmed terminal-notification and public-documentation
+findings are repaired in source:
+
+- Terminal bell and long-task alerts use the existing service-worker registration when available,
+  retain desktop constructor fallback, and contain display failures. Visual tab marks remain available
+  even when system display fails; optional notification errors cannot retire the terminal transport.
+- Release verification no longer claims that the removed upload trust-migration CLI was exercised.
+- The public design overview uses standard relative Markdown links. The packaged extension guide
+  links to the source-only task-board tutorial in the repository, and SSH reverse examples consistently
+  use the globally installed command with the existing source-checkout substitution instruction.
+
+Validation used an independent source/dependency copy. Full Biome format/lint, import boundaries,
+TypeScript and Knip passed. The browser-notification, terminal-pane, terminal-settings-dialog and
+terminal-connection suites passed (85 tests), including service-worker rejection, unsupported mobile
+constructors, desktop fallback and retained visual marks. Public Markdown targets and packaged-guide
+links were checked, as were release-script syntax and the DocDoki privacy boundary. No running Host,
+Pi process or terminal was used. The full installed-package lifecycle check was not rerun.
+
+This follow-up does not change Android system-bar styling. The observed installed-PWA navigation-bar
+color still requires device-level attribution; a screenshot alone does not establish a CSS defect.
+Android delivery of the manual task-alert notification is already verified. Background real-task and
+notification-click acceptance remain separate from that completed check.
+
 ## Next actions
 
-No repair remains pending within this scope. Existing browser pages use the new client after reload;
-backend fixes load at the next normal Host start. Physical mobile/background notification acceptance,
-real Herdr/systemd integration and the conditional optimization proposals remain outside this run.
-Changes are committed on `auto-dev` as AnoAnonyAnon, without push, merge, tag or release.
+The follow-up source changes require the next authorized client build before existing installations
+receive them. Do not restart the Host or publish a client as part of this follow-up. Validate the final
+release candidate's installed package separately; the earlier release verification does not certify
+these later changes. Physical mobile/background notification acceptance, real Herdr/systemd integration
+and the conditional optimization proposals remain outside this run. Work stays on `auto-dev` as
+AnoAnonyAnon, without push, merge, tag or release.

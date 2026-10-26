@@ -71,17 +71,17 @@ The connection commands manage only the verified SSH tunnel. They do not stop, r
 
 For a bounded client-side trace, browser developer tools can inspect `performance.getEntriesByType("measure").filter(({ name }) => name.startsWith("inspire:"))`. These process-local entries report bootstrap and WebSocket handshake duration (including whether `permessage-deflate` was actually negotiated), prompt-confirmation outcome, and ten-second stream frame/event/character aggregates; they contain no prompt or response text and are neither persisted nor uploaded.
 
-`./inspire --ssh-reverse` is a shorthand for `./inspire connection ssh-reverse start`.
+`inspire --ssh-reverse` is a shorthand for `inspire connection ssh-reverse start`.
 
 ## Automatic recovery
 
 Install the local host and tunnel user services:
 
 ```bash
-./inspire stop
-./inspire service install-host
-./inspire connection ssh-reverse install-service
-./inspire service enable-host
+inspire stop
+inspire service install-host
+inspire connection ssh-reverse install-service
+inspire service enable-host
 systemctl --user enable --now inspire-connection-ssh-reverse.service
 ```
 

@@ -288,7 +288,7 @@ There are three distinct levels:
 3. **Source DIY:** add purpose-built React controls and a small adapter in a checkout. Pi extensions
    still own state and behavior; Inspire does not supply a scheduler or permission policy.
 
-The complete [source task-board example](examples/task-board/README.md) includes the Pi extension,
+The complete [source task-board example](https://github.com/XWIlluDelu/pi-inspire/blob/main/docs/examples/task-board/README.md) includes the Pi extension,
 shared data/actions, props-only list/detail UI, adapter, styles, mounting instructions, build/reload
 steps and session-cleanup checks. It uses cancellable demonstration timers rather than launching
 agents. Its Stop/Retry/Open notes actions require both extension-declared capability and the current
