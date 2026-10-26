@@ -58,6 +58,60 @@ entry and retained outgoing assets are served successfully, and the build stamp 
 inputs. The running Host and terminal daemon have not been restarted. Their activation remains
 with the operator; external Pi extensions need their own reload in the original idle process.
 
+### CI follow-up
+
+The [original 0.6.5 matrix](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40339358680)
+passed all three installed-package checks but failed quality and Windows, while macOS exhausted
+its job budget after browser failures. The follow-up restores the sidebar's specified compact search
+font size after shared search styles overrode it, retaining WebKit's editing-size exception. It also
+repairs test contracts without changing the tag, deployed assets, native Pi or runtime deadlines.
+Large activity mounting and deliberate card
+choices have independent checks; native model edit scenarios retain real metadata validation
+without combining six cold worker starts into one test deadline. Native Bash logout is witnessed
+by its exact file side effect after exit, independently of bounded PTY tail delivery.
+
+Cross-platform fixtures use canonical temporary paths and apply POSIX permission assertions only
+where meaningful. Browser acceptance follows current action menus, addressed branch commands,
+model labels, recovery states and responsive layout. Held History-copy requests are scoped to the
+original entry so they cannot also block a newer response copy. Reading checks retain real scroll
+offsets, and clipboard checks assert the complete copied source.
+
+The complete Chromium run also exposed an asynchronous mobile history race: a delayed explicit
+close could dismiss a newly opened Settings panel. History ownership now waits for its own pending
+traversal before reconciling the latest UI intent. A controlled delayed-popstate regression and real
+login, modal Back, image-gallery and native-question flows cover the repair. Cancellation fixtures
+finish their in-flight mock request handlers before disposing the browser context.
+
+Reading scroll ownership retains an upward wheel across a queued layout scroll at latest instead
+of snapping back to the bottom. A gesture that cannot move the transcript still permits subsequent
+latest-follow. Native occupancy acceptance observes successful guard admission when the replacement
+worker is created, rather than installing a probe after automatic recovery may already have finished.
+
+The [first repair matrix](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40349199484)
+also measured 27.3 minutes for macOS Chromium, after successful core and launcher checks. Its
+40-minute job budget cancelled the following 38-case WebKit phase without a Safari assertion
+failure. The aggregate macOS budget is now 50 minutes; individual deadlines, one browser worker
+and one CI retry are unchanged.
+
+A later Windows run measured 3.35–4.65 seconds for single native configuration validations.
+Its five two-validation scenarios exhausted the unit runner's shared five-second default;
+those scenarios now have a 45-second integration budget, covering two existing 15-second
+request deadlines and Windows process retirement. Global and production deadlines are unchanged.
+
+Large argument-menu scrolling waits for the browser's asynchronous visibility observation before
+stopping wheel input; estimated virtual-row geometry can move after a synchronous rectangle read.
+Command fixtures finish each settled snapshot before starting the next simulated run and drain
+pending handlers before browser-context disposal. File-refresh acceptance waits for changed source
+content before checking retained mode and offsets, independently of concurrent workspace searching.
+Export-format geometry is sampled in one browser task so a viewport relayout cannot split
+measurements of a control and its containing row; the original alignment limits are retained.
+
+Local Linux follow-up evidence includes 3,957 passing unit/integration cases, 42 portable checks,
+and nine launcher checks (one platform skip), plus formatting, lint, types, unused-code checks and
+a fresh isolated browser build. Launcher checks run from a temporary source copy so validation
+cannot rebuild the staged deployment or control its instances. Cross-platform CI remains separate
+evidence from this local run.
+
 ## Remaining acceptance
 
 - On Android, verify background task outcomes, click-through and offscreen same-Pi prompting,

@@ -13,9 +13,14 @@ test("a failed clone leaves its action menu available instead of silently dismis
 }) => {
   await pairedPage(page);
   await openMockSession(page, /Review extension event lifecycle/);
-  await page.route("**/api/branches/clone", (route) =>
-    route.fulfill({ status: 503, json: { error: "Clone is unavailable" } }),
-  );
+  let attempts = 0;
+  await page.route("**/api/branches/clone", (route) => {
+    attempts++;
+    return route.fulfill({
+      status: 503,
+      json: { error: "Clone is unavailable" },
+    });
+  });
   await page.getByRole("button", { name: /^Session actions:/ }).click();
   const menu = page.getByRole("menu", { name: "Session actions" });
   const clone = menu.getByRole("menuitem", {
@@ -25,7 +30,14 @@ test("a failed clone leaves its action menu available instead of silently dismis
   await expect(clone).toBeEnabled();
   await clone.click();
   await expect(menu).toBeVisible();
-  await expect(clone).toBeDisabled();
+  await expect(
+    page.getByText("Clone is unavailable", { exact: true }),
+  ).toBeVisible();
+  await expect(clone).toBeEnabled();
+  expect(attempts).toBe(1);
+  await clone.click();
+  await expect.poll(() => attempts).toBe(2);
+  await expect(menu).toBeVisible();
 });
 
 async function namedSession(page: Page) {
@@ -708,22 +720,34 @@ test("title/palette exports download the selected format and branch without cons
       .all()) {
       const copy = row.locator(".export-dialog__format-copy");
       const [format, description] = await Promise.all([
-        copy.locator("span").evaluate(firstTextBaseline),
-        copy.locator("small").evaluate(firstTextBaseline),
+        copy
+          .locator("span")
+          .evaluate(firstTextBaseline, ".export-dialog__format-copy"),
+        copy
+          .locator("small")
+          .evaluate(firstTextBaseline, ".export-dialog__format-copy"),
       ]);
       expect(format).not.toBeNull();
       expect(description).not.toBeNull();
       expect(Math.abs(format! - description!)).toBeLessThanOrEqual(0.5);
-      const [control, box] = await Promise.all([
-        row.locator("input").boundingBox(),
-        row.boundingBox(),
-      ]);
-      expect(control!.width).toBe(14);
-      expect(control!.height).toBe(14);
-      expect(
-        Math.abs(control!.y + control!.height / 2 - box!.y - box!.height / 2),
-      ).toBeLessThanOrEqual(0.5);
-      expect(box!.height).toBeGreaterThanOrEqual(44);
+      // The overlay's viewport-relative padding can change between separate
+      // browser reads after resize. Compare related geometry in one layout.
+      const geometry = await row.evaluate((element) => {
+        const control = element.querySelector("input")!.getBoundingClientRect();
+        const box = element.getBoundingClientRect();
+        return {
+          controlWidth: control.width,
+          controlHeight: control.height,
+          centerOffset: Math.abs(
+            control.y + control.height / 2 - box.y - box.height / 2,
+          ),
+          rowHeight: box.height,
+        };
+      });
+      expect(geometry.controlWidth).toBe(14);
+      expect(geometry.controlHeight).toBe(14);
+      expect(geometry.centerOffset).toBeLessThanOrEqual(0.5);
+      expect(geometry.rowHeight).toBeGreaterThanOrEqual(44);
     }
   }
   await page.setViewportSize({ width: 1280, height: 900 });

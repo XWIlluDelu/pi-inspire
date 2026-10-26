@@ -7,7 +7,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { useInspectionHistory } from "../../src/use-inspection-history";
 
@@ -49,4 +49,33 @@ it("explicit close consumes all inspection entries without an empty Back stop", 
   fireEvent.click(screen.getByText("Close"));
   await waitFor(() => expect(history.state).toEqual({ baseline: true }));
   expect(screen.getByLabelText("Depth")).toHaveTextContent("0");
+});
+
+it("keeps a reopened panel when the previous explicit close finishes traversing history", async () => {
+  history.replaceState({ baseline: true }, "");
+  render(<Inspection />);
+  fireEvent.click(screen.getByText("Panel"));
+  // Hold the browser's asynchronous traversal so reopening always precedes
+  // its popstate acknowledgment, independently of event-loop scheduling.
+  const go = vi.spyOn(history, "go").mockImplementation(() => {});
+  try {
+    fireEvent.click(screen.getByText("Close"));
+    expect(go).toHaveBeenCalledExactlyOnceWith(-1);
+    fireEvent.click(screen.getByText("Panel"));
+    act(() => {
+      history.replaceState({ baseline: true }, "");
+      window.dispatchEvent(
+        new PopStateEvent("popstate", { state: history.state }),
+      );
+    });
+    expect(screen.getByLabelText("Depth")).toHaveTextContent("1");
+    expect(history.state.__testInspection.depth).toBe(1);
+  } finally {
+    go.mockRestore();
+  }
+  act(() => history.back());
+  await waitFor(() =>
+    expect(screen.getByLabelText("Depth")).toHaveTextContent("0"),
+  );
+  expect(history.state).toEqual({ baseline: true });
 });

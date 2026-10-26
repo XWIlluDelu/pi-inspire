@@ -30,10 +30,7 @@ test.describe("phone action dialogs", () => {
             await page
               .getByRole("button", { name: /^Session actions:/ })
               .click();
-            if (name === "Export session")
-              await page
-                .getByRole("menuitem", { name: "More actions" })
-                .click();
+            await page.getByRole("menuitem", { name: "More actions" }).click();
             await page
               .getByRole("menuitem", {
                 name:

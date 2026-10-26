@@ -97,10 +97,10 @@ test("PDF paints selectable pages, preserves zoom across resize and never runs d
     )
     .toBe(true);
   const position = await scroll.evaluate((element) => {
-    element.scrollTop = 80;
+    element.scrollTop = (element.scrollHeight - element.clientHeight) / 2;
     return element.scrollTop;
   });
-  expect(position).toBeGreaterThan(50);
+  expect(position).toBeGreaterThan(0);
   await pdf.getByRole("button", { name: "Zoom in PDF" }).click();
   await expect
     .poll(async () =>

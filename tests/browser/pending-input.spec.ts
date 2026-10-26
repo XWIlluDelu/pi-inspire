@@ -279,9 +279,17 @@ test("Pending Clear all keeps its explicit two-step confirmation and leaves the 
         const { width, height } = button.getBoundingClientRect();
         return { width, height };
       });
-      return { rowWidth: box.width, groupWidth: group.width, buttons };
+      const style = getComputedStyle(row);
+      return {
+        contentWidth:
+          box.width -
+          Number.parseFloat(style.paddingLeft) -
+          Number.parseFloat(style.paddingRight),
+        groupWidth: group.width,
+        buttons,
+      };
     });
-  expect(delivery.groupWidth).toBeCloseTo(delivery.rowWidth, 0);
+  expect(delivery.groupWidth).toBeCloseTo(delivery.contentWidth, 0);
   expect(delivery.buttons[0]!.width).toBeCloseTo(delivery.buttons[1]!.width, 0);
   expect(delivery.buttons.every(({ height }) => height >= 34)).toBe(true);
 

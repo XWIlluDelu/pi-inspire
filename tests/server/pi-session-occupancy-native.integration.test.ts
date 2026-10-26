@@ -116,9 +116,12 @@ async function exerciseOwner(connectHerdr: boolean) {
       resolve("tests/fixtures/pi-session-shutdown-extension.ts"),
     ],
   });
-  const create = vi.fn(
-    (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-  );
+  let admission: [string, string] | undefined;
+  let admissionAtCreation: typeof admission;
+  const create = vi.fn((options) => {
+    admissionAtCreation = admission;
+    return new FakeRpc(options) as unknown as PiRpcProcess;
+  });
   const guard = new PiSessionOccupancy();
   const attachments = new AttachmentStore(
     join(workspace.root, "uploads"),
@@ -127,7 +130,10 @@ async function exerciseOwner(connectHerdr: boolean) {
   );
   const runtime = new RuntimeController(catalog, attachments, create)
     .setExternalSessionConnector(async () => null)
-    .setExternalSessionGuard((id, file) => guard.assertWritable(id, file));
+    .setExternalSessionGuard(async (id, file) => {
+      await guard.assertWritable(id, file);
+      admission = [id, file];
+    });
   const releaseView = runtime.retainSessionView(sessionId);
   try {
     await external.start();
@@ -259,6 +265,7 @@ async function exerciseOwner(connectHerdr: boolean) {
         ),
       );
       if (closed) expect(closed).not.toHaveBeenCalled();
+      expect(admission).toBeUndefined();
       expect(create).not.toHaveBeenCalled();
     } finally {
       await writeFile(shutdownProceed, "continue");
@@ -284,12 +291,13 @@ async function exerciseOwner(connectHerdr: boolean) {
     await expect(
       guard.assertWritable(otherId, otherFile),
     ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
-    const occupancy = vi.spyOn(guard, "assertWritable");
     await vi.waitFor(() => expect(create).toHaveBeenCalledOnce(), {
       timeout: 5_000,
     });
     if (native) await expect(native.read()).resolves.toBeNull();
-    expect(occupancy).toHaveBeenCalledWith(sessionId, sessionFile);
+    // Recovery can finish during the awaited post-switch observations above.
+    // Verify successful admission at creation, regardless of when we observe it.
+    expect(admissionAtCreation).toEqual([sessionId, sessionFile]);
     expect(external.pid).toBe(pid);
     await external.stop();
     await expect(

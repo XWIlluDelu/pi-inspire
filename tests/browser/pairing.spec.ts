@@ -51,6 +51,7 @@ test("pairing opens the workbench without external requests, cookies, or persist
     const identity = await new Promise<{
       privateKey: CryptoKey;
       certificate: string;
+      taskAlertsVersion?: number;
     }>((resolve) => {
       const request = database
         .transaction("identity")
@@ -67,6 +68,7 @@ test("pairing opens the workbench without external requests, cookies, or persist
     }
     return {
       keys: Object.keys(identity).sort(),
+      taskAlertsVersion: identity.taskAlertsVersion,
       extractable: identity.privateKey.extractable,
       exportRejected,
       local: JSON.stringify(localStorage),
@@ -74,7 +76,12 @@ test("pairing opens the workbench without external requests, cookies, or persist
       certificate: identity.certificate,
     };
   });
-  expect(stored.keys).toEqual(["certificate", "privateKey"]);
+  expect(stored.keys).toEqual([
+    "certificate",
+    "privateKey",
+    "taskAlertsVersion",
+  ]);
+  expect(stored.taskAlertsVersion).toBe(1);
   expect(stored.extractable).toBe(false);
   expect(stored.exportRejected).toBe(true);
   expect(JSON.stringify(stored)).not.toContain(token);

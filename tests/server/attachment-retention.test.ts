@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -32,7 +33,11 @@ async function stop(child: ChildProcess) {
   await exited;
 }
 async function fixture() {
-  const parent = await mkdtemp(join(tmpdir(), "inspire-attachment-lifecycle-"));
+  // Match the canonical paths persisted by AttachmentStore, including aliased
+  // macOS temporary directories and Windows short path spellings.
+  const parent = await realpath(
+    await mkdtemp(join(tmpdir(), "inspire-attachment-lifecycle-")),
+  );
   roots.push(parent);
   const root = join(parent, "1-1-current");
   const store = new AttachmentStore(root, parent, { sweepIntervalMs: 0 });

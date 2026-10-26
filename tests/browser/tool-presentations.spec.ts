@@ -13,6 +13,7 @@ import { fileResourceReference } from "../../shared/resource-references";
 import type { ToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import type { ToolCallContent } from "../../src/events";
 import { toolResultResourcesFixture } from "../fixtures/tool-result-resources.mjs";
+import { observeClipboardWrites } from "./support/clipboard";
 import { hostRequest } from "./support/host-request";
 import { openMockEventSession } from "./support/mock-host";
 
@@ -127,7 +128,11 @@ for (const mobile of [false, true]) {
     });
     test("separates CodeMode calls from readable output and preserves whole-block copy", async ({
       page,
+      context,
+      browserName,
     }) => {
+      if (browserName === "chromium")
+        await context.grantPermissions(["clipboard-read", "clipboard-write"]);
       const send = await openReview(page, { palette: "hydrangea" });
       const call = tool("codemode", {
         code: "text(await tools.edit({path: 'src/components/transcript-cards.tsx', edits: []})); text({i: 1, result: await tools.bash({command: 'npm run typecheck'})}); await tools.ctx_reduce({drop: '1'});",
@@ -287,9 +292,21 @@ for (const mobile of [false, true]) {
         element.scrollTop = 0;
       });
       await output.evaluate((element) => (element as HTMLElement).blur());
+      await observeClipboardWrites(page);
       await card
         .getByRole("button", { name: "Copy codemode tool block" })
         .click();
+      await expect(
+        card.getByRole("button", {
+          name: "codemode tool block copied",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.gestureClipboardWrites.at(-1)?.text),
+        )
+        .toContain("Checked fixture module 70");
       await expect(card).not.toHaveClass(/card--failed/);
       expect(
         await page.evaluate(

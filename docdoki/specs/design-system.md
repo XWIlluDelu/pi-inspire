@@ -591,7 +591,8 @@ Session, workspace and History search share an explicit clear control. It remain
 search is loading, restores input focus and does not add a second native clear button. Loading uses
 the leading icon slot without displacing Clear. Each search retains its own query, Escape, navigation
 and IME semantics, surface geometry and loading announcements. Narrow inputs use 16px text to avoid
-focus zoom. Other search surfaces retain themed native clearing and their own keyboard rules.
+focus zoom; the sidebar keeps its compact 14px navigation labels with the WebKit editing exception
+defined above. Other search surfaces retain themed native clearing and their own keyboard rules.
 
 Session titles and visible project names/context emphasize matching text at weight 600, without
 changing colors, backgrounds, ellipsis or direct Pin/Hide controls. Visible token emphasis uses Pi's
