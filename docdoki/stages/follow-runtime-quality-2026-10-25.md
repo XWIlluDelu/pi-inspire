@@ -76,7 +76,13 @@ model labels, recovery states and responsive layout. Held History-copy requests 
 original entry so they cannot also block a newer response copy. Reading checks retain real scroll
 offsets, and clipboard checks assert the complete copied source.
 
-Local Linux follow-up evidence includes 3,954 passing unit/integration cases, 42 portable checks,
+The complete Chromium run also exposed an asynchronous mobile history race: a delayed explicit
+close could dismiss a newly opened Settings panel. History ownership now waits for its own pending
+traversal before reconciling the latest UI intent. A controlled delayed-popstate regression and real
+login, modal Back, image-gallery and native-question flows cover the repair. Cancellation fixtures
+finish their in-flight mock request handlers before disposing the browser context.
+
+Local Linux follow-up evidence includes 3,955 passing unit/integration cases, 42 portable checks,
 and nine launcher checks (one platform skip), plus formatting, lint, types, unused-code checks and
 a fresh isolated browser build. Launcher checks run from a temporary source copy so validation
 cannot rebuild the staged deployment or control its instances. Cross-platform CI remains separate
