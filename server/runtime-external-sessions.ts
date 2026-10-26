@@ -79,14 +79,17 @@ export class RuntimeExternalSessions {
     const c = this.modelConnection(slot);
     if (c.modelRefresh) return c.modelRefresh;
     const selectionRevision = c.selectionRevision;
+    const receiverId = c.state.taskRuns?.receiverId;
     const pending = c.native.models!().then((result) => {
+      if (c.modelRefresh !== pending)
+        throw requestError("The native Pi model receiver changed.", 409);
       // Catalog reads run alongside setters. A delayed read can still supply
       // models, but cannot undo a selection completed/observed since it began.
       const current =
         c.selectionRevision === selectionRevision
           ? result
           : { ...result, ...c.state.modelSelection };
-      this.applyModelState(slot, c, current);
+      this.applyModelState(slot, c, current, receiverId);
       return current;
     });
     c.modelRefresh = pending;
@@ -119,9 +122,12 @@ export class RuntimeExternalSessions {
     slot: RuntimeSlot,
     c: Connection,
     state: NativeModelSelection | NativeModelCatalog,
+    receiverId: string | undefined,
   ): void {
     if (this.connections.get(slot) !== c || !this.host.current(slot))
       throw requestError("The external Pi connection has ended.", 409);
+    if (c.state.taskRuns?.receiverId !== receiverId)
+      throw requestError("The native Pi model receiver changed.", 409);
     if ("models" in state) slot.availableModels = state.models;
     c.selectionRevision++;
     c.state = {
@@ -161,12 +167,15 @@ export class RuntimeExternalSessions {
     ) => Promise<NativeModelSelection>,
   ): Promise<NativeModelSelection> {
     const c = this.modelConnection(slot);
+    const receiverId = c.state.taskRuns?.receiverId;
     const result = await change(c.native, () => {
       if (this.connections.get(slot) !== c)
         throw requestError("The external Pi connection has ended.", 409);
+      if (c.state.taskRuns?.receiverId !== receiverId)
+        throw requestError("The native Pi model receiver changed.", 409);
       this.host.assertUsable(slot);
     });
-    this.applyModelState(slot, c, result);
+    this.applyModelState(slot, c, result, receiverId);
     await this.host.reconcile(slot, false);
     return { model: result.model, thinkingLevel: result.thinkingLevel };
   }
@@ -191,6 +200,7 @@ export class RuntimeExternalSessions {
     if (this.closed || slot.process || !slot.sessionPath) return false;
     const previous = this.connections.get(slot);
     if (previous) {
+      const selectionRevision = previous.selectionRevision;
       let state: ExternalSessionState | null | undefined;
       try {
         state = await previous.native.read();
@@ -203,7 +213,7 @@ export class RuntimeExternalSessions {
         if (state) {
           previous.interrupted = false;
           this.setUnavailable(slot, false);
-          this.applyState(slot, previous, state);
+          this.applyState(slot, previous, state, false, selectionRevision);
           return true;
         }
         if (state === null) this.detach(slot);
@@ -286,19 +296,34 @@ export class RuntimeExternalSessions {
     connection: Connection,
     state: ExternalSessionState,
     force = false,
+    selectionRevision = connection.selectionRevision,
   ): void {
+    // Ownership validation can finish after a newer selection. Fence at the
+    // state commit while retaining this observation's activity and capability.
+    if (selectionRevision !== connection.selectionRevision)
+      state = { ...state, modelSelection: connection.state.modelSelection };
     const priorState = connection.state;
     const changed = priorState.status !== state.status;
     const selectionChanged =
       JSON.stringify(priorState.modelSelection) !==
       JSON.stringify(state.modelSelection);
+    const receiverChanged =
+      priorState.taskRuns?.receiverId !== state.taskRuns?.receiverId;
     connection.state = state;
     if (selectionChanged) connection.selectionRevision++;
-    if (priorState.modelControls !== state.modelControls || selectionChanged) {
+    if (force || receiverChanged) {
+      slot.availableModels = null;
+      // A reload can replace the action receiver without ending the Pi process.
+      // New discovery must not join or publish the retired receiver's result.
+      connection.modelRefresh = undefined;
+    }
+    if (
+      priorState.modelControls !== state.modelControls ||
+      selectionChanged ||
+      receiverChanged
+    ) {
       this.host.emit(slot, { type: "model_metadata_changed" });
     }
-    if (force || priorState.taskRuns?.receiverId !== state.taskRuns?.receiverId)
-      slot.availableModels = null;
     const sameReceiver =
       !force &&
       state.taskRuns &&
@@ -323,16 +348,20 @@ export class RuntimeExternalSessions {
     if (connection.sending > 0 && state.status === "idle") return;
     if (state.status === "unknown") return;
     const previous = slot.runState;
-    slot.runState = slot.conflict
-      ? "conflict"
-      : state.status === "idle"
-        ? state.outcome === "failed" ||
-          state.taskRuns?.settled.at(-1)?.outcome === "failed"
-          ? "failed"
-          : state.taskRuns?.settled.at(-1)?.outcome === "aborted"
-            ? "aborted"
-            : "idle"
-        : "running";
+    if (slot.conflict) {
+      slot.runState = "conflict";
+    } else if (state.status !== "idle") {
+      slot.runState = "running";
+    } else if (
+      state.outcome === "failed" ||
+      state.taskRuns?.settled.at(-1)?.outcome === "failed"
+    ) {
+      slot.runState = "failed";
+    } else if (state.taskRuns?.settled.at(-1)?.outcome === "aborted") {
+      slot.runState = "aborted";
+    } else {
+      slot.runState = "idle";
+    }
     if (
       !force &&
       !changed &&
@@ -363,6 +392,7 @@ export class RuntimeExternalSessions {
   }
 
   private async poll(slot: RuntimeSlot, connection: Connection): Promise<void> {
+    const selectionRevision = connection.selectionRevision;
     try {
       const state = await connection.native.read().catch((error) => {
         if (this.connections.get(slot) === connection)
@@ -394,7 +424,7 @@ export class RuntimeExternalSessions {
         return;
       }
       this.setUnavailable(slot, false);
-      this.applyState(slot, connection, state);
+      this.applyState(slot, connection, state, false, selectionRevision);
       // Background history may be intentionally reclaimed. Keep observing Pi
       // without rebuilding it; retained projections use their version fast path.
       if (slot.projection) await this.host.reconcile(slot, false);

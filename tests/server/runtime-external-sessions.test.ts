@@ -51,6 +51,54 @@ function nativeFixture() {
   };
 }
 
+async function nativeModelFixture() {
+  const f = nativeFixture();
+  const selection = {
+    model: { provider: "native", id: "current" },
+    thinkingLevel: "low" as const,
+  };
+  const state: ExternalSessionState = {
+    status: "idle",
+    modelControls: true,
+    modelSelection: selection,
+    taskRuns: { receiverId: "receiver-one", activeRunId: null, settled: [] },
+  };
+  f.setState(state);
+  f.native.models = vi.fn(async () => ({
+    ...selection,
+    models: [selection.model],
+  }));
+  f.native.setModel = vi.fn(async () => selection);
+  f.native.setThinkingLevel = vi.fn(async () => selection);
+  const slot = createRuntimeSlot({
+    id: "a",
+    cwd: "/tmp",
+    sessionPath: "/sessions/a.jsonl",
+    process: null,
+    preview: null,
+    projection: await preview(record("a", "/tmp")),
+    bridge: null,
+    branchRevision: 1,
+    incarnationId: "slot-a",
+    viewId: "view-a",
+  });
+  const emit = vi.fn();
+  const external = new RuntimeExternalSessions(
+    async () => f.native,
+    {
+      current: () => true,
+      emit,
+      assertUsable: vi.fn(),
+      released: vi.fn(),
+      log: vi.fn(),
+      reconcile: async () => {},
+    },
+    trackedAttachmentStore(),
+    10,
+  );
+  return { ...f, selection, state, slot, external, emit };
+}
+
 describe("continue an externally owned Pi", () => {
   it("observes short native run outcomes without replaying the initial report or claiming idle means success", async () => {
     const f = nativeFixture();
@@ -804,6 +852,214 @@ describe("continue an externally owned Pi", () => {
       external.close();
     }
   });
+
+  it.each(["poll", "reselect"] as const)(
+    "preserves completed model/thinking changes when an older %s observation returns last",
+    async (source) => {
+      const f = nativeFixture();
+      const gate = deferredSignal();
+      const old = {
+        model: { provider: "native", id: "old" },
+        thinkingLevel: "off" as const,
+      };
+      const selected = {
+        model: { provider: "native", id: "selected" },
+        thinkingLevel: "low" as const,
+      };
+      f.setState({ status: "idle", modelControls: true, modelSelection: old });
+      f.native.models = vi.fn();
+      f.native.setModel = vi.fn(async () => ({
+        ...selected,
+        thinkingLevel: "off" as const,
+      }));
+      f.native.setThinkingLevel = vi.fn(async () => selected);
+      const slot = createRuntimeSlot({
+        id: "a",
+        cwd: "/tmp",
+        sessionPath: "/sessions/a.jsonl",
+        process: null,
+        preview: null,
+        projection: await preview(record("a", "/tmp")),
+        bridge: null,
+        branchRevision: 1,
+        incarnationId: "slot-a",
+        viewId: "view-a",
+      });
+      const external = new RuntimeExternalSessions(
+        async () => f.native,
+        {
+          current: () => true,
+          emit: vi.fn(),
+          assertUsable: vi.fn(),
+          released: vi.fn(),
+          log: vi.fn(),
+          reconcile: async () => {},
+        },
+        trackedAttachmentStore(),
+        10,
+      );
+      vi.useFakeTimers();
+      try {
+        await external.connect(slot);
+        vi.mocked(f.native.read).mockImplementationOnce(async () => {
+          // The receiver report was read before the selection, while its
+          // asynchronous ownership validation is still in flight.
+          const state = {
+            status: "working" as const,
+            modelControls: true,
+            modelSelection: old,
+          };
+          await gate.promise;
+          return state;
+        });
+        const reading =
+          source === "reselect" ? external.connect(slot) : undefined;
+        if (source === "poll") await vi.advanceTimersByTimeAsync(10);
+        expect(f.native.read).toHaveBeenCalledTimes(2);
+        await external.setModel(slot, "native", "selected");
+        await external.setThinkingLevel(slot, "low");
+        gate.resolve();
+        await reading;
+        await vi.advanceTimersByTimeAsync(0);
+        expect(external.modelSelection(slot)).toEqual(selected);
+        // Unrelated activity still updates; only the stale selection is fenced.
+        expect(slot.runState).toBe("running");
+        f.setState({
+          status: "idle",
+          modelControls: true,
+          modelSelection: old,
+        });
+        await vi.advanceTimersByTimeAsync(10);
+        // A subsequent terminal-side selection remains authoritative.
+        expect(external.modelSelection(slot)).toEqual(old);
+      } finally {
+        gate.resolve();
+        external.close();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(["model", "thinking"] as const)(
+    "preserves a confirmed same-value %s selection over an older catalog result",
+    async (kind) => {
+      const f = await nativeModelFixture();
+      const gate = deferredSignal();
+      const old = {
+        model: { provider: "native", id: "stale" },
+        thinkingLevel: "off" as const,
+      };
+      vi.mocked(f.native.models!).mockImplementationOnce(async () => {
+        await gate.promise;
+        return { ...old, models: [old.model, f.selection.model] };
+      });
+      vi.useFakeTimers();
+      try {
+        await f.external.connect(f.slot);
+        const reading = f.external.models(f.slot);
+        if (kind === "model")
+          await f.external.setModel(f.slot, "native", "current");
+        else await f.external.setThinkingLevel(f.slot, "low");
+        gate.resolve();
+        expect(await reading).toMatchObject(f.selection);
+        expect(f.external.modelSelection(f.slot)).toEqual(f.selection);
+      } finally {
+        gate.resolve();
+        f.external.close();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("retires an old receiver's catalog while retaining the native Pi connection", async () => {
+    const f = await nativeModelFixture();
+    const gate = deferredSignal();
+    const oldModel = { provider: "old", id: "retired" };
+    const freshModel = { provider: "fresh", id: "available" };
+    vi.mocked(f.native.models!)
+      .mockImplementationOnce(async () => {
+        await gate.promise;
+        return { ...f.selection, models: [oldModel] };
+      })
+      .mockResolvedValue({ ...f.selection, models: [freshModel] });
+    vi.useFakeTimers();
+    try {
+      await f.external.connect(f.slot);
+      const pending = f.external.models(f.slot);
+      const outcome = pending.catch((error: unknown) => error);
+      f.emit.mockClear();
+      f.setState({
+        ...f.state,
+        taskRuns: {
+          receiverId: "receiver-two",
+          activeRunId: null,
+          settled: [],
+        },
+      });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(f.slot.availableModels).toBeNull();
+      expect(f.emit).toHaveBeenCalledWith(f.slot, {
+        type: "model_metadata_changed",
+      });
+      // The replacement's read can finish without waiting for the old reply.
+      await expect(f.external.models(f.slot)).resolves.toMatchObject({
+        models: [freshModel],
+      });
+      gate.resolve();
+      expect(await outcome).toMatchObject({ status: 409 });
+      expect(f.slot.availableModels).toEqual([freshModel]);
+      expect(f.native.close).not.toHaveBeenCalled();
+    } finally {
+      gate.resolve();
+      f.external.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["model", "thinking"] as const)(
+    "rejects a retired receiver's %s result without replacing its successor's selection",
+    async (kind) => {
+      const f = await nativeModelFixture();
+      const gate = deferredSignal();
+      const successor = {
+        model: { provider: "native", id: "successor" },
+        thinkingLevel: "high" as const,
+      };
+      const late = async () => {
+        await gate.promise;
+        return f.selection;
+      };
+      vi.mocked(f.native.setModel!).mockImplementation(late);
+      vi.mocked(f.native.setThinkingLevel!).mockImplementation(late);
+      vi.useFakeTimers();
+      try {
+        await f.external.connect(f.slot);
+        const pending =
+          kind === "model"
+            ? f.external.setModel(f.slot, "native", "current")
+            : f.external.setThinkingLevel(f.slot, "low");
+        const outcome = pending.catch((error: unknown) => error);
+        f.setState({
+          ...f.state,
+          modelSelection: successor,
+          taskRuns: {
+            receiverId: "receiver-two",
+            activeRunId: null,
+            settled: [],
+          },
+        });
+        await vi.advanceTimersByTimeAsync(10);
+        gate.resolve();
+        expect(await outcome).toMatchObject({ status: 409 });
+        expect(f.external.modelSelection(f.slot)).toEqual(successor);
+        expect(f.native.close).not.toHaveBeenCalled();
+      } finally {
+        gate.resolve();
+        f.external.close();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("rejects a retired catalog before changing the replacement owner's models or selection", async () => {
     const old = nativeFixture(),

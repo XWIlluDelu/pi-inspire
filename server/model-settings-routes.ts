@@ -115,15 +115,22 @@ export function registerModelSettingsRoutes(
     refresh = false,
   ): Promise<{ models: ModelOption[]; modelsWarning?: string }> {
     try {
-      const models = owner.sessionId
-        ? refresh
-          ? (await deps.runtime.refreshModels(owner.sessionId)).models
-          : (
-              (await deps.runtime.snapshot(owner.sessionId)).active
-                ?.availableModels ?? []
-            ).map((model) => modelOption(model as ModelOption))
-        : ((await deps.availableModels?.(refresh, owner.cwd)) ?? []);
-      return { models };
+      if (!owner.sessionId) {
+        return {
+          models: (await deps.availableModels?.(refresh, owner.cwd)) ?? [],
+        };
+      }
+      if (refresh) {
+        return {
+          models: (await deps.runtime.refreshModels(owner.sessionId)).models,
+        };
+      }
+      const snapshot = await deps.runtime.snapshot(owner.sessionId);
+      return {
+        models: (snapshot.active?.availableModels ?? []).map((model) =>
+          modelOption(model as ModelOption),
+        ),
+      };
     } catch {
       return {
         models: [],
