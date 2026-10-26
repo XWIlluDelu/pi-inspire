@@ -330,6 +330,55 @@ Portable and installed-package lifecycle suites were not repeated in this pass. 
 not replace physical-device acceptance. The running Host, Pi sessions and terminal service were not
 used, deployed or restarted, and no changes were pushed.
 
+## Disconnect and shutdown follow-up
+
+This pass starts at `d3aab83a` and stops after checking the remaining connection replacement,
+worker shutdown and terminal-service recovery boundaries. The user's intervening desktop-search
+restoration was completed separately as `083d0713`; its client-only publication is recorded in
+[the frontend review](follow-frontend-review-2026-10-24.md#desktop-search-restoration--2026-10-26).
+That publication excludes the quality-review changes, which remain undeployed.
+
+Three reproducible defects are repaired:
+
+- Lightweight socket resume could restore a Pending receipt while the initiating Return/Stop still
+  awaited its lost POST response. A handoff now shares its confirmed completion across observers;
+  matched failure/retirement also ends the wait, while transient receipt-read failure does not.
+  Real Host receipt tests retain the same browser transport generation and show Return finishing
+  and Stop proceeding exactly once before the original POST arrives. Late responses neither restore
+  input twice nor replace the observed outcome. No mutation is automatically replayed.
+- A pending terminal attach could reject after its Host disconnected; reporting that error wrote
+  to a destroyed socket and escaped as an unhandled rejection. An isolated child with real TLS IPC
+  exited with status 1 before repair. The daemon now contains error-delivery failures within the
+  connection; the repaired child remains available to a new probe, and online refusals retain their
+  original error code/status. The reproduction creates no PTYs.
+- Shutdown could retire an unstarted Pi worker during asynchronous preparation, then the resumed
+  startup still called its transport factory. Startup now rechecks existing Host/slot ownership
+  before attaching and starting the worker, with disposal inside the existing cleanup boundary.
+  An actual PiRpc object called its sentinel transport factory once on the baseline and zero times
+  after repair. This proves an unwanted startup opportunity, not a permanently orphaned worker.
+
+Resource-preview authority, upload cancellation, terminal receipt epochs and the documented
+Host-only restart/external-Pi boundaries were reviewed without another confirmed repair. No broader
+compatibility machinery or feature redesign was added; the deferred Android white bar stayed outside
+the review.
+
+### Disconnect and shutdown verification
+
+The combined source was checked in an isolated copy with empty HOME/XDG/Pi directories. Temporary
+listeners and child processes used normal sandbox approval; running user tasks were not test fixtures.
+
+- Format/lint, import boundaries, TypeScript and Knip passed. The isolated client build passed with
+  the existing large-chunk advisory.
+- Web/integration passed all 164 files and 2,152 tests. Node passed 202 files with one skipped:
+  1,786 tests passed and 14 skipped. Launcher, real Herdr continuity and systemd worker-scope
+  integration remain excluded; portable and installed-package lifecycle suites were not repeated.
+- Documentation checks passed for 56 Markdown files, 208 targets/anchors, 85 packaged relative
+  targets and six JSON examples against production schemas. Privacy and whitespace checks passed.
+
+The search restoration has separate browser, screenshot and publication evidence in the linked
+frontend record. These three quality repairs remain source-only; no further deployment, service
+restart or push was performed.
+
 ## Next actions
 
 This review permits source fixes and local commits only; deployment and Host restart require a
