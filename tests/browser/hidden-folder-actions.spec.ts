@@ -18,7 +18,8 @@ test("deletes the visible idle session through one confirmation and returns to N
   const created = await hostRequest(page).post("/api/branches/clone", {
     data: {
       sessionId: source.sessionId,
-      revision: source.transcriptPage.revision,
+      viewId: source.transcriptPage.viewId,
+      targetId: source.transcriptPage.effectiveLeafId,
     },
   });
   expect(created.ok()).toBe(true);
@@ -52,6 +53,12 @@ test("deletes the visible idle session through one confirmation and returns to N
     name: `Delete "${name}"`,
     exact: true,
   });
+  await page
+    .locator(".nav__group--hidden .nav__row")
+    .filter({
+      has: page.getByRole("button", { name: `Delete "${name}"`, exact: true }),
+    })
+    .hover();
   await expect(remove).toBeEnabled();
   await remove.click();
   const dialog = page.getByRole("alertdialog", { name: "Delete session?" });
@@ -79,7 +86,8 @@ test("failed deletion wraps a literal path inside the confirmation", async ({
   const created = await hostRequest(page).post("/api/branches/clone", {
     data: {
       sessionId: source.sessionId,
-      revision: source.transcriptPage.revision,
+      viewId: source.transcriptPage.viewId,
+      targetId: source.transcriptPage.effectiveLeafId,
     },
   });
   expect(created.ok()).toBe(true);

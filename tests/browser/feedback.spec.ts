@@ -28,18 +28,22 @@ for (const theme of ["light", "dark"] as const) {
       await expect(input).toBeVisible();
       await expect(page.getByRole("main").locator(".banner")).toHaveCount(0);
 
+      // Non-retryable reads expose a persistent banner; transient failures
+      // recover automatically without immediately surfacing a banner.
       let unavailable = true;
       await page.route("**/api/snapshot**", async (route) => {
         if (unavailable)
           await route.fulfill({
-            status: 503,
-            json: { error: "Session snapshot is temporarily unavailable" },
+            status: 400,
+            json: { error: "Session snapshot requires an explicit refresh" },
           });
         else await route.fallback();
       });
       transport.send({ type: "runtime_ready", sessionId });
       const banner = page.getByRole("main").locator(".banner");
-      await expect(banner).toContainText("Failed to refresh session");
+      await expect(banner).toContainText(
+        "The conversation could not be synchronized. Showing the last confirmed state.",
+      );
       await expect(
         banner.getByRole("button", { name: "Retry", exact: true }),
       ).toBeVisible();
@@ -65,7 +69,9 @@ for (const theme of ["light", "dark"] as const) {
         .click();
       const notice = page.locator(".notices .notice--warning");
       await expect(notice).toContainText("provider is temporarily unavailable");
-      await expect(banner).toContainText("Failed to refresh session");
+      await expect(banner).toContainText(
+        "The conversation could not be synchronized. Showing the last confirmed state.",
+      );
       await expect(input).toHaveValue("Keep this draft after a failed send.");
       expect(
         await page.evaluate(

@@ -156,9 +156,11 @@ describe.each(shells)("native Bash startup: %s", (shell) => {
         );
       }
       await writeFile(join(f.root, ".bashrc"), 'printf "UNREQUESTED_RC\\n"\n');
+      // Observe native logout independently of the PTY's bounded exit-output
+      // drain. A completed shell can close before its last bytes are delivered.
       await writeFile(
         join(f.root, ".bash_logout"),
-        'printf "NATIVE_LOGOUT:%s\\n" "$fixture_local"\n',
+        'printf "%s\\n" "$fixture_local" >> "$HOME/native-logout"\n',
       );
       const original = await readFile(join(f.root, selected), "utf8");
       await session(shell, f, ["-l"], async (terminal) => {
@@ -191,9 +193,9 @@ describe.each(shells)("native Bash startup: %s", (shell) => {
           markers.every((value) => !value.includes("bash-login-init.sh")),
         ).toBe(true);
         await terminal.exit();
-        expect(
-          terminal.output().match(/NATIVE_LOGOUT:retained/gu),
-        ).toHaveLength(1);
+        expect(await readFile(join(f.root, "native-logout"), "utf8")).toBe(
+          "retained\n",
+        );
         expect(terminal.output().match(/SELECTED:/gu)).toHaveLength(1);
       });
       expect(await readFile(join(f.root, selected), "utf8")).toBe(original);
@@ -206,7 +208,10 @@ describe.each(shells)("native Bash startup: %s", (shell) => {
       join(f.root, ".bash_profile"),
       'printf "WRONG_PROFILE\\n"\n',
     );
-    await writeFile(join(f.root, ".bash_logout"), 'printf "WRONG_LOGOUT\\n"\n');
+    await writeFile(
+      join(f.root, ".bash_logout"),
+      'printf "WRONG_LOGOUT\\n" >> "$HOME/native-logout"\n',
+    );
     await writeFile(
       join(f.root, ".bashrc"),
       [...setup, 'printf "NATIVE_RC\\n"', "PROMPT_COMMAND=fixture_prompt"].join(
@@ -222,7 +227,10 @@ describe.each(shells)("native Bash startup: %s", (shell) => {
       expect(state).toContain("FUNCTION:retained");
       expect(terminal.output()).toContain("\x1b]6973;C1;");
       await terminal.exit();
-      expect(terminal.output()).not.toMatch(/WRONG_PROFILE|WRONG_LOGOUT/);
+      expect(terminal.output()).not.toContain("WRONG_PROFILE");
+      await expect(
+        readFile(join(f.root, "native-logout"), "utf8"),
+      ).rejects.toMatchObject({ code: "ENOENT" });
     });
   });
 

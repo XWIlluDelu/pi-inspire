@@ -708,7 +708,7 @@ body.srail-dragging {
     transform: scale(0.99);
   }
 
-  .nav__search input {
+  .nav__search input[type="search"] {
     height: 34px;
     font-size: var(--text-base);
   }
@@ -720,7 +720,7 @@ body.srail-dragging {
   @supports (-webkit-touch-callout: none) {
     /* iOS keeps edit text at 16px to avoid focus zoom; the resting prompt
        still shares the compact creation row's label size. */
-    .nav__search input {
+    .nav__search input[type="search"] {
       font-size: 16px;
     }
 

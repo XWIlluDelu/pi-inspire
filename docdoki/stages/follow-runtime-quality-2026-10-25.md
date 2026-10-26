@@ -58,6 +58,30 @@ entry and retained outgoing assets are served successfully, and the build stamp 
 inputs. The running Host and terminal daemon have not been restarted. Their activation remains
 with the operator; external Pi extensions need their own reload in the original idle process.
 
+### CI follow-up
+
+The [original 0.6.5 matrix](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40339358680)
+passed all three installed-package checks but failed quality and Windows, while macOS exhausted
+its job budget after browser failures. The follow-up restores the sidebar's specified compact search
+font size after shared search styles overrode it, retaining WebKit's editing-size exception. It also
+repairs test contracts without changing the tag, deployed assets, native Pi or runtime deadlines.
+Large activity mounting and deliberate card
+choices have independent checks; native model edit scenarios retain real metadata validation
+without combining six cold worker starts into one test deadline. Native Bash logout is witnessed
+by its exact file side effect after exit, independently of bounded PTY tail delivery.
+
+Cross-platform fixtures use canonical temporary paths and apply POSIX permission assertions only
+where meaningful. Browser acceptance follows current action menus, addressed branch commands,
+model labels, recovery states and responsive layout. Held History-copy requests are scoped to the
+original entry so they cannot also block a newer response copy. Reading checks retain real scroll
+offsets, and clipboard checks assert the complete copied source.
+
+Local Linux follow-up evidence includes 3,954 passing unit/integration cases, 42 portable checks,
+and nine launcher checks (one platform skip), plus formatting, lint, types, unused-code checks and
+a fresh isolated browser build. Launcher checks run from a temporary source copy so validation
+cannot rebuild the staged deployment or control its instances. Cross-platform CI remains separate
+evidence from this local run.
+
 ## Remaining acceptance
 
 - On Android, verify background task outcomes, click-through and offscreen same-Pi prompting,

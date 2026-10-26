@@ -130,6 +130,7 @@ test("leaving a pending History copy does not replace a newer clipboard action",
   tag: "@cross-browser",
 }, async ({ page }) => {
   let copying = false;
+  let historyTarget: string | null = null;
   let release: () => void = () => {};
   let began: () => void = () => {};
   const pending = new Promise<void>((resolve) => {
@@ -140,7 +141,11 @@ test("leaving a pending History copy does not replace a newer clipboard action",
   });
   await page.route("**/api/branches/entry?**", async (route) => {
     const response = await route.fetch();
-    if (copying) {
+    const target = new URL(route.request().url()).searchParams.get("targetId");
+    if (!copying) historyTarget = target;
+    // Response Copy also reads retained entries; hold only the older action
+    // so the newer independent copy can finish while it is pending.
+    if (copying && target === historyTarget) {
       began();
       await finish;
     }
@@ -157,9 +162,21 @@ test("leaving a pending History copy does not replace a newer clipboard action",
     .click();
   await pending;
   try {
+    const retiredCopy = page.waitForEvent("requestfailed", {
+      predicate: (request) => {
+        const url = new URL(request.url());
+        return (
+          url.pathname === "/api/branches/entry" &&
+          url.searchParams.get("targetId") === historyTarget
+        );
+      },
+    });
     await history
       .getByRole("button", { name: "Back to history", exact: true })
       .click();
+    // Observe retirement before the replacement gesture: even if its held
+    // response arrives later, this old read cannot complete a clipboard write.
+    await retiredCopy;
     // Earlier suites may leave more of this session's transcript loaded.
     // Copy the known complete response, not whichever assistant row is first.
     await page
