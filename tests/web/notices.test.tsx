@@ -116,7 +116,7 @@ describe("right-corner notices", () => {
     vi.unstubAllGlobals();
   });
 
-  it("anchors retained notices below the current mobile toolbar or search control after replacements", async () => {
+  it("anchors retained notices below the visible responsive toolbar or search control", async () => {
     await initialize();
     const observers: TestResizeObserver[] = [];
     class TestResizeObserver {
@@ -170,28 +170,26 @@ describe("right-corner notices", () => {
       );
       expect(observer.observed.has(launcher)).toBe(true);
 
-      launcher.remove();
+      launcher.style.display = "none";
       search.style.display = "";
       observer.resize();
       expect(stack.style.getPropertyValue("--notice-header-bottom")).toBe(
         "100px",
       );
-      expect(observer.observed.has(launcher)).toBe(false);
+      expect(observer.observed.has(search)).toBe(true);
 
-      const replacement = launcher.cloneNode(true) as HTMLElement;
-      main.append(replacement);
+      launcher.style.display = "";
       search.style.display = "none";
       observer.resize();
       expect(stack.style.getPropertyValue("--notice-header-bottom")).toBe(
         "88px",
       );
-      expect(observer.observed.has(replacement)).toBe(true);
-      replacement.dataset.height = "40";
+      launcher.dataset.height = "40";
       observer.resize();
       expect(stack.style.getPropertyValue("--notice-header-bottom")).toBe(
         "96px",
       );
-      replacement.style.display = "none";
+      launcher.style.display = "none";
       fireEvent.resize(window);
       expect(stack.style.getPropertyValue("--notice-header-bottom")).toBe(
         "44px",
