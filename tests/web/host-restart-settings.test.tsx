@@ -39,6 +39,25 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("Settings restart controls", () => {
+  it("keeps initial availability quiet without implying either restart has begun", () => {
+    const ready = fixture.state.status;
+    fixture.state.status = null;
+    const { container, rerender } = render(<HostRestartSettings />);
+    const restart = screen.getByRole("button", { name: "Restart Host" });
+    expect(restart).toBeDisabled();
+    expect(restart).not.toHaveAttribute("aria-busy", "true");
+    const restartAll = screen.getByRole("button", { name: "Restart all" });
+    expect(restartAll).toBeDisabled();
+    expect(restartAll).not.toHaveAttribute("aria-busy", "true");
+    expect(container.querySelector(".pi-loading")).toBeNull();
+    expect(container.querySelector(".host-restart__status-row")).toBeNull();
+    fixture.state.status = ready;
+    rerender(<HostRestartSettings />);
+    expect(restart).toBeEnabled();
+    expect(restartAll).toBeEnabled();
+    expect(fixture.start).not.toHaveBeenCalled();
+  });
+
   it("uses concise confirmation, cancels without mutation, and binds the selected scope", () => {
     render(<HostRestartSettings />);
     fireEvent.click(screen.getByRole("button", { name: "Restart Host" }));

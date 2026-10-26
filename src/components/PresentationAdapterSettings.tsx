@@ -2,8 +2,8 @@ import { Puzzle } from "lucide-react";
 import { useState } from "react";
 import { usePresentationAdapters } from "../presentation-adapters";
 import { store } from "../store";
-import { SettingsCardMessage, SettingsSection } from "./SettingsSection";
 import { SettingField, SettingsSwitch } from "./SettingsControls";
+import { SettingsCardMessage, SettingsSection } from "./SettingsSection";
 
 export function PresentationAdapterSettings() {
   const { adapters } = usePresentationAdapters();
@@ -37,8 +37,6 @@ export function PresentationAdapterSettings() {
             status={
               adapter.warning ? (
                 <span role="alert">{adapter.warning}</span>
-              ) : pending === adapter.id ? (
-                "Saving…"
               ) : undefined
             }
           >
@@ -46,6 +44,7 @@ export function PresentationAdapterSettings() {
               label={adapter.name}
               checked={adapter.enabled}
               disabled={pending !== null}
+              busy={pending === adapter.id}
               onChange={(enabled) => void toggle(adapter.id, enabled)}
               state={adapter.enabled ? "On" : "Off"}
             />
@@ -54,7 +53,7 @@ export function PresentationAdapterSettings() {
       ) : (
         <SettingsCardMessage>
           No adapters configured. Add adapter files to your custom presentation
-          profile; no rebuild is needed.
+          profile.
         </SettingsCardMessage>
       )}
       {error ? <SettingsCardMessage error>{error}</SettingsCardMessage> : null}

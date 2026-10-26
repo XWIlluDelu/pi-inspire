@@ -9,7 +9,6 @@ import { SettingsSection } from "./SettingsSection";
 
 const checkLabels = {
   initial: "Check updates",
-  pending: "Submitting…",
   checking: "Checking…",
   checked: "Check again",
 };
@@ -70,7 +69,6 @@ function VersionValue({
   version,
   versionTitle,
   restartRequired = false,
-  activity,
   status,
   update,
   command,
@@ -78,7 +76,6 @@ function VersionValue({
   version: string | null;
   versionTitle?: string;
   restartRequired?: boolean;
-  activity: string | null;
   status: string;
   update?: { version: string; url: string };
   command?: string;
@@ -89,7 +86,7 @@ function VersionValue({
         {version ? `v${version}` : "Version unavailable"}
       </span>
       <span aria-hidden>·</span>
-      {!activity && update ? (
+      {update ? (
         <>
           <a href={update.url} target="_blank" rel="noreferrer noopener">
             v{update.version} available ↗
@@ -98,9 +95,7 @@ function VersionValue({
           {restartRequired ? <span>Restart Host to apply</span> : null}
         </>
       ) : (
-        <span>
-          {activity || (restartRequired ? "Restart Host to apply" : status)}
-        </span>
+        <span>{restartRequired ? "Restart Host to apply" : status}</span>
       )}
     </div>
   );
@@ -113,10 +108,12 @@ export function SystemVersionsCard() {
       piUpdateCheck: source.piUpdateCheck,
       piUpdateChecking: source.piUpdateChecking,
       piUpdateRequestPending: source.piUpdateRequestPending,
+      piUpdateRequestError: source.piUpdateRequestError,
       piVersion: source.piVersion,
       inspireUpdateCheck: source.inspireUpdateCheck,
       inspireUpdateChecking: source.inspireUpdateChecking,
       inspireUpdateRequestPending: source.inspireUpdateRequestPending,
+      inspireUpdateRequestError: source.inspireUpdateRequestError,
       version: source.version,
     }),
     shallowEqual,
@@ -138,24 +135,17 @@ export function SystemVersionsCard() {
   const pending =
     state.piUpdateRequestPending || state.inspireUpdateRequestPending;
   const checking = state.piUpdateChecking || state.inspireUpdateChecking;
+  const checkError =
+    state.piUpdateRequestError && state.inspireUpdateRequestError
+      ? "Couldn't check for updates."
+      : state.piUpdateRequestError || state.inspireUpdateRequestError;
+  const hasPreviousResult = Boolean(
+    (state.piUpdateRequestError && piCheck) ||
+      (state.inspireUpdateRequestError && inspire),
+  );
   const bothChecked = state.piUpdateCheck !== null && inspire !== null;
-  const checkState = pending
-    ? "pending"
-    : checking
-      ? "checking"
-      : bothChecked
-        ? "checked"
-        : "initial";
-  const piActivity = state.piUpdateRequestPending
-    ? "Submitting…"
-    : state.piUpdateChecking
-      ? "Checking…"
-      : null;
-  const inspireActivity = state.inspireUpdateRequestPending
-    ? "Submitting…"
-    : state.inspireUpdateChecking
-      ? "Checking…"
-      : null;
+  const checkState =
+    pending || checking ? "checking" : bothChecked ? "checked" : "initial";
 
   return (
     <SettingsSection
@@ -173,7 +163,6 @@ export function SystemVersionsCard() {
               text={details}
               label="Update details"
               className="system-versions__copy"
-              disabled={pending || checking}
               onError={setCopyError}
             />
           ) : null}
@@ -181,6 +170,7 @@ export function SystemVersionsCard() {
             type="button"
             className="button system-versions__check"
             aria-label="Check for updates"
+            aria-describedby={checkError ? "update-check-error" : undefined}
             disabled={pending || checking}
             aria-busy={pending || checking}
             onClick={() => {
@@ -204,8 +194,18 @@ export function SystemVersionsCard() {
         </div>
       }
     >
+      {checkError ? (
+        <p
+          id="update-check-error"
+          className="settings__error system-versions__error"
+          role="alert"
+        >
+          {checkError}
+          {hasPreviousResult ? " Showing previous results." : null}
+        </p>
+      ) : null}
       {copyError ? (
-        <p className="settings__error system-versions__copy-error" role="alert">
+        <p className="settings__error system-versions__error" role="alert">
           {copyError}
         </p>
       ) : null}
@@ -240,7 +240,6 @@ export function SystemVersionsCard() {
                 : undefined
             }
             restartRequired={piRestartRequired}
-            activity={piActivity}
             status={
               pi?.kind === "current"
                 ? "Up to date"
@@ -259,9 +258,7 @@ export function SystemVersionsCard() {
 
         <VersionRow label="Extensions">
           <div className="system-versions__value">
-            {piActivity ? (
-              <span>{piActivity}</span>
-            ) : extensions?.kind === "available" ? (
+            {extensions?.kind === "available" ? (
               <>
                 <span>
                   {extensions.updates.length} package{" "}
@@ -279,7 +276,7 @@ export function SystemVersionsCard() {
               </span>
             )}
           </div>
-          {!piActivity && extensions?.kind === "available" ? (
+          {extensions?.kind === "available" ? (
             <ul
               className="system-versions__packages"
               aria-label="Packages with updates"
@@ -310,7 +307,6 @@ export function SystemVersionsCard() {
         <VersionRow label="INSΠRE">
           <VersionValue
             version={state.version}
-            activity={inspireActivity}
             status={
               inspire?.kind === "current"
                 ? "Up to date"

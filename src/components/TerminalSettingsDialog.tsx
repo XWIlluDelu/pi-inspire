@@ -484,7 +484,6 @@ export function TerminalSettingsDialog({
                 <SettingsSection
                   icon={<Database size={14} />}
                   title="Saved output"
-                  description="Stored on the connected Host."
                 >
                   {serviceSettings ? (
                     <>

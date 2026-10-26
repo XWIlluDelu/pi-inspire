@@ -213,8 +213,7 @@ export function HostRestartSettings({
           </button>
         )}
       </SettingField>
-      {!state.status ||
-      !state.status.available ||
+      {(state.status && !state.status.available) ||
       message ||
       unobserved ||
       state.error ||
@@ -222,9 +221,7 @@ export function HostRestartSettings({
       active ? (
         <div className="host-restart__status-row">
           <div className="host-restart__status-copy">
-            {!state.status ? (
-              <p className="settings__field-help">Checking availability…</p>
-            ) : !state.status.available ? (
+            {state.status && !state.status.available ? (
               <p className="settings__field-help">{state.status.reason}</p>
             ) : null}
             {message ? (

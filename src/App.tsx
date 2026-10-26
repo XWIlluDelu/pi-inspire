@@ -248,7 +248,7 @@ function connectionProblemText(
     default:
       return {
         title: "INSΠRE address not reachable",
-        detail: `No usable response arrived from ${host}. The device network, public entry, reverse tunnel, or local Host may be unavailable.`,
+        detail: `No usable response arrived from ${host}.`,
       };
   }
 }
