@@ -121,6 +121,42 @@ describe("Settings component UX and navigation", () => {
     expect(empty.closest(".settings__card")).not.toBeNull();
   });
 
+  it("retains notification availability while settings are updating", () => {
+    const state = store.getState();
+    const getState = vi.spyOn(store, "getState").mockReturnValue({
+      ...state,
+      taskAlerts: {
+        ...state.taskAlerts,
+        mode: "desktop",
+        permission: "granted",
+        subscribed: true,
+        busy: true,
+      },
+    });
+    const props = { onClose: () => undefined };
+    const { rerender } = render(<Settings {...props} />);
+    fireEvent.click(
+      within(
+        screen.getByRole("navigation", { name: "Settings categories" }),
+      ).getByRole("button", { name: "Behavior" }),
+    );
+    const feedback = screen.getByRole("group", { name: "Notification status" });
+    expect(feedback).toHaveTextContent("Background notifications enabled");
+    expect(within(feedback).getAllByRole("status")).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: "Send test notification" }),
+    ).toBeDisabled();
+    getState.mockReturnValue({
+      ...getState(),
+      taskAlerts: { ...getState().taskAlerts, busy: false },
+    });
+    rerender(<Settings {...props} />);
+    expect(feedback).toHaveTextContent("Background notifications enabled");
+    expect(
+      screen.getByRole("button", { name: "Send test notification" }),
+    ).toBeEnabled();
+  });
+
   it("requires confirmation before restoring interface preferences", () => {
     const restore = vi
       .spyOn(store, "restoreDefaultSettings")

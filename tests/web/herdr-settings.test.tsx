@@ -108,6 +108,8 @@ describe("Herdr Settings", () => {
     fireEvent.click(retry);
     expect(retry).toBeDisabled();
     expect(toggle).toBeDisabled();
+    expect(toggle).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByText(blocked.issue)).toBeVisible();
     recover(ready);
     await waitFor(() => expect(toggle).not.toBeDisabled());
     expect(screen.queryByText(blocked.issue)).toBeNull();

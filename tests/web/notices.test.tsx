@@ -111,7 +111,94 @@ describe("right-corner notices", () => {
     FakeWebSocket.instances.at(-1)?.open();
   }
 
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("anchors retained notices below the visible responsive toolbar or search control", async () => {
+    await initialize();
+    const observers: TestResizeObserver[] = [];
+    class TestResizeObserver {
+      observed = new Set<Element>();
+      constructor(private callback: ResizeObserverCallback) {
+        observers.push(this);
+      }
+      observe(node: Element) {
+        this.observed.add(node);
+      }
+      unobserve(node: Element) {
+        this.observed.delete(node);
+      }
+      disconnect() {
+        this.observed.clear();
+      }
+      resize() {
+        this.callback([], this);
+      }
+    }
+    vi.stubGlobal("ResizeObserver", TestResizeObserver);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        if (this.style.display === "none") return new DOMRect();
+        if (this.matches(".topbar")) return new DOMRect(0, 0, 1200, 44);
+        if (this.matches(".transcript-mobile-toolbar"))
+          return new DOMRect(900, 56, 72, Number(this.dataset.height ?? 32));
+        if (this.matches(".transcript-search"))
+          return new DOMRect(700, 56, 300, 44);
+        if (this.matches(".notices")) return new DOMRect(700, 0, 300, 300);
+        return new DOMRect();
+      },
+    );
+    const main = document.createElement("main");
+    main.innerHTML =
+      '<header class="topbar"></header><div class="transcript-search" style="display:none"></div><div class="transcript-mobile-toolbar">Transcript tools</div>';
+    document.body.append(main);
+    act(() => store.reportCopyError("Retain this diagnostic"));
+    const { container, unmount } = render(
+      <Notices onViewUpdates={() => undefined} />,
+    );
+    try {
+      const stack = container.querySelector<HTMLElement>(".notices")!;
+      const observer = observers.find((item) => item.observed.has(stack))!;
+      const search = main.querySelector<HTMLElement>(".transcript-search")!;
+      const launcher = main.querySelector<HTMLElement>(
+        ".transcript-mobile-toolbar",
+      )!;
+      expect(stack.style.getPropertyValue("--notice-header-bottom")).toBe(
+        "88px",
+      );
+      expect(observer.observed.has(launcher)).toBe(true);
+
+      launcher.style.display = "none";
+      search.style.display = "";
+      observer.resize();
+      expect(stack.style.getPropertyValue("--notice-header-bottom")).toBe(
+        "100px",
+      );
+      expect(observer.observed.has(search)).toBe(true);
+
+      launcher.style.display = "";
+      search.style.display = "none";
+      observer.resize();
+      expect(stack.style.getPropertyValue("--notice-header-bottom")).toBe(
+        "88px",
+      );
+      launcher.dataset.height = "40";
+      observer.resize();
+      expect(stack.style.getPropertyValue("--notice-header-bottom")).toBe(
+        "96px",
+      );
+      launcher.style.display = "none";
+      fireEvent.resize(window);
+      expect(stack.style.getPropertyValue("--notice-header-bottom")).toBe(
+        "44px",
+      );
+    } finally {
+      unmount();
+      main.remove();
+    }
+  });
 
   it("renews duplicate INFO in place, fades it, and retains warning/error diagnostics", async () => {
     await initialize();
@@ -249,6 +336,49 @@ describe("right-corner notices", () => {
       expect(
         within(nav).getByRole("button", { name: "System" }),
       ).toHaveAttribute("aria-current", "location"),
+    );
+  });
+
+  it("keeps the same update notice through background checks and still honors snooze", async () => {
+    updateResponse = {
+      kind: "available",
+      update: {
+        currentVersion: "1.0.0",
+        latestVersion: "1.1.0",
+        releaseUrl: "https://example.com/release",
+      },
+    };
+    await initialize();
+    render(<Notices onViewUpdates={() => undefined} />);
+    store.checkInspireUpdate();
+    const notice = (await screen.findByText("Updates available")).closest(
+      ".notice",
+    );
+    const socket = FakeWebSocket.instances.at(-1)!;
+    for (const checking of [true, false, true]) {
+      act(() =>
+        socket.emit({
+          type: "update_status",
+          updateStatus: {
+            ...updateStatus(),
+            revision: ++updateRevision,
+            inspireUpdateChecking: checking,
+            piUpdateChecking: checking,
+          },
+        }),
+      );
+      expect(screen.getByText("Updates available").closest(".notice")).toBe(
+        notice,
+      );
+      expect(
+        screen.getByRole("button", { name: "Copy update details" }),
+      ).toBeEnabled();
+    }
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close updates for 24 hours" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("Updates available")).toBeNull(),
     );
   });
 

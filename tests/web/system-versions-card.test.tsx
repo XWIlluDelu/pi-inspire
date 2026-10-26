@@ -9,10 +9,12 @@ type VersionState = Pick<
   | "piUpdateCheck"
   | "piUpdateChecking"
   | "piUpdateRequestPending"
+  | "piUpdateRequestError"
   | "piVersion"
   | "inspireUpdateCheck"
   | "inspireUpdateChecking"
   | "inspireUpdateRequestPending"
+  | "inspireUpdateRequestError"
   | "version"
 >;
 
@@ -37,10 +39,12 @@ beforeEach(() => {
     piUpdateCheck: null,
     piUpdateChecking: false,
     piUpdateRequestPending: false,
+    piUpdateRequestError: null,
     piVersion: "1.0.0",
     inspireUpdateCheck: null,
     inspireUpdateChecking: false,
     inspireUpdateRequestPending: false,
+    inspireUpdateRequestError: null,
     version: "0.4.0",
   };
 });
@@ -132,8 +136,10 @@ describe("System versions", () => {
     ).toHaveAttribute("href", "https://github.com/example/pi-tools");
   });
 
-  it("distinguishes request submission from execution and retains known versions", () => {
+  it("uses one checking state and keeps known updates readable and copyable throughout a refresh", async () => {
     availableUpdates();
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
     fixture.state.piUpdateRequestPending = true;
     fixture.state.inspireUpdateChecking = true;
     const { rerender } = render(<SystemVersionsCard />);
@@ -142,14 +148,25 @@ describe("System versions", () => {
       check.querySelector(
         '.system-versions__check-label > [aria-hidden="false"]',
       );
-    expect(activeLabel()).toHaveTextContent(/^Submitting…$/);
+    expect(activeLabel()).toHaveTextContent(/^Checking…$/);
     expect(check).toBeDisabled();
+    const copy = screen.getByRole("button", { name: "Copy update details" });
+    expect(copy).toBeEnabled();
+    fireEvent.click(copy);
     expect(
-      screen.getByRole("button", { name: "Copy update details" }),
-    ).toBeDisabled();
-    expect(row("Pi").getByText("Submitting…")).toBeVisible();
-    expect(row("Extensions").getByText("Submitting…")).toBeVisible();
-    expect(row("INSΠRE").getByText("Checking…")).toBeVisible();
+      await screen.findByRole("button", { name: "Update details copied" }),
+    ).toBeEnabled();
+    expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining("Pi 1.0.0 → 1.1.0"),
+    );
+    const result = document.querySelector(".system-versions__list")!;
+    const resultText = result.textContent;
+    expect(row("Pi").getByRole("link", { name: /available/ })).toBeVisible();
+    expect(
+      row("INSΠRE").getByRole("link", { name: /available/ }),
+    ).toBeVisible();
+    expect(row("Extensions").getByText("2 package updates")).toBeVisible();
+    expect(row("Extensions").getByRole("list")).toBeVisible();
     expect(row("Pi").getByText("v1.0.0")).toBeVisible();
     expect(row("INSΠRE").getByText("v0.4.0")).toBeVisible();
     fireEvent.click(check);
@@ -162,19 +179,49 @@ describe("System versions", () => {
     rerender(<SystemVersionsCard />);
     expect(activeLabel()).toHaveTextContent(/^Checking…$/);
     expect(check).toBeDisabled();
-    expect(row("Pi").getByText("Checking…")).toBeVisible();
-    expect(row("Extensions").getByText("Checking…")).toBeVisible();
+    expect(result.textContent).toBe(resultText);
 
     fixture.state.piUpdateChecking = false;
     rerender(<SystemVersionsCard />);
     expect(activeLabel()).toHaveTextContent(/^Check again$/);
     expect(check).toBeEnabled();
+    expect(result.textContent).toBe(resultText);
     expect(
       screen.getByRole("link", { name: "v1.1.0 available ↗" }),
     ).toHaveAttribute("href", "https://pi.dev/changelog");
     expect(
       screen.getByRole("link", { name: "v0.5.0 available ↗" }),
     ).toHaveAttribute("href", "https://example.com/inspire/release");
+  });
+
+  it("keeps request failures local and preserves results until the failed checks recover", () => {
+    availableUpdates();
+    fixture.state.piUpdateRequestError =
+      "Couldn't check Pi and extension updates.";
+    fixture.state.inspireUpdateRequestError = "Couldn't check INSΠRE updates.";
+    const { rerender } = render(<SystemVersionsCard />);
+    const result = document.querySelector(".system-versions__list")!;
+    const text = result.textContent;
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Couldn't check for updates. Showing previous results.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Check for updates" }),
+    ).toHaveAccessibleDescription(
+      "Couldn't check for updates. Showing previous results.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Copy update details" }),
+    ).toBeEnabled();
+    fixture.state.inspireUpdateRequestError = null;
+    rerender(<SystemVersionsCard />);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Couldn't check Pi and extension updates.",
+    );
+    fixture.state.piUpdateRequestError = null;
+    rerender(<SystemVersionsCard />);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(result.textContent).toBe(text);
   });
 
   it.each([

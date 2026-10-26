@@ -34,6 +34,52 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("provider directory", () => {
+  it("uses one login status while preserving authorization actions and replacing progress with the outcome", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let attempt = pendingLogin({
+      events: [
+        {
+          type: "auth_url",
+          url: "https://example.com/authorize",
+          userCode: "ABCD-EFGH",
+        },
+        { type: "progress", message: "Waiting for authorization…" },
+      ],
+      prompt: {
+        id: "code",
+        type: "manual_code",
+        message: "Authorization code",
+      },
+    });
+    host.providerAuth.mockImplementation(async () => attempt);
+    const view = render(panel());
+    await start();
+    const login = within(
+      screen.getByRole("group", { name: "Login to anthropic" }),
+    );
+    expect(login.getAllByRole("status")).toHaveLength(1);
+    expect(login.getByRole("status")).toHaveTextContent(
+      "Waiting for authorization…",
+    );
+    expect(screen.queryByText("Login in progress")).toBeNull();
+    expect(
+      login.getByRole("link", { name: "Open sign-in link" }),
+    ).toHaveAttribute("href", "https://example.com/authorize");
+    expect(login.getByText("ABCD-EFGH")).toBeVisible();
+    expect(login.getByLabelText("Authorization code")).toBeEnabled();
+    attempt = {
+      ...attempt,
+      status: "completed",
+      message: "Login complete.",
+      prompt: null,
+    };
+    await act(async () => vi.advanceTimersByTimeAsync(250));
+    expect(login.getAllByRole("status")).toHaveLength(1);
+    expect(login.getByRole("status")).toHaveTextContent("Login complete.");
+    expect(login.queryByText("Waiting for authorization…")).toBeNull();
+    view.unmount();
+  });
+
   it("keeps discovery unavailable until an initial provider read succeeds", () => {
     const props = {
       owner: {},
@@ -62,6 +108,18 @@ describe("provider directory", () => {
       screen.getByRole("button", { name: "Connect provider" }),
     ).toBeEnabled();
     expect(screen.getByText("No connected providers.")).toBeVisible();
+    view.rerender(
+      <ProviderAuthentication
+        {...props}
+        loaded
+        loading
+        providers={loginProviders()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Manage Anthropic" }),
+    ).toBeEnabled();
+    expect(screen.queryByText("Loading providers…")).toBeNull();
   });
 
   it("emphasizes directory name matches and explains ID-only results without changing method titles", () => {

@@ -70,17 +70,13 @@ export function HerdrSettings({
           : null);
 
   let statusNode: ReactNode = null;
-  if (loading || error || issue || pending) {
+  if (error || issue || pending) {
     statusNode = (
       <div role="status">
-        {loading || error || issue ? (
+        {error || issue ? (
           <div className="settings__field-status-block">
             <span>
-              {loading ? "Checking Herdr availability…" : null}
-              {!loading && error
-                ? "Herdr status is unavailable on this Host."
-                : null}
-              {!loading && !error && issue ? issue : null}
+              {error ? "Herdr status is unavailable on this Host." : issue}
             </span>
             {error || (status && !status.ready) ? (
               <button
@@ -140,6 +136,7 @@ export function HerdrSettings({
         label="Herdr enhancement"
         checked={saved}
         disabled={!saved && !canEnable}
+        busy={loading}
         onChange={(checked) => store.setHerdrEnabled(checked)}
       />
     </SettingField>

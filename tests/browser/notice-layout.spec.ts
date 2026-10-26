@@ -40,16 +40,32 @@ for (const touch of [false, true]) {
       const notice = page.locator(".notice--error");
       await expect(notice).toContainText(error);
       await page.setViewportSize({ width: 1280, height: 844 });
+      const gapBelowTool = (selector: string) =>
+        page.locator(".notices").evaluate((el, selector) => {
+          const control = document.querySelector(selector)!;
+          return (
+            el.getBoundingClientRect().top -
+            control.getBoundingClientRect().bottom
+          );
+        }, selector);
       await expect
-        .poll(() =>
-          page.locator(".notices").evaluate((el) => {
-            const search = document.querySelector(".transcript-search")!;
-            return (
-              el.getBoundingClientRect().top -
-              search.getBoundingClientRect().bottom
-            );
-          }),
-        )
+        .poll(() => gapBelowTool(".transcript-search"))
+        .toBeCloseTo(8, 0);
+      await expect(
+        page.getByRole("button", { name: "Close conversation search" }),
+      ).toBeHidden();
+      await page.setViewportSize({ width: 568, height: 420 });
+      await page
+        .getByRole("button", { name: "Open conversation search" })
+        .click();
+      await expect
+        .poll(() => gapBelowTool(".transcript-search"))
+        .toBeCloseTo(8, 0);
+      await page
+        .getByRole("button", { name: "Close conversation search" })
+        .click();
+      await expect
+        .poll(() => gapBelowTool(".transcript-mobile-toolbar"))
         .toBeCloseTo(8, 0);
       await page.setViewportSize({ width: 568, height: 420 });
       const startNew = async () => {
