@@ -82,7 +82,21 @@ traversal before reconciling the latest UI intent. A controlled delayed-popstate
 login, modal Back, image-gallery and native-question flows cover the repair. Cancellation fixtures
 finish their in-flight mock request handlers before disposing the browser context.
 
-Local Linux follow-up evidence includes 3,955 passing unit/integration cases, 42 portable checks,
+Reading scroll ownership retains an upward wheel across a queued layout scroll at latest instead
+of snapping back to the bottom. A gesture that cannot move the transcript still permits subsequent
+latest-follow. Native occupancy acceptance observes successful guard admission when the replacement
+worker is created, rather than installing a probe after automatic recovery may already have finished.
+
+The [first repair matrix](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40349199484)
+also measured 27.3 minutes for macOS Chromium, after successful core and launcher checks. Its
+40-minute job budget cancelled the following 38-case WebKit phase without a Safari assertion
+failure. The aggregate macOS budget is now 50 minutes; individual deadlines, one browser worker
+and one CI retry are unchanged.
+
+Large argument-menu scrolling waits for the browser's asynchronous visibility observation before
+stopping wheel input; estimated virtual-row geometry can move after a synchronous rectangle read.
+
+Local Linux follow-up evidence includes 3,957 passing unit/integration cases, 42 portable checks,
 and nine launcher checks (one platform skip), plus formatting, lint, types, unused-code checks and
 a fresh isolated browser build. Launcher checks run from a temporary source copy so validation
 cannot rebuild the staged deployment or control its instances. Cross-platform CI remains separate

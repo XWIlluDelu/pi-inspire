@@ -707,16 +707,22 @@ test("bounds large argument menus without dropping search, scrolling or keyboard
   const menu = page.locator(".completion");
   const last = page.getByRole("option", { name: "scale/model0249 Model 249" });
   await menu.hover();
-  // Real wheel input continues through measured row-height changes after resize.
+  // Observe browser visibility after layout delivery, not transient bounds from
+  // estimated virtual rows. Keep wheeling as newly mounted rows are measured.
   await expect
     .poll(async () => {
       await page.mouse.wheel(0, 4000);
       if (!(await last.count())) return false;
-      return last.evaluate((element) => {
-        const row = element.getBoundingClientRect();
-        const menu = element.closest(".completion")!.getBoundingClientRect();
-        return row.top >= menu.top && row.bottom <= menu.bottom;
-      });
+      return last.evaluate(
+        (element) =>
+          new Promise<boolean>((resolve) => {
+            const observer = new IntersectionObserver(([entry]) => {
+              observer.disconnect();
+              resolve(entry?.intersectionRatio === 1);
+            });
+            observer.observe(element);
+          }),
+      );
     })
     .toBe(true);
   await expect(last).toBeInViewport();
