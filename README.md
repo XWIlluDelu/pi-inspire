@@ -130,7 +130,7 @@ The usual launcher commands then manage that installation's services. Host-only 
 terminal tabs; `restart --all` also ends terminal processes. The Host guide owns the installation,
 maintenance and recovery steps.
 
-See [Running and maintaining Inspire](docs/host.md) for service behavior, shell environments, packaging, and diagnostics, and the [0.6.0 changelog](CHANGELOG.md) for changes and upgrade notes.
+See [Running and maintaining Inspire](docs/host.md) for service behavior, shell environments, packaging, and diagnostics, and the [0.6.5 changelog](CHANGELOG.md) for changes and upgrade notes.
 
 ## Pi commands and customization
 
