@@ -575,6 +575,53 @@ describe("recent model preference", () => {
 describe("thinking level control", () => {
   beforeEach(() => installFakeWebSocket());
 
+  it.each(["picker", "cycle"] as const)(
+    "keeps the newer %s selection when an earlier thinking response arrives late",
+    async (control) => {
+      const delivery = deferred<void>();
+      const oldModel = { provider: "fixture", id: "old", reasoning: true };
+      const newModel = { provider: "fixture", id: "new", reasoning: true };
+      let model = oldModel;
+      let thinkingLevel = "medium";
+      const snapshot = () => activeSnapshot({ model, thinkingLevel });
+      installFetch(async (url, init) => {
+        if (url.startsWith("/api/bootstrap"))
+          return { body: bootstrapPayload({ snapshot: snapshot() }) };
+        if (url.startsWith("/api/snapshot")) return { body: snapshot() };
+        if (url === "/api/control/thinking") {
+          // Pi completes this mutation first. Only HTTP delivery is delayed;
+          // the next mutation and its snapshot observe the newer native state.
+          thinkingLevel = String(jsonBody(init).level);
+          const result = { model, thinkingLevel };
+          await delivery.promise;
+          return { body: result };
+        }
+        if (
+          url === "/api/control/model" ||
+          url === "/api/control/model-cycle"
+        ) {
+          model = newModel;
+          thinkingLevel = "low";
+          return { body: { model, thinkingLevel } };
+        }
+        return baseRoutes(url, init);
+      });
+      const { store } = await initStore();
+      const thinking = store.setThinkingLevel("high");
+      await vi.waitFor(() => expect(thinkingLevel).toBe("high"));
+      if (control === "picker") await store.setModel("fixture", "new");
+      else await store.cycleModel(1);
+      expect(store.getState().model).toEqual(newModel);
+      expect(store.getState().thinkingLevel).toBe("low");
+
+      delivery.resolve();
+      await thinking;
+
+      expect(store.getState().model).toEqual(newModel);
+      expect(store.getState().thinkingLevel).toBe("low");
+    },
+  );
+
   it("adopts the actual model and clamped effort returned by Pi", async () => {
     const actual = {
       provider: "native",
@@ -622,6 +669,30 @@ describe("thinking level control", () => {
         ),
     ).toBe(true);
     await vi.waitFor(() => expect(snapshotCalls).toBeGreaterThan(0));
+  });
+
+  it("retains a newer native snapshot while reconciling an older thinking refusal", async () => {
+    const thinking = deferred<RouteResponse>();
+    const resync = deferred<RouteResponse>();
+    installFetch((url, init) => {
+      if (url === "/api/control/thinking") return thinking.promise;
+      if (url.startsWith("/api/snapshot")) return resync.promise;
+      return baseRoutes(url, init);
+    });
+    const { store, socket } = await initStore();
+    const changing = store.setThinkingLevel("high");
+    const native = activeSnapshot({ thinkingLevel: "low" });
+    socket.emit({ type: "snapshot", data: native });
+    expect(store.getState().thinkingLevel).toBe("low");
+
+    thinking.resolve({ status: 400, body: { error: "unsupported level" } });
+    await changing;
+
+    // Keep confirmed state visible while the follow-up read is still pending.
+    expect(store.getState().thinkingLevel).toBe("low");
+    expect(store.getState().notices.at(-1)?.text).toBe("unsupported level");
+    resync.resolve({ body: native });
+    await vi.waitFor(() => expect(store.getState().thinkingLevel).toBe("low"));
   });
 
   it("does not let an older refusal undo a newer accepted level", async () => {

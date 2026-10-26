@@ -620,8 +620,8 @@ export class PiRpcProcess extends EventEmitter {
       throw new Error("Pi RPC process is not available");
     }
     const frame = encodeOutboundFrame({
-      type: "extension_ui_response",
       ...response,
+      type: "extension_ui_response",
     });
     const requestId = typeof response.id === "string" ? response.id : undefined;
     this.diagnostic("debug", "rpc_extension_response", {

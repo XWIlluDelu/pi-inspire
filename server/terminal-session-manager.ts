@@ -761,33 +761,30 @@ export class TerminalSessionManager implements TerminalService {
       detached: false,
     };
     session.attachments.set(attachment.id, attachment);
-    const ownershipReason = this.attachOwnership(
-      session,
-      attachment,
-      options.ownerToken,
-    );
-    if (attachment.writable && session.status === "running")
-      this.resizeSession(session, options.cols, options.rows, attachment.id);
-
-    const canReplayDelta =
-      options.outputEpoch === session.outputEpoch &&
-      options.resizeRevision === session.resizeRevision &&
-      typeof options.nextOutputOffset === "number" &&
-      session.ring.contains(options.nextOutputOffset);
-    const replay = canReplayDelta ? "delta" : "snapshot";
-    this.sendControl(attachment, {
-      type: "attached",
-      terminal: this.describe(session),
-      attachmentId: attachment.id,
-      writable: attachment.writable,
-      ownerToken: attachment.writable ? session.owner?.token : undefined,
-      nextInputSequence: attachment.writable
-        ? (session.owner?.lastInputSequence ?? 0) + 1
-        : 1,
-      replay,
-    });
-
     try {
+      const ownershipReason = this.attachOwnership(
+        session,
+        attachment,
+        options,
+      );
+      const canReplayDelta =
+        options.outputEpoch === session.outputEpoch &&
+        options.resizeRevision === session.resizeRevision &&
+        typeof options.nextOutputOffset === "number" &&
+        session.ring.contains(options.nextOutputOffset);
+      const replay = canReplayDelta ? "delta" : "snapshot";
+      this.sendControl(attachment, {
+        type: "attached",
+        terminal: this.describe(session),
+        attachmentId: attachment.id,
+        writable: attachment.writable,
+        ownerToken: attachment.writable ? session.owner?.token : undefined,
+        nextInputSequence: attachment.writable
+          ? (session.owner?.lastInputSequence ?? 0) + 1
+          : 1,
+        replay,
+      });
+
       if (canReplayDelta) {
         this.sendRingFrom(
           session,
@@ -1398,7 +1395,7 @@ export class TerminalSessionManager implements TerminalService {
   private attachOwnership(
     session: ManagedTerminal,
     attachment: ManagedAttachment,
-    ownerToken: string | undefined,
+    { ownerToken, cols, rows }: TerminalAttachOptions,
   ): "claimed" | "reconnected" | null {
     if (session.status !== "running") return null;
     if (
@@ -1407,6 +1404,7 @@ export class TerminalSessionManager implements TerminalService {
       ownerToken === session.owner.token &&
       attachment.clientId === session.owner.clientId
     ) {
+      this.resizeSession(session, cols, rows, attachment.id);
       if (session.owner.releaseTimer) clearTimeout(session.owner.releaseTimer);
       if (session.owner.attachmentId) {
         const previous = session.attachments.get(session.owner.attachmentId);
@@ -1426,6 +1424,7 @@ export class TerminalSessionManager implements TerminalService {
       return "reconnected";
     }
     if (!session.owner) {
+      this.resizeSession(session, cols, rows, attachment.id);
       session.owner = {
         token: this.uuid(),
         clientId: attachment.clientId,
@@ -1455,6 +1454,8 @@ export class TerminalSessionManager implements TerminalService {
       });
       return;
     }
+    // Do not revoke a working lease until the requested grid is accepted.
+    this.resizeSession(session, cols, rows);
     const previousId = session.owner?.attachmentId;
     if (session.owner?.releaseTimer) clearTimeout(session.owner.releaseTimer);
     if (previousId && previousId !== attachment.id) {
@@ -1477,7 +1478,6 @@ export class TerminalSessionManager implements TerminalService {
       releaseTimer: null,
     };
     attachment.writable = true;
-    this.resizeSession(session, cols, rows);
     this.sendControl(attachment, {
       type: "ownership",
       writable: true,
@@ -1511,6 +1511,9 @@ export class TerminalSessionManager implements TerminalService {
   ): void {
     if (session.status !== "running") return;
     if (session.cols === cols && session.rows === rows) return;
+    // Native resize may fail while the PTY is exiting. Commit projection and
+    // replay changes only after success so the same dimensions remain retryable.
+    session.pty?.resize(cols, rows);
     session.cols = cols;
     session.rows = rows;
     session.resizeRevision += 1;
@@ -1523,7 +1526,6 @@ export class TerminalSessionManager implements TerminalService {
         session.emulator.resize(cols, rows);
       })
       .catch(() => {});
-    session.pty?.resize(cols, rows);
     this.touch(session);
     this.broadcastControl(
       session,

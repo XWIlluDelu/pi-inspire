@@ -345,6 +345,6 @@ Inspire has no runtime React plugin API. Source customization needs a checkout a
 | Pi extension, skill, prompt, or context file | Run `/reload` in an idle Inspire-owned session to replace its worker and reset its in-memory extension state. For a connected external Pi, reload in its terminal. |
 | Selected tool-presentation JSON | Save and refresh the browser; authenticated bootstrap revalidates it. |
 | Host environment or configuration-file path | Restart the Host. |
-| React, CSS, or contract source | Rebuild. In a checkout, `./inspire restart` detects changed browser inputs and rebuilds before restarting. |
+| React, CSS, or contract source | Rebuild. In a checkout, `npm run inspire -- restart` detects changed browser inputs and rebuilds before restarting. |
 
 Verify the adaptation's update/clear/failure paths, switching between sessions, and reconnect. Check both RPC and retained TUI behavior, plus long content, keyboard focus, light/dark themes, and a narrow viewport. Use synthetic data in committed fixtures and screenshots.

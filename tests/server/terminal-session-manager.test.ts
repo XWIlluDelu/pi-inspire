@@ -313,6 +313,123 @@ describe("TerminalSessionManager", () => {
     await manager.close();
   });
 
+  it("keeps the grid and replay bytes unchanged when a resize fails", async () => {
+    const { manager, spawns } = setup();
+    try {
+      const terminal = await manager.create({ cwd: process.cwd() });
+      const sink = new FakeSink();
+      const attachment = await manager.attach(
+        { terminalId: terminal.id, clientId: "client-a", cols: 100, rows: 30 },
+        sink,
+      );
+      const pty = spawns[0]!.pty;
+      pty.emitData("retained output");
+      const before = manager.list().terminals[0]!;
+      const resize = vi.spyOn(pty, "resize").mockImplementationOnce(() => {
+        throw new Error("PTY resize failed");
+      });
+
+      expect(() =>
+        attachment.control({ type: "resize", cols: 120, rows: 40 }),
+      ).toThrow("PTY resize failed");
+      expect(manager.list().terminals[0]).toMatchObject({
+        cols: before.cols,
+        rows: before.rows,
+        resizeRevision: before.resizeRevision,
+        firstOutputOffset: before.firstOutputOffset,
+        nextOutputOffset: before.nextOutputOffset,
+      });
+      expect(sink.controls.some((message) => message.type === "resized")).toBe(
+        false,
+      );
+
+      attachment.control({ type: "resize", cols: 120, rows: 40 });
+      expect(resize).toHaveBeenCalledTimes(2);
+      expect(pty.resizes).toEqual([[120, 40]]);
+      expect(manager.list().terminals[0]).toMatchObject({
+        cols: 120,
+        rows: 40,
+      });
+    } finally {
+      await manager.close();
+    }
+  });
+
+  it("does not retain an attachment or claim its lease when its resize fails", async () => {
+    const { manager, spawns } = setup();
+    try {
+      const terminal = await manager.create({ cwd: process.cwd() });
+      const sink = new FakeSink();
+      vi.spyOn(spawns[0]!.pty, "resize").mockImplementationOnce(() => {
+        throw new Error("PTY resize failed");
+      });
+      const options = {
+        terminalId: terminal.id,
+        clientId: "client-a",
+        cols: 120,
+        rows: 40,
+      };
+      await expect(manager.attach(options, sink)).rejects.toThrow(
+        "PTY resize failed",
+      );
+      expect(manager.list().terminals[0]).toMatchObject({
+        viewerCount: 0,
+        hasOwner: false,
+      });
+      expect(sink.controls).toEqual([]);
+
+      await manager.attach(options, sink);
+      expect(attachedMessage(sink)).toMatchObject({ writable: true });
+      expect(manager.list().terminals[0]).toMatchObject({
+        viewerCount: 1,
+        hasOwner: true,
+      });
+    } finally {
+      await manager.close();
+    }
+  });
+
+  it("preserves the previous writer when taking control cannot resize the PTY", async () => {
+    const { manager, spawns } = setup();
+    try {
+      const terminal = await manager.create({ cwd: process.cwd() });
+      const options = { terminalId: terminal.id, cols: 100, rows: 30 };
+      const firstSink = new FakeSink();
+      const first = await manager.attach(
+        { ...options, clientId: "client-a" },
+        firstSink,
+      );
+      const secondSink = new FakeSink();
+      const second = await manager.attach(
+        { ...options, clientId: "client-b" },
+        secondSink,
+      );
+      vi.spyOn(spawns[0]!.pty, "resize").mockImplementationOnce(() => {
+        throw new Error("PTY resize failed");
+      });
+
+      expect(() =>
+        second.control({ type: "take_control", cols: 120, rows: 40 }),
+      ).toThrow("PTY resize failed");
+      first.writeInput(1, Buffer.from("still owned\r"));
+      expect(spawns[0]!.pty.writes.map(String)).toEqual(["still owned\r"]);
+      expect(
+        firstSink.controls.some(
+          (message) => message.type === "ownership" && !message.writable,
+        ),
+      ).toBe(false);
+
+      second.control({ type: "take_control", cols: 120, rows: 40 });
+      second.writeInput(1, Buffer.from("new owner\r"));
+      expect(spawns[0]!.pty.writes.map(String)).toEqual([
+        "still owned\r",
+        "new owner\r",
+      ]);
+    } finally {
+      await manager.close();
+    }
+  });
+
   it("tracks shell command boundaries, working directories, and completion", async () => {
     const { manager, spawns } = setup();
     const terminal = await manager.create({ cwd: process.cwd() });
