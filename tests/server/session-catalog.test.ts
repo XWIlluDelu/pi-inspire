@@ -308,6 +308,7 @@ async function withSearchFixture(
   const index = new SessionMetadataIndex();
   const catalog = new SessionCatalog("/unused", {
     list: () => index.list(root),
+    readCurrent: (session) => index.readCurrent(session),
   });
   try {
     await run(root, index, catalog);
@@ -315,6 +316,54 @@ async function withSearchFixture(
     await rm(root, { recursive: true, force: true });
   }
 }
+
+describe("catalog current metadata", () => {
+  it("refreshes one session name without a global scan or transcript projection", async () => {
+    await withSearchFixture(async (root, index, catalog) => {
+      const scan = vi.spyOn(index, "list");
+      const original = await catalog.get("search-owner");
+      expect(original?.name).toBe("Quantum migration review");
+      const path = join(root, "search-owner.jsonl");
+      await appendFile(
+        path,
+        JSON.stringify({
+          type: "session_info",
+          id: "renamed",
+          name: "New saved name",
+        }) + "\n",
+      );
+      expect((await catalog.get("search-owner"))?.name).toBe(original?.name);
+      expect((await catalog.get("search-owner", { refresh: true }))?.name).toBe(
+        "New saved name",
+      );
+      await appendFile(
+        path,
+        JSON.stringify({
+          type: "session_info",
+          id: "cleared",
+          name: "",
+        }) + "\n",
+      );
+      expect(
+        (await catalog.get("search-owner", { refresh: true }))?.name,
+      ).toBeUndefined();
+      expect(scan).toHaveBeenCalledOnce();
+      await writeFile(
+        path,
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: "different-session",
+          cwd: "/work/quantum-project",
+          timestamp: "2026-10-02T00:00:00.000Z",
+        }) + "\n",
+      );
+      expect(
+        await catalog.get("search-owner", { refresh: true }),
+      ).toBeUndefined();
+    });
+  });
+});
 
 describe("catalog retained-content search", () => {
   it("searches complete retained text with defined query syntax and chronological pages", async () => {

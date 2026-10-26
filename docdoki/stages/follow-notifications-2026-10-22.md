@@ -1,76 +1,58 @@
 ---
 scope:
-  - docdoki/specs/{notifications,interface-preferences}.md
-  - server/{app,browser-auth,runtime,runtime-external-sessions,runtime-event-sockets,herdr-native-session,external-session,pi-native-actions,task-notifications}.ts
-  - docs/{host,extensions}.md
-  - extensions/inspire-session-bridge.ts
-  - shared/notifications.ts
-  - src/{main,api,app-state,store,browser-auth,notifications}.ts*
-  - src/controllers/{runtime-event,preference,connection,session-selection}-controller.ts
+  - src/attention.ts
+  - src/notification-platform.ts
+  - src/visual-preferences.ts
   - src/components/Settings.tsx
-  - src/styles/settings-overlays.css
-  - public/service-worker.js
-  - tests/server/{task-notifications,app-auth,runtime-external-sessions,pi-session-activity,herdr-native-actions.integration}.test.ts
-  - tests/web/{attention,preferences,task-notification-worker}.test.ts
+  - server/notifications/**
+  - public/task-notification-worker.js
+  - docs/notifications.md
 ---
 
-# Desktop and mobile task notifications
+# Task-alert device acceptance
 
 ## Objective
 
-Notify users who leave a Pi conversation when work completes or fails, following [[notifications]].
+Complete background task-alert acceptance against [[notifications]] without changing native Pi
+execution or replacing the separate tab-title/favicon signal.
 
-## Current state
+## Implemented
 
-The Host outcome coordinator, per-installation settings, service-worker display and Web Push path
-are implemented. Linux Chrome delivery and an Android manual-test notification are verified.
-Android real-task background delivery/click-through, iOS acceptance and desktop OS-banner clicking
-remain open.
+- The Host classifies task outcomes for built-in and reporter-enabled external Pi sessions.
+  Page-independent Web Push delivers them to enrolled installations.
+- Device-local Off / Mark tab / System notification intent remains separate from browser permission
+  and push enrollment. Settings show the chosen value, effective status and a manual Test action.
+- Session grouping replaces one native notification per Pi session. Project grouping combines
+  distinct sessions in the same project, counts each once, and links to the latest session.
+  Grouping is saved by the Host for each installation; changing it does not request permission
+  or enable alerts.
+- Host-scoped settings revisions fence late page messages and pushes. A new Host starts with its
+  own policy. Outcome ordering, restart persistence, dismissal and viewed-session clearing preserve
+  the latest content and unread peers.
+- Enrollment repair follows worker and receiver replacement without rewriting saved intent.
+  Core navigation and prompt offers do not wait for enrollment.
+- Notification click-through reuses a paired page, preserves navigation identity through reload,
+  and supports a later prompt in the same Pi.
 
-The native reporter records receiver-bound runs and explicit outcomes, including short runs between
-polls. Enrollment recovery, device isolation and delivery deduplication follow [[notifications]];
-that spec owns the detailed contract. Pending sends are retained for at most 15 minutes.
+## Evidence
 
-## Verification
+Linux Chrome native display/click-through, installed-PWA refresh continuity and Android system
+display of a manual test are verified. Automated tests cover classification, startup independence,
+permission/enrollment races, session/project grouping, deduplication, restart ordering, click
+ownership and lifecycle event delivery.
 
-Regression coverage includes:
+A manual Android test covers the receiver path only; background Pi outcomes and same-Pi prompting
+still need physical-device acceptance. iOS/iPadOS push has not been physically verified.
 
-- run outcomes, explicit cancellation, native receiver identity and public Pi event integration;
-- authenticated device scoping, endpoint validation, persistence, expiry and delivery recovery;
-- concurrent enrollment/disable changes, subscription renewal, worker deduplication, foreground
-  suppression and authenticated click navigation;
-- Settings, connection and native-session behavior.
+## Remaining work
 
-### Linux Chrome delivery
+1. On an installed Android receiver, deliver background outcomes, click through, and continue
+   prompting in the same Pi, including an offscreen session.
+2. On iOS/iPadOS, test permission, badge, click-through and delivery from an
+   Add-to-Home-Screen installation.
+3. Check installed-window tab/title/badge behavior alongside native notifications and confirm
+   status/navigation-bar rendering in light and dark themes.
 
-An isolated production build used real Pi workers, deterministic local providers, Chrome Web Push
-and GNOME's notification service. Verified outcomes:
-
-- Host → browser-vendor push → service-worker display reached GNOME through its notification
-  D-Bus interface. With no page open, completion displayed **Task completed**, provider failure
-  displayed **Task failed**, and confirmed Stop stayed quiet.
-- An installed PWA received completion after reloading during work. Foreground viewing suppressed
-  delivery across two windows. Focus checks used browser-reported focus, including Playwright's
-  focus emulation.
-- Two browser windows shared mode/enrollment changes; Mark tab removed the push subscription. Healthy Settings
-  refreshes issued no enrollment write. Duplicate and expired local offers did not redisplay an
-  outcome after reload.
-- Cold navigation and worker-to-page click messages reached the intended conversation. Actual
-  OS-banner clicking remains an acceptance item.
-- Desktop and 390-pixel Settings layouts were inspected without overflow.
-
-### Android system display
-
-A user-provided screenshot on 2026-10-23 confirms **Inspire test notification** in Android's system
-notification shade. Real-task background delivery and tapping back into the conversation remain open.
-
-## Remaining acceptance and activation
-
-1. Android: receive real task outcomes while backgrounded or locked, then tap back with no page open.
-2. iOS Home Screen app: verify background/lock-screen delivery, tap-to-return and foreground
-   coordination under WebKit's visible-push policy.
-3. Desktop: click a native OS notification and verify the intended conversation opens.
-
-[Task notifications](../../docs/host.md#task-notifications) documents setup and protected state.
-Enabling notifications requires a user gesture on each installation. Updated external Pi reporters load through their
-original terminals' reload/restart path, independently of Host restart.
+Current Linux coverage does not require additional implementation before these device checks.
+Existing external Pi processes need reporter activation through their own supported lifecycle;
+local integration and publishing source do not reload them.
