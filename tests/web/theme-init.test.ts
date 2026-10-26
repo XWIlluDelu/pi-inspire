@@ -159,7 +159,7 @@ describe("first-paint visual preferences", () => {
     },
   );
 
-  it("keeps the HTML fallback without freezing installed system bars to light", async () => {
+  it("keeps the HTML fallback, optional installed theme color and stable app identity", async () => {
     const html = await readFile(
       new URL("../../index.html", import.meta.url),
       "utf8",

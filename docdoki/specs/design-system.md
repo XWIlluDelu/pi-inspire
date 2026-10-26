@@ -96,10 +96,13 @@ so browser-owned controls do not retain a bright patch. Closing the last modal r
 window drag and native controls remain available. This applies to dialogs and narrow modal drawers.
 Ordinary tabs and standalone fallback use neutral `#F4F5F6` / `#14171A` page hints. The manifest omits
 `theme_color`: Chrome Android WebAPK can otherwise keep that installed color on the system navigation
-bar even when the page changes theme. Without a custom installed color, the non-edge-to-edge bar uses
-Chrome's native system light/dark surface; it need not match an explicitly opposite in-app theme.
-The manifest retains the neutral light `background_color` for startup. Browser/OS support determines
-native controls and installed metadata update timing; page reload alone does not update a WebAPK.
+bar even when the page changes theme. Omitting it removes that custom override; it does not guarantee
+that the native bar follows the page or system theme. Chrome can retain a native bar or make it
+transparent in its edge-to-edge path, where native window and inset handling also affect the visible
+background. The manifest retains neutral light `background_color` for native startup/window use;
+its presence alone does not establish the cause of a persistent navigation-area color.
+Browser/OS support determines native controls and installed metadata update timing; page reload
+alone does not update a WebAPK. Actual installed appearance requires device verification.
 
 A small INSΠRE wordmark centers over the whole window within the browser-reported safe rectangle,
 independent of navigation resize/collapse. INS and RE use quartz-gray/silver, Π the brand accent,
