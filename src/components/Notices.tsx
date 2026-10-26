@@ -124,31 +124,15 @@ export const Notices = memo(function Notices({
         "main > .topbar, main > .banner",
       ),
     ];
-    const observedTools = new Set<HTMLElement>();
-    let observer: ResizeObserver | null = null;
+    const tools = [
+      ...document.querySelectorAll<HTMLElement>(
+        "main .transcript-search, main .transcript-mobile-toolbar",
+      ),
+    ];
     const composer = document.querySelector<HTMLElement>(
       "main .composer, main .composer-readonly",
     );
     const measure = () => {
-      // Rediscover responsive controls when their sizes change rather than
-      // retaining a detached node as the notice anchor.
-      const tools = new Set(
-        document.querySelectorAll<HTMLElement>(
-          "main .transcript-search, main .transcript-mobile-toolbar",
-        ),
-      );
-      for (const tool of observedTools) {
-        if (!tools.has(tool)) {
-          observer?.unobserve(tool);
-          observedTools.delete(tool);
-        }
-      }
-      for (const tool of tools) {
-        if (!observedTools.has(tool)) {
-          observer?.observe(tool);
-          observedTools.add(tool);
-        }
-      }
       const stackBounds = element.getBoundingClientRect();
       const overlapsHorizontally = (bounds: DOMRect) =>
         bounds.width > 0 &&
@@ -194,13 +178,14 @@ export const Notices = memo(function Notices({
       element.classList.toggle("notices--scrollable", overflowing);
       if (overflowing) element.scrollTop = scrollTop;
     };
-    observer =
+    measure();
+    const observer =
       typeof ResizeObserver === "undefined"
         ? null
         : new ResizeObserver(measure);
-    measure();
     [
       ...boundaries,
+      ...tools,
       element,
       ...element.children,
       composer,
