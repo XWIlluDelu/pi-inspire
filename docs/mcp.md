@@ -2,6 +2,9 @@
 
 Open **Settings → MCP** to add, edit or remove Pi's native MCP file configuration on the connected
 Host. These are saved configuration entries, not a display of the current session's connections.
+Configure a server here when you want Pi to use that server's external tools; MCP is not required
+for an ordinary Pi session. The server's installation and connection instructions supply the URL
+or executable you will enter below.
 
 ## Choose the configuration source
 
@@ -30,9 +33,13 @@ credentials in the user file.
 
 ## Add or edit a server
 
+Choose **Add server**, enter its name and select **User · all projects** or **This project** as the
+destination. To change an existing entry, open its editor in the corresponding group.
+
 Choose **HTTP** for a streamable HTTP endpoint, or **Stdio** for an executable and separate argument
 rows. The program is one executable, not a shell command. Each argument row is one argument,
-including any spaces. Legacy SSE is not supported.
+including any spaces. The HTTP endpoint must be reachable from the Host; a Stdio program and its
+working directory must exist on the Host, not on the browser device. Legacy SSE is not supported.
 
 **Advanced configuration** contains description, per-request timeout in seconds, file-enabled state,
 tool exposure, and transport-specific options:
