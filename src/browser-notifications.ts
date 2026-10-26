@@ -15,6 +15,31 @@ export async function requestBrowserNotificationPermission() {
     : permission;
 }
 
+/** Mobile browsers require the existing service worker to display notifications.
+ * Notification delivery is optional and must never interrupt its caller. */
+export async function showBrowserNotification(
+  title: string,
+  options: NotificationOptions,
+): Promise<boolean> {
+  if (browserNotificationPermission() !== "granted") return false;
+  try {
+    const registration = await navigator.serviceWorker?.getRegistration();
+    if (registration) {
+      await registration.showNotification(title, options);
+      return true;
+    }
+  } catch {
+    // A desktop browser may still support notifications without a worker.
+  }
+  try {
+    new Notification(title, options);
+    return true;
+  } catch {
+    // Permission alone does not imply constructor support, notably on mobile.
+    return false;
+  }
+}
+
 export function notificationPermissionMessage(
   permission: ReturnType<typeof browserNotificationPermission>,
 ): string | null {

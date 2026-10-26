@@ -12,12 +12,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   TerminalCatalogResponse,
   TerminalDescriptor,
+  TerminalServerControlMessage,
 } from "../../shared/terminal-contracts";
 import { TerminalPane } from "../../src/components/TerminalPane";
 import { terminalOperations } from "../../src/controllers/terminal-operation-controller";
 import { queueTerminalAction } from "../../src/terminal-actions";
 import { TerminalCatalogController } from "../../src/terminal-catalog";
-import { deferred } from "./helpers";
+import {
+  DEFAULT_TERMINAL_UI_SETTINGS,
+  saveTerminalUiSettings,
+} from "../../src/terminal-settings";
+import { deferred, installLocalStorage } from "./helpers";
 
 const api = vi.hoisted(() => ({
   terminals: vi.fn(),
@@ -29,21 +34,51 @@ const api = vi.hoisted(() => ({
   retryTerminalOperation: vi.fn(),
   terminalSettings: vi.fn(),
 }));
+const viewCallbacks = vi.hoisted(
+  () => new Map<string, { bell(): void; complete(): void }>(),
+);
 vi.mock("../../src/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/api")>()),
   createApi: () => api,
 }));
 vi.mock("../../src/components/TerminalView", () => ({
-  TerminalView: ({ terminal }: { terminal: TerminalDescriptor }) => (
-    <div data-testid="shell-cwd">
-      {terminal.projectCwd}
-      <textarea
-        className="xterm-helper-textarea"
-        aria-label="Fixture terminal input"
-      />
-      <input aria-label="Fixture terminal search" />
-    </div>
-  ),
+  TerminalView: ({
+    terminal,
+    onBell,
+    onCommandComplete,
+  }: {
+    terminal: TerminalDescriptor;
+    onBell(terminal: TerminalDescriptor): void;
+    onCommandComplete(
+      terminal: TerminalDescriptor,
+      message: Extract<
+        TerminalServerControlMessage,
+        { type: "command_complete" }
+      >,
+    ): void;
+  }) => {
+    viewCallbacks.set(terminal.id, {
+      bell: () => onBell(terminal),
+      complete: () =>
+        onCommandComplete(terminal, {
+          type: "command_complete",
+          command: "private command text",
+          currentCwd: terminal.projectCwd,
+          durationMs: 15_000,
+          exitCode: 0,
+        }),
+    });
+    return (
+      <div data-testid="shell-cwd">
+        {terminal.projectCwd}
+        <textarea
+          className="xterm-helper-textarea"
+          aria-label="Fixture terminal input"
+        />
+        <input aria-label="Fixture terminal search" />
+      </div>
+    );
+  },
 }));
 
 function terminal(
@@ -113,6 +148,7 @@ function action(name: string) {
 
 beforeEach(() => {
   sessionStorage.clear();
+  viewCallbacks.clear();
   for (const mock of Object.values(api)) mock.mockReset();
   api.terminalSettings.mockResolvedValue({
     persistOutput: false,
@@ -126,6 +162,65 @@ beforeEach(() => {
           ? [terminal("B shell", "/B")]
           : [terminal("A shell"), terminal("B shell", "/B")],
     ),
+  );
+});
+
+describe("terminal notification delivery", () => {
+  it.each(["bell", "complete"] as const)(
+    "isolates failed %s notifications and retains the terminal mark",
+    async (event) => {
+      const storage = Object.getOwnPropertyDescriptor(window, "localStorage");
+      installLocalStorage();
+      saveTerminalUiSettings({
+        ...DEFAULT_TERMINAL_UI_SETTINGS,
+        bell: "desktop",
+        longTaskNotifications: true,
+      });
+      const Notification = vi.fn(function () {
+        throw new TypeError(
+          "Illegal constructor. Use showNotification instead.",
+        );
+      });
+      vi.stubGlobal(
+        "Notification",
+        Object.assign(Notification, { permission: "granted" }),
+      );
+      const showNotification = vi
+        .fn()
+        .mockRejectedValue(new Error("Service worker unavailable"));
+      vi.stubGlobal("navigator", {
+        platform: navigator.platform,
+        userAgent: navigator.userAgent,
+        serviceWorker: {
+          getRegistration: vi.fn().mockResolvedValue({ showNotification }),
+        },
+      });
+      try {
+        render(<TerminalPane cwd="/A" />);
+        await screen.findByRole("button", { name: "A shell", pressed: true });
+        fireEvent.click(
+          screen.getByRole("button", { name: "A second", pressed: false }),
+        );
+        await screen.findByRole("button", { name: "A second", pressed: true });
+        expect(() => {
+          act(() => viewCallbacks.get("A shell")![event]());
+        }).not.toThrow();
+        await waitFor(() => expect(Notification).toHaveBeenCalledTimes(1));
+        expect(showNotification).toHaveBeenCalledWith(
+          event === "bell" ? "Terminal · Bash" : "Terminal finished · Bash",
+          expect.objectContaining({
+            body: event === "bell" ? "Terminal bell" : "15s · Succeeded",
+          }),
+        );
+        expect(
+          screen.getByRole("button", { name: "A shell, bell", pressed: false }),
+        ).toBeInTheDocument();
+        expect(screen.queryByRole("alert")).toBeNull();
+      } finally {
+        if (storage) Object.defineProperty(window, "localStorage", storage);
+        else Reflect.deleteProperty(window, "localStorage");
+      }
+    },
   );
 });
 afterEach(() => {

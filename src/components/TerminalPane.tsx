@@ -44,7 +44,7 @@ import {
   type TerminalServerControlMessage,
 } from "../../shared/terminal-contracts";
 import { createApi } from "../api";
-import { browserNotificationPermission } from "../browser-notifications";
+import { showBrowserNotification } from "../browser-notifications";
 import { terminalOperations } from "../controllers/terminal-operation-controller";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
@@ -571,15 +571,14 @@ export const TerminalPane = memo(function TerminalPane({
       const background = terminal.id !== activeId || document.hidden;
       if (background)
         setBellIds((current) => new Set(current).add(terminal.id));
-      if (
-        background &&
-        uiSettings.bell === "desktop" &&
-        browserNotificationPermission() === "granted"
-      )
-        new Notification(`Terminal · ${notificationTerminalLabel(terminal)}`, {
-          body: "Terminal bell",
-          tag: `inspire-terminal-${terminal.id}`,
-        });
+      if (background && uiSettings.bell === "desktop")
+        void showBrowserNotification(
+          `Terminal · ${notificationTerminalLabel(terminal)}`,
+          {
+            body: "Terminal bell",
+            tag: `inspire-terminal-${terminal.id}`,
+          },
+        );
     },
     [activeId, uiSettings.bell],
   );
@@ -597,12 +596,12 @@ export const TerminalPane = memo(function TerminalPane({
         !uiSettings.longTaskNotifications ||
         message.durationMs === null ||
         message.durationMs < uiSettings.longTaskThresholdSeconds * 1_000 ||
-        (terminal.id === activeId && !document.hidden) ||
-        browserNotificationPermission() !== "granted"
+        (terminal.id === activeId && !document.hidden)
       )
         return;
+      setBellIds((current) => new Set(current).add(terminal.id));
       const seconds = Math.max(1, Math.round(message.durationMs / 1_000));
-      new Notification(
+      void showBrowserNotification(
         `Terminal finished · ${notificationTerminalLabel(terminal)}`,
         {
           body: `${seconds}s · ${message.exitCode === 0 ? "Succeeded" : `Exit ${message.exitCode ?? "unknown"}`}`,
