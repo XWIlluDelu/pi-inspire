@@ -93,8 +93,18 @@ also measured 27.3 minutes for macOS Chromium, after successful core and launche
 failure. The aggregate macOS budget is now 50 minutes; individual deadlines, one browser worker
 and one CI retry are unchanged.
 
+A later Windows run measured 3.35–4.65 seconds for single native configuration validations.
+Its five two-validation scenarios exhausted the unit runner's shared five-second default;
+those scenarios now have a 45-second integration budget, covering two existing 15-second
+request deadlines and Windows process retirement. Global and production deadlines are unchanged.
+
 Large argument-menu scrolling waits for the browser's asynchronous visibility observation before
 stopping wheel input; estimated virtual-row geometry can move after a synchronous rectangle read.
+Command fixtures finish each settled snapshot before starting the next simulated run and drain
+pending handlers before browser-context disposal. File-refresh acceptance waits for changed source
+content before checking retained mode and offsets, independently of concurrent workspace searching.
+Export-format geometry is sampled in one browser task so a viewport relayout cannot split
+measurements of a control and its containing row; the original alignment limits are retained.
 
 Local Linux follow-up evidence includes 3,957 passing unit/integration cases, 42 portable checks,
 and nine launcher checks (one platform skip), plus formatting, lint, types, unused-code checks and

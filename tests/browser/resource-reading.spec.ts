@@ -24,6 +24,9 @@ test("Files refresh preserves Source mode and reading offsets", async ({
     .click();
   await pane.getByRole("button", { name: "Source", exact: true }).click();
   const source = pane.getByRole("region", { name: "File source" });
+  const originalHeading = "Observation log · Station 07";
+  const refreshedHeading = "Observation log · Station 08";
+  await expect(source).toContainText(originalHeading);
   await source.evaluate((element) => {
     element.scrollTop = 100;
     element.scrollLeft = 80;
@@ -39,15 +42,32 @@ test("Files refresh preserves Source mode and reading offsets", async ({
   const pending = new Promise<void>((resolve) => {
     release = resolve;
   });
-  await page.route("**/api/resources/resolve", async (route) => {
-    await pending;
-    await route.continue();
-  });
+  const contentRequest = "**/api/resources/*/content?**";
+  await page.route(
+    contentRequest,
+    async (route) => {
+      const response = await route.fetch();
+      const original = await response.text();
+      expect(original).toContain(originalHeading);
+      const refreshed = original.replace(originalHeading, refreshedHeading);
+      expect(refreshed).not.toBe(original);
+      expect(refreshed).not.toContain(originalHeading);
+      // Keep the real response's byte-range metadata valid while proving that
+      // the selected file received new content, not only its retained preview.
+      expect(Buffer.byteLength(refreshed)).toBe(Buffer.byteLength(original));
+      await pending;
+      await route.fulfill({ response, body: refreshed });
+    },
+    { times: 1 },
+  );
   const refresh = pane.getByRole("button", { name: "Refresh context pane" });
+  const requested = page.waitForRequest(contentRequest);
   try {
     await refresh.click();
+    await requested;
     await expect(refresh).toHaveAttribute("aria-busy", "true");
     await expect(source).toBeVisible();
+    await expect(source).toContainText(originalHeading);
     await expect
       .poll(() => source.evaluate((element) => element.scrollTop))
       .toBe(100);
@@ -57,7 +77,10 @@ test("Files refresh preserves Source mode and reading offsets", async ({
   } finally {
     release();
   }
-  await expect(refresh).toHaveAttribute("aria-busy", "false");
+  // Global refresh also rescans directories and search results. The selected
+  // file's new content is the completion boundary for its reading position.
+  await expect(source).toContainText(refreshedHeading);
+  await expect(source).not.toContainText(originalHeading);
   await expect(source).toBeVisible();
   await expect(
     pane.getByRole("button", { name: "Preview", exact: true }),
