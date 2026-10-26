@@ -4,14 +4,18 @@ scope:
   - src/components/transcript-*.{ts,tsx}
   - src/components/{ChildCalls,CodeModeResult}.tsx
   - src/components/TerminalPane.tsx
+  - src/controllers/workspace-controller.ts
   - server/{runtime,mcp-config}.ts
+  - server/{model-settings-routes,runtime-external-sessions}.ts
+  - public/manifest.webmanifest
   - scripts/build-web.mjs
   - scripts/verify-release-package.mjs
   - tests/**
-  - docs/pi-commands.md
-  - docs/{extensions,ssh-reverse}.md
+  - README.md
+  - docs/{host,pi-commands,mcp,extensions,ssh-reverse,tool-presentations}.md
   - docdoki/specs/{notifications,activity-presentation,herdr-enhancement,host-lifecycle}.md
   - docdoki/specs/terminal.md
+  - docdoki/specs/design-system.md
   - docdoki/spec_abstract.md
 ---
 
@@ -117,15 +121,73 @@ constructors, desktop fallback and retained visual marks. Public Markdown target
 links were checked, as were release-script syntax and the DocDoki privacy boundary. No running Host,
 Pi process or terminal was used. The full installed-package lifecycle check was not rerun.
 
-This follow-up does not change Android system-bar styling. The observed installed-PWA navigation-bar
-color still requires device-level attribution; a screenshot alone does not establish a CSS defect.
+That first follow-up did not change Android system-bar styling. At that point, the observed
+installed-PWA navigation-bar color still required device-level attribution; a screenshot alone did
+not establish a CSS defect. The later metadata and implementation investigation is recorded below.
 Android delivery of the manual task-alert notification is already verified. Background real-task and
 notification-click acceptance remain separate from that completed check.
 
+## Skill-guided quality pass
+
+The next pass starts at `643cc761`. It reads the original
+[code-simplifier agent](https://github.com/anthropics/claude-plugins-official/blob/main/plugins/code-simplifier/agents/code-simplifier.md)
+and [docs-audit-and-refresh skill](https://github.com/QwenLM/qwen-code/blob/main/.qwen/skills/docs-audit-and-refresh/SKILL.md),
+including its audit checklist. The requested scope extends the former to major source areas and the
+latter to README plus the main user guides. Project conventions replace generic style preferences;
+Qwen-specific navigation and bundled-skill paths do not apply here. No audit software is installed.
+
+Implementation, tests, schemas and CLI dispatch are the evidence for documentation changes. The
+review prioritizes installation, authentication and command flow before organization. README now
+connects requirements, source/package entry points, first-session setup and daily use. The Host guide
+owns configuration and lifecycle details; the extension guide owns Herdr prerequisites and bridge
+installation. Model-update guidance is consolidated, existing section anchors are retained, and
+optional MCP/presentation workflows explain prerequisites and application steps. Reverse SSH now
+states its noninteractive authentication requirements and stops the direct tunnel before service
+handoff, avoiding competition for the same remote listener. Historical records retain their dates
+and original verification scope.
+
+Three code refinements preserve behavior: workspace requests reuse their existing ownership/query
+predicates; model loading uses explicit returns for directory, refreshed-session and snapshot paths;
+external-session state uses explicit branches with the original conflict/running/outcome priority.
+Notification fallback and build publication retain their separate failure and cleanup boundaries.
+Broader component reshaping is not justified by this pass.
+
+### Android installed navigation color
+
+Installed WebAPK metadata confirms the manifest's fixed light theme color. Chrome
+`155.0.8059.84` uses that custom installed color on its non-edge-to-edge navigation bar; see
+[WebappIntentDataProvider](https://github.com/chromium/chromium/blob/155.0.8059.84/chrome/android/java/src/org/chromium/chrome/browser/webapps/WebappIntentDataProvider.java#L241)
+and [CustomTabNavigationBarController](https://github.com/chromium/chromium/blob/155.0.8059.84/chrome/android/java/src/org/chromium/chrome/browser/customtabs/features/CustomTabNavigationBarController.java#L134).
+The manifest now omits only `theme_color`, allowing the native system light/dark surface on that
+path. Page theme hints remain dynamic; startup background and application identity remain unchanged.
+No unsupported dark-color manifest fields are added. An explicitly opposite application theme need
+not match the system bar, and the device's edge-to-edge branch is not established by the screenshot.
+
+The Host guide explains installed-app updates. An existing WebAPK must receive the new manifest
+metadata after a future authorized deployment; reloading the page alone is insufficient. Actual
+navigation appearance in both system themes remains a device check, not a claimed test result.
+
+### Verification of this pass
+
+- Full Biome format/lint, import boundaries, TypeScript build and Knip passed. The isolated client
+  build passed with the existing large-chunk advisory; its emitted manifest matches the source.
+- Theme/bootstrap and icon checks passed (28 tests), workspace controller/tree checks passed
+  (17 tests), and model-settings/external-session checks passed (39 tests, one environment skip).
+  HTTP fixtures initially lacked sandbox listen permission; the same suites passed with authorized
+  local fixture listeners and empty temporary HOME, XDG and Pi directories. No real Host was used.
+- Markdown links and anchors were checked across 56 tracked files, including packaged user-guide
+  targets. The deliberate missing-image browser fixture is excluded from defect reporting.
+  Guide JSON examples passed their real schemas and shell examples passed syntax checks. The
+  launcher help was checked with inherited-environment mode; operational examples were verified
+  against dispatch/implementation, without installing services or running maintenance commands.
+- DocDoki privacy and Git whitespace checks passed. The full installed-package lifecycle and
+  physical mobile acceptance were not rerun; test counts do not certify a release candidate.
+
 ## Next actions
 
-The follow-up source changes require the next authorized client build before existing installations
-receive them. Do not restart the Host or publish a client as part of this follow-up. Validate the final
+The follow-up source changes require the next authorized deployment before existing installations
+receive them; server refinements also wait for an authorized Host restart. Do not restart the Host or
+publish a client as part of this follow-up. Validate the final
 release candidate's installed package separately; the earlier release verification does not certify
 these later changes. Physical mobile/background notification acceptance, real Herdr/systemd integration
 and the conditional optimization proposals remain outside this run. Work stays on `auto-dev` as

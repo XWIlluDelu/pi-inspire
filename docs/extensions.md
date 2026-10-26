@@ -1,10 +1,33 @@
 # Adapting Pi extensions to Inspire
 
-Pi loads your extensions and owns their tools, commands, state, and lifecycle. Inspire presents their RPC-visible data in the browser. Start with commands, dialogs, and text widgets; use [tool-presentation rules](tool-presentations.md) for custom cards. Use [extension adapters](tool-presentations.md#extension-adapters) for composable cards, status visibility, status-bound Thinking-menu choices and source-specific context records. Configure and toggle them together in Settings → Adapters; no custom build is needed. Arbitrary panels and shortcuts still require source changes.
+Pi loads your extensions and owns their tools, commands, state, and lifecycle. Inspire presents their
+RPC-visible data in the browser. Install and enable an extension through Pi's normal configuration
+first; GUI presentation files and adapter toggles do not load Pi extensions. This guide helps extension
+authors choose a browser-compatible interface, then apply and verify it.
 
 Inspire ships native cards for `read`, `write`, `edit`, `bash`, `powershell`, `grep`, `find`, and `ls`. Other tools get generic cards with arguments, output, images, and expandable structured details. Inspire also loads an internal GUI bridge for branch navigation, model-catalog refresh, effective retry settings, and authentication; it adds no model tools.
 
-The Host uses your installed Pi for both SDK calls and RPC workers. `package.json` pins the development test version, not the runtime installation.
+The [native UI example](#try-the-native-ui-example) is a small starting point for dialogs and widgets.
+To connect an existing terminal session, use the optional [session bridge](#show-external-session-activity).
+See [Reload and verify](#reload-and-verify) when applying either extension or presentation changes.
+
+## Choose the smallest integration
+
+There are three distinct levels:
+
+1. **Native RPC, no frontend changes:** commands, standard dialogs, notices, status and text widgets.
+2. **Declarative presentation:** map stable tool/custom-message data to existing typed blocks, or
+   bind a discrete choice to an extension command and structured RPC status. See the
+   [status-control contract](tool-presentations.md#extension-adapters). Use this before adding
+   source-owned buttons; the extension retains state, persistence, and capability decisions.
+3. **Source DIY:** add purpose-built React controls and a small adapter in a checkout. Pi extensions
+   still own state and behavior; Inspire does not supply a scheduler or permission policy.
+
+The complete [source task-board example](https://github.com/XWIlluDelu/pi-inspire/blob/main/docs/examples/task-board/README.md) includes the Pi extension,
+shared data/actions, props-only list/detail UI, adapter, styles, mounting instructions, build/reload
+steps and session-cleanup checks. It uses cancellable demonstration timers rather than launching
+agents. Its Stop/Retry/Open notes actions require both extension-declared capability and the current
+loaded command inventory, and prepared commands preserve the browser's draft and attachments.
 
 ## What works through RPC
 
@@ -148,6 +171,14 @@ confirmed release; switching sessions or reloading the page is not required.
 
 ### Control the same Herdr Pi terminal
 
+First install and enable the [session bridge](#show-external-session-activity) in the Pi terminal
+you want to connect.
+
+Enable **Settings → System → Host → Herdr enhancement** to place Inspire workers in Herdr and
+connect to existing Herdr Pi terminals. This optional mode requires Linux, Herdr, a systemd user
+manager, and writable cgroup v2 scopes with `cgroup.kill`. Settings shows unavailable prerequisites;
+the saved choice takes effect after a Host restart. The default direct mode needs no Herdr.
+
 In a Herdr TUI, this same extension also handles Inspire input, Steer, Follow-up, agent Stop, rename,
 and model/thinking selection through Pi's public functions. No additional extension is needed. It reuses Herdr's existing terminal
 control permission, not your shortcut bindings or screen layout; it adds no service listener or
@@ -275,24 +306,6 @@ function publishUsage(ctx: ExtensionContext, usage: Usage) {
 ```
 
 Register `/usage` to toggle `usageDetailsOpen`. Fetching, caching, and calculations stay in the extension.
-
-## Choose the smallest integration
-
-There are three distinct levels:
-
-1. **Native RPC, no frontend changes:** commands, standard dialogs, notices, status and text widgets.
-2. **Declarative presentation:** map stable tool/custom-message data to existing typed blocks, or
-   bind a discrete choice to an extension command and structured RPC status. See the
-   [status-control contract](tool-presentations.md#extension-adapters). Use this before adding
-   source-owned buttons; the extension retains state, persistence, and capability decisions.
-3. **Source DIY:** add purpose-built React controls and a small adapter in a checkout. Pi extensions
-   still own state and behavior; Inspire does not supply a scheduler or permission policy.
-
-The complete [source task-board example](https://github.com/XWIlluDelu/pi-inspire/blob/main/docs/examples/task-board/README.md) includes the Pi extension,
-shared data/actions, props-only list/detail UI, adapter, styles, mounting instructions, build/reload
-steps and session-cleanup checks. It uses cancellable demonstration timers rather than launching
-agents. Its Stop/Retry/Open notes actions require both extension-declared capability and the current
-loaded command inventory, and prepared commands preserve the browser's draft and attachments.
 
 ## Custom cards and source changes
 
