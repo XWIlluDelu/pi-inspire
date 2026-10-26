@@ -228,20 +228,23 @@ export class RuntimeWorkerLifecycle {
     this.host.clearPendingExtensionUi(slot, "replaced");
     slot.piPendingQueues = emptyPendingQueues();
     slot.piPendingInput = { steering: [], followUp: [] };
-    await slot.pendingImages?.dispose();
-    slot.pendingImages = null;
-    slot.pendingQueues = {
-      ...emptyPendingQueues(),
-      revision: slot.pendingQueues.revision + 1,
-    };
-    slot.extensionDisplays = [];
-    slot.extensionStatuses = {};
-    slot.toolActivity = {};
-    slot.availableModels = null;
-    slot.commands = null;
     let checkingWriterAvailability = false;
     let started = false;
     try {
+      await slot.pendingImages?.dispose();
+      this.host.assertNotClosing();
+      if (slot.process !== rpc)
+        throw requestError("Pi runtime stopped before startup", 503);
+      slot.pendingImages = null;
+      slot.pendingQueues = {
+        ...emptyPendingQueues(),
+        revision: slot.pendingQueues.revision + 1,
+      };
+      slot.extensionDisplays = [];
+      slot.extensionStatuses = {};
+      slot.toolActivity = {};
+      slot.availableModels = null;
+      slot.commands = null;
       this.host.attachProcess(slot, rpc);
       await this.startupAttestor.requireUnchangedPreStartBaseline(
         slot,
@@ -252,6 +255,9 @@ export class RuntimeWorkerLifecycle {
       checkingWriterAvailability = true;
       await this.host.assertWriterAvailable(slot);
       checkingWriterAvailability = false;
+      this.host.assertNotClosing();
+      if (slot.process !== rpc)
+        throw requestError("Pi runtime stopped before startup", 503);
       slot.startupPhase = "starting";
       started = true;
       await rpc.start();

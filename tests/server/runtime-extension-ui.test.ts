@@ -19,6 +19,7 @@ import {
   catalog,
   trackedAttachmentStore,
   schedulingRuntime,
+  waitForReady,
   initializeRuntimeFixture,
   disposeRuntimeFixture,
 } from "./fixtures/runtime.js";
@@ -377,60 +378,82 @@ describe("extension displays and dialog ownership", () => {
     await runtime.close();
   });
 
-  it("treats a written extension response with a lost ordered fence as acceptance-unknown", async () => {
-    const store = trackedAttachmentStore();
-    let worker!: FakeRpc;
-    let responseWritten = false;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      store,
-      (options) => {
-        worker = new FakeRpc(options);
-        const send = worker.sendExtensionUiResponse.bind(worker);
-        worker.sendExtensionUiResponse = (response) => {
-          send(response);
-          responseWritten = true;
-        };
-        const request = worker.request.bind(worker);
-        worker.request = async <T>(command: Record<string, unknown>) => {
-          if (responseWritten && command.type === "get_state") {
-            const error = new PiRpcOutcomeUnknownError("get_state");
-            error.stopped = Promise.resolve();
-            throw error;
-          }
-          return request<T>(command);
-        };
-        return worker as unknown as PiRpcProcess;
-      },
-      preview,
-    );
-    await runtime.openSession("a");
-    await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
-    worker.emit("event", {
-      type: "extension_ui_request",
-      id: "unknown-ui",
-      method: "confirm",
-    });
-    await expect(
-      runtime.extensionUiResponse({
-        sessionId: "a",
-        id: "unknown-ui",
-        confirmed: true,
-      }),
-    ).rejects.toThrow(/outcome is unknown/);
-    expect(worker.uiResponses).toEqual([{ id: "unknown-ui", confirmed: true }]);
-    expect(worker.stops).toBe(1);
-    expect((await runtime.snapshot()).runState).toBe("conflict");
-    await expect(
-      runtime.extensionUiResponse({
-        sessionId: "a",
-        id: "unknown-ui",
-        confirmed: true,
-      }),
-    ).rejects.toThrow();
-    expect(worker.uiResponses).toHaveLength(1);
-    await runtime.close();
-  });
+  it.each(["timeout", "exit"] as const)(
+    "reports uncertain extension delivery after a read-only fence %s without inferring worker liveness",
+    async (failure) => {
+      const store = trackedAttachmentStore();
+      let worker!: FakeRpc;
+      let responseWritten = false;
+      const runtime = new RuntimeController(
+        catalog([record("a", "/tmp")]),
+        store,
+        (options) => {
+          worker = new FakeRpc(options);
+          const send = worker.sendExtensionUiResponse.bind(worker);
+          worker.sendExtensionUiResponse = (response) => {
+            send(response);
+            responseWritten = true;
+          };
+          const request = worker.request.bind(worker);
+          worker.request = async <T>(command: Record<string, unknown>) => {
+            if (responseWritten && command.type === "get_state") {
+              responseWritten = false;
+              // PiRpcProcess rejects read-only waits with ordinary errors, even
+              // when its exit event has already retired the originating worker.
+              const error = new Error(
+                failure === "exit"
+                  ? "Pi RPC stdout closed unexpectedly"
+                  : "Pi command get_state response timed out",
+              );
+              if (failure === "exit") worker.emit("exit", error);
+              throw error;
+            }
+            return request<T>(command);
+          };
+          return worker as unknown as PiRpcProcess;
+        },
+        preview,
+      );
+      try {
+        await runtime.openSession("a");
+        await waitForReady(runtime);
+        worker.emit("event", {
+          type: "extension_ui_request",
+          id: "unknown-ui",
+          method: "confirm",
+        });
+        await expect(
+          runtime.extensionUiResponse({
+            sessionId: "a",
+            id: "unknown-ui",
+            confirmed: true,
+          }),
+        ).rejects.toMatchObject({
+          status: 504,
+          code: "PI_RPC_OUTCOME_UNKNOWN",
+          outcomeUnknown: true,
+          message: "Pi extension_ui_response outcome is not yet confirmed",
+        });
+        expect(worker.uiResponses).toEqual([
+          { id: "unknown-ui", confirmed: true },
+        ]);
+        expect(worker.stops).toBe(failure === "exit" ? 1 : 0);
+        const snapshot = await runtime.snapshot();
+        expect(snapshot.runState).toBe(failure === "exit" ? "failed" : "idle");
+        expect(snapshot.pendingExtensionUiRequests).toEqual([]);
+        await expect(
+          runtime.extensionUiResponse({
+            sessionId: "a",
+            id: "unknown-ui",
+            confirmed: true,
+          }),
+        ).rejects.toThrow();
+        expect(worker.uiResponses).toHaveLength(1);
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
 
   it("retires the writer when extension-response stdin delivery is acceptance-unknown", async () => {
     const store = trackedAttachmentStore();

@@ -116,12 +116,14 @@ other applications' unreported or later launches remain outside its authority.
   live foreground Pi identity. Stale metadata does not establish a connection, and ambiguous live
   matches are not chosen arbitrarily. Sibling Inspire RPC workers retain their existing writer
   admission rules.
-- Native connections are outside the owned-worker pool. Switching sessions, closing the browser,
+- Native Pi processes are outside the owned-worker pool. Switching sessions, closing the browser,
   and Host shutdown/restart leave the native Pi and pane running. Independently running native work
   does not block Host maintenance restart; in-flight Host input, commands and interruption still do.
   Background history may be reclaimed independently of native status polling. Polling does not
   rebuild it; retained history uses version-checked reads, while prompt admission retains forced
-  verification. Repeated observation errors coalesce until a complete poll succeeds.
+  verification. Discarding an idle, unobserved runtime slot also releases its native connection;
+  reclaiming only its history leaves status polling active. Repeated observation errors coalesce
+  until a complete poll succeeds.
 - Capture the native Pi's boot/process-birth identity before publishing its connection. A replaced
   Herdr server, missing agent/pane, or vanished session metadata does not establish that Pi exited.
   Keep its history read-only while ownership is unverified; an explicit reselect may connect through
