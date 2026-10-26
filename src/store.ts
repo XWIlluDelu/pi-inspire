@@ -3317,6 +3317,12 @@ export class AppStore {
     });
   };
 
+  showChangesBrowser = (): void => {
+    this.resources.clearSelection();
+    this.git.clearDiffSelection();
+    this.set({ resourcesOpen: true, contextMode: "changes" });
+  };
+
   setContextMode = (
     contextMode: "files" | "changes" | "branches" | "terminal",
   ): void => {

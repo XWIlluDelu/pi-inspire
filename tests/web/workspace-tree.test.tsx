@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import {
+  WorkspaceFileSearch,
   WorkspaceSearchResults,
   WorkspaceTree,
 } from "../../src/components/WorkspaceBrowser";
@@ -16,6 +17,7 @@ import { store } from "../../src/store";
 import {
   activeSnapshot,
   bootstrapPayload,
+  deferred,
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
@@ -37,11 +39,9 @@ async function workspaceHarness() {
       },
     }),
   );
-  const search = vi.fn(
-    (): RouteResponse => ({
-      body: { files: [{ name: "known.ts", path: "known.ts" }] },
-    }),
-  );
+  const search = vi.fn((): RouteResponse | Promise<RouteResponse> => ({
+    body: { files: [{ name: "known.ts", path: "known.ts" }] },
+  }));
   installFakeWebSocket();
   installFetch((url) => {
     if (url.startsWith("/api/bootstrap"))
@@ -62,6 +62,35 @@ async function workspaceHarness() {
   socket.open();
   return { directory, search, socket };
 }
+
+it("keeps workspace search clearing available while loading and retires the pending result", async () => {
+  const harness = await workspaceHarness();
+  const pending = deferred<RouteResponse>();
+  harness.search.mockReturnValueOnce(pending.promise);
+  render(<WorkspaceFileSearch />);
+  const search = screen.getByRole("searchbox", {
+    name: "Search workspace files",
+  });
+  fireEvent.change(search, { target: { value: "pending" } });
+  await screen.findByLabelText("Searching workspace");
+  fireEvent.keyDown(search, { key: "Escape", isComposing: true });
+  expect(search).toHaveValue("pending");
+  const clear = screen.getByRole("button", { name: "Clear workspace search" });
+  expect(clear).toBeEnabled();
+  fireEvent.click(clear);
+  expect(search).toHaveValue("");
+  expect(search).toHaveFocus();
+  await act(async () =>
+    pending.resolve({
+      body: { files: [{ name: "pending.ts", path: "pending.ts" }] },
+    }),
+  );
+  expect(store.getState().workspaceQuery).toBe("");
+  expect(store.getState().workspaceMatches).toEqual([]);
+  expect(
+    screen.queryByLabelText("Searching workspace"),
+  ).not.toBeInTheDocument();
+});
 
 it("keeps confirmed directory and search rows visible during and after a failed refresh", async () => {
   const harness = await workspaceHarness();

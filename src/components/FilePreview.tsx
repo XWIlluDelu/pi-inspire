@@ -35,7 +35,7 @@ export function PathCopyButton({ path }: { path: string }) {
     <button
       type="button"
       className={`file-path-action ${copied ? "file-path-action--copied" : ""}`}
-      onClick={() => void copy(path)}
+      onClick={() => void copy(path, store.copyOwnership())}
       aria-label={copied ? "Path copied" : `Copy path ${path}`}
       title={copied ? "Copied" : `Click to copy — ${path}`}
     >
