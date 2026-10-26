@@ -22,8 +22,8 @@ import type {
   HostUpdateStatus,
   InspirePreferences,
   InspireUpdateCheckResult,
-  NewSessionOptions,
   ModelSelectionResponse,
+  NewSessionOptions,
   PendingCopyContent,
   PendingOperationIdentity,
   PendingOperationRequest,
@@ -49,10 +49,6 @@ import type {
   UserTurnIndexPage,
   UserTurnTranscriptPage,
 } from "../shared/contracts";
-import type {
-  ToolPresentationConfiguration,
-  PresentationAdapterInfo,
-} from "../shared/tool-presentation-config";
 import type { HerdrEnhancementStatus } from "../shared/herdr";
 import type {
   HostRestartOperation,
@@ -90,6 +86,10 @@ import type {
   TerminalServiceSettings,
   TerminalServiceSettingsPatch,
 } from "../shared/terminal-contracts";
+import type {
+  PresentationAdapterInfo,
+  ToolPresentationConfiguration,
+} from "../shared/tool-presentation-config";
 import { terminalOperations } from "./controllers/terminal-operation-controller";
 import { withTransportMeasure } from "./transport-performance";
 
@@ -596,6 +596,7 @@ export function createApi(token: string | null = null) {
         | import("../shared/contracts").CompletionAttentionPreference
         | undefined,
       subscription?: PushSubscriptionJSON | null,
+      grouping?: import("../shared/notifications").TaskNotificationGrouping,
     ) =>
       request<import("../shared/notifications").TaskAlertSettings>(
         token,
@@ -604,6 +605,7 @@ export function createApi(token: string | null = null) {
           method: "PUT",
           body: JSON.stringify({
             mode,
+            grouping,
             subscription: subscription
               ? { endpoint: subscription.endpoint, keys: subscription.keys }
               : subscription,

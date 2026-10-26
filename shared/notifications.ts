@@ -1,11 +1,18 @@
 import type { CompletionAttentionPreference } from "./contracts.js";
 
 export type TaskOutcome = "completed" | "failed" | "ended";
+export type TaskNotificationGrouping = "session" | "project";
 export interface TaskNotification {
   id: string;
   sessionId: string | null;
+  sessionName?: string;
   outcome: TaskOutcome;
   project?: string;
+  /** Host-scoped opaque cwd identity; project labels are not unique. */
+  projectId?: string;
+  grouping?: TaskNotificationGrouping;
+  groupingUpdatedAt?: number;
+  notificationOwner?: string;
   createdAt: number;
   test?: true;
 }
@@ -16,6 +23,8 @@ export interface NotificationSubscription {
 export interface TaskAlertSettings {
   installationId: string;
   mode: CompletionAttentionPreference | null;
+  grouping: TaskNotificationGrouping;
+  groupingUpdatedAt: number;
   publicKey: string;
   subscribed: boolean;
   /** Active endpoint, or the last endpoint rejected as expired by the push service. */
@@ -28,6 +37,10 @@ export type TaskAlertEvent =
 
 export interface TaskAlertState {
   mode: CompletionAttentionPreference;
+  grouping: TaskNotificationGrouping;
+  groupingUpdatedAt: number;
+  groupingBusy: boolean;
+  groupingError: string | null;
   permission: NotificationPermission | "unavailable";
   subscribed: boolean;
   busy: boolean;
@@ -36,6 +49,10 @@ export interface TaskAlertState {
 }
 export const initialTaskAlerts: TaskAlertState = {
   mode: "off",
+  grouping: "session",
+  groupingUpdatedAt: 0,
+  groupingBusy: false,
+  groupingError: null,
   permission: "default",
   subscribed: false,
   busy: false,

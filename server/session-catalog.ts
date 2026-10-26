@@ -74,7 +74,10 @@ export interface SessionCatalogLike {
     force?: boolean,
     options?: { requireComplete?: boolean },
   ): Promise<readonly SessionRecord[]>;
-  get(id: string): Promise<SessionRecord | undefined>;
+  get(
+    id: string,
+    options?: { refresh?: boolean },
+  ): Promise<SessionRecord | undefined>;
   list(options?: {
     query?: string;
     offset?: number;
@@ -107,10 +110,10 @@ export class SessionCatalog implements SessionCatalogLike {
 
   constructor(
     private readonly startupCwd: string,
-    private readonly metadata: Pick<
-      SessionMetadataIndex,
-      "list"
-    > = new SessionMetadataIndex(),
+    private readonly metadata: Pick<SessionMetadataIndex, "list"> &
+      Partial<
+        Pick<SessionMetadataIndex, "readCurrent">
+      > = new SessionMetadataIndex(),
     private readonly projectCwds: () => Promise<
       readonly string[]
     > = async () => [],
@@ -256,7 +259,10 @@ export class SessionCatalog implements SessionCatalogLike {
     return loading;
   }
 
-  async get(id: string): Promise<SessionRecord | undefined> {
+  async get(
+    id: string,
+    options?: { refresh?: boolean },
+  ): Promise<SessionRecord | undefined> {
     // Opening needs stable identity/path/cwd, not freshly sorted list metadata.
     // Keep known identities usable after invalidate() so a click never pays for
     // a global JSONL rescan; explicit/list refreshes still rebuild the catalog.
@@ -274,7 +280,10 @@ export class SessionCatalog implements SessionCatalogLike {
       );
     }
     if (!this.byId.has(id)) this.requireComplete();
-    return this.byId.get(id);
+    const session = this.byId.get(id);
+    if (session && options?.refresh && this.metadata.readCurrent)
+      return (await this.metadata.readCurrent(session)) ?? undefined;
+    return session;
   }
 
   async list(

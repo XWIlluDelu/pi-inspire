@@ -1,14 +1,15 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 import webPush from "web-push";
 import { z } from "zod";
 import type { CompletionAttentionPreference } from "../shared/contracts.js";
 import type {
   NotificationSubscription,
-  TaskAlertSettings,
   TaskAlertEvent,
+  TaskAlertSettings,
   TaskNotification,
+  TaskNotificationGrouping,
   TaskOutcome,
 } from "../shared/notifications.js";
 import { requestError } from "./request-error.js";
@@ -54,6 +55,8 @@ export const pushSubscriptionSchema = z
 interface Device {
   origin: string;
   mode: CompletionAttentionPreference;
+  grouping?: TaskNotificationGrouping;
+  groupingUpdatedAt?: number;
   subscription?: NotificationSubscription;
   expiredEndpoint?: string;
   error?: string;
@@ -72,6 +75,29 @@ interface Saved {
 }
 type Wire = Record<string, unknown>;
 
+function notificationSessionName(
+  value: string | undefined,
+): string | undefined {
+  return value?.replace(/\s+/g, " ").trim().slice(0, 160);
+}
+
+/** Only the newest undelivered result per device/session remains eligible.
+ * Tests have no session and keep their independent delivery identity. */
+function coalescePending(items: Pending[]): Pending[] {
+  const latest = new Map<string, Pending>();
+  for (const item of items) {
+    if (item.event.test || !item.event.sessionId) continue;
+    const key = JSON.stringify([item.deviceId, item.event.sessionId]);
+    const previous = latest.get(key);
+    if (!previous || item.event.createdAt >= previous.event.createdAt)
+      latest.set(key, item);
+  }
+  const retained = new Set(latest.values());
+  return items.filter(
+    (item) => item.event.test || !item.event.sessionId || retained.has(item),
+  );
+}
+
 /** Correlates live work once in the Host, never from browser snapshot ownership. */
 export class TaskOutcomeTracker {
   private runs = new Map<
@@ -79,6 +105,7 @@ export class TaskOutcomeTracker {
     { id: string; kind: "agent" | "compaction" }
   >();
   private nativeSeen = new Map<string, string>();
+  private lastCreatedAt = 0;
   observe(event: Wire): TaskNotification | null {
     if (typeof event.sessionId !== "string") return null;
     const sessionId = event.sessionId;
@@ -160,7 +187,17 @@ export class TaskOutcomeTracker {
       id,
       sessionId,
       outcome,
-      createdAt: Date.now(),
+      // Distinguish settlements within one clock tick so delayed delivery can
+      // never choose an older result just because their timestamps tied.
+      createdAt: (this.lastCreatedAt = Math.max(
+        Date.now(),
+        this.lastCreatedAt + 1,
+      )),
+      ...(typeof event.taskSessionName === "string"
+        ? {
+            sessionName: notificationSessionName(event.taskSessionName),
+          }
+        : {}),
       ...(typeof event.taskProject === "string"
         ? { project: event.taskProject.slice(0, 160) }
         : {}),
@@ -186,6 +223,9 @@ export class TaskNotifications {
   constructor(
     private readonly path: string,
     private readonly sendPush = webPush.sendNotification.bind(webPush),
+    private readonly sessionContext?: (
+      sessionId: string,
+    ) => Promise<{ name?: string; cwd: string } | undefined>,
   ) {
     this.ready = this.load();
     // Delivery failures are surfaced by the authenticated Settings endpoint.
@@ -219,8 +259,10 @@ export class TaskNotifications {
         pending: [],
       };
     }
-    this.saved.pending = this.saved.pending.filter(
-      (item) => item.event.createdAt + LIFETIME > Date.now(),
+    this.saved.pending = coalescePending(
+      this.saved.pending.filter(
+        (item) => item.event.createdAt + LIFETIME > Date.now(),
+      ),
     );
   }
   private save(): Promise<void> {
@@ -254,6 +296,8 @@ export class TaskNotifications {
     return {
       installationId: id,
       mode: device?.mode ?? null,
+      grouping: device?.grouping ?? "session",
+      groupingUpdatedAt: device?.groupingUpdatedAt ?? 0,
       publicKey: this.saved.vapid.publicKey,
       subscribed: Boolean(device?.subscription),
       endpoint:
@@ -265,9 +309,11 @@ export class TaskNotifications {
     principal: NotificationPrincipal,
     mode: CompletionAttentionPreference | undefined,
     subscription?: NotificationSubscription | null,
+    grouping?: TaskNotificationGrouping,
   ): Promise<TaskAlertSettings> {
     await this.ready;
     const previous = this.saved.devices[principal.id];
+    const modeProvided = mode !== undefined;
     mode ??= previous?.mode ?? "off";
     if (!previous && Object.keys(this.saved.devices).length >= 64)
       throw requestError("Too many notification devices registered", 409);
@@ -282,6 +328,11 @@ export class TaskNotifications {
     this.saved.devices[principal.id] = {
       origin: principal.origin,
       mode,
+      grouping: grouping ?? previous?.grouping ?? "session",
+      groupingUpdatedAt:
+        grouping !== undefined && grouping !== (previous?.grouping ?? "session")
+          ? Math.max(Date.now(), (previous?.groupingUpdatedAt ?? 0) + 1)
+          : (previous?.groupingUpdatedAt ?? 0),
       ...(!subscription && previous?.expiredEndpoint
         ? { expiredEndpoint: previous.expiredEndpoint }
         : {}),
@@ -296,7 +347,7 @@ export class TaskNotifications {
         ? { subscription: subscription ?? previous?.subscription }
         : {}),
     };
-    if (mode !== "desktop" || subscription === null)
+    if ((modeProvided && mode !== "desktop") || subscription === null)
       this.saved.pending = this.saved.pending.filter(
         (item) => item.deviceId !== principal.id,
       );
@@ -320,6 +371,35 @@ export class TaskNotifications {
     onlyDevice?: string,
   ): Promise<void> {
     await this.ready;
+    if (
+      this.closed ||
+      !Object.entries(this.saved.devices).some(
+        ([id, device]) =>
+          device.mode !== "off" && (!onlyDevice || id === onlyDevice),
+      )
+    )
+      return;
+    if (this.sessionContext && event.sessionId && !event.test) {
+      try {
+        const context = await this.sessionContext(event.sessionId);
+        if (context)
+          event = {
+            ...event,
+            project: basename(context.cwd),
+            // Stable across Host restarts without exposing filesystem paths or
+            // confusing two directories that share the same display label.
+            projectId: createHmac("sha256", this.saved.vapid.privateKey)
+              .update(context.cwd)
+              .digest("base64url"),
+            ...("name" in context
+              ? { sessionName: notificationSessionName(context.name) }
+              : {}),
+          };
+      } catch {
+        // Optional metadata cannot discard the actual task result. Without a
+        // trustworthy project identity the worker keeps this session separate.
+      }
+    }
     if (this.closed) return;
     const count = this.saved.pending.length;
     for (const [id, device] of Object.entries(this.saved.devices)) {
@@ -333,7 +413,7 @@ export class TaskNotifications {
       this.saved.pending.push(item);
     }
     if (this.saved.pending.length === count) return;
-    this.saved.pending = this.saved.pending.slice(-512);
+    this.saved.pending = coalescePending(this.saved.pending).slice(-512);
     await this.save();
     for (const item of this.saved.pending.filter(
       (item) => item.event.id === event.id,
@@ -359,7 +439,13 @@ export class TaskNotifications {
             item.deviceId === principal.id &&
             item.event.createdAt + LIFETIME > Date.now()
           )
-            send({ type: "task_notification", notification: item.event });
+            send({
+              type: "task_notification",
+              notification: this.delivery(
+                item.event,
+                this.saved.devices[item.deviceId]!,
+              ),
+            });
       })
       .catch(() => {});
     return () => {
@@ -367,10 +453,24 @@ export class TaskNotifications {
       if (!clients.size) this.clients.delete(principal.id);
     };
   }
+  private delivery(event: TaskNotification, device: Device): TaskNotification {
+    return {
+      ...event,
+      grouping: device.grouping ?? "session",
+      groupingUpdatedAt: device.groupingUpdatedAt ?? 0,
+      notificationOwner: this.saved.vapid.publicKey,
+    };
+  }
   private offer(item: Pending): void {
     if (item.event.createdAt + LIFETIME <= Date.now()) return;
     for (const send of this.clients.get(item.deviceId) ?? [])
-      send({ type: "task_notification", notification: item.event });
+      send({
+        type: "task_notification",
+        notification: this.delivery(
+          item.event,
+          this.saved.devices[item.deviceId]!,
+        ),
+      });
   }
   async acknowledge(
     principal: NotificationPrincipal,
@@ -419,7 +519,7 @@ export class TaskNotifications {
     // No redirects: web-push uses https.request directly and exposes non-2xx.
     await this.sendPush(
       device.subscription!,
-      JSON.stringify({ type: "inspire-task", ...event }),
+      JSON.stringify({ type: "inspire-task", ...this.delivery(event, device) }),
       {
         TTL: Math.max(
           1,
@@ -453,6 +553,7 @@ export class TaskNotifications {
         const device = this.saved.devices[item.deviceId];
         if (
           item.nextAttempt > now ||
+          !this.saved.pending.includes(item) ||
           device?.mode !== "desktop" ||
           !device.subscription
         )
