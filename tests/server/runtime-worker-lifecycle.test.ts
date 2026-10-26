@@ -3,7 +3,7 @@ import { stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { type PiRpcProcess } from "../../server/pi-rpc.js";
+import { PiRpcProcess } from "../../server/pi-rpc.js";
 
 import {
   MAX_IDLE_WORKERS,
@@ -643,6 +643,47 @@ describe("worker startup and retirement", () => {
     expect(
       (runtime as unknown as { slots: Map<string, unknown> }).slots.size,
     ).toBe(0);
+  });
+
+  it("does not start a prepared worker after close retires it during writer inspection", async () => {
+    const inspected = deferredSignal();
+    const releaseInspection = deferredSignal();
+    const createTransport = vi.fn(() => {
+      throw new Error("A retired worker must not launch a Pi transport");
+    });
+    let worker!: PiRpcProcess;
+    const guard = vi.fn(async () => {
+      // The first inspection precedes process creation. The second runs after
+      // attaching the unstarted worker and validating its projection baseline.
+      if (guard.mock.calls.length === 2) {
+        inspected.resolve();
+        await releaseInspection.promise;
+      }
+    });
+    const runtime = new RuntimeController(
+      catalog([record("a", TEST_CWD)]),
+      trackedAttachmentStore(),
+      (options) => {
+        worker = new PiRpcProcess({ ...options, createTransport });
+        return worker;
+      },
+      preview,
+    ).setExternalSessionGuard(guard);
+    try {
+      await runtime.openSession("a");
+      await inspected.promise;
+      const stop = vi.spyOn(worker, "stop");
+      expect(createTransport.mock.calls.length).toBe(0);
+      const closing = runtime.close();
+      expect(stop).toHaveBeenCalledOnce();
+      releaseInspection.resolve();
+      await closing;
+      expect(createTransport.mock.calls.length).toBe(0);
+      expect(runtime.activeSessionId).toBeNull();
+    } finally {
+      releaseInspection.resolve();
+      await runtime.close();
+    }
   });
 
   it("owns and drains a provisional new-session worker during concurrent close", async () => {

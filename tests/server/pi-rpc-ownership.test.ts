@@ -83,6 +83,20 @@ const flush = async () => {
 };
 
 describe("Pi RPC operation-owned waits", () => {
+  it("keeps extension replies in their protocol frame when payload includes a command type", async () => {
+    await rpc.sendExtensionUiResponse({
+      id: "pending-dialog",
+      type: "new_session",
+      value: "answer",
+    });
+    expect(child.commands.at(-1)).toEqual({
+      id: "pending-dialog",
+      type: "extension_ui_response",
+      value: "answer",
+    });
+    expect(rpc.available).toBe(true);
+  });
+
   it.each([undefined, null])(
     "waits through preflight compaction and human input with timeout %s",
     async (timeout) => {
