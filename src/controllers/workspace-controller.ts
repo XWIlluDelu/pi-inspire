@@ -226,12 +226,7 @@ export class WorkspaceController {
           if (!currentRequest()) return;
         }
       }
-      if (
-        this.directoryRequests.get(dir) !== request ||
-        request.signal.aborted ||
-        !this.owns(api, transportGeneration, sessionId, cwd)
-      )
-        return;
+      if (!currentRequest()) return;
       const current = this.host.state();
       this.host.patch({
         workspaceLevels: {
@@ -249,12 +244,7 @@ export class WorkspaceController {
         ),
       });
     } catch (error) {
-      if (
-        this.directoryRequests.get(dir) !== request ||
-        request.signal.aborted ||
-        !this.owns(api, transportGeneration, sessionId, cwd)
-      )
-        return;
+      if (!currentRequest()) return;
       if (error instanceof ApiError && error.status === 401) {
         this.host.handleAuthFailure();
         return;
@@ -384,14 +374,7 @@ export class WorkspaceController {
           if (!ownsQuery()) return;
         }
       }
-      const current = this.host.state();
-      if (
-        this.searchRequest !== request ||
-        request.signal.aborted ||
-        !this.owns(api, transportGeneration, sessionId, cwd) ||
-        current.workspaceQuery !== query
-      )
-        return;
+      if (!ownsQuery()) return;
       this.host.patch({
         workspaceMatches: response.files,
         workspaceSearchTruncated: Boolean(response.truncated),
@@ -399,14 +382,7 @@ export class WorkspaceController {
         workspaceSearchError: null,
       });
     } catch (error) {
-      const current = this.host.state();
-      if (
-        this.searchRequest !== request ||
-        request.signal.aborted ||
-        !this.owns(api, transportGeneration, sessionId, cwd) ||
-        current.workspaceQuery !== query
-      )
-        return;
+      if (!ownsQuery()) return;
       if (error instanceof ApiError && error.status === 401) {
         this.host.handleAuthFailure();
         return;

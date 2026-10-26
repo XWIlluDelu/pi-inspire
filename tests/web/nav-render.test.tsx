@@ -180,6 +180,33 @@ describe("session navigation controls", () => {
     await waitFor(() => expect(store.getState().sessions).toHaveLength(2));
   });
 
+  it("refreshes a populated session list quietly but explains an empty initial wait", () => {
+    const state = store.getState();
+    const snapshot = vi.spyOn(store, "getState").mockReturnValue({
+      ...state,
+      sessionListLoading: true,
+      sessionListOperation: "refresh",
+    });
+    const props = {
+      collapsed: false,
+      onToggleNavigation: vi.fn(),
+      onNewSession: vi.fn(),
+      onSelectSession: vi.fn(),
+    };
+    const { unmount } = render(<Nav {...props} />);
+    expect(list().getByText("Alpha session")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Refreshing sessions…" }),
+    ).toBeNull();
+    unmount();
+    snapshot.mockReturnValue({ ...snapshot(), sessions: [] });
+    render(<Nav {...props} />);
+    expect(
+      screen.getByRole("button", { name: "Refreshing sessions…" }),
+    ).toBeDisabled();
+    expect(screen.queryByText("No sessions yet")).toBeNull();
+  });
+
   it("renders brand lockup and provides new session action in both nav widths", () => {
     const onNewSession = vi.fn();
     const { container, rerender } = render(
@@ -809,6 +836,40 @@ describe("session navigation controls", () => {
     onSelect.mockClear();
     await user.keyboard("{Enter}");
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("clears session search by pointer or keyboard and returns focus without opening a result", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(
+      <Nav
+        onToggleNavigation={vi.fn()}
+        collapsed={false}
+        onNewSession={vi.fn()}
+        onSelectSession={onSelect}
+      />,
+    );
+    const search = screen.getByRole("searchbox", { name: "Search sessions" });
+    await user.type(search, "session");
+    await user.click(
+      screen.getByRole("button", { name: "Clear session search" }),
+    );
+    expect(search).toHaveValue("");
+    expect(search).toHaveFocus();
+    expect(document.querySelector(".nav__row--highlighted")).toBeNull();
+
+    await user.type(search, "session");
+    await user.tab();
+    expect(
+      screen.getByRole("button", { name: "Clear session search" }),
+    ).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(search).toHaveValue("");
+    expect(search).toHaveFocus();
+    expect(document.querySelector(".nav__row--highlighted")).toBeNull();
+    await user.keyboard("{Enter}");
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(store.getState().sessionId).toBe("alpha");
   });
 
   it("selects search results in visual order, retaining session identity across pages and curation", async () => {

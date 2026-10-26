@@ -5,7 +5,6 @@ import {
   PanelLeft,
   Pin,
   Plus,
-  Search,
   SearchX,
   Trash2,
   X,
@@ -29,6 +28,7 @@ import { ProjectGroup, SessionRow } from "./NavSessions";
 import { hiddenDeletionBlockReason, splitNavSections } from "./nav-model";
 import { PiLoader } from "./PiLoader";
 import { ScrollRail } from "./ScrollRail";
+import { SearchField } from "./SearchField";
 import { SessionDeleteDialog } from "./SessionDeleteDialog";
 import { BrandLogo, Wordmark } from "./Wordmark";
 
@@ -247,7 +247,9 @@ export const Nav = memo(function Nav({
   const sessionListBusy =
     sessionListLoading || sessionListLoadingOlder || sessionListHydrating;
   const foregroundSessionListBusy =
-    sessionListBusy && sessionListOperation !== "curation";
+    sessionListBusy &&
+    sessionListOperation !== "curation" &&
+    (sessionListOperation !== "refresh" || sessions.length === 0);
   const showSessionListActivity =
     hasOlderSessions || sessionListError !== null || foregroundSessionListBusy;
   const retrySessionLabel =
@@ -333,76 +335,73 @@ export const Nav = memo(function Nav({
               <span>New session</span>
             </span>
           </button>
-          <label className="nav__search">
-            <Search size={16} aria-hidden />
-            <input
-              ref={searchInputRef}
-              type="search"
-              placeholder="Search sessions"
-              aria-label="Search sessions"
-              value={sessionQuery}
-              aria-describedby={selectionStatusId}
-              onFocus={() => setSearchFocused(true)}
-              onBlur={() => {
-                setSearchFocused(false);
-                if (!searching)
-                  setSearchSelection({ query: sessionQuery, id: null });
-              }}
-              onCompositionStart={() => {
-                composing.current = true;
-              }}
-              onCompositionEnd={() => {
-                composing.current = false;
-              }}
-              onChange={(event) => store.searchSessions(event.target.value)}
-              onKeyDown={(event) => {
-                if (
-                  isComposingKeyboardEvent(event.nativeEvent) ||
-                  composing.current
-                ) {
-                  event.stopPropagation();
-                  return;
-                }
-                if (
-                  event.altKey ||
-                  event.ctrlKey ||
-                  event.metaKey ||
-                  event.shiftKey
-                )
-                  return;
-                if (
-                  !["ArrowUp", "ArrowDown", "Enter", "Escape"].includes(
-                    event.key,
-                  )
-                )
-                  return;
-                event.preventDefault();
+          <SearchField
+            className="nav__search"
+            inputRef={searchInputRef}
+            iconSize={16}
+            clearLabel="Clear session search"
+            placeholder="Search sessions"
+            aria-label="Search sessions"
+            value={sessionQuery}
+            aria-describedby={selectionStatusId}
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => {
+              setSearchFocused(false);
+              if (!searching)
+                setSearchSelection({ query: sessionQuery, id: null });
+            }}
+            onCompositionStart={() => {
+              composing.current = true;
+            }}
+            onCompositionEnd={() => {
+              composing.current = false;
+            }}
+            onValueChange={store.searchSessions}
+            onKeyDown={(event) => {
+              if (
+                isComposingKeyboardEvent(event.nativeEvent) ||
+                composing.current
+              ) {
                 event.stopPropagation();
-                if (event.key === "Escape") {
-                  if (sessionQuery) store.searchSessions("");
-                  else event.currentTarget.blur();
-                } else if (event.key === "Enter") {
-                  if (highlighted && highlighted.id !== openingSessionId)
-                    onSelectSession(highlighted.id);
-                } else if (searchResults.length > 0) {
-                  const index = searchResults.findIndex(
-                    (session) => session.id === highlightedSessionId,
-                  );
-                  const next = Math.max(
-                    0,
-                    Math.min(
-                      searchResults.length - 1,
-                      index + (event.key === "ArrowDown" ? 1 : -1),
-                    ),
-                  );
-                  setSearchSelection({
-                    query: sessionQuery,
-                    id: searchResults[next]!.id,
-                  });
-                }
-              }}
-            />
-          </label>
+                return;
+              }
+              if (
+                event.altKey ||
+                event.ctrlKey ||
+                event.metaKey ||
+                event.shiftKey
+              )
+                return;
+              if (
+                !["ArrowUp", "ArrowDown", "Enter", "Escape"].includes(event.key)
+              )
+                return;
+              event.preventDefault();
+              event.stopPropagation();
+              if (event.key === "Escape") {
+                if (sessionQuery) store.searchSessions("");
+                else event.currentTarget.blur();
+              } else if (event.key === "Enter") {
+                if (highlighted && highlighted.id !== openingSessionId)
+                  onSelectSession(highlighted.id);
+              } else if (searchResults.length > 0) {
+                const index = searchResults.findIndex(
+                  (session) => session.id === highlightedSessionId,
+                );
+                const next = Math.max(
+                  0,
+                  Math.min(
+                    searchResults.length - 1,
+                    index + (event.key === "ArrowDown" ? 1 : -1),
+                  ),
+                );
+                setSearchSelection({
+                  query: sessionQuery,
+                  id: searchResults[next]!.id,
+                });
+              }
+            }}
+          />
           <span id={selectionStatusId} className="sr-only" role="status">
             {highlighted
               ? `${highlighted.title}. Up and Down select a session; Enter opens it.`

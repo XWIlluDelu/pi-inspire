@@ -17,6 +17,7 @@ import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
+  deferred,
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
@@ -359,6 +360,64 @@ describe("welcome flow", () => {
     }
   });
 
+  it("backs out of a narrow Changes detail before closing its drawer", async () => {
+    const media = vi
+      .spyOn(window, "matchMedia")
+      .mockImplementation((query) => ({
+        matches: query === "(max-width: 900px)",
+        media: query,
+        onchange: null,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        dispatchEvent: () => false,
+      }));
+    try {
+      await store.openSession("s1");
+      store.setResourcesOpen(false);
+      history.replaceState({ changesBaseline: true }, "");
+      render(<App />);
+      act(() => {
+        store.setContextMode("changes");
+        store.setResourcesOpen(true);
+      });
+      const row = await screen.findByRole("button", {
+        name: "README.md, unstaged modified",
+      });
+      fireEvent.click(row);
+      await waitFor(() =>
+        expect(store.getState().selectedGitPathId).toBe("readme"),
+      );
+      expect(history.state.__inspireWorkbench.depth).toBe(2);
+
+      act(() => history.back());
+      await waitFor(() =>
+        expect(store.getState().selectedGitPathId).toBeNull(),
+      );
+      expect(store.getState().selectedResourceReference).toBeNull();
+      expect(store.getState().resourcesOpen).toBe(true);
+      expect(row).toHaveFocus();
+      expect(history.state.__inspireWorkbench.depth).toBe(1);
+
+      fireEvent.click(row);
+      await waitFor(() =>
+        expect(store.getState().selectedGitPathId).toBe("readme"),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "All changes (3)" }));
+      await waitFor(() =>
+        expect(history.state.__inspireWorkbench.depth).toBe(1),
+      );
+      expect(store.getState().selectedGitPathId).toBeNull();
+      expect(store.getState().resourcesOpen).toBe(true);
+      act(() => history.back());
+      await waitFor(() => expect(store.getState().resourcesOpen).toBe(false));
+      expect(history.state).toEqual({ changesBaseline: true });
+    } finally {
+      media.mockRestore();
+    }
+  });
+
   it("renames from the title menu", async () => {
     render(<App />);
     await openTitleRename();
@@ -596,6 +655,50 @@ describe("welcome flow", () => {
     fireEvent.click(project);
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("/demo"));
   });
+
+  it.each(["resolve", "reject"] as const)(
+    "retires a late project-path %s when its view ownership changes",
+    async (outcome) => {
+      render(<App />);
+      await act(async () => {
+        await store.openSession("s1");
+      });
+      const write = deferred<void>();
+      let current = true;
+      vi.spyOn(store, "copyOwnership").mockImplementation(() => () => current);
+      const report = vi
+        .spyOn(store, "reportCopyError")
+        .mockImplementation(() => {});
+      const writeText = vi
+        .fn()
+        .mockImplementationOnce(() => write.promise)
+        .mockResolvedValue(undefined);
+      Object.defineProperty(window.navigator, "clipboard", {
+        configurable: true,
+        value: { writeText },
+      });
+      const project = screen.getByRole("button", {
+        name: "Copy project path",
+      });
+      fireEvent.click(project);
+      expect(writeText).toHaveBeenCalledWith("/demo");
+      current = false;
+      await act(async () => {
+        if (outcome === "resolve") write.resolve();
+        else write.reject(new Error("Retired project copy failed"));
+        await write.promise.catch(() => {});
+      });
+      expect(project).toHaveAttribute("title", "Copy path — /demo");
+      expect(
+        project.querySelector(".topbar__project-feedback--visible"),
+      ).toBeNull();
+      expect(report).not.toHaveBeenCalled();
+
+      current = true;
+      fireEvent.click(project);
+      await waitFor(() => expect(project).toHaveAttribute("title", "Copied"));
+    },
+  );
 
   it("keeps a compact Git summary beside workspace identity and opens Changes", async () => {
     render(<App />);

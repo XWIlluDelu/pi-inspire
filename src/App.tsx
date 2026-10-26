@@ -492,6 +492,8 @@ export function App() {
       nativeCommandUiRequest: source.nativeCommandUiRequest,
       readOnlyReason: source.readOnlyReason,
       fileBrowserView: source.fileBrowserView,
+      selectedGitPathId: source.selectedGitPathId,
+      selectedResourceReference: source.selectedResourceReference,
     }),
     shallowEqual,
   );
@@ -612,6 +614,10 @@ export function App() {
           state.fileBrowserView === "preview"
             ? ["file"]
             : []),
+          ...(state.contextMode === "changes" &&
+          (state.selectedGitPathId || state.selectedResourceReference)
+            ? ["change"]
+            : []),
         ]
       : []),
     ...(mobileNavOpen ? ["navigation"] : []),
@@ -635,6 +641,8 @@ export function App() {
       if (!remaining.includes("context")) store.setResourcesOpen(false);
       else if (!remaining.includes("file") && state.contextMode === "files")
         store.showFileBrowser();
+      else if (!remaining.includes("change") && state.contextMode === "changes")
+        store.showChangesBrowser();
     },
     "__inspireWorkbench",
   );

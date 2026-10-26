@@ -43,6 +43,45 @@ describe("owned content copying", () => {
     expect(button).toHaveAccessibleName("Copy path /workspace/first.md");
   });
 
+  it.each(["resolve", "reject"] as const)(
+    "retires a late path-copy %s when its view changes but the path stays the same",
+    async (outcome) => {
+      const write = deferred<void>();
+      let current = true;
+      vi.spyOn(store, "copyOwnership").mockImplementation(() => () => current);
+      const report = vi
+        .spyOn(store, "reportCopyError")
+        .mockImplementation(() => {});
+      const writeText = vi
+        .fn()
+        .mockImplementationOnce(() => write.promise)
+        .mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText },
+      });
+      render(<PathCopyButton path="/workspace/result.md" />);
+      const button = screen.getByRole("button", {
+        name: "Copy path /workspace/result.md",
+      });
+      fireEvent.click(button);
+      expect(writeText).toHaveBeenCalledWith("/workspace/result.md");
+      current = false;
+      await act(async () => {
+        if (outcome === "resolve") write.resolve();
+        else write.reject(new Error("Retired path copy failed"));
+        await write.promise.catch(() => {});
+      });
+      expect(button).toHaveAccessibleName("Copy path /workspace/result.md");
+      expect(button.querySelector("svg")).toBeNull();
+      expect(report).not.toHaveBeenCalled();
+
+      current = true;
+      fireEvent.click(button);
+      await screen.findByRole("button", { name: "Path copied" });
+    },
+  );
+
   it("retires a copied code block's confirmation as its content grows", async () => {
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
