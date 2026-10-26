@@ -331,7 +331,10 @@ for (const narrow of [false, true]) {
     ).toBeFocused();
     let reachedMessages = false;
     let visitedPromptMap = narrow;
-    for (let step = 0; step < 12; step++) {
+    const tabStops = await wrap
+      .locator("button, input, a[href], [tabindex='0']")
+      .count();
+    for (let step = 0; step <= tabStops; step++) {
       await page.keyboard.press("Tab");
       const focus = await page.evaluate(() => ({
         message: !!document.activeElement?.closest(".transcript"),

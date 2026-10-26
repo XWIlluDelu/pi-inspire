@@ -43,14 +43,21 @@ test("Files refresh preserves Source mode and reading offsets", async ({
     await pending;
     await route.continue();
   });
+  const refresh = pane.getByRole("button", { name: "Refresh context pane" });
   try {
-    await pane.getByRole("button", { name: "Refresh context pane" }).click();
-    await expect(
-      pane.getByText("Loading preview", { exact: true }),
-    ).toBeVisible();
+    await refresh.click();
+    await expect(refresh).toHaveAttribute("aria-busy", "true");
+    await expect(source).toBeVisible();
+    await expect
+      .poll(() => source.evaluate((element) => element.scrollTop))
+      .toBe(100);
+    await expect
+      .poll(() => source.evaluate((element) => element.scrollLeft))
+      .toBe(80);
   } finally {
     release();
   }
+  await expect(refresh).toHaveAttribute("aria-busy", "false");
   await expect(source).toBeVisible();
   await expect(
     pane.getByRole("button", { name: "Preview", exact: true }),
@@ -80,9 +87,11 @@ for (const mode of ["Files", "Changes"] as const) {
       (route) =>
         unavailable
           ? route.fulfill({
-              status: 503,
+              // This test owns error layout and explicit Retry. Transient
+              // recovery keeps its separate loading surface while retrying.
+              status: 403,
               json: {
-                error: "This file is temporarily unavailable. Try again.",
+                error: "This file is unavailable. Check access and try again.",
               },
             })
           : route.continue(),
@@ -336,10 +345,14 @@ test("file path toolbars distinguish the reader from browser chrome across palet
     await settings.press("Escape");
     for (const width of [1280, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });
-      await expect(pane.locator(".file-detail-header")).toHaveCSS(
-        "height",
-        "34px",
-      );
+      const header = pane.locator(".file-detail-header");
+      if (width > 900) await expect(header).toHaveCSS("height", "34px");
+      else {
+        await expect(
+          pane.getByRole("button", { name: "Back to Files", exact: true }),
+        ).toBeVisible();
+        expect((await header.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      }
       expect(
         await pane.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
       ).toBe(true);

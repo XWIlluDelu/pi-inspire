@@ -298,9 +298,11 @@ test("sidebar owns desktop toggles and creation while phones keep a full drawer"
     const icons = [
       ".nav__brand-icon",
       ".nav__new-session-label > svg",
-      ".nav__search > svg",
+      ".nav__search .search-field__icon",
       ".nav__group-toggle > svg",
-      ".nav__dock-toggle > svg",
+      ...(nav.querySelector(".nav__dock-toggle")
+        ? [".nav__dock-toggle > svg"]
+        : []),
     ].map((s) => {
       const rect = box(s);
       return rect.x + rect.width / 2;
@@ -311,7 +313,7 @@ test("sidebar owns desktop toggles and creation while phones keep a full drawer"
       ".nav__search input",
       ".nav__group-name",
       ".nav__row-title",
-      ".nav__dock-title",
+      ...(nav.querySelector(".nav__dock-title") ? [".nav__dock-title"] : []),
     ].map((s) => box(s).x);
     const right = [".nav__new-session", ".nav__search", ".nav__row"].map(
       (s) => box(s).right,

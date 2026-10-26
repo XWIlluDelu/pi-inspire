@@ -246,7 +246,8 @@ describe("installation-owned notification delivery", () => {
     await vi.waitFor(() => expect(again).toHaveLength(1));
     await replacement.acknowledge(principal, received[0]!.id);
     expect(JSON.parse(await readFile(path, "utf8")).pending).toEqual([]);
-    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32")
+      expect((await stat(path)).mode & 0o777).toBe(0o600);
     expect(send).not.toHaveBeenCalled();
   });
 

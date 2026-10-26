@@ -29,6 +29,21 @@ function transcript(
   );
 }
 
+function toolRounds(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    role: "assistant",
+    timestamp: index + 1,
+    content: [
+      {
+        type: "toolCall",
+        id: `round-${index}`,
+        name: `tool-${index}`,
+        arguments: { path: `file-${index}.ts` },
+      },
+    ],
+  }));
+}
+
 afterEach(() => {
   configureToolPresentationRegistry();
   vi.useRealTimers();
@@ -497,19 +512,39 @@ describe("response activity folds", () => {
     expect(fold.querySelector(".turn__divider, .turn__head")).toBeNull();
   });
 
-  it("bounds long multi-round activity and restores only deliberate card choices", () => {
-    const messages = Array.from({ length: 300 }, (_, index) => ({
-      role: "assistant",
-      timestamp: index + 1,
-      content: [
-        {
-          type: "toolCall",
-          id: `long-${index}`,
-          name: `tool-${index}`,
-          arguments: { path: `file-${index}.ts` },
-        },
-      ],
-    }));
+  it("bounds a long multi-round history and restores its full activity on expansion", () => {
+    const { container } = render(
+      transcript(toolRounds(300), "compact", { toolVisibility: "compact" }),
+    );
+    const expectMountedTail = () => {
+      expect(container.querySelectorAll(".card--tool")).toHaveLength(24);
+      expect(container.querySelectorAll(".turn--assistant")).toHaveLength(24);
+      expect(screen.queryByLabelText("Expand tool-275 tool")).toBeNull();
+      expect(screen.getByLabelText("Expand tool-276 tool")).toBeVisible();
+      expect(screen.getByLabelText("Expand tool-299 tool")).toBeVisible();
+    };
+    expectMountedTail();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Show all earlier assistant activity",
+      }),
+    );
+    expect(container.querySelectorAll(".card--tool")).toHaveLength(300);
+    expect(container.querySelectorAll(".turn--assistant")).toHaveLength(300);
+    expect(screen.getByLabelText("Expand tool-0 tool")).toBeVisible();
+    expect(screen.getByLabelText("Expand tool-299 tool")).toBeVisible();
+    fireEvent.click(
+      screen.getByLabelText(
+        "Compact assistant activity from the lower boundary",
+      ),
+    );
+    expectMountedTail();
+  });
+
+  it("restores only deliberate card choices after compact omission", () => {
+    // Two omitted cards distinguish a deliberate choice from an untouched
+    // preference. Large-history mounting is exercised independently above.
+    const messages = toolRounds(26);
     const view = (
       density: "compact" | "expanded",
       tools: "compact" | "expanded",

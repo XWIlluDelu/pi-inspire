@@ -244,7 +244,7 @@ test("file completion marks follow the first line of wrapped filenames", async (
   }
 });
 
-test("separates purpose-based palette group headings from indented rows and bounds long CJK/path session titles to two lines", async ({
+test("aligns purpose-based palette group headings with result rows and bounds long CJK/path session titles to two lines", async ({
   page,
   commandSession,
 }) => {
@@ -297,7 +297,7 @@ test("separates purpose-based palette group headings from indented rows and boun
     });
     expect(hierarchy.groupBorderBottom).toBeGreaterThan(0);
     expect(hierarchy.groupTransform).toBe("uppercase");
-    expect(hierarchy.rowIndentDelta).toBeGreaterThanOrEqual(4);
+    expect(Math.abs(hierarchy.rowIndentDelta)).toBeLessThanOrEqual(0.5);
 
     const layout = await longSession.evaluate((row) => {
       const title = row.querySelector<HTMLElement>(".palette__title")!;

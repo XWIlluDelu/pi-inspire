@@ -517,7 +517,7 @@ describe("native configuration round trips", () => {
     expect(readback.effective.defaultThinkingLevel).toBe("low");
   });
 
-  it("preserves advanced declarations and secrets while adding, editing and removing graphical fields", async () => {
+  it("edits graphical model fields without replacing advanced declarations or exposing secrets", async () => {
     const before = await snapshot();
     expect(before.commonModels).toEqual([
       { provider: "fixture", id: "second" },
@@ -536,40 +536,74 @@ describe("native configuration round trips", () => {
       originalId: "first",
       values: { id: "first", name: "Edited" },
     });
-    const edited = await readJson(join(agent, "models.json"));
-    expect(edited.providers.fixture).toEqual({
-      ...initialConfig.providers.fixture,
-      models: [
-        { ...initialConfig.providers.fixture.models[0], name: "Edited" },
-      ],
+    expect(await readJson(join(agent, "models.json"))).toEqual({
+      ...initialConfig,
+      providers: {
+        fixture: {
+          ...initialConfig.providers.fixture,
+          models: [
+            { ...initialConfig.providers.fixture.models[0], name: "Edited" },
+          ],
+        },
+      },
     });
+    const after = await snapshot();
+    expect(after.providers[0]?.models[0]?.name).toBe("Edited");
+    expect(JSON.stringify(after)).not.toContain("stored-config-secret");
+    expect(JSON.stringify(after)).not.toContain("never-project-this");
+  });
+
+  // Each save intentionally validates through a fresh native metadata worker.
+  // Keep independent edit scenarios separate instead of charging all six cold
+  // starts to one test deadline; the add/remove case still checks a round trip.
+  it("adds and removes a model while preserving existing declarations and provider secrets", async () => {
+    const model = {
+      id: "new-model",
+      reasoning: false,
+      input: ["text"],
+      contextWindow: 4096,
+      maxTokens: 128,
+    };
     await editConfig({
       kind: "model",
       provider: "fixture",
-      values: {
-        id: "new-model",
-        reasoning: false,
-        input: ["text"],
-        contextWindow: 4096,
-        maxTokens: 128,
-      },
+      values: model,
     });
-    await editConfig({
-      kind: "provider",
-      id: "fixture",
-      values: { baseUrl: "https://changed.invalid/v1" },
+    expect(await readJson(join(agent, "models.json"))).toEqual({
+      ...initialConfig,
+      providers: {
+        fixture: {
+          ...initialConfig.providers.fixture,
+          models: [...initialConfig.providers.fixture.models, model],
+        },
+      },
     });
     await editConfig({
       kind: "remove-model",
       provider: "fixture",
       id: "new-model",
     });
+    expect(await readJson(join(agent, "models.json"))).toEqual(initialConfig);
+  });
+
+  it("preserves provider edits and advanced declarations when clearing a model-file credential", async () => {
+    await editConfig({
+      kind: "provider",
+      id: "fixture",
+      values: { baseUrl: "https://changed.invalid/v1" },
+    });
+    expect(
+      (await readJson(join(agent, "models.json"))).providers.fixture,
+    ).toEqual({
+      ...initialConfig.providers.fixture,
+      baseUrl: "https://changed.invalid/v1",
+    });
     await editConfig({
       kind: "provider",
       id: "fixture",
       values: { apiKey: null },
     });
-    const { apiKey: _key, ...provider } = edited.providers.fixture;
+    const { apiKey: _key, ...provider } = initialConfig.providers.fixture;
     expect(
       (await readJson(join(agent, "models.json"))).providers.fixture,
     ).toEqual({
@@ -577,10 +611,22 @@ describe("native configuration round trips", () => {
       baseUrl: "https://changed.invalid/v1",
     });
     expect(await readFile(join(agent, "auth.json"), "utf8")).toBe("{}");
+    expect((await snapshot()).providers[0]?.apiKeyConfigured).toBe(false);
+  });
+
+  it("removes the provider declaration independently of saved preferences and login credentials", async () => {
+    const auth = JSON.stringify({
+      fixture: { type: "api_key", key: "saved-login-secret" },
+    });
+    await writeFile(join(agent, "auth.json"), auth);
     await editConfig({ kind: "remove-provider", id: "fixture" });
     expect(await readJson(join(agent, "models.json"))).toEqual({
       providers: {},
     });
+    expect(await readJson(join(agent, "settings.json"))).toEqual(
+      initialSettings,
+    );
+    expect(await readFile(join(agent, "auth.json"), "utf8")).toBe(auth);
   });
 
   it("saves a regular filename case alias on a native case-insensitive volume", async (context) => {

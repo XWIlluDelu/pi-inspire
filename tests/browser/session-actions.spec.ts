@@ -13,9 +13,14 @@ test("a failed clone leaves its action menu available instead of silently dismis
 }) => {
   await pairedPage(page);
   await openMockSession(page, /Review extension event lifecycle/);
-  await page.route("**/api/branches/clone", (route) =>
-    route.fulfill({ status: 503, json: { error: "Clone is unavailable" } }),
-  );
+  let attempts = 0;
+  await page.route("**/api/branches/clone", (route) => {
+    attempts++;
+    return route.fulfill({
+      status: 503,
+      json: { error: "Clone is unavailable" },
+    });
+  });
   await page.getByRole("button", { name: /^Session actions:/ }).click();
   const menu = page.getByRole("menu", { name: "Session actions" });
   const clone = menu.getByRole("menuitem", {
@@ -25,7 +30,14 @@ test("a failed clone leaves its action menu available instead of silently dismis
   await expect(clone).toBeEnabled();
   await clone.click();
   await expect(menu).toBeVisible();
-  await expect(clone).toBeDisabled();
+  await expect(
+    page.getByText("Clone is unavailable", { exact: true }),
+  ).toBeVisible();
+  await expect(clone).toBeEnabled();
+  expect(attempts).toBe(1);
+  await clone.click();
+  await expect.poll(() => attempts).toBe(2);
+  await expect(menu).toBeVisible();
 });
 
 async function namedSession(page: Page) {
