@@ -15,7 +15,7 @@ const draft = "UNFINISHED DRAFT — retain these notes";
 interface CommandSession {
   input: ReturnType<Page["getByLabel"]>;
   prompts: Array<Record<string, unknown>>;
-  setBusy: (busy: boolean) => void;
+  setBusy: (busy: boolean) => Promise<void>;
   setModels: (models: ModelOption[]) => void;
   showQuestion: () => void;
   hideQuestion: () => void;
@@ -111,14 +111,33 @@ const test = base.extend<{ commandSession: CommandSession }>({
           id: "command-test-question",
           reason: "answered",
         }),
-      setBusy: (value) => {
+      setBusy: async (value) => {
+        // A settle refreshes the snapshot asynchronously. Finish that response
+        // before the next scenario starts a run, so stale fixture state cannot
+        // overtake its newer event.
+        const refreshed = value
+          ? undefined
+          : page.waitForResponse((response) => {
+              const url = new URL(response.url());
+              return (
+                url.pathname === "/api/snapshot" &&
+                url.searchParams.get("detail") === snapshot.active!.sessionId
+              );
+            });
         busy = value;
         transport.send({
           type: value ? "agent_start" : "agent_settled",
           sessionId: snapshot.active!.sessionId,
         });
+        if (refreshed) {
+          const failure = await (await refreshed).finished();
+          if (failure) throw failure;
+        }
       },
     });
+    // Settled events can start snapshot reads after the visible state changes.
+    // Drain this fixture's handlers before its page and API responses are closed.
+    await page.unrouteAll({ behavior: "wait" });
     expect(errors).toEqual([]);
   },
 });
@@ -444,7 +463,7 @@ test("preparation sizes each action locally and holds it through pending run-sta
       ["plan", "Steer Pi", true, false],
       ["plan", "Queue prompt", true, true],
     ] as const) {
-      commandSession.setBusy(busy);
+      await commandSession.setBusy(busy);
       const palette = await openPalette(page, command);
       await palette
         .getByRole("option", { name: new RegExp("/" + command) })
@@ -473,7 +492,7 @@ test("preparation sizes each action locally and holds it through pending run-sta
         expect(await actionGeometry(row)).toEqual(before);
         // Agent events may arrive before the HTTP acceptance. They must not
         // resize the already-submitted action to another delivery mode.
-        commandSession.setBusy(!busy);
+        await commandSession.setBusy(!busy);
         await expect
           .poll(() =>
             page
@@ -737,7 +756,7 @@ test("queues prepared prompts but runs extension commands under their own policy
   commandSession,
 }) => {
   const { prompts, setBusy, assertDraft } = commandSession;
-  setBusy(true);
+  await setBusy(true);
   await expect(
     page.getByRole("button", { name: "Send as steer", exact: true }),
   ).toBeVisible();
@@ -760,7 +779,7 @@ test("queues prepared prompts but runs extension commands under their own policy
   ).toHaveCount(0);
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
-  setBusy(false);
+  await setBusy(false);
 });
 
 test("reads shortcuts and installed release notes, including from the start screen", async ({

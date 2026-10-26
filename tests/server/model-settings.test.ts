@@ -129,6 +129,9 @@ function routes(
   return { app, runtime, availableModels, invalidateModels };
 }
 
+// Only scenarios with two serial native validations use a 45s integration
+// budget: each query already has a 15s deadline and Windows process-tree
+// retirement can take another 5s. Let both complete before test cleanup.
 describe("model settings routes", () => {
   it.each(["providers", "start"] as const)(
     "reloads the Host auth reader for %s after saving a new provider",
@@ -196,6 +199,7 @@ describe("model settings routes", () => {
         auth.close();
       }
     },
+    45_000,
   );
 
   it("offers native available models, not the full catalog, and refreshes configuration choices while retaining unavailable saved scope", async () => {
@@ -286,7 +290,7 @@ describe("model settings routes", () => {
     expect(
       (await readJson(join(agent, "settings.json"))).enabledModels,
     ).toEqual(initialSettings.enabledModels);
-  });
+  }, 45_000);
   it("invalidates workspace discovery without delaying a session save or retaining stale results", async () => {
     const metadata = (items: typeof models): ModelMetadata => ({
       models: items,
@@ -584,7 +588,7 @@ describe("native configuration round trips", () => {
       id: "new-model",
     });
     expect(await readJson(join(agent, "models.json"))).toEqual(initialConfig);
-  });
+  }, 45_000);
 
   it("preserves provider edits and advanced declarations when clearing a model-file credential", async () => {
     await editConfig({
@@ -612,7 +616,7 @@ describe("native configuration round trips", () => {
     });
     expect(await readFile(join(agent, "auth.json"), "utf8")).toBe("{}");
     expect((await snapshot()).providers[0]?.apiKeyConfigured).toBe(false);
-  });
+  }, 45_000);
 
   it("removes the provider declaration independently of saved preferences and login credentials", async () => {
     const auth = JSON.stringify({
