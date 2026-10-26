@@ -49,9 +49,15 @@ for (const touch of [false, true]) {
           );
         }, selector);
       await expect
-        .poll(() => gapBelowTool(".transcript-search-launcher"))
+        .poll(() => gapBelowTool(".transcript-search"))
         .toBeCloseTo(8, 0);
-      await page.getByRole("button", { name: "Find in conversation" }).click();
+      await expect(
+        page.getByRole("button", { name: "Close conversation search" }),
+      ).toBeHidden();
+      await page.setViewportSize({ width: 568, height: 420 });
+      await page
+        .getByRole("button", { name: "Open conversation search" })
+        .click();
       await expect
         .poll(() => gapBelowTool(".transcript-search"))
         .toBeCloseTo(8, 0);
@@ -59,7 +65,7 @@ for (const touch of [false, true]) {
         .getByRole("button", { name: "Close conversation search" })
         .click();
       await expect
-        .poll(() => gapBelowTool(".transcript-search-launcher"))
+        .poll(() => gapBelowTool(".transcript-mobile-toolbar"))
         .toBeCloseTo(8, 0);
       await page.setViewportSize({ width: 568, height: 420 });
       const startNew = async () => {

@@ -21,40 +21,21 @@ export function TranscriptUtilities({
   search,
   inputRef,
   searchLauncherRef,
-  desktopSearchLauncherRef,
   promptLauncherRef,
-  desktopSearchOpen,
   mobileTool,
-  onOpenSearch,
   onOpenMobile,
   onClose,
 }: {
   search: ReturnType<typeof useTranscriptSearch>;
   inputRef: RefObject<HTMLInputElement | null>;
   searchLauncherRef: RefObject<HTMLButtonElement | null>;
-  desktopSearchLauncherRef: RefObject<HTMLButtonElement | null>;
   promptLauncherRef: RefObject<HTMLButtonElement | null>;
-  desktopSearchOpen: boolean;
   mobileTool: MobileTranscriptTool;
-  onOpenSearch: () => void;
   onOpenMobile: (tool: MobileTranscriptTool) => void;
   onClose: (restoreFocus?: boolean) => void;
 }) {
   return (
     <>
-      {!desktopSearchOpen && !search.query ? (
-        <button
-          ref={desktopSearchLauncherRef}
-          type="button"
-          className="transcript-search-launcher"
-          aria-label="Find in conversation"
-          title="Search conversation (Ctrl/Cmd+F)"
-          onClick={onOpenSearch}
-        >
-          <Search size={14} aria-hidden />
-          <span>Find</span>
-        </button>
-      ) : null}
       <div className="transcript-mobile-toolbar">
         {mobileTool === null ? (
           <div
@@ -86,7 +67,7 @@ export function TranscriptUtilities({
         ) : null}
       </div>
       <div
-        className={`transcript-search ${search.query ? "transcript-search--active" : ""} ${desktopSearchOpen || search.query ? "" : "transcript-search--desktop-closed"} ${mobileTool === "search" ? "transcript-search--mobile-open" : ""}`}
+        className={`transcript-search ${search.query ? "transcript-search--active" : ""} ${mobileTool === "search" ? "transcript-search--mobile-open" : ""}`}
         role="search"
         aria-label="Search conversation"
         onClick={(event) => {

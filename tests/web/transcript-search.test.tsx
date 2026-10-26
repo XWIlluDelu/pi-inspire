@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 describe("settled transcript search", () => {
-  it("leaves Find to modal and expanded scope-menu owners", () => {
+  it("leaves the search shortcut to modal and expanded scope-menu owners", () => {
     render(
       <Transcript
         sessionId="owned-find"
@@ -35,14 +35,16 @@ describe("settled transcript search", () => {
         toolVisibility="collapsed"
       />,
     );
-    const launcher = screen.getByRole("button", {
-      name: "Find in conversation",
+    const input = screen.getByRole("searchbox", {
+      name: "Search conversation",
     });
+    const log = screen.getByRole("log");
     const modal = vi.spyOn(modalFocus, "hasActiveModal").mockReturnValue(true);
-    expect(fireEvent.keyDown(launcher, { key: "f", ctrlKey: true })).toBe(true);
-    expect(launcher).toBeInTheDocument();
+    expect(fireEvent.keyDown(log, { key: "f", ctrlKey: true })).toBe(true);
+    expect(input).not.toHaveFocus();
     modal.mockReturnValue(false);
-    fireEvent.click(launcher);
+    fireEvent.keyDown(log, { key: "f", ctrlKey: true });
+    expect(input).toHaveFocus();
     const scope = screen.getByRole("combobox", { name: "Search scope" });
     fireEvent.click(scope);
     scope.focus();
@@ -51,23 +53,26 @@ describe("settled transcript search", () => {
     expect(scope).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("opens desktop Find on demand and clears its match before restoring the launcher", async () => {
+  it("keeps desktop search available and preserves its query on Escape", () => {
     const ref = createRef<TranscriptNavigation>();
     const props = {
       ref,
-      sessionId: "desktop-find",
+      sessionId: "desktop-search",
       messages: [{ role: "user", content: "find this prompt", timestamp: 1 }],
       streaming: false,
       thinkingVisibility: "collapsed" as const,
       toolVisibility: "collapsed" as const,
     };
     const { rerender } = render(<Transcript {...props} />);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Find in conversation" }),
-    );
     const input = screen.getByRole("searchbox", {
       name: "Search conversation",
     });
+    expect(input).toBeInTheDocument();
+    expect(input).not.toHaveFocus();
+    expect(
+      screen.queryByRole("button", { name: "Find in conversation" }),
+    ).not.toBeInTheDocument();
+    act(() => ref.current?.openSearch());
     expect(input).toHaveFocus();
     fireEvent.change(input, { target: { value: "find" } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -77,35 +82,21 @@ describe("settled transcript search", () => {
     fireEvent.keyDown(input, { key: "Escape" });
     expect(input).not.toHaveFocus();
     expect(input).toHaveValue("find");
-    act(() => ref.current?.openSearch());
+    expect(
+      screen.getByLabelText("Transcript search matches"),
+    ).toHaveTextContent("1 of 1");
+    fireEvent.keyDown(screen.getByRole("log"), { key: "f", ctrlKey: true });
     expect(input).toHaveFocus();
     expect((input as HTMLInputElement).selectionEnd).toBe(4);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Close conversation search" }),
-    );
-    expect(input).toHaveValue("");
+    fireEvent.change(input, { target: { value: "" } });
+    expect(input).toHaveFocus();
     expect(
       screen.getByLabelText("Transcript search matches"),
     ).toBeEmptyDOMElement();
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Find in conversation" }),
-      ).toHaveFocus(),
-    );
-    fireEvent.keyDown(
-      screen.getByRole("button", { name: "Find in conversation" }),
-      {
-        key: "f",
-        ctrlKey: true,
-      },
-    );
-    expect(input).toHaveFocus();
     fireEvent.change(input, { target: { value: "find" } });
     rerender(<Transcript {...props} viewId="other-view" />);
     expect(input).toHaveValue("");
-    expect(
-      screen.getByRole("button", { name: "Find in conversation" }),
-    ).toBeInTheDocument();
+    expect(input).toBeInTheDocument();
   });
 
   it("keeps an active query visible when crossing between desktop and narrow search", () => {
@@ -130,9 +121,6 @@ describe("settled transcript search", () => {
         toolVisibility="collapsed"
       />,
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Find in conversation" }),
-    );
     const input = screen.getByRole("searchbox", {
       name: "Search conversation",
     });
@@ -151,20 +139,24 @@ describe("settled transcript search", () => {
     });
     expect(input).toHaveValue("find");
     expect(
-      screen.queryByRole("button", { name: "Find in conversation" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("search", { name: "Search conversation" }),
+    ).not.toHaveClass("transcript-search--mobile-open");
     fireEvent.change(input, { target: { value: "" } });
     expect(input).toHaveFocus();
-    expect(
-      screen.queryByRole("button", { name: "Find in conversation" }),
-    ).not.toBeInTheDocument();
+    act(() => {
+      narrow = true;
+      syncLayout?.();
+    });
+    expect(input).not.toHaveFocus();
     fireEvent.click(
-      screen.getByRole("button", { name: "Close conversation search" }),
+      screen.getByRole("button", { name: "Open conversation search" }),
     );
+    fireEvent.change(input, { target: { value: "find" } });
+    fireEvent.keyDown(input, { key: "Escape" });
     expect(input).toHaveValue("");
     expect(
-      screen.getByRole("button", { name: "Find in conversation" }),
-    ).toBeInTheDocument();
+      screen.getByRole("search", { name: "Search conversation" }),
+    ).not.toHaveClass("transcript-search--mobile-open");
   });
 
   it("indexes displayed shell output and checkpoint text rather than their hidden control data", () => {

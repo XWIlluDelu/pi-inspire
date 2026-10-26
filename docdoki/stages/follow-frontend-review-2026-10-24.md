@@ -154,6 +154,24 @@ Shared error messages, failed-delivery text and text-style danger actions follow
   implementation validation and local-build receipts use `output/playwright/error-ink-fix-2026-10-25/`.
   The local update uses normal static publication without a service restart, push or release.
 
+## Desktop search restoration — 2026-10-26
+
+The user withdrew item 1.1's on-demand Find interaction and requested the previous always-visible
+desktop search input. The current [[conversation]] contract removes desktop folding and Close,
+while retaining Ctrl/Cmd+F, IME/modal ownership, and Escape's query-preserving focus release.
+Narrow Search/Prompt Map behavior and the accepted smaller radii remain unchanged. The input keeps
+its existing opaque surface, boundary and light shadow; this restoration adds no new surface design.
+The `489c78aa` decision and checks above remain the record of that earlier implementation, not
+acceptance evidence for this restoration.
+
+The deployed client was built from `72c9dd2a` plus only the four restored frontend files; subsequent
+quality-review changes were not included. That isolated candidate passed full static checks,
+39 focused web tests and a Chromium desktop/narrow screenshot check. The current-source UI patch
+also passed 25 existing Chromium checks. The reviewed screenshots show the desktop input without
+Find/Close and retain narrow Search's close control. Native static publication retained outgoing
+resources; the served homepage and 20 current public resources matched the candidate, and the Host
+and terminal service process identities remained unchanged. No remote push or service restart occurred.
+
 ## Remaining decisions
 
 The user may decide the remaining proposals separately: title affordance, phone tool placement/Latest,

@@ -116,7 +116,7 @@ describe("right-corner notices", () => {
     vi.unstubAllGlobals();
   });
 
-  it("anchors retained notices below the current Find or search control after replacements", async () => {
+  it("anchors retained notices below the current mobile toolbar or search control after replacements", async () => {
     await initialize();
     const observers: TestResizeObserver[] = [];
     class TestResizeObserver {
@@ -142,7 +142,7 @@ describe("right-corner notices", () => {
       function (this: HTMLElement) {
         if (this.style.display === "none") return new DOMRect();
         if (this.matches(".topbar")) return new DOMRect(0, 0, 1200, 44);
-        if (this.matches(".transcript-search-launcher"))
+        if (this.matches(".transcript-mobile-toolbar"))
           return new DOMRect(900, 56, 72, Number(this.dataset.height ?? 32));
         if (this.matches(".transcript-search"))
           return new DOMRect(700, 56, 300, 44);
@@ -152,7 +152,7 @@ describe("right-corner notices", () => {
     );
     const main = document.createElement("main");
     main.innerHTML =
-      '<header class="topbar"></header><div class="transcript-search" style="display:none"></div><button class="transcript-search-launcher">Find</button>';
+      '<header class="topbar"></header><div class="transcript-search" style="display:none"></div><div class="transcript-mobile-toolbar">Transcript tools</div>';
     document.body.append(main);
     act(() => store.reportCopyError("Retain this diagnostic"));
     const { container, unmount } = render(
@@ -163,7 +163,7 @@ describe("right-corner notices", () => {
       const observer = observers.find((item) => item.observed.has(stack))!;
       const search = main.querySelector<HTMLElement>(".transcript-search")!;
       const launcher = main.querySelector<HTMLElement>(
-        ".transcript-search-launcher",
+        ".transcript-mobile-toolbar",
       )!;
       expect(stack.style.getPropertyValue("--notice-header-bottom")).toBe(
         "88px",
