@@ -2654,6 +2654,11 @@ export class AppStore {
         this.state.sessionId === sessionId &&
         this.selectionGeneration === selectionGeneration
       ) {
+        // In-flight snapshots may predate this confirmed mutation. Empty
+        // sessions may emit no projection event to retire those reads, so
+        // they must not overwrite the confirmed model/effort pair.
+        this.resyncRecovery.reset();
+        this.resyncRequest += 1;
         // A model change or native update may have published a newer snapshot
         // while this receipt was in transit. Read current state instead of
         // replacing it with the earlier operation's model/effort pair.
@@ -2665,6 +2670,8 @@ export class AppStore {
             thinkingLevel: selection.thinkingLevel,
           });
       }
+      if (!ownsTransport() || request !== this.thinkingLevelRequest)
+        return { status: "stale" };
       return {
         status: "success",
         message: `Thinking level is now ${selection.thinkingLevel}.`,

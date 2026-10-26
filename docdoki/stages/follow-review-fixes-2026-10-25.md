@@ -270,6 +270,66 @@ normal approval for isolated local sockets and child processes. No running Host 
 The installed-package lifecycle and other browser/platform matrix were not rerun; their absence is
 not a new defect. This review's changes remain source-only until separately deployed.
 
+## Follow-up lifecycle review
+
+The next bounded pass starts at `1d2f2bfc` on `auto-dev`. Responsibility is assessed as native or
+native-like behavior, Web host adaptation, and added capabilities. Native model/thinking selection
+is one user-facing feature; interaction differences do not make it a separate product capability.
+The internal branch/provider-auth bridge adapts owned RPC workers. The optional session bridge
+reports external Pi activity generally and enables action reception specifically in Herdr TUI.
+The existing extension guide owns these boundaries; no duplicate feature inventory is introduced.
+
+Five additional issues are repaired:
+
+- A delayed snapshot could overwrite a newer confirmed thinking change in an empty Pi session,
+  with no projection event to correct it. A successful current receipt now retires older reads and
+  recovery attempts; completion also rechecks the request owner. An offline native Pi reproduction
+  changed the final browser value from stale `high` to confirmed `low` while forwarding all runtime
+  events. Its fetch adapter controls delivery order; it is not a real HTTP transport test.
+- Earlier-history loading could restore its old reading anchor after a newer search navigation or
+  scroll gesture. The load keeps its data but yields geometry to a newer viewport intent, including
+  deferred animation frames. Chromium using the actual hook reproduced a search target displaced
+  by 900 pixels before the repair and zero afterward.
+- Terminal takeover/reconnection could publish a lease for an attachment already detached by a
+  failing sink. The manager rechecks attachment validity after resize and commits ownership before
+  sending ownership notices, allowing synchronous cleanup to retire the actual writer. Four failure
+  cases fail on the baseline and pass after repair; native resize still precedes dimension/replay changes.
+- A replaced external Pi action receiver could publish a late model catalog or selection into its
+  successor. Existing receiver identity and refresh-promise ownership now retire these results,
+  permit fresh discovery immediately and notify browsers when a receiver-only change clears models.
+  The actual native-action transport reproduced a stale receipt; regressions verify rejection without
+  closing the external Pi connection.
+- An extension response whose ordered read failed could falsely claim its worker remained active.
+  The error now states only that delivery is unconfirmed. The test uses the ordinary errors produced
+  by read-only timeout/exit paths rather than an impossible mutating-command error, and verifies that
+  the response is not resent. Worker retirement and timeout policies are unchanged.
+
+Same-value native setters already advance selection ownership, and model/cycle operations already
+retire older browser reads; these suspicions did not require product changes. No real supported
+Linux PTY path was found for the proposed synchronous resize callback failure, so no speculative
+guard was added. README and the main guides retain accurate lifecycle, recovery and feature boundaries.
+
+### Follow-up verification
+
+The isolated source/dependency copy again uses empty HOME/XDG/Pi directories and offline fixtures;
+required temporary listeners and child processes ran through normal sandbox approval.
+
+- Full format/lint, import boundaries, TypeScript and Knip passed. The isolated client build passed
+  with the existing large-chunk advisory; Chromium reading/search/activity suites passed all 20 tests.
+- Web/integration passed 164 files and 2,145 tests, including the native empty-session regression.
+  Node passed 202 files with one skipped: 1,783 tests passed and 14 skipped. Launcher, real Herdr
+  continuity and systemd worker-scope integration remain excluded.
+- The first Node run alongside browser validation had one existing model-configuration round-trip
+  test exceed its five-second limit. Its isolated suite passed, with that test taking 2.23 seconds.
+  The complete Node run then passed with two outer workers. Assertions and timeouts were unchanged;
+  no product change was made for this timing failure.
+- Documentation checks passed for 56 Markdown files, 205 targets/anchors, 85 packaged relative
+  targets and six JSON examples against production schemas. Privacy and whitespace checks passed.
+
+Portable and installed-package lifecycle suites were not repeated in this pass. Browser fixtures do
+not replace physical-device acceptance. The running Host, Pi sessions and terminal service were not
+used, deployed or restarted, and no changes were pushed.
+
 ## Next actions
 
 This review permits source fixes and local commits only; deployment and Host restart require a

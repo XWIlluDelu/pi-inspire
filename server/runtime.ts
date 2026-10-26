@@ -1446,7 +1446,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   ): Promise<never> {
     if (!error.stopped)
       throw requestError(
-        `Pi ${error.command} outcome is not yet confirmed; its worker remains active`,
+        `Pi ${error.command} outcome is not yet confirmed`,
         504,
         {
           code: "PI_RPC_OUTCOME_UNKNOWN",

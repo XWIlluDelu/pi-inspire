@@ -83,6 +83,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   const geometricFollowFrameRef = useRef<number | null>(null);
   const anchoredLayoutFrameRef = useRef<number | null>(null);
   const lastScrollTopRef = useRef(0);
+  const viewportIntentRef = useRef(0);
   const olderLoadInFlightRef = useRef<object | null>(null);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const onLoadOlderRef = useRef(onLoadOlder);
@@ -132,6 +133,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   virtualizerRef.current = virtualizer;
 
   const markUserScrollIntent = useCallback(() => {
+    viewportIntentRef.current += 1;
     userScrollIntentRef.current = true;
     if (userScrollIntentTimerRef.current !== null)
       window.clearTimeout(userScrollIntentTimerRef.current);
@@ -172,6 +174,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     olderLoadInFlightRef.current = owner;
     setLoadingEarlier(true);
     const loadingProjectionIdentity = projectionIdentityRef.current;
+    const loadingViewportIntent = viewportIntentRef.current;
     // Keep ownership through deferred geometry, not only the page response.
     const ownsLoad = () =>
       olderLoadInFlightRef.current === owner &&
@@ -181,20 +184,28 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
       olderLoadInFlightRef.current = null;
       setLoadingEarlier(false);
     };
+    // A slow read may finish after search, a seek, or another scroll gesture.
+    // Keep its data, but let the newer navigation own prepend geometry.
+    const ownsAnchor = () => {
+      if (!ownsLoad()) return false;
+      if (viewportIntentRef.current === loadingViewportIntent) return true;
+      finish();
+      return false;
+    };
     const oldHeight = element.scrollHeight;
     const oldTop = element.scrollTop;
     const anchor = captureScrollAnchor(element);
     pinnedRef.current = false;
     setPinned(false);
     const prepended = await onLoadOlderRef.current();
-    if (!ownsLoad()) return;
+    if (!ownsAnchor()) return;
     if (!prepended) {
       finish();
       return;
     }
 
     const restore = () => {
-      if (!ownsLoad()) return;
+      if (!ownsAnchor()) return;
       const current = scrollRef.current;
       if (current && (!anchor || !restoreScrollAnchor(current, anchor))) {
         current.scrollTop =
@@ -205,7 +216,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
       // the preload zone instead of flashing between each request.
       if (current && current.scrollTop <= OLDER_PRELOAD_PX) {
         requestAnimationFrame(() => {
-          if (!ownsLoad()) return;
+          if (!ownsAnchor()) return;
           olderLoadInFlightRef.current = null;
           if (!requestOlderRef.current()) setLoadingEarlier(false);
         });
@@ -215,7 +226,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     };
     requestAnimationFrame(() =>
       requestAnimationFrame(() => {
-        if (!ownsLoad()) return;
+        if (!ownsAnchor()) return;
         const anchorIndex = anchor
           ? rowsRef.current.findIndex((row) => row.key === anchor.key)
           : -1;
@@ -278,6 +289,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   }, [followLatest, measureLatest, searchOwnsViewportRef]);
 
   const restoreGeometricFollow = useCallback(() => {
+    viewportIntentRef.current += 1;
     const element = scrollRef.current;
     const isPinned = element
       ? element.scrollHeight - element.scrollTop - element.clientHeight <= 1
@@ -288,6 +300,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   }, [measureLatest]);
 
   const releaseLatestFollow = useCallback(() => {
+    viewportIntentRef.current += 1;
     pinnedRef.current = false;
     setPinned(false);
   }, []);
@@ -305,6 +318,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
         anchorBounds.top > rootBounds.bottom
       )
         return;
+      viewportIntentRef.current += 1;
 
       const coordinate = (bounds: DOMRect) => {
         if (alignment === "start") return bounds.top;
@@ -362,6 +376,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   );
 
   const jumpToLatest = useCallback(() => {
+    viewportIntentRef.current += 1;
     userScrollIntentRef.current = false;
     pinnedRef.current = true;
     setPinned(true);

@@ -1405,26 +1405,28 @@ export class TerminalSessionManager implements TerminalService {
       attachment.clientId === session.owner.clientId
     ) {
       this.resizeSession(session, cols, rows, attachment.id);
+      if (attachment.detached) return null;
+      const previous = session.owner.attachmentId
+        ? session.attachments.get(session.owner.attachmentId)
+        : undefined;
       if (session.owner.releaseTimer) clearTimeout(session.owner.releaseTimer);
-      if (session.owner.attachmentId) {
-        const previous = session.attachments.get(session.owner.attachmentId);
-        if (previous) {
-          previous.writable = false;
-          this.sendControl(previous, {
-            type: "ownership",
-            writable: false,
-            hasOwner: true,
-            reason: "reconnected",
-          });
-        }
-      }
       session.owner.attachmentId = attachment.id;
       session.owner.releaseTimer = null;
       attachment.writable = true;
+      if (previous) {
+        previous.writable = false;
+        this.sendControl(previous, {
+          type: "ownership",
+          writable: false,
+          hasOwner: true,
+          reason: "reconnected",
+        });
+      }
       return "reconnected";
     }
     if (!session.owner) {
       this.resizeSession(session, cols, rows, attachment.id);
+      if (attachment.detached) return null;
       session.owner = {
         token: this.uuid(),
         clientId: attachment.clientId,
@@ -1456,20 +1458,13 @@ export class TerminalSessionManager implements TerminalService {
     }
     // Do not revoke a working lease until the requested grid is accepted.
     this.resizeSession(session, cols, rows);
+    if (attachment.detached) return;
     const previousId = session.owner?.attachmentId;
+    const previous =
+      previousId && previousId !== attachment.id
+        ? session.attachments.get(previousId)
+        : undefined;
     if (session.owner?.releaseTimer) clearTimeout(session.owner.releaseTimer);
-    if (previousId && previousId !== attachment.id) {
-      const previous = session.attachments.get(previousId);
-      if (previous) {
-        previous.writable = false;
-        this.sendControl(previous, {
-          type: "ownership",
-          writable: false,
-          hasOwner: true,
-          reason: "taken",
-        });
-      }
-    }
     session.owner = {
       token: this.uuid(),
       clientId: attachment.clientId,
@@ -1478,6 +1473,17 @@ export class TerminalSessionManager implements TerminalService {
       releaseTimer: null,
     };
     attachment.writable = true;
+    // Publishing may synchronously detach either sink. Commit the new lease
+    // first so that cleanup always retires its actual attachment.
+    if (previous) {
+      previous.writable = false;
+      this.sendControl(previous, {
+        type: "ownership",
+        writable: false,
+        hasOwner: true,
+        reason: "taken",
+      });
+    }
     this.sendControl(attachment, {
       type: "ownership",
       writable: true,
