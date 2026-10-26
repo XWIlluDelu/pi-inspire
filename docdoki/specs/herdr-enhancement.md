@@ -166,8 +166,8 @@ other applications' unreported or later launches remain outside its authority.
   Each invocation retains its own receipt in its private payload. Discovery has a 15-second cancellation
   budget and is cancelled on Stop, receiver retirement or removal of an abandoned Host request.
   Closing a connection abandons its reads, not the native Pi. Retired results cannot modify a replacement
-  connection's catalog or selection. A delayed catalog reply may update candidates, but cannot roll
-  back a selection completed or observed since that read began.
+  connection's catalog or selection. Delayed catalog and status observations may update candidates
+  and activity, but cannot roll back a selection completed or observed since that read began.
   Model selection invokes `setModel` once, then reads actual `ctx.model/getThinkingLevel`. No second
   thinking write overrides native defaults or extension decisions. Thinking selection likewise returns
   the adjusted native value. Availability/ownership and activity remain separate from API support.

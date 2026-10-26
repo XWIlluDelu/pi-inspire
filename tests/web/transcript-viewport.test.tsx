@@ -83,6 +83,9 @@ function ViewportHarness({
     >
       <div ref={viewport.contentRef}>
         <div data-transcript-key="one">message</div>
+        <button type="button" onClick={viewport.restoreGeometricFollow}>
+          Clear search
+        </button>
         <button
           type="button"
           data-testid="layout-anchor"
@@ -307,6 +310,71 @@ describe("transcript viewport geometry", () => {
     expect(log.scrollTop).toBe(600);
     expect(log).toHaveAttribute("data-at-latest", "false");
   });
+
+  it("does not resume latest-follow while a downward gesture is still above latest", () => {
+    render(<ViewportHarness />);
+    const log = screen.getByRole("log");
+    setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
+    fireEvent.scroll(log);
+
+    fireEvent.wheel(log);
+    log.scrollTop = 500;
+    fireEvent.scroll(log);
+    fireEvent.wheel(log);
+    log.scrollTop = 560;
+    fireEvent.scroll(log);
+
+    // A stream update must preserve the deliberate reading position, even
+    // though the user has moved back into the former 80px proximity band.
+    Object.defineProperty(log, "scrollHeight", {
+      configurable: true,
+      value: 1_100,
+    });
+    act(() => {
+      TestResizeObserver.trigger(log);
+      flushAnimationFrames();
+    });
+    expect(log.scrollTop).toBe(560);
+    expect(log).toHaveAttribute("data-pinned", "false");
+    expect(log).toHaveAttribute("data-at-latest", "false");
+
+    fireEvent.wheel(log);
+    log.scrollTop = 700;
+    fireEvent.scroll(log);
+    expect(log).toHaveAttribute("data-pinned", "true");
+    expect(log).toHaveAttribute("data-at-latest", "true");
+  });
+
+  it.each([
+    { scrollTop: 560, expectedTop: 560, expectedPinned: "false" },
+    { scrollTop: 599.5, expectedTop: 700, expectedPinned: "true" },
+  ])(
+    "restores follow after clearing search only at the latest boundary ($scrollTop)",
+    ({ scrollTop, expectedTop, expectedPinned }) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      render(<ViewportHarness />);
+      const log = screen.getByRole("log");
+      setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
+      fireEvent.scroll(log);
+      fireEvent.wheel(log);
+      log.scrollTop = scrollTop;
+      fireEvent.scroll(log);
+      expect(log).toHaveAttribute("data-pinned", "false");
+      act(() => vi.advanceTimersByTime(450));
+
+      fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+      expect(log).toHaveAttribute("data-pinned", expectedPinned);
+      Object.defineProperty(log, "scrollHeight", {
+        configurable: true,
+        value: 1_100,
+      });
+      act(() => {
+        TestResizeObserver.trigger(log);
+        flushAnimationFrames();
+      });
+      expect(log.scrollTop).toBe(expectedTop);
+    },
+  );
 
   it("does not reclaim latest-follow after an unpinned scrollport resize", () => {
     render(<ViewportHarness />);

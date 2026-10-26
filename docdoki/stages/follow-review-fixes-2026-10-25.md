@@ -7,11 +7,13 @@ scope:
   - src/controllers/workspace-controller.ts
   - server/{runtime,mcp-config}.ts
   - server/{model-settings-routes,runtime-external-sessions}.ts
+  - server/{pi-rpc,terminal-session-manager}.ts
   - public/manifest.webmanifest
   - scripts/build-web.mjs
   - scripts/verify-release-package.mjs
   - tests/**
   - README.md
+  - connections/README.md
   - docs/{host,pi-commands,mcp,extensions,ssh-reverse,tool-presentations}.md
   - docdoki/specs/{notifications,activity-presentation,herdr-enhancement,host-lifecycle}.md
   - docdoki/specs/terminal.md
@@ -215,10 +217,64 @@ insets. An ordinary tab's successful appearance therefore does not prove that a 
 same drawing path. The feature's effective state and final native background on the affected device
 remain unmeasured; website CSS cannot enable the browser feature or remove native wrapper padding.
 
+## Independent quality re-review
+
+The independent review starts at `f8178ed3` on `auto-dev` with a clean worktree and uses Astra Ultra.
+It rereads the two upstream quality guides above and checks the implementation, tests, README and
+main user guides. Existing behavior and project contracts determine the repairs; no larger redesign
+or speculative performance refactor is introduced.
+
+Five defects have deterministic regressions that fail against the original implementation:
+
+- An earlier thinking HTTP response could overwrite a later model selection. The browser uses its
+  existing snapshot generation to reconcile current state instead; an old failure also preserves
+  a newer confirmed snapshot.
+- A native status observation started before a successful model/effort change could roll that
+  selection back. Poll and reconnect reads now check the existing selection revision at commit,
+  while still accepting activity and ownership evidence.
+- A failed PTY resize prematurely changed dimensions and replay state, retained a failed attachment,
+  or revoked the previous writer during takeover. Native resize now precedes those commits;
+  attachment cleanup covers the complete operation and a same-size retry remains effective.
+- Scrolling downward but stopping within 80 pixels of the bottom incorrectly resumed latest-follow.
+  Scroll and search-clear recovery now use the existing one-pixel latest-boundary tolerance, keeping
+  deliberate reading positions stable through content growth.
+- An extension UI response could override its RPC discriminator through an extra payload field.
+  The wire frame now fixes `extension_ui_response` after copying response fields.
+
+The documentation corrections consolidate obsolete deployment summaries and distinguish installed
+and cross-platform source commands. The earlier deployment/device records remain historical evidence.
+Resource authority, uploads, configuration edits, Git inspection, notification failure containment
+and the existing request/model simplifications were also reviewed without another confirmed repair.
+
+### Verification of the independent review
+
+Validation used a complete temporary source/dependency copy, empty HOME/XDG/Pi directories and
+offline fixtures. Sandbox-local listeners initially returned `EPERM`; the affected runs passed after
+normal approval for isolated local sockets and child processes. No running Host or user session was used.
+
+- Full format/lint, import boundaries, TypeScript and Knip passed; the isolated client build passed
+  with the existing large-chunk advisory.
+- Web/integration: 163 files and 2,138 tests passed. Node: 202 files passed, one skipped; 1,773 tests
+  passed and 14 skipped. The final native-observation commit-point refinement also passed its four
+  focused suites (70 tests) and repeated static checks. Launcher, real Herdr continuity and systemd
+  worker-scope integration were excluded; skips retain their platform/environment meaning.
+- Portable tests: 42 passed. Chromium reading navigation, transcript search and activity presentation:
+  20 passed, including narrow/touch flows. These are browser fixtures, not physical-device acceptance.
+- Documentation: 56 tracked Markdown files, 204 targets/anchors and 85 packaged relative targets
+  checked; six JSON examples passed production schemas and 22 shell examples passed syntax checks.
+  The deliberate broken-image fixture is excluded. DocDoki privacy and Git whitespace checks passed.
+- A 16,795,320-byte projection fixture produced nine measured samples per mode: median forced
+  reconciliation 7.398 ms, version-checked reconciliation 0.028 ms. This measures Host file reads only,
+  not browser frame rate, real-device performance or network latency.
+
+The installed-package lifecycle and other browser/platform matrix were not rerun; their absence is
+not a new defect. This review's changes remain source-only until separately deployed.
+
 ## Next actions
 
-Keep the installed-window limitation explicit until native window/inset behavior can be measured.
-Do not repeat installation solely to refresh already-current
-metadata or claim that omitting `theme_color` fixes the observed bar. Android receipt of the manual
-test notification remains verified; real background-task and notification-click behavior are separate
-checks. Work stays on `auto-dev` as AnoAnonyAnon, without push, merge, tag or public release.
+This review permits source fixes and local commits only; deployment and Host restart require a
+separate instruction. Preserve current tasks and terminal processes. Android's installed-window
+white bar remains unresolved and is explicitly deferred by the user; no further investigation is
+part of this review. Receipt of the manual phone notification remains verified. Background-task and
+notification-click acceptance are separate checks, not regressions found here. Work stays on
+`auto-dev`, without push, merge, tag or public release.

@@ -805,6 +805,93 @@ describe("continue an externally owned Pi", () => {
     }
   });
 
+  it.each(["poll", "reselect"] as const)(
+    "preserves completed model/thinking changes when an older %s observation returns last",
+    async (source) => {
+      const f = nativeFixture();
+      const gate = deferredSignal();
+      const old = {
+        model: { provider: "native", id: "old" },
+        thinkingLevel: "off" as const,
+      };
+      const selected = {
+        model: { provider: "native", id: "selected" },
+        thinkingLevel: "low" as const,
+      };
+      f.setState({ status: "idle", modelControls: true, modelSelection: old });
+      f.native.models = vi.fn();
+      f.native.setModel = vi.fn(async () => ({
+        ...selected,
+        thinkingLevel: "off" as const,
+      }));
+      f.native.setThinkingLevel = vi.fn(async () => selected);
+      const slot = createRuntimeSlot({
+        id: "a",
+        cwd: "/tmp",
+        sessionPath: "/sessions/a.jsonl",
+        process: null,
+        preview: null,
+        projection: await preview(record("a", "/tmp")),
+        bridge: null,
+        branchRevision: 1,
+        incarnationId: "slot-a",
+        viewId: "view-a",
+      });
+      const external = new RuntimeExternalSessions(
+        async () => f.native,
+        {
+          current: () => true,
+          emit: vi.fn(),
+          assertUsable: vi.fn(),
+          released: vi.fn(),
+          log: vi.fn(),
+          reconcile: async () => {},
+        },
+        trackedAttachmentStore(),
+        10,
+      );
+      vi.useFakeTimers();
+      try {
+        await external.connect(slot);
+        vi.mocked(f.native.read).mockImplementationOnce(async () => {
+          // The receiver report was read before the selection, while its
+          // asynchronous ownership validation is still in flight.
+          const state = {
+            status: "working" as const,
+            modelControls: true,
+            modelSelection: old,
+          };
+          await gate.promise;
+          return state;
+        });
+        const reading =
+          source === "reselect" ? external.connect(slot) : undefined;
+        if (source === "poll") await vi.advanceTimersByTimeAsync(10);
+        expect(f.native.read).toHaveBeenCalledTimes(2);
+        await external.setModel(slot, "native", "selected");
+        await external.setThinkingLevel(slot, "low");
+        gate.resolve();
+        await reading;
+        await vi.advanceTimersByTimeAsync(0);
+        expect(external.modelSelection(slot)).toEqual(selected);
+        // Unrelated activity still updates; only the stale selection is fenced.
+        expect(slot.runState).toBe("running");
+        f.setState({
+          status: "idle",
+          modelControls: true,
+          modelSelection: old,
+        });
+        await vi.advanceTimersByTimeAsync(10);
+        // A subsequent terminal-side selection remains authoritative.
+        expect(external.modelSelection(slot)).toEqual(old);
+      } finally {
+        gate.resolve();
+        external.close();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("rejects a retired catalog before changing the replacement owner's models or selection", async () => {
     const old = nativeFixture(),
       fresh = nativeFixture();

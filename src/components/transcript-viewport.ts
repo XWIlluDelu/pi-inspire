@@ -270,7 +270,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     // even inside the former 80px proximity band. A user moving downward may
     // reacquire it only by actually reaching the latest boundary.
     const movedTowardHistory = element.scrollTop < previousScrollTop;
-    const nextPinned = !movedTowardHistory && remaining < 80;
+    const nextPinned = !movedTowardHistory && remaining <= 1;
     pinnedRef.current = nextPinned;
     if (nextPinned) userScrollIntentRef.current = false;
     setPinned(nextPinned);
@@ -280,7 +280,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   const restoreGeometricFollow = useCallback(() => {
     const element = scrollRef.current;
     const isPinned = element
-      ? element.scrollHeight - element.scrollTop - element.clientHeight < 80
+      ? element.scrollHeight - element.scrollTop - element.clientHeight <= 1
       : true;
     pinnedRef.current = isPinned;
     setPinned(isPinned);

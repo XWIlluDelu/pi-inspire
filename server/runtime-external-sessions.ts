@@ -191,6 +191,7 @@ export class RuntimeExternalSessions {
     if (this.closed || slot.process || !slot.sessionPath) return false;
     const previous = this.connections.get(slot);
     if (previous) {
+      const selectionRevision = previous.selectionRevision;
       let state: ExternalSessionState | null | undefined;
       try {
         state = await previous.native.read();
@@ -203,7 +204,7 @@ export class RuntimeExternalSessions {
         if (state) {
           previous.interrupted = false;
           this.setUnavailable(slot, false);
-          this.applyState(slot, previous, state);
+          this.applyState(slot, previous, state, false, selectionRevision);
           return true;
         }
         if (state === null) this.detach(slot);
@@ -286,7 +287,12 @@ export class RuntimeExternalSessions {
     connection: Connection,
     state: ExternalSessionState,
     force = false,
+    selectionRevision = connection.selectionRevision,
   ): void {
+    // Ownership validation can finish after a newer selection. Fence at the
+    // state commit while retaining this observation's activity and capability.
+    if (selectionRevision !== connection.selectionRevision)
+      state = { ...state, modelSelection: connection.state.modelSelection };
     const priorState = connection.state;
     const changed = priorState.status !== state.status;
     const selectionChanged =
@@ -367,6 +373,7 @@ export class RuntimeExternalSessions {
   }
 
   private async poll(slot: RuntimeSlot, connection: Connection): Promise<void> {
+    const selectionRevision = connection.selectionRevision;
     try {
       const state = await connection.native.read().catch((error) => {
         if (this.connections.get(slot) === connection)
@@ -398,7 +405,7 @@ export class RuntimeExternalSessions {
         return;
       }
       this.setUnavailable(slot, false);
-      this.applyState(slot, connection, state);
+      this.applyState(slot, connection, state, false, selectionRevision);
       // Background history may be intentionally reclaimed. Keep observing Pi
       // without rebuilding it; retained projections use their version fast path.
       if (slot.projection) await this.host.reconcile(slot, false);
