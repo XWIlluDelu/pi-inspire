@@ -148,7 +148,7 @@ it("can choose the first draft value by keyboard without claiming a current nati
   );
   const slider = screen.getByRole("slider", { name: "Choice" });
   expect(slider).toBeEnabled();
-  expect(slider).toHaveAttribute("aria-valuetext", "Pi default");
+  expect(slider).toHaveAttribute("aria-valuetext", "Default");
   expect(
     document.querySelector('.status-choice__dots [data-focus-target="true"]'),
   ).not.toHaveAttribute("data-selected", "true");

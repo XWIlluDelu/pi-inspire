@@ -184,7 +184,7 @@ export function StatusChoice({
     (draft
       ? value
         ? (selected.description ?? "")
-        : "Pi default until selected."
+        : "Default"
       : !snapshot
         ? "Selection status is not available yet."
         : snapshot.supported?.[snapshot.value] === false
@@ -226,7 +226,7 @@ export function StatusChoice({
             confirmedIndex >= 0
               ? (selected.title ?? selected.label)
               : draft
-                ? "Pi default"
+                ? "Default"
                 : "Unknown"
           }
           disabled={unavailable}
