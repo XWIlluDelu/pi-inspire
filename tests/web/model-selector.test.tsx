@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -411,6 +412,8 @@ describe("model picker interaction", () => {
       "Model unavailable",
     );
     fireEvent.click(screen.getByRole("button", { name: "Model" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Loading models");
+    expect(screen.queryByText("No models available yet.")).toBeNull();
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent(
         "Could not refresh models",
@@ -443,13 +446,14 @@ describe("model picker interaction", () => {
     expect(
       screen.getByRole("option", { name: /Claude Sonnet/, selected: true }),
     ).toBeVisible();
-    expect(screen.getByRole("status")).toHaveTextContent("Refreshing models");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(document.querySelector(".model-picker__menu")).toHaveAttribute(
+      "aria-busy",
+      "false",
+    );
     const search = screen.getByRole("combobox", { name: "Search models" });
     fireEvent.change(search, { target: { value: "fresh" } });
-    complete();
-    await waitFor(() =>
-      expect(screen.queryByRole("status")).not.toBeInTheDocument(),
-    );
+    await act(async () => complete());
     const fresh = { provider: "fixture", id: "fresh", name: "Fresh" };
     const failing = vi.fn(async () => {
       throw new Error("offline");

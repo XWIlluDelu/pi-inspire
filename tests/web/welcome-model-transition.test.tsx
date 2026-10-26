@@ -313,9 +313,15 @@ it("waits for a pending source selection instead of applying workspace defaults"
   );
   await waitFor(() => expect(queries).toHaveBeenCalledWith("source", "/one"));
   expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
-    "Resolving model",
+  expect(screen.getByRole("button", { name: "Model" })).toHaveAttribute(
+    "aria-busy",
+    "true",
   );
+  expect(screen.getByRole("button", { name: "Start session" })).toHaveAttribute(
+    "aria-busy",
+    "true",
+  );
+  expect(document.querySelector(".welcome__readiness")).toBeNull();
   await act(async () =>
     source.resolve({
       models,
@@ -377,7 +383,8 @@ it("recovers inherited selection before allowing missing-folder creation", async
     name: "Create folder and start",
   });
   expect(create).toBeDisabled();
-  expect(screen.getByText("Resolving model…")).toBeInTheDocument();
+  expect(create).toHaveAttribute("aria-busy", "true");
+  expect(document.querySelector(".welcome__readiness")).toBeNull();
   vi.useFakeTimers();
   await act(async () =>
     source.reject(new ApiError(503, "The source model is unavailable")),
@@ -388,7 +395,7 @@ it("recovers inherited selection before allowing missing-folder creation", async
   source = deferred<ModelCatalogResponse>();
   await act(() => vi.advanceTimersByTimeAsync(1_000));
   expect(queries.mock.calls.filter(([, , inherit]) => inherit)).toHaveLength(2);
-  expect(screen.getByText("Resolving model…")).toBeInTheDocument();
+  expect(create).toHaveAttribute("aria-busy", "true");
   expect(create).toBeDisabled();
   await act(async () =>
     source.resolve({
@@ -523,6 +530,46 @@ it("treats choosing the displayed default as an explicit selection without reset
     }),
   );
 });
+it.each([
+  { chosen: "Low", effective: "low", shown: "Low" },
+  { chosen: "Max", effective: "high", shown: "High" },
+])(
+  "keeps manual $chosen effort on a model switch, clamping only unsupported levels",
+  async ({ chosen, effective, shown }) => {
+    vi.spyOn(store, "resolveNewSessionThinking").mockResolvedValue("medium");
+    const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
+    render(
+      <Welcome
+        showRecent={false}
+        inherited={{ ...inherit, thinkingLevel: "high" }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
+    fireEvent.click(screen.getByRole("option", { name: chosen }));
+    pick("ordinary");
+    expect(
+      screen.getByRole("combobox", { name: "Thinking level" }),
+    ).toHaveTextContent(shown);
+    fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
+      target: { value: "Keep my effort choice" },
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Start session" }),
+      ).toBeEnabled(),
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Thinking level" }),
+    ).toHaveTextContent(shown);
+    fireEvent.click(screen.getByRole("button", { name: "Start session" }));
+    await waitFor(() =>
+      expect(start).toHaveBeenCalledWith("/one", {
+        model: { provider: "fixture", id: "ordinary" },
+        thinkingLevel: effective,
+      }),
+    );
+  },
+);
 it.each(["xhigh", "max"])(
   "clamps inherited %s to high rather than off on an ordinary model",
   async (level) => {

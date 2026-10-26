@@ -2642,6 +2642,7 @@ export class AppStore {
     if (!modelControlsSupported(this.state))
       return { status: "error", message: NATIVE_MODEL_GUIDANCE };
     const previous = this.state.thinkingLevel;
+    const snapshotGeneration = this.snapshotGeneration;
     const request = ++this.thinkingLevelRequest;
     this.set({ thinkingLevel: level });
     try {
@@ -2651,11 +2652,25 @@ export class AppStore {
       if (
         this.state.sessionId === sessionId &&
         this.selectionGeneration === selectionGeneration
-      )
-        this.set({
-          model: selection.model,
-          thinkingLevel: selection.thinkingLevel,
-        });
+      ) {
+        // In-flight snapshots may predate this confirmed mutation. Empty
+        // sessions may emit no projection event to retire those reads, so
+        // they must not overwrite the confirmed model/effort pair.
+        this.resyncRecovery.reset();
+        this.resyncRequest += 1;
+        // A model change or native update may have published a newer snapshot
+        // while this receipt was in transit. Read current state instead of
+        // replacing it with the earlier operation's model/effort pair.
+        if (this.snapshotGeneration !== snapshotGeneration)
+          await this.resync(sessionId, selectionGeneration);
+        else
+          this.set({
+            model: selection.model,
+            thinkingLevel: selection.thinkingLevel,
+          });
+      }
+      if (!ownsTransport() || request !== this.thinkingLevelRequest)
+        return { status: "stale" };
       return {
         status: "success",
         message: `Thinking level is now ${selection.thinkingLevel}.`,
@@ -2671,7 +2686,8 @@ export class AppStore {
         this.state.sessionId === sessionId &&
         this.selectionGeneration === selectionGeneration
       ) {
-        this.set({ thinkingLevel: previous });
+        if (this.snapshotGeneration === snapshotGeneration)
+          this.set({ thinkingLevel: previous });
         void this.resync();
       }
       return {

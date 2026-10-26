@@ -181,17 +181,15 @@ export function StatusChoice({
   }, [control]);
   const hint =
     error ||
-    (pending
-      ? "Applying selection…"
-      : draft
-        ? value
-          ? "Applies on session start."
-          : "Pi default until selected."
-        : !snapshot
-          ? "Selection status is not available yet."
-          : snapshot.supported?.[snapshot.value] === false
-            ? "Requested; inactive for this model."
-            : (selected.description ?? ""));
+    (draft
+      ? value
+        ? (selected.description ?? "")
+        : "Default"
+      : !snapshot
+        ? "Selection status is not available yet."
+        : snapshot.supported?.[snapshot.value] === false
+          ? "Requested; inactive for this model."
+          : (selected.description ?? ""));
   const confirmOption = control.options.find(
     (option) => option.value === confirmation,
   );
@@ -228,7 +226,7 @@ export function StatusChoice({
             confirmedIndex >= 0
               ? (selected.title ?? selected.label)
               : draft
-                ? "Pi default"
+                ? "Default"
                 : "Unknown"
           }
           disabled={unavailable}

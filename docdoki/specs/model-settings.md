@@ -11,7 +11,7 @@ covers:
   - tests/server/{model-settings,model-catalog,model-metadata.integration,model-workflow.integration,session-model-selection,provider-auth,provider-auth-bridge.integration}.test.ts
   - tests/server/configuration-edit-locks.test.ts
   - tests/integration/model-cycle-native.test.ts
-  - tests/web/{model-settings,model-store,model-selector,modal-focus}.test.ts*
+  - tests/web/{model-settings,model-store,model-selector,modal-focus,welcome-model-transition,welcome-new-session}.test.ts*
   - tests/browser/{model-settings*,model-workflow}.spec.ts
   - tests/browser/fixtures/model-scale.ts
 progress: in-progress
@@ -27,6 +27,12 @@ session selection. Preserve selected routing identity separately from physical r
 Settings manages Pi's startup defaults, common-model scope, `models.json` declarations and saved
 credentials. The session picker changes the current selection. Both use Pi's available models;
 configuration editing and login remain independent.
+
+The picker opens cached choices immediately and refreshes them without a separate progress row.
+Initial discovery with no choices keeps a concise loading state; a failed refresh remains visible
+without discarding usable choices. New-session preparation stays in the model/start controls rather
+than narrating directory checks and model resolution. Blocking errors and required choices retain
+local guidance. Provider lists likewise retain loaded content during a background refresh.
 
 ## Interface
 
@@ -102,6 +108,12 @@ history retains known selection/effort but discovers choices in the prospective 
 the read-only source. Choosing manual effort retires an in-flight thinking preview; directory changes
 preserve that choice without leaving model readiness pending.
 
+A model-only change must preserve a manually selected current-session effort when the target
+supports it, clamping only unsupported levels. This requires one owning-worker operation that applies
+the effort intent before model-select hooks. [[pi-capability-gaps]] tracks the missing public Pi
+interface; live selection currently retains native default resolution rather than overriding
+extension decisions with a second thinking setter.
+
 Pi 1.4.0 cold startup follows configured defaults when the reconstructed context has no messages,
 even if the file contains model/thinking records. Inspire leaves that decision to Pi rather than
 adding a preference copy, synthetic messages or forced restoration arguments.
@@ -110,9 +122,11 @@ adding a preference copy, synthetic messages or forced restoration arguments.
 
 New distinguishes explicit selection, inheritance from a session and workspace defaults. Explicit or
 inherited choices keep their resolved thinking value; manual thinking changes take precedence.
-Workspace-default startup leaves model and unmodified thinking arguments to Pi. Model switches use
-Pi's per-model thinking preference, then global preference, then current effort, with supported-level
-clamping. Catalog refresh alone does not reapply defaults; non-reasoning models disable thinking.
+Workspace-default startup leaves model and unmodified thinking arguments to Pi. Once thinking is
+chosen manually, model switches preserve that effort when supported and clamp it otherwise, without
+reapplying defaults. Until a manual choice, switches use Pi's per-model thinking preference, then
+global preference, then current effort, with supported-level clamping. Catalog refresh alone does not
+reapply defaults; non-reasoning models disable thinking.
 If a chosen model’s thinking cannot be previewed before explicit new-folder creation, unmodified
 effort is left to native startup rather than guessed. A manual effort choice remains explicit.
 
@@ -202,8 +216,11 @@ preserves query and focus. Long login captions wrap without squeezing status or 
 
 Login operates on the connected Host's Pi credentials. Switching Settings categories leaves the
 attempt running and preserves entered responses. The browser displays native links, codes,
-prompts and outcomes. Supported methods offer Remote login help on demand, following the selected
-method's device-code, pasted-code or redirect interaction.
+prompts and outcomes. One status position shows the latest native progress message while pending,
+falling back to a concise login status; the settled outcome replaces progress rather than leaving a
+second progress line. Authorization links, codes and prompts remain available. Supported methods
+offer Remote login help on demand, following the selected method's device-code, pasted-code or
+redirect interaction.
 
 Attempts retain their originating worker. Cancellation or supersession prevents an older attempt
 from replacing a newer credential choice. Status-read failures resume observation; failed cancellation
@@ -221,6 +238,8 @@ Pi's saved credential; environment and `models.json` credentials are managed sep
   authority, and validation without a turn or persistent session.
 - `tests/server/model-settings.test.ts` covers revision conflicts, file/symlink authority, atomic
   edits, preserved unedited declarations and protected credentials.
+- `tests/web/welcome-model-transition.test.tsx` covers New's effort ownership across model/directory
+  changes, supported-level clamping, late discovery and the submitted startup selection.
 
 ## Related contracts
 
