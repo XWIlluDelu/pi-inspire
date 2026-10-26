@@ -5,9 +5,35 @@ import { StrictMode, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { SettingsContent } from "../../src/components/Settings";
 import { SettingsDialog } from "../../src/components/SettingsDialog";
-import { recoverModalFocus, useModalFocus } from "../../src/use-modal-focus";
+import {
+  recoverModalFocus,
+  useModalDepth,
+  useModalFocus,
+} from "../../src/use-modal-focus";
 
 describe("modal focus ownership", () => {
+  it("reports only visible backdrops while suspended dialogs retain ownership", () => {
+    function Depth() {
+      return <output aria-label="Backdrop depth">{useModalDepth()}</output>;
+    }
+    const content = (suspended: boolean) => (
+      <StrictMode>
+        <Depth />
+        <SettingsDialog suspended={suspended} onClose={() => undefined}>
+          <button type="button">Setting</button>
+        </SettingsDialog>
+      </StrictMode>
+    );
+    const view = render(content(false));
+    expect(screen.getByLabelText("Backdrop depth")).toHaveTextContent("1");
+    view.rerender(content(true));
+    expect(screen.getByLabelText("Backdrop depth")).toHaveTextContent("0");
+    view.rerender(content(false));
+    expect(screen.getByLabelText("Backdrop depth")).toHaveTextContent("1");
+    view.rerender(<Depth />);
+    expect(screen.getByLabelText("Backdrop depth")).toHaveTextContent("0");
+  });
+
   it.each([
     { isComposing: true, keyCode: 0 },
     { isComposing: false, keyCode: 229 },

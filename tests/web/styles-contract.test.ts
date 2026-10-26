@@ -53,6 +53,15 @@ describe("static asset contracts", () => {
       for (const match of source.matchAll(/["']--([a-z0-9-]+)["']\s*:/gi))
         declared.add(match[1]);
     }
+    // Installed-window chrome also supplies its overlay scrim at runtime.
+    const visualPreferences = await readFile(
+      new URL("../../src/visual-preferences.ts", import.meta.url),
+      "utf8",
+    );
+    for (const match of visualPreferences.matchAll(
+      /\.setProperty\(\s*["']--([a-z0-9-]+)["']/gi,
+    ))
+      declared.add(match[1]);
     const referenced = new Set(
       [...css.matchAll(/var\(--([a-z0-9-]+)/gi)].map((match) => match[1]),
     );

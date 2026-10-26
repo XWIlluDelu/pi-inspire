@@ -48,7 +48,7 @@ import { isComposingKeyboardEvent } from "./keyboard-input";
 import { thinkingLevelLabel } from "./model-options";
 import { shallowEqual, store, useAppState } from "./store";
 import { useInspectionHistory } from "./use-inspection-history";
-import { hasActiveModal } from "./use-modal-focus";
+import { hasActiveModal, useModalDepth } from "./use-modal-focus";
 import {
   applyBrowserTheme,
   cacheVisualPreferences,
@@ -497,6 +497,7 @@ export function App() {
     }),
     shallowEqual,
   );
+  const backdropDepth = useModalDepth();
   const [connectionDelayed, setConnectionDelayed] = useState(false);
   const connectionInterrupted = state.connection !== "open";
   useEffect(() => {
@@ -790,6 +791,7 @@ export function App() {
       applyBrowserTheme(
         resolveTheme(state.prefs.theme, media.matches),
         overlay.matches,
+        backdropDepth,
       );
       document.documentElement.dataset.contentTextSize =
         state.prefs.contentTextSize;
@@ -814,6 +816,7 @@ export function App() {
     state.prefs.palette,
     state.prefs.contentTextSize,
     state.prefs.readingWidth,
+    backdropDepth,
   ]);
 
   useEffect(() => {

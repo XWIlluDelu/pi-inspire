@@ -8,7 +8,6 @@
   "display": "standalone",
   "display_override": ["window-controls-overlay"],
   "background_color": "#F4F5F6",
-  "theme_color": "#F4F5F6",
   "categories": ["productivity", "utilities"],
   "icons": [
     {

@@ -376,15 +376,36 @@ test("Overlay chrome and needle colors follow every palette and luminosity, and 
       await expect
         .poll(() =>
           page.evaluate(() => {
-            const root = document.documentElement;
+            // Compare resolved colors, not custom-property source spelling:
+            // minification can turn 0.4 into .4 without changing the scrim.
+            const sample = document.createElement("span");
+            sample.style.transition = "none";
+            document.body.append(sample);
+            sample.style.color = "var(--bg-rail)";
+            const base = getComputedStyle(sample)
+              .color.match(/[\d.]+/g)!
+              .map(Number);
+            sample.style.color = "var(--bg-overlay)";
+            const scrim = getComputedStyle(sample).color;
+            sample.remove();
+            const hint = document.querySelector<HTMLMetaElement>(
+              'meta[name="theme-color"]',
+            )!.content;
+            const rgba = scrim.match(/[\d.]+/g)!.map(Number);
+            const actual = hint.match(/[\d.]+/g)?.map(Number) ?? [];
             return (
-              document
-                .querySelector<HTMLMetaElement>('meta[name="theme-color"]')!
-                .content.toLowerCase() ===
-              getComputedStyle(root)
-                .getPropertyValue("--bg-rail")
-                .trim()
-                .toLowerCase()
+              actual.length === 3 &&
+              actual.every(
+                (value, index) =>
+                  Math.abs(
+                    value -
+                      (base[index]! * (1 - rgba[3]!) + rgba[index]! * rgba[3]!),
+                  ) <= 1,
+              ) &&
+              getComputedStyle(
+                document.querySelector(".window-titlebar")!,
+                "::after",
+              ).backgroundImage.includes(scrim)
             );
           }),
         )
