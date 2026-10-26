@@ -79,7 +79,15 @@ function ViewportHarness({
       data-pinned={viewport.pinned}
       data-at-latest={viewport.atLatest}
       onScroll={viewport.onScroll}
-      onWheel={viewport.markUserScrollIntent}
+      onWheel={(event) =>
+        viewport.markUserScrollIntent(
+          event.deltaY < 0
+            ? "history"
+            : event.deltaY > 0
+              ? "latest"
+              : "unknown",
+        )
+      }
     >
       <div ref={viewport.contentRef}>
         <div data-transcript-key="one">message</div>
@@ -126,7 +134,15 @@ function OlderLoadingHarness({
       role="log"
       data-loading-earlier={viewport.loadingEarlier}
       onScroll={viewport.onScroll}
-      onWheel={viewport.markUserScrollIntent}
+      onWheel={(event) =>
+        viewport.markUserScrollIntent(
+          event.deltaY < 0
+            ? "history"
+            : event.deltaY > 0
+              ? "latest"
+              : "unknown",
+        )
+      }
     >
       <div ref={viewport.contentRef}>
         <div data-transcript-key="one">message</div>
@@ -196,6 +212,66 @@ describe("transcript viewport geometry", () => {
     });
 
     expect(log.scrollTop).toBe(820);
+  });
+
+  it("keeps an upward wheel intent across a queued layout scroll at latest", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    render(<ViewportHarness />);
+    const log = screen.getByRole("log");
+    setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
+    fireEvent.scroll(log);
+
+    fireEvent.wheel(log, { deltaY: -500 });
+    // Disclosure reflow can move the bottom before the browser delivers the
+    // wheel's own scroll. This is movement, but not a return chosen by the user.
+    Object.defineProperty(log, "scrollHeight", {
+      configurable: true,
+      value: 1_010,
+    });
+    log.scrollTop = 610;
+    fireEvent.scroll(log);
+    log.scrollTop = 110;
+    fireEvent.scroll(log);
+    act(() => {
+      TestResizeObserver.trigger(log);
+      flushAnimationFrames();
+    });
+
+    expect(log.scrollTop).toBe(110);
+    expect(log).toHaveAttribute("data-pinned", "false");
+    expect(log).toHaveAttribute("data-at-latest", "false");
+    act(() => vi.runOnlyPendingTimers());
+    expect(log.scrollTop).toBe(110);
+
+    fireEvent.wheel(log, { deltaY: 500 });
+    log.scrollTop = 610;
+    fireEvent.scroll(log);
+    expect(log).toHaveAttribute("data-pinned", "true");
+    expect(log).toHaveAttribute("data-at-latest", "true");
+  });
+
+  it("retains follow when an upward wheel cannot move a short transcript", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    render(<ViewportHarness />);
+    const log = screen.getByRole("log");
+    setScrollGeometry(log, { clientHeight: 1_000, scrollTop: 0 });
+    fireEvent.scroll(log);
+    fireEvent.wheel(log, { deltaY: -500 });
+    fireEvent.scroll(log);
+    expect(log).toHaveAttribute("data-pinned", "true");
+
+    Object.defineProperty(log, "scrollHeight", {
+      configurable: true,
+      value: 1_100,
+    });
+    act(() => {
+      TestResizeObserver.trigger(log);
+      flushAnimationFrames();
+    });
+    expect(log.scrollTop).toBe(0);
+    act(() => vi.runOnlyPendingTimers());
+    expect(log.scrollTop).toBe(100);
+    expect(log).toHaveAttribute("data-at-latest", "true");
   });
 
   it("keeps one loading state across consecutive automatic older pages", async () => {

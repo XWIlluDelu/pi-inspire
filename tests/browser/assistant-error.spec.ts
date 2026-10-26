@@ -3,6 +3,12 @@ import { expect, test } from "@playwright/test";
 import { assistantOutcomeScenario } from "./support/assistant-outcomes";
 import { openMockSession, pairedPage } from "./support/navigation";
 
+test.afterEach(async ({ page }) => {
+  // Settled events can start a snapshot read after their visible outcome.
+  // Finish the fixture's in-flight handlers before disposing API responses.
+  await page.unrouteAll({ behavior: "wait" });
+});
+
 for (const scenario of [
   {
     name: "native cancellation with a mouse",

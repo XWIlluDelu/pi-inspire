@@ -85,15 +85,15 @@ for (const width of [1280, 390]) {
     expect(changes).toEqual([]);
     await picker.click();
     await page.getByRole("option", { name: /Native first/ }).click();
-    await expect(effort).toHaveText("low");
+    await expect(effort).toHaveText("Low");
     await expect(picker).toContainText("Native final");
     expect(changes[0]).toMatchObject({
       provider: "native-owner",
       modelId: "a",
     });
     await effort.click();
-    await page.getByRole("option", { name: "high", exact: true }).click();
-    await expect(effort).toHaveText("medium");
+    await page.getByRole("option", { name: "High", exact: true }).click();
+    await expect(effort).toHaveText("Medium");
     expect(changes[1]).toMatchObject({ level: "high" });
 
     const palette = await openCommandPalette(page);

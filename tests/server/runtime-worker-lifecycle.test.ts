@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -63,7 +63,7 @@ describe("worker startup and retirement", () => {
       const created = await runtime.newSession(TEST_CWD);
       expect(created.active?.sessionId).toBe("new-id");
       expect(workers[1]?.starts).toBe(1);
-      expect(remember).toHaveBeenCalledWith([TEST_CWD]);
+      expect(remember).toHaveBeenCalledWith([await realpath(TEST_CWD)]);
     } finally {
       await runtime.close();
     }

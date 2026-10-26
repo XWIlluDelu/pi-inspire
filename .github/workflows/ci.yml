@@ -47,9 +47,10 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    # Native/core and the full browser suite run serially. Budget their aggregate
-    # on Windows without changing individual test or runtime deadlines.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || 40 }}
+    # Native/core and the full browser suite run serially. macOS Chromium alone
+    # takes about 27 minutes, followed by native WebKit; leave room for that tail
+    # without changing individual test or runtime deadlines.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || 50 }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

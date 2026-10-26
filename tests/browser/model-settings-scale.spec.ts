@@ -160,9 +160,10 @@ for (const touch of [false, true]) {
         expect(measurements.pickerMounted).toBeLessThan(25);
         const menu = page.locator(".model-picker__menu");
         const bounds = await menu.boundingBox();
-        expect(Math.round(bounds!.height)).toBeLessThanOrEqual(440);
+        expect(Math.round(bounds!.height)).toBeLessThanOrEqual(456);
+        expect(bounds!.y).toBeGreaterThanOrEqual(0);
         expect(Math.round(bounds!.width)).toBeLessThanOrEqual(
-          touch ? 358 : 520,
+          touch ? 358 : 384,
         );
         expect(bounds!.x).toBeGreaterThanOrEqual(0);
         expect(Math.round(bounds!.y + bounds!.height)).toBeLessThanOrEqual(

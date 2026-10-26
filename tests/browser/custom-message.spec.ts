@@ -159,7 +159,7 @@ test("context and extension glyphs follow Tool through live palette changes", as
   send(conversationFeedbackMessages[1]!);
   send(incomingIntercom("The full message remains independently readable."));
   const checkpoint = page.getByRole("button", {
-    name: "Magic Context compacted",
+    name: "Context compacted",
     exact: true,
   });
   const message = page.getByRole("article", {

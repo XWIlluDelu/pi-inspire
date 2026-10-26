@@ -78,7 +78,9 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
 }: TranscriptViewportOptions<Row>) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const userScrollIntentRef = useRef(false);
+  const userScrollIntentRef = useRef<"history" | "latest" | "unknown" | null>(
+    null,
+  );
   const userScrollIntentTimerRef = useRef<number | null>(null);
   const geometricFollowFrameRef = useRef<number | null>(null);
   const anchoredLayoutFrameRef = useRef<number | null>(null);
@@ -132,17 +134,6 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   virtualizeRef.current = virtualize;
   virtualizerRef.current = virtualizer;
 
-  const markUserScrollIntent = useCallback(() => {
-    viewportIntentRef.current += 1;
-    userScrollIntentRef.current = true;
-    if (userScrollIntentTimerRef.current !== null)
-      window.clearTimeout(userScrollIntentTimerRef.current);
-    userScrollIntentTimerRef.current = window.setTimeout(() => {
-      userScrollIntentTimerRef.current = null;
-      userScrollIntentRef.current = false;
-    }, 400);
-  }, []);
-
   const followLatest = useCallback(() => {
     const element = scrollRef.current;
     // Input arrives before the browser's corresponding scroll event. Do not let
@@ -156,6 +147,21 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     );
     measureLatest();
   }, [measureLatest]);
+
+  const markUserScrollIntent = useCallback(
+    (direction: "history" | "latest" | "unknown" = "unknown") => {
+      viewportIntentRef.current += 1;
+      userScrollIntentRef.current = direction;
+      if (userScrollIntentTimerRef.current !== null)
+        window.clearTimeout(userScrollIntentTimerRef.current);
+      userScrollIntentTimerRef.current = window.setTimeout(() => {
+        userScrollIntentTimerRef.current = null;
+        userScrollIntentRef.current = null;
+        followLatest();
+      }, 400);
+    },
+    [followLatest],
+  );
 
   const scheduleGeometricFollow = useCallback(() => {
     if (geometricFollowFrameRef.current !== null) return;
@@ -282,8 +288,12 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
     // reacquire it only by actually reaching the latest boundary.
     const movedTowardHistory = element.scrollTop < previousScrollTop;
     const nextPinned = !movedTowardHistory && remaining <= 1;
+    // A queued reflow/anchoring event can still reach latest after an upward
+    // wheel arrives but before its scroll. Keep the gesture and existing owner;
+    // geometry alone cannot turn that input into a return to latest.
+    if (nextPinned && userScrollIntentRef.current === "history") return;
     pinnedRef.current = nextPinned;
-    if (nextPinned) userScrollIntentRef.current = false;
+    if (nextPinned) userScrollIntentRef.current = null;
     setPinned(nextPinned);
     if (element.scrollTop <= OLDER_PRELOAD_PX) requestOlderRef.current();
   }, [followLatest, measureLatest, searchOwnsViewportRef]);
@@ -332,7 +342,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
       // fold to the end of the session as its height changes.
       const restoreLatestAtBoundary =
         pinnedRef.current && !searchOwnsViewportRef.current;
-      userScrollIntentRef.current = false;
+      userScrollIntentRef.current = null;
       if (userScrollIntentTimerRef.current !== null) {
         window.clearTimeout(userScrollIntentTimerRef.current);
         userScrollIntentTimerRef.current = null;
@@ -377,7 +387,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
 
   const jumpToLatest = useCallback(() => {
     viewportIntentRef.current += 1;
-    userScrollIntentRef.current = false;
+    userScrollIntentRef.current = null;
     pinnedRef.current = true;
     setPinned(true);
     followLatest();
@@ -393,7 +403,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
       geometricFollowFrameRef.current = null;
     }
     pinnedRef.current = true;
-    userScrollIntentRef.current = false;
+    userScrollIntentRef.current = null;
     lastScrollTopRef.current = 0;
     olderLoadInFlightRef.current = null;
     setLoadingEarlier(false);

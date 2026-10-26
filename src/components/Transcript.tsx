@@ -611,15 +611,21 @@ export const Transcript = memo(function Transcript({
         onPointerDown={() => {
           promptNavigationOverrideRef.current = null;
         }}
-        onWheel={() => {
+        onWheel={(event) => {
           promptNavigationOverrideRef.current = null;
-          viewport.markUserScrollIntent();
+          viewport.markUserScrollIntent(
+            event.deltaY < 0
+              ? "history"
+              : event.deltaY > 0
+                ? "latest"
+                : "unknown",
+          );
         }}
         onTouchStart={() => {
           promptNavigationOverrideRef.current = null;
           viewport.markUserScrollIntent();
         }}
-        onTouchMove={viewport.markUserScrollIntent}
+        onTouchMove={() => viewport.markUserScrollIntent()}
         onClickCapture={onActivityFoldClickCapture}
         onClick={onClick}
         onCopy={handleRichTextCopy}

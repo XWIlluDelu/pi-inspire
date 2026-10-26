@@ -24,6 +24,9 @@ test("Files refresh preserves Source mode and reading offsets", async ({
     .click();
   await pane.getByRole("button", { name: "Source", exact: true }).click();
   const source = pane.getByRole("region", { name: "File source" });
+  const originalHeading = "Observation log · Station 07";
+  const refreshedHeading = "Observation log · Station 08";
+  await expect(source).toContainText(originalHeading);
   await source.evaluate((element) => {
     element.scrollTop = 100;
     element.scrollLeft = 80;
@@ -39,18 +42,45 @@ test("Files refresh preserves Source mode and reading offsets", async ({
   const pending = new Promise<void>((resolve) => {
     release = resolve;
   });
-  await page.route("**/api/resources/resolve", async (route) => {
-    await pending;
-    await route.continue();
-  });
+  const contentRequest = "**/api/resources/*/content?**";
+  await page.route(
+    contentRequest,
+    async (route) => {
+      const response = await route.fetch();
+      const original = await response.text();
+      expect(original).toContain(originalHeading);
+      const refreshed = original.replace(originalHeading, refreshedHeading);
+      expect(refreshed).not.toBe(original);
+      expect(refreshed).not.toContain(originalHeading);
+      // Keep the real response's byte-range metadata valid while proving that
+      // the selected file received new content, not only its retained preview.
+      expect(Buffer.byteLength(refreshed)).toBe(Buffer.byteLength(original));
+      await pending;
+      await route.fulfill({ response, body: refreshed });
+    },
+    { times: 1 },
+  );
+  const refresh = pane.getByRole("button", { name: "Refresh context pane" });
+  const requested = page.waitForRequest(contentRequest);
   try {
-    await pane.getByRole("button", { name: "Refresh context pane" }).click();
-    await expect(
-      pane.getByText("Loading preview", { exact: true }),
-    ).toBeVisible();
+    await refresh.click();
+    await requested;
+    await expect(refresh).toHaveAttribute("aria-busy", "true");
+    await expect(source).toBeVisible();
+    await expect(source).toContainText(originalHeading);
+    await expect
+      .poll(() => source.evaluate((element) => element.scrollTop))
+      .toBe(100);
+    await expect
+      .poll(() => source.evaluate((element) => element.scrollLeft))
+      .toBe(80);
   } finally {
     release();
   }
+  // Global refresh also rescans directories and search results. The selected
+  // file's new content is the completion boundary for its reading position.
+  await expect(source).toContainText(refreshedHeading);
+  await expect(source).not.toContainText(originalHeading);
   await expect(source).toBeVisible();
   await expect(
     pane.getByRole("button", { name: "Preview", exact: true }),
@@ -80,9 +110,11 @@ for (const mode of ["Files", "Changes"] as const) {
       (route) =>
         unavailable
           ? route.fulfill({
-              status: 503,
+              // This test owns error layout and explicit Retry. Transient
+              // recovery keeps its separate loading surface while retrying.
+              status: 403,
               json: {
-                error: "This file is temporarily unavailable. Try again.",
+                error: "This file is unavailable. Check access and try again.",
               },
             })
           : route.continue(),
@@ -336,10 +368,14 @@ test("file path toolbars distinguish the reader from browser chrome across palet
     await settings.press("Escape");
     for (const width of [1280, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });
-      await expect(pane.locator(".file-detail-header")).toHaveCSS(
-        "height",
-        "34px",
-      );
+      const header = pane.locator(".file-detail-header");
+      if (width > 900) await expect(header).toHaveCSS("height", "34px");
+      else {
+        await expect(
+          pane.getByRole("button", { name: "Back to Files", exact: true }),
+        ).toBeVisible();
+        expect((await header.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      }
       expect(
         await pane.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
       ).toBe(true);
