@@ -255,7 +255,13 @@ for (const narrow of [false, true]) {
       await page
         .getByRole("button", { name: "Open conversation search" })
         .click();
-    else await search.focus();
+    else {
+      await expect(search).toBeVisible();
+      await search.focus();
+      await expect(
+        page.getByRole("button", { name: "Close conversation search" }),
+      ).toBeHidden();
+    }
     await expect(search).toBeFocused();
     expect(await anchor()).toEqual(beforeSearch);
     expect(await geometry()).toEqual(original);
@@ -283,6 +289,18 @@ for (const narrow of [false, true]) {
       await expect(
         page.getByRole("button", { name: "Open prompt navigation" }),
       ).toBeFocused();
+    } else {
+      await search.fill("formula");
+      await search.press("Escape");
+      await expect(search).toBeVisible();
+      await expect(search).not.toBeFocused();
+      await expect(search).toHaveValue("formula");
+      expect(await anchor()).toEqual(beforeSearch);
+      expect(await geometry()).toEqual(original);
+      await wrap.press("Control+f");
+      await expect(search).toBeFocused();
+      await expect(search).toHaveValue("formula");
+      await search.fill("");
     }
 
     const fold = log.locator("[data-activity-fold]").first();
@@ -329,7 +347,12 @@ for (const narrow of [false, true]) {
     }
     expect(reachedMessages).toBe(true);
     expect(visitedPromptMap).toBe(true);
-    await log.locator("button, a[href]").last().focus({ preventScroll: true });
+    await log
+      .locator("button, a[href]")
+      .last()
+      .evaluate((element: HTMLElement) =>
+        element.focus({ preventScroll: true }),
+      );
     await page.keyboard.press("Tab");
     await expect(latest).toBeFocused();
     await page.keyboard.press("Shift+Tab");
