@@ -338,6 +338,8 @@ requests and permission messages with task alerts, while keeping terminal delive
 independent. A denied, dismissed or unavailable permission leaves long-task alerts off or falls back
 to a tab-marking bell, with an explanation beside the initiating setting. A delayed permission result
 updates only its setting, preserving newer browser preference edits.
+System display uses the existing service worker when available, including on mobile. Delivery failures
+retain the terminal's visual mark and never interrupt its output or connection.
 
 ## Persistence and installation
 
