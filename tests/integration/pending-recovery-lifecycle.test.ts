@@ -8,6 +8,8 @@ import {
   token,
 } from "../server/fixtures/host-api";
 import {
+  deferred,
+  FakeWebSocket,
   installFakeWebSocket,
   installFetch,
   jsonBody,
@@ -51,6 +53,136 @@ describe("Pending intent and receipt lifecycle", () => {
       },
     };
   }
+
+  it.each(
+    (["recover", "abort"] as const).flatMap((action) =>
+      (["success", "failed", "retired"] as const).map((outcome) => ({
+        action,
+        outcome,
+      })),
+    ),
+  )(
+    "finishes $action after socket resume observes a $outcome recovery whose POST response is still pending",
+    async ({ action, outcome }) => {
+      const delivery = deferred<void>();
+      const admitted = deferred<void>();
+      const recover = vi
+        .spyOn(f.runtime, "recoverPending")
+        .mockResolvedValue({ steering: ["reclaimed input"], followUp: [] });
+      if (outcome === "failed")
+        recover.mockRejectedValue(new Error("confirmed recovery failure"));
+      const abort = vi
+        .spyOn(f.runtime, "abort")
+        .mockResolvedValue({ steering: [], followUp: [] });
+      const fetch = installFetch(async (url, init) => {
+        if (url === "/api/pending/recover") {
+          const response = await forward(url, init);
+          admitted.resolve();
+          await delivery.promise;
+          return response;
+        }
+        if (
+          url === "/api/control/abort" ||
+          url.startsWith("/api/pending/operations/")
+        )
+          return forward(url, init);
+        return baseRoutes(url, init);
+      });
+      const { store } = await initStore();
+      const generation = store.getState().transportGeneration;
+      let completed = false;
+      const operation = (
+        action === "recover" ? store.recoverPending() : store.abort()
+      ).then(() => {
+        completed = true;
+      });
+      try {
+        await admitted.promise;
+        if (outcome === "retired") {
+          vi.useFakeTimers({ toFake: ["Date"] });
+          vi.setSystemTime(Date.now() + 16 * 60_000);
+        }
+        store.recoverConnection("online");
+        await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+        FakeWebSocket.instances[1]!.open();
+        expect(store.getState().transportGeneration).toBe(generation);
+        expect(recover).toHaveBeenCalledOnce();
+        await vi.waitFor(() => expect(completed).toBe(true));
+        expect(store.getState().pendingAction).toBeNull();
+        expect(abort).toHaveBeenCalledTimes(action === "abort" ? 1 : 0);
+        expect(sessionDraft("s1")).toBe(
+          outcome === "success" ? "reclaimed input" : "",
+        );
+        const notices = store.getState().notices;
+        expect(notices).toHaveLength(outcome === "success" ? 0 : 1);
+        expect(
+          fetch.mock.calls.filter(([url]) =>
+            String(url).startsWith("/api/bootstrap"),
+          ),
+        ).toHaveLength(1);
+        // Late success or rejection of the original POST cannot restore twice
+        // or replace the already observed terminal outcome with another notice.
+        delivery.resolve();
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        expect(store.getState().notices).toEqual(notices);
+      } finally {
+        delivery.resolve();
+        await operation;
+        expect(sessionDraft("s1")).toBe(
+          outcome === "success" ? "reclaimed input" : "",
+        );
+      }
+    },
+  );
+
+  it("keeps the original recovery pending when a resumed receipt read fails transiently", async () => {
+    const delivery = deferred<void>();
+    const admitted = deferred<void>();
+    let receiptReads = 0;
+    vi.spyOn(f.runtime, "recoverPending").mockResolvedValue({
+      steering: ["original completion"],
+      followUp: [],
+    });
+    installFetch(async (url, init) => {
+      if (url === "/api/pending/recover") {
+        const response = await forward(url, init);
+        admitted.resolve();
+        await delivery.promise;
+        return response;
+      }
+      if (url.startsWith("/api/pending/operations/")) {
+        receiptReads += 1;
+        return {
+          status: 503,
+          body: { error: "receipt observation unavailable" },
+        };
+      }
+      return baseRoutes(url, init);
+    });
+    const { store } = await initStore();
+    let completed = false;
+    const operation = store.recoverPending().then((result) => {
+      completed = true;
+      return result;
+    });
+    try {
+      await admitted.promise;
+      store.recoverConnection("online");
+      await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+      FakeWebSocket.instances[1]!.open();
+      await vi.waitFor(() => expect(receiptReads).toBe(1));
+      expect(completed).toBe(false);
+      expect(store.getState().pendingAction).toBe("recover");
+      expect(store.getState().notices).toEqual([]);
+      delivery.resolve();
+      await expect(operation).resolves.toBe(true);
+      expect(sessionDraft("s1")).toBe("original completion");
+      expect(store.getState().pendingAction).toBeNull();
+    } finally {
+      delivery.resolve();
+      await operation;
+    }
+  });
 
   it("stops a new run while independently reclaiming the previous Stop's lost result on the same socket", async () => {
     let run = 1,
