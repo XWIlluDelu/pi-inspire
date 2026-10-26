@@ -1,11 +1,16 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TerminalDaemonClient } from "../../server/terminal-daemon-client.js";
 import { TerminalDaemonServer } from "../../server/terminal-daemon-server.js";
-import type { TerminalAttachmentSink } from "../../server/terminal-service.js";
+import {
+  type TerminalAttachmentSink,
+  TerminalServiceError,
+} from "../../server/terminal-service.js";
 import {
   type TerminalPtyFactory,
   TerminalSessionManager,
@@ -78,6 +83,99 @@ async function setup() {
 }
 
 describe("terminal daemon", () => {
+  it("delivers attachment refusals to a connected Host and remains available", async () => {
+    const { client, manager, server } = await setup();
+    vi.spyOn(manager, "attach").mockRejectedValue(
+      new TerminalServiceError("terminal_busy", 409, "Terminal is restarting"),
+    );
+    try {
+      await expect(
+        client.attach(
+          { terminalId: "fixture", clientId: "fixture", cols: 80, rows: 24 },
+          new Sink(),
+        ),
+      ).rejects.toMatchObject({
+        code: "terminal_busy",
+        status: 409,
+        message: "Terminal is restarting",
+      });
+      await expect(client.probe()).resolves.toBeUndefined();
+    } finally {
+      await client.close();
+      await server.stop();
+    }
+  });
+
+  it("survives an attachment rejection after the Host connection closes", async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "inspire-terminal-disconnect-"),
+    );
+    directories.push(directory);
+    const address =
+      process.platform === "win32"
+        ? `\\\\.\\pipe\\inspire-terminal-test-${randomUUID()}`
+        : join(directory, "terminal.sock");
+    const moduleUrl = (name: string) =>
+      JSON.stringify(new URL(`../../server/${name}.ts`, import.meta.url).href);
+    // A real child process makes an unhandled rejection fatal, as it is in the
+    // daemon, without taking down Vitest or creating any actual PTYs.
+    const script = `
+      import assert from "node:assert/strict";
+      import { once } from "node:events";
+      import { setTimeout as delay } from "node:timers/promises";
+      import { TerminalDaemonClient } from ${moduleUrl("terminal-daemon-client")};
+      import { TerminalDaemonServer } from ${moduleUrl("terminal-daemon-server")};
+      import { TERMINAL_DAEMON_PROTOCOL_VERSION } from ${moduleUrl("terminal-daemon-protocol")};
+      import { connectTerminalDaemon } from ${moduleUrl("terminal-daemon-tls")};
+      import { encodeTerminalIpcJson } from ${moduleUrl("terminal-ipc")};
+      import { UnavailableTerminalService } from ${moduleUrl("terminal-service")};
+      const address = ${JSON.stringify(address)};
+      const service = new UnavailableTerminalService("isolated fixture");
+      let rejectAttach, attachmentSink, received;
+      const admitted = new Promise(resolve => { received = resolve; });
+      service.attach = (_options, sink) => {
+        attachmentSink = sink;
+        received();
+        return new Promise((_resolve, reject) => { rejectAttach = reject; });
+      };
+      const server = new TerminalDaemonServer(address, "fixture-secret", service);
+      await server.start();
+      const socket = connectTerminalDaemon(address, "fixture-secret");
+      socket.on("error", () => {});
+      await once(socket, "secureConnect");
+      socket.write(encodeTerminalIpcJson({
+        protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
+        mode: "attach", terminalId: "fixture",
+        options: { terminalId: "fixture", clientId: "fixture", cols: 80, rows: 24 },
+      }));
+      await admitted;
+      const closed = once(socket, "close");
+      socket.destroy();
+      await closed;
+      let peerClosed = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        try { attachmentSink.sendControl({ type: "heartbeat" }); }
+        catch { peerClosed = true; break; }
+        await delay(10);
+      }
+      assert(peerClosed, "the daemon must observe Host disconnection first");
+      rejectAttach(new Error("attachment failed after disconnection"));
+      await delay(20);
+      const client = new TerminalDaemonClient(address, "fixture-secret");
+      await client.probe();
+      await client.close();
+      await server.stop();
+      console.log("daemon survived the disconnected attachment");
+    `;
+    const { stdout, stderr } = await promisify(execFile)(
+      process.execPath,
+      ["--import", "tsx", "--input-type=module", "-e", script],
+      { timeout: 10_000, env: process.env },
+    );
+    expect(stdout).toContain("daemon survived the disconnected attachment");
+    expect(stderr).toBe("");
+  });
+
   it.each(["remove", "restart"] as const)(
     "keeps the %s RPC open through graceful stop and delayed PTY exit",
     async (method) => {
