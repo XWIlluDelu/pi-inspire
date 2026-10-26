@@ -295,11 +295,18 @@ export class TerminalDaemonServer {
                 sendJson({ type: TERMINAL_DAEMON_READY_TYPE });
               })
               .catch((error) => {
-                sendJson({
-                  type: "terminal_daemon_error",
-                  error: errorPayload(error),
-                });
-                socket.end();
+                if (socket.destroyed) return;
+                try {
+                  sendJson({
+                    type: "terminal_daemon_error",
+                    error: errorPayload(error),
+                  });
+                  socket.end();
+                } catch {
+                  // An attach can fail after its Host disconnects or falls
+                  // behind. Reporting that failure must not crash the daemon.
+                  socket.destroy();
+                }
               });
           } else throw new Error("Terminal daemon handshake mode is invalid");
         }
