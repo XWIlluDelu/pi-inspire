@@ -134,8 +134,6 @@ export const Transcript = memo(function Transcript({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const promptLauncherRef = useRef<HTMLButtonElement>(null);
   const searchLauncherRef = useRef<HTMLButtonElement>(null);
-  const desktopSearchLauncherRef = useRef<HTMLButtonElement>(null);
-  const [desktopSearchOpen, setDesktopSearchOpen] = useState(false);
   const [mobileTranscriptTool, setMobileTranscriptTool] =
     useState<MobileTranscriptTool>(null);
   const projectionViewKey = transcriptProjectionKey(
@@ -294,47 +292,23 @@ export const Transcript = memo(function Transcript({
   const openSearch = () => {
     if (window.matchMedia("(max-width: 900px)").matches)
       setMobileTranscriptTool("search");
-    else setDesktopSearchOpen(true);
-    // Already-open search needs to refocus/select too. The layout effect handles
-    // the initially hidden input after its launcher has been replaced.
+    // The layout effect focuses a newly opened narrow search after it renders.
     searchInputRef.current?.focus();
     searchInputRef.current?.select();
-  };
-
-  const closeSearch = (restoreFocus = false) => {
-    if (window.matchMedia("(max-width: 900px)").matches) {
-      closeMobileTranscriptTool(restoreFocus);
-      return;
-    }
-    search.clear();
-    setDesktopSearchOpen(false);
-    if (restoreFocus) {
-      const owner = imageOwner;
-      requestAnimationFrame(() => {
-        if (
-          promptNavigationOwnerRef.current === owner &&
-          !hasActiveModal() &&
-          !window.matchMedia("(max-width: 900px)").matches
-        )
-          desktopSearchLauncherRef.current?.focus();
-      });
-    }
   };
 
   useLayoutEffect(() => {
-    if (!desktopSearchOpen && mobileTranscriptTool !== "search") return;
+    if (mobileTranscriptTool !== "search") return;
     searchInputRef.current?.focus();
     searchInputRef.current?.select();
-  }, [desktopSearchOpen, mobileTranscriptTool]);
+  }, [mobileTranscriptTool]);
 
   useEffect(() => {
     const narrow = window.matchMedia("(max-width: 900px)");
     const syncLayout = () => {
       if (!narrow.matches) {
-        setDesktopSearchOpen((open) => open || !!searchQueryRef.current);
         setMobileTranscriptTool(null);
       } else {
-        setDesktopSearchOpen(false);
         if (searchQueryRef.current) setMobileTranscriptTool("search");
         else searchInputRef.current?.blur();
       }
@@ -418,7 +392,6 @@ export const Transcript = memo(function Transcript({
     setActivePromptOrdinal(null);
     setPendingPromptOrdinal(null);
     setMobileTranscriptTool(null);
-    setDesktopSearchOpen(false);
   }, [sessionId, projectionViewKey]);
 
   useLayoutEffect(() => {
@@ -608,13 +581,10 @@ export const Transcript = memo(function Transcript({
         search={search}
         inputRef={searchInputRef}
         searchLauncherRef={searchLauncherRef}
-        desktopSearchLauncherRef={desktopSearchLauncherRef}
         promptLauncherRef={promptLauncherRef}
-        desktopSearchOpen={desktopSearchOpen}
-        onOpenSearch={openSearch}
         mobileTool={mobileTranscriptTool}
         onOpenMobile={setMobileTranscriptTool}
-        onClose={closeSearch}
+        onClose={closeMobileTranscriptTool}
       />
       <PromptMap
         key={`prompt-map:${sessionId}\u0000${projectionViewKey}`}

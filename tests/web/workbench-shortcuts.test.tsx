@@ -22,13 +22,13 @@ describe("workbench keyboard ownership", () => {
       const draft = screen.getByRole("textbox", { name: "Message" });
       fireEvent.change(draft, { target: { value: "keep this draft" } });
       expect(fireEvent.keyDown(draft, { key: "f", ...modifier })).toBe(false);
-      expect(
-        screen.getByRole("searchbox", { name: "Search conversation" }),
-      ).toHaveFocus();
+      const search = screen.getByRole("searchbox", {
+        name: "Search conversation",
+      });
+      expect(search).toHaveFocus();
       expect(draft).toHaveValue("keep this draft");
-      fireEvent.click(
-        screen.getByRole("button", { name: "Close conversation search" }),
-      );
+      fireEvent.keyDown(search, { key: "Escape" });
+      expect(search).not.toHaveFocus();
       fireEvent.click(
         screen.getByRole("button", { name: "Open command palette" }),
       );

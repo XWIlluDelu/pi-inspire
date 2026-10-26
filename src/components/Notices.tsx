@@ -130,12 +130,11 @@ export const Notices = memo(function Notices({
       "main .composer, main .composer-readonly",
     );
     const measure = () => {
-      // Find is replaced by the search row and recreated when search closes.
-      // Rediscover controls when their sizes change rather than retaining the
-      // previous launcher's detached node as the notice anchor.
+      // Rediscover responsive controls when their sizes change rather than
+      // retaining a detached node as the notice anchor.
       const tools = new Set(
         document.querySelectorAll<HTMLElement>(
-          "main .transcript-search, main .transcript-search-launcher, main .transcript-mobile-toolbar",
+          "main .transcript-search, main .transcript-mobile-toolbar",
         ),
       );
       for (const tool of observedTools) {
