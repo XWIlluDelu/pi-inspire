@@ -159,7 +159,7 @@ describe("first-paint visual preferences", () => {
     },
   );
 
-  it("uses the neutral light fallback in the HTML and install manifest", async () => {
+  it("keeps the HTML fallback without freezing installed system bars to light", async () => {
     const html = await readFile(
       new URL("../../index.html", import.meta.url),
       "utf8",
@@ -171,8 +171,11 @@ describe("first-paint visual preferences", () => {
       ),
     );
     expect(html).toContain('<meta name="theme-color" content="#F4F5F6" />');
-    expect(manifest.theme_color).toBe("#F4F5F6");
+    expect(manifest).not.toHaveProperty("theme_color");
     expect(manifest.background_color).toBe("#F4F5F6");
+    expect(manifest.id).toBe("/");
+    expect(manifest.start_url).toBe("/");
+    expect(manifest.scope).toBe("/");
     expect(manifest.display_override).toEqual(["window-controls-overlay"]);
     expect(manifest.display).toBe("standalone");
   });
