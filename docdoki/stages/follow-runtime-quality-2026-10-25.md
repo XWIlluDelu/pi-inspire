@@ -141,10 +141,10 @@ implementation. Eight Chromium reading-navigation cases passed using a separate 
 build and mock Host. Formatting, lint, unused-code and no-emit TypeScript checks passed. The deployed
 browser entry and build-stamp hashes stayed unchanged during validation. Operator-authorized rollout
 uses the existing preparation and Inspire-owned Host/terminal restart controls; native Pi and other
-projects' services remain outside that rollout. The current workflow needs explicit dispatch for
-`auto-dev`; local results do not imply that its cross-platform CI has passed.
+projects' services remain outside that rollout. The full cross-platform result is recorded below,
+separately from local validation and service activation.
 
-The [review matrix](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40467001479)
+The failed review matrix `40467001479` at `41b5326b`
 identified a Windows-only setup failure in four source-identity cases: the isolated fixture
 retained OS tools but removed Git from PATH, so `git init` failed before any assertion. This
 fixture now explicitly preserves its Git search path while continuing to isolate user state and
@@ -153,7 +153,7 @@ assertions and timeouts are unchanged. Windows Chromium passed 373 cases with on
 The local fixture, isolation, Git-configuration and maintenance regressions pass 45 cases with
 one platform skip; native Windows execution remains a separate CI check.
 
-The [next matrix](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40470764744)
+The failed next matrix `40470764744` at `5162c71a`
 exposed a separate fixture ordering error: an extension response ownership case emitted its
 question before RPC startup completed, invoking the deliberately unsupported startup-UI path.
 The three adjacent response-ownership cases now await the existing worker-ready condition before
@@ -163,7 +163,7 @@ The Windows unit/integration step passed after the PATH repair. With both fixtur
 local focused startup/ownership checks pass 53 cases and the complete unit/integration run passes
 3,991 with 10 skips; formatting, lint and server/test TypeScript checks also pass.
 
-The [combined-fixture matrix](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40472306748)
+The failed combined-fixture matrix `40472306748` at `0fb515cf`
 passed both repaired suites on Windows, but its 300-round activity mounting test exceeded the
 generic five-second budget at 6.553 seconds. The same unchanged case previously passed Windows
 at 2.771 seconds. Its complete `24 → 300 → 24` mounting/visibility assertions remain intact with
@@ -174,7 +174,7 @@ layout nor tolerance is changed on that evidence alone.
 The complete 50-case activity-fold suite, web TypeScript, formatting and lint pass locally
 after the single-test budget change; native Windows remains the decisive validation.
 
-The [following Windows run](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40478110306)
+The following matrix `40478110306` at `428ac99e`, cancelled after its Windows unit failure,
 passed the 300-round case at 5.216 seconds and the prior writer/PATH repairs. Its sole unit
 failure was `EBUSY` during corrupt-index fixture cleanup. Source inspection had a confirmed
 early-return gap: one failed Git child could complete the inspection before its concurrent
@@ -185,6 +185,21 @@ already-failed workflow was cancelled to retrieve its completed unit log promptl
 Existing focused checks pass 45 cases with one skip; the complete local unit/integration run
 passes 3,991 with 10 skips. A temporary controlled-failure check confirms that inspection waits
 for both delayed peer commands before returning unknown. No permanent test scope was added.
+
+The [final review matrix](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40481436169)
+at `2fe2dc7385e7d275c8f5f2a5fbe9139909aba4ff` passed all seven jobs: Linux quality,
+macOS and Windows platform checks, three installed-package checks and the size report. This is
+the complete `auto-dev` acceptance result; it does not replace the original v0.6.5 tag's failed
+matrix or change `main` and the tag.
+
+The four superseded review runs and their 15 associated artifacts were permanently removed with
+user approval on 2026-10-27. Their revision identities, observed failures and repair rationale
+remain above; the final passing run and the original v0.6.5 matrix remain available.
+
+The CI scope change passes actionlint 1.7.12 and local evaluation with GitHub's
+`@actions/expressions` 0.3.61, confirming single-job focused scopes, unchanged main/PR/full commands
+and the intended trigger/concurrency boundaries. This verification used no new remote CI run or
+full application test rerun.
 
 ## Remaining acceptance
 

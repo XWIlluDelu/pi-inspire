@@ -20,6 +20,9 @@ at `f67d6ee` (v0.6.0): all seven jobs pass, including Linux/macOS/Windows and th
 checks. [[follow-release-0-6-0-2026-10-21]] owns that release record;
 [[follow-project-quality-2026-10-21]] records subsequent integration checks.
 [[follow-runtime-quality-2026-10-25]] records local Linux production-install verification for 0.6.5.
+Its later `auto-dev` review fixes pass all seven jobs in
+[run 40481436169](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40481436169)
+at `2fe2dc73`; this does not change the original v0.6.5 tag's failed result.
 
 Package checks exercise a real default daemon, PTY I/O, terminal maintenance, Host restart preserving
 terminals, authenticated readiness/pairing and native session recovery. Native filesystem/shell checks
@@ -32,6 +35,36 @@ passes 26 branch and three Chromium cases on Windows/macOS, plus two macOS WebKi
 without retries. Its reusable lessons are to preserve Host-normalized document separators while
 asserting raw paths separately, and to block Service Workers in mock-routing suites. It does not
 change the original full run's result.
+
+## CI verification scope
+
+Ordinary `auto-dev` pushes do not trigger [CI](../../.github/workflows/ci.yml). Use targeted local
+checks during development and a full matrix for a stable acceptance revision. Main pushes retain
+the complete matrix; PR runs retain their existing quality, platform/browser and size checks,
+without installed-package verification.
+
+Manual dispatch selects one explicit `scope`:
+
+- `checks` (default): Ubuntu `npm run check`, without browsers, package verification or size reporting.
+- `windows-core` or `macos-core`: only that OS's browser-app build, portable checks, full unit/integration
+  suite, native Trash/recovery and launcher checks, without browser execution.
+- `windows` or `macos`: the corresponding complete core checks and Chromium; macOS also runs WebKit.
+- `full`: the original complete seven-job matrix, including all three installed-package checks and
+  the size report.
+
+All four OS-specific scopes omit package verification and size reporting.
+
+For a Windows core check:
+
+```sh
+gh workflow run ci.yml --ref auto-dev -f scope=windows-core
+```
+
+Full acceptance requires an explicit `-f scope=full`.
+
+Concurrency replaces an older run only for the same workflow, scope and `auto-dev` ref or PR.
+A new `checks` run therefore does not cancel `full`. Other refs, including `main`, use a unique
+run identity so neither running nor pending evidence is replaced.
 
 ## Windows full-suite completion
 
