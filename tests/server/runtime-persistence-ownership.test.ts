@@ -159,6 +159,7 @@ describe("writer persistence ownership", () => {
   it("conflicts rather than answering a stale extension-blocked writer", async () => {
     const { runtime, workers, path } = await setup();
     try {
+      await waitForReady(runtime, "session-a");
       workers[0]!.emit("event", {
         type: "extension_ui_request",
         id: "question",
@@ -865,6 +866,7 @@ describe("writer persistence ownership", () => {
   it("hard-stops and recovers a conflicted extension-blocked worker through abort", async () => {
     const { runtime, workers, path } = await setup();
     try {
+      await waitForReady(runtime, "session-a");
       workers[0]!.emit("event", {
         type: "extension_ui_request",
         id: "blocked",
@@ -903,6 +905,7 @@ describe("writer persistence ownership", () => {
   it("serializes concurrent extension responses and sends only the winning response", async () => {
     const { runtime, workers } = await setup();
     try {
+      await waitForReady(runtime, "session-a");
       workers[0]!.emit("event", {
         type: "extension_ui_request",
         id: "once",

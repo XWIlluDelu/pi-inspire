@@ -153,6 +153,16 @@ assertions and timeouts are unchanged. Windows Chromium passed 373 cases with on
 The local fixture, isolation, Git-configuration and maintenance regressions pass 45 cases with
 one platform skip; native Windows execution remains a separate CI check.
 
+The [next matrix](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40470764744)
+exposed a separate fixture ordering error: an extension response ownership case emitted its
+question before RPC startup completed, invoking the deliberately unsupported startup-UI path.
+The three adjacent response-ownership cases now await the existing worker-ready condition before
+emitting their question. Their original ownership, retirement and single-response assertions are
+unchanged; startup-UI rejection remains covered separately.
+The Windows unit/integration step passed after the PATH repair. With both fixture repairs,
+local focused startup/ownership checks pass 53 cases and the complete unit/integration run passes
+3,991 with 10 skips; formatting, lint and server/test TypeScript checks also pass.
+
 ## Remaining acceptance
 
 - On Android, verify background task outcomes, click-through and offscreen same-Pi prompting,
