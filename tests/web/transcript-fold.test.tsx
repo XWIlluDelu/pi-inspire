@@ -512,6 +512,7 @@ describe("response activity folds", () => {
     expect(fold.querySelector(".turn__divider, .turn__head")).toBeNull();
   });
 
+  // This scale regression intentionally mounts and removes all 300 real cards.
   it("bounds a long multi-round history and restores its full activity on expansion", () => {
     const { container } = render(
       transcript(toolRounds(300), "compact", { toolVisibility: "compact" }),
@@ -539,7 +540,7 @@ describe("response activity folds", () => {
       ),
     );
     expectMountedTail();
-  });
+  }, 15_000);
 
   it("restores only deliberate card choices after compact omission", () => {
     // Two omitted cards distinguish a deliberate choice from an untouched

@@ -163,6 +163,17 @@ The Windows unit/integration step passed after the PATH repair. With both fixtur
 local focused startup/ownership checks pass 53 cases and the complete unit/integration run passes
 3,991 with 10 skips; formatting, lint and server/test TypeScript checks also pass.
 
+The [combined-fixture matrix](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40472306748)
+passed both repaired suites on Windows, but its 300-round activity mounting test exceeded the
+generic five-second budget at 6.553 seconds. The same unchanged case previously passed Windows
+at 2.771 seconds. Its complete `24 → 300 → 24` mounting/visibility assertions remain intact with
+an explicit 15-second scale-test budget; global and production deadlines remain unchanged.
+Linux quality and the macOS job passed. Linux WebKit's notebook baseline estimate required one
+retry (1.3125px against the existing 1px bound); its precise cause is unconfirmed, so neither
+layout nor tolerance is changed on that evidence alone.
+The complete 50-case activity-fold suite, web TypeScript, formatting and lint pass locally
+after the single-test budget change; native Windows remains the decisive validation.
+
 ## Remaining acceptance
 
 - On Android, verify background task outcomes, click-through and offscreen same-Pi prompting,
