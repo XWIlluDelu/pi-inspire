@@ -78,31 +78,33 @@ export async function inspectInspireSource(
       const version = await installedPackageVersion(directory);
       return version ? { kind: "package", version } : { kind: "unknown" };
     }
-    const [{ stdout: inside }, { stdout: revision }, { stdout: status }] =
-      await Promise.all([
-        execFile(
-          "git",
-          ["-C", directory, "rev-parse", "--is-inside-work-tree"],
-          {
-            encoding: "utf8",
-            timeout: IDENTITY_COMMAND_TIMEOUT_MS,
-          },
-        ),
-        execFile("git", ["-C", directory, "rev-parse", "--verify", "HEAD"], {
-          encoding: "utf8",
-          timeout: IDENTITY_COMMAND_TIMEOUT_MS,
-        }),
-        execFile(
-          "git",
-          ["-C", directory, "status", "--porcelain", "--untracked-files=all"],
-          { encoding: "utf8", timeout: IDENTITY_COMMAND_TIMEOUT_MS },
-        ),
-      ]);
-    if (inside.trim() !== "true") return { kind: "unknown" };
-    const value = revision.trim();
+    // Await every started command before completing a failed inspection.
+    const [inside, revision, status] = await Promise.allSettled([
+      execFile("git", ["-C", directory, "rev-parse", "--is-inside-work-tree"], {
+        encoding: "utf8",
+        timeout: IDENTITY_COMMAND_TIMEOUT_MS,
+      }),
+      execFile("git", ["-C", directory, "rev-parse", "--verify", "HEAD"], {
+        encoding: "utf8",
+        timeout: IDENTITY_COMMAND_TIMEOUT_MS,
+      }),
+      execFile(
+        "git",
+        ["-C", directory, "status", "--porcelain", "--untracked-files=all"],
+        { encoding: "utf8", timeout: IDENTITY_COMMAND_TIMEOUT_MS },
+      ),
+    ]);
+    if (
+      inside.status === "rejected" ||
+      revision.status === "rejected" ||
+      status.status === "rejected" ||
+      inside.value.stdout.trim() !== "true"
+    )
+      return { kind: "unknown" };
+    const value = revision.value.stdout.trim();
     return {
       kind: "source",
-      revision: status.trim() === "" && value ? value : null,
+      revision: status.value.stdout.trim() === "" && value ? value : null,
     };
   } catch {
     // Missing Git, unsafe repositories, unreadable/corrupt metadata and command

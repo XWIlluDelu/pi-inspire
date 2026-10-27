@@ -174,6 +174,18 @@ layout nor tolerance is changed on that evidence alone.
 The complete 50-case activity-fold suite, web TypeScript, formatting and lint pass locally
 after the single-test budget change; native Windows remains the decisive validation.
 
+The [following Windows run](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40478110306)
+passed the 300-round case at 5.216 seconds and the prior writer/PATH repairs. Its sole unit
+failure was `EBUSY` during corrupt-index fixture cleanup. Source inspection had a confirmed
+early-return gap: one failed Git child could complete the inspection before its concurrent
+siblings exited. It now awaits every started command before interpreting their results, retaining
+parallel execution, each five-second deadline and conservative unknown identity on any failure.
+The observed Windows lock is consistent with that gap; its exact holder was not recorded. The
+already-failed workflow was cancelled to retrieve its completed unit log promptly.
+Existing focused checks pass 45 cases with one skip; the complete local unit/integration run
+passes 3,991 with 10 skips. A temporary controlled-failure check confirms that inspection waits
+for both delayed peer commands before returning unknown. No permanent test scope was added.
+
 ## Remaining acceptance
 
 - On Android, verify background task outcomes, click-through and offscreen same-Pi prompting,
