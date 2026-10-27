@@ -21,7 +21,12 @@ async function fixture() {
   directories.push(parent);
   const root = join(parent, "installation");
   await mkdir(root);
+  const pathKey =
+    Object.keys(process.env).find((key) => key.toLowerCase() === "path") ??
+    "PATH";
   const environment = isolatedTestEnvironment(parent, {
+    // Git is fixture input; the isolated Windows runtime only retains OS tools.
+    PATH: process.env[pathKey],
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: join(parent, "no-global-config"),
   });
@@ -43,9 +48,6 @@ async function fixture() {
   );
   const inspect = async (directory = root, missingGit = false) => {
     if (!missingGit) return inspectInspireSource(directory);
-    const pathKey =
-      Object.keys(process.env).find((key) => key.toLowerCase() === "path") ??
-      "PATH";
     const previous = process.env[pathKey];
     vi.stubEnv(pathKey, join(parent, "empty-bin"));
     try {

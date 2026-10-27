@@ -144,6 +144,15 @@ uses the existing preparation and Inspire-owned Host/terminal restart controls; 
 projects' services remain outside that rollout. The current workflow needs explicit dispatch for
 `auto-dev`; local results do not imply that its cross-platform CI has passed.
 
+The [review matrix](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40467001479)
+identified a Windows-only setup failure in four source-identity cases: the isolated fixture
+retained OS tools but removed Git from PATH, so `git init` failed before any assertion. This
+fixture now explicitly preserves its Git search path while continuing to isolate user state and
+Git configuration. The missing-Git scenario still replaces that path; production identity rules,
+assertions and timeouts are unchanged. Windows Chromium passed 373 cases with one skip.
+The local fixture, isolation, Git-configuration and maintenance regressions pass 45 cases with
+one platform skip; native Windows execution remains a separate CI check.
+
 ## Remaining acceptance
 
 - On Android, verify background task outcomes, click-through and offscreen same-Pi prompting,
