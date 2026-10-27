@@ -1,14 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PiRpcProcess, PiRpcResponseFence } from "../../server/pi-rpc.js";
+import {
+  PiRpcCancelledError,
+  type PiRpcProcess,
+  type PiRpcResponseFence,
+} from "../../server/pi-rpc.js";
 import { RuntimeBashController } from "../../server/runtime-bash.js";
 import {
   createRuntimeSlot,
   type RuntimeSlot,
 } from "../../server/runtime-slot.js";
 import {
+  deferredSignal,
   disposeRuntimeFixture,
-  schedulingRuntime,
   initializeRuntimeFixture,
+  schedulingRuntime,
   waitForReady,
 } from "./fixtures/runtime.js";
 
@@ -55,6 +60,79 @@ function fixture() {
 describe("RuntimeController shell acceptance", () => {
   beforeEach(initializeRuntimeFixture);
   afterEach(disposeRuntimeFixture);
+
+  it.each(["retirement", "reconciliation"] as const)(
+    "keeps a cancelled shell outcome unknown when %s fails",
+    async (failure) => {
+      const f = schedulingRuntime();
+      const { runtime } = f;
+      const dispatched = deferredSignal();
+      const cleanupError = new Error(`Shell ${failure} failed`);
+      let rejectShell!: (error: Error) => void;
+      let execution: Promise<unknown> | undefined;
+      try {
+        await runtime.openSession("a");
+        await waitForReady(runtime);
+        const reconcile = vi.spyOn(
+          runtime as unknown as { reconcileSlot(): Promise<unknown> },
+          "reconcileSlot",
+        );
+        f.worker.responseOverrides.set("bash", () => {
+          dispatched.resolve();
+          return new Promise((_resolve, reject) => {
+            rejectShell = reject;
+          });
+        });
+        f.worker.stop = async () => {
+          f.worker.stops += 1;
+          const error = new PiRpcCancelledError("bash");
+          error.stopped =
+            failure === "retirement"
+              ? Promise.reject(cleanupError)
+              : Promise.resolve();
+          if (failure === "reconciliation")
+            reconcile.mockRejectedValueOnce(cleanupError);
+          rejectShell(error);
+          await error.stopped;
+        };
+        execution = runtime
+          .prompt({ sessionId: "a", message: "!echo once" })
+          .catch((error: unknown) => error);
+        await dispatched.promise;
+        // A suspended user_bash hook requires actual worker retirement.
+        f.worker.emit("event", {
+          type: "extension_ui_request",
+          id: "bash-hook",
+          method: "confirm",
+          title: "Run shell command?",
+        });
+        await vi.waitFor(async () =>
+          expect(
+            (await runtime.snapshot()).pendingExtensionUiRequests,
+          ).toHaveLength(1),
+        );
+        const stopping = runtime.abort("a");
+        if (failure === "retirement")
+          await expect(stopping).rejects.toBe(cleanupError);
+        else await stopping;
+        expect(await execution).toMatchObject({
+          status: 409,
+          code: "PI_RPC_OUTCOME_UNKNOWN",
+          outcomeUnknown: true,
+          message: expect.stringContaining("Shell command cancelled"),
+        });
+        expect(
+          f.worker.commands.filter((command) => command.type === "bash"),
+        ).toHaveLength(1);
+        expect(f.worker.stops).toBe(1);
+      } finally {
+        await execution;
+        if (failure === "retirement")
+          await expect(runtime.close()).rejects.toBe(cleanupError);
+        else await runtime.close();
+      }
+    },
+  );
 
   it("consumes a confirmed shell command even when reconciliation and worker retirement fail", async () => {
     const f = schedulingRuntime();
