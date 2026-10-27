@@ -1,6 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { lstat, readFile, stat } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { resolvePiInstallationIdentity } from "./pi-installation.js";
 import type { DiagnosticLogger } from "./diagnostics.js";
@@ -12,7 +12,8 @@ const IDENTITY_COMMAND_TIMEOUT_MS = 5_000;
 
 export type InspireSourceIdentity =
   | { kind: "source"; revision: string | null }
-  | { kind: "package"; version: string | null };
+  | { kind: "package"; version: string | null }
+  | { kind: "unknown" };
 
 interface MaintenanceRestartReady {
   kind: "ready";
@@ -35,15 +36,24 @@ interface MaintenanceRestartControllerOptions {
   inspectSource?: (root: string) => Promise<InspireSourceIdentity>;
 }
 
-/** A package release does not have a mutable checked-out revision. A source
- * checkout with an unclean worktree remains distinct from one with no git
- * authority, so a Pi update can never deploy local edits by accident. */
+async function hasPath(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 async function installedPackageVersion(root: string): Promise<string | null> {
   try {
-    const { version } = JSON.parse(
+    const { name, version } = JSON.parse(
       await readFile(`${root}/package.json`, "utf8"),
-    ) as { version?: unknown };
-    return typeof version === "string" && version ? version : null;
+    ) as { name?: unknown; version?: unknown };
+    return name === "inspire-pi-gui" && typeof version === "string" && version
+      ? version
+      : null;
   } catch {
     return null;
   }
@@ -54,6 +64,20 @@ export async function inspectInspireSource(
 ): Promise<InspireSourceIdentity> {
   const directory = resolve(root);
   try {
+    // Match the launcher's compiled-package layout before consulting Git: an
+    // npm installation may live inside an unrelated checkout. A local .git
+    // directory or gitfile still requires source inspection, even without ts.
+    if (
+      !(await hasPath(join(directory, "server", "index.ts"))) &&
+      !(await hasPath(join(directory, ".git")))
+    ) {
+      if (
+        !(await stat(join(directory, "build", "server", "index.js"))).isFile()
+      )
+        return { kind: "unknown" };
+      const version = await installedPackageVersion(directory);
+      return version ? { kind: "package", version } : { kind: "unknown" };
+    }
     const [{ stdout: inside }, { stdout: revision }, { stdout: status }] =
       await Promise.all([
         execFile(
@@ -74,21 +98,16 @@ export async function inspectInspireSource(
           { encoding: "utf8", timeout: IDENTITY_COMMAND_TIMEOUT_MS },
         ),
       ]);
-    if (inside.trim() !== "true")
-      return {
-        kind: "package",
-        version: await installedPackageVersion(directory),
-      };
+    if (inside.trim() !== "true") return { kind: "unknown" };
     const value = revision.trim();
     return {
       kind: "source",
       revision: status.trim() === "" && value ? value : null,
     };
   } catch {
-    return {
-      kind: "package",
-      version: await installedPackageVersion(directory),
-    };
+    // Missing Git, unsafe repositories, unreadable/corrupt metadata and command
+    // failures cannot establish package identity or authorize a Pi-only restart.
+    return { kind: "unknown" };
   }
 }
 
@@ -121,6 +140,8 @@ export class MaintenanceRestartController {
       return this.skip("runtime-unsupported");
 
     const source = this.options.runningSource;
+    if (source.kind === "unknown")
+      return this.skip("inspire-identity-unavailable");
     if (source.kind === "source" && source.revision === null)
       return this.skip("inspire-source-not-clean");
 
@@ -139,6 +160,8 @@ export class MaintenanceRestartController {
     } catch {
       return this.skip("inspire-identity-unavailable");
     }
+    if (current.kind === "unknown")
+      return this.skip("inspire-identity-unavailable");
     if (source.kind === "source") {
       if (current.kind !== "source" || current.revision === null)
         return this.skip("inspire-source-not-clean");

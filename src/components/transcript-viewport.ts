@@ -461,6 +461,7 @@ export function useTranscriptViewport<Row extends TranscriptViewportRow>({
   return {
     scrollRef,
     contentRef,
+    viewportIntentRef,
     virtualize,
     virtualizer,
     pinned,

@@ -212,6 +212,7 @@ export const Transcript = memo(function Transcript({
   const [pendingPromptOrdinal, setPendingPromptOrdinal] = useState<{
     ordinal: number;
     owner: typeof imageOwner;
+    viewportIntent: number;
   } | null>(null);
   const promptNavigationOverrideRef = useRef<number | null>(null);
   const viewport = useTranscriptViewport({
@@ -360,8 +361,13 @@ export const Transcript = memo(function Transcript({
         viewport.virtualizer.scrollToIndex(rowIndex, { align: "start" });
       } else {
         const owner = promptNavigationOwnerRef.current;
+        const viewportIntent = viewport.viewportIntentRef.current;
         requestAnimationFrame(() => {
-          if (promptNavigationOwnerRef.current !== owner) return;
+          if (
+            promptNavigationOwnerRef.current !== owner ||
+            viewport.viewportIntentRef.current !== viewportIntent
+          )
+            return;
           viewport.scrollRef.current
             ?.querySelector<HTMLElement>(`[data-transcript-row="${rowIndex}"]`)
             ?.scrollIntoView({ block: "start" });
@@ -378,13 +384,28 @@ export const Transcript = memo(function Transcript({
       search.clearCurrentMatch();
       if (scrollToPromptOrdinal(ordinal)) return true;
       const owner = imageOwner;
-      setPendingPromptOrdinal({ ordinal, owner });
+      viewport.releaseLatestFollow();
+      const pending = {
+        ordinal,
+        owner,
+        viewportIntent: viewport.viewportIntentRef.current,
+      };
+      setPendingPromptOrdinal(pending);
       const loaded = await onNavigatePromptMapTurn(ordinal);
       if (promptNavigationOwnerRef.current !== owner) return false;
-      if (!loaded) setPendingPromptOrdinal(null);
+      if (!loaded)
+        setPendingPromptOrdinal((current) =>
+          current === pending ? null : current,
+        );
       return loaded;
     },
-    [imageOwner, onNavigatePromptMapTurn, scrollToPromptOrdinal, search],
+    [
+      imageOwner,
+      onNavigatePromptMapTurn,
+      scrollToPromptOrdinal,
+      search,
+      viewport,
+    ],
   );
 
   useEffect(() => {
@@ -395,11 +416,19 @@ export const Transcript = memo(function Transcript({
   }, [sessionId, projectionViewKey]);
 
   useLayoutEffect(() => {
-    if (!pendingPromptOrdinal || pendingPromptOrdinal.owner !== imageOwner)
-      return;
-    if (scrollToPromptOrdinal(pendingPromptOrdinal.ordinal))
-      setPendingPromptOrdinal(null);
-  }, [imageOwner, pendingPromptOrdinal, rows, scrollToPromptOrdinal]);
+    if (!pendingPromptOrdinal) return;
+    // The read can still populate this view after search or another gesture,
+    // but only the intent that requested it may move the reading position.
+    if (
+      pendingPromptOrdinal.owner !== imageOwner ||
+      pendingPromptOrdinal.viewportIntent !==
+        viewport.viewportIntentRef.current ||
+      scrollToPromptOrdinal(pendingPromptOrdinal.ordinal)
+    )
+      setPendingPromptOrdinal((current) =>
+        current === pendingPromptOrdinal ? null : current,
+      );
+  }, [imageOwner, pendingPromptOrdinal, scrollToPromptOrdinal, viewport]);
 
   useEffect(() => {
     const scroller = viewport.scrollRef.current;

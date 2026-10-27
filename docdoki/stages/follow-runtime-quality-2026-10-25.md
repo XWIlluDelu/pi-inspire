@@ -53,10 +53,11 @@ clear after compatible request-parser, multipart-upload and schema-validation up
 API, configuration, upload and notification regressions pass. Cross-platform evidence is tracked
 in [[platform-compatibility]].
 
-The 0.6.5 source, dependencies and browser build are staged in the local installation. The new
-entry and retained outgoing assets are served successfully, and the build stamp matches current
-inputs. The running Host and terminal daemon have not been restarted. Their activation remains
-with the operator; external Pi extensions need their own reload in the original idle process.
+The CI repair at `c7f74095` was subsequently deployed and activated with operator authorization.
+Authenticated readiness reported Inspire 0.6.5; Host and terminal services recovered, the served
+browser assets matched the prepared build, and retained sessions remained readable. Native Pi and
+the annotated 0.6.5 tag were unchanged. The review follow-up below is a separate change set delivered
+through `auto-dev`, without merging into `main` or moving that tag.
 
 ### CI follow-up
 
@@ -111,6 +112,37 @@ and nine launcher checks (one platform skip), plus formatting, lint, types, unus
 a fresh isolated browser build. Launcher checks run from a temporary source copy so validation
 cannot rebuild the staged deployment or control its instances. Cross-platform CI remains separate
 evidence from this local run.
+
+### Review follow-up
+
+The six review findings are real current paths or bounded local repairs. None requires a new
+coordination layer or a broader compatibility project:
+
+- Zsh's ordinary command and cwd markers require a literal-percent pattern, rather than Zsh's
+  end anchor. Native marker round trips cover plain text, percent signs and control characters.
+- A cancelled dispatched input retains unknown acceptance even if retirement or reconciliation
+  fails. Cleanup diagnostics and the existing writer fence remain separate from delivery evidence.
+- Branch navigation rechecks its original worker, bridge and pending operation after final
+  reconciliation; Stop or exit cannot leave a successful lease owned by a retired worker.
+- A delayed Prompt Map seek retains its data but loses scrolling authority after a newer search,
+  scroll or Latest action, including before its deferred animation frame.
+- Linux direct launch remains available without a user service manager when offline inspection
+  establishes that no service authority is present. Installed or indeterminate authority still
+  refuses takeover; unusual manager lookup settings are not reconstructed.
+- Source-inspection failure remains unknown instead of becoming package identity. The optional
+  maintenance timer must skip it; a compiled package is recognized from its existing release layout.
+
+These checks exercise controlled failure/ordering conditions, not claims of observed production
+incidents. Real Pi duplicate execution, cross-platform process failure and physical-device
+acceptance remain distinct from these regressions. The final combined unit/integration run passed
+3,991 cases with 10 skips. Focused checks passed 119 runtime, 71 web, 54 Host-control/source-identity
+and 19 shell cases; new navigation, cancellation and Zsh regressions also failed against the old
+implementation. Eight Chromium reading-navigation cases passed using a separate temporary browser
+build and mock Host. Formatting, lint, unused-code and no-emit TypeScript checks passed. The deployed
+browser entry and build-stamp hashes stayed unchanged during validation. Operator-authorized rollout
+uses the existing preparation and Inspire-owned Host/terminal restart controls; native Pi and other
+projects' services remain outside that rollout. The current workflow needs explicit dispatch for
+`auto-dev`; local results do not imply that its cross-platform CI has passed.
 
 ## Remaining acceptance
 

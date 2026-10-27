@@ -1539,8 +1539,19 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         error instanceof PiRpcCancelledError &&
         (error.command === "prompt" || error.command === "bash")
       ) {
-        if (error.stopped) await error.stopped;
-        await this.reconcileSlot(slot, true);
+        try {
+          if (error.stopped) await error.stopped;
+          await this.reconcileSlot(slot, true);
+        } catch (cleanupError) {
+          // Cancellation does not prove that Pi rejected the dispatched input.
+          // Failed retirement keeps its writer fence; failed reconciliation
+          // must likewise preserve uncertainty instead of inviting a resend.
+          this.logRuntimeError(
+            slot.id,
+            cleanupError,
+            "cancelled_persistence_cleanup_failed",
+          );
+        }
         if (error.command === "prompt") {
           slot.runState = slot.conflict ? "conflict" : "aborted";
           this.emitSlotEvent(slot, { type: "prompt_cancelled" });
@@ -3516,6 +3527,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       this.requireIdleBranchSlot(slot, request.revision);
       const ready = await this.ensureFreshWriterInsideGate(slot);
       this.requireIdleBranchSlot(slot, request.revision);
+      const rpc = ready.process;
       const projection = ready.projection;
       const bridge = ready.bridge;
       if (!projection || !bridge)
@@ -3569,7 +3581,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         bridgeRequest,
         BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
       );
-      const promptFence = ready.process
+      const promptFence = rpc
         .request(
           { type: "prompt", message: `/${bridge.command} ${payload}` },
           this.branchBridgeTimeoutMs,
@@ -3632,7 +3644,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       const result = resultOutcome.value;
       let verified: { entries?: unknown[]; leafId?: unknown };
       try {
-        verified = await ready.process.request({
+        verified = await rpc.request({
           type: "get_entries",
           since: tail,
         });
@@ -3657,7 +3669,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         (!result.summaryId || request.summarize) &&
         branchDeltaMatches(result, delta, navigationTarget, beforeLeaf);
       await this.reconcileSlot(slot, true);
-      if (slot.pendingBranchBridge === pending) slot.pendingBranchBridge = null;
       if (
         slot.conflict ||
         (delta.length === 0
@@ -3672,6 +3683,18 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           slot,
           "Branch navigation verification failed; the worker was stopped and disk state reconciled",
         );
+      // Stop and process exit retire this worker outside the mutation lane.
+      // Reconciliation must not let its finished handler recreate that lease.
+      if (
+        slot.process !== rpc ||
+        slot.bridge !== bridge ||
+        slot.pendingBranchBridge !== pending
+      )
+        throw requestError(
+          "Branch navigation worker stopped before the result could be applied",
+          409,
+        );
+      slot.pendingBranchBridge = null;
       if (result.cancelled) {
         if (result.effectiveLeaf !== beforeLeaf)
           return this.failUnknownBranchOutcome(

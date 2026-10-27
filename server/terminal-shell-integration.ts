@@ -217,7 +217,8 @@ __inspire_bash_finish_bootstrap
 const zshIntegration =
   shellLiteral(String.raw`__inspire_encode_terminal_value() {
   local value="$1"
-  value="__INSPIRE_OPEN__value//%/%25}"
+  # Escape the literal percent so zsh does not treat it as an end anchor.
+  value="__INSPIRE_OPEN__value//\%/%25}"
   value="__INSPIRE_OPEN__value//$'\033'/%1B}"
   value="__INSPIRE_OPEN__value//$'\007'/%07}"
   value="__INSPIRE_OPEN__value//$'\r'/%0D}"

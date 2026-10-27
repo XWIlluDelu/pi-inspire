@@ -8,16 +8,24 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addAttachmentContext } from "../../server/attachments.js";
 
 import {
+  PiRpcCancelledError,
   PiRpcOutcomeUnknownError,
   type PiRpcProcess,
 } from "../../server/pi-rpc.js";
 
 import { RuntimeController } from "../../server/runtime.js";
+import type { RuntimeSlot } from "../../server/runtime-slot.js";
 
+import {
+  closeHostApiFixture,
+  hostApiFixture,
+  token,
+} from "./fixtures/host-api.js";
 import { PreviewProjection } from "./fixtures/preview-projection.js";
 import {
   catalog,
@@ -331,6 +339,151 @@ describe("prompt admission and artifact ownership", () => {
         await expect(runtime.close()).rejects.toThrow(
           "Worker exit unconfirmed",
         );
+    },
+  );
+
+  it.each(["stop", "reconciliation"] as const)(
+    "retains an unknown prompt receipt when cancellation %s fails",
+    async (failure) => {
+      const store = trackedAttachmentStore();
+      const workers: FakeRpc[] = [];
+      const runtime = new RuntimeController(
+        catalog([await persistedRecord("a")]),
+        store,
+        (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+      );
+      await runtime.openSession("a");
+      await waitForReady(runtime);
+      const internal = runtime as unknown as {
+        slots: Map<string, RuntimeSlot>;
+        reconcileSlot(slot: RuntimeSlot, force?: boolean): Promise<unknown>;
+        logRuntimeError(
+          sessionId: string,
+          error: unknown,
+          event?: string,
+        ): void;
+      };
+      const slot = internal.slots.get("a")!;
+      const stopEpoch = slot.inputStopEpoch;
+      const worker = workers[0]!;
+      const dispatched = deferredSignal();
+      let rejectPrompt!: (error: Error) => void;
+      worker.responseOverrides.set(
+        "prompt",
+        () =>
+          new Promise<never>((_resolve, reject) => {
+            rejectPrompt = reject;
+            dispatched.resolve();
+          }),
+      );
+      const cleanupError = new Error(`Cancellation ${failure} failed`);
+      const reconcile = vi.spyOn(internal, "reconcileSlot");
+      const logged = vi.spyOn(internal, "logRuntimeError");
+      const restage = vi.spyOn(store, "restage");
+      const stop = vi.spyOn(worker, "stop").mockImplementation((command) => {
+        expect(command).toBe("prompt");
+        const stopped =
+          failure === "stop" ? Promise.reject(cleanupError) : Promise.resolve();
+        if (failure === "reconciliation")
+          reconcile.mockRejectedValueOnce(cleanupError);
+        const error = new PiRpcCancelledError("prompt");
+        error.stopped = stopped;
+        rejectPrompt(error);
+        return stopped;
+      });
+      const http = await hostApiFixture({ runtime });
+      try {
+        const prompt = vi.spyOn(runtime, "prompt");
+        const doc = await store.add(upload("notes.txt", "text/plain"));
+        const delivery = http.promptDelivery({
+          sessionId: "a",
+          message: "send once before Stop",
+          attachmentIds: [doc.id],
+        });
+        const posting = request(http.application.server)
+          .post("/api/prompt")
+          .set("Authorization", `Bearer ${token}`)
+          .send(delivery)
+          .then((response) => response);
+        await Promise.race([
+          dispatched.promise,
+          posting.then((response) => {
+            throw new Error(
+              `Prompt did not dispatch: ${JSON.stringify(response.body)}`,
+            );
+          }),
+        ]);
+        const aborting = runtime.abort("a");
+        if (failure === "stop")
+          await expect(aborting).rejects.toBe(cleanupError);
+        else
+          await expect(aborting).resolves.toMatchObject({
+            steering: [],
+            followUp: [],
+          });
+        const response = await posting;
+        expect(response.status).toBe(409);
+        expect(response.body).toMatchObject({
+          code: "PI_RPC_OUTCOME_UNKNOWN",
+          outcomeUnknown: true,
+        });
+        expect(response.headers["x-inspire-prompt-outcome"]).toBe("unknown");
+        expect(slot.inputStopEpoch).toBe(stopEpoch + 1);
+        expect(slot.process).toBeNull();
+        expect(stop).toHaveBeenCalledOnce();
+        expect(restage).not.toHaveBeenCalled();
+        expect(logged).toHaveBeenCalledWith(
+          "a",
+          cleanupError,
+          "cancelled_persistence_cleanup_failed",
+        );
+        // Both retrying the same delivery and observing its receipt retain the
+        // unknown outcome, so Composer cannot treat Stop as a refusal to send.
+        const repeated = await request(http.application.server)
+          .post("/api/prompt")
+          .set("Authorization", `Bearer ${token}`)
+          .send(delivery)
+          .expect(409)
+          .expect("X-Inspire-Prompt-Outcome", "unknown");
+        expect(repeated.body).toEqual(response.body);
+        const observed = await request(http.application.server)
+          .get(`/api/prompt/${delivery.operationId}`)
+          .query({ authorityId: http.application.authorityId })
+          .set("Authorization", `Bearer ${token}`)
+          .expect(409)
+          .expect("X-Inspire-Prompt-Operation", delivery.operationId)
+          .expect("X-Inspire-Prompt-Outcome", "unknown");
+        expect(observed.body).toEqual(response.body);
+        expect(prompt).toHaveBeenCalledOnce();
+        expect(
+          worker.commands.filter((command) => command.type === "prompt"),
+        ).toHaveLength(1);
+        // An uncertain file delivery keeps its consumed lease even if the
+        // browser tries to withdraw it or submit it under a new identity.
+        await store.remove(doc.id);
+        await expect(store.resolveForPrompt([doc.id])).rejects.toThrow(
+          /already belong/,
+        );
+        if (failure === "stop") {
+          expect(slot.stopping).not.toBeNull();
+          await expect(slot.stopping).rejects.toBe(cleanupError);
+          await expect(
+            runtime.prompt({ sessionId: "a", message: "must not replace" }),
+          ).rejects.toBe(cleanupError);
+          expect(workers).toHaveLength(1);
+        } else expect(slot.stopping).toBeNull();
+      } finally {
+        const closing = closeHostApiFixture(http).finally(() =>
+          rm(http.temporary, { recursive: true, force: true }),
+        );
+        if (failure === "stop" && stop.mock.calls.length)
+          await expect(closing).rejects.toBe(cleanupError);
+        else await closing;
+      }
     },
   );
 

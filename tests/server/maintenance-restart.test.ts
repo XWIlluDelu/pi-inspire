@@ -61,6 +61,28 @@ function controller(options: {
 }
 
 describe("idle maintenance restart", () => {
+  it.each(["startup", "maintenance", "both"])(
+    "does not authorize a Pi-only restart with unknown %s source identity",
+    async (unknownAt) => {
+      const { subject, reserve } = controller({
+        inspectedPiVersion: "0.85.0",
+        runningSource:
+          unknownAt === "maintenance"
+            ? { kind: "package", version: "0.6.5" }
+            : { kind: "unknown" },
+        inspectedSource:
+          unknownAt === "startup"
+            ? { kind: "package", version: "0.6.5" }
+            : { kind: "unknown" },
+      });
+      await expect(subject.reserve()).resolves.toEqual({
+        kind: "skipped",
+        reason: "inspire-identity-unavailable",
+      });
+      expect(reserve).not.toHaveBeenCalled();
+    },
+  );
+
   it("does not authorize restart when source inspection throws", async () => {
     const { subject, reserve } = controller({
       inspectedPiVersion: "0.85.0",
