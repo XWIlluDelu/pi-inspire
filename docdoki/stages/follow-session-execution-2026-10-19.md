@@ -59,11 +59,13 @@ Confirmed native retirement triggers admission immediately;
 ordinary presence is checked every two seconds while viewed. Observation does not replay input or
 rewrite unchanged retained presence. [[follow-project-quality-2026-10-21]] tracks integration into `main`.
 
-## Automatic idle handoff — blocked
+## Automatic idle handoff — deferred
 
-The decided extension of [[herdr-enhancement]] requires no manual takeover workflow. The intended
-implementation adds a receiver-bound cooperative retirement action to the existing bridge, then
-reuses viewed-session recovery; it does not replace native discovery or introduce a new writer lease.
+The desired behavior is automatic control without a manual takeover workflow or complex machinery.
+A candidate would let the identified native receiver retire when safe, then reuse viewed-session
+recovery. That approach has not become an implementable design. The follow-up feasibility review
+found no simple supported alternative for an already-running TUI; keep existing native control
+rather than expanding this into a new lifecycle system.
 
 Public-interface inspection and isolated Linux PTY probes on 2026-10-28 found a blocking distinction
 in both the pinned Pi 1.3.0 and installed Pi 1.4.0:
@@ -81,10 +83,29 @@ No automatic-exit code is enabled. Existing native control and confirmed-release
 unchanged. The probes used isolated offline configuration and disposable sessions; no production Pi,
 Host or shared build output was changed, and the one-off probe was removed.
 
-Next: revisit when Pi offers a public non-interrupting retirement primitive, or sufficient owning-runtime
-admission/lifetime controls to implement one. Verify active shell, queued input, native dialogs/drafts,
-new input racing retirement, and delayed shutdown hooks before enabling the bridge action. Do not
-reconstruct shell state by overriding user execution or interpreting terminal screens.
+The follow-up review checked alternatives as well as shutdown:
+
+- **Wait, then release by switching:** `waitForIdle()` uses the same agent-only state. An isolated
+  Pi 1.4.0 SDK check returned from it while `isBashRunning === true`; `runtime.newSession()`
+  replaced the session and cancelled the unfinished shell. The public runtime's common
+  `teardownCurrent()` also disposes the old session on `switchSession()`.
+- **Adopt the live TUI:** SDK exports expose the session/runtime a caller creates; neither the
+  extension context nor RPC offers attachment to an existing interactive runtime or a live TUI-to-RPC
+  mode switch. A custom launcher could own future sessions from startup, not adopt this native process.
+- **Use Herdr state/control:** installed Herdr 0.8.6 (protocol 22) has no conditional agent-retirement
+  operation. Its Pi integration v9 reports agent activity and blocked prompts, not native shell
+  lifetime. `agent wait` observes that reported state; server live handoff preserves terminal
+  processes during a Herdr update, not Pi session ownership.
+- **Reconstruct activity in the bridge:** `user_bash` handlers short-circuit on a returned execution
+  or result; a later observer can miss the operation altogether. Replacing shell execution, guessing
+  from process trees/screens or patching the owning runtime would add complexity or violate the
+  public-interface boundary.
+
+The inspected upstream [extension types](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/extensions/types.ts)
+also lack owning-shell state or conditional retirement. The [SDK](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md)
+and [Herdr automation](https://herdr.dev/docs/agent-automation/) document the respective ownership
+and observation boundaries. Revisit only if a simple public adoption or non-interrupting release
+path becomes available; no workaround or automatic-exit implementation is scheduled.
 
 ## Existing verification
 
