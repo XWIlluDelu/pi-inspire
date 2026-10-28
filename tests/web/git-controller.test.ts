@@ -17,7 +17,14 @@ const path = { id: "file", display: "file.txt", utf8Path: "file.txt" };
 const modified: GitStatusResponse = {
   kind: "repository",
   head: { kind: "branch", name: "main", oid: "abc" },
-  files: [{ path, unstaged: { kind: "modified" }, untracked: false }],
+  files: [
+    {
+      path,
+      unstaged: { kind: "modified" },
+      worktree: { kind: "modified" as const },
+      untracked: false,
+    },
+  ],
   total: 1,
   truncated: false,
   groups: { conflicted: [], staged: [], unstaged: [path.id], untracked: [] },
@@ -25,7 +32,7 @@ const modified: GitStatusResponse = {
 const diff = (version: string) => ({
   kind: "text" as const,
   path,
-  side: "unstaged" as const,
+  side: "worktree" as const,
   additions: 1,
   deletions: 0,
   truncated: false,
@@ -40,7 +47,7 @@ const visibleSelection = {
   fileChangesVisible: true,
   gitStatus: modified,
   selectedGitPathId: path.id,
-  selectedGitSide: "unstaged" as const,
+  selectedGitSide: "worktree" as const,
   gitDiff: { status: "ready" as const, result: diff("before") },
 };
 
@@ -94,6 +101,104 @@ describe("GitController", () => {
     vi.useRealTimers();
   });
 
+  it.each([undefined, "staged", "unstaged"] as const)(
+    "opens the net comparison even when a legacy caller requests %s",
+    async (legacySide) => {
+      const harness = createHarness({ gitStatus: modified });
+      harness.gitDiff.mockResolvedValue(diff("net"));
+
+      await harness.controller.openChange(path.id, legacySide);
+
+      expect(harness.gitDiff).toHaveBeenCalledExactlyOnceWith(
+        "s1",
+        path.id,
+        "worktree",
+        expect.any(AbortSignal),
+      );
+      expect(harness.state().selectedGitSide).toBe("worktree");
+    },
+  );
+
+  it("does not use native index facets as evidence of a net change", async () => {
+    const harness = createHarness({
+      gitStatus: {
+        ...modified,
+        files: [
+          {
+            path,
+            staged: { kind: "modified" },
+            unstaged: { kind: "modified" },
+            untracked: false,
+          },
+        ],
+      },
+    });
+
+    await harness.controller.openChange(path.id);
+    harness.controller.selectWorkspacePath("file.txt");
+
+    expect(harness.gitDiff).not.toHaveBeenCalled();
+    expect(harness.openResourceFromGit).not.toHaveBeenCalled();
+    expect(harness.state().selectedGitPathId).toBeNull();
+  });
+
+  it.each([
+    { path, worktree: { kind: "added" }, untracked: true },
+    { path, conflict: { code: "UU" }, untracked: false },
+  ] satisfies GitFileChange[])(
+    "opens a net addition or conflict without requiring index facets: %j",
+    async (change) => {
+      const harness = createHarness({
+        gitStatus: { ...modified, files: [change] },
+      });
+      harness.gitDiff.mockResolvedValue(diff("net"));
+
+      await harness.controller.openChange(path.id);
+
+      expect(harness.openResourceFromGit).toHaveBeenCalledExactlyOnceWith(
+        change,
+        "worktree",
+      );
+      expect(harness.gitDiff).toHaveBeenCalledExactlyOnceWith(
+        "s1",
+        path.id,
+        "worktree",
+        expect.any(AbortSignal),
+      );
+    },
+  );
+
+  it("cancels a pending comparison when fresh net status removes the path", async () => {
+    const harness = createHarness({ gitStatus: modified });
+    let finish!: (value: ReturnType<typeof diff>) => void;
+    harness.gitDiff.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const opening = harness.controller.openChange(path.id);
+    await vi.waitFor(() => expect(harness.gitDiff).toHaveBeenCalledTimes(1));
+    const signal = harness.gitDiff.mock.calls[0]![3] as AbortSignal;
+    harness.gitStatus.mockResolvedValue({
+      ...modified,
+      files: [],
+      total: 0,
+      groups: { conflicted: [], staged: [], unstaged: [], untracked: [] },
+    });
+
+    await harness.controller.refreshStatus();
+    expect(signal.aborted).toBe(true);
+    expect(harness.state()).toMatchObject({
+      selectedGitPathId: null,
+      selectedGitSide: null,
+      gitDiff: null,
+    });
+    finish(diff("late native change"));
+    await opening;
+    expect(harness.state().gitDiff).toBeNull();
+  });
+
   it("retains readable source while coalescing refresh hints behind a slow diff", async () => {
     const harness = createHarness(visibleSelection);
     const releases: Array<(value: ReturnType<typeof diff>) => void> = [];
@@ -108,7 +213,7 @@ describe("GitController", () => {
         harness.controller.refreshStatus(),
         harness.controller.refreshStatus(),
         harness.controller.refreshStatus(),
-        harness.controller.openDiff(path.id, "unstaged"),
+        harness.controller.openDiff(path.id, "worktree"),
       ];
       expect(harness.gitDiff).toHaveBeenCalledTimes(1);
       expect(harness.state().gitDiff).toMatchObject({
@@ -164,6 +269,7 @@ describe("GitController", () => {
         {
           path: other,
           unstaged: { kind: "modified" as const },
+          worktree: { kind: "modified" as const },
           untracked: false,
         },
       ],
@@ -287,6 +393,7 @@ describe("GitController", () => {
             workspacePath: "src/main.ts",
           },
           unstaged: { kind: "modified" },
+          worktree: { kind: "modified" as const },
           untracked: false,
         },
       ],
@@ -304,7 +411,7 @@ describe("GitController", () => {
 
     expect(harness.state()).toMatchObject({
       selectedGitPathId: "main-path",
-      selectedGitSide: "unstaged",
+      selectedGitSide: "worktree",
     });
   });
 
@@ -323,6 +430,7 @@ describe("GitController", () => {
         {
           path,
           unstaged: { kind: "modified" },
+          worktree: { kind: "modified" as const },
           untracked: false,
         },
       ],
@@ -338,7 +446,7 @@ describe("GitController", () => {
     const diff = {
       kind: "empty" as const,
       path,
-      side: "unstaged" as const,
+      side: "worktree" as const,
       reason: "no-changes" as const,
     };
     harness.gitDiff.mockResolvedValue(diff);
@@ -347,8 +455,13 @@ describe("GitController", () => {
 
     expect(harness.gitStatus).toHaveBeenCalledTimes(1);
     expect(harness.openResourceFromGit).toHaveBeenCalledWith(
-      { path, unstaged: { kind: "modified" }, untracked: false },
-      "unstaged",
+      {
+        path,
+        unstaged: { kind: "modified" },
+        worktree: { kind: "modified" as const },
+        untracked: false,
+      },
+      "worktree",
     );
     expect(harness.gitDiff).toHaveBeenCalledTimes(1);
     expect(harness.state().gitDiff).toEqual({ status: "ready", result: diff });
@@ -361,33 +474,35 @@ describe("GitController", () => {
       change: {
         path: { ...path, workspacePath: "file.txt" },
         unstaged: { kind: "deleted" },
+        worktree: { kind: "deleted" },
         untracked: false,
       } satisfies GitFileChange,
-      side: "unstaged" as const,
+      side: "worktree" as const,
     },
     {
       label: "deleted staged file",
       change: {
         path: { ...path, workspacePath: "file.txt" },
         staged: { kind: "deleted" },
-        unstaged: { kind: "modified" },
+        worktree: { kind: "deleted" },
         untracked: false,
       } satisfies GitFileChange,
-      side: "staged" as const,
+      side: "worktree" as const,
     },
     {
       label: "non-UTF-8 Git identity",
       change: {
         path: { id: "raw-path", display: "escaped pathname" },
         unstaged: { kind: "modified" },
+        worktree: { kind: "modified" as const },
         untracked: false,
       } satisfies GitFileChange,
-      side: "unstaged" as const,
+      side: "worktree" as const,
     },
     {
       label: "path outside the workspace",
       change: modified.files[0],
-      side: "unstaged" as const,
+      side: "worktree" as const,
     },
   ])(
     "opens a file tab for $label without waiting for its body",
@@ -449,7 +564,7 @@ describe("GitController", () => {
     expect(harness.gitDiff).toHaveBeenCalledTimes(1);
   });
 
-  it("preserves an explicit staged selection when the resource resolves", () => {
+  it("preserves the net comparison when the resource resolves", () => {
     const path = {
       id: "dual-path",
       display: "src/dual.ts",
@@ -459,7 +574,7 @@ describe("GitController", () => {
     const gitDiff = {
       status: "loading" as const,
       pathId: path.id,
-      side: "staged" as const,
+      side: "worktree" as const,
     };
     const harness = createHarness({
       gitStatus: {
@@ -470,6 +585,7 @@ describe("GitController", () => {
             path,
             staged: { kind: "modified" },
             unstaged: { kind: "modified" },
+            worktree: { kind: "modified" as const },
             untracked: false,
           },
         ],
@@ -483,7 +599,7 @@ describe("GitController", () => {
         },
       },
       selectedGitPathId: path.id,
-      selectedGitSide: "staged",
+      selectedGitSide: "worktree",
       gitDiff,
     });
 
@@ -491,7 +607,7 @@ describe("GitController", () => {
 
     expect(harness.state()).toMatchObject({
       selectedGitPathId: path.id,
-      selectedGitSide: "staged",
+      selectedGitSide: "worktree",
       gitDiff,
     });
   });
@@ -511,6 +627,7 @@ describe("GitController", () => {
           {
             path: changedPath,
             unstaged: { kind: "modified" },
+            worktree: { kind: "modified" as const },
             untracked: false,
           },
         ],
@@ -524,11 +641,11 @@ describe("GitController", () => {
         },
       },
       selectedGitPathId: changedPath.id,
-      selectedGitSide: "unstaged",
+      selectedGitSide: "worktree",
       gitDiff: {
         status: "loading",
         pathId: changedPath.id,
-        side: "unstaged",
+        side: "worktree",
       },
     });
 
@@ -552,8 +669,8 @@ describe("GitController", () => {
       gitStatusLoading: false,
       gitStatusRefreshing: false,
       selectedGitPathId: "path-1",
-      selectedGitSide: "unstaged",
-      gitDiff: { status: "loading", pathId: "path-1", side: "unstaged" },
+      selectedGitSide: "worktree",
+      gitDiff: { status: "loading", pathId: "path-1", side: "worktree" },
     };
     const harness = createHarness(selected);
 

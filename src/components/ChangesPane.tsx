@@ -20,7 +20,6 @@ import {
 } from "react";
 import type {
   GitDiffResponse,
-  GitDiffSide,
   GitFileChange,
   GitStatusResponse,
 } from "../../shared/contracts";
@@ -199,43 +198,31 @@ function GitResultState({ result }: { result: GitDiffResponse }) {
 
 const ChangeRow = memo(function ChangeRow({
   change,
-  side,
   selectedPathId,
-  selectedSide,
 }: {
   change: GitFileChange;
-  side: GitDiffSide;
   selectedPathId: string | null;
-  selectedSide: GitDiffSide | null;
 }) {
   const Icon = fileIconForPath(pathName(change));
   const facet = presentGitFacet(change);
   const decoration = gitDecorationForChange(change);
-  const sideChange = side === "staged" ? change.staged : change.unstaged;
-  const originalPath = sideChange?.originalPath;
-  const sideLabel = change.conflict
-    ? `conflict ${change.conflict.code}`
-    : change.untracked
-      ? "Untracked — not yet added to Git"
-      : sideChange
-        ? `${side} ${sideChange.kind}`
-        : facet?.label;
+  const originalPath = change.worktree?.originalPath;
   const sourceLabel = originalPath
-    ? `${sideChange?.kind === "copied" ? "copied" : "renamed"} from ${originalPath.display}`
+    ? `${change.worktree?.kind === "copied" ? "copied" : "renamed"} from ${originalPath.display}`
     : null;
-  const selected = selectedPathId === change.path.id && selectedSide === side;
+  const selected = selectedPathId === change.path.id;
   return (
     <button
       type="button"
       className={`res__row ${selected ? "res__row--active" : ""}`}
       aria-current={selected || undefined}
       data-git-path={change.path.id}
-      data-git-side={side}
-      aria-label={[pathName(change), sideLabel, sourceLabel]
+      data-git-side="worktree"
+      aria-label={[pathName(change), facet?.label, sourceLabel]
         .filter(Boolean)
         .join(", ")}
       title={pathName(change)}
-      onClick={() => void store.openGitDiff(change.path.id, side)}
+      onClick={() => void store.openGitDiff(change.path.id, "worktree")}
     >
       <Icon size={13} aria-hidden />
       <span
@@ -266,15 +253,11 @@ const ChangeRow = memo(function ChangeRow({
 function ChangeGroup({
   title,
   changes,
-  side,
   selectedPathId,
-  selectedSide,
 }: {
   title: string;
   changes: GitFileChange[];
-  side: GitDiffSide;
   selectedPathId: string | null;
-  selectedSide: GitDiffSide | null;
 }) {
   if (changes.length === 0) return null;
   return (
@@ -286,9 +269,7 @@ function ChangeGroup({
         <ChangeRow
           key={`${title}-${change.path.id}`}
           change={change}
-          side={side}
           selectedPathId={selectedPathId}
-          selectedSide={selectedSide}
         />
       ))}
     </section>
@@ -341,10 +322,7 @@ function ChangesIndex({ state }: { state: ContextPaneView }) {
       />
     );
   const conflicts = status.files.filter((file) => file.conflict);
-  const unstaged = status.files.filter(
-    (file) => !file.conflict && (file.unstaged || file.untracked),
-  );
-  const staged = status.files.filter((file) => !file.conflict && file.staged);
+  const changes = status.files.filter((file) => !file.conflict);
   return (
     <>
       {status.truncated ? (
@@ -355,23 +333,12 @@ function ChangesIndex({ state }: { state: ContextPaneView }) {
       <ChangeGroup
         title="Conflicts"
         changes={conflicts}
-        side="unstaged"
         selectedPathId={state.selectedGitPathId}
-        selectedSide={state.selectedGitSide}
       />
       <ChangeGroup
-        title="Unstaged"
-        changes={unstaged}
-        side="unstaged"
+        title="Changes"
+        changes={changes}
         selectedPathId={state.selectedGitPathId}
-        selectedSide={state.selectedGitSide}
-      />
-      <ChangeGroup
-        title="Staged"
-        changes={staged}
-        side="staged"
-        selectedPathId={state.selectedGitPathId}
-        selectedSide={state.selectedGitSide}
       />
     </>
   );
@@ -386,22 +353,17 @@ function ChangesIndexHeader({ state }: { state: ContextPaneView }) {
         <span className="res__index-title">Workspace</span>
       </div>
     );
-  const summary = [
-    status.groups.staged.length > 0 && `${status.groups.staged.length} staged`,
-    status.groups.unstaged.length + status.groups.untracked.length > 0 &&
-      `${status.groups.unstaged.length + status.groups.untracked.length} working`,
-    status.groups.conflicted.length > 0 &&
-      `${status.groups.conflicted.length} conflict`,
-  ].filter(Boolean);
-  const isClean = summary.length === 0;
-  const hasConflict = status.groups.conflicted.length > 0;
+  const isClean = status.total === 0 && !status.truncated;
+  const hasConflict = status.files.some((file) => file.conflict);
   const summaryTone = hasConflict
     ? "res__index-summary--conflict"
     : isClean
       ? "res__index-summary--clean"
       : "res__index-summary--dirty";
   const headLabel = gitHeadLabel(status);
-  const summaryLabel = summary.length > 0 ? summary.join(" · ") : "Clean";
+  const summaryLabel = isClean
+    ? "Clean"
+    : `${status.total} ${status.total === 1 ? "change" : "changes"}`;
   return (
     <div className="res__index-header">
       <GitBranch size={13} className="res__index-branch-icon" aria-hidden />
@@ -437,17 +399,11 @@ export function ChangesDetail({
   const pathId = state.selectedGitPathId;
   const side = state.selectedGitSide;
   const change = selectedChange(state.gitStatus, pathId);
-  const hasSide = Boolean(
-    change &&
-      (side === "staged"
-        ? change.staged
-        : side === "unstaged" &&
-          (change.unstaged || change.untracked || change.conflict)),
-  );
+  const hasComparison = side === "worktree" && change !== null;
   const pending = state.gitDiff;
   // A retained response is usable only for the currently selected comparison.
   const diffView =
-    hasSide &&
+    hasComparison &&
     pending &&
     (pending.status === "ready"
       ? pending.result.path.id === pathId && pending.result.side === side
@@ -456,8 +412,7 @@ export function ChangesDetail({
       : null;
   const result = diffView?.status === "ready" ? diffView.result : null;
   const textResult = result?.kind === "text" ? result : null;
-  const oldPath = (side === "staged" ? change?.staged : change?.unstaged)
-    ?.originalPath;
+  const oldPath = change?.worktree?.originalPath;
   const oldName = oldPath?.utf8Path ?? oldPath?.display;
   const projection = useMemo(
     () => (textResult ? sourceDiffRows(textResult, oldName) : null),
@@ -469,6 +424,17 @@ export function ChangesDetail({
     state.cwd,
     state.selectedResourceReference ?? pathId,
   ]);
+  const statusScope = JSON.stringify([scope, state.transportGeneration]);
+  const confirmedStatusScope = useRef<string | null>(null);
+  const statusPending = state.gitStatusLoading || state.gitStatusRefreshing;
+  const waitingForStatus =
+    statusPending && confirmedStatusScope.current !== statusScope;
+  useLayoutEffect(() => {
+    if (!state.gitStatus || confirmedStatusScope.current !== statusScope)
+      confirmedStatusScope.current = null;
+    if (state.gitStatus && !statusPending && !state.gitStatusError)
+      confirmedStatusScope.current = statusScope;
+  }, [state.gitStatus, state.gitStatusError, statusPending, statusScope]);
   const readingKey = side ? JSON.stringify([scope, pathId, side]) : null;
   const readingOwner = useRef({ reading, scope });
   const sameReadingScope =
@@ -562,9 +528,8 @@ export function ChangesDetail({
   };
   const previousDisabled = count === 0 || activeChange === 0;
   const nextDisabled = count === 0 || activeChange === count - 1;
-  const statusPending = state.gitStatusLoading || state.gitStatusRefreshing;
-  const noComparison = !hasSide
-    ? statusPending
+  const noComparison = !hasComparison
+    ? waitingForStatus
       ? "Reading Git status"
       : state.gitStatusError || !state.gitStatus
         ? "Git status unavailable"
@@ -576,9 +541,9 @@ export function ChangesDetail({
     : null;
 
   let content: ReactNode;
-  if (!hasSide) {
+  if (!hasComparison) {
     content =
-      statusPending || (!state.gitStatus && !state.gitStatusError) ? (
+      waitingForStatus || (!state.gitStatus && !state.gitStatusError) ? (
         <ContextPaneState
           icon={<PiLoader size={17} aria-hidden />}
           title="Reading Git status"
@@ -629,30 +594,6 @@ export function ChangesDetail({
 
   const controls = (
     <>
-      {change && side ? (
-        <select
-          className="changes__side"
-          aria-label="Comparison side"
-          value={side}
-          disabled={
-            !(
-              change.staged &&
-              (change.unstaged || change.untracked || change.conflict)
-            )
-          }
-          onChange={(event) =>
-            void store.openGitDiff(
-              change.path.id,
-              event.currentTarget.value as GitDiffSide,
-            )
-          }
-        >
-          {change.unstaged || change.untracked || change.conflict ? (
-            <option value="unstaged">Unstaged</option>
-          ) : null}
-          {change.staged ? <option value="staged">Staged</option> : null}
-        </select>
-      ) : null}
       <div
         className="changes__stats"
         role="group"

@@ -449,7 +449,12 @@ export class MockGitInspection implements GitInspectionLike {
         oid: "0123456789abcdef0123456789abcdef01234567",
       },
       files: [
-        { path: mockGitPath, unstaged: { kind: "modified" }, untracked: false },
+        {
+          path: mockGitPath,
+          worktree: { kind: "modified" },
+          unstaged: { kind: "modified" },
+          untracked: false,
+        },
       ],
       total: 1,
       truncated: false,
@@ -467,7 +472,10 @@ export class MockGitInspection implements GitInspectionLike {
     pathId: string,
     side: GitDiffSide,
   ): Promise<GitDiffResponse> {
-    if (pathId !== mockGitPath.id || side !== "unstaged") {
+    if (
+      pathId !== mockGitPath.id ||
+      (side !== "unstaged" && side !== "worktree")
+    ) {
       throw requestError(
         "That path and diff side are not present in fresh status",
         409,

@@ -181,9 +181,7 @@ for (const mode of ["notebook", "changes"] as const) {
       ).toBeVisible();
     } else {
       await pane.getByRole("tab", { name: "Changes", exact: true }).click();
-      await pane
-        .getByRole("button", { name: /page\.html, unstaged modified/ })
-        .click();
+      await pane.getByRole("button", { name: /page\.html, modified/ }).click();
       await expect(pane.locator(".source-diff__line--add")).toBeVisible();
     }
 

@@ -40,6 +40,10 @@ import {
   startDraft,
 } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
+import {
+  readNavigationDisclosure,
+  saveNavigationDisclosure,
+} from "../workbench-session";
 import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
 import { ThinkingControl } from "./ComposerThinkingControl";
@@ -155,7 +159,14 @@ export const Welcome = memo(function Welcome({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [showHiddenFiles, setShowHiddenFiles] = useState(false);
   const [dropActive, setDropActive] = useState(false);
-  const [recentOpen, setRecentOpen] = useState(true);
+  const [recentOpen, setRecentOpen] = useState(() =>
+    readNavigationDisclosure("recentSessions"),
+  );
+  const toggleRecent = () => {
+    const open = !recentOpen;
+    setRecentOpen(open);
+    saveNavigationDisclosure("recentSessions", open);
+  };
   const [browsing, setBrowsing] = useState(false);
   const [modelKey, setModelKey] = useState(() =>
     inheritedModel ? modelIdentityKey(inheritedModel) : "",
@@ -1138,7 +1149,7 @@ export const Welcome = memo(function Welcome({
               type="button"
               className="welcome__recent-toggle"
               aria-expanded={recentOpen}
-              onClick={() => setRecentOpen((value) => !value)}
+              onClick={toggleRecent}
             >
               <ChevronRight
                 size={12}

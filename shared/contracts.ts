@@ -417,7 +417,7 @@ export type GitDeltaKind =
   | "copied"
   | "type-changed"
   | "unmerged";
-export type GitDiffSide = "staged" | "unstaged";
+export type GitDiffSide = "worktree" | "staged" | "unstaged";
 
 /** Opaque Git identity. `id` is unpadded base64url of the exact raw
  * repository-relative pathname bytes; display strings never authorize a
@@ -442,6 +442,8 @@ export interface GitSubmoduleState {
 
 export interface GitFileChange {
   path: GitPathIdentity;
+  /** Current working tree relative to HEAD (or the empty tree before the first commit). */
+  worktree?: GitDeltaFacet;
   staged?: GitDeltaFacet;
   unstaged?: GitDeltaFacet;
   conflict?: { code: string };

@@ -28,6 +28,7 @@ const cleanStatus = {
       path,
       staged: { kind: "modified" as const },
       unstaged: { kind: "modified" as const },
+      worktree: { kind: "modified" as const },
       untracked: false,
     },
   ],
@@ -112,6 +113,7 @@ describe("Git inspection ownership and freshness", () => {
                 {
                   path: deletedPath,
                   unstaged: { kind: "deleted" },
+                  worktree: { kind: "deleted" },
                   untracked: false,
                 },
               ],
@@ -126,7 +128,7 @@ describe("Git inspection ownership and freshness", () => {
           return {
             body: {
               path: jsonBody(init).pathId === path.id ? path : deletedPath,
-              side: "unstaged",
+              side: "worktree",
               kind: "binary",
             },
           };
@@ -146,9 +148,9 @@ describe("Git inspection ownership and freshness", () => {
       const opening =
         origin === "files"
           ? store.openWorkspaceFile(path.workspacePath)
-          : store.openGitDiff(path.id, "unstaged");
+          : store.openGitDiff(path.id, "worktree");
       await resourceStarted.promise;
-      await store.openGitDiff(deletedPath.id, "unstaged");
+      await store.openGitDiff(deletedPath.id, "worktree");
       const selectedDiff = store.getState().gitDiff;
       expect(store.getState().selectedGitPathId).toBe(deletedPath.id);
 
@@ -211,7 +213,7 @@ describe("Git inspection ownership and freshness", () => {
           body: {
             kind: "text",
             path,
-            side: "unstaged",
+            side: "worktree",
             truncated: false,
             encodingLossy: false,
             lines: [
@@ -229,7 +231,7 @@ describe("Git inspection ownership and freshness", () => {
     });
     const { store } = await initStore();
     await store.refreshGitStatus();
-    await store.openGitDiff(path.id, "unstaged");
+    await store.openGitDiff(path.id, "worktree");
     expect(store.getState().gitDiff).toMatchObject({
       status: "ready",
       result: { lines: [{ text: "+version-1" }] },
@@ -268,7 +270,7 @@ describe("Git inspection ownership and freshness", () => {
           body: {
             kind: "text",
             path,
-            side: "unstaged",
+            side: "worktree",
             truncated: false,
             encodingLossy: false,
             lines: [
@@ -291,7 +293,7 @@ describe("Git inspection ownership and freshness", () => {
         head: { name: "branch-1" },
       }),
     );
-    await store.openGitDiff(path.id, "unstaged");
+    await store.openGitDiff(path.id, "worktree");
     expect(store.getState().gitDiff).toMatchObject({
       status: "ready",
       result: { lines: [{ text: "+transport-1" }] },
@@ -364,7 +366,7 @@ describe("Git inspection ownership and freshness", () => {
             body: {
               kind: "text",
               path,
-              side: "unstaged",
+              side: "worktree",
               truncated: false,
               encodingLossy: false,
               lines: [
@@ -384,7 +386,7 @@ describe("Git inspection ownership and freshness", () => {
       await store.refreshGitStatus();
       store.setGitSurfaceVisible("resources-pane", true);
       await vi.advanceTimersByTimeAsync(0);
-      await store.openGitDiff(path.id, "unstaged");
+      await store.openGitDiff(path.id, "worktree");
       await vi.advanceTimersByTimeAsync(4_001);
       expect(store.getState().gitDiff).toMatchObject({
         status: "ready",
@@ -476,7 +478,7 @@ describe("Git inspection ownership and freshness", () => {
             body: {
               kind: "text",
               path,
-              side: "unstaged",
+              side: "worktree",
               truncated: false,
               encodingLossy: false,
               lines: [
@@ -495,7 +497,7 @@ describe("Git inspection ownership and freshness", () => {
       const { store, socket } = await initStore();
       store.setGitSurfaceVisible("test", true);
       await vi.advanceTimersByTimeAsync(0);
-      await store.openGitDiff(path.id, "unstaged");
+      await store.openGitDiff(path.id, "worktree");
       expect(calls).toBe(1);
       socket.emit({
         type: "tool_execution_end",
@@ -520,7 +522,7 @@ describe("Git inspection ownership and freshness", () => {
     }
   });
 
-  it("defaults a multifacet path to unstaged and drops a late diff after a session switch", async () => {
+  it("defaults a multifacet path to its net worktree comparison and drops a late diff after a session switch", async () => {
     let release!: () => void;
     let requestedSide = "";
     let aborted = false;
@@ -535,7 +537,7 @@ describe("Git inspection ownership and freshness", () => {
           release = resolve;
         });
         return {
-          body: { kind: "empty", path, side: "unstaged", reason: "no-changes" },
+          body: { kind: "empty", path, side: "worktree", reason: "no-changes" },
         };
       }
       return baseRoutes(url, init);
@@ -543,7 +545,7 @@ describe("Git inspection ownership and freshness", () => {
     const { store, socket } = await initStore();
     await store.refreshGitStatus();
     const opening = store.openGitDiff(path.id);
-    await vi.waitFor(() => expect(requestedSide).toBe("unstaged"));
+    await vi.waitFor(() => expect(requestedSide).toBe("worktree"));
     socket.emit({
       type: "snapshot",
       data: activeSnapshot({ sessionId: "s2", cwd: "/other" }),

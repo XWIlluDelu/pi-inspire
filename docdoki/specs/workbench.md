@@ -277,7 +277,10 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   resources, attention acknowledgement, Escape, or delete protection even if its idle worker remains
   warm. A collapsible recent-session list appears only when navigation is unavailable or collapsed;
   expanded desktop navigation already owns that route and is not duplicated. Recent sessions exclude
-  hidden sessions/folders and show up to six entries in activity order. A missing project
+  hidden sessions/folders and show up to six entries in activity order. Recent and Hidden disclosure
+  choices share the browser-tab-local navigation metadata store, initialized before first render;
+  F5 and returning home preserve explicit choices. Search may temporarily reveal Hidden without
+  overwriting that choice. A missing project
   directory offers the explicit creation path in [[session-continuity]]. An invalid or inaccessible
   directory instead shows its own retryable error and blocks Start, including when a model was
   chosen manually. Failed open/create operations remain in the navigation and start surfaces

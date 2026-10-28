@@ -17,6 +17,7 @@ const change: GitFileChange = {
   },
   staged: { kind: "modified" },
   unstaged: { kind: "modified" },
+  worktree: { kind: "modified" as const },
   untracked: false,
 };
 
@@ -112,11 +113,11 @@ describe("ordinary file tabs with Git views", () => {
     });
   });
 
-  it("reuses a mapped file reference and order, preserving Git side across tab selection", async () => {
+  it("reuses a mapped file reference and order, preserving the net Git view across tab selection", async () => {
     const { store } = await initStore();
     await store.openResource("readme.md");
     await store.openResource("other.txt");
-    await store.openGitDiff(change.path.id, "staged");
+    await store.openGitDiff(change.path.id, "worktree");
     expect(store.getState()).toMatchObject({
       contextMode: "files",
       selectedResourceReference: "readme.md",
@@ -125,15 +126,15 @@ describe("ordinary file tabs with Git views", () => {
           reference: "readme.md",
           workspacePath: "src/readme.md",
           view: "changes",
-          git: { side: "staged" },
+          git: { side: "worktree" },
         },
         { reference: "other.txt" },
       ],
-      gitDiff: { status: "ready", result: { side: "staged" } },
+      gitDiff: { status: "ready", result: { side: "worktree" } },
     });
     await store.selectResourceTab("other.txt");
     await store.selectResourceTab("readme.md");
-    expect(diffs.at(-1)).toEqual({ pathId: change.path.id, side: "staged" });
+    expect(diffs.at(-1)).toEqual({ pathId: change.path.id, side: "worktree" });
     await store.openWorkspaceFile("src/readme.md");
     expect(store.getState().resourceTabs).toHaveLength(2);
     expect(store.getState().resourceTabs[0].view).toBeUndefined();
@@ -145,7 +146,7 @@ describe("ordinary file tabs with Git views", () => {
     "reuses a Git tab when Recent opens the authorized alias %s",
     async (reference) => {
       const { store } = await initStore();
-      await store.openGitDiff(change.path.id, "staged");
+      await store.openGitDiff(change.path.id, "worktree");
       await store.probeResources([reference]);
       expect(store.getState().resourceWorkspacePaths[reference]).toBe(
         change.path.workspacePath,
@@ -161,15 +162,15 @@ describe("ordinary file tabs with Git views", () => {
     },
   );
 
-  it("restores a staged comparison after closing the neighboring tab and reopening the pane", async () => {
+  it("restores the net comparison after closing the neighboring tab and reopening the pane", async () => {
     const { store } = await initStore();
-    await store.openGitDiff(change.path.id, "staged");
+    await store.openGitDiff(change.path.id, "worktree");
     await store.openResource("other.txt");
     store.closeResourceTab("other.txt");
     await vi.waitFor(() =>
       expect(store.getState().gitDiff).toMatchObject({
         status: "ready",
-        result: { side: "staged" },
+        result: { side: "worktree" },
       }),
     );
     const previousDiff = store.getState().gitDiff;
@@ -180,16 +181,16 @@ describe("ordinary file tabs with Git views", () => {
     await vi.waitFor(() =>
       expect(store.getState().gitDiff).toMatchObject({
         status: "ready",
-        result: { side: "staged" },
+        result: { side: "worktree" },
       }),
     );
     expect(store.getState().gitDiff).not.toBe(previousDiff);
     expect(store.getState().resourceTabs).toHaveLength(1);
   });
 
-  it("reloads a persisted Git tab with fresh authority and keeps its comparison side", async () => {
+  it("reloads a persisted Git tab with fresh authority and keeps its net comparison", async () => {
     const { store: first } = await initStore();
-    await first.openGitDiff(change.path.id, "staged");
+    await first.openGitDiff(change.path.id, "worktree");
     await vi.waitFor(() =>
       expect(first.getState().resourcePreview?.status).toBe("ready"),
     );
@@ -198,18 +199,80 @@ describe("ordinary file tabs with Git views", () => {
     await vi.waitFor(() =>
       expect(second.getState().gitDiff).toMatchObject({
         status: "ready",
-        result: { side: "staged" },
+        result: { side: "worktree" },
       }),
     );
     await vi.waitFor(() =>
       expect(second.getState().resourcePreview?.status).toBe("ready"),
     );
     expect(second.getState().resourceTabs).toMatchObject([
-      { reference: "src/readme.md", view: "changes", git: { side: "staged" } },
+      {
+        reference: "src/readme.md",
+        view: "changes",
+        git: { side: "worktree" },
+      },
     ]);
     expect(second.getState().resourcePreview).not.toEqual(oldPreview);
     expect(diffs).toHaveLength(2);
     expect(JSON.stringify(sessionStorage)).not.toContain("fresh-");
+  });
+
+  it("restores an older staged tab as the net comparison while preserving a BODY tab", async () => {
+    const { store: first } = await initStore();
+    await first.openResource("other.txt");
+    await first.openGitDiff(change.path.id);
+    const key = Object.keys(sessionStorage).find((key) => {
+      const saved = JSON.parse(sessionStorage.getItem(key) ?? "null");
+      return Array.isArray(saved?.resourceTabs);
+    })!;
+    const saved = JSON.parse(sessionStorage.getItem(key)!);
+    saved.resourceTabs[1].git.side = "staged";
+    sessionStorage.setItem(key, JSON.stringify(saved));
+
+    const { store: second } = await initStore();
+    await vi.waitFor(() =>
+      expect(second.getState().gitDiff).toMatchObject({
+        status: "ready",
+        result: { side: "worktree" },
+      }),
+    );
+    expect(second.getState().resourceTabs[1].git?.side).toBe("worktree");
+    await second.selectResourceTab("other.txt");
+    expect(second.getState().resourceTabs[0].view).toBeUndefined();
+    expect(second.getState().resourcePreview).toMatchObject({
+      status: "ready",
+      reference: "other.txt",
+    });
+    expect(second.getState().gitDiff).toBeNull();
+  });
+
+  it("keeps a Git tab when changes cancel out and resumes the net comparison after new edits", async () => {
+    const { store } = await initStore();
+    await store.openGitDiff(change.path.id);
+    status = repository([]);
+
+    await store.refreshFileTab();
+
+    expect(store.getState()).toMatchObject({
+      selectedGitPathId: null,
+      selectedGitSide: null,
+      gitDiff: null,
+      selectedResourceReference: "src/readme.md",
+    });
+    expect(store.getState().resourceTabs).toMatchObject([
+      {
+        reference: "src/readme.md",
+        view: "changes",
+        git: { side: "worktree" },
+      },
+    ]);
+    status = repository([change]);
+    await store.refreshGitStatus();
+    expect(store.getState().gitDiff).toMatchObject({
+      status: "ready",
+      result: { side: "worktree" },
+    });
+    expect(store.getState().resourceTabs).toHaveLength(1);
   });
 
   it("opens deleted and opaque Git paths without using display names as body authority", async () => {
@@ -221,16 +284,18 @@ describe("ordinary file tabs with Git views", () => {
         workspacePath: "deleted.txt",
       },
       staged: { kind: "deleted" },
+      worktree: { kind: "deleted" },
       untracked: false,
     };
     const opaque: GitFileChange = {
       path: { id: "opaque", display: "escaped-name" },
       unstaged: { kind: "modified" },
+      worktree: { kind: "modified" as const },
       untracked: false,
     };
     status = repository([deleted, opaque]);
     const { store } = await initStore();
-    await store.openGitDiff(deleted.path.id, "staged");
+    await store.openGitDiff(deleted.path.id, "worktree");
     await vi.waitFor(() =>
       expect(store.getState().resourcePreview).toMatchObject({
         status: "error",

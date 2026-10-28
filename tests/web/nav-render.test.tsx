@@ -503,6 +503,66 @@ describe("session navigation controls", () => {
     expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
   });
 
+  it("restores the Hidden disclosure without saving search's temporary expansion", async () => {
+    const props = {
+      collapsed: false,
+      onToggleNavigation: vi.fn(),
+      onNewSession: vi.fn(),
+      onSelectSession: vi.fn(),
+    };
+    let view = render(<Nav {...props} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: 'Hide "Alpha session"' }),
+    );
+    const toggle = await screen.findByRole("button", { name: "Hidden" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    view.unmount();
+
+    view = render(<Nav {...props} />);
+    expect(screen.getByRole("button", { name: "Hidden" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Search sessions" }),
+      {
+        target: { value: "alpha" },
+      },
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Hidden" })).toBeDisabled(),
+    );
+    expect(screen.getByRole("button", { name: "Hidden" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    view.unmount();
+
+    view = render(<Nav {...props} />);
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Search sessions" }),
+      {
+        target: { value: "" },
+      },
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Hidden" })).toBeEnabled(),
+    );
+    expect(screen.getByRole("button", { name: "Hidden" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    view.unmount();
+
+    render(<Nav {...props} />);
+    expect(screen.getByRole("button", { name: "Hidden" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
   it("restores a child from a hidden folder without revealing its other sessions", async () => {
     extraSessions = [
       { ...alpha, id: "alpha-sibling", title: "Other analysis" },

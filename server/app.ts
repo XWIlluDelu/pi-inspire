@@ -48,8 +48,8 @@ import {
   socketTicketSchema,
   secretMatches as tokenMatches,
 } from "./browser-auth.js";
-import { GeneratedExportStore } from "./generated-exports.js";
 import { showInFileManager } from "./file-manager.js";
+import { GeneratedExportStore } from "./generated-exports.js";
 import type { GitInspectionLike } from "./git-inspection.js";
 import { listHostDirectories, listHostRoots } from "./host-dirs.js";
 import { HtmlPreviewStore } from "./html-preview.js";
@@ -407,7 +407,7 @@ const gitDiffSchema = z.object({
     .min(1)
     .max(16_384)
     .regex(/^[A-Za-z0-9_-]+$/),
-  side: z.enum(["staged", "unstaged"] satisfies GitDiffSide[]),
+  side: z.enum(["worktree", "staged", "unstaged"] satisfies GitDiffSide[]),
 });
 const MAX_PROMPT_OPERATION_RECEIPTS = 65_536;
 const MAX_PROMPT_OPERATION_RESULTS = 2_048;

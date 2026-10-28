@@ -10,10 +10,8 @@ const GIT_DETAIL_REFRESH_INTERVAL_MS = 4_000;
 const GIT_TOPBAR_REFRESH_INTERVAL_MS = 20_000;
 const TOPBAR_SURFACE = "topbar-git";
 
-function changeHasSide(change: GitFileChange, side: GitDiffSide): boolean {
-  return side === "staged"
-    ? Boolean(change.staged)
-    : Boolean(change.unstaged || change.untracked || change.conflict);
+function hasWorktreeChange(change: GitFileChange): boolean {
+  return Boolean(change.worktree || change.conflict);
 }
 
 export type GitDiffView =
@@ -139,7 +137,6 @@ export class GitController {
 
   private async resolveChange(
     pathId: string,
-    requestedSide?: GitDiffSide,
   ): Promise<GitChangeSelection | null> {
     let state = this.host.state();
     const api = this.host.api();
@@ -165,19 +162,14 @@ export class GitController {
       (candidate) => candidate.path.id === pathId,
     );
     if (!change) return null;
-    const side =
-      requestedSide ??
-      (change.unstaged || change.untracked || change.conflict
-        ? "unstaged"
-        : "staged");
-    return changeHasSide(change, side)
+    return hasWorktreeChange(change)
       ? {
           api,
           sessionId,
           selectionGeneration,
           transportGeneration,
           change,
-          side,
+          side: "worktree",
         }
       : null;
   }
@@ -283,9 +275,9 @@ export class GitController {
     return promise;
   }
 
-  async openDiff(pathId: string, requestedSide?: GitDiffSide): Promise<void> {
+  async openDiff(pathId: string, _legacySide?: GitDiffSide): Promise<void> {
     const epoch = this.selectionEpoch;
-    const selection = await this.resolveChange(pathId, requestedSide);
+    const selection = await this.resolveChange(pathId);
     if (selection && epoch === this.selectionEpoch)
       await this.openResolvedDiff(selection);
   }
@@ -296,7 +288,9 @@ export class GitController {
     const status = this.host.state().gitStatus;
     if (!status || status.kind !== "repository") return;
     const change = status.files.find(
-      (candidate) => candidate.path.workspacePath === workspacePath,
+      (candidate) =>
+        candidate.path.workspacePath === workspacePath &&
+        hasWorktreeChange(candidate),
     );
     if (!change) {
       this.cancelDiff();
@@ -315,14 +309,7 @@ export class GitController {
       return;
     }
     const state = this.host.state();
-    const side =
-      state.selectedGitPathId === change.path.id &&
-      state.selectedGitSide &&
-      changeHasSide(change, state.selectedGitSide)
-        ? state.selectedGitSide
-        : change.unstaged || change.untracked || change.conflict
-          ? "unstaged"
-          : "staged";
+    const side = "worktree";
     if (
       state.selectedGitPathId !== change.path.id ||
       state.selectedGitSide !== side
@@ -366,9 +353,9 @@ export class GitController {
     }
   }
 
-  async openChange(pathId: string, requestedSide?: GitDiffSide): Promise<void> {
+  async openChange(pathId: string, _legacySide?: GitDiffSide): Promise<void> {
     const epoch = ++this.selectionEpoch;
-    const selection = await this.resolveChange(pathId, requestedSide);
+    const selection = await this.resolveChange(pathId);
     if (!selection || epoch !== this.selectionEpoch) return;
     const { change, side } = selection;
     this.selectedWorkspacePath = change.path.workspacePath ?? null;
@@ -441,45 +428,31 @@ export class GitController {
           status.kind === "repository" && this.selectedWorkspacePath
             ? status.files.find(
                 (file) =>
-                  file.path.workspacePath === this.selectedWorkspacePath,
+                  file.path.workspacePath === this.selectedWorkspacePath &&
+                  hasWorktreeChange(file),
               )
             : undefined;
         let selectedPathId = currentState.selectedGitPathId;
         let selectedSide = currentState.selectedGitSide;
         if (this.selectedWorkspacePath) {
           if (workspaceChange) {
-            const retainedSide =
-              currentState.selectedGitPathId === workspaceChange.path.id &&
-              currentState.selectedGitSide &&
-              changeHasSide(workspaceChange, currentState.selectedGitSide)
-                ? currentState.selectedGitSide
-                : null;
             selectedPathId = workspaceChange.path.id;
-            selectedSide =
-              retainedSide ??
-              (workspaceChange.unstaged ||
-              workspaceChange.untracked ||
-              workspaceChange.conflict
-                ? "unstaged"
-                : "staged");
+            selectedSide = "worktree";
           } else {
             selectedPathId = null;
             selectedSide = null;
           }
         }
-        const candidateSide = selectedSide;
         const selectedExists =
           status.kind === "repository" &&
-          candidateSide !== null &&
           status.files.some(
             (file) =>
-              file.path.id === selectedPathId &&
-              changeHasSide(file, candidateSide),
+              file.path.id === selectedPathId && hasWorktreeChange(file),
           );
         if (!selectedExists) {
           selectedPathId = null;
           selectedSide = null;
-        }
+        } else selectedSide = "worktree";
         const selectionChanged =
           selectedPathId !== currentState.selectedGitPathId ||
           selectedSide !== currentState.selectedGitSide;

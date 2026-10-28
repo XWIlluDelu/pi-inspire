@@ -25,6 +25,7 @@ const changed: Extract<GitStatusResponse, { kind: "repository" }> = {
   files: [
     {
       path: { id: "notes", display: "notes.md", utf8Path: "notes.md" },
+      worktree: { kind: "modified" },
       unstaged: { kind: "modified" },
       untracked: false,
     },
@@ -64,7 +65,7 @@ function Detail({
 const diff: Extract<GitDiffResponse, { kind: "text" }> = {
   kind: "text",
   path: changed.files[0].path,
-  side: "unstaged",
+  side: "worktree",
   additions: 2,
   deletions: 2,
   truncated: false,
@@ -115,15 +116,18 @@ describe("Changes file list", () => {
     expect(screen.queryByText("Select a change")).toBeNull();
     expect(open).not.toHaveBeenCalled();
     const row = screen.getByRole("button", {
-      name: "notes.md, unstaged modified",
+      name: "notes.md, modified",
     });
     expect(row.querySelector("svg")).toHaveClass("lucide-file-text");
     fireEvent.click(row);
-    expect(open).toHaveBeenLastCalledWith("notes", "unstaged");
-    fireEvent.click(
-      screen.getByRole("button", { name: "notes.md, staged modified" }),
-    );
-    expect(open).toHaveBeenLastCalledWith("notes", "staged");
+    expect(open).toHaveBeenLastCalledWith("notes", "worktree");
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(
+      screen.queryByRole("heading", { name: /Staged|Unstaged/ }),
+    ).toBeNull();
+    expect(
+      view.container.querySelector(".res__index-summary"),
+    ).toHaveTextContent("1 change");
     list.scrollTop = 150;
     view.unmount();
     const returned = render(
@@ -171,20 +175,12 @@ describe("File Changes rendering and navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Previous change" }));
     expect(screen.getByLabelText("Change position")).toHaveTextContent("1 / 2");
     expect(open).not.toHaveBeenCalled();
-    expect(screen.getByRole("option", { name: "Unstaged" })).toHaveValue(
-      "unstaged",
-    );
-    expect(screen.getByRole("option", { name: "Staged" })).toHaveValue(
-      "staged",
-    );
-    fireEvent.change(
-      screen.getByRole("combobox", { name: "Comparison side" }),
-      { target: { value: "staged" } },
-    );
-    expect(open).toHaveBeenLastCalledWith("notes", "staged");
+    expect(
+      screen.queryByRole("combobox", { name: "Comparison side" }),
+    ).toBeNull();
   });
 
-  it("retains per-side reading across refresh and remount, and resets stale counters during another selection", () => {
+  it("retains reading across refresh and remount, and resets stale counters during another file selection", () => {
     vi.stubGlobal("requestAnimationFrame", (callback: () => void) => {
       callback();
       return 0;
@@ -219,32 +215,38 @@ describe("File Changes rendering and navigation", () => {
     );
     expect(screen.getByLabelText("Change position")).toHaveTextContent("2 / 2");
 
-    const staged = {
-      ...state,
-      selectedGitSide: "staged" as const,
-      gitDiff: {
-        status: "loading" as const,
-        pathId: "notes",
-        side: "staged" as const,
+    const otherPath = {
+      id: "other",
+      display: "other.md",
+      utf8Path: "other.md",
+    };
+    const other = {
+      ...ready({ ...diff, path: otherPath, lines: diff.lines.slice(0, 2) }),
+      gitStatus: {
+        ...changed,
+        files: [{ ...changed.files[0], path: otherPath }],
       },
     };
-    view.rerender(<Detail state={staged} readingState={readingState} />);
+    const otherReading = readings();
+    view.rerender(
+      <Detail
+        state={{
+          ...other,
+          gitDiff: { status: "loading", pathId: "other", side: "worktree" },
+        }}
+        readingState={otherReading}
+      />,
+    );
     expect(screen.getByLabelText("Change position")).toHaveTextContent("—");
     expect(
       screen.getByRole("button", { name: "Previous change" }),
     ).toBeDisabled();
     expect(screen.queryByRole("region", { name: /Source changes/ })).toBeNull();
-    view.rerender(
-      <Detail
-        state={ready({
-          ...diff,
-          side: "staged",
-          lines: diff.lines.slice(0, 2),
-        })}
-        readingState={readingState}
-      />,
-    );
-    expect(source().scrollTop).toBe(0);
+    view.rerender(<Detail state={other} readingState={otherReading} />);
+    expect(
+      screen.getByRole("region", { name: "Source changes for other.md" })
+        .scrollTop,
+    ).toBe(0);
     expect(screen.getByLabelText("Change position")).toHaveTextContent("1 / 1");
     view.rerender(<Detail state={state} readingState={readingState} />);
     expect(source().scrollTop).toBe(300);
@@ -292,7 +294,7 @@ describe("File Changes rendering and navigation", () => {
   it("restores a file tab's reading after its Git selection resolves on remount", () => {
     const readingState = readings();
     readingState.changes = {
-      unstaged: { top: 800, left: 50, activeChange: 1 },
+      worktree: { top: 800, left: 50, activeChange: 1 },
     };
     const state = { ...ready(), selectedResourceReference: "notes.md" };
     const view = render(
@@ -369,7 +371,7 @@ describe("Changes status observation", () => {
       status: { kind: "not-repository" } as GitStatusResponse,
       title: "No Git repository",
     },
-    { status: changed, title: "notes.md, unstaged modified" },
+    { status: changed, title: "notes.md, modified" },
   ])(
     "retains $title with one stale-result warning after a failed refresh",
     ({ status, title }) => {
@@ -428,6 +430,55 @@ describe("Git evidence boundaries", () => {
     },
   );
 
+  it.each([
+    { status: clean, label: "No Git comparison" },
+    {
+      status: { kind: "not-repository" } as GitStatusResponse,
+      label: "Not in a Git repository",
+    },
+  ])(
+    "retains $label during background observation without lending it to another scope",
+    ({ status, label }) => {
+      const state = {
+        ...ready(),
+        selectedResourceReference: "notes.md",
+        gitStatus: status,
+        gitDiff: null,
+      };
+      const view = render(<Detail state={state} />);
+      const empty = screen.getByText(label);
+      view.rerender(<Detail state={{ ...state, gitStatusRefreshing: true }} />);
+      expect(screen.getByText(label)).toBe(empty);
+      expect(screen.queryByText("Reading Git status")).toBeNull();
+      expect(view.container.querySelector(".pi-loading")).toBeNull();
+      expect(screen.getByRole("group", { name: label })).toHaveTextContent(
+        "——",
+      );
+      for (const changedOwner of [
+        { selectedResourceReference: "other.md" },
+        { sessionId: "other-session" },
+        { cwd: "/other" },
+        { transportGeneration: state.transportGeneration + 1 },
+      ]) {
+        view.rerender(
+          <Detail
+            state={{ ...state, ...changedOwner, gitStatusRefreshing: true }}
+          />,
+        );
+        expect(screen.getByText("Reading Git status")).toBeInTheDocument();
+        expect(screen.queryByText(label)).toBeNull();
+      }
+      view.rerender(<Detail state={{ ...state, gitStatusRefreshing: true }} />);
+      expect(screen.getByText("Reading Git status")).toBeInTheDocument();
+      view.rerender(
+        <Detail state={{ ...state, gitStatusError: "Git failed" }} />,
+      );
+      expect(screen.getByText("Git status unavailable")).toBeInTheDocument();
+      view.rerender(<Detail state={state} />);
+      expect(screen.getByText(label)).toBeInTheDocument();
+    },
+  );
+
   it("keeps the current matching comparison visible during a background status refresh", () => {
     render(<Detail state={{ ...ready(), gitStatusRefreshing: true }} />);
     expect(
@@ -472,17 +523,17 @@ describe("Git evidence boundaries", () => {
     },
   );
 
-  it("does not substitute filesystem source for a vanished staged comparison", () => {
+  it("does not substitute filesystem source for an empty comparison", () => {
     render(
       <Detail
         state={{
           ...ready(),
-          selectedGitSide: "staged",
+          selectedGitSide: "worktree",
           gitDiff: {
             status: "ready",
             result: {
               path: diff.path,
-              side: "staged",
+              side: "worktree",
               kind: "empty",
               reason: "no-changes",
             },
@@ -493,8 +544,15 @@ describe("Git evidence boundaries", () => {
     expect(screen.getByText("No diff available")).toBeInTheDocument();
   });
 
-  it("does not render a late result from another side", () => {
-    render(<Detail state={{ ...ready(), selectedGitSide: "staged" }} />);
+  it("does not render a retained index comparison as the net worktree diff", () => {
+    render(
+      <Detail
+        state={{
+          ...ready(),
+          gitDiff: { status: "ready", result: { ...diff, side: "staged" } },
+        }}
+      />,
+    );
     expect(screen.getByText("Loading source")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: /Source changes/ })).toBeNull();
     expect(screen.getByLabelText("Change position")).toHaveTextContent("—");

@@ -29,6 +29,7 @@ import { resourceRows as toResourceRows } from "../resources";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { hasActiveModal, recoverModalFocus } from "../use-modal-focus";
+import { readHistoryReading, workbenchSessionKey } from "../workbench-session";
 import { BranchTree } from "./BranchTree";
 import { ChangesPane } from "./ChangesPane";
 import { selectContextPaneView } from "./context-pane-view";
@@ -70,6 +71,10 @@ export const ContextPane = memo(function ContextPane({
   const browseScrollTop = useMemo(
     () => ({ current: 0 }),
     [state.sessionId, state.cwd, transportGeneration],
+  );
+  const historyReading = useMemo(
+    () => readHistoryReading(workbenchSessionKey(state.sessionId, state.cwd)),
+    [state.sessionId, state.cwd],
   );
   const [terminalVisited, setTerminalVisited] = useState(false);
   const fileTabsRef = useRef<HTMLDivElement>(null);
@@ -557,7 +562,11 @@ export const ContextPane = memo(function ContextPane({
           role="tabpanel"
           aria-label="History"
         >
-          <BranchTree onContextChange={isModal ? onClose : undefined} />
+          <BranchTree
+            key={workbenchSessionKey(state.sessionId, state.cwd)}
+            readingState={historyReading}
+            onContextChange={isModal ? onClose : undefined}
+          />
         </div>
       ) : null}
       {terminalVisited || state.contextMode === "terminal" ? (

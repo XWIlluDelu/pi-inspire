@@ -9,6 +9,12 @@ import type { ResourceFileTab } from "./resource-preview";
 const PREFIX = "inspire:workbench:v1:";
 const LAST_SESSION = `${PREFIX}last-session`;
 const NAV_COLLAPSED = `${PREFIX}nav-collapsed`;
+const NAV_DISCLOSURES = `${PREFIX}navigation-disclosures`;
+const NAV_DISCLOSURE_DEFAULTS = {
+  recentSessions: true,
+  hiddenSessions: false,
+};
+type NavigationDisclosure = keyof typeof NAV_DISCLOSURE_DEFAULTS;
 
 export interface FileReadingState {
   source: { current: { top: number; left: number } | null; save?: () => void };
@@ -20,6 +26,17 @@ export interface FileReadingState {
       { top: number; left: number; activeChange: number | null }
     >
   >;
+  save?: () => void;
+}
+
+export interface HistoryReadingState {
+  restored: boolean;
+  query: string;
+  expanded: string[];
+  selectedEntryId: string | null;
+  routeLeafId: string | null;
+  outline: { top: number; left: number };
+  detail: { top: number; left: number };
   save?: () => void;
 }
 
@@ -93,6 +110,18 @@ export function saveNavCollapsed(collapsed: boolean): void {
   write(NAV_COLLAPSED, collapsed);
 }
 
+export function readNavigationDisclosure(name: NavigationDisclosure): boolean {
+  const value = record(read(NAV_DISCLOSURES))?.[name];
+  return typeof value === "boolean" ? value : NAV_DISCLOSURE_DEFAULTS[name];
+}
+
+export function saveNavigationDisclosure(
+  name: NavigationDisclosure,
+  open: boolean,
+): void {
+  write(NAV_DISCLOSURES, { ...record(read(NAV_DISCLOSURES)), [name]: open });
+}
+
 export function readWorkbench(key: string | null): SavedWorkbench | null {
   const saved = key ? record(read(key)) : null;
   if (!saved || !Array.isArray(saved.resourceTabs)) return null;
@@ -113,12 +142,14 @@ export function readWorkbench(key: string | null): SavedWorkbench | null {
       ...(tab.view === "changes" ? { view: "changes" } : {}),
       ...(git &&
       path(git.pathId) &&
-      (git.side === "staged" || git.side === "unstaged") &&
+      (git.side === "worktree" ||
+        git.side === "staged" ||
+        git.side === "unstaged") &&
       path(git.displayPath)
         ? {
             git: {
               pathId: git.pathId,
-              side: git.side,
+              side: "worktree",
               displayPath: git.displayPath,
             },
           }
@@ -179,6 +210,25 @@ export function saveWorkbench(
   saved.resourceTabs = state.resourceTabs.filter(
     (tab) => !tab.reference.startsWith("pi-embedded://"),
   );
+  // Restoring a tab can save its new mode before its reader mounts. Preserve
+  // the old comparison's position before that write retires its side metadata.
+  const previousTabs = record(read(key))?.resourceTabs;
+  if (Array.isArray(previousTabs)) {
+    for (const value of previousTabs) {
+      const tab = record(value);
+      const git = record(tab?.git);
+      if (
+        path(tab?.reference) &&
+        (git?.side === "staged" || git?.side === "unstaged") &&
+        state.resourceTabs.some(
+          (current) =>
+            current.reference === tab.reference &&
+            current.git?.side === "worktree",
+        )
+      )
+        readFileReading(key, tab.reference).save?.();
+    }
+  }
   write(key, saved);
 }
 
@@ -199,6 +249,38 @@ function position(value: unknown): { top: number; left: number } | null {
     : null;
 }
 
+export function readHistoryReading(key: string | null): HistoryReadingState {
+  const storageKey = key ? `${key}:history` : null;
+  const saved = storageKey ? record(read(storageKey)) : null;
+  const outline = position(saved?.outline);
+  const state: HistoryReadingState = {
+    restored: outline !== null,
+    query: typeof saved?.query === "string" ? saved.query : "",
+    expanded: Array.isArray(saved?.expanded)
+      ? [...new Set(saved.expanded.filter(path))]
+      : [],
+    selectedEntryId: path(saved?.selectedEntryId)
+      ? saved.selectedEntryId
+      : null,
+    routeLeafId: path(saved?.routeLeafId) ? saved.routeLeafId : null,
+    outline: outline ?? { top: 0, left: 0 },
+    detail: position(saved?.detail) ?? { top: 0, left: 0 },
+    save: () => {
+      state.restored = true;
+      if (storageKey)
+        write(storageKey, {
+          query: state.query,
+          expanded: state.expanded,
+          selectedEntryId: state.selectedEntryId,
+          routeLeafId: state.routeLeafId,
+          outline: state.outline,
+          detail: state.detail,
+        });
+    },
+  };
+  return state;
+}
+
 export function readFileReading(
   key: string | null,
   reference: string,
@@ -210,7 +292,7 @@ export function readFileReading(
   const saved = storageKey ? record(read(storageKey)) : null;
   const savedChanges = record(saved?.changes);
   const changes: NonNullable<FileReadingState["changes"]> = {};
-  for (const side of ["staged", "unstaged"] as const) {
+  for (const side of ["worktree", "staged", "unstaged"] as const) {
     const reading = record(savedChanges?.[side]);
     const offset = position(reading);
     if (offset)
@@ -223,6 +305,20 @@ export function readFileReading(
             ? reading.activeChange
             : null,
       };
+  }
+  if (!changes.worktree) {
+    const tabs = key ? record(read(key))?.resourceTabs : null;
+    const tab = Array.isArray(tabs)
+      ? tabs.map(record).find((item) => item?.reference === reference)
+      : null;
+    const previousSide = record(tab?.git)?.side;
+    const previous =
+      (previousSide === "staged" || previousSide === "unstaged"
+        ? changes[previousSide]
+        : undefined) ??
+      changes.unstaged ??
+      changes.staged;
+    if (previous) changes.worktree = { ...previous };
   }
   const state: FileReadingState = {
     source: { current: position(saved?.source) },

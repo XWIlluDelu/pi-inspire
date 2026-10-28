@@ -1,8 +1,5 @@
 import { expect, test } from "@playwright/test";
-import type {
-  GitDiffResponse,
-  GitStatusResponse,
-} from "../../shared/contracts";
+import type { GitDiffResponse } from "../../shared/contracts";
 
 // Files and Changes share the contextual navigation and reading surface.
 import { focusRingClipping } from "./support/focus-bounds";
@@ -80,7 +77,7 @@ for (const touch of [false, true]) {
             await expect(pane.locator(".res__list")).toBeVisible();
             await expect(pane.locator(".file-detail-header")).toHaveCount(0);
             await pane
-              .getByRole("button", { name: /page\.html, unstaged modified/ })
+              .getByRole("button", { name: /page\.html, modified/ })
               .click();
             await expect(
               pane.getByRole("tab", { name: "page.html", exact: true }),
@@ -161,9 +158,7 @@ for (const touch of [false, true]) {
         .click();
       const pane = page.locator(".ctx");
       await pane.getByRole("tab", { name: "Changes", exact: true }).click();
-      await pane
-        .getByRole("button", { name: /page\.html, unstaged modified/ })
-        .click();
+      await pane.getByRole("button", { name: /page\.html, modified/ }).click();
       const state = pane.locator(".res__state");
       const retry = state.getByRole("button", { name: "Retry", exact: true });
       await expect(state).toContainText("Source unavailable");
@@ -232,9 +227,7 @@ test("long diff line numbers keep separate aligned columns and sticky gutters", 
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   const pane = page.locator(".ctx");
   await pane.getByRole("tab", { name: "Changes", exact: true }).click();
-  await pane
-    .getByRole("button", { name: /page\.html, unstaged modified/ })
-    .click();
+  await pane.getByRole("button", { name: /page\.html, modified/ }).click();
   const source = pane.locator(".source-diff");
   await expect(source).toContainText("1000");
   for (const width of [1280, 901, 568, 320]) {
@@ -304,9 +297,7 @@ test("change navigation preserves addition and deletion colors", async ({
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   const pane = page.locator(".ctx");
   await pane.getByRole("tab", { name: "Changes", exact: true }).click();
-  await pane
-    .getByRole("button", { name: /page\.html, unstaged modified/ })
-    .click();
+  await pane.getByRole("button", { name: /page\.html, modified/ }).click();
 
   const lines = pane.locator(
     ".source-diff__line--add, .source-diff__line--delete",
@@ -353,31 +344,14 @@ for (const touch of [false, true]) {
       page,
     }) => {
       await page.clock.install();
-      if (touch) {
-        await page.route("**/api/git/status?*", async (route) => {
-          const response = await route.fetch();
-          const status = (await response.json()) as GitStatusResponse;
-          if (status.kind === "repository") {
-            status.files[0].staged = { kind: "modified" };
-            status.groups.staged = [status.files[0].path.id];
-          }
-          await route.fulfill({ response, json: status });
-        });
-      }
       await pairedPage(page);
       let latest = false;
       let diffReads = 0;
       let gate: Promise<void> | null = null;
       await page.route("**/api/git/diff", async (route) => {
         diffReads += 1;
-        const requested = route.request().postDataJSON();
-        const response = await route.fetch({
-          // The mock Host provides one working-tree comparison. Present its
-          // bytes as a staged comparison too, to exercise two-sided navigation.
-          postData: touch ? { ...requested, side: "unstaged" } : requested,
-        });
+        const response = await route.fetch();
         const diff = (await response.json()) as GitDiffResponse;
-        if (touch) diff.side = requested.side;
         if (latest && diff.kind === "text") {
           if (gate) await gate;
           diff.lines = diff.lines.map((line) =>
@@ -418,9 +392,7 @@ for (const touch of [false, true]) {
       expect(await nameX(file)).toBe(await nameX(folder));
 
       await pane.getByRole("tab", { name: "Changes", exact: true }).click();
-      await pane
-        .getByRole("button", { name: /page\.html, unstaged modified/ })
-        .click();
+      await pane.getByRole("button", { name: /page\.html, modified/ }).click();
       const source = pane.locator(".source-diff");
       const first = source.locator('[data-change-index="0"]');
       await expect(first).toBeInViewport();
@@ -480,25 +452,15 @@ for (const touch of [false, true]) {
       ).toBeDisabled();
       await expect(pane.locator(".source-diff__line--active")).toHaveCount(2);
       if (touch) {
-        const comparison = pane.getByRole("combobox", {
-          name: "Comparison side",
-        });
+        await expect(
+          pane.getByRole("combobox", { name: "Comparison side" }),
+        ).toHaveCount(0);
         const savedBeforeNavigation = await position();
-        await comparison.selectOption("staged");
-        await expect(comparison).toHaveValue("staged");
-        await expect(source).toBeVisible();
-        await expect(first).toBeInViewport();
-        await expect(pane.getByLabel("Change position")).toHaveText("1 / 1");
-        await comparison.selectOption("unstaged");
-        await expect(comparison).toHaveValue("unstaged");
-        await expect.poll(position).toEqual(savedBeforeNavigation);
-        await expect(pane.locator(".source-diff__line--active")).toHaveCount(2);
-
         await pane.getByRole("tab", { name: "Changes", exact: true }).click();
         await expect(pane.locator(".res__list")).toBeVisible();
         await expect(pane.locator(".file-detail-header")).toHaveCount(0);
         await pane
-          .getByRole("button", { name: /page\.html, unstaged modified/ })
+          .getByRole("button", { name: /page\.html, modified/ })
           .click();
         await expect(
           pane.getByRole("tab", { name: "page.html", exact: true }),
@@ -536,12 +498,10 @@ test("Files and Changes open one file tab with explicit body and diff views", as
   await expect(resources.locator(".res__index-title")).toHaveText(
     "mock/analysis",
   );
-  await expect(resources.locator(".res__index-summary")).toHaveText(
-    "1 working",
-  );
+  await expect(resources.locator(".res__index-summary")).toHaveText("1 change");
   await expect(resources.locator(".res__index-summary")).toHaveAttribute(
     "title",
-    "1 working",
+    "1 change",
   );
   await expect(resources.locator(".res__index-title")).toHaveAttribute(
     "title",
@@ -549,9 +509,7 @@ test("Files and Changes open one file tab with explicit body and diff views", as
   );
   await expect(resources.locator(".file-detail-header")).toHaveCount(0);
   await expect(resources.locator(".source-diff")).toHaveCount(0);
-  await resources
-    .getByRole("button", { name: /page\.html, unstaged modified/ })
-    .click();
+  await resources.getByRole("button", { name: /page\.html, modified/ }).click();
   const fileTab = resources.getByRole("tab", {
     name: "page.html",
     exact: true,
@@ -671,7 +629,7 @@ for (const hasTouch of [false, true]) {
           1,
         );
         await pane
-          .getByRole("button", { name: /page\.html, unstaged modified/ })
+          .getByRole("button", { name: /page\.html, modified/ })
           .click();
         await expect(
           pane.getByRole("tab", { name: "page.html", exact: true }),

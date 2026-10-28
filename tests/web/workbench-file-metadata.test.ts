@@ -39,7 +39,10 @@ describe("file-tab navigation metadata", () => {
     });
 
     expect(readWorkbench(key)).toMatchObject({
-      resourceTabs: tabs,
+      resourceTabs: tabs.map((tab) => ({
+        ...tab,
+        git: { ...tab.git, side: "worktree" },
+      })),
       selectedResourceReference: "git-path-2",
       selectedResourceWorkspacePath: null,
       fileBrowserView: "preview",
@@ -90,6 +93,7 @@ describe("per-file comparison reading metadata", () => {
     reading.rendered.current = { top: 240, left: 0 };
     reading.mode = "preview";
     reading.changes = {
+      worktree: { top: 600, left: 10, activeChange: 3 },
       staged: { top: 360, left: 16, activeChange: 2 },
       unstaged: { top: 480, left: 32, activeChange: null },
     };
@@ -130,6 +134,91 @@ describe("per-file comparison reading metadata", () => {
     expect(reading.mode).toBeUndefined();
     expect(reading.changes).toEqual({
       unstaged: { top: 80, left: 2, activeChange: null },
+      worktree: { top: 80, left: 2, activeChange: null },
+    });
+  });
+
+  it.each([
+    ["staged", 360],
+    ["unstaged", 480],
+    ["worktree", 480],
+  ] as const)(
+    "migrates the saved %s comparison's reading position",
+    (side, top) => {
+      const key = workbenchSessionKey("session", "/project")!;
+      sessionStorage.setItem(
+        key,
+        JSON.stringify({
+          resourceTabs: [{ reference: "example.md", git: { side } }],
+        }),
+      );
+      sessionStorage.setItem(
+        `${key}:reading:${JSON.stringify("example.md")}`,
+        JSON.stringify({
+          source: { top: 120, left: 8 },
+          rendered: { top: 240, left: 0 },
+          mode: "source",
+          changes: {
+            staged: { top: 360, left: 0, activeChange: 1 },
+            unstaged: { top: 480, left: 0, activeChange: 2 },
+          },
+        }),
+      );
+      const reading = readFileReading(key, "example.md");
+      expect(reading).toMatchObject({
+        source: { current: { top: 120, left: 8 } },
+        rendered: { current: { top: 240, left: 0 } },
+        mode: "source",
+        changes: {
+          staged: { top: 360 },
+          unstaged: { top: 480 },
+          worktree: { top },
+        },
+      });
+    },
+  );
+
+  it("preserves the old selected comparison before restored tab metadata is saved", () => {
+    const key = workbenchSessionKey("session", "/project")!;
+    saveWorkbench(key, {
+      ...createInitialAppState(),
+      resourceTabs: [
+        {
+          reference: "example.md",
+          workspacePath: "example.md",
+          view: "changes",
+          git: { pathId: "path", side: "staged", displayPath: "example.md" },
+        },
+      ],
+      selectedResourceReference: "example.md",
+      fileBrowserView: "preview",
+    });
+    sessionStorage.setItem(
+      `${key}:reading:${JSON.stringify("example.md")}`,
+      JSON.stringify({
+        source: { top: 120, left: 0 },
+        changes: {
+          staged: { top: 360, left: 0, activeChange: 1 },
+          unstaged: { top: 480, left: 0, activeChange: 2 },
+        },
+      }),
+    );
+    const restored = readWorkbench(key)!;
+    expect(restored.resourceTabs[0].git?.side).toBe("worktree");
+    saveWorkbench(key, { ...createInitialAppState(), ...restored });
+    const reading = readFileReading(key, "example.md");
+    expect(reading.changes?.worktree).toEqual({
+      top: 360,
+      left: 0,
+      activeChange: 1,
+    });
+    expect(reading.source.current).toEqual({ top: 120, left: 0 });
+    reading.changes!.worktree = { top: 600, left: 10, activeChange: 3 };
+    reading.save?.();
+    expect(readFileReading(key, "example.md").changes?.worktree).toEqual({
+      top: 600,
+      left: 10,
+      activeChange: 3,
     });
   });
 });

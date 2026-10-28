@@ -23,6 +23,10 @@ import { type SessionSummary } from "../../shared/contracts";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
+import {
+  readNavigationDisclosure,
+  saveNavigationDisclosure,
+} from "../workbench-session";
 import { HiddenClearDialog } from "./HiddenClearDialog";
 import { ProjectGroup, SessionRow } from "./NavSessions";
 import { hiddenDeletionBlockReason, splitNavSections } from "./nav-model";
@@ -110,7 +114,14 @@ export const Nav = memo(function Nav({
     "drawer",
   );
   const navRef = isModal ? modalNavRef : internalNavRef;
-  const [hiddenOpen, setHiddenOpen] = useState(false);
+  const [hiddenOpen, setHiddenOpen] = useState(() =>
+    readNavigationDisclosure("hiddenSessions"),
+  );
+  const toggleHidden = () => {
+    const open = !hiddenOpen;
+    setHiddenOpen(open);
+    saveNavigationDisclosure("hiddenSessions", open);
+  };
   const [searchFocused, setSearchFocused] = useState(false);
   const [searchSelection, setSearchSelection] = useState<{
     query: string;
@@ -557,7 +568,7 @@ export const Nav = memo(function Nav({
               aria-expanded={hiddenExpanded}
               aria-controls={hiddenContentId}
               disabled={searching}
-              onClick={() => setHiddenOpen((value) => !value)}
+              onClick={toggleHidden}
             >
               <EyeOff size={16} aria-hidden />
               <span className="nav__group-name nav__dock-title">Hidden</span>

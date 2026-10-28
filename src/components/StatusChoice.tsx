@@ -179,17 +179,6 @@ export function StatusChoice({
     element?.addEventListener("change", commit);
     return () => element?.removeEventListener("change", commit);
   }, [control]);
-  const hint =
-    error ||
-    (draft
-      ? value
-        ? (selected.description ?? "")
-        : "Default"
-      : !snapshot
-        ? "Selection status is not available yet."
-        : snapshot.supported?.[snapshot.value] === false
-          ? "Requested; inactive for this model."
-          : (selected.description ?? ""));
   const confirmOption = control.options.find(
     (option) => option.value === confirmation,
   );
@@ -263,9 +252,9 @@ export function StatusChoice({
           </span>
         ))}
       </div>
-      {hint ? (
+      {error ? (
         <p className="status-choice__hint" role="status">
-          {hint}
+          {error}
         </p>
       ) : null}
       {confirmOption ? (

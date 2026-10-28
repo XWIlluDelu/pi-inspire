@@ -97,6 +97,7 @@ import { appendNotice, type Notice, parseExtensionDisplays } from "./events";
 import { resolveModelMetadata, supportedThinkingLevels } from "./model-options";
 import { controlState } from "./presentation-adapters";
 import { isTransientFailure, RecoveryBackoff } from "./recovery-backoff";
+import type { ResourceFileTab } from "./resource-preview";
 import {
   isExternalSession,
   modelControlsSupported,
@@ -122,7 +123,6 @@ import {
   saveWorkbench,
   workbenchSessionKey,
 } from "./workbench-session";
-import type { ResourceFileTab } from "./resource-preview";
 
 export type {
   ActivityMaterializationMode,
@@ -3540,9 +3540,10 @@ export class AppStore {
     if (this.state.gitStatusError || status?.kind !== "repository") return;
     const change = status.files.find(
       (file) =>
-        (tab.workspacePath !== undefined &&
+        (file.worktree || file.conflict) &&
+        ((tab.workspacePath !== undefined &&
           file.path.workspacePath === tab.workspacePath) ||
-        file.path.id === tab.git?.pathId,
+          file.path.id === tab.git?.pathId),
     );
     if (!change) {
       // A clean file remains the watched comparison target; a later status
@@ -3550,15 +3551,7 @@ export class AppStore {
       if (tab.workspacePath) this.git.selectWorkspacePath(tab.workspacePath);
       return;
     }
-    const previousSide = tab.git?.side;
-    const side =
-      previousSide === "staged" && change.staged
-        ? "staged"
-        : previousSide === "unstaged" &&
-            (change.unstaged || change.untracked || change.conflict)
-          ? "unstaged"
-          : undefined;
-    await this.git.openChange(change.path.id, side);
+    await this.git.openChange(change.path.id);
   };
 
   refreshFileTab = (): Promise<void> => {

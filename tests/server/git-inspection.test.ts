@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
 import {
   access,
-  mkdtemp,
   mkdir,
+  mkdtemp,
+  readFile,
   rename as renamePath,
   rm,
   stat,
@@ -21,10 +22,10 @@ import {
   GIT_TIMEOUT_MS,
   GitInspectionError,
   GitInspectionService,
-  parsePorcelainV2,
-  spawnGit,
-  parseUnifiedDiff,
   type GitRunner,
+  parsePorcelainV2,
+  parseUnifiedDiff,
+  spawnGit,
 } from "../../server/git-inspection.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -350,7 +351,13 @@ describe("bounded diff contract", () => {
     const records = Array.from({ length: 1_005 }, (_, index) =>
       Buffer.from(`? service-file-${String(index).padStart(4, "0")}`),
     );
-    const fake = runnerForStatus(statusBuffer(...headers(), ...records));
+    const fake = runnerForStatus(
+      statusBuffer(...headers(), ...records),
+      (args) =>
+        args.includes("--name-status")
+          ? { stdout: Buffer.alloc(0) }
+          : undefined,
+    );
     const result = await new GitInspectionService(fake.runner).status(
       "/workspace",
     );
@@ -363,6 +370,30 @@ describe("bounded diff contract", () => {
       expect(result.files).toHaveLength(1_000);
       expect(result.groups.untracked).toHaveLength(1_000);
     }
+  });
+
+  it("applies the file cap after canceled index edits are removed", async () => {
+    const records = Array.from({ length: 1_005 }, (_, index) =>
+      ordinary("MM", "N...", Buffer.from(`file-${index}`)),
+    );
+    const fake = runnerForStatus(
+      statusBuffer(...headers(), ...records),
+      (args) =>
+        args.includes("--name-status")
+          ? { stdout: Buffer.from("M\0file-1004\0") }
+          : undefined,
+    );
+    const result = await new GitInspectionService(fake.runner).status(
+      "/workspace",
+    );
+    expect(result).toMatchObject({
+      kind: "repository",
+      total: 1,
+      truncated: false,
+      files: [
+        { path: { utf8Path: "file-1004" }, worktree: { kind: "modified" } },
+      ],
+    });
   });
 
   it("numbers unified text, including omitted and zero hunk counts", () => {
@@ -1011,6 +1042,12 @@ describe("real temporary repository", () => {
           kind: "unsupported",
           reason: "untracked-content",
         });
+        await expect(
+          bounded(service.diff(root, change.path.id, "worktree")),
+        ).resolves.toMatchObject({
+          kind: "unsupported",
+          reason: "untracked-content",
+        });
       }
 
       await expect(
@@ -1032,6 +1069,185 @@ describe("real temporary repository", () => {
       ).rejects.toMatchObject({ status: 409 });
     },
   );
+
+  it("shows one HEAD-to-worktree change per file, including staged edits and untracked files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inspire-net-git-"));
+    directories.push(root);
+    const git = (...args: string[]) => exec("git", ["-C", root, ...args]);
+    await git("init", "-q");
+    await git("config", "user.email", "test@example.invalid");
+    await git("config", "user.name", "Test");
+    for (const path of [
+      "staged",
+      "unstaged",
+      "both",
+      "canceled",
+      "deleted",
+      "rename-old",
+      "recreated",
+    ])
+      await writeFile(
+        join(root, path),
+        path === "rename-old"
+          ? "rename unique\nsecond rename\nthird rename\n"
+          : path === "deleted"
+            ? "deleted unique\nsecond deleted\nthird deleted\n"
+            : "base\nsecond\nthird\n",
+      );
+    await git("add", ".");
+    await git("commit", "-qm", "base");
+    const base = "base\nsecond\nthird\n";
+    await writeFile(join(root, "staged"), "staged\nsecond\nthird\n");
+    await writeFile(join(root, "both"), "staged\nsecond\nthird\n");
+    await writeFile(join(root, "canceled"), "staged\nsecond\nthird\n");
+    await git("add", "staged", "both", "canceled");
+    await writeFile(join(root, "unstaged"), "working\nsecond\nthird\n");
+    await writeFile(join(root, "both"), "final\nsecond\nthird\n");
+    await writeFile(join(root, "canceled"), base);
+    await rm(join(root, "deleted"));
+    await git("mv", "rename-old", "rename-new");
+    await writeFile(join(root, "new-file"), "new line\nlast line");
+    await writeFile(join(root, "new-binary"), Buffer.from([0, 1, 2]));
+    // A removed index entry with the original file still on disk is another
+    // legitimate cancellation; porcelain emits both D and ? for this identity.
+    await git("rm", "--cached", "recreated");
+    const indexBefore = await readFile(join(root, ".git", "index"));
+    const service = new GitInspectionService();
+    const status = await service.status(root);
+    expect(status.kind).toBe("repository");
+    if (status.kind !== "repository") return;
+
+    expect(status.total).toBe(7);
+    expect(status.files.map((file) => file.path.utf8Path).sort()).toEqual([
+      "both",
+      "deleted",
+      "new-binary",
+      "new-file",
+      "rename-new",
+      "staged",
+      "unstaged",
+    ]);
+    expect(status.files.every((file) => file.worktree)).toBe(true);
+    const byPath = (path: string) =>
+      status.files.find((file) => file.path.utf8Path === path)!;
+    for (const [path, line] of [
+      ["staged", "+staged"],
+      ["unstaged", "+working"],
+      ["both", "+final"],
+    ]) {
+      const diff = await service.diff(root, byPath(path!).path.id, "worktree");
+      expect(diff).toMatchObject({ kind: "text", additions: 1, deletions: 1 });
+      if (diff.kind === "text") {
+        expect(diff.lines.map((row) => row.text)).toContain("-base");
+        expect(diff.lines.map((row) => row.text)).toContain(line);
+      }
+    }
+    expect(
+      await service.diff(root, byPath("deleted").path.id, "worktree"),
+    ).toMatchObject({ kind: "text", additions: 0, deletions: 3 });
+    expect(byPath("rename-new").worktree).toMatchObject({
+      kind: "renamed",
+      originalPath: { utf8Path: "rename-old" },
+    });
+    expect(
+      await service.diff(root, byPath("rename-new").path.id, "worktree"),
+    ).toMatchObject({ kind: "text", additions: 0, deletions: 0 });
+    const added = await service.diff(
+      root,
+      byPath("new-file").path.id,
+      "worktree",
+    );
+    expect(added).toMatchObject({ kind: "text", additions: 2, deletions: 0 });
+    if (added.kind === "text") {
+      expect(added.lines.map((line) => line.text)).toContain("+new line");
+      expect(added.lines.map((line) => line.text)).toContain("+last line");
+      expect(added.lines.map((line) => line.text).join("\n")).not.toContain(
+        "inspire-git-diff-",
+      );
+    }
+    expect(
+      await service.diff(root, byPath("new-binary").path.id, "worktree"),
+    ).toMatchObject({ kind: "binary" });
+    await expect(
+      service.diff(
+        root,
+        Buffer.from("canceled").toString("base64url"),
+        "worktree",
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+    await writeFile(join(root, "recreated"), "replacement\n");
+    const replaced = await service.status(root);
+    expect(replaced.kind).toBe("repository");
+    if (replaced.kind === "repository") {
+      const file = replaced.files.find(
+        (file) => file.path.utf8Path === "recreated",
+      )!;
+      expect(file.worktree).toEqual({ kind: "modified" });
+      expect(await service.diff(root, file.path.id, "worktree")).toMatchObject({
+        kind: "text",
+        additions: 1,
+        deletions: 3,
+      });
+    }
+    const indexAfter = await readFile(join(root, ".git", "index"));
+    expect(indexAfter.equals(indexBefore)).toBe(true);
+  });
+
+  it("does not report a restored rename source as removed or renamed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inspire-restored-source-"));
+    directories.push(root);
+    const git = (...args: string[]) => exec("git", ["-C", root, ...args]);
+    await git("init", "-q");
+    await git("config", "user.email", "test@example.invalid");
+    await git("config", "user.name", "Test");
+    await writeFile(join(root, "before"), "same\n");
+    await git("add", ".");
+    await git("commit", "-qm", "base");
+    await git("mv", "before", "after");
+    await writeFile(join(root, "before"), "same\n");
+    const service = new GitInspectionService();
+    const status = await service.status(root);
+    expect(status).toMatchObject({ kind: "repository", total: 1 });
+    if (status.kind !== "repository") return;
+    expect(status.files[0]).toMatchObject({
+      path: { utf8Path: "after" },
+      worktree: { kind: "added" },
+    });
+    expect(status.files[0]?.worktree?.originalPath).toBeUndefined();
+    expect(
+      await service.diff(root, status.files[0]!.path.id, "worktree"),
+    ).toMatchObject({ kind: "text", additions: 1, deletions: 0 });
+  });
+
+  it("uses an empty baseline before the first commit and omits newly staged files removed again", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inspire-unborn-net-"));
+    directories.push(root);
+    await exec("git", ["init", "-q", root]);
+    await writeFile(join(root, "staged"), "staged\n");
+    await writeFile(join(root, "gone"), "gone\n");
+    await exec("git", ["-C", root, "add", "."]);
+    await writeFile(join(root, "staged"), "final\n");
+    await rm(join(root, "gone"));
+    await writeFile(join(root, "untracked"), "new\n");
+    await writeFile(join(root, "empty"), "");
+    const service = new GitInspectionService();
+    const status = await service.status(root);
+    expect(status).toMatchObject({
+      kind: "repository",
+      head: { kind: "unborn" },
+      total: 3,
+    });
+    if (status.kind !== "repository") return;
+    for (const file of status.files) {
+      expect(file.worktree).toEqual({ kind: "added" });
+      const diff = await service.diff(root, file.path.id, "worktree");
+      expect(diff).toMatchObject({
+        kind: "text",
+        additions: file.path.utf8Path === "empty" ? 0 : 1,
+        deletions: 0,
+      });
+    }
+  });
 
   it("compares both sides of a staged rename without inventing added source", async () => {
     const root = await mkdtemp(join(tmpdir(), "inspire-rename-"));

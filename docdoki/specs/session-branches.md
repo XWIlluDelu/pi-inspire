@@ -35,7 +35,10 @@ admission; [[session-transport]] owns browser continuity and observation lifetim
 
 Read bounded projections of Pi entry identities while keeping older and alternate points reachable
 and searchable. Route pages retain their containing user prompt when tool/event detail crosses a
-page boundary, without skipping activity. Read-only inspection never creates a navigation lease.
+page boundary, without skipping activity. Read-only inspection never creates a navigation lease. Query, expanded nodes, selected preview,
+explicit route and outline/detail positions survive tool switches and F5 as browser-tab-local
+metadata scoped by session and workspace. Tree and entry content are read again under current
+authority; saved navigation never includes content, loading flags or continuation authorization.
 
 Ordinary user-input snippets use the shared user-content projection: readable file names replace
 transport trailers, image-dimension notes are omitted, and image cues remain. Search snippets and

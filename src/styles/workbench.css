@@ -869,25 +869,6 @@ body.pane-resizing--vertical .nav {
   font-variant-numeric: tabular-nums;
 }
 
-.changes__side {
-  width: 76px;
-  height: 24px;
-  border: 0;
-  border-radius: var(--radius-control);
-  padding: 0 var(--space-1);
-  background: transparent;
-  color: var(--muted);
-  font: 400 10.5px/var(--leading-ui) var(--font-sans);
-}
-
-.changes__side:hover:not(:disabled) {
-  color: var(--ink);
-}
-
-.changes__side:focus-visible {
-  outline-offset: -2px;
-}
-
 .file-detail-header__view {
   display: inline-flex;
   width: 64px;

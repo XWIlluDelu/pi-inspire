@@ -1,5 +1,13 @@
-import { stat } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import {
+  lstat,
+  mkdtemp,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import type {
   GitDeltaFacet,
   GitDeltaKind,
@@ -12,6 +20,7 @@ import type {
   GitStatusResponse,
   GitSubmoduleState,
 } from "../shared/contracts.js";
+import { filesystemRelativePath } from "./filesystem-containment.js";
 import {
   createGitInspectionRunner,
   GIT_CONFIG_ARGS,
@@ -23,6 +32,7 @@ import {
   spawnGit,
 } from "./git-runner.js";
 import { requestError } from "./request-error.js";
+import { openCanonicalResourceFile } from "./resources.js";
 
 export type { GitRunner };
 export { GIT_STDERR_BYTES, GIT_TIMEOUT_MS, GitInspectionError, spawnGit };
@@ -249,6 +259,7 @@ interface ParsedRepository {
 export function parsePorcelainV2(
   output: Buffer,
   workspacePrefix = Buffer.alloc(0),
+  fileLimit = MAX_GIT_STATUS_FILES,
 ): ParsedRepository {
   if (output.length === 0 || output[output.length - 1] !== 0) {
     throw new GitInspectionError("Git returned incomplete status data");
@@ -263,7 +274,7 @@ export function parsePorcelainV2(
   let branchUpstreamSeen = false;
   let branchAbSeen = false;
   const files: GitFileChange[] = [];
-  const seenIds = new Set<string>();
+  const seenIds = new Map<string, GitFileChange>();
   let total = 0;
 
   for (let index = 0; index < records.length; index += 1) {
@@ -374,10 +385,23 @@ export function parsePorcelainV2(
       throw new GitInspectionError("Git returned an unsupported status record");
     }
     total += 1;
-    if (seenIds.has(change.path.id))
+    const previous = seenIds.get(change.path.id);
+    if (previous) {
+      // Git legitimately emits D + ? when an index deletion leaves a file on
+      // disk. It is one filesystem identity, not two selectable file tabs.
+      if (
+        change.untracked &&
+        previous.staged?.kind === "deleted" &&
+        !previous.untracked
+      ) {
+        previous.untracked = true;
+        total -= 1;
+        continue;
+      }
       throw new GitInspectionError("Git returned duplicate path identities");
-    seenIds.add(change.path.id);
-    if (files.length < MAX_GIT_STATUS_FILES) files.push(change);
+    }
+    seenIds.set(change.path.id, change);
+    if (files.length < fileLimit) files.push(change);
   }
 
   if (branchOid === undefined || branchHead === undefined)
@@ -579,6 +603,9 @@ async function hasGitMarker(cwd: string): Promise<boolean> {
 
 interface InspectionRepository extends ParsedRepository {
   repoRoot: string;
+  workspacePrefix: Buffer;
+  comparisonBase?: string;
+  untrackedHeadPaths?: Set<string>;
 }
 
 export interface GitInspectionLike {
@@ -611,6 +638,7 @@ export class GitInspectionService implements GitInspectionLike {
     cwd: string,
     signal: AbortSignal | undefined,
     runner: GitRunner,
+    net = false,
   ): Promise<InspectionRepository | null> {
     let inside: GitRunResult;
     try {
@@ -673,15 +701,248 @@ export class GitInspectionService implements GitInspectionLike {
       { stdoutLimit: GIT_STATUS_OUTPUT_BYTES, signal },
     );
     return {
-      ...parsePorcelainV2(status.stdout, Buffer.from(workspacePrefix)),
+      ...parsePorcelainV2(
+        status.stdout,
+        Buffer.from(workspacePrefix),
+        net ? Number.MAX_SAFE_INTEGER : MAX_GIT_STATUS_FILES,
+      ),
       repoRoot,
+      workspacePrefix: Buffer.from(workspacePrefix),
+    };
+  }
+
+  private async untrackedSnapshot(
+    repoRoot: string,
+    path: GitPathIdentity,
+  ): Promise<Buffer | undefined> {
+    if (!path.utf8Path) return undefined;
+    const root = await realpath(repoRoot);
+    const selected = resolve(root, path.utf8Path);
+    if ((await filesystemRelativePath(root, selected)) === null)
+      return undefined;
+    const details = await lstat(selected);
+    if (!details.isFile() || (await realpath(selected)) !== selected)
+      return undefined;
+    const opened = await openCanonicalResourceFile(selected);
+    try {
+      if (opened.details.size > BigInt(GIT_DIFF_OUTPUT_BYTES))
+        throw new GitInspectionError(
+          "New file exceeds the Git inspection limit",
+        );
+      const buffer = Buffer.alloc(GIT_DIFF_OUTPUT_BYTES + 1);
+      let bytesRead = 0;
+      while (bytesRead < buffer.length) {
+        const result = await opened.handle.read(
+          buffer,
+          bytesRead,
+          buffer.length - bytesRead,
+          bytesRead,
+        );
+        if (result.bytesRead === 0) break;
+        bytesRead += result.bytesRead;
+      }
+      if (bytesRead > GIT_DIFF_OUTPUT_BYTES)
+        throw new GitInspectionError(
+          "New file exceeds the Git inspection limit",
+        );
+      return buffer.subarray(0, bytesRead);
+    } finally {
+      await opened.handle.close();
+    }
+  }
+
+  private async headContent(
+    inspected: InspectionRepository,
+    path: GitPathIdentity,
+    runner: GitRunner,
+    signal?: AbortSignal,
+  ): Promise<Buffer> {
+    const result = await runner(
+      [
+        ...GIT_CONFIG_ARGS,
+        "-C",
+        inspected.repoRoot,
+        "cat-file",
+        "blob",
+        `${inspected.comparisonBase}:${path.utf8Path}`,
+      ],
+      { stdoutLimit: GIT_DIFF_OUTPUT_BYTES, signal },
+    );
+    return result.stdout;
+  }
+
+  private async projectWorktree(
+    inspected: InspectionRepository,
+    runner: GitRunner,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const native = new Map(
+      inspected.response.files.map((file) => [file.path.id, file]),
+    );
+    const head = inspected.response.head;
+    // hash-object without -w computes the format-specific empty tree ID and
+    // never writes an object or touches the user's index.
+    inspected.comparisonBase =
+      head.kind === "unborn"
+        ? (
+            await runner(
+              [
+                ...GIT_CONFIG_ARGS,
+                "-C",
+                inspected.repoRoot,
+                "hash-object",
+                "-t",
+                "tree",
+                "--stdin",
+              ],
+              { stdoutLimit: GIT_STDERR_BYTES, signal },
+            )
+          ).stdout
+            .toString("ascii")
+            .trim()
+        : head.oid;
+    if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(inspected.comparisonBase))
+      throw new GitInspectionError(
+        "Git returned malformed comparison identity",
+      );
+    const result = await runner(
+      [
+        ...GIT_CONFIG_ARGS,
+        "-C",
+        inspected.repoRoot,
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--name-status",
+        "-z",
+        "--find-renames",
+        "--ignore-submodules=none",
+        inspected.comparisonBase,
+        "--",
+      ],
+      { stdoutLimit: GIT_STATUS_OUTPUT_BYTES, signal },
+    );
+    if (result.stdout.length && result.stdout.at(-1) !== 0)
+      throw new GitInspectionError("Git returned incomplete change data");
+    const records = result.stdout
+      .subarray(0, -1)
+      .toString("latin1")
+      .split("\0");
+    const net = new Map<string, GitFileChange>();
+    if (result.stdout.length)
+      for (let index = 0; index < records.length; index += 1) {
+        const code = records[index]!;
+        if (
+          !/^(?:[AMDTU]|[RC][0-9]{1,3})$/.test(code) ||
+          (code.length > 1 && Number(code.slice(1)) > 100)
+        )
+          throw new GitInspectionError("Git returned malformed change data");
+        const original =
+          code[0] === "R" || code[0] === "C" ? records[++index] : undefined;
+        const raw = records[++index];
+        if (!raw || original === "")
+          throw new GitInspectionError("Git returned incomplete change data");
+        const path = identity(
+          Buffer.from(raw, "latin1"),
+          inspected.workspacePrefix,
+        );
+        if (net.has(path.id))
+          throw new GitInspectionError(
+            "Git returned duplicate change identities",
+          );
+        const source = native.get(path.id);
+        net.set(path.id, {
+          ...source,
+          path,
+          untracked: source?.untracked ?? false,
+          worktree: {
+            kind: deltaKind(code[0]!)!,
+            ...(original
+              ? {
+                  originalPath: identity(
+                    Buffer.from(original, "latin1"),
+                    inspected.workspacePrefix,
+                  ),
+                }
+              : {}),
+          },
+        });
+      }
+    // Native rename detection can consume a deletion record whose old path
+    // is now untracked. Retain that HEAD identity before adding untracked files.
+    const headPaths = new Set<string>();
+    for (const file of [...native.values(), ...net.values()]) {
+      for (const facet of [file.staged, file.worktree]) {
+        if (facet?.kind === "deleted") headPaths.add(file.path.id);
+        if (facet?.kind === "renamed" && facet.originalPath)
+          headPaths.add(facet.originalPath.id);
+      }
+    }
+    inspected.untrackedHeadPaths = new Set<string>();
+    for (const file of native.values()) {
+      if (file.conflict) {
+        net.set(file.path.id, { ...file, worktree: { kind: "unmerged" } });
+      } else if (file.untracked) {
+        if (headPaths.has(file.path.id) && file.path.utf8Path) {
+          inspected.untrackedHeadPaths.add(file.path.id);
+          const current = await this.untrackedSnapshot(
+            inspected.repoRoot,
+            file.path,
+          );
+          const previous = await this.headContent(
+            inspected,
+            file.path,
+            runner,
+            signal,
+          );
+          if (current?.equals(previous)) {
+            net.delete(file.path.id);
+            continue;
+          }
+          net.set(file.path.id, { ...file, worktree: { kind: "modified" } });
+        } else {
+          net.set(file.path.id, { ...file, worktree: { kind: "added" } });
+        }
+      }
+    }
+    for (const file of net.values()) {
+      if (
+        file.worktree?.kind === "renamed" &&
+        file.worktree.originalPath &&
+        inspected.untrackedHeadPaths.has(file.worktree.originalPath.id)
+      ) {
+        // The source still exists: this is a new destination, not a rename.
+        file.worktree = { kind: "added" };
+      }
+    }
+    const files = [...net.values()].slice(0, MAX_GIT_STATUS_FILES);
+    inspected.response = {
+      ...inspected.response,
+      files,
+      total: net.size,
+      truncated: net.size > files.length,
+      groups: {
+        conflicted: files
+          .filter((file) => file.conflict)
+          .map((file) => file.path.id),
+        staged: files.filter((file) => file.staged).map((file) => file.path.id),
+        unstaged: files
+          .filter((file) => file.unstaged)
+          .map((file) => file.path.id),
+        untracked: files
+          .filter((file) => file.untracked)
+          .map((file) => file.path.id),
+      },
     };
   }
 
   async status(cwd: string, signal?: AbortSignal): Promise<GitStatusResponse> {
     return this.withRunner(cwd, async (runner) => {
-      const inspected = await this.inspect(cwd, signal, runner);
-      return inspected?.response ?? { kind: "not-repository" };
+      const inspected = await this.inspect(cwd, signal, runner, true);
+      if (!inspected) return { kind: "not-repository" };
+      await this.projectWorktree(inspected, runner, signal);
+      return inspected.response;
     });
   }
 
@@ -699,18 +960,27 @@ export class GitInspectionService implements GitInspectionLike {
       throw requestError("Invalid Git path identity", 400);
     }
     return this.withRunner(cwd, async (runner) => {
-      const inspected = await this.inspect(cwd, signal, runner);
+      const inspected = await this.inspect(
+        cwd,
+        signal,
+        runner,
+        side === "worktree",
+      );
       if (!inspected)
         throw requestError("That session is not in a Git repository", 409);
+      if (side === "worktree")
+        await this.projectWorktree(inspected, runner, signal);
       const change = inspected.response.files.find(
         (file) => file.path.id === pathId,
       );
       const authorized =
         change?.conflict ??
-        (side === "staged"
-          ? change?.staged
-          : (change?.unstaged ??
-            (change?.untracked ? { kind: "added" } : undefined)));
+        (side === "worktree"
+          ? change?.worktree
+          : side === "staged"
+            ? change?.staged
+            : (change?.unstaged ??
+              (change?.untracked ? { kind: "added" } : undefined)));
       if (!change || !authorized)
         throw requestError(
           "That path and diff side are not present in fresh status",
@@ -721,9 +991,14 @@ export class GitInspectionService implements GitInspectionLike {
         return { ...base, kind: "conflict", code: change.conflict.code };
       if (change.submodule)
         return { ...base, kind: "submodule", state: change.submodule };
-      if (change.untracked)
+      if (change.untracked && side !== "worktree")
         return { ...base, kind: "unsupported", reason: "untracked-content" };
-      const facet = side === "staged" ? change.staged : change.unstaged;
+      const facet =
+        side === "worktree"
+          ? change.worktree
+          : side === "staged"
+            ? change.staged
+            : change.unstaged;
       const originalPath = facet?.originalPath;
       if (!change.path.utf8Path || (originalPath && !originalPath.utf8Path))
         return { ...base, kind: "unsupported", reason: "path-encoding" };
@@ -744,81 +1019,138 @@ export class GitInspectionService implements GitInspectionLike {
         "--no-color",
         ...(facet?.kind === "renamed" ? ["--find-renames"] : []),
       ];
-      const cached = side === "staged" ? ["--cached"] : [];
-      const numstat = await runner(
-        [...common, "--numstat", "-z", ...cached, "--", ...paths],
-        { stdoutLimit: GIT_DIFF_OUTPUT_BYTES, signal },
-      );
-      const stats = parseNumstat(numstat.stdout);
-      if (stats.kind === "empty")
-        return { ...base, kind: "empty", reason: "no-changes" };
-      if (stats.kind === "binary") return { ...base, kind: "binary" };
-      const full = await runner(
-        [
-          ...common,
-          `--unified=${FULL_SOURCE_CONTEXT_LINES}`,
-          ...cached,
-          "--",
-          ...paths,
-        ],
+      if (side === "worktree" && change.untracked) {
+        const current = await this.untrackedSnapshot(
+          inspected.repoRoot,
+          change.path,
+        );
+        if (!current)
+          return { ...base, kind: "unsupported", reason: "untracked-content" };
+        const previous = inspected.untrackedHeadPaths?.has(change.path.id)
+          ? await this.headContent(inspected, change.path, runner, signal)
+          : undefined;
+        const directory = await mkdtemp(join(tmpdir(), "inspire-git-diff-"));
+        try {
+          const oldPath = join(directory, "before");
+          const newPath = join(directory, "after");
+          if (previous) await writeFile(oldPath, previous);
+          await writeFile(newPath, current);
+          return await this.renderDiff(
+            base,
+            [...common, "--no-index"],
+            [],
+            [previous ? oldPath : "/dev/null", newPath],
+            runner,
+            signal,
+            true,
+          );
+        } finally {
+          await rm(directory, { recursive: true, force: true });
+        }
+      }
+      const comparison =
+        side === "worktree"
+          ? [inspected.comparisonBase!]
+          : side === "staged"
+            ? ["--cached"]
+            : [];
+      return this.renderDiff(base, common, comparison, paths, runner, signal);
+    });
+  }
+
+  private async renderDiff(
+    base: { path: GitPathIdentity; side: GitDiffSide },
+    common: string[],
+    comparison: string[],
+    paths: string[],
+    runner: GitRunner,
+    signal: AbortSignal | undefined,
+    snapshot = false,
+  ): Promise<GitDiffResponse> {
+    const cached = comparison;
+    const acceptedExitCodes = snapshot ? [0, 1] : undefined;
+    const numstat = await runner(
+      [...common, "--numstat", "-z", ...cached, "--", ...paths],
+      { stdoutLimit: GIT_DIFF_OUTPUT_BYTES, signal, acceptedExitCodes },
+    );
+    const stats = parseNumstat(numstat.stdout);
+    if (stats.kind === "empty")
+      return { ...base, kind: "empty", reason: "no-changes" };
+    if (stats.kind === "binary") return { ...base, kind: "binary" };
+    const full = await runner(
+      [
+        ...common,
+        `--unified=${FULL_SOURCE_CONTEXT_LINES}`,
+        ...cached,
+        "--",
+        ...paths,
+      ],
+      {
+        stdoutLimit: GIT_DIFF_OUTPUT_BYTES,
+        allowStdoutTruncation: true,
+        signal,
+        acceptedExitCodes,
+      },
+    );
+    if (full.stdout.length === 0)
+      return { ...base, kind: "empty", reason: "no-changes" };
+    let projection = parseUnifiedDiff(full.stdout, full.truncated);
+    let source: { old: string; new: string } | undefined;
+    const contextLimited = projection.truncated;
+    if (contextLimited) {
+      // Full source is useful context, not permission to spend the diff's
+      // entire budget before its first change.
+      if (!full.truncated && full.stdout.length <= MAX_GIT_SOURCE_BYTES) {
+        const context = parseUnifiedDiff(
+          full.stdout,
+          false,
+          MAX_GIT_SOURCE_LINES,
+        );
+        if (!context.truncated && !context.encodingLossy) {
+          const rows = context.lines.filter(
+            (line) =>
+              line.kind === "context" ||
+              line.kind === "add" ||
+              line.kind === "delete",
+          );
+          source = {
+            old: rows
+              .filter((line) => line.kind !== "add")
+              .map((line) => line.text.slice(1))
+              .join("\n"),
+            new: rows
+              .filter((line) => line.kind !== "delete")
+              .map((line) => line.text.slice(1))
+              .join("\n"),
+          };
+        }
+      }
+      const patch = await runner(
+        [...common, "--unified=3", ...cached, "--", ...paths],
         {
           stdoutLimit: GIT_DIFF_OUTPUT_BYTES,
           allowStdoutTruncation: true,
           signal,
+          acceptedExitCodes,
         },
       );
-      if (full.stdout.length === 0)
-        return { ...base, kind: "empty", reason: "no-changes" };
-      let projection = parseUnifiedDiff(full.stdout, full.truncated);
-      let source: { old: string; new: string } | undefined;
-      const contextLimited = projection.truncated;
-      if (contextLimited) {
-        // Full source is useful context, not permission to spend the diff's
-        // entire budget before its first change.
-        if (!full.truncated && full.stdout.length <= MAX_GIT_SOURCE_BYTES) {
-          const context = parseUnifiedDiff(
-            full.stdout,
-            false,
-            MAX_GIT_SOURCE_LINES,
-          );
-          if (!context.truncated && !context.encodingLossy) {
-            const rows = context.lines.filter(
-              (line) =>
-                line.kind === "context" ||
-                line.kind === "add" ||
-                line.kind === "delete",
-            );
-            source = {
-              old: rows
-                .filter((line) => line.kind !== "add")
-                .map((line) => line.text.slice(1))
-                .join("\n"),
-              new: rows
-                .filter((line) => line.kind !== "delete")
-                .map((line) => line.text.slice(1))
-                .join("\n"),
-            };
-          }
-        }
-        const patch = await runner(
-          [...common, "--unified=3", ...cached, "--", ...paths],
-          {
-            stdoutLimit: GIT_DIFF_OUTPUT_BYTES,
-            allowStdoutTruncation: true,
-            signal,
-          },
-        );
-        projection = parseUnifiedDiff(patch.stdout, patch.truncated);
-      }
-      return {
-        ...base,
-        kind: "text",
-        additions: stats.additions,
-        deletions: stats.deletions,
-        ...projection,
-        ...(contextLimited ? { contextLimited: true } : {}),
-        ...(source ? { source } : {}),
-      };
-    });
+      projection = parseUnifiedDiff(patch.stdout, patch.truncated);
+    }
+    if (snapshot) {
+      // Temporary snapshot paths are an implementation detail. The opaque
+      // fresh-status identity remains the only user-visible pathname.
+      projection.lines = projection.lines.filter(
+        (line) => line.kind !== "meta",
+      );
+    }
+    return {
+      ...base,
+      kind: "text",
+      additions: stats.additions,
+      deletions: stats.deletions,
+      ...projection,
+      ...(contextLimited ? { contextLimited: true } : {}),
+      ...(source ? { source } : {}),
+    };
   }
 }

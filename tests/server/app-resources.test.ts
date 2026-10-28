@@ -412,14 +412,14 @@ describe("HTTP resource and upload authority", () => {
       .send({
         sessionId: "mock-active",
         pathId: "ZmlsZS50eHQ",
-        side: "unstaged",
+        side: "worktree",
       })
       .expect(200);
-    expect(diff.body).toMatchObject({ kind: "empty", side: "unstaged" });
+    expect(diff.body).toMatchObject({ kind: "empty", side: "worktree" });
     expect(git.diff).toHaveBeenCalledWith(
       mockWorkspace,
       "ZmlsZS50eHQ",
-      "unstaged",
+      "worktree",
       expect.any(AbortSignal),
     );
 

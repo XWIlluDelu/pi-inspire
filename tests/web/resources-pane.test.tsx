@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  GitDiffSide,
   GitPathIdentity,
   ResourceProbeResult,
 } from "../../shared/contracts";
@@ -158,18 +159,17 @@ describe("Files pane", () => {
             files: [
               {
                 path: gitPath("notes", "notes.md", "notes.md"),
-                unstaged: { kind: "modified" },
+                worktree: { kind: "modified" },
                 untracked: false,
               },
               {
                 path: gitPath("both", "both.ts", "both.ts"),
-                staged: { kind: "modified" },
-                unstaged: { kind: "modified" },
+                worktree: { kind: "modified" },
                 untracked: false,
               },
               {
                 path: gitPath("rename", "renamed.ts", "renamed.ts"),
-                staged: {
+                worktree: {
                   kind: "renamed",
                   originalPath: gitPath("old", "old.ts", "old.ts"),
                 },
@@ -177,7 +177,7 @@ describe("Files pane", () => {
               },
               {
                 path: gitPath("copy", "copied.ts", "copied.ts"),
-                staged: {
+                worktree: {
                   kind: "copied",
                   originalPath: gitPath("source", "source.ts", "source.ts"),
                 },
@@ -185,17 +185,18 @@ describe("Files pane", () => {
               },
               {
                 path: gitPath("conflict", "conflict.ts", "conflict.ts"),
+                worktree: { kind: "unmerged" },
                 conflict: { code: "UU" },
                 untracked: false,
               },
               {
                 path: gitPath("binary", "image.bin", "image.bin"),
-                unstaged: { kind: "modified" },
+                worktree: { kind: "modified" },
                 untracked: false,
               },
               {
                 path: gitPath("module", "vendor/module", "vendor/module"),
-                staged: { kind: "modified" },
+                worktree: { kind: "modified" },
                 untracked: false,
                 submodule: {
                   commitChanged: true,
@@ -205,20 +206,24 @@ describe("Files pane", () => {
               },
               {
                 path: gitPath("deleted", "gone.ts", "gone.ts"),
-                unstaged: { kind: "deleted" },
+                worktree: { kind: "deleted" },
                 untracked: false,
               },
               {
                 path: gitPath("outside", "outside.ts"),
-                unstaged: { kind: "modified" },
+                worktree: { kind: "modified" },
                 untracked: false,
               },
               {
                 path: { id: "bytes", display: "bad\\xff" },
-                unstaged: { kind: "modified" },
+                worktree: { kind: "modified" },
                 untracked: false,
               },
-              { path: gitPath("new", "new.ts", "new.ts"), untracked: true },
+              {
+                path: gitPath("new", "new.ts", "new.ts"),
+                worktree: { kind: "added" },
+                untracked: true,
+              },
             ],
             total: 1_005,
             truncated: true,
@@ -240,7 +245,7 @@ describe("Files pane", () => {
         if (url.startsWith("/api/git/diff")) {
           const body = JSON.parse(String(init?.body ?? "{}")) as {
             pathId: string;
-            side: "staged" | "unstaged";
+            side: GitDiffSide;
           };
           const paths: Record<string, GitPathIdentity> = {
             notes: gitPath("notes", "notes.md", "notes.md"),
@@ -279,8 +284,14 @@ describe("Files pane", () => {
           if (body.pathId === "new")
             return Response.json({
               ...base,
-              kind: "unsupported",
-              reason: "untracked-content",
+              kind: "text",
+              additions: 1,
+              deletions: 0,
+              truncated: false,
+              encodingLossy: false,
+              lines: [
+                { kind: "add", text: "+new file", oldLine: null, newLine: 1 },
+              ],
             });
           return Response.json({
             ...base,
@@ -610,7 +621,7 @@ describe("Files pane", () => {
     }
   });
 
-  it("opens grouped changes in ordinary file tabs with comparison and hunk navigation", async () => {
+  it("opens grouped changes in ordinary file tabs with net comparison and hunk navigation", async () => {
     Element.prototype.scrollIntoView = vi.fn();
     store.setResourcesOpen(true);
     store.setContextMode("changes");
@@ -622,12 +633,14 @@ describe("Files pane", () => {
       await screen.findByRole("heading", { name: /Conflicts/ }),
     ).toBeInTheDocument();
     expect(pane.querySelector(".res__index-header")).toHaveTextContent(
-      "feature/git4 staged · 7 working · 1 conflict",
+      "feature/git1005 changes",
     );
-    expect(screen.getByRole("heading", { name: /Staged/ })).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: /Unstaged/ }),
+      screen.getByRole("heading", { name: /Changes/ }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: /Staged|Unstaged/ }),
+    ).toBeNull();
     expect(screen.queryByLabelText("Source changes for notes.md")).toBeNull();
     expect(pane.querySelector(".file-detail-header")).toBeNull();
     expect(
@@ -638,18 +651,16 @@ describe("Files pane", () => {
     ).toHaveClass("git-deco--untracked");
     expect(
       screen.getByRole("button", {
-        name: "renamed.ts, staged renamed, renamed from old.ts",
+        name: "renamed.ts, renamed, renamed from old.ts",
       }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: "copied.ts, staged copied, copied from source.ts",
+        name: "copied.ts, copied, copied from source.ts",
       }),
     ).toBeInTheDocument();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "notes.md, unstaged modified" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "notes.md, modified" }));
     expect(
       await screen.findByLabelText("Source changes for notes.md"),
     ).toBeInTheDocument();
@@ -659,11 +670,9 @@ describe("Files pane", () => {
     );
     fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
     expect(
-      screen.getByRole("button", { name: "notes.md, unstaged modified" }),
+      screen.getByRole("button", { name: "notes.md, modified" }),
     ).toHaveAttribute("aria-current", "true");
-    fireEvent.click(
-      screen.getByRole("button", { name: "both.ts, unstaged modified" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "both.ts, modified" }));
     const source = await screen.findByLabelText("Source changes for both.ts");
     expect(source).toHaveAttribute("data-pane-scroll-active", "true");
     expect(within(pane).getByTitle("Line changes")).toHaveTextContent("+2−1");
@@ -677,22 +686,16 @@ describe("Files pane", () => {
       "source-diff__line--active",
     );
 
-    fireEvent.change(
-      screen.getByRole("combobox", { name: "Comparison side" }),
-      {
-        target: { value: "staged" },
-      },
-    );
-    await waitFor(() =>
-      expect(store.getState().selectedGitSide).toBe("staged"),
-    );
-    expect(screen.getByRole("tab", { name: "both.ts" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    expect(
+      screen.queryByRole("combobox", { name: "Comparison side" }),
+    ).toBeNull();
+    expect(store.getState().selectedGitSide).toBe("worktree");
     fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
     expect(
-      screen.getByRole("button", { name: "both.ts, staged modified" }),
+      screen.getAllByRole("button", { name: "both.ts, modified" }),
+    ).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: "both.ts, modified" }),
     ).toHaveAttribute("aria-current", "true");
 
     for (const [name, title] of [
@@ -700,7 +703,6 @@ describe("Files pane", () => {
       [/conflict\.ts/, "Unresolved conflict"],
       [/vendor\/module/, "Submodule change"],
       [/bad\\xff/, "Source unavailable"],
-      [/new\.ts/, "Changes unavailable"],
     ] as const) {
       fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
       fireEvent.click(screen.getByRole("button", { name }));
@@ -710,7 +712,15 @@ describe("Files pane", () => {
           screen.getByText(/cannot be represented as UTF-8/),
         ).toBeInTheDocument();
     }
-    // Unsupported comparisons stay distinct from the file's readable body.
+    fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
+    fireEvent.click(screen.getByRole("button", { name: /new\.ts/ }));
+    const added = await screen.findByRole("region", {
+      name: "Source changes for new.ts",
+    });
+    expect(added).toHaveTextContent("new file");
+    expect(added.querySelectorAll(".source-diff__line--add")).toHaveLength(1);
+    expect(added.querySelector(".source-diff__line--delete")).toBeNull();
+    // The same new-file tab can still return to its ordinary body.
     fireEvent.click(screen.getByRole("button", { name: "Git changes" }));
     expect(
       await screen.findByRole("region", { name: "File source" }),
@@ -1022,7 +1032,7 @@ describe("Files pane", () => {
     fireEvent.click(within(pane).getByRole("tab", { name: "Changes" }));
     expect(
       await within(pane).findByRole("button", {
-        name: "notes.md, unstaged modified",
+        name: "notes.md, modified",
       }),
     ).toHaveAttribute("aria-current", "true");
   });
@@ -1271,7 +1281,7 @@ describe("Files pane", () => {
       store.setResourcesOpen(true);
       store.setContextMode("changes");
       await store.refreshGitInspection();
-      if (view === "file") await store.openGitDiff("notes", "unstaged");
+      if (view === "file") await store.openGitDiff("notes", "worktree");
       render(<ContextPane />);
       await waitFor(() =>
         expect(store.getState().gitStatusRefreshing).toBe(false),
@@ -1350,7 +1360,7 @@ describe("Files pane", () => {
     "keeps the new %s refresh busy when a previous scope's request completes",
     async (scope) => {
       await store.refreshGitInspection();
-      await store.openGitDiff("notes", "unstaged");
+      await store.openGitDiff("notes", "worktree");
       if (scope === "tool") store.setContextMode("changes");
       render(<ContextPane />);
       await waitFor(() =>

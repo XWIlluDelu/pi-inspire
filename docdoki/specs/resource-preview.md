@@ -349,18 +349,23 @@ and display settings that alter patch grammar. This read-only interface is not a
 repository whose configuration is being maliciously replaced during inspection.
 
 A failed refresh retains the previous result with one visible stale-result notice, including clean
-and non-repository results. Initial failure does not claim a Git result.
+and non-repository results. Same-owner background refresh retains confirmed clean/non-repository
+results without replacing them with a loading panel; initial or changed-owner reads remain unknown
+until confirmed. Initial failure does not claim a Git result.
 
-The Changes tool shows repository identity, staged/working/conflict counts and grouped paths in a
-full-height list. Selecting a path opens or reuses its ordinary file tab in Git Changes mode;
+The Changes tool shows repository identity and one full-height list of the current working tree's
+net changes against HEAD, plus untracked new files. Files, counts, decorations and file comparisons
+use that same projection; staging is not a separate browsing mode. Changes canceled by later working
+content do not remain as phantom rows. An unborn repository compares against the empty tree. Conflicts
+retain their explicit unsupported-comparison boundary. Selecting a path opens or reuses its ordinary
+file tab in Git Changes mode;
 workspace paths share identity with Files, while opaque Git paths retain their authorized Git ID.
 Display paths are never converted into filesystem authority. Deleted or unreadable body content
 keeps the tab and its error, independently of the readable Git comparison.
 
-The file toolbar owns the side selector, line counts, non-wrapping previous/next change controls and
-current position. Its compact Unstaged/Staged labels distinguish index-to-working-tree and
-HEAD-to-index comparisons; they retain the shared toolbar font and native selection behavior. These controls only navigate changes within that file. Git Changes toggles back
-to its remembered body mode; opening from Files explicitly selects body. Download stays at the
+The file toolbar owns line counts, non-wrapping previous/next change controls and current position.
+These controls only navigate changes within that file. Git Changes toggles back to its remembered
+body mode; opening from Files explicitly selects body. Download stays at the
 trailing edge, with Source/Preview immediately before it when available in body mode. The current
 change uses an edge marker without replacing addition/deletion colors. Old/new line numbers and
 change signs share a sticky gutter with an opaque matching row tint. Changed-file rows use the
@@ -375,21 +380,22 @@ geometry.
 
 A newly encountered text diff positions its first change inside the source viewport without
 scrolling the outer page or changing focus. Within the mounted context pane, vertical/horizontal
-reading offsets and manually navigated change selection survive file/side changes, tab switches,
+reading offsets and manually navigated change selection survive file changes, tab switches,
 diff reloads and F5. Only navigation metadata is stored under the existing browser-origin, session,
-workspace and file identity scope, separately for each side. Reload/reconnect reauthorizes every
+workspace and file identity scope. Saved staged/unstaged selections migrate to the net comparison,
+retaining the previously selected comparison's reading position. Reload/reconnect reauthorizes every
 read, and late results cannot replace a newer file selection. Unknown or failed status does not
 claim that the file is clean.
 
-- Working comparisons use working-tree source; staged comparisons use index source. An empty
-  comparison reports no diff rather than substituting disk content for index source.
+- Comparisons use HEAD and current working-tree source. New untracked regular files use a bounded,
+  validated snapshot; Git inspection never adds them to the index or writes repository objects.
 - Without an authoritative comparison, counts are `—` and navigation is disabled. Absence from a
   bounded status result cannot distinguish clean, ignored, omitted, non-repository, or unavailable
   states; only a concrete diff establishes zero counts.
 - Deleted, untracked, binary, submodule, conflict, outside-workspace, and non-UTF-8 states expose the
-  content their Git state supports. Rename comparisons use the selected side's old and new paths.
+  content their Git state supports. Rename comparisons use the net change's old and new paths.
   A pure rename is not a whole-file addition.
-- Polling retains the selected path/side and reader position while that comparison remains present;
+- Polling retains the selected path and reader position while that comparison remains present;
   explicit inspection refreshes the diff, and a vanished selection clears it. Git selection intent
   owns the pane, so a delayed Files response cannot replace a newer Git choice.
 - Unified-diff file headers are recognized outside hunk bodies. Hunk lines with repeated `+` or `-`

@@ -3,6 +3,7 @@ import type { GitFileChange, GitStatusResponse } from "../../shared/contracts";
 import {
   gitDecorationForChange,
   gitDecorationForDirectory,
+  presentGitFacet,
 } from "../../src/git-presentation";
 
 function change(
@@ -39,12 +40,49 @@ describe("gitDecorationForChange", () => {
       "untracked",
     );
     expect(
-      gitDecorationForChange(change({ staged: { kind: "modified" } })),
+      gitDecorationForChange(change({ worktree: { kind: "deleted" } })),
     ).toBe("modified");
     expect(
-      gitDecorationForChange(change({ unstaged: { kind: "modified" } })),
+      gitDecorationForChange(change({ worktree: { kind: "modified" } })),
     ).toBe("modified");
     expect(gitDecorationForChange(change({}))).toBeNull();
+  });
+});
+
+describe("presentGitFacet", () => {
+  it("uses only the net facet even when index and working-tree facets disagree", () => {
+    const file = change({
+      staged: { kind: "added" },
+      unstaged: { kind: "deleted" },
+    });
+    expect(presentGitFacet(file)).toBeNull();
+    expect(gitDecorationForChange(file)).toBeNull();
+    expect(
+      presentGitFacet({ ...file, worktree: { kind: "modified" } }),
+    ).toEqual({ mark: "M", label: "modified" });
+  });
+  it.each([
+    ["added", "A"],
+    ["modified", "M"],
+    ["deleted", "D"],
+    ["renamed", "R"],
+    ["copied", "C"],
+    ["type-changed", "T"],
+  ] as const)("presents net %s as %s", (kind, mark) => {
+    expect(presentGitFacet(change({ worktree: { kind } }))).toEqual({
+      mark,
+      label: kind,
+    });
+  });
+  it("keeps conflict and untracked provenance clear", () => {
+    expect(
+      presentGitFacet(
+        change({ conflict: { code: "UU" }, worktree: { kind: "unmerged" } }),
+      ),
+    ).toEqual({ mark: "!", label: "conflict UU" });
+    expect(
+      presentGitFacet(change({ untracked: true, worktree: { kind: "added" } })),
+    ).toEqual({ mark: "U", label: "Untracked — not yet added to Git" });
   });
 });
 
@@ -65,7 +103,7 @@ describe("gitDecorationForDirectory", () => {
   it("rolls up the most severe descendant state (conflict > modified > untracked)", () => {
     const status = statusWith([
       change({ untracked: true }, "projects/a/new.md"),
-      change({ unstaged: { kind: "modified" } }, "projects/a/touched.md"),
+      change({ worktree: { kind: "modified" } }, "projects/a/touched.md"),
     ]);
     expect(gitDecorationForDirectory(status, "projects")).toBe("modified");
     expect(gitDecorationForDirectory(status, "projects/a")).toBe("modified");
@@ -73,7 +111,7 @@ describe("gitDecorationForDirectory", () => {
     expect(
       gitDecorationForDirectory(
         statusWith([
-          change({ unstaged: { kind: "modified" } }, "vendor/module"),
+          change({ worktree: { kind: "modified" } }, "vendor/module"),
         ]),
         "vendor/module",
       ),
@@ -81,7 +119,7 @@ describe("gitDecorationForDirectory", () => {
 
     const withConflict = statusWith([
       change({ untracked: true }, "projects/a/new.md"),
-      change({ unstaged: { kind: "modified" } }, "projects/a/touched.md"),
+      change({ worktree: { kind: "modified" } }, "projects/a/touched.md"),
       change({ conflict: { code: "UU" } }, "projects/deep/clash.md"),
     ]);
     expect(gitDecorationForDirectory(withConflict, "projects")).toBe(
@@ -91,7 +129,7 @@ describe("gitDecorationForDirectory", () => {
 
   it("scopes by path prefix boundary and requires a safe workspace projection", () => {
     const status = statusWith([
-      change({ unstaged: { kind: "modified" } }, "projects2/twin.md"),
+      change({ worktree: { kind: "modified" } }, "projects2/twin.md"),
       { path: { id: "y", display: "projects/lost.md" }, untracked: true },
     ]);
     expect(gitDecorationForDirectory(status, "projects")).toBeNull();

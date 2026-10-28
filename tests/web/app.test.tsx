@@ -70,6 +70,7 @@ beforeAll(async () => {
                 workspacePath: "README.md",
               },
               unstaged: { kind: "modified" },
+              worktree: { kind: "modified" },
               untracked: false,
             },
             {
@@ -80,6 +81,7 @@ beforeAll(async () => {
                 workspacePath: "src/App.tsx",
               },
               unstaged: { kind: "modified" },
+              worktree: { kind: "modified" },
               untracked: false,
             },
             {
@@ -90,6 +92,7 @@ beforeAll(async () => {
                 workspacePath: "notes.md",
               },
               untracked: true,
+              worktree: { kind: "added" },
             },
           ],
           total: 3,
@@ -405,7 +408,7 @@ describe("welcome flow", () => {
     }
   });
 
-  it("backs out of a narrow Changes detail before closing its drawer", async () => {
+  it("keeps a narrow Git file tab at the same history level as Changes", async () => {
     const media = vi
       .spyOn(window, "matchMedia")
       .mockImplementation((query) => ({
@@ -427,35 +430,30 @@ describe("welcome flow", () => {
         store.showChangesBrowser();
       });
       const row = await screen.findByRole("button", {
-        name: "README.md, unstaged modified",
+        name: "README.md, modified",
       });
       fireEvent.click(row);
       await waitFor(() =>
         expect(store.getState().selectedGitPathId).toBe("readme"),
       );
-      expect(history.state.__inspireWorkbench.depth).toBe(2);
-
-      act(() => history.back());
-      await waitFor(() =>
-        expect(store.getState().selectedGitPathId).toBeNull(),
-      );
-      expect(store.getState().selectedResourceReference).toBeNull();
-      expect(store.getState().resourcesOpen).toBe(true);
-      expect(row).toHaveFocus();
+      const file = await screen.findByRole("tab", { name: "README.md" });
+      expect(file).toHaveAttribute("aria-selected", "true");
       expect(history.state.__inspireWorkbench.depth).toBe(1);
 
-      fireEvent.click(row);
+      fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
+      expect(store.getState().contextMode).toBe("changes");
+      expect(history.state.__inspireWorkbench.depth).toBe(1);
+      fireEvent.click(file);
       await waitFor(() =>
-        expect(store.getState().selectedGitPathId).toBe("readme"),
+        expect(file).toHaveAttribute("aria-selected", "true"),
       );
-      fireEvent.click(screen.getByRole("button", { name: "All changes (3)" }));
-      await waitFor(() =>
-        expect(history.state.__inspireWorkbench.depth).toBe(1),
-      );
-      expect(store.getState().selectedGitPathId).toBeNull();
-      expect(store.getState().resourcesOpen).toBe(true);
+      expect(history.state.__inspireWorkbench.depth).toBe(1);
+
       act(() => history.back());
       await waitFor(() => expect(store.getState().resourcesOpen).toBe(false));
+      expect(
+        screen.queryByRole("dialog", { name: "Context panel" }),
+      ).not.toBeInTheDocument();
       expect(history.state).toEqual({ changesBaseline: true });
     } finally {
       media.mockRestore();

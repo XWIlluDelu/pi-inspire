@@ -26,6 +26,10 @@ import { isComposingKeyboardEvent } from "../keyboard-input";
 import { resourceReferenceFromEventTarget } from "../resources";
 import { sessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
+import {
+  type HistoryReadingState,
+  readHistoryReading,
+} from "../workbench-session";
 import { ContextPaneState } from "./ContextPaneState";
 import { CopyAction } from "./CopyAction";
 import {
@@ -155,8 +159,10 @@ function HistoryImage({
  * conversation. Keeping the outline mounted preserves its exact place. */
 export function BranchTree({
   onContextChange,
+  readingState,
 }: {
   onContextChange?: () => void;
+  readingState?: HistoryReadingState;
 } = {}) {
   const state = useAppState(
     (source) => ({
@@ -177,31 +183,92 @@ export function BranchTree({
     }),
     shallowEqual,
   );
-  const [query, setQuery] = useState("");
+  const localReading = useMemo(
+    () => readHistoryReading(null),
+    [state.sessionId],
+  );
+  const savedReading = readingState ?? localReading;
+  const [query, setQueryState] = useState(savedReading.query);
   const [page, setPage] = useState<BranchTreeResponse | null>(null);
-  const [routeLeaf, setRouteLeaf] = useState<string>();
+  const [routeLeaf, setRouteLeafState] = useState<string | undefined>(
+    savedReading.routeLeafId ?? undefined,
+  );
   const [reading, setReading] = useState(false);
   const [readError, setReadError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [expanded, setExpandedState] = useState<ReadonlySet<string>>(
+    () => new Set(savedReading.expanded),
+  );
   const [routes, setRoutes] = useState<{
     parentId: string;
     page: BranchTreeResponse;
   } | null>(null);
-  const [selected, setSelected] = useState<BranchTreeNode | null>(null);
+  const [selected, setSelectedState] = useState<BranchTreeNode | null>(null);
+  const [restoringEntryId, setRestoringEntryId] = useState(
+    savedReading.selectedEntryId,
+  );
+  const selectedId = selected?.id ?? restoringEntryId;
   const [detail, setDetail] = useState<BranchEntryResponse | null>(null);
   const [carrySummary, setCarrySummary] = useState(false);
   const [instructions, setInstructions] = useState("");
   const [summarizing, setSummarizing] = useState(false);
   const rowsRef = useRef<HTMLDivElement>(null);
+  const detailRef = useRef<HTMLDivElement>(null);
   const backRef = useRef<HTMLButtonElement>(null);
   const selectedButtonRef = useRef<HTMLButtonElement | null>(null);
-  const outlineScrollRef = useRef(0);
+  const outlineScrollRef = useRef(savedReading.outline.top);
+  const restoreOutline = useRef(savedReading.restored);
+  const restoreDetail = useRef(
+    savedReading.selectedEntryId ? { ...savedReading.detail } : null,
+  );
   const outlineOwnerRef = useRef<string | null>(null);
   const readOwnerRef = useRef<AbortController | null>(null);
-  const identityRef = useRef<string | null>(null);
+  const restorationAttemptRef = useRef<string | null>(null);
+  const initialTreeReadRef = useRef<string | null>(null);
+  const identityRef = useRef({
+    sessionId: state.sessionId,
+    viewId: state.viewId,
+    reading: savedReading,
+  });
   const loadedSearchRef = useRef<string | null>(null);
   const tree = page ?? state.tree;
   const searching = Boolean(query.trim());
+  function setQuery(value: string) {
+    if (savedReading.query !== value) {
+      savedReading.outline = { top: 0, left: 0 };
+      outlineScrollRef.current = 0;
+      restoreOutline.current = false;
+    }
+    savedReading.query = value;
+    savedReading.save?.();
+    setQueryState(value);
+  }
+  function setRouteLeaf(value: string | undefined) {
+    savedReading.outline = { top: 0, left: 0 };
+    outlineScrollRef.current = 0;
+    restoreOutline.current = false;
+    outlineOwnerRef.current = null;
+    savedReading.routeLeafId = value ?? null;
+    savedReading.save?.();
+    setRouteLeafState(value);
+  }
+  function setExpanded(
+    update: (value: ReadonlySet<string>) => ReadonlySet<string>,
+  ) {
+    const next = update(new Set(savedReading.expanded));
+    savedReading.expanded = [...next];
+    savedReading.save?.();
+    setExpandedState(next);
+  }
+  function setSelected(node: BranchTreeNode | null) {
+    if (savedReading.selectedEntryId !== (node?.id ?? null)) {
+      savedReading.detail = { top: 0, left: 0 };
+      restoreDetail.current = null;
+    }
+    savedReading.selectedEntryId = node?.id ?? null;
+    savedReading.save?.();
+    setRestoringEntryId(null);
+    setSelectedState(node);
+  }
   const selectedContent = copyLoader(
     async (signal: AbortSignal) => {
       if (!selected) return null;
@@ -268,27 +335,121 @@ export function BranchTree({
     [ownsRead, retireRead],
   );
 
-  useEffect(() => {
-    const identity = `${state.sessionId ?? ""}\0${state.viewId ?? ""}`;
-    if (identityRef.current === identity) return;
-    identityRef.current = identity;
+  const loadContent = useCallback(async () => {
+    if (!detail || detail.nextOffset === null) return;
+    await performRead(
+      beginRead(),
+      (signal) =>
+        store.readBranchEntry(detail.node.id, detail.nextOffset!, signal),
+      (result) => setDetail({ ...result, text: detail.text + result.text }),
+      "More content could not be loaded",
+    );
+  }, [detail, beginRead, performRead]);
+
+  useLayoutEffect(() => {
+    if (
+      !state.sessionId ||
+      !state.viewId ||
+      state.tree ||
+      state.loading ||
+      state.error
+    )
+      return;
+    const owner = `${state.sessionId}\0${state.viewId}`;
+    if (initialTreeReadRef.current === owner) return;
+    initialTreeReadRef.current = owner;
+    void store.loadBranchTree();
+  }, [state.sessionId, state.viewId, state.tree, state.loading, state.error]);
+
+  useLayoutEffect(() => {
+    const identity = identityRef.current;
+    if (
+      identity.sessionId === state.sessionId &&
+      identity.viewId === state.viewId &&
+      identity.reading === savedReading
+    )
+      return;
+    identityRef.current = {
+      sessionId: state.sessionId,
+      viewId: state.viewId,
+      reading: savedReading,
+    };
     retireRead();
-    setQuery("");
+    setQueryState(savedReading.query);
     setPage(null);
-    setRouteLeaf(undefined);
+    setRouteLeafState(savedReading.routeLeafId ?? undefined);
     setRoutes(null);
-    setSelected(null);
+    setSelectedState(null);
+    setRestoringEntryId(savedReading.selectedEntryId);
     setDetail(null);
     setCarrySummary(false);
     setInstructions("");
     setReadError(null);
-    setExpanded(new Set());
+    setExpandedState(new Set(savedReading.expanded));
     setSummarizing(false);
+    outlineScrollRef.current = savedReading.outline.top;
+    restoreOutline.current = savedReading.restored;
+    restoreDetail.current = savedReading.selectedEntryId
+      ? { ...savedReading.detail }
+      : null;
+    selectedButtonRef.current = null;
+    outlineOwnerRef.current = null;
     loadedSearchRef.current = null;
-  }, [state.sessionId, state.viewId, retireRead]);
+    restorationAttemptRef.current = null;
+  }, [state.sessionId, state.viewId, savedReading, retireRead]);
+
+  const treeReady = Boolean(
+    state.tree &&
+      state.tree.sessionId === state.sessionId &&
+      !state.stale &&
+      !state.loading,
+  );
+  useEffect(() => {
+    if (
+      !restoringEntryId ||
+      restoringEntryId !== savedReading.selectedEntryId ||
+      !treeReady ||
+      restorationAttemptRef.current === restoringEntryId
+    )
+      return;
+    restorationAttemptRef.current = restoringEntryId;
+    const owner = beginRead();
+    void performRead(
+      owner,
+      (signal) => store.readBranchEntry(restoringEntryId, 0, signal),
+      (result) => {
+        if (result.node.id !== restoringEntryId)
+          throw new Error("History changed. Try this read again.");
+        setSelectedState(result.node);
+        setDetail(result);
+        setRestoringEntryId(null);
+      },
+      "This point could not be previewed",
+    );
+    return () => {
+      if (ownsRead(owner)) restorationAttemptRef.current = null;
+      retireRead(owner);
+    };
+  }, [
+    restoringEntryId,
+    treeReady,
+    savedReading,
+    state.sessionId,
+    state.viewId,
+    beginRead,
+    performRead,
+    retireRead,
+    ownsRead,
+  ]);
 
   useEffect(() => {
-    if (!state.tree || selected) return;
+    if (
+      !state.tree ||
+      selectedId ||
+      query !== savedReading.query ||
+      routeLeaf !== (savedReading.routeLeafId ?? undefined)
+    )
+      return;
     if (!query.trim() && !routeLeaf) {
       setPage((current) =>
         current && current.revision !== state.tree!.revision ? null : current,
@@ -324,7 +485,8 @@ export function BranchTree({
     query,
     routeLeaf,
     state.tree,
-    selected,
+    selectedId,
+    savedReading,
     searching,
     beginRead,
     performRead,
@@ -333,12 +495,56 @@ export function BranchTree({
 
   useEffect(() => () => readOwnerRef.current?.abort(), []);
   useLayoutEffect(() => {
-    if (selected) backRef.current?.focus();
+    if (selectedId) backRef.current?.focus();
     else {
-      if (rowsRef.current) rowsRef.current.scrollTop = outlineScrollRef.current;
+      if (rowsRef.current) {
+        rowsRef.current.scrollTop = outlineScrollRef.current;
+        rowsRef.current.scrollLeft = savedReading.outline.left;
+      }
       selectedButtonRef.current?.focus({ preventScroll: true });
     }
-  }, [selected]);
+  }, [selectedId, savedReading]);
+
+  useLayoutEffect(() => {
+    if (
+      selectedId ||
+      !restoreOutline.current ||
+      !tree ||
+      (searching && !page) ||
+      (routeLeaf && page?.routeLeafId !== routeLeaf)
+    )
+      return;
+    const rows = rowsRef.current;
+    if (!rows) return;
+    rows.scrollTop = savedReading.outline.top;
+    rows.scrollLeft = savedReading.outline.left;
+    outlineScrollRef.current = savedReading.outline.top;
+    if (Math.abs(rows.scrollTop - savedReading.outline.top) <= 1)
+      restoreOutline.current = false;
+    outlineOwnerRef.current = `${state.sessionId}\0${state.viewId}\0${routeLeaf ?? ""}`;
+  }, [
+    selectedId,
+    tree,
+    page,
+    searching,
+    routeLeaf,
+    expanded,
+    savedReading,
+    state.sessionId,
+    state.viewId,
+  ]);
+
+  useLayoutEffect(() => {
+    const position = restoreDetail.current;
+    const body = detailRef.current;
+    if (!position || !body || !detail) return;
+    body.scrollTop = position.top;
+    body.scrollLeft = position.left;
+    if (Math.abs(body.scrollTop - position.top) <= 1)
+      restoreDetail.current = null;
+    else if (detail.nextOffset !== null && !reading && !readError)
+      void loadContent();
+  }, [detail, reading, readError, loadContent]);
 
   useLayoutEffect(() => {
     if (searching) {
@@ -347,7 +553,7 @@ export function BranchTree({
     }
     if (
       !tree ||
-      selected ||
+      selectedId ||
       tree.sessionId !== state.sessionId ||
       (routeLeaf && page?.routeLeafId !== routeLeaf)
     )
@@ -366,7 +572,7 @@ export function BranchTree({
   }, [
     tree,
     page,
-    selected,
+    selectedId,
     searching,
     routeLeaf,
     state.sessionId,
@@ -394,32 +600,33 @@ export function BranchTree({
     );
   }
 
-  async function readSelected(node: BranchTreeNode) {
+  async function readSelected(node: BranchTreeNode | string) {
+    const id = typeof node === "string" ? node : node.id;
     setDetail(null);
     await read(
-      (signal) => store.readBranchEntry(node.id, 0, signal),
-      setDetail,
+      (signal) => store.readBranchEntry(id, 0, signal),
+      (result) => {
+        if (result.node.id !== id)
+          throw new Error("History changed. Try this read again.");
+        setSelectedState(result.node);
+        setRestoringEntryId(null);
+        setDetail(result);
+      },
       "This point could not be previewed",
     );
   }
 
   async function preview(node: BranchTreeNode, button: HTMLButtonElement) {
     outlineScrollRef.current = rowsRef.current?.scrollTop ?? 0;
+    savedReading.outline = {
+      top: outlineScrollRef.current,
+      left: rowsRef.current?.scrollLeft ?? 0,
+    };
     selectedButtonRef.current = button;
     setSelected(node);
     setCarrySummary(false);
     setInstructions("");
     await readSelected(node);
-  }
-
-  async function loadContent() {
-    if (!detail || detail.nextOffset === null) return;
-    await read(
-      (signal) =>
-        store.readBranchEntry(detail.node.id, detail.nextOffset!, signal),
-      (result) => setDetail({ ...result, text: detail.text + result.text }),
-      "More content could not be loaded",
-    );
   }
 
   async function showRoutes(parentId: string, before?: string) {
@@ -592,7 +799,7 @@ export function BranchTree({
           {readError ?? state.error}
         </div>
       ) : null}
-      <div className="history-outline" hidden={selected !== null}>
+      <div className="history-outline" hidden={selectedId !== null}>
         <SearchField
           className="branch-tree__search"
           clearLabel="Clear history search"
@@ -633,7 +840,28 @@ export function BranchTree({
             </button>
           </div>
         ) : null}
-        <div className="branch-tree__rows" ref={rowsRef}>
+        <div
+          className="branch-tree__rows"
+          ref={rowsRef}
+          onWheel={() => {
+            restoreOutline.current = false;
+          }}
+          onPointerDown={() => {
+            restoreOutline.current = false;
+          }}
+          onKeyDown={() => {
+            restoreOutline.current = false;
+          }}
+          onScroll={(event) => {
+            if (selectedId || restoreOutline.current) return;
+            savedReading.outline = {
+              top: event.currentTarget.scrollTop,
+              left: event.currentTarget.scrollLeft,
+            };
+            outlineScrollRef.current = savedReading.outline.top;
+            savedReading.save?.();
+          }}
+        >
           {tree.nextBefore && (!(searching || routeLeaf) || page) ? (
             <button
               type="button"
@@ -838,7 +1066,7 @@ export function BranchTree({
           )}
         </div>
       </div>
-      {selected ? (
+      {selectedId ? (
         <div
           className="history-detail"
           onKeyDown={(event) => {
@@ -869,10 +1097,10 @@ export function BranchTree({
               <ArrowLeft size={14} aria-hidden />
               Back to history
             </button>
-            {selected.leaf ? <span>Current point</span> : null}
+            {selected?.leaf ? <span>Current point</span> : null}
             {detail && detail.node.role !== "shell" ? (
               <CopyAction
-                key={selected.id}
+                key={selectedId}
                 getContent={selectedContent}
                 label="history entry"
                 className="history-detail__copy"
@@ -881,6 +1109,24 @@ export function BranchTree({
           </header>
           <div
             className="history-detail__body"
+            ref={detailRef}
+            onWheel={() => {
+              restoreDetail.current = null;
+            }}
+            onPointerDown={() => {
+              restoreDetail.current = null;
+            }}
+            onKeyDown={() => {
+              restoreDetail.current = null;
+            }}
+            onScroll={(event) => {
+              if (restoreDetail.current) return;
+              savedReading.detail = {
+                top: event.currentTarget.scrollTop,
+                left: event.currentTarget.scrollLeft,
+              };
+              savedReading.save?.();
+            }}
             onClick={(event) => {
               const reference = resourceReferenceFromEventTarget(event.target);
               if (!reference) return;
@@ -888,14 +1134,14 @@ export function BranchTree({
               void store.openResource(reference);
             }}
           >
-            {detail?.node.role !== "shell" ? (
+            {selected && detail?.node.role !== "shell" ? (
               <div className="history-detail__kind">{pointKind(selected)}</div>
             ) : null}
             {detail ? (
               <>
                 {detail.node.role === "shell" ? (
                   <HistoryShellPreview
-                    key={selected.id}
+                    key={selectedId}
                     text={detail.text}
                     complete={detail.nextOffset === null}
                     getCopyContent={selectedContent}
@@ -903,7 +1149,7 @@ export function BranchTree({
                 ) : (
                   <RichText
                     text={detail.text}
-                    variant={selected.role === "user" ? "user" : "assistant"}
+                    variant={detail.node.role === "user" ? "user" : "assistant"}
                   />
                 )}
                 {detail.nextOffset !== null ? (
@@ -920,7 +1166,7 @@ export function BranchTree({
                   {detail.images?.map((image) => (
                     <HistoryImage
                       key={image.index}
-                      targetId={selected.id}
+                      targetId={selectedId}
                       index={image.index}
                     />
                   ))}
@@ -930,125 +1176,127 @@ export function BranchTree({
               <button
                 type="button"
                 className="button button--quiet"
-                onClick={() => void readSelected(selected)}
+                onClick={() => void readSelected(selectedId)}
               >
                 Retry preview
               </button>
-            ) : reading ? (
+            ) : reading || restoringEntryId ? (
               <p role="status">
                 <PiLoader size={14} aria-hidden /> Loading complete content…
               </p>
             ) : null}
           </div>
-          <div className="history-detail__actions">
-            {state.actionId ? (
-              <p role="status">
-                <PiLoader size={14} aria-hidden />
-                {summarizing
-                  ? "Summarizing the conversation being left…"
-                  : "Opening the conversation…"}
-                {summarizing ? (
-                  <button
-                    type="button"
-                    className="button button--quiet"
-                    onClick={() => void store.abort()}
+          {selected ? (
+            <div className="history-detail__actions">
+              {state.actionId ? (
+                <p role="status">
+                  <PiLoader size={14} aria-hidden />
+                  {summarizing
+                    ? "Summarizing the conversation being left…"
+                    : "Opening the conversation…"}
+                  {summarizing ? (
+                    <button
+                      type="button"
+                      className="button button--quiet"
+                      onClick={() => void store.abort()}
+                    >
+                      Stop summary
+                    </button>
+                  ) : null}
+                </p>
+              ) : (
+                <>
+                  <div
+                    className="history-action-group"
+                    role="group"
+                    aria-label="This session"
                   >
-                    Stop summary
-                  </button>
-                ) : null}
-              </p>
-            ) : (
-              <>
-                <div
-                  className="history-action-group"
-                  role="group"
-                  aria-label="This session"
-                >
-                  <h3>This session</h3>
-                  {!tree.skipSummaryPrompt && !selected.leaf ? (
-                    <div className="history-summary">
-                      <label title="Carry a summary of the conversation being left">
-                        <input
-                          type="checkbox"
-                          className="choice-input"
-                          checked={carrySummary}
-                          disabled={Boolean(sameSessionBlocked) || !detail}
-                          onChange={(event) =>
-                            setCarrySummary(event.target.checked)
-                          }
-                        />
-                        Carry branch summary
-                      </label>
-                      {carrySummary ? (
-                        <textarea
-                          aria-label="Summary instructions"
-                          value={instructions}
-                          maxLength={2000}
-                          placeholder="Optional summary instructions"
-                          onChange={(event) =>
-                            setInstructions(event.target.value)
-                          }
-                        />
+                    <h3>This session</h3>
+                    {!tree.skipSummaryPrompt && !selected.leaf ? (
+                      <div className="history-summary">
+                        <label title="Carry a summary of the conversation being left">
+                          <input
+                            type="checkbox"
+                            className="choice-input"
+                            checked={carrySummary}
+                            disabled={Boolean(sameSessionBlocked) || !detail}
+                            onChange={(event) =>
+                              setCarrySummary(event.target.checked)
+                            }
+                          />
+                          Carry branch summary
+                        </label>
+                        {carrySummary ? (
+                          <textarea
+                            aria-label="Summary instructions"
+                            value={instructions}
+                            maxLength={2000}
+                            placeholder="Optional summary instructions"
+                            onChange={(event) =>
+                              setInstructions(event.target.value)
+                            }
+                          />
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={
+                        Boolean(sameSessionBlocked) || !detail || selected.leaf
+                      }
+                      title={
+                        selected.canEdit
+                          ? "Move before this input and prepare it in Composer"
+                          : "Continue after this point"
+                      }
+                      onClick={() =>
+                        void navigate(carrySummary && !tree.skipSummaryPrompt)
+                      }
+                    >
+                      {selected.canEdit
+                        ? "Edit in this session"
+                        : "Continue here"}
+                    </button>
+                    {sameSessionBlocked ? (
+                      <p className="history-detail__blocked">
+                        {sameSessionBlocked}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div
+                    className="history-action-group"
+                    role="group"
+                    aria-label="New session"
+                  >
+                    <h3>New session</h3>
+                    <div className="history-copy-actions">
+                      {selected.canFork ? (
+                        <button
+                          type="button"
+                          className="button button--quiet"
+                          disabled={Boolean(blocked) || !detail}
+                          title="Copy before this input and prepare it as the new draft"
+                          onClick={() => void copySelected("fork")}
+                        >
+                          Fork to new session
+                        </button>
                       ) : null}
-                    </div>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="button"
-                    disabled={
-                      Boolean(sameSessionBlocked) || !detail || selected.leaf
-                    }
-                    title={
-                      selected.canEdit
-                        ? "Move before this input and prepare it in Composer"
-                        : "Continue after this point"
-                    }
-                    onClick={() =>
-                      void navigate(carrySummary && !tree.skipSummaryPrompt)
-                    }
-                  >
-                    {selected.canEdit
-                      ? "Edit in this session"
-                      : "Continue here"}
-                  </button>
-                  {sameSessionBlocked ? (
-                    <p className="history-detail__blocked">
-                      {sameSessionBlocked}
-                    </p>
-                  ) : null}
-                </div>
-                <div
-                  className="history-action-group"
-                  role="group"
-                  aria-label="New session"
-                >
-                  <h3>New session</h3>
-                  <div className="history-copy-actions">
-                    {selected.canFork ? (
                       <button
                         type="button"
                         className="button button--quiet"
                         disabled={Boolean(blocked) || !detail}
-                        title="Copy before this input and prepare it as the new draft"
-                        onClick={() => void copySelected("fork")}
+                        title="Copy through this point with an empty draft"
+                        onClick={() => void copySelected("clone")}
                       >
-                        Fork to new session
+                        Clone through here
                       </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="button button--quiet"
-                      disabled={Boolean(blocked) || !detail}
-                      title="Copy through this point with an empty draft"
-                      onClick={() => void copySelected("clone")}
-                    >
-                      Clone through here
-                    </button>
+                    </div>
                   </div>
-                </div>
-              </>
-            )}
-          </div>
+                </>
+              )}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </section>

@@ -138,9 +138,7 @@ for (const mode of ["Files", "Changes"] as const) {
         )
         .click();
     } else {
-      await pane
-        .getByRole("button", { name: /page\.html, unstaged modified/ })
-        .click();
+      await pane.getByRole("button", { name: /page\.html, modified/ }).click();
     }
     const frame = pane.locator(".file-preview__content");
     const state = frame.locator(":scope > .res__state");

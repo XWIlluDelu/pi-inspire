@@ -194,7 +194,7 @@ it("decorates workspace rows by exact path without basename guessing", async () 
                 utf8Path: "other/changed.ts",
                 workspacePath: "other/changed.ts",
               },
-              unstaged: { kind: "modified" },
+              worktree: { kind: "modified" },
               untracked: false,
             },
           ],
@@ -229,7 +229,7 @@ it("decorates workspace rows by exact path without basename guessing", async () 
   await store.refreshGitStatus();
   render(<WorkspaceTree />);
   const rootFile = await screen.findByRole("button", { name: "changed.ts" });
-  expect(within(rootFile).queryByLabelText(/unstaged/)).not.toBeInTheDocument();
+  expect(within(rootFile).queryByLabelText("modified")).not.toBeInTheDocument();
   expect(rootFile.querySelector(".workspace-tree__name")).not.toHaveClass(
     "git-deco--modified",
   );
@@ -250,10 +250,8 @@ it("decorates workspace rows by exact path without basename guessing", async () 
   );
   const files = screen.getAllByRole("button", { name: /changed\.ts/ });
   const nested = files.find((button) => button !== rootFile)!;
-  expect(within(nested).getByLabelText("unstaged modified")).toHaveTextContent(
-    "M",
-  );
-  expect(within(nested).getByLabelText("unstaged modified")).toHaveClass(
+  expect(within(nested).getByLabelText("modified")).toHaveTextContent("M");
+  expect(within(nested).getByLabelText("modified")).toHaveClass(
     "git-deco--modified",
   );
   expect(nested.querySelector(".workspace-tree__name")).toHaveClass(
