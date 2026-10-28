@@ -60,6 +60,7 @@
    and the reading column yields while a preview is open. */
 
 .ctx {
+  --bg-context: var(--bg-rail);
   width: var(--ctx-w);
   flex: 0 0 auto;
   background: var(--bg-context);
@@ -101,7 +102,7 @@
     min-width: var(--context-min-w);
     flex-shrink: 1;
     border-left: 0;
-    border-radius: var(--radius-surface);
+    border-radius: 0 0 var(--radius-surface) var(--radius-surface);
   }
 }
 

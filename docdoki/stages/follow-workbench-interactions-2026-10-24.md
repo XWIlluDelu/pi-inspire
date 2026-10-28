@@ -147,6 +147,13 @@ the document-image inspector remain functional. Typechecking, changed-file Biome
 boundaries and the production build pass. These frontend-only changes use atomic asset publication
 with the outgoing asset generation retained; Host and terminal restarts are unnecessary.
 
+The right frame now aliases its contextual background to the existing rail token, matching the
+unchanged navigation and installed titlebar. Only its desktop top corners become square; bottom
+corners and neutral file canvases/input surfaces retain their roles. Chrome checks file preview and
+all four tool views in light/dark themes plus narrow containment. Twenty-seven existing style/palette
+checks and the production build pass. Full-page fixture screenshots use the existing titlebar media
+and geometry emulation; they do not claim a native installed-window acceptance run.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:
