@@ -157,8 +157,10 @@ body.srail-dragging {
     height: auto;
     /* Match the compact header while retaining 34px touch controls. */
     min-height: 41px;
-    padding: 2px var(--space-2);
+    padding: 0 var(--space-2);
   }
+
+  .app--narrow .ctx__header:has(.ctx__tabs) { padding-left: 0; }
 
   .app--narrow .ctx__modes {
     flex: 0 0 auto;

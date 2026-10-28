@@ -190,11 +190,14 @@ body.pane-resizing--vertical .nav {
   font-weight: 500;
 }
 
+.ctx__header:has(.ctx__tabs) { padding-left: 0; }
+
 .ctx__tabs {
   min-width: 0;
   flex: 1;
   display: flex;
-  align-items: center;
+  align-items: stretch;
+  align-self: stretch;
   gap: 8px;
 }
 
@@ -204,7 +207,7 @@ body.pane-resizing--vertical .nav {
   display: flex;
   overflow-x: auto;
   scrollbar-width: thin;
-  gap: 2px;
+  gap: 0;
 }
 
 .ctx__file-tab {
@@ -212,8 +215,7 @@ body.pane-resizing--vertical .nav {
   flex: 0 0 auto;
   max-width: min(180px, 100%);
   display: flex;
-  align-items: center;
-  border-radius: var(--radius-control);
+  align-items: stretch;
   color: var(--muted);
 }
 
@@ -237,9 +239,9 @@ body.pane-resizing--vertical .nav {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 3px 5px;
+  padding: 3px 8px;
   border: 0;
-  border-radius: var(--radius-control);
+  border-radius: 0;
   background: transparent;
   color: inherit;
   font-size: var(--text-sm);
@@ -252,6 +254,7 @@ body.pane-resizing--vertical .nav {
 .ctx__file-tab > button:hover { color: var(--ink); }
 .ctx__file-tab--active > button[role="tab"] { color: inherit; }
 .ctx__file-tab > .ctx__file-close { flex: 0 0 22px; justify-content: center; padding-inline: 3px; }
+.ctx__file-tab > .ctx__file-close:focus-visible { outline-width: 1px; }
 
 .ctx__modes {
   flex: 0 0 auto;
@@ -349,7 +352,6 @@ body.pane-resizing--vertical .nav {
   }
 
   .ctx__file-tab > .ctx__file-close:hover {
-    background: var(--bg-inset);
     color: var(--ink);
   }
 }

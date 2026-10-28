@@ -70,7 +70,7 @@ publication and deployment after these checks; main and the existing release tag
 
 ## Context tabs and page-reload continuity
 
-The user approved the visual trial on `2031a483`. File and tool tabs use
+The user approved the visual trial on `2031a483`. Tool tabs use
 the shared 4px control radius: neutral hover, a theme-tinted selected background with accent ink
 and the existing 2px indicator, and a slightly deeper selected hover. Close and refresh remain
 neutral actions. Keyboard focus stays inside each control. The 1×16px refresh separator uses
@@ -80,6 +80,14 @@ Chrome pointer/keyboard checks cover these states in light/dark themes and confi
 to 41px. The underline no longer displaces file controls above the tool icons; file and close SVGs
 share size and center, selected ink is consistent, and labels reuse the existing optical-offset
 token. Pi error Show/Hide details uses that same label correction without changing other icons.
+
+The subsequent screenshot feedback removes the floating file-tab treatment: filename tabs now
+fill the header's content height and begin flush at its left edge, with internal text/icon padding.
+The close button is transparent in default, hover and focus states; hover changes icon ink and
+keyboard focus retains a 1px outline. The selected tab keeps one continuous background and underline.
+Chrome verifies 18 selected/unselected, title/close hover, focus and light/dark/narrow states;
+desktop file tabs occupy 39px inside the 40px header, narrow tabs 40px inside the 41px header,
+with only the shared 1px header seam outside their background. No global button fill overrides them.
 
 F5 restores browser-tab-local workbench metadata under browser-origin/session/workspace identity: current
 session, pane visibility, file order/selection, tool choice, Files filters/expansions and independent

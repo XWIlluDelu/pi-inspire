@@ -202,6 +202,9 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
   expansions and scroll. File tabs retain independent reader modes and Source/rendered scroll
   offsets; [[resource-preview]] defines the boundary for embedded readers and execution.
   Overflowing filename tabs scroll within their own strip while the tool tabs remain available.
+  Filename tabs fill the header height, starting flush at its leading content edge, with internal
+  label spacing rather than floating rounded backgrounds. Title and close action share one continuous
+  tab background; close hover changes only its icon ink, and keyboard focus uses a thin outline.
   F5 keeps the current browser tab's navigation collapse, context visibility, file-tab order and
   selection, tool selection, and Files query/expanded directories. Existing saved pane widths remain
   in use. Session-specific state is scoped to the Host, session and workspace, and file content is
