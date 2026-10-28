@@ -813,6 +813,10 @@
   border-color: var(--line);
 }
 
+.palette-picker__choice[data-palette-choice="mono"] {
+  grid-column: 1 / -1;
+}
+
 .palette-picker__choice[aria-pressed="true"] {
   background: var(--accent-tint);
   border-color: var(--accent-deep);

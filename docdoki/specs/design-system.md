@@ -147,10 +147,12 @@ both this glow and wordmark color transitions.
   **Hydrangea** (`hydrangea`) celadon green, **Lycoris** (`lycoris`) mineral coral,
   and **Chimonanthus** (`chimonanthus`) honey amber. **Jade** (`classic-jade`) and
   **Amber** (`classic-amber`) retain their classic teal and warm-orange identities
-  and light/dark surface ladders. **Mono** (`mono`) adds neutral gray surfaces
+  and light/dark surface ladders. **Carbon** (`mono`) adds neutral gray surfaces
   and monochrome interface emphasis, inspired by VS Code Light Modern / Dark Modern.
-  Chimonanthus remains the default; adding Mono does not change a saved choice.
+  Chimonanthus remains the default; adding Carbon does not change a saved choice.
   Light, Dark, and System select luminosity independently of the palette.
+  Carbon retains the internal `mono` identifier so previously saved selections remain valid.
+  Its choice appears last and spans the full picker row; the other six choices keep their order.
   Display presents seven named color swatches; the selected choice has a border and pressed state,
   not color alone. The picker uses two columns and keeps complete names reachable on narrow screens.
 - Saved `amber` migrates to `chimonanthus`; saved `teal` (formerly Jade) migrates to
@@ -172,7 +174,7 @@ both this glow and wordmark color transitions.
   | Chimonanthus | `#B36010` | `#8A4605` | `#EAA03E` | `#F2B25C` |
   | Jade | `#007D78` | `#005E5A` | `#52D2C9` | `#52D2C9` |
   | Amber | `#D95A00` | `#A23E00` | `#FF781F` | `#FF781F` |
-  | Mono | `#4B4B4B` | `#3B3B3B` | `#C8C8C8` | `#D7D7D7` |
+  | Carbon | `#4B4B4B` | `#3B3B3B` | `#C8C8C8` | `#D7D7D7` |
 
   | Role | Use |
   | --- | --- |
@@ -214,10 +216,10 @@ enabled state; disabled styling takes precedence over local action styles.
   source syntax or Diff additions/deletions retain semantic color. Syntax and Git
   text use luminosity-aware colors with AA contrast on their neutral or tinted
   reading surfaces.
-- Mono uses a continuous neutral frame around the existing workbench, with lighter
+- Carbon uses a continuous neutral frame around the existing workbench, with lighter
   content in Light and a slightly lighter reading stage than the frame in Dark.
   Error, warning, success and Git state colors remain semantic. Code highlighting
-  is outside this palette change: Mono's code containers retain the existing
+  is outside this palette change: Carbon's code containers retain the existing
   Chimonanthus syntax colors through scoped token values, without changing the
   highlighter, token mapping, or other palettes. It is not a separate selectable
   code theme. Upstream attribution and the MIT license ship in
@@ -801,7 +803,7 @@ follows [Content copying](#content-copying), independently of presentation type.
 
 ## Non-goals
 
-- Mono may reference the Modern themes' neutral surface colors; the system does
+- Carbon may reference the Modern themes' neutral surface colors; the system does
   not reproduce a reference application's layout, typography, artwork, or component identity.
 - It does not mix botanical surface ladders, use a legacy
   mixed-case lockup, large decorative brand motifs, idle-state breathing,

@@ -7,7 +7,7 @@ export const PALETTE_LABELS: Record<PalettePreference, string> = {
   chimonanthus: "Chimonanthus",
   "classic-jade": "Jade",
   "classic-amber": "Amber",
-  mono: "Mono",
+  mono: "Carbon",
 };
 
 export function preferenceChoiceLabel(value: string): string {
