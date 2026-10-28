@@ -222,8 +222,10 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
   metadata. Tool changes during reconnect must not overwrite saved file tabs with temporary empty
   state; the latest navigation intent survives success or retry without exposing old file content.
 
-  Changes retains a bounded desktop index above complete selected-file Source with inline Git
-  changes and navigation, without an internal resize control. Narrow Changes uses a full-height
+  Changes uses the available height for its list until a file is selected, without a placeholder
+  Source header, empty preview or selection hint. Selection reveals the bounded desktop index above
+  complete selected-file Source with inline Git changes and navigation, without an internal resize
+  control. Narrow Changes uses a full-height
   list until a path is selected, then gives the selected Source the available height with All changes
   and adjacent-comparison controls. Those
   controls follow the index's conflict, working and staged order, including both sides of the same

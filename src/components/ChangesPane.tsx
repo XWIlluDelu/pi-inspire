@@ -827,7 +827,7 @@ export function ChangesPane({
           state={state}
           readingPositions={readingPositions ?? localReadings.current}
           navigation={navigation}
-          hidden={narrow && !selected}
+          hidden={!selected}
         />
       }
     />

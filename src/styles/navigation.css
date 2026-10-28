@@ -779,8 +779,8 @@
     color var(--dur-micro) var(--ease-standard);
 }
 
-/* Leaf rows reserve the same disclosure slot as sibling folders, not search results. */
-.workspace-tree__row--file:not(.workspace-tree__row--result)::before {
+/* Keep file icons in the same column as folders, including search results. */
+.workspace-tree__row--file::before {
   content: "";
   flex: 0 0 11px;
 }
@@ -842,11 +842,7 @@
   height: auto;
   min-height: 34px;
   padding-block: 4px;
-  align-items: flex-start;
-}
-
-.workspace-tree__row--result svg {
-  margin-top: 2px;
+  align-items: center;
 }
 
 .workspace-tree__status {

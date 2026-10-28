@@ -154,6 +154,15 @@ all four tool views in light/dark themes plus narrow containment. Twenty-seven e
 checks and the production build pass. Full-page fixture screenshots use the existing titlebar media
 and geometry emulation; they do not claim a native installed-window acceptance run.
 
+The following layout correction removes the desktop Changes preview allocation while no file is
+selected. Its list keeps the full available height; selection returns the existing Source layout,
+without an added empty-state hint or automatic selection. The mounted detail preserves existing
+return-to-list focus and reading behavior. Files aligns search/section gutters and the Recent,
+root-file and folder icon/name columns while retaining directory indentation and ordering; search
+result icons center vertically. Sixteen targeted checks, typechecking and the production bundle
+pass; isolated Chrome covers long-list scrolling, selection/refresh/return, light/dark themes and
+390px containment. This change does not alter resource authorization or reconnect controllers.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

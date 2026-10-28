@@ -43,6 +43,28 @@ afterEach(() => {
 });
 
 describe("narrow Changes navigation", () => {
+  it("keeps the desktop list and its position while source appears only for a selection", () => {
+    const open = vi.spyOn(store, "openGitDiff").mockResolvedValue();
+    const state = { ...initial, sessionId: "s1", gitStatus: changed };
+    const view = render(<ChangesPane state={state} />);
+    const list = view.container.querySelector<HTMLElement>(".res__list")!;
+    const detail = view.container.querySelector(".changes__detail")!;
+    list.scrollTop = 80;
+    expect(detail).toHaveAttribute("hidden");
+    expect(screen.queryByRole("button", { name: "Next change" })).toBeNull();
+    expect(open).not.toHaveBeenCalled();
+    view.rerender(
+      <ChangesPane state={{ ...state, selectedGitPathId: "notes" }} />,
+    );
+    expect(detail).not.toHaveAttribute("hidden");
+    expect(screen.getByRole("button", { name: "Next change" })).toBeDisabled();
+    view.rerender(<ChangesPane state={state} />);
+    expect(detail).toHaveAttribute("hidden");
+    expect(view.container.querySelector(".res__list")).toBe(list);
+    expect(list.scrollTop).toBe(80);
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it("visits each indexed comparison, including both sides, and restores the list's focus and scroll", () => {
     const open = vi.spyOn(store, "openGitDiff").mockResolvedValue();
     const back = vi

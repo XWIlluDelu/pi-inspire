@@ -518,7 +518,7 @@ button.res__index-header--back:focus-visible,
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: var(--space-2);
+  padding: var(--space-2) var(--space-1);
 }
 
 .files-browser__section {
@@ -587,7 +587,7 @@ button.res__index-header--back:focus-visible,
   min-height: 28px;
   flex: 0 0 28px;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -599,6 +599,11 @@ button.res__index-header--back:focus-visible,
   transition:
     background var(--dur-micro) var(--ease-standard),
     color var(--dur-micro) var(--ease-standard);
+}
+
+.recent-file::before {
+  content: "";
+  flex: 0 0 11px;
 }
 
 .recent-file:hover {
@@ -1007,6 +1012,16 @@ button.res__index-header--back:hover svg {
   display: grid;
   grid-template-rows: min(var(--files-index-default-size), 42%) minmax(0, 1fr);
 }
+
+.res__body--changes:not(.res__body--detail) {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.res__body--changes:not(.res__body--detail) > .res__index {
+  border-bottom: 0;
+}
+
+.changes__detail[hidden] { display: none; }
 
 .res__index {
   min-height: 0;
