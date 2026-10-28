@@ -197,9 +197,9 @@ and Download position during mode changes, mouse/keyboard resizing, and light/da
 to 320px. Mode-specific controls intentionally appear/disappear; no further unexplained vertical
 jitter was reproduced. Screenshots use only the isolated fixture, not live user contents.
 
-## Optional Carbon palette
+## Optional Carbon & Silicon palette
 
-Carbon adds a neutral Light/Dark surface family to the existing palette preference,
+Carbon & Silicon adds a neutral Light/Dark surface family to the existing palette preference,
 Settings swatches, command palette and before-paint cache. It preserves the default
 Chimonanthus choice and all legacy palette migrations. The Modern theme references
 and upstream MIT notice ship with the static assets. No typography or layout changes
@@ -207,18 +207,18 @@ accompany this option. Error, warning, success and Git states remain colored; sc
 code-leaf tokens retain Chimonanthus syntax colors without a new code-theme system.
 
 Focused preference/API, theme bootstrap, palette UI and color-role checks pass,
-along with TypeScript, scoped lint and Host import preflight. Carbon text and solid
+along with TypeScript, scoped lint and Host import preflight. Carbon & Silicon text and solid
 actions meet 4.5:1 contrast on their declared surfaces, and focus meets 3:1.
 The initial addition required an idle Host restart because its palette enum is
-captured by Host validation at startup. The later Carbon display-name change keeps
+captured by Host validation at startup. The later Carbon & Silicon display-name change keeps
 the shipped `mono` identifier and makes the last picker choice span a complete row;
 that change needs only static publication, with no preference migration or restart.
 
-Isolated Chromium acceptance confirms successful Carbon preference writes, Light/Dark
+Isolated Chromium acceptance confirms successful Carbon & Silicon preference writes, Light/Dark
 page-reload restoration, switching back to an existing palette, and readable complete
 palette names at 390px and 320px without document overflow. Keyboard focus retains its
 2px outline. Rendered colored syntax tokens in chat, Source and a real file diff match
-Chimonanthus in each luminosity; ordinary source text follows Carbon's neutral body ink.
+Chimonanthus in each luminosity; ordinary source text follows Carbon & Silicon's neutral body ink.
 Full-page Light/Dark screenshots were reviewed using mock content only.
 
 ## Undecided interaction proposals

@@ -1,4 +1,4 @@
-Carbon's neutral interface surfaces are adapted from Visual Studio Code's
+Carbon & Silicon's neutral interface surfaces are adapted from Visual Studio Code's
 Light Modern and Dark Modern themes. Syntax colors are not imported.
 
 Sources (consulted 2026-10-28):

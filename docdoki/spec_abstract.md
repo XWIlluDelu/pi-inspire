@@ -32,7 +32,7 @@ and untracked.
 
 ## Implemented capabilities
 
-- **Optional Carbon interface:** the existing palette picker adds neutral Light/Dark surfaces
+- **Optional Carbon & Silicon interface:** the existing palette picker adds neutral Light/Dark surfaces
   inspired by VS Code Modern. Existing defaults and saved choices remain intact; syntax
   highlighting is unchanged under [design-system](specs/design-system.md).
 - **Native Pi workflow:** conversations, rich input, model/thinking selection, native configuration and

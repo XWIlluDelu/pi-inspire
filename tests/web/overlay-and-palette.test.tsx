@@ -106,7 +106,7 @@ describe("palette controls", () => {
     await import("../../src/components/Settings");
   });
 
-  it("offers botanical, classic and Carbon swatches and persists each selection without changing theme", async () => {
+  it("offers botanical, classic and Carbon & Silicon swatches and persists each selection without changing theme", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
     const settings = await screen.findByRole("dialog", { name: "Settings" });
@@ -119,7 +119,7 @@ describe("palette controls", () => {
       ["chimonanthus", "Chimonanthus"],
       ["classic-jade", "Jade"],
       ["classic-amber", "Amber"],
-      ["mono", "Carbon"],
+      ["mono", "Carbon & Silicon"],
     ]) {
       const choice = within(settings).getByRole("button", { name: label });
       fireEvent.click(choice);
@@ -159,7 +159,7 @@ describe("palette controls", () => {
       "Chimonanthus",
       "Jade",
       "Amber",
-      "Carbon",
+      "Carbon & Silicon",
     ]) {
       expect(
         await screen.findByRole("option", {
