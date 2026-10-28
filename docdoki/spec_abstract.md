@@ -32,6 +32,9 @@ and untracked.
 
 ## Implemented capabilities
 
+- **Optional Mono interface:** the existing palette picker adds neutral Light/Dark surfaces
+  inspired by VS Code Modern. Existing defaults and saved choices remain intact; syntax
+  highlighting is unchanged under [design-system](specs/design-system.md).
 - **Native Pi workflow:** conversations, rich input, model/thinking selection, native configuration and
   authentication, compaction, History, Fork/Clone and exports. Saved history remains readable when
   execution is unavailable, including saved-only JSONL export. [pi-integration](specs/pi-integration.md), [model-settings](specs/model-settings.md),

@@ -44,6 +44,47 @@ describe("classic palette preservation", () => {
   });
 });
 
+describe("Mono readability", () => {
+  it.each(["light", "dark"])(
+    "keeps %s text and focus legible on its surfaces",
+    (theme) => {
+      const value = tokens("mono", theme);
+      for (const surface of [
+        "--bg-rail",
+        "--bg-stage",
+        "--bg-surface",
+        "--bg-raised",
+        "--bg-inset",
+        "--bg-control",
+        "--bg-prompt",
+        "--bg-code",
+      ]) {
+        for (const role of [
+          "--ink",
+          "--body",
+          "--muted",
+          "--faint",
+          "--accent-deep",
+        ]) {
+          expect(
+            contrast(rgb(value[role]!), rgb(value[surface]!)),
+            `${role} on ${surface}`,
+          ).toBeGreaterThanOrEqual(4.5);
+        }
+        expect(
+          contrast(rgb(value["--accent-focus"]!), rgb(value[surface]!)),
+          `focus on ${surface}`,
+        ).toBeGreaterThanOrEqual(3);
+      }
+      for (const fill of ["--accent-fill", "--accent-hover", "--accent-active"])
+        expect(
+          contrast(rgb(value["--on-accent"]!), rgb(value[fill]!)),
+          fill,
+        ).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+});
+
 describe("activity identities", () => {
   it("draws needles directly from the same Tool/Thinking identity roles", () => {
     for (const role of ["tool", "think"]) {

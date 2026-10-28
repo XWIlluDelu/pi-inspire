@@ -100,13 +100,13 @@ async function openPalette() {
   return screen.findByRole("dialog", { name: "Command palette" });
 }
 
-describe("botanical palette controls", () => {
+describe("palette controls", () => {
   beforeAll(async () => {
     // These cases test palette persistence, not a cold source-module import.
     await import("../../src/components/Settings");
   });
 
-  it("offers botanical and classic swatches and persists each selection without changing theme", async () => {
+  it("offers botanical, classic and Mono swatches and persists each selection without changing theme", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
     const settings = await screen.findByRole("dialog", { name: "Settings" });
@@ -119,6 +119,7 @@ describe("botanical palette controls", () => {
       ["chimonanthus", "Chimonanthus"],
       ["classic-jade", "Jade"],
       ["classic-amber", "Amber"],
+      ["mono", "Mono"],
     ]) {
       const choice = within(settings).getByRole("button", { name: label });
       fireEvent.click(choice);
@@ -130,7 +131,7 @@ describe("botanical palette controls", () => {
     }
   });
 
-  it("offers each botanical palette as a command with the current choice marked", async () => {
+  it("offers each palette as a command with the current choice marked", async () => {
     render(<App />);
     await openPalette();
     const search = screen.getByRole("combobox", { name: "Filter commands" });
@@ -158,6 +159,7 @@ describe("botanical palette controls", () => {
       "Chimonanthus",
       "Jade",
       "Amber",
+      "Mono",
     ]) {
       expect(
         await screen.findByRole("option", {

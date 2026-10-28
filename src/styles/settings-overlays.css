@@ -847,7 +847,13 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 14%, transparent);
 }
 
-/* Swatches represent each botanical hue, not state or readable text. */
+/* Swatches represent palette accents, not state or readable text. */
+[data-palette-choice="mono"] {
+  --palette-swatch: #4b4b4b;
+}
+:root[data-theme="dark"] [data-palette-choice="mono"] {
+  --palette-swatch: #c8c8c8;
+}
 [data-palette-choice="classic-jade"] {
   --palette-swatch: #007d78;
 }

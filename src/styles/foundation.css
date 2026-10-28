@@ -828,6 +828,135 @@
   --nav-active-bg: var(--accent-tint);
 }
 
+/* Mono adapts the neutral surface hierarchy of VS Code Light/Dark Modern.
+   Source and MIT notice: public/licenses/vscode-themes-MIT.txt. */
+:root[data-palette="mono"],
+:root[data-theme="light"][data-palette="mono"] {
+  --bg-canvas: #F8F8F8;
+  --bg-rail: #F8F8F8;
+  --bg-nav: #F8F8F8;
+  --bg-context: #F8F8F8;
+  --bg-stage: #FFFFFF;
+  --bg-surface: #FFFFFF;
+  --bg-raised: #FFFFFF;
+  --bg-inset: #E8E8E8;
+  --bg-control: #F0F0F0;
+  --bg-prompt: #F2F2F2;
+  --bg-activity: #F8F8F8;
+  --bg-code: #F8F8F8;
+  --ink: #1F1F1F;
+  --body: #3B3B3B;
+  --muted: #616161;
+  --faint: #616161;
+  --accent: #4B4B4B;
+  --accent-deep: #3B3B3B;
+  --accent-hover: #333333;
+  --accent-active: #1F1F1F;
+  --accent-soft: transparent;
+  --accent-focus: var(--accent-deep);
+  --nav-active-bg: var(--accent-tint);
+  --running-glow: #4B4B4B;
+  --on-accent: #FFFFFF;
+  --chrome-bg: #F4F5F6;
+  --chrome-ink: #63676C;
+  --brand-ink: #1F1F1F;
+  --bg-file-canvas: #FAFAFA;
+  --bg-file-surface: #FFFFFF;
+  --bg-file-inset: #F1F1F1;
+  --bg-overlay: rgba(0, 0, 0, 0.4);
+  --line: #E5E5E5;
+  --line-subtle: var(--line);
+  --line-strong: #B0B0B0;
+  --success: #247A54;
+  --warning: #B45309;
+  --error: #BE123C;
+  --on-status: #FFFFFF;
+  --info: #0284C7;
+  --activity-tool: #4B4B4B;
+  --activity-think: #696969;
+  --think: var(--activity-think);
+  --activity-success: #1B7E5A;
+  --activity-warning: #B45309;
+  --activity-error: #C53B38;
+  --error-tint: rgba(190, 18, 60, 0.08);
+  --think-tint: rgba(105, 105, 105, 0.08);
+  --warning-tint: rgba(180, 83, 9, 0.08);
+  --git-modified: #914009;
+  --git-untracked: #176A47;
+  --git-conflict: var(--error);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-2: 0 3px 12px rgba(0, 0, 0, 0.08);
+  --shadow-overlay: 0 20px 48px -12px rgba(0, 0, 0, 0.16), 0 6px 16px -4px rgba(0, 0, 0, 0.06);
+  --thumb: rgba(0, 0, 0, 0.16);
+  --brand-accent: #4B4B4B;
+  --accent-fill: #3B3B3B;
+  --accent-tint: rgba(0, 0, 0, 0.07);
+  --selection: rgba(0, 0, 0, 0.16);
+}
+
+:root[data-theme="dark"][data-palette="mono"] {
+  --bg-canvas: #181818;
+  --bg-rail: #181818;
+  --bg-nav: #181818;
+  --bg-context: #181818;
+  --bg-stage: #1F1F1F;
+  --bg-surface: #252525;
+  --bg-raised: #2B2B2B;
+  --bg-inset: #181818;
+  --bg-control: #313131;
+  --bg-prompt: #2B2B2B;
+  --bg-activity: #222222;
+  --bg-code: #181818;
+  --ink: #F0F0F0;
+  --body: #CCCCCC;
+  --muted: #ABABAB;
+  --faint: #ABABAB;
+  --accent: #C8C8C8;
+  --accent-deep: #D7D7D7;
+  --accent-hover: #E2E2E2;
+  --accent-active: #B0B0B0;
+  --accent-soft: transparent;
+  --accent-focus: var(--accent-deep);
+  --nav-active-bg: var(--accent-tint);
+  --running-glow: #C8C8C8;
+  --on-accent: #181818;
+  --chrome-bg: #14171A;
+  --chrome-ink: #B9C0C7;
+  --brand-ink: #F0F0F0;
+  --bg-file-canvas: #151515;
+  --bg-file-surface: #1D1D1D;
+  --bg-file-inset: #0F0F0F;
+  --bg-overlay: rgba(0, 0, 0, 0.62);
+  --line: #2B2B2B;
+  --line-subtle: var(--line);
+  --line-strong: #505050;
+  --success: #63C78E;
+  --warning: #F59E0B;
+  --error: #F43F5E;
+  --on-status: #181818;
+  --info: #38BDF8;
+  --activity-tool: #C8C8C8;
+  --activity-think: #ABABAB;
+  --think: var(--activity-think);
+  --activity-success: #4EBA88;
+  --activity-warning: #F59E0B;
+  --activity-error: #F06A65;
+  --error-tint: rgba(244, 63, 94, 0.12);
+  --think-tint: rgba(171, 171, 171, 0.11);
+  --warning-tint: rgba(245, 158, 11, 0.12);
+  --git-modified: var(--warning);
+  --git-untracked: var(--success);
+  --git-conflict: var(--error);
+  --shadow-1: none;
+  --shadow-2: none;
+  --shadow-overlay: 0 20px 48px -12px rgba(0, 0, 0, 0.50), 0 6px 16px -4px rgba(0, 0, 0, 0.28);
+  --thumb: rgba(255, 255, 255, 0.14);
+  --brand-accent: #C8C8C8;
+  --accent-fill: #C8C8C8;
+  --accent-tint: rgba(255, 255, 255, 0.08);
+  --selection: rgba(255, 255, 255, 0.20);
+}
+
 /* --- Base --- */
 
 * {

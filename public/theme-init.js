@@ -34,6 +34,7 @@
     "chimonanthus",
     "classic-jade",
     "classic-amber",
+    "mono",
   ].includes(savedPalette)
     ? savedPalette
     : "chimonanthus";
@@ -58,6 +59,7 @@
     lycoris: ["#EFE9E6", "#141010"],
     "classic-amber": ["#EFEEEB", "#13161A"],
     "classic-jade": ["#EDF1EF", "#131815"],
+    mono: ["#F8F8F8", "#181818"],
   };
   const themeColor = document.querySelector('meta[name="theme-color"]');
   if (themeColor) {

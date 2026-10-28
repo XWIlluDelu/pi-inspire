@@ -71,6 +71,7 @@ describe("preference persistence", () => {
     "chimonanthus",
     "classic-jade",
     "classic-amber",
+    "mono",
   ] as const)(
     "setPalette persists %s with a field-scoped patch",
     async (palette) => {
