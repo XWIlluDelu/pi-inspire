@@ -205,11 +205,16 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
   Filename tabs fill the header height, starting flush at its leading content edge, with internal
   label spacing rather than floating rounded backgrounds. Title and close action share one continuous
   tab background; close hover changes only its icon ink, and keyboard focus uses a thin outline.
+  The tab strip has no full-width bottom rule: its warm surface meets the selected view directly,
+  while file paths and tool content retain their own local boundaries. Selection indicators remain.
   F5 keeps the current browser tab's navigation collapse, context visibility, file-tab order and
   selection, tool selection, and Files query/expanded directories. Existing saved pane widths remain
   in use. Session-specific state is scoped to the Host, session and workspace, and file content is
   loaded again under current authority. Terminal restores its existing selection and reconnects;
   restoring the view never reruns a command. Embedded readers retain the limits in [[resource-preview]].
+  Initial bootstrap and saved/continue-session selection keep a lightweight loading state in the
+  workbench shell. The create-session screen appears only after restoration settles without a
+  session; missing sessions and failed reads retain their normal error and recovery paths.
 
   Changes retains a bounded desktop index above complete selected-file Source with inline Git
   changes and navigation, without an internal resize control. Narrow Changes uses a full-height

@@ -38,6 +38,9 @@ thinking, documents, and extension Markdown share one rendering authority with d
   ordered numbers and share the content column with task entries.
   Table columns preserve whole-word minimum widths and wrap ordinary prose at word boundaries;
   wide tables and unbroken cell tokens scroll within the table, not the reading column.
+  Inline mathematics keeps its natural text baseline and visible script/fraction extents, without
+  becoming an independent scroll container. Display mathematics scrolls locally only when the
+  expression exceeds the available reading width. Chat and Markdown file previews share this rule.
 - Code blocks preserve whitespace, identify their language when available, highlight syntax, and
   copy the original source. Parsed `pre` structure determines block identity: unlabeled, indented,
   and incomplete fences retain block/copy behavior. Only inline code can become a file-reference button.

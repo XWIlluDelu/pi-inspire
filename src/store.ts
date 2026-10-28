@@ -785,6 +785,9 @@ export class AppStore {
       this.set({
         openingSessionId: null,
         sessionSelectionPending: false,
+        ...(owner !== undefined && this.state.bootstrapped
+          ? { startupPending: false }
+          : {}),
       });
     }
     this.branches.reconcile();
@@ -794,6 +797,7 @@ export class AppStore {
     // Bootstrap owns a fresh transport generation before authenticating or
     // publishing any replacement state.
     const generation = this.replaceTransport();
+    if (!this.state.bootstrapped) this.set({ startupPending: true });
     const api = createApi(token);
     let reconnectToken = token;
     const bootstrapRequest = new AbortController();
@@ -894,6 +898,13 @@ export class AppStore {
         // supplies host metadata, but its digest cannot attest that newer view.
         this.snapshotDigest = null;
       }
+      if (
+        this.autoContinued ||
+        preferences.launch !== "continue" ||
+        this.state.sessionId ||
+        this.selectionIntentGeneration !== autoContinueIntent
+      )
+        this.set({ startupPending: false });
       void this.git.resumeAfterTransportReplacement();
       if (boot.preferencesWarning)
         this.notify("warning", boot.preferencesWarning);
@@ -901,28 +912,33 @@ export class AppStore {
         this.notify("warning", boot.toolPresentationsWarning);
       this.notifications.start(preferences.completionAttention);
       void this.connectionController.connect(reconnectToken);
-      void this.loadSessions(this.state.sessionQuery).then(() => {
-        if (!ownsBootstrap()) return;
-        // The remembered launch preference applies once per store lifetime so
-        // reconnects never hijack a deliberate navigation.
-        if (this.autoContinued) return;
-        this.autoContinued = true;
-        if (this.selectionIntentGeneration !== autoContinueIntent) return;
-        if (
-          preferences.launch === "continue" &&
-          !this.state.sessionId &&
-          !this.state.sessionSelectionPending
-        ) {
-          const previous = this.state.sessions[0];
-          if (previous) void this.openSession(previous.id);
-        }
-      });
+      void this.loadSessions(this.state.sessionQuery)
+        .then(async () => {
+          if (!ownsBootstrap()) return;
+          // The remembered launch preference applies once per store lifetime so
+          // reconnects never hijack a deliberate navigation.
+          if (this.autoContinued) return;
+          this.autoContinued = true;
+          if (this.selectionIntentGeneration !== autoContinueIntent) return;
+          if (
+            preferences.launch === "continue" &&
+            !this.state.sessionId &&
+            !this.state.sessionSelectionPending
+          ) {
+            const previous = this.state.sessions[0];
+            if (previous) await this.openSession(previous.id);
+          }
+        })
+        .finally(() => {
+          if (ownsBootstrap()) this.set({ startupPending: false });
+        });
     } catch (error) {
       if (!ownsBootstrap()) return;
       if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
       } else {
         this.set({
+          startupPending: false,
           connection: "offline",
           connectionProblem:
             navigator.onLine === false

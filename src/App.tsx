@@ -24,6 +24,7 @@ import {
   ContextPaneLoading,
   ContextPaneShell,
 } from "./components/ContextPaneShell";
+import { ContextPaneState } from "./components/ContextPaneState";
 import { ExportDialog } from "./components/ExportDialog";
 import { ExtensionDisplayDock } from "./components/ExtensionDisplays";
 import {
@@ -475,6 +476,7 @@ export function App() {
     (source) => ({
       needsToken: source.needsToken,
       bootstrapped: source.bootstrapped,
+      startupPending: source.startupPending,
       connection: source.connection,
       connectionProblem: source.connectionProblem,
       extensionOverlayOpen: source.extensionUiRequests.length > 0,
@@ -1052,6 +1054,12 @@ export function App() {
         ) : null}
         {state.sessionId ? (
           <ConversationStage transcriptRef={transcriptRef} />
+        ) : !state.bootstrapped || state.startupPending ? (
+          <ContextPaneState
+            className="deferred-loading"
+            icon={<PiLoader size={17} aria-hidden />}
+            title="Loading workspace"
+          />
         ) : (
           <Welcome
             showRecent={narrowViewport ? !mobileNavOpen : navCollapsed}

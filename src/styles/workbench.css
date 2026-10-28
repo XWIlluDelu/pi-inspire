@@ -184,7 +184,6 @@ body.pane-resizing--vertical .nav {
   gap: var(--space-1);
   padding: 0 var(--space-3);
   height: 40px;
-  border-bottom: 1px solid var(--hairline);
   background: var(--bg-context);
   font-size: var(--text-base);
   font-weight: 500;

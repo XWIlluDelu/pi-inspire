@@ -1,4 +1,3 @@
-import { hostRequest } from "./host-request";
 import { expect, type Page, type WebSocketRoute } from "@playwright/test";
 import type {
   ActiveSnapshot,
@@ -6,6 +5,7 @@ import type {
 } from "../../../shared/contracts";
 import type { ToolPresentationConfiguration } from "../../../shared/tool-presentation-config";
 import { browserWorkspace } from "../fixtures/workspace.mjs";
+import { hostRequest } from "./host-request";
 import { pairedPage } from "./navigation";
 
 type SnapshotEvent = {
@@ -90,6 +90,14 @@ export async function openMockEventSession(
   expect(created.ok()).toBe(true);
   const createdSnapshot: ActiveSnapshot = await created.json();
   const createdSessionId = createdSnapshot.active!.sessionId;
+  // This fixture creates outside the browser. Match its persisted selection
+  // before reload rather than relying on the Host's process-global selection.
+  await page.evaluate((sessionId) => {
+    sessionStorage.setItem(
+      "inspire:workbench:v1:last-session",
+      JSON.stringify({ sessionId }),
+    );
+  }, createdSessionId);
   sessionId = null;
   await page.reload();
   await expect(

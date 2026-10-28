@@ -86,8 +86,11 @@ fill the header's content height and begin flush at its left edge, with internal
 The close button is transparent in default, hover and focus states; hover changes icon ink and
 keyboard focus retains a 1px outline. The selected tab keeps one continuous background and underline.
 Chrome verifies 18 selected/unselected, title/close hover, focus and light/dark/narrow states;
-desktop file tabs occupy 39px inside the 40px header, narrow tabs 40px inside the 41px header,
-with only the shared 1px header seam outside their background. No global button fill overrides them.
+file tabs fill the 40px desktop or 41px narrow header. No global button fill overrides them.
+The following visual refinement removes the header's full-width gray rule, using the existing warm
+background and each view's own local boundaries. Twenty Chrome combinations cover file preview,
+Files, Changes, History and Terminal in light/dark themes at desktop and narrow widths; selected
+orange indicators, transparent close controls and containment remain intact.
 
 F5 restores browser-tab-local workbench metadata under browser-origin/session/workspace identity: current
 session, pane visibility, file order/selection, tool choice, Files filters/expansions and independent
@@ -112,6 +115,19 @@ the fixture now matches production's read-only saved-session admission rather th
 unrelated not-open conflict. The final targeted run passes 207 tests in 12 files. Typechecking,
 changed TypeScript formatting/lint, import boundaries and the production build pass. No full
 platform matrix is required for this iteration.
+
+The startup follow-up keeps the create-session screen hidden while bootstrap or launch-continuation
+is pending. Eight regression cases cover delayed restoration, empty and deleted selections, failed
+reads/retry and an explicit new-session choice; the related targeted run passes 35 tests. Real Chrome
+reloads, including a deliberately held bootstrap response, never insert the Welcome form and restore
+the saved session without a timer.
+
+Short inline math exposed a separate shared-renderer defect: KaTeX's zero-width layout helper
+overhangs by about 2px (a 32px expression measured 34px scroll width), producing false scrollbars in
+the inline-flex wrapper and clipping tall fractions. Natural inline layout removes that wrapper's
+scrolling. Two Chrome regressions cover message surfaces and Markdown files, table/list formulas,
+400px chat after right-pane resizing, and 390/320px viewports. Short display math measures 400/400px;
+long display math measures 400/774px with working local scrolling and no page-width expansion.
 
 ## Undecided interaction proposals
 

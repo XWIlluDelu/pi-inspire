@@ -1737,27 +1737,14 @@ span.card__file-arg {
   color: var(--activity-success);
 }
 
-/* KaTeX renders with its own fonts; the system only owns spacing. The inner
-   padding keeps tall ascenders clear of the scroll container's clip edge. */
+/* Inline KaTeX keeps its natural baseline and visible script/fraction extent.
+   Its internal zero-width helpers can overhang the intrinsic width, so making
+   every inline expression a scroll container creates false overflow. */
 .rich-text .katex {
   font-size: 1.05em;
 }
 
-/* Inline flex preserves the child's text baseline even when overflow is
-   scrollable; ordinary formulas stay inline, wide ones own their scroll area. */
-.rich-text .inline-math {
-  display: inline-flex;
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  vertical-align: baseline;
-  padding: 2px 0;
-}
-
-.rich-text .inline-math > * {
-  flex: 0 0 auto;
-}
-
+/* Display math owns scrolling only when its complete expression is too wide. */
 .rich-text .katex-display {
   margin: var(--space-3) 0;
   padding: var(--space-1) 2px;

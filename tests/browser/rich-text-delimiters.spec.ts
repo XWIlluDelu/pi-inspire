@@ -1,3 +1,5 @@
+import { rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { customMessageConfiguration } from "../web/fixtures/custom-message-presentation";
 import {
@@ -6,6 +8,7 @@ import {
   richTextLiteralCases,
   wideInlineMath,
 } from "../web/fixtures/rich-text-literals";
+import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { openMockEventSession } from "./support/mock-host";
 
 test("regex anchors stay prose beside genuine math across message surfaces", async ({
@@ -95,9 +98,9 @@ test("literal syntax and wide formulas remain readable across message surfaces",
     literalReviewText +
     "\n\n$" +
     escapedCurrencyMath +
-    "$\n\nInline vector $" +
-    wideInlineMath +
-    "$.\n\n$$" +
+    "$\n\nInline comparison $G_{\\mathrm{mean}}B_*$.\n\n" +
+    "| Name | Meaning |\n| --- | --- |\n| $G_{\\mathrm{mean}}$ | Average gain |\n\n" +
+    "- Compare $G_{\\mathrm{center}}$ with the measured gain.\n\n$$" +
     wideInlineMath +
     "$$";
   const surfaces = [
@@ -136,7 +139,7 @@ test("literal syntax and wide formulas remain readable across message surfaces",
       .locator(".transcript")
       .evaluate((el) => (el.scrollTop = el.scrollHeight));
     const prose = page.locator(surface.selector).last();
-    await expect(prose.locator("annotation")).toHaveCount(3);
+    await expect(prose.locator("annotation")).toHaveCount(5);
     for (const width of [1440, 390, 320]) {
       await page.setViewportSize({ width, height: 1100 });
       await prose.scrollIntoViewIfNeeded();
@@ -149,7 +152,12 @@ test("literal syntax and wide formulas remain readable across message surfaces",
       expect(
         await prose.evaluate((el) => el.scrollWidth - el.clientWidth),
       ).toBeLessThanOrEqual(1);
-      const vector = prose.locator(".inline-math").last();
+      for (const inline of await prose.locator(".inline-math").all()) {
+        await expect(inline).toHaveCSS("display", "inline");
+        await expect(inline).toHaveCSS("overflow-x", "visible");
+        await expect(inline).toHaveCSS("overflow-y", "visible");
+      }
+      const vector = prose.locator(".katex-display").last();
       const overflow = await vector.evaluate(
         (el) => el.scrollWidth - el.clientWidth,
       );
@@ -169,6 +177,103 @@ test("literal syntax and wide formulas remain readable across message surfaces",
         await vector.evaluate((el) => (el.scrollLeft = 0));
       }
     }
+  }
+});
+
+test("inline formulas remain natural in chat and Markdown file previews", async ({
+  page,
+}) => {
+  const file = join(browserWorkspace, "inline-math-layout.md");
+  const text =
+    String.raw`Short $G_{\mathrm{mean}}B_*$ comparison.
+
+| Name | Meaning |
+| --- | --- |
+| $G_{\mathrm{mean}}$ | Average gain |
+
+- Compare $G_{\mathrm{center}}$ with the measured gain.
+- Preserve $\displaystyle\frac{\sum_{i=1}^{n}w_ix_i}{\sum_{i=1}^{n}w_i}$ completely.
+
+$$x+1$$
+
+$$` +
+    wideInlineMath +
+    "$$";
+  await writeFile(file, text);
+  try {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const send = await openMockEventSession(
+      page,
+      "Inline math reading",
+      customMessageConfiguration,
+      {},
+    );
+    send({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: text + "\n\n[Read formulas](inline-math-layout.md)",
+          },
+        ],
+        __inspireMessageId: "inline-math-reading",
+      },
+    });
+    await page
+      .getByRole("link", { name: "Read formulas", exact: true })
+      .click();
+    const resize = page.getByRole("separator", {
+      name: "Resize files panel",
+      exact: true,
+    });
+    const handle = (await resize.boundingBox())!;
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + 24);
+    await page.mouse.down();
+    await page.mouse.move(0, handle.y + 24, { steps: 8 });
+    await page.mouse.up();
+    expect((await page.locator(".center").boundingBox())!.width).toBeCloseTo(
+      400,
+      0,
+    );
+    for (const width of [1440, 390, 320]) {
+      await page.setViewportSize({ width, height: 1000 });
+      for (const selector of width === 1440
+        ? [".center .rich-text--assistant", ".ctx .rich-text"]
+        : [".ctx .rich-text"]) {
+        const reader = page.locator(selector).last();
+        await expect(reader.locator(".inline-math")).toHaveCount(4);
+        for (const formula of await reader.locator(".inline-math").all()) {
+          await expect(formula).toHaveCSS("display", "inline");
+          await expect(formula).toHaveCSS("overflow-x", "visible");
+          await expect(formula).toHaveCSS("overflow-y", "visible");
+        }
+        const displays = reader.locator(".katex-display");
+        await expect(displays).toHaveCount(2);
+        expect(
+          await displays
+            .first()
+            .evaluate((el) => el.scrollWidth - el.clientWidth),
+        ).toBeLessThanOrEqual(1);
+        if (width <= 390 || selector === ".center .rich-text--assistant")
+          expect(
+            await displays
+              .last()
+              .evaluate((el) => el.scrollWidth - el.clientWidth),
+          ).toBeGreaterThan(100);
+        expect(
+          await reader.evaluate((el) => el.scrollWidth - el.clientWidth),
+        ).toBeLessThanOrEqual(1);
+      }
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth - innerWidth,
+        ),
+      ).toBeLessThanOrEqual(1);
+    }
+  } finally {
+    await rm(file, { force: true });
   }
 });
 

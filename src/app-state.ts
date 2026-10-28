@@ -148,6 +148,8 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   connection: ManagedConnectionState;
   connectionProblem: ManagedConnectionProblem;
   bootstrapped: boolean;
+  /** Initial bootstrap and saved launch selection have not settled yet. */
+  startupPending: boolean;
   /** Monotonic identity of the current HTTP/WebSocket authority. */
   transportGeneration: number;
   mock: boolean;
@@ -328,6 +330,7 @@ export function createInitialAppState(): AppState {
     connection: "connecting",
     connectionProblem: null,
     bootstrapped: false,
+    startupPending: true,
     transportGeneration: 0,
     mock: false,
     version: "",
