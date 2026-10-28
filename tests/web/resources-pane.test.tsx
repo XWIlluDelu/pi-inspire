@@ -29,11 +29,14 @@ import {
 describe("Files pane", () => {
   let testToken = 0;
   let gitStatusFails = false;
+  let gitStatusGate: Promise<void> | null = null;
+  let gitStatusRequests = 0;
   let missingProbeReference: string | null = null;
   let invalidProbeReference: string | null = null;
   let resourceListRequests: Array<{ cursor?: string; limit?: number }> = [];
   let resourceProbeRequests = 0;
   let resourceResolveRequests = 0;
+  let resourceResolveGate: Promise<void> | null = null;
   let resourceResolveBodies: Array<{
     reference: string;
     workspacePath?: string;
@@ -50,11 +53,14 @@ describe("Files pane", () => {
 
   beforeEach(async () => {
     gitStatusFails = false;
+    gitStatusGate = null;
+    gitStatusRequests = 0;
     missingProbeReference = null;
     invalidProbeReference = null;
     resourceListRequests = [];
     resourceProbeRequests = 0;
     resourceResolveRequests = 0;
+    resourceResolveGate = null;
     resourceResolveBodies = [];
     resourceListGate = null;
     resourceProbeGate = null;
@@ -136,6 +142,10 @@ describe("Files pane", () => {
           ...(workspacePath ? { workspacePath } : {}),
         });
         if (url.startsWith("/api/git/status")) {
+          gitStatusRequests += 1;
+          const gate = gitStatusGate;
+          gitStatusGate = null;
+          if (gate) await gate;
           if (gitStatusFails)
             return Response.json({ error: "Git timed out" }, { status: 503 });
           return Response.json({
@@ -383,6 +393,9 @@ describe("Files pane", () => {
         }
         if (url.startsWith("/api/resources/resolve")) {
           resourceResolveRequests += 1;
+          const gate = resourceResolveGate;
+          resourceResolveGate = null;
+          if (gate) await gate;
           const body = JSON.parse(String(init?.body ?? "{}")) as {
             reference: string;
             workspacePath?: string;
@@ -597,9 +610,11 @@ describe("Files pane", () => {
     }
   });
 
-  it("renders grouped changes over a stable source view with change navigation", async () => {
+  it("opens grouped changes in ordinary file tabs with comparison and hunk navigation", async () => {
     Element.prototype.scrollIntoView = vi.fn();
-    await store.openResource("notes.md", "changes");
+    store.setResourcesOpen(true);
+    store.setContextMode("changes");
+    await store.refreshGitInspection();
     const { container: pane } = render(
       <ContextPane isModal={false} onClose={vi.fn()} />,
     );
@@ -613,14 +628,8 @@ describe("Files pane", () => {
     expect(
       screen.getByRole("heading", { name: /Unstaged/ }),
     ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "notes.md, unstaged modified" }),
-      ).toHaveAttribute("aria-current", "true"),
-    );
-    expect(
-      await screen.findByLabelText("Source changes for notes.md"),
-    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Source changes for notes.md")).toBeNull();
+    expect(pane.querySelector(".file-detail-header")).toBeNull();
     expect(
       screen.getByText("Showing first 11 of 1005 changed paths."),
     ).toBeInTheDocument();
@@ -639,6 +648,20 @@ describe("Files pane", () => {
     ).toBeInTheDocument();
 
     fireEvent.click(
+      screen.getByRole("button", { name: "notes.md, unstaged modified" }),
+    );
+    expect(
+      await screen.findByLabelText("Source changes for notes.md"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "notes.md" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
+    expect(
+      screen.getByRole("button", { name: "notes.md, unstaged modified" }),
+    ).toHaveAttribute("aria-current", "true");
+    fireEvent.click(
       screen.getByRole("button", { name: "both.ts, unstaged modified" }),
     );
     const source = await screen.findByLabelText("Source changes for both.ts");
@@ -646,7 +669,6 @@ describe("Files pane", () => {
     expect(within(pane).getByTitle("Line changes")).toHaveTextContent("+2−1");
     expect(screen.getByText("Source truncated")).toBeInTheDocument();
     const next = screen.getByRole("button", { name: "Next change" });
-    fireEvent.click(next);
     expect(source.querySelector('[data-change-index="0"]')).toHaveClass(
       "source-diff__line--active",
     );
@@ -655,27 +677,41 @@ describe("Files pane", () => {
       "source-diff__line--active",
     );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "both.ts, staged modified" }),
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "Comparison side" }),
+      {
+        target: { value: "staged" },
+      },
     );
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "both.ts, staged modified" }),
-      ).toHaveAttribute("aria-current", "true"),
+      expect(store.getState().selectedGitSide).toBe("staged"),
     );
-
-    fireEvent.click(screen.getByRole("button", { name: /image\.bin/ }));
-    expect(await screen.findByText("Binary change")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /conflict\.ts/ }));
-    expect(await screen.findByText("Unresolved conflict")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /vendor\/module/ }));
-    expect(await screen.findByText("Submodule change")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /bad\\xff/ }));
-    expect(await screen.findByText("Source unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "both.ts" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
     expect(
-      screen.getByText(/cannot be represented as UTF-8/),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /new\.ts/ }));
+      screen.getByRole("button", { name: "both.ts, staged modified" }),
+    ).toHaveAttribute("aria-current", "true");
+
+    for (const [name, title] of [
+      [/image\.bin/, "Binary change"],
+      [/conflict\.ts/, "Unresolved conflict"],
+      [/vendor\/module/, "Submodule change"],
+      [/bad\\xff/, "Source unavailable"],
+      [/new\.ts/, "Changes unavailable"],
+    ] as const) {
+      fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
+      fireEvent.click(screen.getByRole("button", { name }));
+      expect(await screen.findByText(title)).toBeInTheDocument();
+      if (title === "Source unavailable")
+        expect(
+          screen.getByText(/cannot be represented as UTF-8/),
+        ).toBeInTheDocument();
+    }
+    // Unsupported comparisons stay distinct from the file's readable body.
+    fireEvent.click(screen.getByRole("button", { name: "Git changes" }));
     expect(
       await screen.findByRole("region", { name: "File source" }),
     ).toBeInTheDocument();
@@ -1228,6 +1264,163 @@ describe("Files pane", () => {
         .some((url) => url.startsWith("/api/git/status")),
     ).toBe(false);
   });
+
+  it.each(["changes", "file"] as const)(
+    "keeps the refresh action idle during background Git observation in the %s view",
+    async (view) => {
+      store.setResourcesOpen(true);
+      store.setContextMode("changes");
+      await store.refreshGitInspection();
+      if (view === "file") await store.openGitDiff("notes", "unstaged");
+      render(<ContextPane />);
+      await waitFor(() =>
+        expect(store.getState().gitStatusRefreshing).toBe(false),
+      );
+      const refresh = screen.getByRole("button", {
+        name: "Refresh context pane",
+      });
+      const icon = refresh.querySelector(".lucide-refresh-cw");
+      expect(icon).not.toBeNull();
+      let release!: () => void;
+      gitStatusGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let pending!: Promise<void>;
+      act(() => {
+        pending = store.refreshGitInspection();
+      });
+      try {
+        await waitFor(() =>
+          expect(store.getState().gitStatusRefreshing).toBe(true),
+        );
+        expect(refresh).toBeEnabled();
+        expect(refresh).toHaveAttribute("aria-busy", "false");
+        expect(refresh.querySelector(".lucide-refresh-cw")).toBe(icon);
+        expect(refresh.querySelector(".pi-loading")).toBeNull();
+      } finally {
+        await act(async () => {
+          release();
+          await pending;
+        });
+      }
+      expect(refresh).toBeEnabled();
+      expect(refresh).toHaveAttribute("aria-busy", "false");
+      expect(refresh.querySelector(".lucide-refresh-cw")).toBe(icon);
+    },
+  );
+
+  it("marks only an explicit refresh busy and prevents duplicate requests until it settles", async () => {
+    store.setResourcesOpen(true);
+    store.setContextMode("changes");
+    await store.refreshGitInspection();
+    render(<ContextPane />);
+    await waitFor(() =>
+      expect(store.getState().gitStatusRefreshing).toBe(false),
+    );
+    const refresh = screen.getByRole("button", {
+      name: "Refresh context pane",
+    });
+    let release!: () => void;
+    gitStatusGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const requests = gitStatusRequests;
+    try {
+      fireEvent.click(refresh);
+      await waitFor(() => expect(gitStatusRequests).toBe(requests + 1));
+      expect(refresh).toBeDisabled();
+      expect(refresh).toHaveAttribute("aria-busy", "true");
+      expect(refresh.querySelector(".pi-loading")).not.toBeNull();
+      expect(refresh.querySelector(".lucide-refresh-cw")).toBeNull();
+      fireEvent.click(refresh);
+      expect(gitStatusRequests).toBe(requests + 1);
+    } finally {
+      await act(async () => {
+        release();
+      });
+    }
+    await waitFor(() => expect(refresh).toBeEnabled());
+    expect(refresh).toHaveAttribute("aria-busy", "false");
+    expect(refresh.querySelector(".lucide-refresh-cw")).not.toBeNull();
+    expect(refresh.querySelector(".pi-loading")).toBeNull();
+    expect(gitStatusRequests).toBe(requests + 1);
+  });
+
+  it.each(["tool", "file"] as const)(
+    "keeps the new %s refresh busy when a previous scope's request completes",
+    async (scope) => {
+      await store.refreshGitInspection();
+      await store.openGitDiff("notes", "unstaged");
+      if (scope === "tool") store.setContextMode("changes");
+      render(<ContextPane />);
+      await waitFor(() =>
+        expect(store.getState().gitStatusRefreshing).toBe(false),
+      );
+      const refresh = screen.getByRole("button", {
+        name: "Refresh context pane",
+      });
+      let releaseOld!: () => void;
+      let releaseNew: (() => void) | undefined;
+      gitStatusGate = new Promise<void>((resolve) => {
+        releaseOld = resolve;
+      });
+      try {
+        fireEvent.click(refresh);
+        await waitFor(() =>
+          expect(store.getState().gitStatusRefreshing).toBe(true),
+        );
+        expect(refresh).toHaveAttribute("aria-busy", "true");
+        if (scope === "tool") {
+          fireEvent.click(screen.getByRole("tab", { name: "Files" }));
+          await screen.findByRole("button", { name: "README.md" });
+        } else {
+          await act(async () => {
+            await store.openResource("demo.html");
+          });
+          await screen.findByTitle("Preview demo.html");
+        }
+        expect(refresh).toBeEnabled();
+        expect(refresh).toHaveAttribute("aria-busy", "false");
+        expect(refresh.querySelector(".lucide-refresh-cw")).not.toBeNull();
+        const nextGate = new Promise<void>((resolve) => {
+          releaseNew = resolve;
+        });
+        if (scope === "tool") resourceListGate = nextGate;
+        else resourceResolveGate = nextGate;
+        const requests =
+          scope === "tool"
+            ? resourceListRequests.length
+            : resourceResolveRequests;
+        fireEvent.click(refresh);
+        await waitFor(() =>
+          expect(
+            scope === "tool"
+              ? resourceListRequests.length
+              : resourceResolveRequests,
+          ).toBe(requests + 1),
+        );
+        expect(refresh).toBeDisabled();
+        expect(refresh).toHaveAttribute("aria-busy", "true");
+        await act(async () => {
+          releaseOld();
+        });
+        await waitFor(() =>
+          expect(store.getState().gitStatusRefreshing).toBe(false),
+        );
+        expect(refresh).toBeDisabled();
+        expect(refresh).toHaveAttribute("aria-busy", "true");
+        expect(refresh.querySelector(".pi-loading")).not.toBeNull();
+      } finally {
+        await act(async () => {
+          releaseOld();
+          releaseNew?.();
+        });
+      }
+      await waitFor(() => expect(refresh).toBeEnabled());
+      expect(refresh).toHaveAttribute("aria-busy", "false");
+      expect(refresh.querySelector(".lucide-refresh-cw")).not.toBeNull();
+    },
+  );
 
   it("marks missing recent references before selection", async () => {
     missingProbeReference = "demo.html";

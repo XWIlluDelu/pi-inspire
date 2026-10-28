@@ -263,3 +263,6 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
 
   The contextual header owns Refresh for the current mode, including History. Files, Changes, and
   History disable it without a selected session; History also disables it during a branch action.
+  Only a user-initiated refresh drives this action’s busy icon and disabled state. Background
+  observations update content quietly; their loading, stale-result and error states remain with the
+  content. Manual feedback belongs to its session/transport/view and cannot overwrite a newer action.

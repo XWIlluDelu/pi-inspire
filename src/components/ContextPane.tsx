@@ -289,49 +289,49 @@ export const ContextPane = memo(function ContextPane({
     [],
   );
 
-  const handleRefresh = () => {
-    if (state.contextMode === "files") {
-      store.cancelResourceProbes();
-      void Promise.all([
-        state.fileBrowserView === "browse"
-          ? loadResources()
-          : Promise.resolve(),
-        store.refreshWorkspaceBrowser(),
-        state.fileBrowserView === "preview" && state.selectedResourceReference
-          ? store.refreshFileTab()
-          : Promise.resolve(),
-      ]);
-      return;
-    }
-    if (state.contextMode === "changes") {
-      void store.refreshGitInspection();
-      return;
-    }
+  const refreshScope = JSON.stringify([
+    state.sessionId,
+    state.cwd,
+    transportGeneration,
+    state.contextMode,
+    state.fileBrowserView,
+    selectedReference,
+  ]);
+  const [manualRefresh, setManualRefresh] = useState<{ scope: string } | null>(
+    null,
+  );
+  const refreshing = manualRefresh?.scope === refreshScope;
+  const handleRefresh = async () => {
+    if (refreshing) return;
     if (state.contextMode === "terminal") {
       setTerminalReloadKey((value) => value + 1);
       return;
     }
-    void store.loadBranchTree();
+    // Background observations update their content without animating this action.
+    // Only the user's refresh owns the button feedback, within the current view.
+    const request = { scope: refreshScope };
+    setManualRefresh(request);
+    try {
+      if (state.contextMode === "files") {
+        store.cancelResourceProbes();
+        await Promise.all([
+          state.fileBrowserView === "browse"
+            ? loadResources()
+            : Promise.resolve(),
+          store.refreshWorkspaceBrowser(),
+          state.fileBrowserView === "preview" && selectedReference
+            ? store.refreshFileTab()
+            : Promise.resolve(),
+        ]);
+      } else if (state.contextMode === "changes") {
+        await store.refreshGitInspection();
+      } else {
+        await store.loadBranchTree();
+      }
+    } finally {
+      setManualRefresh((current) => (current === request ? null : current));
+    }
   };
-  const refreshing =
-    state.contextMode === "files"
-      ? (state.fileBrowserView === "browse" && resourceStatus === "loading") ||
-        (state.fileBrowserView === "preview" &&
-          (state.resourceTabs.find((tab) => tab.reference === selectedReference)
-            ?.view === "changes"
-            ? state.gitStatusLoading ||
-              state.gitStatusRefreshing ||
-              state.gitDiff?.status === "loading"
-            : state.resourcePreview?.status === "loading" ||
-              (state.resourcePreview?.status === "ready" &&
-                state.resourcePreview.refreshing))) ||
-        state.workspaceLoadingDirs.length > 0 ||
-        state.workspaceSearchLoading
-      : state.contextMode === "changes"
-        ? state.gitStatusLoading || state.gitStatusRefreshing
-        : state.contextMode === "branches"
-          ? state.branchTreeLoading
-          : false;
   const contents = (
     <>
       <div className="ctx__header" ref={recoverModalFocus}>
