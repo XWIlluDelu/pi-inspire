@@ -129,6 +129,9 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
   with explicit state-owned retry/compaction text in the adjacent activity surface rather than
   command-owned progress copy.
 
+  When the status slot is empty, identity can use the remaining header width instead of truncating
+  beside unused reserved space. Nonempty status keeps its existing budget; trailing actions and
+  inline rename retain their own layout.
   Session title, project, Git and extension status form one left-aligned cluster with consistent
   spacing and a shared text baseline across the sans title and mono metadata/status; icons
   and global action buttons remain centered independently. The project and Git identifiers form

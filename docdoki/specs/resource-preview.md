@@ -48,6 +48,10 @@ stack. Returning to the Files tab restores its query, expansions and scroll. Fil
 one narrow browser-history level under [[workspace-layout]]. The browser uses `--bg-context`; the selected file's path/actions bar and
 reader use `--bg-surface`, without an extra shadow or raised frame.
 
+Coarse-pointer file close areas are 32px wide, and file reader actions have 32px targets. The narrow
+two-row header uses its existing padding budget to keep its 57px height; desktop pointer density,
+icon sizes and action order do not change.
+
 The Files tree uses the project basename as its heading. Opening a workspace file expands its
 ancestors and emits one reveal request; unrelated updates do not scroll it. Leaf rows reserve the
 folder disclosure slot, aligning sibling file/folder icons and names. Recent and flat search results

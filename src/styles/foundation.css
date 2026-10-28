@@ -48,6 +48,7 @@
   --text-base: 14px;
   --text-reading: 15.5px;
   --text-reading-small: 12.5px;
+  --text-reading-table: 14px;
   --text-reading-code: 12.5px;
   --text-reading-h1: 26px;
   --text-reading-h2: 21px;
@@ -72,6 +73,7 @@
 :root[data-content-text-size="compact"] {
   --text-reading: 14px;
   --text-reading-small: 11.5px;
+  --text-reading-table: 12.5px;
   --text-reading-code: 11.5px;
   --text-reading-h1: 21px;
   --text-reading-h2: 17px;
@@ -81,6 +83,7 @@
 :root[data-content-text-size="large"] {
   --text-reading: 17px;
   --text-reading-small: 14px;
+  --text-reading-table: 15.5px;
   --text-reading-code: 14px;
   --text-reading-h1: 32px;
   --text-reading-h2: 26px;

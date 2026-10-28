@@ -50,6 +50,15 @@ async function namedSession(page: Page) {
     },
   });
   expect(response.ok()).toBe(true);
+  const sessionId = (await response.json()).active.sessionId;
+  // API creation is outside browser navigation; reload must restore this
+  // fixture's session rather than the Host selection from a preceding test.
+  await page.evaluate((sessionId) => {
+    sessionStorage.setItem(
+      "inspire:workbench:v1:last-session",
+      JSON.stringify({ sessionId }),
+    );
+  }, sessionId);
   await page.reload();
   const title = page.getByRole("button", { name: /^Session actions:/ });
   await expect(title).toContainText("Calibration notes");

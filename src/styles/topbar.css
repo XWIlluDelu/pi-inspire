@@ -17,6 +17,12 @@
   container-type: inline-size;
 }
 
+/* An idle header has no status to reserve space for. Let identity use that
+   budget while keeping actions at the trailing edge and rename independent. */
+.topbar:has(> .topbar__status:empty):not(:has(.topbar__rename)) {
+  grid-template-columns: [identity] minmax(0, 1fr) [status] 0 [actions] auto;
+}
+
 .reading-stage {
   --reading-min-height: min(144px, 28%);
   display: flex;
@@ -555,6 +561,10 @@
 @media (max-width: 900px) {
   .topbar {
     grid-template-columns: [navigation] auto [identity] fit-content(56%) [status] minmax(auto, 1fr) [actions] auto;
+  }
+
+  .topbar:has(> .topbar__status:empty):not(:has(.topbar__rename)) {
+    grid-template-columns: [navigation] auto [identity] minmax(0, 1fr) [status] 0 [actions] auto;
   }
 
   .topbar:has(.topbar__rename) {

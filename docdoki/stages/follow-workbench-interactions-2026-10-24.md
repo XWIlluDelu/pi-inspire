@@ -247,6 +247,24 @@ together with project typechecking, scoped lint and the isolated production-mode
 extension fixture now restores its own browser selection after API creation, matching the existing
 live-event fixture rather than relying on the Host's process-global selected session.
 
+## Independent design finish
+
+An independent screenshot critique followed the geometric review, focusing on reading hierarchy,
+surface density and useful space rather than treating absence of overflow as visual quality.
+Result tables now use their own 12.5/14/15.5px tier instead of the smaller metadata tier. The idle
+topbar returns unused status width to the session identity while keeping trailing actions fixed;
+nonempty status and inline rename retain their established budgets.
+
+Behavior's reorder list removes repeated ordinary row borders, leaving its container and the
+meaningful More actions boundary. The directory visibility action follows the trailing content
+edge. On coarse pointers, file close areas are 32px wide and reader actions are 32px tall; the
+narrow reader spends existing vertical padding on those targets and stays 57px high. Icons,
+action order, transparent close treatment and desktop density remain unchanged.
+
+The quiet home lockup, Composer writing space and long-activity boundaries remain intentional.
+Prompt Map keeps its real reading gutter, and mobile editable paths retain their 16px input size;
+reducing those solely for visual uniformity would trade away navigation or input usability.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

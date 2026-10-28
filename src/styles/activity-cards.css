@@ -1493,7 +1493,7 @@ span.card__file-arg {
 .rich-text table {
   border-collapse: collapse;
   margin: var(--space-3) 0;
-  font-size: var(--text-reading-small);
+  font-size: var(--text-reading-table);
   /* Numeric columns compare down the row rule; proportional figures wobble. */
   font-variant-numeric: tabular-nums;
   /* Preserve word-sized column minima; the table owns wide-content scrolling. */

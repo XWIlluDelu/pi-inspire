@@ -411,15 +411,9 @@
   gap: var(--space-3);
   min-height: 48px;
   padding: 0 var(--space-4);
-  border-bottom: 1px solid var(--hairline);
   background: transparent;
   position: relative;
   transition: background var(--dur-micro) var(--ease-standard);
-}
-
-.session-action-order > li:last-child,
-.session-action-order__row:has(+ .session-action-order__boundary) {
-  border-bottom: 0;
 }
 
 .session-action-order__row:hover:where(:not([data-dragging])) {
@@ -1913,6 +1907,7 @@
 
 .dirpicker__hidden.icon-button {
   flex: 0 0 auto;
+  margin-inline-start: auto;
   width: 32px;
   height: 32px;
   color: var(--muted);

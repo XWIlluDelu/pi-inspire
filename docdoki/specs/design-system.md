@@ -274,6 +274,10 @@ text has no tracking; short uppercase Latin labels may use restrained tracking. 
 and Large presets remap conversation prose, headings, code, reasoning, tables, drafts and text
 previews; interface controls keep fixed tiers.
 
+Reading tables use a separate data-text tier: 12.5px Compact, 14px Comfortable and 15.5px Large.
+They sit one step below prose without sharing the smaller tool/metadata tier. Semibold headings,
+tabular numerals, quiet row rules and local horizontal scrolling remain unchanged.
+
 Resource tabs use four equal columns, 13px labels (12.5px untracked in the smallest groups), and
 28px desktop / 34px compact-touch height with adjacent 32px actions. Complete labels fit without
 cropping or distortion. The group is unfilled and has no visible enclosing border. Selected modes
@@ -752,7 +756,8 @@ layout space. Presentation follows the action's role:
 
 The directory picker's editable path shares Welcome's canvas fill, line border, small radius and
 inset focus mark, with mono text, soft wrapping and content-sized height above the bordered directory
-list. Quiet styling preserves action availability, sizing and keyboard behavior. Copy availability
+list. Its title stays on the leading edge and its visibility action aligns with the trailing content
+edge. Quiet styling preserves action availability, sizing and keyboard behavior. Copy availability
 follows [Content copying](#content-copying), independently of presentation type.
 
 ## Responsive, motion, and accessibility

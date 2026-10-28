@@ -891,6 +891,36 @@ body.pane-resizing--vertical .nav {
   color: var(--ink);
 }
 
+/* Spend existing reader-header breathing room on touch targets, preserving
+   the two-row header height and the icons' centers. Pointer layouts stay compact. */
+@media (pointer: coarse) {
+  .ctx__file-tab > .ctx__file-close {
+    flex-basis: 32px;
+    min-width: 32px;
+  }
+
+  .file-detail-header__actions .icon-button,
+  .file-detail-header__actions .file-detail-header__view {
+    height: 32px;
+    min-height: 32px;
+  }
+
+  .file-detail-header__actions .icon-button {
+    width: 32px;
+    min-width: 32px;
+  }
+
+  .file-detail-header__actions {
+    min-height: 32px;
+  }
+
+  @container file-reader (max-width: 520px) {
+    .file-preview > .file-detail-header {
+      padding-block: 0;
+    }
+  }
+}
+
 .file-detail-header__view:hover:not(:disabled) {
   background: var(--bg-inset);
   color: var(--ink);
