@@ -708,7 +708,10 @@ describe("Files pane", () => {
     const row = await screen.findByRole("button", {
       name: literal,
     });
-    expect(row).toHaveAttribute("title", literal);
+    expect(row).toHaveAttribute(
+      "title",
+      `${literal}\nCtrl+click: Show in file manager`,
+    );
     expect(row).toHaveTextContent("report%20draft.md");
     expect(screen.queryByRole("button", { name: reference })).toBeNull();
     fireEvent.click(row);
@@ -718,6 +721,80 @@ describe("Files pane", () => {
         reference,
       }),
     );
+  });
+
+  it("shows Ctrl-clicked files and folders without changing the browser selection", async () => {
+    const shown: unknown[] = [];
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input) === "/api/resources/show-in-file-manager") {
+        shown.push(JSON.parse(String(init?.body)));
+        return Response.json({ ok: true });
+      }
+      return originalFetch(input, init);
+    });
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Toggle resources panel" }),
+    );
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    const folder = await within(pane).findByRole("button", { name: /^src$/ });
+    fireEvent.click(folder, { ctrlKey: true });
+    expect(folder).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(
+      await within(pane).findByRole("button", { name: /^README\.md$/ }),
+      { ctrlKey: true },
+    );
+    fireEvent.click(
+      await within(pane).findByRole("button", { name: /^notes\.md/ }),
+      { metaKey: true },
+    );
+    await waitFor(() =>
+      expect(shown).toEqual([
+        {
+          sessionId: "s1",
+          reference: "src",
+          workspacePath: "src",
+          directory: true,
+        },
+        {
+          sessionId: "s1",
+          reference: "README.md",
+          workspacePath: "README.md",
+          directory: false,
+        },
+        {
+          sessionId: "s1",
+          reference: "notes.md",
+          workspacePath: "notes.md",
+          directory: false,
+        },
+      ]),
+    );
+    expect(resourceResolveRequests).toBe(0);
+    expect(store.getState().fileBrowserView).toBe("browse");
+    fireEvent.click(folder);
+    expect(folder).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("surfaces an unavailable file manager without opening or dropping file tabs", async () => {
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) =>
+      String(input) === "/api/resources/show-in-file-manager"
+        ? Response.json(
+            { error: "No desktop is available to show this item" },
+            { status: 503 },
+          )
+        : originalFetch(input, init),
+    );
+    render(<App />);
+    await act(() => store.showInFileManager("notes.md", "notes.md"));
+    expect(
+      await screen.findByText("No desktop is available to show this item"),
+    ).toBeVisible();
+    expect(resourceResolveRequests).toBe(0);
   });
 
   it("browses, searches, and keeps only the essential file actions", async () => {
@@ -743,7 +820,9 @@ describe("Files pane", () => {
     // Recent-reference observations settle independently of the directory listing.
     await waitFor(() =>
       expect(
-        pane.querySelector('.recent-file[title="demo.html"] > svg'),
+        within(pane)
+          .getByRole("button", { name: "demo.html" })
+          .querySelector("svg"),
       ).toHaveClass("lucide-file-code-corner"),
     );
     const directory = await within(pane).findByRole("button", { name: "src" });
@@ -812,7 +891,10 @@ describe("Files pane", () => {
     expect(match.querySelector(".resource-path__visible")).toHaveTextContent(
       /^src$/,
     );
-    expect(match).toHaveAttribute("title", "src/main.ts");
+    expect(match).toHaveAttribute(
+      "title",
+      "src/main.ts\nCtrl+click: Show in file manager",
+    );
     expect(match.querySelector(".search-match")).toHaveTextContent(/^main$/);
     fireEvent.click(match);
     expect(

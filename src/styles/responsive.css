@@ -155,8 +155,8 @@ body.srail-dragging {
   .app--narrow .ctx__header {
     gap: var(--space-1);
     height: auto;
-    /* Reserve the 40px tab frame, vertical inset and border even while loading. */
-    min-height: calc(var(--topbar-h) + 1px);
+    /* Match the compact header while retaining 34px touch controls. */
+    min-height: 41px;
     padding: 2px var(--space-2);
   }
 

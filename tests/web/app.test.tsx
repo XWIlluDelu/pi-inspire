@@ -424,8 +424,7 @@ describe("welcome flow", () => {
       history.replaceState({ changesBaseline: true }, "");
       render(<App />);
       act(() => {
-        store.setContextMode("changes");
-        store.setResourcesOpen(true);
+        store.showChangesBrowser();
       });
       const row = await screen.findByRole("button", {
         name: "README.md, unstaged modified",

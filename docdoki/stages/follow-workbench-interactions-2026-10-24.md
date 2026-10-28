@@ -68,6 +68,43 @@ retains 400px; at 1280/980px it yields to 648/348px. The 390/320px drawers and c
 contained. Full project typechecking and import boundaries also pass. The user approved auto-dev
 publication and deployment after these checks; main and the existing release tag are outside scope.
 
+## Context tabs and page-reload continuity
+
+The user approved the visual trial on `2031a483`. File and tool tabs use
+the shared 4px control radius: neutral hover, a theme-tinted selected background with accent ink
+and the existing 2px indicator, and a slightly deeper selected hover. Close and refresh remain
+neutral actions. Keyboard focus stays inside each control. The 1×16px refresh separator uses
+`--hairline-strong`, matching the existing model-group vertical divider rather than adding a color.
+Chrome pointer/keyboard checks cover these states in light/dark themes and confirm containment at
+390/320px. Follow-up feedback tightens the desktop header from 44px to 40px and the narrow header
+to 41px. The underline no longer displaces file controls above the tool icons; file and close SVGs
+share size and center, selected ink is consistent, and labels reuse the existing optical-offset
+token. Pi error Show/Hide details uses that same label correction without changing other icons.
+
+F5 restores browser-tab-local workbench metadata under browser-origin/session/workspace identity: current
+session, pane visibility, file order/selection, tool choice, Files filters/expansions and independent
+file reading positions. Widths reuse the existing persistence. Files are reauthorized and reread;
+missing files keep their tabs and errors. Closing the pane retires content while preserving its
+selection. No file body or HTML execution grant is persisted. Existing terminal reconnection retains
+the shell and never replays commands. Transcript-position embedded images, iframe-internal scroll,
+media playback and a specific Changes comparison are outside this reload restoration.
+
+Ctrl/Meta+click in Files or a filename tab shows the authorized file or directory in the Host's
+file manager. Linux FileManager1, Finder and Windows Shell requests use parameterized arguments;
+unsupported/headless/native failure is reported. Linux browser Ctrl+click for a file, filename tab
+and directory passes through the actual authenticated Host endpoint and acknowledged FileManager1
+calls; ordinary preview and folder expansion remain unchanged. macOS/Windows native desktop
+invocation remains untested on this Linux host.
+
+Chrome validates source offset 780 and rendered offset 600 across F5, closed-pane reopening,
+file order, navigation collapse, Files query, History selection and session isolation. Terminal F5
+reconnects the same terminal ID, restores its output, and a fixture counter confirms the test command
+runs once. A mock Host restart also restores the selected file and its 400px source offset;
+the fixture now matches production's read-only saved-session admission rather than returning an
+unrelated not-open conflict. The final targeted run passes 207 tests in 12 files. Typechecking,
+changed TypeScript formatting/lint, import boundaries and the production build pass. No full
+platform matrix is required for this iteration.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

@@ -202,6 +202,11 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
   expansions and scroll. File tabs retain independent reader modes and Source/rendered scroll
   offsets; [[resource-preview]] defines the boundary for embedded readers and execution.
   Overflowing filename tabs scroll within their own strip while the tool tabs remain available.
+  F5 keeps the current browser tab's navigation collapse, context visibility, file-tab order and
+  selection, tool selection, and Files query/expanded directories. Existing saved pane widths remain
+  in use. Session-specific state is scoped to the Host, session and workspace, and file content is
+  loaded again under current authority. Terminal restores its existing selection and reconnects;
+  restoring the view never reruns a command. Embedded readers retain the limits in [[resource-preview]].
 
   Changes retains a bounded desktop index above complete selected-file Source with inline Git
   changes and navigation, without an internal resize control. Narrow Changes uses a full-height

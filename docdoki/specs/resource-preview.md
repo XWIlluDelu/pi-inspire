@@ -210,9 +210,14 @@ buffer arbitrary files in JavaScript. Dual-view files retain one reciprocal view
 in a fixed trailing slot. Files with no alternative view omit that action. Source uses highlighting and line numbers; `:line` and `#Lline`
 open Source at that position, including for files that normally open in Preview. Refreshing the
 same selected file retains its chosen view and Source reading offsets while replacing the content.
-While the contextual pane remains open, switching file/tool tabs restores each file's selected view
-and Source/rendered scroll offsets.
-Closing its tab, or changing session, workspace or transport, discards that retained reading context.
+Switching file/tool tabs, reopening the contextual pane, or reloading the page restores each file's
+selected view and Source/rendered scroll offsets. Browser-tab session storage retains navigation
+metadata under the browser origin, session and workspace identity; another origin or session cannot
+inherit it. Host process restarts retain that metadata but reread files through current permissions.
+Restoration retains a missing/unreadable file's
+tab with its error. Closing a file tab discards its saved reading position. No file bytes, resource
+handles or execution grants are stored. Position-based transcript embedded images are not restored
+across projection replacement.
 This does not retain iframe-internal interaction or media playback state. HTML execution
 leases remain separate and are still retired on refresh or leaving the file tab. Files does not
 duplicate Changes with a Diff mode or add file-editing controls. Files Source and Changes share an unframed, full-width source canvas below the fixed header, without
@@ -224,6 +229,12 @@ Source, Markdown code blocks and
 Notebook cells highlight recognized languages up to 64 Ki characters per leaf; larger leaves retain
 text and copying without highlighting. Markdown Preview and Notebook prose follow Content text size;
 resource headers and controls keep their independent UI sizing.
+
+Ctrl+click (or Meta+click) on a workspace file, directory, Recent file or filename tab invokes
+**Show in file manager** on the Host: select a file in its parent, or open a directory. The Host
+uses the same session file authority and workspace containment checks as browsing, and passes paths
+as data to the native desktop integration without executing them. Missing desktop support or native
+request failure is shown as an error. Linux uses FileManager1, macOS Finder, and Windows the Shell API.
 
 Host-owned reading canvases follow the palette-independent neutral roles in [[design-system]],
 preserving authored backgrounds and semantic source/diff colors. Images use a neutral checkerboard

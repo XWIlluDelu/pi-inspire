@@ -114,6 +114,43 @@ describe("MockRuntime History reads", () => {
   });
 });
 
+describe("MockRuntime addressed bootstrap", () => {
+  it("restores an unopened catalog fixture without changing the Host selection", async () => {
+    const runtime = new MockRuntime();
+    try {
+      await runtime.openSession("mock-history");
+      const selected = await runtime.snapshot();
+      const addressed = await runtime.snapshot("mock-active");
+      expect(addressed.active?.sessionId).toBe("mock-active");
+      expect(addressed.active?.transcriptPage.messages.length).toBeGreaterThan(
+        0,
+      );
+      expect(addressed.runState).toBe("idle");
+      expect(await runtime.snapshot()).toEqual(selected);
+      expect((await runtime.resourceContext("mock-active")).sessionId).toBe(
+        "mock-active",
+      );
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("classifies a missing remembered session for bootstrap recovery", async () => {
+    const runtime = new MockRuntime();
+    try {
+      await expect(
+        runtime.snapshot("missing-saved-session"),
+      ).rejects.toMatchObject({
+        status: 404,
+        code: "SESSION_NOT_FOUND",
+      });
+      expect((await runtime.snapshot(null)).active).toBeNull();
+    } finally {
+      await runtime.close();
+    }
+  });
+});
+
 describe("MockRuntime concurrent sessions", () => {
   it("keeps addressed background compaction from changing the selected run state", async () => {
     vi.useFakeTimers();

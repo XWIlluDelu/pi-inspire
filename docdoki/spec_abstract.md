@@ -52,6 +52,8 @@ and untracked.
 - **Reading and workspace tools:** rich conversation/activity readers, source-backed Copy, Files and
   Changes with in-place refresh, previews and persistent project terminals. Responsive inspection
   preserves the reading context and supports terminal quoting back to the draft. Session actions
+  and file inspection retain browser-tab-local workbench state across page reloads; Ctrl+click shows
+  authorized files and directories in the Host's file manager. Session actions
   include full-ID copy and a compact menu whose drag handles share saved ordering with Behavior
   settings under [interface-preferences](specs/interface-preferences.md).
   See [conversation](specs/conversation.md), [workspace-layout](specs/workspace-layout.md), [resource-preview](specs/resource-preview.md), [terminal](specs/terminal.md) and [workbench](specs/workbench.md).

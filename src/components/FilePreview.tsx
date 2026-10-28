@@ -15,6 +15,7 @@ import { formatBytes } from "../format";
 import { store } from "../store";
 import { highlightSource, languageForFile } from "../syntax-highlighting";
 import { useCopied } from "../use-copied";
+import type { FileReadingState } from "../workbench-session";
 import { ContextPaneState } from "./ContextPaneState";
 import type { ContextPaneView } from "./context-pane-view";
 import { DocumentPreview } from "./DocumentPreview";
@@ -68,6 +69,7 @@ interface LineJump {
 
 interface SourceReadingPosition {
   current: { top: number; left: number } | null;
+  save?: () => void;
 }
 
 function SourceCodePreview({
@@ -123,11 +125,13 @@ function SourceCodePreview({
       className="source-view source-reader"
       ref={rootRef}
       onScroll={(event) => {
-        if (readingPosition)
+        if (readingPosition) {
           readingPosition.current = {
             top: event.currentTarget.scrollTop,
             left: event.currentTarget.scrollLeft,
           };
+          readingPosition.save?.();
+        }
       }}
       tabIndex={0}
       role="region"
@@ -403,11 +407,7 @@ export function ResourcePreviewContent({
   );
 }
 
-export interface FileReadingState {
-  source: SourceReadingPosition;
-  rendered: SourceReadingPosition;
-  mode?: FileViewMode;
-}
+export type { FileReadingState } from "../workbench-session";
 
 export function FilePreview({
   state,
@@ -649,7 +649,10 @@ export function FilePreview({
               mode={viewMode}
               onChange={(mode) => {
                 if (descriptor) {
-                  if (readingState) readingState.mode = mode;
+                  if (readingState) {
+                    readingState.mode = mode;
+                    readingState.save?.();
+                  }
                   setFileView({ owner: readingPosition, mode });
                 }
               }}
@@ -667,11 +670,13 @@ export function FilePreview({
             viewMode !== "source" &&
             (element === event.currentTarget ||
               element.matches('[data-pane-scroll-active="true"]'))
-          )
+          ) {
             readingState.rendered.current = {
               top: element.scrollTop,
               left: element.scrollLeft,
             };
+            readingState.save?.();
+          }
         }}
       >
         {preview?.status === "ready" && preview.refreshError ? (

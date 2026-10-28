@@ -54,6 +54,7 @@ import {
   cacheVisualPreferences,
 } from "./visual-preferences";
 import { modelCycleAction } from "./workbench-keyboard";
+import { readNavCollapsed, saveNavCollapsed } from "./workbench-session";
 
 const loadContextPane = () => import("./components/ContextPane");
 const loadSettings = () => import("./components/Settings");
@@ -513,7 +514,8 @@ export function App() {
     (connectionDelayed ||
       (state.connectionProblem !== null &&
         state.connectionProblem.kind !== "stream-interrupted"));
-  const [navCollapsed, setNavCollapsed] = useState(false);
+  const [navCollapsed, setNavCollapsed] = useState(readNavCollapsed);
+  useEffect(() => saveNavCollapsed(navCollapsed), [navCollapsed]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const navSearchRef = useRef<HTMLInputElement>(null);
   const narrowViewport = useMediaQuery("(max-width: 900px)");

@@ -113,6 +113,15 @@ import {
   snapshotLifecyclePatch,
 } from "./snapshot-transition";
 import { configureToolPresentationRegistry } from "./tool-presentations/registry";
+import {
+  forgetFileReading,
+  lastWorkbenchSession,
+  readFileReading,
+  readWorkbench,
+  rememberWorkbenchSession,
+  saveWorkbench,
+  workbenchSessionKey,
+} from "./workbench-session";
 
 export type {
   ActivityMaterializationMode,
@@ -194,6 +203,8 @@ import { TaskNotificationController } from "./notifications";
 
 export class AppStore {
   private state: AppState = createInitialAppState();
+  private workbenchReady = false;
+  private clearingWorkbench = false;
   private listeners = new Set<() => void>();
   private api: Api | null = null;
   private readonly pendingExports = new Map<
@@ -589,9 +600,15 @@ export class AppStore {
   getState = (): AppState => this.state;
 
   private set(partial: Partial<AppState>): void {
-    const previousSessionId = this.state.sessionId;
-    this.state = { ...this.state, ...partial };
-    if (this.state.sessionId !== previousSessionId)
+    const previous = this.state;
+    this.state = { ...previous, ...partial };
+    if (
+      !this.clearingWorkbench &&
+      previous.sessionId === this.state.sessionId &&
+      previous.cwd === this.state.cwd
+    )
+      saveWorkbench(this.workbenchKey(), this.state, previous);
+    if (this.state.sessionId !== previous.sessionId)
       this.connectionController.updateDetailInterest();
     for (const listener of this.listeners) listener();
   }
@@ -714,6 +731,7 @@ export class AppStore {
   /** One transport replacement boundary invalidates every owner before a new
    * API or event stream can publish state. */
   private replaceTransport(): number {
+    this.workbenchReady = false;
     // Stop detaches its owned socket before closing it, so the close handler
     // cannot schedule a retry with the superseded credential or API.
     this.connectionController.stop();
@@ -722,7 +740,12 @@ export class AppStore {
     this.set({ transportGeneration: generation, exportingSessions: {} });
     this.bootstrapRequest?.abort();
     this.bootstrapRequest = null;
-    this.invalidateTransportControllers();
+    this.clearingWorkbench = true;
+    try {
+      this.invalidateTransportControllers();
+    } finally {
+      this.clearingWorkbench = false;
+    }
     this.catalog.invalidate();
     this.invalidateTransportRequests();
     this.runtimeEvents.invalidateTransport();
@@ -787,9 +810,12 @@ export class AppStore {
     const preferenceOwners = this.preferences.captureBootstrapOwners();
     const snapshotGeneration = this.snapshotGeneration;
     const autoContinueIntent = this.selectionIntentGeneration;
+    const rememberedSession = this.state.bootstrapped
+      ? null
+      : lastWorkbenchSession();
     const detailSessionId = this.state.bootstrapped
       ? this.state.sessionId
-      : undefined;
+      : rememberedSession?.sessionId;
     let missingDetail = false;
     try {
       const boot = await api
@@ -850,6 +876,7 @@ export class AppStore {
         connectionProblem: null,
       });
       this.hostAuthorityId = boot.authorityId;
+      if (rememberedSession) this.autoContinued = true;
       this.composer.reconcileAuthority(boot.authorityId);
       if (this.snapshotGeneration === snapshotGeneration) {
         this.applySnapshot(boot.snapshot);
@@ -1014,6 +1041,26 @@ export class AppStore {
       transition,
       sessionOwnerPatch,
     );
+    const restoreWorkbench =
+      !this.workbenchReady || sessionChanged || cwd !== this.state.cwd;
+    if (restoreWorkbench) {
+      const saved = readWorkbench(workbenchSessionKey(nextSessionId, cwd));
+      if (saved) {
+        Object.assign(lifecyclePatch, saved, {
+          workspaceSearchLoading: Boolean(saved.workspaceQuery.trim()),
+          resourcePreview:
+            saved.resourcesOpen &&
+            saved.contextMode === "files" &&
+            saved.fileBrowserView === "preview" &&
+            saved.selectedResourceReference
+              ? {
+                  status: "loading",
+                  reference: saved.selectedResourceReference,
+                }
+              : null,
+        });
+      }
+    }
     this.set({
       sessionId: active?.sessionId ?? null,
       sessionName: active?.sessionName ?? "",
@@ -1128,6 +1175,11 @@ export class AppStore {
       statuses: extensionStatuses,
       ...lifecyclePatch,
     });
+    this.workbenchReady = true;
+    if (restoreWorkbench) {
+      if (this.hostAuthorityId) rememberWorkbenchSession(this.state.sessionId);
+      this.workspace.resumeSearch();
+    }
     if (
       lifecyclePatch.resourcePreview?.status === "loading" &&
       this.state.selectedResourceReference ===
@@ -3146,6 +3198,36 @@ export class AppStore {
     return this.resources.openResource(path, "files", path);
   };
 
+  showInFileManager = async (
+    reference: string,
+    workspacePath?: string,
+    directory = false,
+  ): Promise<void> => {
+    const api = this.api;
+    const sessionId = this.state.sessionId;
+    const generation = this.transportGeneration;
+    if (!api || !sessionId) return;
+    try {
+      await api.showInFileManager(
+        sessionId,
+        reference,
+        workspacePath,
+        directory,
+      );
+    } catch (error) {
+      if (this.api !== api || this.transportGeneration !== generation) return;
+      if (error instanceof ApiError && error.status === 401)
+        this.handleAuthFailure();
+      else if (this.state.sessionId === sessionId)
+        this.notify(
+          "warning",
+          error instanceof Error
+            ? error.message
+            : "Could not show in file manager",
+        );
+    }
+  };
+
   refreshWorkspaceBrowser = (): Promise<void> => this.workspace.refresh();
 
   /** Filesystem roots for cross-volume navigation in the host picker. */
@@ -3300,12 +3382,35 @@ export class AppStore {
 
   // --- Files/resources pane ---
 
+  private workbenchKey(): string | null {
+    return workbenchSessionKey(this.state.sessionId, this.state.cwd);
+  }
+
+  fileReadingState = (reference: string) =>
+    readFileReading(this.workbenchKey(), reference);
+
   setResourcesOpen = (resourcesOpen: boolean): void => {
     if (!resourcesOpen) {
-      this.resources.clearSelection();
+      // Closing retires content and HTML capabilities, but the filename/tool
+      // choice remains navigation intent when this pane is opened again.
+      this.resources.invalidate();
       this.git.clearDiffSelection();
+      this.set({ resourcesOpen, resourcePreview: null });
+      return;
     }
     this.set({ resourcesOpen });
+    const state = this.state;
+    if (
+      state.contextMode === "files" &&
+      state.fileBrowserView === "preview" &&
+      state.selectedResourceReference &&
+      !state.resourcePreview
+    )
+      void this.resources.openResource(
+        state.selectedResourceReference,
+        "files",
+        state.selectedResourceWorkspacePath ?? undefined,
+      );
   };
 
   selectResourceTab = (reference: string): Promise<void> => {
@@ -3316,7 +3421,8 @@ export class AppStore {
     if (
       this.state.contextMode === "files" &&
       this.state.fileBrowserView === "preview" &&
-      this.state.selectedResourceReference === reference
+      this.state.selectedResourceReference === reference &&
+      this.state.resourcePreview !== null
     )
       return Promise.resolve();
     return this.resources.openResource(
@@ -3331,6 +3437,7 @@ export class AppStore {
       (tab) => tab.reference === reference,
     );
     if (index < 0) return;
+    forgetFileReading(this.workbenchKey(), reference);
     const resourceTabs = this.state.resourceTabs.filter(
       (tab) => tab.reference !== reference,
     );

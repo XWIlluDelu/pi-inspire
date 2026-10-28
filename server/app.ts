@@ -49,6 +49,7 @@ import {
   secretMatches as tokenMatches,
 } from "./browser-auth.js";
 import { GeneratedExportStore } from "./generated-exports.js";
+import { showInFileManager } from "./file-manager.js";
 import type { GitInspectionLike } from "./git-inspection.js";
 import { listHostDirectories, listHostRoots } from "./host-dirs.js";
 import { HtmlPreviewStore } from "./html-preview.js";
@@ -1809,6 +1810,21 @@ export function createInspireServer(deps: AppDependencies): {
     response.json(
       await deps.resources.resolve(context, reference, true, workspacePath),
     );
+  });
+  app.post("/api/resources/show-in-file-manager", async (request, response) => {
+    const { sessionId, reference, workspacePath, directory } =
+      resourceResolveSchema
+        .extend({ directory: z.boolean().default(false) })
+        .parse(request.body);
+    const context = await deps.runtime.resourceContext(sessionId);
+    const path = await deps.resources.fileManagerPath(
+      context,
+      reference,
+      workspacePath,
+      directory,
+    );
+    await showInFileManager(path, directory);
+    response.json({ ok: true });
   });
   app.post("/api/resources/:id/interactive", async (request, response) => {
     const { sessionId, html } = z

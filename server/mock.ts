@@ -691,7 +691,10 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
     return session;
   }
 
-  private activate(id = "mock-active", cwd = mockWorkspace): ActiveSnapshot {
+  private prepareSession(
+    id: string,
+    cwd: string,
+  ): NonNullable<ActiveSnapshot["active"]> {
     const summary = summaries.find((item) => item.id === id);
     let active = this.sessions.get(id);
     if (!active) {
@@ -766,7 +769,11 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
       }
     }
     if (!active) throw new Error("Mock session activation failed");
+    return active;
+  }
 
+  private activate(id = "mock-active", cwd = mockWorkspace): ActiveSnapshot {
+    const active = this.prepareSession(id, cwd);
     const currentStatus = this.state.sessionStatuses[id] ?? {
       runState: "idle" as const,
     };
@@ -1220,6 +1227,16 @@ export class MockRuntime extends EventEmitter implements RuntimeLike {
   async extensionUiResponse(): Promise<void> {}
   async snapshot(sessionId?: string | null): Promise<ActiveSnapshot> {
     if (sessionId === undefined) return structuredClone(this.state);
+    if (sessionId && !this.sessions.has(sessionId)) {
+      // Match the real runtime's read-only catalog admission after Host restart.
+      // Restoring one browser's view must not select it for other browsers.
+      const summary = summaries.find((item) => item.id === sessionId);
+      if (!summary)
+        throw requestError("Session not found", 404, {
+          code: "SESSION_NOT_FOUND",
+        });
+      this.prepareSession(summary.id, summary.cwd);
+    }
     const active = sessionId === null ? null : this.requireSession(sessionId);
     return structuredClone({
       active,

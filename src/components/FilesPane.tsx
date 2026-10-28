@@ -77,8 +77,12 @@ const RecentFileRow = memo(function RecentFileRow({
       ]
         .filter(Boolean)
         .join(", ")}
-      title={unavailable ? (availability?.message ?? displayPath) : displayPath}
-      onClick={() => void store.openResource(reference)}
+      title={`${unavailable ? (availability?.message ?? displayPath) : displayPath}\nCtrl+click: Show in file manager`}
+      onClick={(event) => {
+        if (event.ctrlKey || event.metaKey)
+          void store.showInFileManager(reference, workspacePath);
+        else void store.openResource(reference);
+      }}
     >
       <Icon size={13} aria-hidden />
       <span

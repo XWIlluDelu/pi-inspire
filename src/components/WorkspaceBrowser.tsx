@@ -127,11 +127,15 @@ const WorkspaceFileRow = memo(function WorkspaceFileRow({
       type="button"
       className={`workspace-tree__row workspace-tree__row--file ${showPath ? "workspace-tree__row--result" : ""} ${selected ? "workspace-tree__row--active" : ""}`}
       style={{ paddingLeft: `${8 + depth * 14}px` }}
-      title={path}
+      title={`${path}\nCtrl+click: Show in file manager`}
       aria-label={showPath ? `${name}, ${path}` : undefined}
       aria-current={selected || undefined}
       data-workspace-path={path}
-      onClick={() => void store.openWorkspaceFile(path)}
+      onClick={(event) => {
+        if (event.ctrlKey || event.metaKey)
+          void store.showInFileManager(path, path);
+        else void store.openWorkspaceFile(path);
+      }}
     >
       <Icon size={13} aria-hidden />
       <span className="workspace-tree__file-label">
@@ -310,8 +314,12 @@ export function WorkspaceTree({
                 className="workspace-tree__row workspace-tree__row--folder"
                 style={indent}
                 aria-expanded={open}
-                title={path}
-                onClick={() => store.toggleWorkspaceDirectory(path)}
+                title={`${path}\nCtrl+click: Show in file manager`}
+                onClick={(event) => {
+                  if (event.ctrlKey || event.metaKey)
+                    void store.showInFileManager(path, path, true);
+                  else store.toggleWorkspaceDirectory(path);
+                }}
               >
                 <ChevronRight
                   size={11}

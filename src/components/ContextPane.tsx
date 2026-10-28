@@ -24,16 +24,16 @@ import {
   type SessionResourceListResponse,
 } from "../../shared/resource-references";
 import { gitChangeCount } from "../git-presentation";
-import { resourceRows as toResourceRows } from "../resources";
 import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import { resourceRows as toResourceRows } from "../resources";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { hasActiveModal, recoverModalFocus } from "../use-modal-focus";
 import { BranchTree } from "./BranchTree";
 import { ChangesPane, type ChangesReadingPositions } from "./ChangesPane";
 import { selectContextPaneView } from "./context-pane-view";
-import { FilesPane } from "./FilesPane";
 import type { FileReadingState } from "./FilePreview";
+import { FilesPane } from "./FilesPane";
 import { PiLoader } from "./PiLoader";
 
 const TerminalPane = lazy(() =>
@@ -97,10 +97,10 @@ export const ContextPane = memo(function ContextPane({
     state.contextMode === "files" && state.fileBrowserView === "preview";
   const selectedReference = state.selectedResourceReference;
   if (selectedReference && !fileReadings.has(selectedReference))
-    fileReadings.set(selectedReference, {
-      source: { current: null },
-      rendered: { current: null },
-    });
+    fileReadings.set(
+      selectedReference,
+      store.fileReadingState(selectedReference),
+    );
   const fileReading = selectedReference
     ? fileReadings.get(selectedReference)
     : undefined;
@@ -383,7 +383,17 @@ export const ContextPane = memo(function ContextPane({
                     aria-selected={selected}
                     aria-controls="context-file-content"
                     tabIndex={selected ? 0 : -1}
-                    onClick={() => void store.selectResourceTab(tab.reference)}
+                    onClick={(event) => {
+                      if (event.ctrlKey || event.metaKey) {
+                        event.preventDefault();
+                        void store.showInFileManager(
+                          tab.reference,
+                          tab.workspacePath,
+                        );
+                        return;
+                      }
+                      void store.selectResourceTab(tab.reference);
+                    }}
                   >
                     <FileText size={13} aria-hidden />
                     <span>{label}</span>
@@ -408,7 +418,7 @@ export const ContextPane = memo(function ContextPane({
                         });
                     }}
                   >
-                    <X size={12} aria-hidden />
+                    <X size={13} aria-hidden />
                   </button>
                 </div>
               );

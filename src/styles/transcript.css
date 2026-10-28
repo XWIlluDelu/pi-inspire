@@ -1435,6 +1435,15 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+.assistant-error__disclosure > svg {
+  display: block;
+  flex: 0 0 auto;
+}
+
+.assistant-error__disclosure > span {
+  translate: 0 var(--ui-text-offset);
+}
+
 @media (hover: hover) {
   .assistant-error__disclosure:hover {
     color: var(--ink);
