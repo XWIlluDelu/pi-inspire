@@ -1,3 +1,4 @@
+import type { GitDiffSide } from "../shared/contracts";
 import type { AppState } from "./app-state";
 import type { ResourceFileTab } from "./resource-preview";
 
@@ -13,6 +14,12 @@ export interface FileReadingState {
   source: { current: { top: number; left: number } | null; save?: () => void };
   rendered: { current: { top: number; left: number } | null };
   mode?: "source" | "preview";
+  changes?: Partial<
+    Record<
+      GitDiffSide,
+      { top: number; left: number; activeChange: number | null }
+    >
+  >;
   save?: () => void;
 }
 
@@ -99,9 +106,23 @@ export function readWorkbench(key: string | null): SavedWorkbench | null {
       resourceTabs.some((previous) => previous.reference === tab.reference)
     )
       continue;
+    const git = record(tab.git);
     resourceTabs.push({
       reference: tab.reference,
       ...(path(tab.workspacePath) ? { workspacePath: tab.workspacePath } : {}),
+      ...(tab.view === "changes" ? { view: "changes" } : {}),
+      ...(git &&
+      path(git.pathId) &&
+      (git.side === "staged" || git.side === "unstaged") &&
+      path(git.displayPath)
+        ? {
+            git: {
+              pathId: git.pathId,
+              side: git.side,
+              displayPath: git.displayPath,
+            },
+          }
+        : {}),
     });
   }
   const selected = resourceTabs.find(
@@ -187,9 +208,26 @@ export function readFileReading(
       ? readingKey(key, reference)
       : null;
   const saved = storageKey ? record(read(storageKey)) : null;
+  const savedChanges = record(saved?.changes);
+  const changes: NonNullable<FileReadingState["changes"]> = {};
+  for (const side of ["staged", "unstaged"] as const) {
+    const reading = record(savedChanges?.[side]);
+    const offset = position(reading);
+    if (offset)
+      changes[side] = {
+        ...offset,
+        activeChange:
+          typeof reading?.activeChange === "number" &&
+          Number.isSafeInteger(reading.activeChange) &&
+          reading.activeChange >= 0
+            ? reading.activeChange
+            : null,
+      };
+  }
   const state: FileReadingState = {
     source: { current: position(saved?.source) },
     rendered: { current: position(saved?.rendered) },
+    changes,
     ...(saved?.mode === "source" || saved?.mode === "preview"
       ? { mode: saved.mode }
       : {}),
@@ -199,6 +237,7 @@ export function readFileReading(
           source: state.source.current,
           rendered: state.rendered.current,
           mode: state.mode,
+          changes: state.changes,
         });
     },
   };

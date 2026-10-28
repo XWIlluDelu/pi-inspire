@@ -30,7 +30,7 @@ import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { hasActiveModal, recoverModalFocus } from "../use-modal-focus";
 import { BranchTree } from "./BranchTree";
-import { ChangesPane, type ChangesReadingPositions } from "./ChangesPane";
+import { ChangesPane } from "./ChangesPane";
 import { selectContextPaneView } from "./context-pane-view";
 import type { FileReadingState } from "./FilePreview";
 import { FilesPane } from "./FilesPane";
@@ -59,7 +59,10 @@ export const ContextPane = memo(function ContextPane({
   const [terminalReloadKey, setTerminalReloadKey] = useState(0);
   const resourceRequest = useRef<AbortController | null>(null);
   const resourceRecovery = useMemo(() => new RecoveryBackoff(), []);
-  const changesReadings = useRef<ChangesReadingPositions>(new Map());
+  const changesScrollTop = useMemo(
+    () => ({ current: 0 }),
+    [state.sessionId, state.cwd],
+  );
   const fileReadings = useMemo(
     () => new Map<string, FileReadingState>(),
     [state.sessionId, state.cwd, transportGeneration],
@@ -295,11 +298,7 @@ export const ContextPane = memo(function ContextPane({
           : Promise.resolve(),
         store.refreshWorkspaceBrowser(),
         state.fileBrowserView === "preview" && state.selectedResourceReference
-          ? store.openResource(
-              state.selectedResourceReference,
-              "files",
-              state.selectedResourceWorkspacePath ?? undefined,
-            )
+          ? store.refreshFileTab()
           : Promise.resolve(),
       ]);
       return;
@@ -318,9 +317,14 @@ export const ContextPane = memo(function ContextPane({
     state.contextMode === "files"
       ? (state.fileBrowserView === "browse" && resourceStatus === "loading") ||
         (state.fileBrowserView === "preview" &&
-          (state.resourcePreview?.status === "loading" ||
-            (state.resourcePreview?.status === "ready" &&
-              state.resourcePreview.refreshing))) ||
+          (state.resourceTabs.find((tab) => tab.reference === selectedReference)
+            ?.view === "changes"
+            ? state.gitStatusLoading ||
+              state.gitStatusRefreshing ||
+              state.gitDiff?.status === "loading"
+            : state.resourcePreview?.status === "loading" ||
+              (state.resourcePreview?.status === "ready" &&
+                state.resourcePreview.refreshing))) ||
         state.workspaceLoadingDirs.length > 0 ||
         state.workspaceSearchLoading
       : state.contextMode === "changes"
@@ -366,7 +370,9 @@ export const ContextPane = memo(function ContextPane({
           <div className="ctx__file-tabs" ref={fileTabsRef}>
             {state.resourceTabs.map((tab) => {
               const path =
-                tab.workspacePath ?? resourceReferenceLabel(tab.reference);
+                tab.workspacePath ??
+                tab.git?.displayPath ??
+                resourceReferenceLabel(tab.reference);
               const label = path.split(/[\\/]/u).at(-1) || path;
               const selected =
                 activeFile && selectedReference === tab.reference;
@@ -542,11 +548,7 @@ export const ContextPane = memo(function ContextPane({
           role="tabpanel"
           aria-label="Changes"
         >
-          <ChangesPane
-            state={state}
-            readingPositions={changesReadings.current}
-            narrow={isModal}
-          />
+          <ChangesPane state={state} browseScrollTop={changesScrollTop} />
         </div>
       ) : state.contextMode === "branches" ? (
         <div

@@ -142,9 +142,7 @@ for (const mode of ["Files", "Changes"] as const) {
         .getByRole("button", { name: /page\.html, unstaged modified/ })
         .click();
     }
-    const frame = pane.locator(
-      mode === "Files" ? ".file-preview__content" : ".changes__content",
-    );
+    const frame = pane.locator(".file-preview__content");
     const state = frame.locator(":scope > .res__state");
     const retry = state.getByRole("button", { name: "Retry", exact: true });
     await expect(state).toContainText(
@@ -172,14 +170,14 @@ for (const mode of ["Files", "Changes"] as const) {
       await expect(frame).toHaveCSS("overflow-y", "auto");
       await expect
         .poll(async () => {
-          // The split height settles after the viewport and drawer transition.
+          // The reader height settles after the viewport and drawer transition.
           await frame.evaluate((el) => {
             el.scrollTop = el.scrollHeight;
           });
           return retry.evaluate((button) => {
             const bounds = button.getBoundingClientRect();
             const parent = button
-              .closest(".file-preview__content, .changes__content")!
+              .closest(".file-preview__content")!
               .getBoundingClientRect();
             const visible = document.elementFromPoint(
               bounds.x + bounds.width / 2,
@@ -378,8 +376,13 @@ test("file path toolbars distinguish the reader from browser chrome across palet
     for (const width of [1280, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });
       const header = pane.locator(".file-detail-header");
-      if (width > 900) await expect(header).toHaveCSS("height", "34px");
-      else {
+      const readerWidth = (await pane.locator(".file-preview").boundingBox())!
+        .width;
+      await expect(header).toHaveCSS(
+        "height",
+        readerWidth <= 520 ? "57px" : "34px",
+      );
+      if (width <= 900) {
         await expect(
           pane.getByRole("tab", { name: "Files", exact: true }),
         ).toBeVisible();

@@ -676,6 +676,15 @@ export class ResourceController {
     contextMode: "files" | "changes" = "files",
     knownWorkspacePath?: string,
   ): Promise<void> {
+    const existing = this.host
+      .state()
+      .resourceTabs.find(
+        (tab) =>
+          tab.reference === reference ||
+          (knownWorkspacePath !== undefined &&
+            tab.workspacePath === knownWorkspacePath),
+      );
+    if (existing) reference = existing.reference;
     const api = this.host.api();
     const transportGeneration = this.host.transportGeneration();
     const {
@@ -701,27 +710,31 @@ export class ResourceController {
     if (!retained) this.revokePreviewObjectUrl();
     this.host.patch({
       resourcesOpen: true,
-      contextMode,
+      contextMode: "files",
       fileBrowserView: "preview",
       selectedResourceReference: reference,
       selectedResourceWorkspacePath: knownWorkspacePath ?? null,
-      ...(contextMode === "files"
-        ? {
-            resourceTabs: this.host
-              .state()
-              .resourceTabs.some((tab) => tab.reference === reference)
-              ? this.host.state().resourceTabs
-              : [
-                  ...this.host.state().resourceTabs,
-                  {
-                    reference,
-                    ...(knownWorkspacePath
-                      ? { workspacePath: knownWorkspacePath }
-                      : {}),
-                  },
-                ],
-          }
-        : {}),
+      resourceTabs: existing
+        ? this.host.state().resourceTabs.map((tab) =>
+            tab.reference === reference
+              ? {
+                  ...tab,
+                  view: contextMode === "changes" ? "changes" : undefined,
+                }
+              : tab,
+          )
+        : [
+            ...this.host.state().resourceTabs,
+            {
+              reference,
+              ...(knownWorkspacePath
+                ? { workspacePath: knownWorkspacePath }
+                : {}),
+              ...(contextMode === "changes"
+                ? { view: "changes" as const }
+                : {}),
+            },
+          ],
       resourcePreview: retained
         ? { ...retained, refreshing: true, refreshError: undefined }
         : { status: "loading", reference },
@@ -773,7 +786,7 @@ export class ResourceController {
       if (descriptor.sessionId !== sessionId || descriptor.viewId !== viewId) {
         throw new Error("The Host returned a resource for another selection");
       }
-      if (contextMode === "files" && descriptor.workspacePath) {
+      if (descriptor.workspacePath) {
         this.host.patch({
           resourceTabs: this.host
             .state()

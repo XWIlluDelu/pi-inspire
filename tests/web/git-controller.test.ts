@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { GitStatusResponse } from "../../shared/contracts";
+import type {
+  GitDiffSide,
+  GitFileChange,
+  GitStatusResponse,
+} from "../../shared/contracts";
 import type { Api } from "../../src/api";
 import {
   GitController,
@@ -32,7 +36,8 @@ const diff = (version: string) => ({
 });
 const visibleSelection = {
   resourcesOpen: true,
-  contextMode: "changes" as const,
+  contextMode: "files" as const,
+  fileChangesVisible: true,
   gitStatus: modified,
   selectedGitPathId: path.id,
   selectedGitSide: "unstaged" as const,
@@ -57,7 +62,8 @@ function createHarness(initial: Partial<GitControllerState> = {}) {
   const gitStatus = vi.fn();
   const gitDiff = vi.fn();
   const api = { gitStatus, gitDiff } as unknown as Api;
-  const openResourceFromGit = vi.fn<(path: string) => Promise<void>>();
+  const openResourceFromGit =
+    vi.fn<(change: GitFileChange, side: GitDiffSide) => Promise<void>>();
   const handleAuthFailure = vi.fn();
   const controller = new GitController({
     state: () => state,
@@ -341,10 +347,106 @@ describe("GitController", () => {
 
     expect(harness.gitStatus).toHaveBeenCalledTimes(1);
     expect(harness.openResourceFromGit).toHaveBeenCalledWith(
-      path.workspacePath,
+      { path, unstaged: { kind: "modified" }, untracked: false },
+      "unstaged",
     );
     expect(harness.gitDiff).toHaveBeenCalledTimes(1);
     expect(harness.state().gitDiff).toEqual({ status: "ready", result: diff });
+    expect(harness.state().contextMode).toBe("files");
+  });
+
+  it.each([
+    {
+      label: "deleted working file",
+      change: {
+        path: { ...path, workspacePath: "file.txt" },
+        unstaged: { kind: "deleted" },
+        untracked: false,
+      } satisfies GitFileChange,
+      side: "unstaged" as const,
+    },
+    {
+      label: "deleted staged file",
+      change: {
+        path: { ...path, workspacePath: "file.txt" },
+        staged: { kind: "deleted" },
+        unstaged: { kind: "modified" },
+        untracked: false,
+      } satisfies GitFileChange,
+      side: "staged" as const,
+    },
+    {
+      label: "non-UTF-8 Git identity",
+      change: {
+        path: { id: "raw-path", display: "escaped pathname" },
+        unstaged: { kind: "modified" },
+        untracked: false,
+      } satisfies GitFileChange,
+      side: "unstaged" as const,
+    },
+    {
+      label: "path outside the workspace",
+      change: modified.files[0],
+      side: "unstaged" as const,
+    },
+  ])(
+    "opens a file tab for $label without waiting for its body",
+    async ({ change, side }) => {
+      const harness = createHarness({
+        gitStatus: { ...modified, files: [change] },
+      });
+      harness.openResourceFromGit.mockReturnValue(new Promise(() => {}));
+      const result = { ...diff("selected"), path: change.path, side };
+      harness.gitDiff.mockResolvedValue(result);
+
+      await harness.controller.openChange(change.path.id, side);
+
+      expect(harness.openResourceFromGit).toHaveBeenCalledExactlyOnceWith(
+        change,
+        side,
+      );
+      expect(harness.gitDiff).toHaveBeenCalledWith(
+        "s1",
+        change.path.id,
+        side,
+        expect.any(AbortSignal),
+      );
+      expect(harness.state()).toMatchObject({
+        resourcesOpen: true,
+        contextMode: "files",
+        selectedGitPathId: change.path.id,
+        selectedGitSide: side,
+        gitDiff: { status: "ready", result },
+      });
+    },
+  );
+
+  it("refreshes a selected comparison only in a visible file Changes view", async () => {
+    const harness = createHarness({
+      ...visibleSelection,
+      contextMode: "changes",
+      fileChangesVisible: false,
+    });
+    harness.gitStatus.mockResolvedValue(modified);
+    harness.gitDiff.mockResolvedValue(diff("latest"));
+
+    await harness.controller.refreshStatus();
+    expect(harness.gitStatus).toHaveBeenCalledTimes(1);
+    expect(harness.gitDiff).not.toHaveBeenCalled();
+
+    harness.patch({ contextMode: "files", fileChangesVisible: true });
+    await harness.controller.refreshStatus();
+    expect(harness.gitDiff).toHaveBeenCalledTimes(1);
+    expect(harness.state().gitDiff).toEqual({
+      status: "ready",
+      result: diff("latest"),
+    });
+
+    harness.patch({ fileChangesVisible: false });
+    await harness.controller.refreshStatus();
+    harness.patch({ resourcesOpen: false, fileChangesVisible: true });
+    await harness.controller.refreshStatus();
+    expect(harness.gitDiff).toHaveBeenCalledTimes(1);
   });
 
   it("preserves an explicit staged selection when the resource resolves", () => {

@@ -131,6 +131,8 @@ describe("Git inspection ownership and freshness", () => {
             },
           };
         if (url.startsWith("/api/resources/resolve")) {
+          if (jsonBody(init).workspacePath === deletedPath.workspacePath)
+            return { status: 404, body: { error: "File was deleted" } };
           resourceSignal = init.signal;
           resourceStarted.resolve();
           return lateResource.promise;
@@ -164,11 +166,15 @@ describe("Git inspection ownership and freshness", () => {
         },
       });
       await opening;
-      // The retained Files preview can finish without reclaiming Changes.
+      // A deleted file is now its own active tab. The former file's late body
+      // must neither replace that tab's error nor reclaim its Git selection.
       await vi.waitFor(() =>
-        expect(store.getState().resourcePreview?.status).toBe("ready"),
+        expect(store.getState().resourcePreview).toMatchObject({
+          status: "error",
+          reference: deletedPath.workspacePath,
+        }),
       );
-      expect(resourceSignal?.aborted).toBe(false);
+      expect(resourceSignal?.aborted).toBe(true);
       expect(store.getState().selectedGitPathId).toBe(deletedPath.id);
       expect(store.getState().gitDiff).toBe(selectedDiff);
       await store.refreshGitStatus();
@@ -385,7 +391,7 @@ describe("Git inspection ownership and freshness", () => {
         result: { lines: [{ text: "+poll-2" }] },
       });
 
-      store.setContextMode("files");
+      store.showFileBrowser();
       await vi.advanceTimersByTimeAsync(4_001);
       expect(diffCalls).toBe(2);
     } finally {

@@ -26,6 +26,8 @@ export interface GitControllerState {
   selectionGeneration: number;
   resourcesOpen: boolean;
   contextMode: "files" | "changes" | "branches" | "terminal";
+  /** Derived from the active file tab, not the Changes navigation list. */
+  fileChangesVisible?: boolean;
   gitStatus: GitStatusResponse | null;
   gitStatusError: string | null;
   gitStatusLoading: boolean;
@@ -52,7 +54,7 @@ interface GitControllerHost {
   patch(patch: GitControllerPatch): void;
   api(): Api | null;
   transportGeneration(): number;
-  openResourceFromGit(workspacePath: string): Promise<void>;
+  openResourceFromGit(change: GitFileChange, side: GitDiffSide): Promise<void>;
   handleAuthFailure(): void;
 }
 
@@ -217,9 +219,7 @@ export class GitController {
         ? previous
         : null;
     this.host.patch({
-      ...(reveal
-        ? { resourcesOpen: true, contextMode: "changes" as const }
-        : {}),
+      ...(reveal ? { resourcesOpen: true, contextMode: "files" as const } : {}),
       selectedGitPathId: pathId,
       selectedGitSide: side,
       // Refresh in place; a new selection still gets ordinary loading feedback.
@@ -372,12 +372,9 @@ export class GitController {
     if (!selection || epoch !== this.selectionEpoch) return;
     const { change, side } = selection;
     this.selectedWorkspacePath = change.path.workspacePath ?? null;
-    const deleted =
-      side === "staged"
-        ? change.staged?.kind === "deleted"
-        : change.unstaged?.kind === "deleted";
-    if (change.path.workspacePath && change.path.utf8Path && !deleted)
-      void this.host.openResourceFromGit(change.path.workspacePath);
+    // The file tab owns navigation even when its filesystem source is absent
+    // or unreadable. Its body read must not delay the independent Git read.
+    void this.host.openResourceFromGit(change, side);
     await this.openResolvedDiff(selection);
   }
 
@@ -502,7 +499,7 @@ export class GitController {
           selectedPathId &&
           selectedSide &&
           currentState.resourcesOpen &&
-          currentState.contextMode === "changes"
+          currentState.fileChangesVisible
         ) {
           // Await the selected read so hints coalesce behind the complete
           // inspection, and slow diffs cannot create an overlapping poll loop.

@@ -170,6 +170,33 @@ preview (including loading/error) or a Git comparison selection; remembered tabs
 allocate Source space. The regression fixture retains that navigation metadata explicitly, while
 filesystem/Git-evidence checks use a real pending resource preview.
 
+## One file tab for body and Git inspection
+
+The latest approved design supersedes the Changes split above. Changes is now a full-height list;
+selecting a path opens/reuses its ordinary file tab in Git Changes mode. Files selects body mode
+on that same tab. Side selection, line counts and bounded previous/next change navigation belong to
+the file toolbar; Source/Preview applies within body mode and Download stays at the trailing edge.
+The removed split component, secondary narrow Back level and their unused styles are retired.
+
+The two sidebars retain their established shared rail color and functional widths. Both resize
+boundaries use a 1px token-colored rule, a 2px hover/focus rule and an accent drag state, within the
+existing 8px hit band. The existing 12px content gutter and same-level file columns remain. A measured
+320px reader initially squeezed its path to 26px; readers up to 520px now use a path row and action
+row in both modes, restoring 296px for that path without moving the trailing Download action.
+
+Targeted verification covers deleted/opaque paths without granting body access, staged/working
+selection, known-path alias deduplication, session/transport ownership, late status after pane close,
+and independent body/diff reading positions. Browser acceptance caught a real null-to-resolved Git
+identity transition that reset saved scroll on tab return; stable file identity now preserves it,
+while path and side still guard delayed jumps. The failing desktop/touch cases pass after that fix.
+The affected browser set has 25 passing cases across its initial pass and targeted rerun; 123 unit
+checks passed before the final additional restoration regression, whose 19-case component suite
+also passes. Typechecking, scoped lint, import boundaries and the staged production build pass.
+Actual Chrome checks confirm F5 restores [800,50] reading offsets, frame-stable tab/header heights
+and Download position during mode changes, mouse/keyboard resizing, and light/dark containment down
+to 320px. Mode-specific controls intentionally appear/disappear; no further unexplained vertical
+jitter was reproduced. Screenshots use only the isolated fixture, not live user contents.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:
@@ -177,7 +204,7 @@ The following remain proposals, not implemented requirements:
 - A command-palette entry that discovers existing actions without duplicating their policy.
 - Discoverable keyboard access to thinking and slash-command choices, with IME-safe handling.
 - Clearer attachment-upload progress that preserves durable retry and draft ownership.
-- An accessible grip for pane resizing and visual differentiation of project groups.
+- Visual differentiation of project groups.
 - A quieter idle composer and less decorative chrome around short messages or reasoning blocks.
 
 Review each against its actual workflow before implementation. Preserve action availability,

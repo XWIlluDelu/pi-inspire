@@ -5,7 +5,7 @@ covers:
   - src/use-inspection-history.ts
   - src/store.ts
   - src/controllers/{git,workspace}-controller.ts
-  - src/components/{AppTopbar,SessionActionsMenu,Composer,ExtensionDisplays,ContextPane,ContextPaneShell,ContextSplitBody,FilesPane,ChangesPane,WorkspaceBrowser,BranchTree,PaneResizeHandle}.tsx
+  - src/components/{AppTopbar,SessionActionsMenu,Composer,ExtensionDisplays,ContextPane,ContextPaneShell,FilesPane,ChangesPane,WorkspaceBrowser,BranchTree,PaneResizeHandle}.tsx
   - src/{git-presentation,source-diff,use-modal-focus,use-session-action-reorder}.ts
   - server/git-inspection.ts
   - shared/contracts.ts
@@ -222,21 +222,19 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
   metadata. Tool changes during reconnect must not overwrite saved file tabs with temporary empty
   state; the latest navigation intent survives success or retry without exposing old file content.
 
-  Changes uses the available height for its list until a file is selected, without a placeholder
-  Source header, empty preview or selection hint. Selection reveals the bounded desktop index above
-  complete selected-file Source with inline Git changes and navigation, without an internal resize
-  control. Narrow Changes uses a full-height
-  list until a path is selected, then gives the selected Source the available height with All changes
-  and adjacent-comparison controls. Those
-  controls follow the index's conflict, working and staged order, including both sides of the same
-  path. Returning to the list preserves its scroll and restores the selected row's focus; reopening
-  a comparison restores its source reading position. Desktop retains this index/detail split.
+  Changes always uses the available height for its grouped list, without a Source split or
+  selection hint. Selecting a comparison opens or reuses the ordinary file tab in Git Changes
+  mode. Files opens that same tab in its body view. The file toolbar owns comparison-side selection,
+  counts and within-file previous/next change navigation; Download stays trailing. Source/Preview
+  remains a body-only reciprocal action. Narrow readers use a path row and an action row in both
+  modes rather than squeezing the path out of the toolbar. File identity, view, side and independent
+  reading offsets survive tab switches and F5 under the existing session/workspace storage scope.
+  [[resource-preview]] defines comparison authority and unavailable-content behavior.
 
   Narrow Context, navigation and Settings participate in transient browser history. File and tool
-  tabs reuse one level, so Back closes the contextual drawer once. Only Changes detail adds a
-  nested level: Back first returns to its list. Explicit close consumes the owned levels without an empty
-  Back stop. Image inspection uses the same small history owner, independently of panel depth;
-  this is not a URL router or a second navigation model.
+  tabs reuse one level, so Back closes the contextual drawer once. Explicit close consumes the
+  owned level without an empty Back stop. Image inspection uses the same small history owner,
+  independently of panel depth; this is not a URL router or a second navigation model.
 
   History is a conversation outline for inspecting and deliberately continuing Pi history, not a
   graph editor, duplicate Transcript, or raw audit log. User prompts lead its compact default view;

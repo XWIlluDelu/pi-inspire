@@ -1,4 +1,5 @@
 import type {
+  GitDiffSide,
   ResourceDescriptor,
   ResourceProbeResult,
 } from "../shared/contracts";
@@ -25,6 +26,8 @@ const HTML_PREVIEW_CSP =
 export interface ResourceFileTab {
   reference: string;
   workspacePath?: string;
+  view?: "changes";
+  git?: { pathId: string; side: GitDiffSide; displayPath: string };
 }
 
 export type ResourcePreview =

@@ -494,9 +494,6 @@ export function App() {
       projectionConflict: source.projectionConflict,
       nativeCommandUiRequest: source.nativeCommandUiRequest,
       readOnlyReason: source.readOnlyReason,
-      fileBrowserView: source.fileBrowserView,
-      selectedGitPathId: source.selectedGitPathId,
-      selectedResourceReference: source.selectedResourceReference,
     }),
     shallowEqual,
   );
@@ -612,15 +609,7 @@ export function App() {
   const closeCommandPalette = useCallback(() => setPaletteOpen(false), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const inspectionLayers = [
-    ...(state.resourcesOpen
-      ? [
-          "context",
-          ...(state.contextMode === "changes" &&
-          (state.selectedGitPathId || state.selectedResourceReference)
-            ? ["change"]
-            : []),
-        ]
-      : []),
+    ...(state.resourcesOpen ? ["context"] : []),
     ...(mobileNavOpen ? ["navigation"] : []),
     ...(settingsOpen ? ["settings"] : []),
     ...(paletteOpen ? ["palette"] : []),
@@ -640,8 +629,6 @@ export function App() {
       if (!remaining.includes("settings")) setSettingsOpen(false);
       if (!remaining.includes("navigation")) setMobileNavOpen(false);
       if (!remaining.includes("context")) store.setResourcesOpen(false);
-      else if (!remaining.includes("change") && state.contextMode === "changes")
-        store.showChangesBrowser();
     },
     "__inspireWorkbench",
   );

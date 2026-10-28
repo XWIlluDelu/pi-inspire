@@ -5,6 +5,7 @@ import { createInitialAppState } from "../../src/app-state";
 import { selectContextPaneView } from "../../src/components/context-pane-view";
 import { FilePreview } from "../../src/components/FilePreview";
 import { store } from "../../src/store";
+import type { FileReadingState } from "../../src/workbench-session";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -235,5 +236,141 @@ describe("Files source reading", () => {
       expect(source.scrollLeft).toBe(0);
       fireEvent.click(screen.getByRole("button", { name: "Preview" }));
     }
+  });
+});
+
+describe("Files Git view", () => {
+  const changes = {
+    controls: <button type="button">Next change</button>,
+    content: (
+      <div
+        role="region"
+        aria-label="File changes"
+        data-pane-scroll-active="true"
+      >
+        Changed file content
+      </div>
+    ),
+  };
+
+  it.each(["source", "preview"] as const)(
+    "returns to the chosen %s body view without mixing its offsets with diff scrolling",
+    (mode) => {
+      const changeView = vi
+        .spyOn(store, "setFileChangesView")
+        .mockResolvedValue();
+      const readingState: FileReadingState = {
+        source: { current: { top: 137, left: 48 } },
+        rendered: { current: { top: 263, left: 0 } },
+        mode,
+      };
+      const state = { ...initial, resourcePreview: ready("file") };
+      const { rerender, container } = render(
+        <FilePreview state={state} readingState={readingState} />,
+      );
+      const actions = container.querySelector(".file-detail-header__actions")!;
+      const buttons: HTMLElement[] = Array.from(
+        actions.querySelectorAll("button"),
+      );
+      const git = screen.getByRole("button", { name: "Git changes" });
+      const download = screen.getByRole("button", {
+        name: "Download notes.md",
+      });
+      expect(buttons.at(-1)).toBe(download);
+      expect(buttons.indexOf(git)).toBeLessThan(buttons.indexOf(download));
+      expect(git).toHaveAttribute("aria-pressed", "false");
+      fireEvent.click(git);
+      expect(changeView).toHaveBeenLastCalledWith(true);
+
+      rerender(
+        <FilePreview
+          state={state}
+          readingState={readingState}
+          changes={changes}
+        />,
+      );
+      expect(git).toHaveAttribute("aria-pressed", "true");
+      expect(screen.queryByRole("button", { name: "Source" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Preview" })).toBeNull();
+      expect(screen.queryByRole("region", { name: "File source" })).toBeNull();
+      const diff = screen.getByRole("region", { name: "File changes" });
+      fireEvent.scroll(diff, { target: { scrollTop: 801, scrollLeft: 90 } });
+      expect(readingState.source.current).toEqual({ top: 137, left: 48 });
+      expect(readingState.rendered.current).toEqual({ top: 263, left: 0 });
+      fireEvent.click(git);
+      expect(changeView).toHaveBeenLastCalledWith(false);
+
+      rerender(<FilePreview state={state} readingState={readingState} />);
+      expect(screen.queryByRole("region", { name: "File changes" })).toBeNull();
+      expect(
+        screen.getByRole("button", {
+          name: mode === "source" ? "Preview" : "Source",
+        }),
+      ).toBeVisible();
+      expect(readingState.mode).toBe(mode);
+      if (mode === "source") {
+        const source = screen.getByRole("region", { name: "File source" });
+        expect(source.scrollTop).toBe(137);
+        expect(source.scrollLeft).toBe(48);
+      }
+    },
+  );
+
+  it("retires HTML execution when switching to Git and returns only to static preview", async () => {
+    const release = vi.fn();
+    const start = vi.spyOn(store, "createHtmlPreview").mockResolvedValue({
+      url: "/html-preview/lease",
+      release,
+    });
+    const preview = {
+      ...ready("html", "<h1>Loaded page</h1>"),
+      descriptor: {
+        ...ready("html").descriptor,
+        kind: "html" as const,
+        mimeType: "text/html",
+      },
+      objectUrl: "blob:static-page",
+    };
+    const state = { ...initial, resourcePreview: preview };
+    const { rerender, container } = render(<FilePreview state={state} />);
+    fireEvent.click(screen.getByRole("button", { name: "Enable interaction" }));
+    await screen.findByRole("button", { name: "Stop interaction" });
+
+    rerender(<FilePreview state={state} changes={changes} />);
+    expect(release).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: /interaction/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Source" })).toBeNull();
+    expect(container.querySelector("iframe")).toBeNull();
+
+    rerender(<FilePreview state={state} />);
+    expect(
+      screen.getByRole("button", { name: "Enable interaction" }),
+    ).toBeEnabled();
+    expect(container.querySelector("iframe")?.getAttribute("src")).toBe(
+      preview.objectUrl,
+    );
+    expect(start).toHaveBeenCalledOnce();
+  });
+
+  it("shows a deleted file's diff while keeping its unavailable download disabled", () => {
+    render(
+      <FilePreview
+        state={{
+          ...initial,
+          resourcePreview: {
+            status: "error",
+            reference: "notes.md",
+            message: "File was deleted",
+          },
+        }}
+        changes={changes}
+      />,
+    );
+    expect(screen.getByRole("region", { name: "File changes" })).toBeVisible();
+    expect(screen.queryByText("File was deleted")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Download unavailable" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Git changes" })).toBeEnabled();
   });
 });

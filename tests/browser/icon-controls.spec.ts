@@ -162,9 +162,10 @@ for (const touch of [false, true]) {
           .getByRole("region", { name: "Workspace file tree", exact: true })
           .getByRole("button", { name: "native-shell.log", exact: true })
           .click();
-        const download = pane
-          .locator(".file-detail-header__actions > .icon-button")
-          .first();
+        const download = pane.getByRole("button", {
+          name: "Download native-shell.log",
+          exact: true,
+        });
         await expect(download).toBeVisible();
         await expect(toggle).toHaveCount(0);
         await pane.getByRole("tab", { name: "Files", exact: true }).click();

@@ -8,7 +8,7 @@ covers:
   - scripts/vite-pdf-assets.ts
   - server/static-asset-cache.mjs
   - src/controllers/{resource,git,workspace}-controller.ts
-  - src/components/{ContextPane,ContextPaneState,ContextSplitBody,FilesPane,FilePreview,PdfPreview,DocumentPreview,ChangesPane,WorkspaceBrowser,ResourcePathLabel,SearchMatchText,NotebookPreview,PaneResizeHandle,RichText,Transcript}.tsx
+  - src/components/{ContextPane,ContextPaneState,FilesPane,FilePreview,PdfPreview,DocumentPreview,ChangesPane,WorkspaceBrowser,ResourcePathLabel,SearchMatchText,NotebookPreview,PaneResizeHandle,RichText,Transcript}.tsx
   - src/components/context-pane-view.ts
   - src/App.tsx
   - src/styles.css
@@ -43,8 +43,7 @@ without changing titles or bidi isolation.
 Selecting a recent, search, or tree entry opens or selects a filename tab beside the fixed tool tabs.
 Its reader uses the complete content area on desktop and narrow screens; Files has no index/detail
 stack. Returning to the Files tab restores its query, expansions and scroll. File/tool tabs share
-one narrow browser-history level, while Changes retains its separate detail level under
-[[workspace-layout]]. The browser uses `--bg-context`; the selected file's path/actions bar and
+one narrow browser-history level under [[workspace-layout]]. The browser uses `--bg-context`; the selected file's path/actions bar and
 reader use `--bg-surface`, without an extra shadow or raised frame.
 
 The Files tree uses the project basename as its heading. Opening a workspace file expands its
@@ -219,8 +218,9 @@ tab with its error. Closing a file tab discards its saved reading position. No f
 handles or execution grants are stored. Position-based transcript embedded images are not restored
 across projection replacement.
 This does not retain iframe-internal interaction or media playback state. HTML execution
-leases remain separate and are still retired on refresh or leaving the file tab. Files does not
-duplicate Changes with a Diff mode or add file-editing controls. Files Source and Changes share an unframed, full-width source canvas below the fixed header, without
+leases remain separate and are still retired on refresh, leaving the file tab or entering Git Changes.
+The same file tab offers body and Git Changes views; Source/Preview applies only within its body view.
+No file-editing controls are added. Source and Git Changes share an unframed, full-width source canvas below the header, without
 outer card padding; inner text spacing remains. Their line-number gutters stay visible during
 horizontal scrolling. Changes line numbers and change marks share the source line baseline despite
 smaller gutter numerals; blank/context rows retain the same gutter alignment. Rendered
@@ -351,14 +351,19 @@ repository whose configuration is being maliciously replaced during inspection.
 A failed refresh retains the previous result with one visible stale-result notice, including clean
 and non-repository results. Initial failure does not claim a Git result.
 
-Switching to Changes preserves the canonical selected workspace file whether or not it appears in
-Git status. The upper region shows repository identity, staged/working/conflict counts, and grouped
-paths. The lower region shows Source with the selected comparison's inline additions/deletions,
-counts, and non-wrapping previous/next change controls. The current change uses an edge marker
-without replacing the addition/deletion background colors. The old/new line numbers and change sign
-share a sticky gutter with an opaque matching row tint, keeping code from showing beneath it;
-the active edge marker stays visible during horizontal scrolling. Changed-file rows use the shared
-file icons from [[design-system]] alongside their Git decoration.
+The Changes tool shows repository identity, staged/working/conflict counts and grouped paths in a
+full-height list. Selecting a path opens or reuses its ordinary file tab in Git Changes mode;
+workspace paths share identity with Files, while opaque Git paths retain their authorized Git ID.
+Display paths are never converted into filesystem authority. Deleted or unreadable body content
+keeps the tab and its error, independently of the readable Git comparison.
+
+The file toolbar owns the side selector, line counts, non-wrapping previous/next change controls and
+current position. These controls only navigate changes within that file. Git Changes toggles back
+to its remembered body mode; opening from Files explicitly selects body. Download stays at the
+trailing edge, with Source/Preview immediately before it when available in body mode. The current
+change uses an edge marker without replacing addition/deletion colors. Old/new line numbers and
+change signs share a sticky gutter with an opaque matching row tint. Changed-file rows use the
+shared file icons from [[design-system]] alongside their Git decoration.
 
 Source comparisons reuse the Source highlighting palette and 64 Ki-character bound per revision.
 Highlight old and new source independently with full Git context, then render balanced token spans
@@ -369,9 +374,11 @@ geometry.
 
 A newly encountered text diff positions its first change inside the source viewport without
 scrolling the outer page or changing focus. Within the mounted context pane, vertical/horizontal
-reading offsets and manually navigated change selection survive file/side changes, tab switches
-and diff reloads. Memory is scoped by transport, session, workspace, path identity and side; it is
-not persisted across app reloads.
+reading offsets and manually navigated change selection survive file/side changes, tab switches,
+diff reloads and F5. Only navigation metadata is stored under the existing browser-origin, session,
+workspace and file identity scope, separately for each side. Reload/reconnect reauthorizes every
+read, and late results cannot replace a newer file selection. Unknown or failed status does not
+claim that the file is clean.
 
 - Working comparisons use working-tree source; staged comparisons use index source. An empty
   comparison reports no diff rather than substituting disk content for index source.

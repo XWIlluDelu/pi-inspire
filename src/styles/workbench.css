@@ -106,8 +106,7 @@
   }
 }
 
-/* A quiet gutter separates the panes. Its 8px hit band remains wider than
-   the visible gap; hover, keyboard focus and dragging reveal the divider. */
+/* Both outer panes share a quiet rule and an 8px resize hit band. */
 .pane-resize {
   position: relative;
   flex: 0 0 auto;
@@ -134,7 +133,7 @@
 .pane-resize__hit::after {
   position: absolute;
   pointer-events: none;
-  opacity: 0;
+  opacity: 1;
   content: "";
   transition: opacity var(--dur-standard) var(--ease-standard);
 }
@@ -144,16 +143,17 @@
   top: var(--space-2);
   bottom: var(--space-2);
   left: 50%;
-  width: 2px;
+  width: 1px;
   border-radius: var(--radius-pill);
-  background: var(--thumb);
+  background: var(--hairline);
   transform: translateX(-50%);
 }
 
 .pane-resize__hit:hover::after,
 .pane-resize__hit:focus-visible::after,
 .pane-resize__hit--drag::after {
-  opacity: 1;
+  width: 2px;
+  background: var(--thumb);
 }
 
 .pane-resize--vertical .pane-resize__hit--drag::after {
@@ -486,7 +486,6 @@ body.pane-resizing--vertical .nav {
 }
 
 /* These controls touch the clipped index edge; keep keyboard outlines inside. */
-button.res__index-header--back:focus-visible,
 .file-search-controls > .icon-button:focus-visible {
   outline-offset: -2px;
 }
@@ -694,6 +693,34 @@ button.res__index-header--back:focus-visible,
   justify-content: space-between;
 }
 
+/* A narrow reader needs a readable path as well as its comparison controls.
+   Keep the same two-row rhythm in body and diff modes. */
+.file-preview {
+  container-type: inline-size;
+  container-name: file-reader;
+}
+
+@container file-reader (max-width: 520px) {
+  .file-preview > .file-detail-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    height: auto;
+    min-height: 57px;
+    flex-basis: auto;
+    padding-block: var(--space-1);
+  }
+
+  .file-detail-header__path {
+    height: 24px;
+  }
+
+  .file-detail-header__actions {
+    justify-self: end;
+    min-height: 24px;
+  }
+}
+
 .res__index-header {
   background: var(--bg-context);
   height: var(--files-section-title-size);
@@ -701,39 +728,6 @@ button.res__index-header--back:focus-visible,
   flex: 0 0 var(--files-section-title-size);
   color: var(--muted);
   font: var(--text-xs)/var(--leading-ui) var(--font-sans);
-}
-
-button.res__index-header--back {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  border: 0;
-  background: transparent;
-  padding: 0 var(--space-3);
-  color: var(--body);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard);
-}
-
-button.res__index-header--back:hover {
-  background: var(--bg-inset);
-  color: var(--ink);
-}
-
-button.res__index-header--back svg {
-  color: var(--muted);
-  transition: transform var(--dur-micro) var(--ease-standard);
-}
-
-button.res__index-header--back:hover svg {
-  transform: translateX(-2px);
-  color: var(--ink);
 }
 
 .res__index-branch-icon {
@@ -861,6 +855,31 @@ button.res__index-header--back:hover svg {
   color: var(--ink);
 }
 
+.file-detail-header__git[aria-pressed="true"] {
+  color: var(--accent-deep);
+  background: var(--accent-tint);
+}
+
+.changes__position {
+  min-width: 5ch;
+  text-align: center;
+  white-space: nowrap;
+  color: var(--muted);
+  font: var(--text-xs)/var(--leading-ui) var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.changes__side {
+  width: 76px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--radius-control);
+  padding: 0 var(--space-1);
+  background: transparent;
+  color: var(--muted);
+  font: var(--text-xs)/var(--leading-ui) var(--font-sans);
+}
+
 .file-detail-header__view {
   display: inline-flex;
   width: 64px;
@@ -902,8 +921,7 @@ button.res__index-header--back:hover svg {
   opacity: 0.4;
 }
 
-.file-preview__content,
-.changes__content {
+.file-preview__content {
   --bg-context: var(--bg-file-canvas);
   --bg-surface: var(--bg-file-surface);
   --bg-inset: var(--bg-file-inset);
@@ -920,8 +938,7 @@ button.res__index-header--back:hover svg {
 }
 
 /* Keep natural state size and room for focus rings when short readers scroll to actions. */
-.file-preview__content:has(> .res__state),
-.changes__content:has(> .res__state) {
+.file-preview__content:has(> .res__state) {
   overflow: auto;
   overscroll-behavior: contain;
   scroll-padding-block: var(--space-2);
@@ -940,8 +957,7 @@ button.res__index-header--back:hover svg {
   text-align: center;
 }
 
-.file-preview__content:has(> .source-reader),
-.changes__content:has(> .source-reader) {
+.file-preview__content:has(> .source-reader) {
   padding: 0;
 }
 
@@ -1006,30 +1022,6 @@ button.res__index-header--back:hover svg {
   color: var(--warning-ink);
   font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
   text-align: center;
-}
-
-.res__body--split {
-  display: grid;
-  grid-template-rows: min(var(--files-index-default-size), 42%) minmax(0, 1fr);
-}
-
-.res__body--changes:not(.res__body--detail) {
-  grid-template-rows: minmax(0, 1fr);
-}
-
-.res__body--changes:not(.res__body--detail) > .res__index {
-  border-bottom: 0;
-}
-
-.changes__detail[hidden] { display: none; }
-
-.res__index {
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg-context);
 }
 
 .res__list {
@@ -1240,24 +1232,6 @@ button.res__more:hover {
 
 .changes__source .resource-path {
   flex: 1 1 auto;
-}
-
-.changes__detail {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--bg-context);
-}
-
-.changes__content {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding: var(--space-3);
 }
 
 .changes__stats,

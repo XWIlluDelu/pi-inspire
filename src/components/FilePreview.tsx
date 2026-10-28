@@ -3,9 +3,17 @@ import {
   Check,
   Download,
   FileText,
+  GitCompareArrows,
   RotateCw,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ResourceDescriptor } from "../../shared/contracts";
 import {
   resourceReferenceLabel,
@@ -412,9 +420,11 @@ export type { FileReadingState } from "../workbench-session";
 export function FilePreview({
   state,
   readingState,
+  changes,
 }: {
   state: ContextPaneView;
   readingState?: FileReadingState;
+  changes?: { controls: ReactNode; content: ReactNode };
 }) {
   const preview = state.resourcePreview;
   const descriptor = preview?.status === "ready" ? preview.descriptor : null;
@@ -423,6 +433,9 @@ export function FilePreview({
   const displayPath =
     descriptor?.workspacePath ??
     state.selectedResourceWorkspacePath ??
+    state.resourceTabs.find(
+      (tab) => tab.reference === state.selectedResourceReference,
+    )?.git?.displayPath ??
     (/^(?:file:\/\/|vscode:\/\/file\/)/iu.test(reference)
       ? reference
       : resourceReferenceLabel(reference));
@@ -477,6 +490,7 @@ export function FilePreview({
     state.contextMode,
     state.fileBrowserView,
     viewMode,
+    Boolean(changes),
   ].join("|");
   const [download, setDownload] = useState<{
     scope: string;
@@ -522,6 +536,7 @@ export function FilePreview({
   const currentInteraction =
     interaction?.scope === htmlScope ? interaction : null;
   const canInteract =
+    !changes &&
     descriptor?.kind === "html" &&
     viewMode === "preview" &&
     preview?.status === "ready" &&
@@ -571,7 +586,13 @@ export function FilePreview({
   useLayoutEffect(() => {
     const root = contentRef.current;
     const saved = readingState?.rendered.current;
-    if (!root || !saved || viewMode === "source" || preview?.status !== "ready")
+    if (
+      !root ||
+      !saved ||
+      changes ||
+      viewMode === "source" ||
+      preview?.status !== "ready"
+    )
       return;
     const restore = () => {
       const scroller =
@@ -592,7 +613,7 @@ export function FilePreview({
       root.addEventListener(event, stop, true);
     restore();
     return stop;
-  }, [readingState, viewMode, preview?.status]);
+  }, [readingState, viewMode, preview?.status, changes]);
   return (
     <div className="file-preview">
       <div className="file-detail-header">
@@ -600,28 +621,18 @@ export function FilePreview({
           <PathCopyButton path={displayPath} />
         </div>
         <div className="file-detail-header__actions">
-          {descriptor && state.sessionId ? (
-            <button
-              type="button"
-              className="icon-button"
-              aria-label={`Download ${descriptor.name}`}
-              title="Download"
-              disabled={currentDownload?.pending}
-              onClick={() => void downloadResource()}
-            >
-              <Download size={14} aria-hidden />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="icon-button"
-              aria-label="Download unavailable"
-              title="Download unavailable"
-              disabled
-            >
-              <Download size={14} aria-hidden />
-            </button>
-          )}
+          {changes?.controls}
+          <button
+            type="button"
+            className="icon-button file-detail-header__git"
+            aria-label="Git changes"
+            title="Git changes"
+            aria-pressed={Boolean(changes)}
+            disabled={!state.sessionId || !state.selectedResourceReference}
+            onClick={() => void store.setFileChangesView(!changes)}
+          >
+            <GitCompareArrows size={14} aria-hidden />
+          </button>
           {canInteract ? (
             <button
               type="button"
@@ -644,7 +655,7 @@ export function FilePreview({
                 : "Enable interaction"}
             </button>
           ) : null}
-          {canToggle ? (
+          {canToggle && !changes ? (
             <FileViewControl
               mode={viewMode}
               onChange={(mode) => {
@@ -658,6 +669,28 @@ export function FilePreview({
               }}
             />
           ) : null}
+          {descriptor && state.sessionId ? (
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={`Download ${descriptor.name}`}
+              title="Download"
+              disabled={currentDownload?.pending}
+              onClick={() => void downloadResource()}
+            >
+              <Download size={14} aria-hidden />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Download unavailable"
+              title="Download unavailable"
+              disabled
+            >
+              <Download size={14} aria-hidden />
+            </button>
+          )}
         </div>
       </div>
       <div
@@ -667,6 +700,7 @@ export function FilePreview({
           const element = event.target as HTMLElement;
           if (
             readingState &&
+            !changes &&
             viewMode !== "source" &&
             (element === event.currentTarget ||
               element.matches('[data-pane-scroll-active="true"]'))
@@ -679,7 +713,7 @@ export function FilePreview({
           }
         }}
       >
-        {preview?.status === "ready" && preview.refreshError ? (
+        {!changes && preview?.status === "ready" && preview.refreshError ? (
           <div className="file-preview__notice" role="status">
             Preview refresh failed: {preview.refreshError}. Showing the last
             loaded content.
@@ -695,13 +729,17 @@ export function FilePreview({
             {currentInteraction.error}
           </div>
         ) : null}
-        <ResourcePreviewContent
-          state={state}
-          jump={jump}
-          viewMode={viewMode}
-          readingPosition={readingPosition}
-          interactiveUrl={currentInteraction?.url}
-        />
+        {changes ? (
+          changes.content
+        ) : (
+          <ResourcePreviewContent
+            state={state}
+            jump={jump}
+            viewMode={viewMode}
+            readingPosition={readingPosition}
+            interactiveUrl={currentInteraction?.url}
+          />
+        )}
       </div>
     </div>
   );

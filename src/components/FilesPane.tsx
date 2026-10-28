@@ -15,6 +15,7 @@ import { gitDecorationForChange, presentGitFacet } from "../git-presentation";
 import type { ResourceRow } from "../resources";
 import { gitChangeForWorkspacePath, store } from "../store";
 import type { ContextPaneView } from "./context-pane-view";
+import { ChangesDetail } from "./ChangesPane";
 import { FilePreview, type FileReadingState } from "./FilePreview";
 import { PiLoader } from "./PiLoader";
 import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
@@ -253,13 +254,32 @@ export function FilesPane({
         />
       </div>
     );
+  const changes =
+    state.resourceTabs.find(
+      (tab) => tab.reference === state.selectedResourceReference,
+    )?.view === "changes";
   return (
     <div className="res__body res__body--files res__body--file-tab">
-      <FilePreview
-        key={state.selectedResourceReference}
-        state={state}
-        readingState={readingState}
-      />
+      {changes ? (
+        <ChangesDetail
+          key={state.selectedResourceReference}
+          state={state}
+          readingState={readingState}
+          render={(controls, content) => (
+            <FilePreview
+              state={state}
+              readingState={readingState}
+              changes={{ controls, content }}
+            />
+          )}
+        />
+      ) : (
+        <FilePreview
+          key={state.selectedResourceReference}
+          state={state}
+          readingState={readingState}
+        />
+      )}
     </div>
   );
 }
