@@ -177,7 +177,11 @@ describe("resource preview read recovery", () => {
       }
       if (change === "transport") {
         f.rotate();
-        expect(f.state.resourceTabs).toEqual([]);
+        expect(f.state.resourceTabs).toEqual([{ reference: "notes.txt" }]);
+        expect(f.state.resourcePreview).toEqual({
+          status: "loading",
+          reference: "notes.txt",
+        });
       }
       if (change === "closed") {
         f.state.resourcesOpen = false;
@@ -189,6 +193,51 @@ describe("resource preview read recovery", () => {
       expect(f.api.resourceContent).not.toHaveBeenCalled();
     },
   );
+
+  it("revokes media authority but retains its named tab across transport replacement", async () => {
+    const f = fixture();
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:retired");
+    const revoke = vi.spyOn(URL, "revokeObjectURL");
+    f.api.resolveResource.mockResolvedValue({
+      id: "image",
+      sessionId: "s1",
+      viewId: "v1",
+      reference: "plot.png",
+      name: "plot.png",
+      mimeType: "image/png",
+      size: 5,
+      kind: "image",
+    });
+    await f.controller.openResource("plot.png");
+    f.rotate();
+    expect(revoke).toHaveBeenCalledExactlyOnceWith("blob:retired");
+    expect(f.state).toMatchObject({
+      resourceTabs: [{ reference: "plot.png" }],
+      selectedResourceReference: "plot.png",
+      resourcePreview: { status: "loading", reference: "plot.png" },
+      resourceAvailability: {},
+      resourceWorkspacePaths: {},
+    });
+    expect(f.state.resourcePreview).not.toHaveProperty("descriptor");
+    expect(f.state.resourcePreview).not.toHaveProperty("objectUrl");
+  });
+
+  it("retires positional embedded tabs without discarding named tabs", () => {
+    const f = fixture();
+    const reference = "pi-embedded://message/0/image/0";
+    f.state.resourceTabs = [{ reference: "notes.txt" }, { reference }];
+    f.state.selectedResourceReference = reference;
+    f.state.fileBrowserView = "preview";
+    f.state.resourcePreview = { status: "loading", reference };
+    f.rotate();
+    expect(f.state).toMatchObject({
+      resourceTabs: [{ reference: "notes.txt" }],
+      selectedResourceReference: null,
+      selectedResourceWorkspacePath: null,
+      fileBrowserView: "browse",
+      resourcePreview: null,
+    });
+  });
 
   it.each([401, 403, 404])(
     "does not retry a definitive %s result or retain revoked content",

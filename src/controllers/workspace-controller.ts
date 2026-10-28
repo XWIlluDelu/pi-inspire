@@ -169,7 +169,16 @@ export class WorkspaceController {
   invalidateForTransportReplacement(): void {
     this.cancelRequests();
     this.statesByCwd.clear();
-    this.host.patch(emptyWorkspaceBrowserState());
+    const state = this.host.state();
+    this.host.patch({
+      ...emptyWorkspaceBrowserState(),
+      // Navigation belongs to the browser; fetched rows belong to the retired
+      // transport. Keep intent available to gestures made during bootstrap.
+      workspaceShowHidden: state.workspaceShowHidden,
+      workspaceExpandedDirs: state.workspaceExpandedDirs,
+      workspaceQuery: state.workspaceQuery,
+      workspaceSearchLoading: Boolean(state.workspaceQuery.trim()),
+    });
   }
 
   async loadDirectory(

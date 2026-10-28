@@ -104,6 +104,30 @@ describe("document Markdown", () => {
     ]);
   });
 
+  it("preserves authored code and remote-image links in a document", () => {
+    const { container } = render(
+      preview(
+        "[`README.md`](../guide.md#results)\n\n[`CHANGELOG.md`](https://pi.dev/changes)\n\n[![Build status](https://pi.dev/status.svg)](https://pi.dev/build)",
+      ),
+    );
+    expect(fireEvent.click(screen.getByText("README.md"))).toBe(false);
+    expect(store.openResource).toHaveBeenCalledExactlyOnceWith(
+      "./reports/../guide.md#results",
+    );
+    vi.mocked(store.openResource).mockClear();
+    for (const [label, href] of [
+      ["CHANGELOG.md", "https://pi.dev/changes"],
+      ["Build status", "https://pi.dev/build"],
+    ]) {
+      const target = screen.getByText(label);
+      expect(target.closest("a")).toHaveAttribute("href", href);
+      expect(fireEvent.click(target)).toBe(true);
+    }
+    expect(store.openResource).not.toHaveBeenCalled();
+    expect(store.loadDocumentImage).not.toHaveBeenCalled();
+    expect(container.querySelector("a button, a a, img")).toBeNull();
+  });
+
   it("keeps heading anchors inside the document, including Unicode and duplicates", () => {
     render(
       preview(

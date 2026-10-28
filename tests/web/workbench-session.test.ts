@@ -25,6 +25,7 @@ describe("browser workbench restoration", () => {
   let bootstrapDetails: Array<string | null>;
   let resolved: string[];
   let bootstrapWait: Promise<void> | null;
+  let bootstrapFailure: boolean;
   let missingSession: string | null;
 
   beforeEach(() => {
@@ -35,6 +36,7 @@ describe("browser workbench restoration", () => {
     bootstrapDetails = [];
     resolved = [];
     bootstrapWait = null;
+    bootstrapFailure = false;
     missingSession = null;
     installFetch(async (url, init) => {
       if (url.startsWith("/api/bootstrap")) {
@@ -42,6 +44,8 @@ describe("browser workbench restoration", () => {
         const detail = query.get("detail");
         bootstrapDetails.push(detail);
         if (bootstrapWait) await bootstrapWait;
+        if (bootstrapFailure)
+          return { status: 503, body: { error: "Host unavailable" } };
         if (detail && detail === missingSession)
           return {
             status: 404,
@@ -85,6 +89,12 @@ describe("browser workbench restoration", () => {
         };
       }
       if (url.includes("/content")) return { body: "PRIVATE FILE BODY" };
+      if (url.startsWith("/api/files/list"))
+        return { body: { entries: [{ name: "known.txt", type: "file" }] } };
+      if (url.startsWith("/api/files?"))
+        return {
+          body: { files: [{ name: "known.txt", path: "src/known.txt" }] },
+        };
       if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
       return undefined;
     });
@@ -254,6 +264,114 @@ describe("browser workbench restoration", () => {
       expect(store.getState().resourcePreview?.status).toBe("ready"),
     );
     expect(store.getState().selectedResourceReference).toBe("new.txt");
+    expect(store.getState().resourceTabs.map((tab) => tab.reference)).toEqual([
+      "old.txt",
+      "new.txt",
+    ]);
+  });
+
+  it.each(["none", "terminal", "browse", "close"] as const)(
+    "retains file navigation through reconnect with a %s gesture",
+    async (gesture) => {
+      const store = await reload();
+      await store.openResource("one.txt");
+      await store.openResource("two.txt");
+      store.setWorkspaceShowHidden(true);
+      store.toggleWorkspaceDirectory("src");
+      store.setWorkspaceQuery("known");
+      await waitFor(() =>
+        expect(store.getState().workspaceMatches).toHaveLength(1),
+      );
+      const pending = deferred<void>();
+      bootstrapWait = pending.promise;
+      const reconnect = store.init("token");
+      await waitFor(() => expect(bootstrapDetails).toHaveLength(2));
+      expect(store.getState()).toMatchObject({
+        resourceTabs: [{ reference: "one.txt" }, { reference: "two.txt" }],
+        selectedResourceReference: "two.txt",
+        resourcePreview: { status: "loading", reference: "two.txt" },
+        workspaceQuery: "known",
+        workspaceExpandedDirs: ["src"],
+        workspaceShowHidden: true,
+        workspaceLevels: {},
+        workspaceMatches: [],
+      });
+      if (gesture === "terminal") store.setContextMode("terminal");
+      if (gesture === "browse") store.showFileBrowser();
+      if (gesture === "close") store.setResourcesOpen(false);
+      pending.resolve();
+      await reconnect;
+      expect(store.getState()).toMatchObject({
+        resourceTabs: [{ reference: "one.txt" }, { reference: "two.txt" }],
+        selectedResourceReference: "two.txt",
+        contextMode: gesture === "terminal" ? "terminal" : "files",
+        fileBrowserView: gesture === "browse" ? "browse" : "preview",
+        resourcesOpen: gesture !== "close",
+        workspaceQuery: "known",
+        workspaceExpandedDirs: ["src"],
+        workspaceShowHidden: true,
+      });
+      if (gesture === "none") {
+        await waitFor(() =>
+          expect(store.getState().resourcePreview?.status).toBe("ready"),
+        );
+        expect(resolved).toEqual(["one.txt", "two.txt", "two.txt"]);
+      } else {
+        expect(store.getState().resourcePreview).toBeNull();
+        expect(resolved).toEqual(["one.txt", "two.txt"]);
+      }
+    },
+  );
+
+  it("retains navigation across a failed reconnect and its later recovery", async () => {
+    const store = await reload();
+    await store.openResource("one.txt");
+    bootstrapFailure = true;
+    await store.init("token");
+    expect(store.getState().connection).toBe("offline");
+    expect(store.getState().resourcePreview).toEqual({
+      status: "loading",
+      reference: "one.txt",
+    });
+    store.setContextMode("terminal");
+    bootstrapFailure = false;
+    await store.init("token");
+    expect(store.getState()).toMatchObject({
+      contextMode: "terminal",
+      resourceTabs: [{ reference: "one.txt" }],
+      selectedResourceReference: "one.txt",
+      resourcePreview: null,
+    });
+    expect(resolved).toEqual(["one.txt"]);
+  });
+
+  it("keeps a newer session's navigation when an old reconnect finishes", async () => {
+    const store = await reload();
+    await store.openResource("old.txt");
+    const pending = deferred<void>();
+    bootstrapWait = pending.promise;
+    const reconnect = store.init("token");
+    await waitFor(() => expect(bootstrapDetails).toHaveLength(2));
+    await store.openSession("s2");
+    expect(store.getState()).toMatchObject({
+      sessionId: "s2",
+      resourceTabs: [],
+      selectedResourceReference: null,
+      resourcePreview: null,
+    });
+    await store.openResource("new.txt");
+    pending.resolve();
+    await reconnect;
+    expect(store.getState()).toMatchObject({
+      sessionId: "s2",
+      resourceTabs: [{ reference: "new.txt" }],
+      selectedResourceReference: "new.txt",
+      resourcePreview: { status: "ready", reference: "new.txt" },
+    });
+    await store.openSession("s1");
+    expect(store.getState().resourceTabs).toEqual([
+      { reference: "old.txt", workspacePath: "old.txt" },
+    ]);
   });
 
   it("recovers a missing remembered session to an empty read-only bootstrap", async () => {

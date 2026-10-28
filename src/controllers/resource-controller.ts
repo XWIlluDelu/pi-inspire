@@ -6,18 +6,18 @@ import {
 } from "../../shared/resource-references";
 import { decodeTextPreview } from "../../shared/text-preview";
 import { type Api, ApiError } from "../api";
+import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 import {
   classifiedResourceFailure,
   injectHtmlPreviewCsp,
   MAX_MEDIA_PREVIEW_BYTES,
   NOTEBOOK_PREVIEW_BYTES,
-  type ResourcePreview,
   type ResourceFileTab,
+  type ResourcePreview,
   TEXT_PREVIEW_BYTES,
   unknownResourceAvailability,
 } from "../resource-preview";
 import { transcriptProjectionKey } from "../transcript-projection-key";
-import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 
 interface ResourceControllerState {
   sessionId: string | null;
@@ -136,13 +136,36 @@ export class ResourceController {
     this.revokePreviewObjectUrl();
   }
 
-  /** A new pairing/bootstrap may retain the same session projection but it
-   * cannot inherit requests or blob content authorized under the old API.
-   * Clear that transient authority before the new transport becomes live. */
+  /** Retire content authority while retaining named-file navigation. A pane
+   * gesture during bootstrap may persist these fields before restoration;
+   * temporary empty tabs would overwrite the user's saved workbench. */
   invalidateForTransportReplacement(): void {
+    this.cancelRequest();
     this.cancelProbes(true);
-    this.clearSelection();
-    this.host.patch({ resourceTabs: [] });
+    this.revokePreviewObjectUrl();
+    const state = this.host.state();
+    const reference = state.selectedResourceReference;
+    const positional = reference?.startsWith("pi-embedded://");
+    this.host.patch({
+      resourceTabs: state.resourceTabs.filter(
+        (tab) => !tab.reference.startsWith("pi-embedded://"),
+      ),
+      ...(positional
+        ? {
+            selectedResourceReference: null,
+            selectedResourceWorkspacePath: null,
+            fileBrowserView: "browse",
+          }
+        : {}),
+      resourcePreview:
+        !positional &&
+        reference &&
+        state.resourcesOpen &&
+        state.contextMode === "files" &&
+        state.fileBrowserView === "preview"
+          ? { status: "loading", reference }
+          : null,
+    });
   }
 
   private ownsTransport(api: Api, generation: number): boolean {

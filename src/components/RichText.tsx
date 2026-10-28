@@ -167,7 +167,8 @@ const components: Components = {
     // mdast-to-hast adds one terminator; source blank lines before it remain.
     return <CodeBlock language={language} code={value.replace(/\n$/, "")} />;
   },
-  code: ({ className, children }) => {
+  code: function ResourceCode({ className, children }) {
+    const linked = useContext(ImageLinkContext);
     const text = String(children ?? "");
     const classes = className?.split(/\s+/) ?? [];
     if (
@@ -178,7 +179,7 @@ const components: Components = {
       return (
         <RichTextMath value={text} display={classes.includes("math-display")} />
       );
-    if (isLocalResourceReference(text))
+    if (!linked && isLocalResourceReference(text))
       return (
         <button
           type="button"
@@ -232,6 +233,7 @@ const components: Components = {
     title?: string;
   }) {
     const document = useContext(DocumentResourceContext);
+    const linked = useContext(ImageLinkContext);
     if (
       src &&
       ((document && isDocumentFileReference(src)) ||
@@ -244,6 +246,18 @@ const components: Components = {
           alt={alt ?? ""}
           title={title}
         />
+      );
+    // An authored link owns navigation; its image label is only content.
+    if (
+      linked &&
+      src &&
+      (isLocalResourceReference(src) || /^(?:https?:|\/\/)/i.test(src))
+    )
+      return (
+        <span title={title}>
+          <span aria-hidden>▧ </span>
+          {alt || src}
+        </span>
       );
     if (src && !/^[\\/]{2}/.test(src) && isLocalResourceReference(src))
       return (

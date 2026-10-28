@@ -129,6 +129,24 @@ scrolling. Two Chrome regressions cover message surfaces and Markdown files, tab
 400px chat after right-pane resizing, and 390/320px viewports. Short display math measures 400/400px;
 long display math measures 400/774px with working local scrolling and no page-width expansion.
 
+The subsequent focused review found two confirmed boundary errors. During transport replacement,
+resource and workspace controllers cleared navigation along with content authority; a tool gesture
+could then persist the temporary empty tabs before bootstrap restored them. The controllers now keep
+named tabs, selection and directory navigation while cancelling reads and revoking preview bytes/URLs.
+Positional embedded-image references still retire. Targeted reconnect, retry, session-switch and
+resource tests pass 94 cases, including old-content revocation and explicit navigation during recovery.
+
+RichText also generated file buttons or image links inside authored Markdown links, causing inner
+actions to replace the author's destination. Existing link context now keeps those labels inert while
+the outer link owns navigation. Standalone references retain their original behavior; 74 rich-text and
+document-preview tests pass, including the five cases that failed before this correction.
+On the staged production bundle, Chrome verifies two automatic reconnects with bootstrap held:
+tabs remain, old content retires, tool/query choices survive, and the unchanged file is reauthorized.
+Chat and file-preview clicks retain exact authored destinations/fragments; standalone references and
+the document-image inspector remain functional. Typechecking, changed-file Biome checks, import
+boundaries and the production build pass. These frontend-only changes use atomic asset publication
+with the outgoing asset generation retained; Host and terminal restarts are unnecessary.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

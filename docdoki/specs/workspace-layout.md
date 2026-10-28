@@ -215,6 +215,9 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
   Initial bootstrap and saved/continue-session selection keep a lightweight loading state in the
   workbench shell. The create-session screen appears only after restoration settles without a
   session; missing sessions and failed reads retain their normal error and recovery paths.
+  Transport replacement revokes old content handles and pending reads while retaining navigation
+  metadata. Tool changes during reconnect must not overwrite saved file tabs with temporary empty
+  state; the latest navigation intent survives success or retry without exposing old file content.
 
   Changes retains a bounded desktop index above complete selected-file Source with inline Git
   changes and navigation, without an internal resize control. Narrow Changes uses a full-height

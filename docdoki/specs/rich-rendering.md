@@ -61,6 +61,9 @@ thinking, documents, and extension Markdown share one rendering authority with d
   render independently authorized local images, and keep heading fragments within the reader under
   [[resource-preview]]. External image URLs appear as links; unrecognized conversation image paths
   remain unavailable. Arbitrary data URLs stay disabled.
+  An authored Markdown link owns navigation for all of its label content. Inline code filenames
+  and image placeholders inside that link remain presentation rather than nested actions;
+  independent file references and images keep their normal preview or external-link behavior.
 - A rendering failure stays within the affected block and leaves its source readable.
 
 ## Parsing and update ownership

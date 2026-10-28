@@ -395,7 +395,12 @@ describe("WorkspaceController", () => {
     await oldTransport;
     await vi.advanceTimersByTimeAsync(60_000);
     expect(harness.listFiles).toHaveBeenCalledTimes(4);
-    expect(harness.state()).toMatchObject(emptyWorkspaceBrowserState());
+    expect(harness.state()).toMatchObject({
+      ...emptyWorkspaceBrowserState(),
+      workspaceShowHidden: true,
+      workspaceQuery: "new",
+      workspaceSearchLoading: true,
+    });
   });
 
   it("keeps a failed directory refresh visible and lets a new visit revalidate it", async () => {
@@ -426,16 +431,24 @@ describe("WorkspaceController", () => {
     });
   });
 
-  it("clears stale projections on transport replacement and reports auth expiry", async () => {
+  it("clears stale projections but retains navigation on transport replacement and reports auth expiry", async () => {
     const harness = createHarness();
     harness.patch({
       workspaceLevels: { "": [{ name: "old", type: "file" }] },
       workspaceQuery: "old",
       workspaceMatches: [{ name: "old", path: "old" }],
+      workspaceExpandedDirs: ["src"],
+      workspaceShowHidden: true,
     });
     harness.replaceTransport();
     harness.controller.invalidateForTransportReplacement();
-    expect(harness.state()).toMatchObject(emptyWorkspaceBrowserState());
+    expect(harness.state()).toMatchObject({
+      ...emptyWorkspaceBrowserState(),
+      workspaceQuery: "old",
+      workspaceSearchLoading: true,
+      workspaceExpandedDirs: ["src"],
+      workspaceShowHidden: true,
+    });
 
     harness.listFiles.mockRejectedValue(new ApiError(401, "Unauthorized"));
     await harness.controller.loadDirectory("");

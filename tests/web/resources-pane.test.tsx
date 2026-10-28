@@ -523,6 +523,15 @@ describe("Files pane", () => {
         return Response.json({ error: `unhandled ${url}` }, { status: 404 });
       }),
     );
+    // This suite shares a store; reconnect now intentionally retains navigation.
+    // Start each independent case with an explicitly cleared browser workbench.
+    store.showFileBrowser();
+    for (const tab of store.getState().resourceTabs)
+      store.closeResourceTab(tab.reference);
+    store.setWorkspaceQuery("");
+    for (const dir of store.getState().workspaceExpandedDirs)
+      store.toggleWorkspaceDirectory(dir);
+    store.setWorkspaceShowHidden(false);
     await store.init(`token-${++testToken}`);
     store.setResourcesOpen(false);
     store.setContextMode("files");
