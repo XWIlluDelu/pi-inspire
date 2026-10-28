@@ -242,8 +242,10 @@ viewport change instead of sampling across drawer restoration. These changes pre
 precision rather than adding arbitrary delays or weakening interaction checks. Physical-device
 font rasterization and every provider authentication step are outside this browser review.
 
-The 60 relevant Chromium scenarios pass across the main run and focused Activity rerun, together
-with project typechecking, scoped lint and the isolated production-mode build.
+The 62 relevant Chromium scenarios pass across the main run and focused Activity/extension reruns,
+together with project typechecking, scoped lint and the isolated production-mode build. The
+extension fixture now restores its own browser selection after API creation, matching the existing
+live-event fixture rather than relying on the Host's process-global selected session.
 
 ## Undecided interaction proposals
 

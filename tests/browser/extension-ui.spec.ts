@@ -99,6 +99,14 @@ async function openExample(page: Page, theme: "light" | "dark") {
   const createdSnapshot: ActiveSnapshot = await created.json();
   expect(createdSnapshot.active?.sessionId).toBeTruthy();
   sessionId = createdSnapshot.active!.sessionId;
+  // API creation does not change this browser's saved selection. Restore the
+  // fixture's own session, as openMockEventSession does for live-event readers.
+  await page.evaluate((sessionId) => {
+    sessionStorage.setItem(
+      "inspire:workbench:v1:last-session",
+      JSON.stringify({ sessionId }),
+    );
+  }, sessionId);
   const reload = async () => {
     const previousSocket = socket;
     await page.reload();
