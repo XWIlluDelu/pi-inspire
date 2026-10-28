@@ -265,6 +265,29 @@ The quiet home lockup, Composer writing space and long-activity boundaries remai
 Prompt Map keeps its real reading gutter, and mobile editable paths retain their 16px input size;
 reducing those solely for visual uniformity would trade away navigation or input usability.
 
+## Visible disclosure edges
+
+A user-supplied enlarged phone screenshot exposed a missed distinction: matching the Activity
+button to the prose container did not match its visible chevron. The 4px control inset and
+Lucide's intrinsic side whitespace accumulated into an 8.7px painted indent. Both chevron
+directions now balance against letter ink with a shared 7px hanging row; the padded focus/hit
+surface remains, and open guides, nested tool headers, title-aligned details and context events
+follow the same corrected hierarchy. The nine-dot vertical correction and colors are unchanged.
+
+Matched before/actual-build after screenshots were visually inspected at 1440, 390 and 320px
+in Carbon & Silicon Light/Dark, with a Chimonanthus sample. Chinese prose, collapsed/expanded
+groups, expanded Thinking and compaction checkpoints were included. Independent screenshot
+reviews of the four right-side tools, file headers, running Terminal, Settings, reorder menu and
+confirmation dialogs found no further worthwhile correction. Folder depth and subordinate
+History Activity remain intentional. Provider/model disclosure internals could not be reviewed
+because the isolated fixture exposes only their unavailable state; physical-phone rasterization
+remains outside this browser review.
+
+All eight focused Activity/context Chromium scenarios pass, including keyboard/touch/copy,
+deferred-prefix expansion and nested-call states. The regression now measures the actual SVG
+path/stroke against letter ink; a former container-edge assertion is removed while title/detail
+alignment stays enforced. Typechecking, scoped formatting and the production-mode build pass.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

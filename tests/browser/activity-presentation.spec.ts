@@ -16,6 +16,40 @@ async function expectActivityMarksCentered(control: Locator) {
   for (const offset of offsets) expect(Math.abs(offset)).toBeLessThan(0.5);
 }
 
+async function expectActivityArrowAtReadingEdge(control: Locator) {
+  const offset = await control.evaluate((element) => {
+    const svg = element.querySelector("svg")!;
+    const path = svg.querySelector("path")!;
+    // A shared button/container edge misses both control padding and SVG
+    // whitespace. Include the actual path and its painted stroke instead.
+    const stroke =
+      (Number.parseFloat(getComputedStyle(path).strokeWidth) *
+        svg.getBoundingClientRect().width) /
+      svg.viewBox.baseVal.width;
+    const response = element
+      .closest("[data-transcript-row]")!
+      .nextElementSibling!.querySelector(".rich-text")!;
+    const walker = document.createTreeWalker(response, NodeFilter.SHOW_TEXT);
+    let text = walker.nextNode()!;
+    while (!text.textContent!.trim()) text = walker.nextNode()!;
+    const start = text.textContent!.search(/\S/);
+    const range = document.createRange();
+    range.setStart(text, start);
+    range.setEnd(text, start + 1);
+    const style = getComputedStyle(text.parentElement!);
+    const context = document.createElement("canvas").getContext("2d")!;
+    context.font =
+      style.font || `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const letter = context.measureText(text.textContent![start]!);
+    const readingEdge =
+      range.getBoundingClientRect().left - letter.actualBoundingBoxLeft;
+    return path.getBoundingClientRect().left - stroke / 2 - readingEdge;
+  });
+  // Chevron directions have different painted widths; both should read on
+  // the prose edge, without forcing the indented Activity label onto it.
+  expect(Math.abs(offset)).toBeLessThan(2);
+}
+
 test("the full activity header discloses content with Copy beside its text", async ({
   page,
 }) => {
@@ -56,7 +90,6 @@ test("the full activity header discloses content with Copy beside its text", asy
           copy.left -
           element.querySelector(".card__disclosure")!.getBoundingClientRect()
             .right,
-        bodyIndent: body.left - element.getBoundingClientRect().left,
         bodyBackground: getComputedStyle(
           element.parentElement!.querySelector(".card__body")!,
         ).backgroundColor,
@@ -83,7 +116,6 @@ test("the full activity header discloses content with Copy beside its text", asy
     expect(geometry.leadingDisclosure).toBe(true);
     expect(geometry.copyGap).toBeGreaterThanOrEqual(4);
     expect(geometry.copyGap).toBeLessThanOrEqual(8);
-    expect(Math.abs(geometry.bodyIndent)).toBeLessThanOrEqual(1);
     expect(Math.abs(geometry.readingOffset)).toBeLessThanOrEqual(1);
     expect(geometry.bodyBackground).toBe("rgba(0, 0, 0, 0)");
     expect(geometry.bodyBorder).toBe("0px");
@@ -180,10 +212,14 @@ test("activity kind cues stay local, respect reduced motion and disclose with ke
   for (const width of [1440, 390, 320]) {
     await page.setViewportSize({ width, height: 1000 });
     await disclosure.scrollIntoViewIfNeeded();
+    await expectActivityArrowAtReadingEdge(disclosure);
     await disclosure.focus();
     await disclosure.press("Enter");
     const content = fold.locator(".activity-fold__content");
     await expect(content).toBeVisible();
+    await expectActivityArrowAtReadingEdge(
+      fold.locator(".activity-fold__boundary--upper"),
+    );
     await expectActivityMarksCentered(
       fold.locator(".activity-fold__boundary--upper"),
     );

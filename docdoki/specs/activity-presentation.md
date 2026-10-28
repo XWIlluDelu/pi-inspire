@@ -56,8 +56,11 @@ Type icons use the theme identity colors directly, separate from failure and liv
 Titles and expanded text use the normal ink/body roles without additional neutral mixing.
 Disclosure chevrons lead group labels, item identities and nested call rows. Top-level Activity
 and context events share a disclosure axis; the group guide continues under its arrow, and nested
-rows begin under the group label. Expanded text follows its own title/name axis. Rows without
-retained call detail reserve the disclosure column without adding an inert arrow. Hit areas stay unchanged.
+rows begin under the group label. These are visible stroke/letter axes, not equal button edges:
+the top-level hit rows hang 7px into the reading gutter to balance their 4px inner inset,
+the chevron's intrinsic blank side and the letters' side bearings. Open guides and nested headers follow the corrected axis;
+expanded text stays under its own title/name. Row heights and the padded focus/hit surfaces remain.
+Rows without retained call detail reserve the disclosure column without adding an inert arrow.
 
 Thinking and tool details open as indented reading content, without an outer frame, tint, or
 shadow. Expanded text aligns with its header title. Code, Diff and output keep their local reading

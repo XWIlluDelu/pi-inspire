@@ -693,6 +693,13 @@
 }
 
 /* Lightweight activity groups. */
+.activity-fold,
+.context-checkpoint {
+  /* Balance both chevron directions against actual letter ink, including
+     its side bearing, rather than aligning the SVG's blank outer box. */
+  --disclosure-outdent: 7px;
+}
+
 .activity-fold {
   display: flex;
   min-width: 0;
@@ -704,10 +711,13 @@
 .activity-fold__boundary,
 .activity-fold__omission {
   display: flex;
-  width: 100%;
+  /* Hang the hit row into the reading gutter: the 4px button inset and
+     chevron's own blank side must not indent its visible stroke twice. */
+  width: calc(100% + var(--disclosure-outdent));
+  margin-inline-start: calc(-1 * var(--disclosure-outdent));
   align-items: center;
   gap: 6px;
-  max-width: 100%;
+  max-width: calc(100% + var(--disclosure-outdent));
   min-height: 28px;
   padding: 4px var(--space-1);
   border: 0;
@@ -838,9 +848,9 @@
   min-width: 0;
   flex-direction: column;
   gap: var(--space-1);
-  /* The guide follows the disclosure axis; nested rows start under the label.
-     4px control inset + half the 14px chevron = 11px. */
-  margin: 2px 0 2px 11px;
+  /* Follow the outdented arrow's center (4px inset + 7px half icon).
+     Nested rows still start under the Activity label. */
+  margin: 2px 0 2px calc(11px - var(--disclosure-outdent));
   border-left: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
   padding: 2px 0 2px 12px;
 }
@@ -897,6 +907,8 @@
 /* Context boundaries are transcript events, not full-width message cards. */
 .context-checkpoint {
   --checkpoint-indent: 44px;
+  width: calc(100% + var(--disclosure-outdent));
+  margin-inline-start: calc(-1 * var(--disclosure-outdent));
   min-width: 0;
   color: var(--muted);
 }
