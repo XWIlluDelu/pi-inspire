@@ -648,7 +648,7 @@ export function ChangesDetail({
           }
         >
           {change.unstaged || change.untracked || change.conflict ? (
-            <option value="unstaged">Working</option>
+            <option value="unstaged">Unstaged</option>
           ) : null}
           {change.staged ? <option value="staged">Staged</option> : null}
         </select>

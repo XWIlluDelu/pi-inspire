@@ -171,6 +171,12 @@ describe("File Changes rendering and navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Previous change" }));
     expect(screen.getByLabelText("Change position")).toHaveTextContent("1 / 2");
     expect(open).not.toHaveBeenCalled();
+    expect(screen.getByRole("option", { name: "Unstaged" })).toHaveValue(
+      "unstaged",
+    );
+    expect(screen.getByRole("option", { name: "Staged" })).toHaveValue(
+      "staged",
+    );
     fireEvent.change(
       screen.getByRole("combobox", { name: "Comparison side" }),
       { target: { value: "staged" } },

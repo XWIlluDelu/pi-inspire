@@ -877,7 +877,15 @@ body.pane-resizing--vertical .nav {
   padding: 0 var(--space-1);
   background: transparent;
   color: var(--muted);
-  font: var(--text-xs)/var(--leading-ui) var(--font-sans);
+  font: 400 10.5px/var(--leading-ui) var(--font-sans);
+}
+
+.changes__side:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.changes__side:focus-visible {
+  outline-offset: -2px;
 }
 
 .file-detail-header__view {

@@ -358,7 +358,8 @@ Display paths are never converted into filesystem authority. Deleted or unreadab
 keeps the tab and its error, independently of the readable Git comparison.
 
 The file toolbar owns the side selector, line counts, non-wrapping previous/next change controls and
-current position. These controls only navigate changes within that file. Git Changes toggles back
+current position. Its compact Unstaged/Staged labels distinguish index-to-working-tree and
+HEAD-to-index comparisons; they retain the shared toolbar font and native selection behavior. These controls only navigate changes within that file. Git Changes toggles back
 to its remembered body mode; opening from Files explicitly selects body. Download stays at the
 trailing edge, with Source/Preview immediately before it when available in body mode. The current
 change uses an edge marker without replacing addition/deletion colors. Old/new line numbers and
