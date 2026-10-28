@@ -1,6 +1,6 @@
 ---
 purpose: Optional Herdr placement and connection to existing Pi terminals preserve session continuity and process ownership.
-progress: done
+progress: in-progress
 covers:
   - server/herdr-*.ts
   - server/pi-{rpc*,native-actions}.ts
@@ -179,6 +179,31 @@ other applications' unreported or later launches remain outside its authority.
   Attachments retain their normal budgets, preparation leases and release behavior. A stopped or
   replaced input cannot be delivered after preparation. An uncertain submission is not retried
   automatically, and any referenced files remain available to Pi.
+
+## Automatic idle handoff
+
+Opening a controllable native session in Inspire should automatically transfer it to an owned
+worker once the original Pi can retire without interrupting work. Do not add a per-session
+takeover button, confirmation or separate scheduling workflow.
+
+- Limit handoff to sessions with live browser detail subscribers and an identified native control
+  connection. Presence alone grants no authority. Explicit terminal-handoff intent opts out;
+  unsupported receivers remain connected under the native controls above.
+- Keep using the original Pi while it has work. The target must check agent work, queues, native
+  shell execution and terminal interactions before accepting retirement. Preserve terminal drafts.
+  A busy refusal leaves the connection usable for a later automatic check.
+- Use a public, cooperative Pi retirement action bound to the current process/session/receiver.
+  Its admission must not interrupt work arriving around the check. Do not infer safe retirement
+  from a heartbeat, agent idleness or a terminal screen, or substitute signals/forced cleanup.
+- After confirmed process exit, reuse viewed-session recovery and ordinary writer admission in
+  [[session-persistence]]. Preserve reading state and browser input; never replay uncertain input
+  or start a second writer. Leave the native pane and shell intact.
+- Closing a view or Host does not itself request native retirement. A request already accepted by
+  Pi may finish, but a replacement worker starts only while the session remains viewed.
+
+This design does not change the external ownership fence before retirement. The missing public
+safe-retirement interface and implementation state are recorded in [[pi-capability-gaps]] and
+[[follow-session-execution-2026-10-19]].
 
 ## Checks
 

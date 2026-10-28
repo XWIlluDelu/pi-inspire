@@ -59,6 +59,33 @@ Confirmed native retirement triggers admission immediately;
 ordinary presence is checked every two seconds while viewed. Observation does not replay input or
 rewrite unchanged retained presence. [[follow-project-quality-2026-10-21]] tracks integration into `main`.
 
+## Automatic idle handoff — blocked
+
+The decided extension of [[herdr-enhancement]] requires no manual takeover workflow. The intended
+implementation adds a receiver-bound cooperative retirement action to the existing bridge, then
+reuses viewed-session recovery; it does not replace native discovery or introduce a new writer lease.
+
+Public-interface inspection and isolated Linux PTY probes on 2026-10-28 found a blocking distinction
+in both the pinned Pi 1.3.0 and installed Pi 1.4.0:
+
+- Start a native `! echo $$ > started; while [ ! -f gate ]; do sleep 0.05; done; echo finished > done`.
+  Once its shell is live and waiting, the public extension context reports `isIdle() === true`,
+  `hasPendingMessages() === false` and an empty editor.
+- Calling public `ctx.shutdown()` in that state exits Pi and terminates the shell before `done`
+  is written. It is orderly process shutdown, not a non-interrupting idle handoff.
+- `AgentSession.isIdle` checks agent activity and compaction, not its separate Bash controllers.
+  The public extension context exposes neither `isBashRunning` nor complete shell completion
+  events. `user_bash` is an interception chain, not a complete operation-lifetime observer.
+
+No automatic-exit code is enabled. Existing native control and confirmed-release recovery remain
+unchanged. The probes used isolated offline configuration and disposable sessions; no production Pi,
+Host or shared build output was changed, and the one-off probe was removed.
+
+Next: revisit when Pi offers a public non-interrupting retirement primitive, or sufficient owning-runtime
+admission/lifetime controls to implement one. Verify active shell, queued input, native dialogs/drafts,
+new input racing retirement, and delayed shutdown hooks before enabling the bridge action. Do not
+reconstruct shell state by overriding user execution or interpreting terminal screens.
+
 ## Existing verification
 
 - `herdr-native-actions.integration.test.ts` uses real offline Pi TUI/PTY with non-default Follow-up
