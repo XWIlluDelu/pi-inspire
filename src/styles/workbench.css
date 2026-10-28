@@ -190,19 +190,73 @@ body.pane-resizing--vertical .nav {
   font-weight: 500;
 }
 
-.ctx__modes {
-  container: context-modes / inline-size;
-  width: min(400px, calc(100% - 38px));
-  flex: 0 1 400px;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+.ctx__tabs {
+  min-width: 0;
+  flex: 1;
+  display: flex;
   align-items: center;
-  padding: 2px;
-  gap: 2px;
-  border: 1px solid transparent;
-  border-radius: 0;
-  background: transparent;
+  gap: 8px;
 }
+
+.ctx__file-tabs {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  gap: 2px;
+}
+
+.ctx__file-tab {
+  flex: 0 0 auto;
+  max-width: min(180px, 100%);
+  display: flex;
+  align-items: center;
+  border-bottom: 2px solid transparent;
+}
+
+.ctx__file-tab--active { border-bottom-color: var(--accent); }
+
+.ctx__file-tab > button {
+  min-width: 0;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 5px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.ctx__file-tab > button > svg { flex: 0 0 auto; }
+.ctx__file-tab > button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx__file-tab > button:focus-visible { outline-offset: -2px; }
+.ctx__file-tab--active > button, .ctx__file-tab > button:hover { color: var(--ink); }
+.ctx__file-tab > .ctx__file-close { flex: 0 0 22px; justify-content: center; padding-inline: 3px; }
+.ctx__file-close:hover { background: var(--bg-control); }
+
+.ctx__modes {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ctx__content {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ctx__content[hidden] { display: none; }
+.res__body--file-tab { min-height: 0; display: flex; flex-direction: column; }
+.res__body--file-tab > .file-preview { flex: 1; min-height: 0; }
 
 .ctx__header-actions {
   display: flex;
@@ -215,8 +269,10 @@ body.pane-resizing--vertical .nav {
 }
 
 .ctx__modes button {
-  min-width: 0;
-  height: 28px;
+  position: relative;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -255,15 +311,11 @@ body.pane-resizing--vertical .nav {
   cursor: not-allowed;
 }
 
-/* Center the label group as a unit, then align its mixed-size text by baseline. */
-.ctx__mode-label {
-  display: inline-flex;
-  align-items: baseline;
-  flex-shrink: 0;
-  gap: 6px;
-}
-
 .ctx__mode-badge {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  pointer-events: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -282,21 +334,7 @@ body.pane-resizing--vertical .nav {
   color: var(--accent-deep);
 }
 
-/* Count is supplementary; a narrow equal-width mode must retain its whole name.
-   Measure the mode group itself, since narrow headers also contain Close. */
-@container context-modes (max-width: 392px) {
-  .ctx__mode-badge {
-    display: none;
-  }
-}
 
-/* At phone-minimum widths, native condensed letterforms need no extra tracking. */
-@container context-modes (max-width: 260px) {
-  .ctx__modes button {
-    font-size: var(--text-sm);
-    letter-spacing: 0;
-  }
-}
 
 .segmented {
   display: inline-flex;
@@ -1707,6 +1745,3 @@ button.res__more:hover {
   border-color: var(--accent-focus);
   box-shadow: 0 0 0 3px var(--accent-tint);
 }
-
-/* Mobile file inspection keeps the reading surface full height. */
-.file-preview__back { display: none; }

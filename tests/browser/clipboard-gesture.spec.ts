@@ -24,7 +24,7 @@ async function openHistoryDetail(page: Page) {
   });
   if ((await toggle.getAttribute("aria-expanded")) === "false")
     await toggle.click();
-  await page.getByRole("button", { name: "History", exact: true }).click();
+  await page.getByRole("tab", { name: "History", exact: true }).click();
   const history = page.getByRole("region", { name: "Conversation history" });
   await history
     .getByRole("searchbox", { name: "Find in history" })

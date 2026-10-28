@@ -69,6 +69,9 @@ independent project shells in [[terminal]].
   the lower drawer cannot trap or make that dialog inert.
 
 - Automatic desktop widths use 220–272px for navigation (48px collapsed) and 340–760px for context.
+  Navigation retains its 460px manual maximum. Context can be manually widened to the remaining
+  shared conversation-width budget, without a separate fixed pixel ceiling; automatic defaults
+  do not change.
   Both side regions' widths are adjustable by dragging their boundary with the conversation
   using focusable handles with pointer and keyboard control, persist across reloads, and reset to
   the default on double-click; each boundary's scroll thumb keeps grab priority where the two
@@ -191,23 +194,26 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
 - Workspace file browsing lives in the contextual Files pane; the session navigation column does
   not duplicate its tree.
 
-- The contextual region primarily hosts Files, Changes, History, and Terminal through equal-width
-  mode controls that preserve every label at the pane's minimum width. Files uses the complete
-  search/Recent/Workspace browser until a file is selected, then keeps a fixed bounded Workspace
-  index above the file detail on desktop so related files remain one step away. Narrow Files uses
-  full-height detail with Back to Files, the filename and existing necessary actions; returning to
-  Browse preserves its query, expansions and scroll. Changes uses that same desktop upper
-  height, divider, and lower-header geometry without an internal resize control: repository identity
-  and grouped changed paths stay above complete selected-file Source with inline Git changes and
-  navigation. Narrow Changes uses a full-height list until a path is selected, then gives the
-  selected Source the available height with All changes and adjacent-comparison controls. Those
+- Open files have filename tabs on the leading side of the contextual header. Files, Changes,
+  History, and Terminal remain fixed icon tabs on its trailing side, with hover titles and
+  accessible names. All are same-level selections sharing one content region. Files shows its
+  complete search/Recent/Workspace browser; selecting a file opens or selects its sibling tab,
+  without a nested Files layer or index/detail split. Returning to Files preserves its query,
+  expansions and scroll. File tabs retain independent reader modes and Source/rendered scroll
+  offsets; [[resource-preview]] defines the boundary for embedded readers and execution.
+  Overflowing filename tabs scroll within their own strip while the tool tabs remain available.
+
+  Changes retains a bounded desktop index above complete selected-file Source with inline Git
+  changes and navigation, without an internal resize control. Narrow Changes uses a full-height
+  list until a path is selected, then gives the selected Source the available height with All changes
+  and adjacent-comparison controls. Those
   controls follow the index's conflict, working and staged order, including both sides of the same
   path. Returning to the list preserves its scroll and restores the selected row's focus; reopening
-  a comparison restores its source reading position. Desktop retains the shared index/detail split.
+  a comparison restores its source reading position. Desktop retains this index/detail split.
 
-  Narrow Context, navigation and Settings participate in transient browser history. Files and Changes
-  detail add one nested level: Back returns to the list, then closes the panel, then leaves the application.
-  Same-level tabs reuse their entry and explicit close consumes the owned levels without an empty
+  Narrow Context, navigation and Settings participate in transient browser history. File and tool
+  tabs reuse one level, so Back closes the contextual drawer once. Only Changes detail adds a
+  nested level: Back first returns to its list. Explicit close consumes the owned levels without an empty
   Back stop. Image inspection uses the same small history owner, independently of panel depth;
   this is not a URL router or a second navigation model.
 
@@ -228,8 +234,10 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
   On a narrow screen, a successful context-changing action closes the modal contextual drawer to
   reveal the resulting conversation/draft; read-only preview and Back keep it open.
 
-  Terminal presents the current project's ordered shell tabs without splits; hiding the pane
-  detaches its views without ending PTYs, and focus mode or an independent same-origin window can
+  Terminal presents the current project's ordered shell tabs without splits. After first access,
+  switching file/tool tabs keeps it mounted, retaining its output and unfinished input; hidden
+  terminal views neither steal focus nor resize the PTY. Closing the pane does not end PTYs,
+  and focus mode or an independent same-origin window can
   temporarily give the selected terminal the viewport. The region remains in the three-column layout
   while that layout can preserve a usable conversation; below that floor it becomes a modal drawer
   with its own close control.

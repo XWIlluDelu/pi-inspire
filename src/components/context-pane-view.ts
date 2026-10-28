@@ -15,6 +15,7 @@ export type ContextPaneView = Pick<
   | "selectedResourceReference"
   | "selectedResourceWorkspacePath"
   | "resourcePreview"
+  | "resourceTabs"
   | "resourceAvailability"
   | "resourceWorkspacePaths"
   | "workspaceQuery"
@@ -44,6 +45,7 @@ export function selectContextPaneView(state: AppState): ContextPaneView {
     selectedResourceReference: state.selectedResourceReference,
     selectedResourceWorkspacePath: state.selectedResourceWorkspacePath,
     resourcePreview: state.resourcePreview,
+    resourceTabs: state.resourceTabs,
     resourceAvailability: state.resourceAvailability,
     resourceWorkspacePaths: state.resourceWorkspacePaths,
     workspaceQuery: state.workspaceQuery,

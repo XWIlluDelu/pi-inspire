@@ -1,6 +1,5 @@
 import {
   AlertTriangle,
-  ArrowLeft,
   Check,
   Download,
   FileText,
@@ -404,7 +403,19 @@ export function ResourcePreviewContent({
   );
 }
 
-export function FilePreview({ state }: { state: ContextPaneView }) {
+export interface FileReadingState {
+  source: SourceReadingPosition;
+  rendered: SourceReadingPosition;
+  mode?: FileViewMode;
+}
+
+export function FilePreview({
+  state,
+  readingState,
+}: {
+  state: ContextPaneView;
+  readingState?: FileReadingState;
+}) {
   const preview = state.resourcePreview;
   const descriptor = preview?.status === "ready" ? preview.descriptor : null;
   const reference =
@@ -417,10 +428,11 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
       : resourceReferenceLabel(reference));
   const [jump, setJump] = useState<LineJump | null>(null);
   // Reading choices belong to the selected file, not its renewable handle.
-  // A new selection lifetime also prevents A -> B -> A from reviving offsets.
+  // Open tabs supply their own reading state; standalone previews keep a local lifetime.
   const readingPosition = useMemo<SourceReadingPosition>(
-    () => ({ current: null }),
+    () => readingState?.source ?? { current: null },
     [
+      readingState,
       state.transportGeneration,
       state.sessionId,
       state.cwd,
@@ -453,7 +465,7 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
   const viewMode =
     descriptor && fileView?.owner === readingPosition
       ? fileView.mode
-      : defaultView;
+      : (readingState?.mode ?? defaultView);
   const htmlScope = [
     descriptor?.id,
     preview?.status === "ready" ? preview.objectUrl : null,
@@ -555,19 +567,36 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
       request: (previous?.request ?? 0) + 1,
     }));
   }, [descriptor?.id, lineCount, referencedLine]);
+  const contentRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const root = contentRef.current;
+    const saved = readingState?.rendered.current;
+    if (!root || !saved || viewMode === "source" || preview?.status !== "ready")
+      return;
+    const restore = () => {
+      const scroller =
+        root.querySelector<HTMLElement>('[data-pane-scroll-active="true"]') ??
+        root;
+      scroller.scrollTop = saved.top;
+      scroller.scrollLeft = saved.left;
+      if (Math.abs(scroller.scrollTop - saved.top) < 1) stop();
+    };
+    const observer = new MutationObserver(restore);
+    const stop = () => {
+      observer.disconnect();
+      for (const event of ["wheel", "touchstart", "pointerdown", "keydown"])
+        root.removeEventListener(event, stop, true);
+    };
+    observer.observe(root, { childList: true, subtree: true });
+    for (const event of ["wheel", "touchstart", "pointerdown", "keydown"])
+      root.addEventListener(event, stop, true);
+    restore();
+    return stop;
+  }, [readingState, viewMode, preview?.status]);
   return (
     <div className="file-preview">
       <div className="file-detail-header">
         <div className="file-detail-header__path">
-          <button
-            type="button"
-            className="file-preview__back"
-            onClick={() => store.showFileBrowser()}
-            aria-label="Back to Files"
-          >
-            <ArrowLeft size={15} aria-hidden />
-            <span>Files</span>
-          </button>
           <PathCopyButton path={displayPath} />
         </div>
         <div className="file-detail-header__actions">
@@ -619,13 +648,32 @@ export function FilePreview({ state }: { state: ContextPaneView }) {
             <FileViewControl
               mode={viewMode}
               onChange={(mode) => {
-                if (descriptor) setFileView({ owner: readingPosition, mode });
+                if (descriptor) {
+                  if (readingState) readingState.mode = mode;
+                  setFileView({ owner: readingPosition, mode });
+                }
               }}
             />
           ) : null}
         </div>
       </div>
-      <div className="file-preview__content">
+      <div
+        className="file-preview__content"
+        ref={contentRef}
+        onScrollCapture={(event) => {
+          const element = event.target as HTMLElement;
+          if (
+            readingState &&
+            viewMode !== "source" &&
+            (element === event.currentTarget ||
+              element.matches('[data-pane-scroll-active="true"]'))
+          )
+            readingState.rendered.current = {
+              top: element.scrollTop,
+              left: element.scrollLeft,
+            };
+        }}
+      >
         {preview?.status === "ready" && preview.refreshError ? (
           <div className="file-preview__notice" role="status">
             Preview refresh failed: {preview.refreshError}. Showing the last

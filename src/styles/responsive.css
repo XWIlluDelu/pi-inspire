@@ -161,8 +161,7 @@ body.srail-dragging {
   }
 
   .app--narrow .ctx__modes {
-    width: auto;
-    flex: 1 1 auto;
+    flex: 0 0 auto;
   }
 
   .app--narrow .ctx__modes button {
@@ -964,11 +963,7 @@ body.srail-dragging {
 .changes__navigation { display: none; }
 
 @media (max-width: 900px) {
-  .res__body--files.res__body--split > .res__index { display: none; }
-  .res__body--files.res__body--split { grid-template-rows: minmax(0, 1fr); }
   .file-preview > .file-detail-header { height: auto; min-height: 44px; flex-basis: auto; }
-  .file-preview__back { display: inline-flex; flex: 0 0 auto; align-items: center; gap: var(--space-1); min-height: 44px; border: 0; padding: 0 var(--space-1); background: transparent; color: var(--body); cursor: pointer; }
-  .file-preview__back:focus-visible,
   .changes__back:focus-visible,
   .changes__navigation > .icon-button:focus-visible { outline-offset: -2px; }
   .res__body--changes.res__body--split { grid-template-rows: minmax(0, 1fr); }

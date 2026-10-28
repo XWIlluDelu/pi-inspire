@@ -81,7 +81,7 @@ for (const touch of [false, true]) {
       await page
         .getByRole("button", { name: "Toggle resources panel", exact: true })
         .click();
-      await page.getByRole("button", { name: "Files", exact: true }).click();
+      await page.getByRole("tab", { name: "Files", exact: true }).click();
       await expect(
         page.getByRole("searchbox", { name: "Search workspace files" }),
       ).toBeVisible();
@@ -109,7 +109,7 @@ for (const touch of [false, true]) {
       deviceScaleFactor: touch ? 2 : 1,
       reducedMotion: "reduce",
     });
-    test("keeps visibility aligned in the desktop index and returns to Browse on narrow previews", async ({
+    test("keeps visibility centered in Files and retains its state across file tabs", async ({
       page,
     }) => {
       await page.setViewportSize({ width: 1280, height: 900 });
@@ -122,7 +122,7 @@ for (const touch of [false, true]) {
         .getByRole("button", { name: "Toggle resources panel", exact: true })
         .click();
       const pane = page.locator(".ctx");
-      await pane.getByRole("button", { name: "Files", exact: true }).click();
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
       const toggle = pane.getByRole("button", {
         name: "Show hidden files",
         exact: true,
@@ -166,45 +166,35 @@ for (const touch of [false, true]) {
           .locator(".file-detail-header__actions > .icon-button")
           .first();
         await expect(download).toBeVisible();
-        if (width <= 900) {
-          // Narrow Files dedicates the panel to the reader; the index controls
-          // return with Browse rather than competing with the preview header.
-          await expect(toggle).toHaveCount(0);
-          await pane
-            .getByRole("button", { name: "Back to Files", exact: true })
-            .click();
-          await expect(toggle).toHaveAttribute("aria-pressed", "false");
-          expect(Math.abs((await measure()).x - browse.x)).toBeLessThanOrEqual(
-            0.5,
-          );
-          continue;
-        }
+        await expect(toggle).toHaveCount(0);
+        await pane.getByRole("tab", { name: "Files", exact: true }).click();
+        await expect(toggle).toHaveAttribute("aria-pressed", "false");
+        expect(Math.abs((await measure()).x - browse.x)).toBeLessThanOrEqual(
+          0.5,
+        );
         for (const pressed of [false, true]) {
           if (pressed) await toggle.click();
           await expect(toggle).toHaveAttribute("aria-pressed", String(pressed));
-          const preview = await measure();
-          const action = await download.locator("svg").boundingBox();
-          expect(
-            Math.abs(preview.x - action!.x - action!.width / 2),
-          ).toBeLessThanOrEqual(0.5);
-          expect(Math.abs(preview.x - browse.x)).toBeLessThanOrEqual(0.5);
-          expect([preview.width, preview.height]).toEqual([14, 14]);
-          expect([preview.targetWidth, preview.targetHeight]).toEqual([28, 28]);
-          expect(Math.abs(preview.x - preview.cx)).toBeLessThanOrEqual(0.5);
-          expect(Math.abs(preview.y - preview.cy)).toBeLessThanOrEqual(0.5);
-          const arrow = await pane
-            .locator(".res__index-header--back > svg")
-            .boundingBox();
-          expect(
-            Math.abs(preview.y - arrow!.y - arrow!.height / 2),
-          ).toBeLessThanOrEqual(0.5);
+          const current = await measure();
+          expect(Math.abs(current.x - browse.x)).toBeLessThanOrEqual(0.5);
+          expect([current.width, current.height]).toEqual([14, 14]);
+          if (width > 900)
+            expect([current.targetWidth, current.targetHeight]).toEqual([
+              28, 28,
+            ]);
+          expect(Math.abs(current.x - current.cx)).toBeLessThanOrEqual(0.5);
+          expect(Math.abs(current.y - current.cy)).toBeLessThanOrEqual(0.5);
+          await pane
+            .getByRole("tab", { name: "native-shell.log", exact: true })
+            .click();
+          await expect(download).toBeVisible();
+          await expect(toggle).toHaveCount(0);
+          await pane.getByRole("tab", { name: "Files", exact: true }).click();
+          await expect(toggle).toHaveAttribute("aria-pressed", String(pressed));
         }
         await toggle.focus();
         await page.keyboard.press("Space");
         await expect(toggle).toHaveAttribute("aria-pressed", "false");
-        await pane
-          .getByRole("button", { name: /Back to file browser for/ })
-          .click();
         expect(Math.abs((await measure()).x - browse.x)).toBeLessThanOrEqual(
           0.5,
         );

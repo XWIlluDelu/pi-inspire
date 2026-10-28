@@ -402,7 +402,7 @@ for (const touch of [false, true]) {
         await page
           .getByRole("button", { name: "Toggle resources panel" })
           .click();
-      await pane.getByRole("button", { name: "Files", exact: true }).click();
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
       const search = pane.getByRole("searchbox", {
         name: "Search workspace files",
         exact: true,

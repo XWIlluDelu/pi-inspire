@@ -30,7 +30,7 @@ preview; Changes owns Git comparisons. [[composer]] owns file attachment and the
 
 ## Browse and search
 
-With no file selected, Files shows up to five deduplicated **Recent in this chat** references from
+The Files tool tab shows up to five deduplicated **Recent in this chat** references from
 one 16-reference Host page, followed by the workspace filesystem tree. Search replaces both sections
 while a query is present. Recent rows use an icon, filename, subdued parent path, and fixed trailing
 Git state on one line. File icons, filename/parent labels and match emphasis follow [[design-system]].
@@ -40,16 +40,12 @@ has one explicit clear/loading control. Matching uses Host lowercase, whitespace
 terms on the full path, projected into filename and parent fields, including path-spanning terms,
 without changing titles or bidi isolation.
 
-On desktop, selecting a recent, search, or tree entry opens a fixed index/detail stack: the workspace tree stays
-above the preview, while Search and Recent yield space. **← project-folder** returns to Browse with
-its query, expansions, and scroll retained. The default upper boundary matches Browse after Search
-and Recent, keeping the file-content boundary stable. Files and Changes share that height, divider,
-headers, with no internal splitter. On narrow screens, Files instead gives the selected file the
-full detail height and provides Back to Files alongside its filename and actions. Both that control
-and browser Back restore Browse with query, expansions and scroll retained. A second Back closes
-Context. Changes keeps its existing narrow split. The index header stays on the browser's
-`--bg-context` surface; the current file's path/actions bar uses `--bg-surface` to distinguish the
-reading area below. Both Files and Changes use these roles without an extra shadow or raised frame.
+Selecting a recent, search, or tree entry opens or selects a filename tab beside the fixed tool tabs.
+Its reader uses the complete content area on desktop and narrow screens; Files has no index/detail
+stack. Returning to the Files tab restores its query, expansions and scroll. File/tool tabs share
+one narrow browser-history level, while Changes retains its separate detail level under
+[[workspace-layout]]. The browser uses `--bg-context`; the selected file's path/actions bar and
+reader use `--bg-surface`, without an extra shadow or raised frame.
 
 The Files tree uses the project basename as its heading. Opening a workspace file expands its
 ancestors and emits one reveal request; unrelated updates do not scroll it. Leaf rows reserve the
@@ -163,9 +159,10 @@ the old preview with its actual failure, rather than retaining it as usable. Aut
 never inherits old content. Refresh retires interactive HTML immediately, even while static content
 remains visible; recovery does not restart execution.
 
-Explicit Files Refresh renews Recent, probes, discovery, and the selected preview without requesting
-Git status. Compatible transcript appends refresh Recent only while Browse is visible and retain the
-previous rows until success; a visible preview keeps its reader mounted and does not load hidden Recent.
+Explicit Refresh renews Recent and probes in Files, or the selected preview in a file tab, alongside
+workspace discovery without requesting Git status. Compatible transcript appends refresh Recent only
+while Browse is visible and retain previous rows until success; a visible preview keeps its reader
+mounted and does not load hidden Recent.
 Transient Recent reads recover automatically without replacing retained rows with retry controls.
 An initial read remains loading during recovery; after persistent failure its local empty surface
 says Recent is unavailable rather than claiming there are no references. The existing Files Refresh
@@ -212,9 +209,12 @@ when selection, session, view or transport changes. Downloads do not inherit pre
 buffer arbitrary files in JavaScript. Dual-view files retain one reciprocal view action
 in a fixed trailing slot. Files with no alternative view omit that action. Source uses highlighting and line numbers; `:line` and `#Lline`
 open Source at that position, including for files that normally open in Preview. Refreshing the
-same selected file retains its chosen view and Source reading offsets while replacing the content;
-file, session, workspace, or transport replacement starts a new reading context. HTML execution
-leases remain separate and are still retired on refresh. Files does not
+same selected file retains its chosen view and Source reading offsets while replacing the content.
+While the contextual pane remains open, switching file/tool tabs restores each file's selected view
+and Source/rendered scroll offsets.
+Closing its tab, or changing session, workspace or transport, discards that retained reading context.
+This does not retain iframe-internal interaction or media playback state. HTML execution
+leases remain separate and are still retired on refresh or leaving the file tab. Files does not
 duplicate Changes with a Diff mode or add file-editing controls. Files Source and Changes share an unframed, full-width source canvas below the fixed header, without
 outer card padding; inner text spacing remains. Their line-number gutters stay visible during
 horizontal scrolling. Changes line numbers and change marks share the source line baseline despite
@@ -279,8 +279,8 @@ animation, and normal HTTP(S) resource loading, including external scripts, styl
 network requests. Browser CORS, mixed-content rules and any policy authored by the document still
 apply. It is not restricted to self-contained HTML.
 
-**Stop interaction** destroys the running frame and returns to static Preview. Source, Browse,
-file replacement/refresh, pane close, session/view or browser-transport replacement also retire
+**Stop interaction** destroys the running frame and returns to static Preview. Source, another file
+or tool tab, file replacement/refresh, pane close, session/view or browser-transport replacement also retire
 execution and its capability. Returning to Preview does not auto-run the page. A compatible transcript
 append does not reset it. The action shows a busy indicator while authorization is pending and
 remains unpressed until authorization succeeds. Loading can be stopped; a late start response releases its own capability

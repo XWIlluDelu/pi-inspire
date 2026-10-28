@@ -64,7 +64,7 @@ test("authorized audio and video previews play from local blobs", async ({
   await page.reload();
   await expect(page.getByRole("main")).toBeVisible();
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await page.getByRole("tab", { name: "Files", exact: true }).click();
   const pane = page.locator(".ctx");
   const tree = pane.getByRole("region", { name: "Workspace file tree" });
   await tree.getByRole("button", { name: "media", exact: true }).click();
@@ -75,10 +75,7 @@ test("authorized audio and video previews play from local blobs", async ({
       ["audio.wav", "audio"],
       ["video.webm", "video"],
     ]) {
-      if (width <= 900 && (await pane.locator(".file-preview").isVisible()))
-        await pane
-          .getByRole("button", { name: "Back to Files", exact: true })
-          .click();
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
       await tree.getByRole("button", { name: file, exact: true }).click();
       const media = pane.locator(`.file-preview ${tag}`);
       await expect
@@ -117,7 +114,7 @@ test("large document Markdown keeps scoped images and heading navigation with th
   expect(created.ok()).toBe(true);
   await page.reload();
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await page.getByRole("tab", { name: "Files", exact: true }).click();
   const pane = page.locator(".ctx");
   await pane
     .getByRole("region", { name: "Workspace file tree" })
@@ -158,7 +155,7 @@ for (const narrow of [false, true]) {
     const pane = page.getByRole(narrow ? "dialog" : "complementary", {
       name: "Context panel",
     });
-    await pane.getByRole("button", { name: "Files", exact: true }).click();
+    await pane.getByRole("tab", { name: "Files", exact: true }).click();
     const tree = pane.getByRole("region", { name: "Workspace file tree" });
     await expect(
       tree.getByRole("button", { name: "dist", exact: true }),
@@ -187,25 +184,16 @@ for (const narrow of [false, true]) {
     await expect(
       pane.getByText("Synthetic hidden configuration", { exact: true }),
     ).toBeVisible();
-    if (narrow) {
-      await pane
-        .getByRole("button", { name: "Back to Files", exact: true })
-        .click();
-      await pane
-        .getByRole("button", { name: "Show hidden files", exact: true })
-        .click();
-    } else {
-      await pane
-        .getByRole("button", { name: "Show hidden files", exact: true })
-        .click();
-      // Desktop filtering cannot revoke an already selected preview.
-      await expect(
-        pane.getByText("Synthetic hidden configuration", { exact: true }),
-      ).toBeVisible();
-      await pane
-        .getByRole("button", { name: /Back to file browser for/ })
-        .click();
-    }
+    await pane.getByRole("tab", { name: "Files", exact: true }).click();
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await expect(hiddenFile).toHaveCount(0);
+    // Browser filtering cannot revoke an already opened file tab.
+    await pane.getByRole("tab", { name: "config.txt", exact: true }).click();
+    await expect(
+      pane.getByText("Synthetic hidden configuration", { exact: true }),
+    ).toBeVisible();
+    await pane.getByRole("tab", { name: "Files", exact: true }).click();
     await tree.getByRole("button", { name: "dist", exact: true }).click();
     await tree.locator('[data-workspace-path="dist/report.md"]').click();
     await expect(
@@ -226,12 +214,7 @@ for (const narrow of [false, true]) {
       await readFile(resolve(root, "dist/report.md"), "utf8"),
     );
 
-    await pane
-      .getByRole("button", {
-        name: narrow ? "Back to Files" : /Back to file browser for/,
-        exact: narrow,
-      })
-      .click();
+    await pane.getByRole("tab", { name: "Files", exact: true }).click();
     await pane
       .getByRole("searchbox", { name: "Search workspace files" })
       .fill("report.md");
@@ -253,7 +236,7 @@ test("native authenticated download streams complete bytes beyond the media prev
   expect(created.ok()).toBe(true);
   await page.reload();
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await page.getByRole("tab", { name: "Files", exact: true }).click();
   const pane = page.locator(".ctx");
   await pane
     .getByRole("region", { name: "Workspace file tree" })
@@ -437,15 +420,14 @@ test("files navigation preserves context across desktop and narrow workspaces", 
     .locator('[data-workspace-path="src/components/WorkspaceBrowser.tsx"]')
     .click();
   await expect(
-    pane.getByRole("button", { name: "Back to file browser" }),
-  ).toBeVisible();
+    pane.getByRole("tab", { name: "WorkspaceBrowser.tsx", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(pane.locator(".files-browser")).toHaveCount(0);
 
   await page.setViewportSize({ width: 390, height: 844 });
   const drawer = page.getByRole("dialog", { name: "Context panel" });
   await expect(drawer).toBeVisible();
-  await drawer
-    .getByRole("button", { name: "Back to Files", exact: true })
-    .click();
+  await drawer.getByRole("tab", { name: "Files", exact: true }).click();
   await expect(
     drawer.getByRole("searchbox", { name: "Search workspace files" }),
   ).toHaveValue("WorkspaceBrowser.tsx");
@@ -486,7 +468,7 @@ test("document readers preserve source toggles, intrinsic SVG geometry and indep
     resources.getByRole("region", { name: "File source" }),
   ).toContainText('"nbformat": 4');
 
-  await resources.getByRole("button", { name: "Back to file browser" }).click();
+  await resources.getByRole("tab", { name: "Files", exact: true }).click();
   await search.fill("file-previews/vector.svg");
   await resources
     .locator(
@@ -521,7 +503,7 @@ test("document readers preserve source toggles, intrinsic SVG geometry and indep
     resources.getByRole("region", { name: "File source" }),
   ).toContainText("<svg");
 
-  await resources.getByRole("button", { name: "Back to file browser" }).click();
+  await resources.getByRole("tab", { name: "Files", exact: true }).click();
   await search.fill("file-previews/document.md");
   await resources
     .locator(
@@ -560,7 +542,7 @@ test("document readers preserve source toggles, intrinsic SVG geometry and indep
     1,
   );
 
-  await resources.getByRole("button", { name: "Back to file browser" }).click();
+  await resources.getByRole("tab", { name: "Files", exact: true }).click();
   await search.fill("FilePreview.tsx");
   await resources
     .locator('[data-workspace-path="src/components/FilePreview.tsx"]')

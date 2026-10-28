@@ -9,7 +9,9 @@ import { textOverflowsInlineBounds } from "./support/text-bounds";
 test("Files refresh preserves Source mode and reading offsets", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 1280, height: 900 });
+  // The full-height file tab needs a short window for this 33-line fixture
+  // to exercise both reading axes rather than silently clamping scrollTop.
+  await page.setViewportSize({ width: 1280, height: 600 });
   await pairedPage(page);
   await openMockSession(page, /Resource virtualization and sandbox fixture/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
@@ -27,6 +29,13 @@ test("Files refresh preserves Source mode and reading offsets", async ({
   const originalHeading = "Observation log · Station 07";
   const refreshedHeading = "Observation log · Station 08";
   await expect(source).toContainText(originalHeading);
+  await page.evaluate(() => document.fonts.ready);
+  const scrollRange = await source.evaluate((element) => ({
+    vertical: element.scrollHeight - element.clientHeight,
+    horizontal: element.scrollWidth - element.clientWidth,
+  }));
+  expect(scrollRange.vertical).toBeGreaterThanOrEqual(100);
+  expect(scrollRange.horizontal).toBeGreaterThanOrEqual(80);
   await source.evaluate((element) => {
     element.scrollTop = 100;
     element.scrollLeft = 80;
@@ -103,7 +112,7 @@ for (const mode of ["Files", "Changes"] as const) {
     await openMockSession(page, /Resource virtualization and sandbox fixture/);
     await page.getByRole("button", { name: "Toggle resources panel" }).click();
     const pane = page.locator(".ctx");
-    await pane.getByRole("button", { name: mode, exact: true }).click();
+    await pane.getByRole("tab", { name: mode, exact: true }).click();
     let unavailable = true;
     await page.route(
       mode === "Files" ? "**/api/resources/resolve" : "**/api/git/diff",
@@ -348,7 +357,7 @@ test("file path toolbars distinguish the reader from browser chrome across palet
           .getByRole("button", { name: palette, exact: true })
           .click();
         const surfaces = await pane.evaluate((el) => {
-          const index = el.querySelector(".res__index-header")!;
+          const index = el.querySelector(".ctx__header")!;
           const detail = el.querySelector(".file-detail-header")!;
           const probe = document.createElement("span");
           probe.style.backgroundColor = "var(--bg-surface)";
@@ -372,7 +381,7 @@ test("file path toolbars distinguish the reader from browser chrome across palet
       if (width > 900) await expect(header).toHaveCSS("height", "34px");
       else {
         await expect(
-          pane.getByRole("button", { name: "Back to Files", exact: true }),
+          pane.getByRole("tab", { name: "Files", exact: true }),
         ).toBeVisible();
         expect((await header.boundingBox())!.height).toBeGreaterThanOrEqual(44);
       }
@@ -398,14 +407,11 @@ test("Markdown and notebook prose follow reading size without scaling resource c
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   const pane = page.locator(".ctx");
   const chromeSize = await pane
-    .getByRole("button", { name: "Files", exact: true })
+    .getByRole("tab", { name: "Files", exact: true })
     .evaluate((el) => getComputedStyle(el).fontSize);
   try {
     for (const file of ["document.md", "notebook.ipynb"]) {
-      const back = pane.getByRole("button", {
-        name: /Back to file browser for/,
-      });
-      if (await back.isVisible()) await back.click();
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
       await pane
         .getByRole("searchbox", { name: "Search workspace files" })
         .fill(file);
@@ -445,7 +451,7 @@ test("Markdown and notebook prose follow reading size without scaling resource c
         await settings.press("Escape");
         await expect(paragraph).toHaveCSS("font-size", size!);
         await expect(
-          pane.getByRole("button", { name: "Files", exact: true }),
+          pane.getByRole("tab", { name: "Files", exact: true }),
         ).toHaveCSS("font-size", chromeSize);
       }
       await page.setViewportSize({ width: 390, height: 844 });

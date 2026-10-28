@@ -105,7 +105,7 @@ for (const viewport of [
     await page.keyboard.press("Escape");
 
     await page.getByRole("button", { name: "Toggle resources panel" }).click();
-    await page.getByRole("button", { name: "Terminal", exact: true }).click();
+    await page.getByRole("tab", { name: "Terminal", exact: true }).click();
     const terminalState = page.locator(".terminal-empty");
     await expect(terminalState).toContainText("No project selected");
     await expect(terminalState.locator("strong")).toHaveCSS(
@@ -153,7 +153,7 @@ for (const viewport of [
       await page
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
-      await page.getByRole("button", { name: "Terminal", exact: true }).click();
+      await page.getByRole("tab", { name: "Terminal", exact: true }).click();
       await expect(terminalState).toContainText("Loading terminals");
       release();
       await expect(terminalState).toContainText("Project terminal");

@@ -146,7 +146,9 @@ proofing is disabled for technical input.
 ## Attachments and image inspection
 
 Images accept paste, drop and file selection. Staged images are separate thumbnail tiles with overlay
-removal, not metadata chips. Ordinary file chips emphasize the filename, upload/error state and
+removal, not metadata chips. Attachment and project-reference rows share the editor text and model
+label's visual left inset on desktop and narrow layouts, without moving the trailing Send control.
+Ordinary file chips emphasize the filename, upload/error state and
 removal. Coarse-pointer removal actions have a 32px target without enlarging the text chip's padding. Full filenames, MIME/size or recalled-file provenance stay in native tooltips rather than
 repeating inline; errors retain their diagnostic and removal guidance. Filenames truncate without
 squeezing status/removal controls, and file chips do not stretch to adjacent image-tile height. Clipboard

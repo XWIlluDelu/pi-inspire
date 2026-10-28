@@ -12,6 +12,7 @@ import {
   MAX_MEDIA_PREVIEW_BYTES,
   NOTEBOOK_PREVIEW_BYTES,
   type ResourcePreview,
+  type ResourceFileTab,
   TEXT_PREVIEW_BYTES,
   unknownResourceAvailability,
 } from "../resource-preview";
@@ -29,6 +30,7 @@ interface ResourceControllerState {
   selectedResourceReference: string | null;
   selectedResourceWorkspacePath: string | null;
   resourcePreview: ResourcePreview | null;
+  resourceTabs: ResourceFileTab[];
   resourceAvailability: Record<string, ResourceProbeResult>;
   resourceWorkspacePaths: Record<string, string>;
 }
@@ -43,6 +45,7 @@ interface ResourceControllerPatch {
   selectedResourceReference?: string | null;
   selectedResourceWorkspacePath?: string | null;
   resourcePreview?: ResourcePreview | null;
+  resourceTabs?: ResourceFileTab[];
   resourceAvailability?: Record<string, ResourceProbeResult>;
   resourceWorkspacePaths?: Record<string, string>;
 }
@@ -139,6 +142,7 @@ export class ResourceController {
   invalidateForTransportReplacement(): void {
     this.cancelProbes(true);
     this.clearSelection();
+    this.host.patch({ resourceTabs: [] });
   }
 
   private ownsTransport(api: Api, generation: number): boolean {
@@ -678,6 +682,23 @@ export class ResourceController {
       fileBrowserView: "preview",
       selectedResourceReference: reference,
       selectedResourceWorkspacePath: knownWorkspacePath ?? null,
+      ...(contextMode === "files"
+        ? {
+            resourceTabs: this.host
+              .state()
+              .resourceTabs.some((tab) => tab.reference === reference)
+              ? this.host.state().resourceTabs
+              : [
+                  ...this.host.state().resourceTabs,
+                  {
+                    reference,
+                    ...(knownWorkspacePath
+                      ? { workspacePath: knownWorkspacePath }
+                      : {}),
+                  },
+                ],
+          }
+        : {}),
       resourcePreview: retained
         ? { ...retained, refreshing: true, refreshError: undefined }
         : { status: "loading", reference },
@@ -728,6 +749,17 @@ export class ResourceController {
       // — not textual equality — binds this response to the request.
       if (descriptor.sessionId !== sessionId || descriptor.viewId !== viewId) {
         throw new Error("The Host returned a resource for another selection");
+      }
+      if (contextMode === "files" && descriptor.workspacePath) {
+        this.host.patch({
+          resourceTabs: this.host
+            .state()
+            .resourceTabs.map((tab) =>
+              tab.reference === reference
+                ? { ...tab, workspacePath: descriptor.workspacePath }
+                : tab,
+            ),
+        });
       }
       // Resolution confirms or corrects preflight standing. Advance first so
       // an older probe cannot overwrite this result when it arrives later.

@@ -523,7 +523,7 @@ test.describe("touch reading controls", () => {
       .toBe(false);
     await page.getByRole("button", { name: "Insert code in terminal" }).tap();
     await expect(
-      page.getByRole("button", { name: "Terminal", exact: true }),
-    ).toHaveAttribute("aria-pressed", "true");
+      page.getByRole("tab", { name: "Terminal", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
   });
 });

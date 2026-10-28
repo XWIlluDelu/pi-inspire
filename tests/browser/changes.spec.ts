@@ -28,7 +28,7 @@ for (const touch of [false, true]) {
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
       const pane = page.locator(".ctx");
-      await pane.getByRole("button", { name: "Files", exact: true }).click();
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
       await pane
         .locator(".files-browser__section")
         .filter({ hasText: "Recent" })
@@ -63,14 +63,17 @@ for (const touch of [false, true]) {
         await page.setViewportSize({ width, height });
         let filesHeaderTop = 0;
         for (const mode of ["Files", "Changes"]) {
-          await pane.getByRole("button", { name: mode, exact: true }).click();
+          await pane
+            .getByRole("tab", {
+              name: mode === "Files" ? "page.html" : mode,
+              exact: true,
+            })
+            .click();
           const header = pane.locator(".file-detail-header");
           await expect(header).toBeVisible();
           const headerTop = (await header.boundingBox())!.y;
           if (mode === "Files") filesHeaderTop = headerTop;
-          else if (width > 900)
-            expect(headerTop).toBeCloseTo(filesHeaderTop, 1);
-          else {
+          else if (width <= 900) {
             const navigation = pane.locator(".changes__navigation");
             await expect(navigation).toBeVisible();
             const box = (await navigation.boundingBox())!;
@@ -81,24 +84,14 @@ for (const touch of [false, true]) {
           }
           const controls =
             mode === "Files"
-              ? width > 900
-                ? [
-                    pane.getByRole("button", {
-                      name: /Back to file browser for/,
-                    }),
-                    pane.getByRole("button", {
-                      name: "Show hidden files",
-                      exact: true,
-                    }),
-                    pane.locator(".file-path-action"),
-                  ]
-                : [
-                    pane.getByRole("button", {
-                      name: "Back to Files",
-                      exact: true,
-                    }),
-                    pane.locator(".file-path-action"),
-                  ]
+              ? [
+                  pane.getByRole("tab", { name: "page.html", exact: true }),
+                  pane.getByRole("button", {
+                    name: "Close page.html",
+                    exact: true,
+                  }),
+                  pane.locator(".file-path-action"),
+                ]
               : [
                   ...(width <= 900
                     ? [pane.getByRole("button", { name: /^All changes/ })]
@@ -131,10 +124,7 @@ for (const touch of [false, true]) {
           }
         }
       }
-      await pane.getByRole("button", { name: "Files", exact: true }).click();
-      await pane
-        .getByRole("button", { name: "Back to Files", exact: true })
-        .click();
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
       await expect(pane.locator(".files-browser")).toBeVisible();
       await expect(pane.locator(".file-detail-header")).toHaveCount(0);
     });
@@ -162,7 +152,7 @@ for (const touch of [false, true]) {
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
       const pane = page.locator(".ctx");
-      await pane.getByRole("button", { name: "Changes", exact: true }).click();
+      await pane.getByRole("tab", { name: "Changes", exact: true }).click();
       await pane
         .getByRole("button", { name: /page\.html, unstaged modified/ })
         .click();
@@ -233,7 +223,7 @@ test("long diff line numbers keep separate aligned columns and sticky gutters", 
   });
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   const pane = page.locator(".ctx");
-  await pane.getByRole("button", { name: "Changes", exact: true }).click();
+  await pane.getByRole("tab", { name: "Changes", exact: true }).click();
   await pane
     .getByRole("button", { name: /page\.html, unstaged modified/ })
     .click();
@@ -288,7 +278,7 @@ test("change navigation preserves addition and deletion colors", async ({
   await openMockSession(page, /Resource virtualization and sandbox fixture/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   const pane = page.locator(".ctx");
-  await pane.getByRole("button", { name: "Changes", exact: true }).click();
+  await pane.getByRole("tab", { name: "Changes", exact: true }).click();
   await pane
     .getByRole("button", { name: /page\.html, unstaged modified/ })
     .click();
@@ -376,7 +366,7 @@ for (const touch of [false, true]) {
       if ((await toggle.getAttribute("aria-expanded")) === "false")
         await toggle.click();
       const pane = page.locator(".ctx");
-      await pane.getByRole("button", { name: "Files", exact: true }).click();
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
       const tree = pane.getByRole("region", { name: "Workspace file tree" });
       const file = tree.getByTitle("README.md", { exact: true });
       const folder = tree.getByTitle("src", { exact: true });
@@ -387,7 +377,7 @@ for (const touch of [false, true]) {
           .evaluate((node) => node.getBoundingClientRect().x);
       expect(await nameX(file)).toBe(await nameX(folder));
 
-      await pane.getByRole("button", { name: "Changes", exact: true }).click();
+      await pane.getByRole("tab", { name: "Changes", exact: true }).click();
       await pane
         .getByRole("button", { name: /page\.html, unstaged modified/ })
         .click();
@@ -438,8 +428,8 @@ for (const touch of [false, true]) {
       await refreshed;
       await expect.poll(position).toEqual(saved);
       expect(diffReads).toBe(readsBeforeExplicit + 1);
-      await pane.getByRole("button", { name: "Files", exact: true }).click();
-      await pane.getByRole("button", { name: "Changes", exact: true }).click();
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
+      await pane.getByRole("tab", { name: "Changes", exact: true }).click();
       await expect.poll(position).toEqual(saved);
       await pane
         .getByRole("button", { name: "Next change", exact: true })
@@ -490,7 +480,7 @@ for (const touch of [false, true]) {
   });
 }
 
-test("Files and Changes share the index boundary and preserve the selected file reader", async ({
+test("Files browser and Changes retain independent content while file tabs reopen their reader", async ({
   page,
 }) => {
   await pairedPage(page);
@@ -503,15 +493,13 @@ test("Files and Changes share the index boundary and preserve the selected file 
     .getByRole("button", { name: /page\.html/ })
     .click();
   const frame = page.frameLocator("iframe[title='Preview page.html']");
-  const workspaceIndex = resources.locator(".res__index");
-  const workspaceIndexHeight = () =>
-    workspaceIndex.evaluate(
-      (element) => element.getBoundingClientRect().height,
-    );
-  const stableIndexHeight = await workspaceIndexHeight();
-  expect(stableIndexHeight).toBeGreaterThan(200);
+  await expect(
+    resources.getByRole("tab", { name: "page.html", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(resources.locator(".res__index")).toHaveCount(0);
+  await expect(resources.locator(".files-browser")).toHaveCount(0);
 
-  await resources.getByRole("button", { name: "Changes", exact: true }).click();
+  await resources.getByRole("tab", { name: "Changes", exact: true }).click();
   await expect(resources.locator(".res__index-title")).toHaveText(
     "mock/analysis",
   );
@@ -535,15 +523,17 @@ test("Files and Changes share the index boundary and preserve the selected file 
   ).toBeVisible();
   await resources.getByRole("button", { name: "Next change" }).click();
   await expect(resources.locator(".source-diff__line--active")).toHaveCount(2);
-  expect(await workspaceIndexHeight()).toBeCloseTo(stableIndexHeight, 1);
-  await resources.getByRole("button", { name: "Files", exact: true }).click();
+  await resources.getByRole("tab", { name: "Files", exact: true }).click();
+  await expect(resources.locator(".files-browser")).toBeVisible();
+  await expect(resources.locator(".res__index")).toHaveCount(0);
+  await resources.getByRole("tab", { name: "page.html", exact: true }).click();
   await expect(frame.locator("h1")).toHaveText(
     "Quiet systems, legible signals.",
   );
 });
 
 for (const hasTouch of [false, true]) {
-  test(`resource index headers retain their shared contour and action alignment · ${hasTouch ? "touch" : "mouse"}`, async ({
+  test(`Files and Changes retain their own navigation and reachable actions · ${hasTouch ? "touch" : "mouse"}`, async ({
     browser,
     baseURL,
   }) => {
@@ -577,24 +567,6 @@ for (const hasTouch of [false, true]) {
         hasTouch ? "dark" : "light",
       );
       const header = pane.locator(".res__index > .res__index-header");
-      const geometry = () =>
-        pane.evaluate((element) => {
-          const rect = (selector: string) => {
-            const value = element
-              .querySelector(selector)!
-              .getBoundingClientRect();
-            return {
-              top: value.top,
-              bottom: value.bottom,
-              height: value.height,
-            };
-          };
-          return {
-            header: rect(".res__index > .res__index-header"),
-            index: rect(".res__index"),
-            detail: rect(".file-detail-header"),
-          };
-        });
       for (const viewport of [
         { width: 1280, height: 900 },
         { width: 901, height: 700 },
@@ -606,17 +578,18 @@ for (const hasTouch of [false, true]) {
         await expect(pane).toHaveRole(
           viewport.width <= 900 ? "dialog" : "complementary",
         );
+        await pane.getByRole("tab", { name: "page.html", exact: true }).click();
+        await expect(pane.locator(".res__index")).toHaveCount(0);
+        await expect(pane.locator(".files-browser")).toHaveCount(0);
+        const filesDetail = (await pane
+          .locator(".file-detail-header")
+          .boundingBox())!;
+        const content = (await pane
+          .getByRole("tabpanel", { name: "File", exact: true })
+          .boundingBox())!;
+        expect(filesDetail.y).toBeCloseTo(content.y, 1);
+        await pane.getByRole("tab", { name: "Changes", exact: true }).click();
         if (viewport.width <= 900) {
-          await expect(pane.locator(".res__index")).toBeHidden();
-          const filesDetail = (await pane
-            .locator(".file-detail-header")
-            .boundingBox())!;
-          await expect(
-            pane.getByRole("button", { name: "Back to Files", exact: true }),
-          ).toBeVisible();
-          await pane
-            .getByRole("button", { name: "Changes", exact: true })
-            .click();
           await expect(pane.locator(".res__index")).toBeHidden();
           const navigation = pane.locator(".changes__navigation");
           await expect(navigation).toBeVisible();
@@ -637,57 +610,30 @@ for (const hasTouch of [false, true]) {
           expect(await back.evaluate(focusRingClipping)).toBeLessThanOrEqual(
             0.5,
           );
-          await pane
-            .getByRole("button", { name: "Files", exact: true })
-            .click();
-          continue;
+        } else {
+          await expect(header).toHaveCSS("border-bottom-width", "1px");
+          await expect(header).toHaveCSS("border-bottom-style", "solid");
+          expect((await header.boundingBox())!.height).toBe(30);
+          const index = (await pane.locator(".res__index").boundingBox())!;
+          const detail = (await pane
+            .locator(".file-detail-header")
+            .boundingBox())!;
+          expect(index.height).toBeGreaterThan(200);
+          expect(detail.y).toBeGreaterThanOrEqual(index.y + index.height);
         }
-        await expect(header).toHaveCSS("border-bottom-width", "1px");
-        await expect(header).toHaveCSS("border-bottom-style", "solid");
-        const files = await geometry();
-        expect(files.header.height).toBe(30);
-        const actions = await header.evaluate((element) => {
-          const center = (selector: string) => {
-            const rect = element
-              .querySelector(selector)!
-              .getBoundingClientRect();
-            return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-          };
-          return {
-            back: center(".res__index-header--back > svg"),
-            visibility: center(".icon-button > svg"),
-          };
-        });
-        expect(
-          Math.abs(actions.back.y - actions.visibility.y),
-        ).toBeLessThanOrEqual(0.5);
+        await pane.getByRole("tab", { name: "Files", exact: true }).click();
+        await expect(pane.locator(".files-browser")).toBeVisible();
+        await expect(pane.locator(".file-detail-header")).toHaveCount(0);
         const visibility = pane.getByRole("button", {
           name: "Show hidden files",
           exact: true,
         });
-        const back = pane.getByRole("button", {
-          name: /Back to file browser for/,
-        });
         await page.keyboard.press("Tab");
-        await back.focus();
-        await expect(back).toBeFocused();
-        await expect(back).toHaveCSS("outline-offset", "-2px");
         await visibility.focus();
-        await expect(visibility).toHaveCSS("outline-offset", "-2px");
-        await pane
-          .getByRole("button", { name: "Changes", exact: true })
-          .click();
-        await expect(header).toHaveCSS("border-bottom-width", "1px");
-        const changes = await geometry();
-        for (const area of ["header", "index", "detail"] as const) {
-          for (const edge of ["top", "bottom", "height"] as const) {
-            expect(
-              Math.abs(changes[area][edge] - files[area][edge]),
-              `${area} ${edge} at ${viewport.width}`,
-            ).toBeLessThanOrEqual(0.5);
-          }
-        }
-        await pane.getByRole("button", { name: "Files", exact: true }).click();
+        await expect(visibility).toBeFocused();
+        expect(
+          await visibility.evaluate(focusRingClipping),
+        ).toBeLessThanOrEqual(0.5);
       }
       await page.setViewportSize({ width: 1280, height: 900 });
       await pane
@@ -696,9 +642,6 @@ for (const hasTouch of [false, true]) {
       await expect(
         pane.getByRole("button", { name: "Show hidden files", exact: true }),
       ).toHaveAttribute("aria-pressed", "true");
-      await pane
-        .getByRole("button", { name: /Back to file browser for/ })
-        .click();
       await expect(pane.locator(".files-browser")).toBeVisible();
     } finally {
       await context.close();

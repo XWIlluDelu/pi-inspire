@@ -103,6 +103,7 @@ describe("authorized Unicode resource previews", () => {
         selectedResourceReference: null,
         selectedResourceWorkspacePath: null,
         resourcePreview: null,
+        resourceTabs: [],
         resourceAvailability: {},
         resourceWorkspacePaths: {},
       };

@@ -763,11 +763,11 @@ describe("Files pane", () => {
       await within(pane).findByRole("button", { name: "long.ts" }),
     );
     expect(pane.querySelector(".files-browser")).toBeNull();
-    expect(
-      within(pane).getByRole("button", {
-        name: "Back to file browser for proj",
-      }),
-    ).toHaveTextContent("proj");
+    expect(within(pane).getByRole("tab", { name: "long.ts" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(pane.querySelector(".res__index")).toBeNull();
 
     expect(
       await within(pane).findByRole("region", { name: "File source" }),
@@ -788,9 +788,7 @@ describe("Files pane", () => {
     );
     expect(writeText).toHaveBeenCalledWith("src/long.ts");
 
-    fireEvent.click(
-      pane.querySelector<HTMLButtonElement>(".res__index-header--back")!,
-    );
+    fireEvent.click(within(pane).getByRole("tab", { name: "Files" }));
     const restoredScroller = pane.querySelector<HTMLElement>(
       ".files-browser__scroll",
     )!;
@@ -824,49 +822,61 @@ describe("Files pane", () => {
     ).toBeInTheDocument();
   });
 
-  it("reveals an opened workspace file once without chasing later tree updates", async () => {
-    const originalScrollIntoView = Element.prototype.scrollIntoView;
-    const scrollIntoView = vi.fn();
-    Element.prototype.scrollIntoView = scrollIntoView;
-    try {
-      render(<App />);
-      fireEvent.click(
-        await screen.findByRole("button", { name: "Toggle resources panel" }),
-      );
-      const pane = await screen.findByRole("complementary", {
-        name: "Context panel",
-      });
-      fireEvent.click(await within(pane).findByRole("button", { name: "src" }));
-      fireEvent.click(
-        await within(pane).findByRole("button", { name: "long.ts" }),
-      );
-      await within(pane).findByRole("region", { name: "File source" });
-      expect(resourceResolveBodies.at(-1)).toMatchObject({
-        reference: "src/long.ts",
-        workspacePath: "src/long.ts",
-      });
-      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
-
-      const resolvesBeforeRefresh = resourceResolveBodies.length;
-      fireEvent.click(
-        within(pane).getByRole("button", { name: "Refresh context pane" }),
-      );
-      await waitFor(() =>
-        expect(resourceResolveBodies.length).toBeGreaterThan(
-          resolvesBeforeRefresh,
-        ),
-      );
-      expect(resourceResolveBodies.at(-1)).toMatchObject({
-        reference: "src/long.ts",
-        workspacePath: "src/long.ts",
-      });
-
-      fireEvent.click(within(pane).getByRole("button", { name: "src" }));
-      fireEvent.click(within(pane).getByRole("button", { name: "src" }));
-      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
-    } finally {
-      Element.prototype.scrollIntoView = originalScrollIntoView;
-    }
+  it("keeps independent file positions through tab and tool switches, and closes only the chosen tab", async () => {
+    render(<App />);
+    await act(async () => {
+      await store.openWorkspaceFile("src/long.ts");
+    });
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    const first = await within(pane).findByRole("region", {
+      name: "File source",
+    });
+    fireEvent.scroll(first, { target: { scrollTop: 137, scrollLeft: 48 } });
+    await act(async () => {
+      await store.openWorkspaceFile("src/main.ts");
+    });
+    const second = await within(pane).findByRole("region", {
+      name: "File source",
+    });
+    expect(second.scrollTop).toBe(0);
+    fireEvent.scroll(second, { target: { scrollTop: 52, scrollLeft: 12 } });
+    fireEvent.click(within(pane).getByRole("tab", { name: "Files" }));
+    expect(
+      within(pane).getByRole("searchbox", { name: "Search workspace files" }),
+    ).toBeVisible();
+    fireEvent.click(within(pane).getByRole("tab", { name: "long.ts" }));
+    await waitFor(() =>
+      expect(
+        within(pane).getByRole("region", { name: "File source" }).scrollTop,
+      ).toBe(137),
+    );
+    expect(
+      within(pane).getByRole("region", { name: "File source" }).scrollLeft,
+    ).toBe(48);
+    fireEvent.click(within(pane).getByRole("tab", { name: "Changes" }));
+    fireEvent.click(within(pane).getByRole("tab", { name: "main.ts" }));
+    await waitFor(() =>
+      expect(
+        within(pane).getByRole("region", { name: "File source" }).scrollTop,
+      ).toBe(52),
+    );
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Close long.ts" }),
+    );
+    expect(within(pane).queryByRole("tab", { name: "long.ts" })).toBeNull();
+    expect(within(pane).getByRole("tab", { name: "main.ts" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Close main.ts" }),
+    );
+    expect(within(pane).getByRole("tab", { name: "Files" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   it("keeps a changed-file selection when returning to Browse", async () => {
@@ -880,11 +890,9 @@ describe("Files pane", () => {
       expect(store.getState().selectedGitPathId).toBe("notes"),
     );
 
-    fireEvent.click(
-      pane.querySelector<HTMLButtonElement>(".res__index-header--back")!,
-    );
+    fireEvent.click(within(pane).getByRole("tab", { name: "Files" }));
     expect(store.getState().selectedGitPathId).toBe("notes");
-    fireEvent.click(within(pane).getByRole("button", { name: "Changes" }));
+    fireEvent.click(within(pane).getByRole("tab", { name: "Changes" }));
     expect(
       await within(pane).findByRole("button", {
         name: "notes.md, unstaged modified",

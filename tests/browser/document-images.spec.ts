@@ -2,8 +2,7 @@ import { expect, type Locator, test } from "@playwright/test";
 import { openMockSession, pairedPage } from "./support/navigation";
 
 async function openFile(resources: Locator, name: string) {
-  const back = resources.getByRole("button", { name: "Back to file browser" });
-  if (await back.isVisible()) await back.click();
+  await resources.getByRole("tab", { name: "Files", exact: true }).click();
   await resources
     .getByRole("searchbox", { name: "Search workspace files" })
     .fill(`file-previews/${name}`);

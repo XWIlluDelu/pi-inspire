@@ -426,7 +426,7 @@
 }
 
 .composer {
-  /* Align writing and delivery with the model label, inside its trigger border. */
+  /* Align writing, attachments and delivery with the model label inside its trigger border. */
   --composer-content-inset: calc(var(--space-2) + 1px);
   position: relative;
   max-width: var(--composer-max);
@@ -1041,7 +1041,7 @@
 .composer__attachments {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 var(--composer-content-inset, 0px);
   display: flex;
   align-items: flex-start;
   flex-wrap: wrap;

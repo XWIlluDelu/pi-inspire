@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { selectedWorkspacePath } from "../../src/components/WorkspaceBrowser";
 import {
   activeSnapshot,
+  deferred,
   installFakeWebSocket,
   installFetch,
   jsonBody,
@@ -80,6 +81,54 @@ describe("selected file preview lifecycle", () => {
     expect(URL.revokeObjectURL).not.toHaveBeenCalled();
   });
 
+  it.each([false, true])(
+    "does not revive a closed loading tab after its late response (another file open: %s)",
+    async (anotherFileOpen) => {
+      const pending = deferred<void>();
+      installFetch(async (url, init) => {
+        if (url.startsWith("/api/resources/resolve")) {
+          const { reference } = jsonBody(init);
+          if (reference === "pending.txt") await pending.promise;
+          return {
+            body: {
+              id: reference,
+              sessionId: "s1",
+              viewId: "view-s1",
+              reference,
+              name: reference,
+              mimeType: "text/plain",
+              size: 5,
+              kind: "text",
+            },
+          };
+        }
+        if (url.includes("/content")) return { body: "Notes" };
+        return baseRoutes(url, init);
+      });
+      const { store } = await initStore();
+      const reading = store.openResource("pending.txt");
+      expect(store.getState().resourceTabs).toEqual([
+        { reference: "pending.txt" },
+      ]);
+      if (anotherFileOpen) await store.openResource("current.txt");
+      store.closeResourceTab("pending.txt");
+      pending.resolve();
+      await reading;
+      expect(store.getState().resourceTabs).toEqual(
+        anotherFileOpen ? [{ reference: "current.txt" }] : [],
+      );
+      expect(store.getState().selectedResourceReference).toBe(
+        anotherFileOpen ? "current.txt" : null,
+      );
+      expect(store.getState().fileBrowserView).toBe(
+        anotherFileOpen ? "preview" : "browse",
+      );
+      expect(store.getState().resourcePreview?.reference ?? null).toBe(
+        anotherFileOpen ? "current.txt" : null,
+      );
+    },
+  );
+
   it.each([
     {
       label: "compaction view",
@@ -131,6 +180,9 @@ describe("selected file preview lifecycle", () => {
       expect(store.getState().resourcePreview).toMatchObject({
         descriptor: { id: "chart-2", viewId },
       });
+      expect(store.getState().resourceTabs).toEqual([
+        { reference: "chart.png", workspacePath: "plots/chart.png" },
+      ]);
     },
   );
 
@@ -165,6 +217,17 @@ describe("selected file preview lifecycle", () => {
     expect(requests).toHaveLength(1);
   });
 
+  it("keeps Files selected when closing its last viewed background tab", async () => {
+    const { store } = await openImage();
+    await store.openResource("other.png");
+    store.showFileBrowser();
+    store.closeResourceTab("other.png");
+    expect(store.getState().resourceTabs).toEqual([
+      { reference: "chart.png", workspacePath: "plots/chart.png" },
+    ]);
+    expect(store.getState().fileBrowserView).toBe("browse");
+  });
+
   it("retires the selected file when the workspace changes", async () => {
     const { store, socket, requests } = await openImage();
     socket.emit({
@@ -176,6 +239,7 @@ describe("selected file preview lifecycle", () => {
     });
     expect(store.getState().fileBrowserView).toBe("browse");
     expect(store.getState().resourcePreview).toBeNull();
+    expect(store.getState().resourceTabs).toEqual([]);
     expect(requests).toHaveLength(1);
   });
 });

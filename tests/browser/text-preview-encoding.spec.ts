@@ -37,6 +37,10 @@ test("BOM text previews decode Unicode and download original bytes", {
     await openMockSession(page, /Resource virtualization and sandbox fixture/);
     await page.getByRole("button", { name: "Toggle resources panel" }).click();
     const pane = page.locator(".ctx");
+    // These fixtures were added after another test may have scanned the workspace.
+    const refresh = pane.getByRole("button", { name: "Refresh context pane" });
+    await refresh.click();
+    await expect(refresh).toHaveAttribute("aria-busy", "false");
     for (const fixture of fixtures) {
       const search = pane.getByRole("searchbox", {
         name: "Search workspace files",
@@ -56,9 +60,7 @@ test("BOM text previews decode Unicode and download original bytes", {
       const chunks: Buffer[] = [];
       for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
       expect(Buffer.concat(chunks)).toEqual(fixture.bytes);
-      await pane
-        .getByRole("button", { name: /^Back to file browser for / })
-        .click();
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
     }
   } finally {
     await Promise.all(

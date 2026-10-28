@@ -126,9 +126,9 @@ for (const name of ["Settings", "Terminal settings"]) {
       await expect(dialog).toHaveCount(0);
       const drawer = page.getByRole("dialog", { name: "Context panel" });
       await expect(drawer).toBeVisible();
-      await drawer.getByRole("button", { name: "Files", exact: true }).focus();
+      await drawer.getByRole("tab", { name: "Files", exact: true }).focus();
       await expect(
-        drawer.getByRole("button", { name: "Files", exact: true }),
+        drawer.getByRole("tab", { name: "Files", exact: true }),
       ).toBeFocused();
       await page.keyboard.press("Escape");
       await expect(drawer).toHaveCount(0);

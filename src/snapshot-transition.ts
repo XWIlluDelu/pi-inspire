@@ -152,6 +152,12 @@ function renewedResourceInspection(
 ): Partial<AppState> {
   const empty = emptyResourceInspectionState();
   const reference = previous.selectedResourceReference;
+  const resourceTabs =
+    previous.cwd === transition.cwd
+      ? previous.resourceTabs.filter(
+          (tab) => !tab.reference.startsWith("pi-embedded://"),
+        )
+      : [];
   if (
     !previous.resourcesOpen ||
     previous.contextMode !== "files" ||
@@ -160,9 +166,10 @@ function renewedResourceInspection(
     !reference ||
     reference.startsWith("pi-embedded://")
   )
-    return empty;
+    return { ...empty, resourceTabs };
   return {
     ...empty,
+    resourceTabs,
     fileBrowserView: "preview",
     selectedResourceReference: reference,
     selectedResourceWorkspacePath:

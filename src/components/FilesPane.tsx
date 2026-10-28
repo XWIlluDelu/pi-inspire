@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import {
   type MutableRefObject,
   memo,
@@ -14,9 +14,8 @@ import { fileIconForPath } from "../file-icons";
 import { gitDecorationForChange, presentGitFacet } from "../git-presentation";
 import type { ResourceRow } from "../resources";
 import { gitChangeForWorkspacePath, store } from "../store";
-import { ContextSplitBody } from "./ContextSplitBody";
 import type { ContextPaneView } from "./context-pane-view";
-import { FilePreview } from "./FilePreview";
+import { FilePreview, type FileReadingState } from "./FilePreview";
 import { PiLoader } from "./PiLoader";
 import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
 import {
@@ -223,37 +222,21 @@ function FileBrowser({
   );
 }
 
-function WorkspaceIndexHeader({ state }: { state: ContextPaneView }) {
-  const projectLabel = workspaceLabel(state.cwd);
-  return (
-    <div className="file-search-controls res__index-header">
-      <button
-        type="button"
-        className="res__index-header--back"
-        aria-label={`Back to file browser for ${projectLabel}`}
-        title={state.cwd ?? projectLabel}
-        onClick={() => store.showFileBrowser()}
-      >
-        <ArrowLeft size={14} aria-hidden />
-        <span className="res__index-title">{projectLabel}</span>
-      </button>
-      <WorkspaceVisibilityToggle />
-    </div>
-  );
-}
-
 export function FilesPane({
   state,
   rows,
   loading,
   error,
+  browseScrollTop,
+  readingState,
 }: {
   state: ContextPaneView;
   rows: ResourceRow[];
   loading: boolean;
   error: string | null;
+  browseScrollTop: MutableRefObject<number>;
+  readingState?: FileReadingState;
 }) {
-  const browseScrollTop = useRef(0);
   if (state.fileBrowserView === "browse")
     return (
       <div className="res__body res__body--files">
@@ -267,11 +250,12 @@ export function FilesPane({
       </div>
     );
   return (
-    <ContextSplitBody
-      mode="files"
-      header={<WorkspaceIndexHeader state={state} />}
-      index={<WorkspaceTree revealRequests />}
-      detail={<FilePreview state={state} />}
-    />
+    <div className="res__body res__body--files res__body--file-tab">
+      <FilePreview
+        key={state.selectedResourceReference}
+        state={state}
+        readingState={readingState}
+      />
+    </div>
   );
 }

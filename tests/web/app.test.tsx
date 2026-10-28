@@ -360,6 +360,51 @@ describe("welcome flow", () => {
     }
   });
 
+  it("closes a narrow file tab in one Back without a nested Files stop", async () => {
+    const media = vi
+      .spyOn(window, "matchMedia")
+      .mockImplementation((query) => ({
+        matches: query === "(max-width: 900px)",
+        media: query,
+        onchange: null,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        dispatchEvent: () => false,
+      }));
+    try {
+      await store.openSession("s1");
+      store.setResourcesOpen(false);
+      history.replaceState({ fileBaseline: true }, "");
+      render(<App />);
+      await act(async () => {
+        await store.openWorkspaceFile("README.md");
+      });
+      const file = await screen.findByRole("tab", { name: "README.md" });
+      expect(file).toHaveAttribute("aria-selected", "true");
+      expect(history.state.__inspireWorkbench.depth).toBe(1);
+
+      fireEvent.click(screen.getByRole("tab", { name: "Files" }));
+      expect(store.getState().fileBrowserView).toBe("browse");
+      expect(history.state.__inspireWorkbench.depth).toBe(1);
+      fireEvent.click(file);
+      await waitFor(() =>
+        expect(file).toHaveAttribute("aria-selected", "true"),
+      );
+      expect(history.state.__inspireWorkbench.depth).toBe(1);
+
+      act(() => history.back());
+      await waitFor(() => expect(store.getState().resourcesOpen).toBe(false));
+      expect(
+        screen.queryByRole("dialog", { name: "Context panel" }),
+      ).not.toBeInTheDocument();
+      expect(history.state).toEqual({ fileBaseline: true });
+    } finally {
+      media.mockRestore();
+    }
+  });
+
   it("backs out of a narrow Changes detail before closing its drawer", async () => {
     const media = vi
       .spyOn(window, "matchMedia")
@@ -454,7 +499,7 @@ describe("welcome flow", () => {
       });
       if (resources.getAttribute("aria-expanded") === "false")
         fireEvent.click(resources);
-      fireEvent.click(await screen.findByRole("button", { name: "Files" }));
+      fireEvent.click(await screen.findByRole("tab", { name: "Files" }));
       const search = await screen.findByRole("searchbox", {
         name: "Search workspace files",
       });
@@ -721,8 +766,8 @@ describe("welcome flow", () => {
       name: "Context panel",
     });
     expect(
-      await within(pane).findByRole("button", { name: "Changes" }),
-    ).toHaveAttribute("aria-pressed", "true");
+      await within(pane).findByRole("tab", { name: "Changes" }),
+    ).toHaveAttribute("aria-selected", "true");
   });
 
   it("picks a project directory by browsing the host filesystem", async () => {

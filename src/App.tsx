@@ -611,10 +611,6 @@ export function App() {
     ...(state.resourcesOpen
       ? [
           "context",
-          ...(state.contextMode === "files" &&
-          state.fileBrowserView === "preview"
-            ? ["file"]
-            : []),
           ...(state.contextMode === "changes" &&
           (state.selectedGitPathId || state.selectedResourceReference)
             ? ["change"]
@@ -640,8 +636,6 @@ export function App() {
       if (!remaining.includes("settings")) setSettingsOpen(false);
       if (!remaining.includes("navigation")) setMobileNavOpen(false);
       if (!remaining.includes("context")) store.setResourcesOpen(false);
-      else if (!remaining.includes("file") && state.contextMode === "files")
-        store.showFileBrowser();
       else if (!remaining.includes("change") && state.contextMode === "changes")
         store.showChangesBrowser();
     },
@@ -1073,7 +1067,7 @@ export function App() {
               paneSelector=".ctx"
               edge="start"
               min={320}
-              max={() => 920}
+              max={(viewportWidth) => viewportWidth}
               label="Resize files panel"
               variant="ctx"
               layoutKey={String(navCollapsed)}

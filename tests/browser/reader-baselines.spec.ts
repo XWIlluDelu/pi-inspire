@@ -180,7 +180,7 @@ for (const mode of ["notebook", "changes"] as const) {
         pane.locator(".notebook-preview__cell--code pre").first(),
       ).toBeVisible();
     } else {
-      await pane.getByRole("button", { name: "Changes", exact: true }).click();
+      await pane.getByRole("tab", { name: "Changes", exact: true }).click();
       await pane
         .getByRole("button", { name: /page\.html, unstaged modified/ })
         .click();

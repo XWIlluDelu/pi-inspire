@@ -72,6 +72,7 @@ import { TerminalView } from "./TerminalView";
 
 interface TerminalPaneProps {
   cwd: string | null;
+  active?: boolean;
   reloadKey?: number;
   onOpenFile?(reference: string): void;
   onSendToComposer?(text: string): void;
@@ -128,6 +129,7 @@ function notificationTerminalLabel(terminal: TerminalDescriptor): string {
 
 export const TerminalPane = memo(function TerminalPane({
   cwd: sessionCwd,
+  active = true,
   reloadKey = 0,
   onOpenFile,
   onSendToComposer,
@@ -218,7 +220,7 @@ export const TerminalPane = memo(function TerminalPane({
   const activeTabId = activeTerminal?.id;
 
   useLayoutEffect(() => {
-    if (!activeTabId) return;
+    if (!active || !activeTabId) return;
     const tab = document.getElementById(`terminal-tab-${activeTabId}`);
     const strip = tab?.closest(".terminal-tabs");
     if (!tab || !strip) return;
@@ -228,7 +230,7 @@ export const TerminalPane = memo(function TerminalPane({
     const observer = new ResizeObserver(reveal);
     observer.observe(strip);
     return () => observer.disconnect();
-  }, [activeTabId]);
+  }, [active, activeTabId]);
 
   useEffect(() => {
     if (launchTarget || lastSessionCwdRef.current === sessionCwd) return;
@@ -316,14 +318,15 @@ export const TerminalPane = memo(function TerminalPane({
   }, [api, globalLoading]);
 
   useEffect(() => {
+    if (!active) return;
     void load();
     return () => {
       requestGeneration.current += 1;
     };
-  }, [load, reloadKey]);
+  }, [active, load, reloadKey]);
 
   useEffect(() => {
-    if (!cwd) return;
+    if (!active || !cwd) return;
     let cancelled = false;
     let polling = false;
     const poll = async () => {
@@ -344,7 +347,7 @@ export const TerminalPane = memo(function TerminalPane({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [api, cwd, catalogController]);
+  }, [active, api, cwd, catalogController]);
 
   useEffect(
     () =>
@@ -360,7 +363,7 @@ export const TerminalPane = memo(function TerminalPane({
   );
 
   useEffect(() => {
-    if (!cwd || !catalog) return;
+    if (!active || !cwd || !catalog) return;
     storeActiveTerminal(cwd, activeId);
     if (!activeId) return;
     setOpenedIds((current) => {
@@ -381,7 +384,7 @@ export const TerminalPane = memo(function TerminalPane({
       next.delete(activeId);
       return next;
     });
-  }, [activeId, catalog, cwd]);
+  }, [active, activeId, catalog, cwd]);
 
   useEffect(() => {
     const knownOffsets = knownOutputOffsetsRef.current;
@@ -393,7 +396,7 @@ export const TerminalPane = memo(function TerminalPane({
         return (
           previous !== undefined &&
           terminal.nextOutputOffset > previous &&
-          terminal.id !== activeId
+          (!active || terminal.id !== activeId)
         );
       })
       .map((terminal) => terminal.id);
@@ -402,13 +405,13 @@ export const TerminalPane = memo(function TerminalPane({
     }
     if (newlyUnread.length > 0)
       setUnreadIds((current) => new Set([...current, ...newlyUnread]));
-  }, [activeId, terminals]);
+  }, [active, activeId, terminals]);
 
   useEffect(() => {
     const ids = new Set(terminals.map((terminal) => terminal.id));
     setOpenedIds((current) => {
       const next = new Set([...current].filter((id) => ids.has(id)));
-      if (activeId && ids.has(activeId)) next.add(activeId);
+      if (active && activeId && ids.has(activeId)) next.add(activeId);
       return next;
     });
     setUnreadIds(
@@ -417,7 +420,7 @@ export const TerminalPane = memo(function TerminalPane({
     setBellIds((current) => new Set([...current].filter((id) => ids.has(id))));
     if (catalog && activeId && !ids.has(activeId))
       setActiveId(terminals[0]?.id ?? null);
-  }, [activeId, catalog, terminals]);
+  }, [active, activeId, catalog, terminals]);
 
   useEffect(() => {
     const pane = paneRef.current;
@@ -524,7 +527,14 @@ export const TerminalPane = memo(function TerminalPane({
   };
 
   useEffect(() => {
-    if (!cwd || !catalog || loading || creating || !hasTerminalInsertion(cwd))
+    if (
+      !active ||
+      !cwd ||
+      !catalog ||
+      loading ||
+      creating ||
+      !hasTerminalInsertion(cwd)
+    )
       return;
     const running =
       terminals.find(
@@ -539,6 +549,7 @@ export const TerminalPane = memo(function TerminalPane({
     autoCreateInsertionRef.current = attemptKey;
     void createTerminal();
   }, [
+    active,
     activeId,
     catalog,
     createTerminal,
@@ -568,7 +579,7 @@ export const TerminalPane = memo(function TerminalPane({
   const markBell = useCallback(
     (terminal: TerminalDescriptor) => {
       if (uiSettings.bell === "off") return;
-      const background = terminal.id !== activeId || document.hidden;
+      const background = !active || terminal.id !== activeId || document.hidden;
       if (background)
         setBellIds((current) => new Set(current).add(terminal.id));
       if (background && uiSettings.bell === "desktop")
@@ -580,7 +591,7 @@ export const TerminalPane = memo(function TerminalPane({
           },
         );
     },
-    [activeId, uiSettings.bell],
+    [active, activeId, uiSettings.bell],
   );
 
   const handleCommandComplete = useCallback(
@@ -596,7 +607,7 @@ export const TerminalPane = memo(function TerminalPane({
         !uiSettings.longTaskNotifications ||
         message.durationMs === null ||
         message.durationMs < uiSettings.longTaskThresholdSeconds * 1_000 ||
-        (terminal.id === activeId && !document.hidden)
+        (active && terminal.id === activeId && !document.hidden)
       )
         return;
       setBellIds((current) => new Set(current).add(terminal.id));
@@ -610,6 +621,7 @@ export const TerminalPane = memo(function TerminalPane({
       );
     },
     [
+      active,
       activeId,
       onCommandComplete,
       uiSettings.longTaskNotifications,
@@ -831,6 +843,7 @@ export const TerminalPane = memo(function TerminalPane({
 
   terminalActionHandlerRef.current = ({ action, projectCwd }) => {
     if (
+      !active ||
       projectCwd !== cwd ||
       !catalogController.active ||
       (!launchTarget && sessionCwd !== lastSessionCwdRef.current)
@@ -869,10 +882,11 @@ export const TerminalPane = memo(function TerminalPane({
       subscribeTerminalActions((action) =>
         terminalActionHandlerRef.current(action),
       ),
-    [activeId, cwd, terminals],
+    [active, activeId, cwd, terminals],
   );
 
   useEffect(() => {
+    if (!active) return;
     const handleShortcut = (event: globalThis.KeyboardEvent) => {
       if (
         uiSettings.shortcutMode !== "workbench" ||
@@ -904,7 +918,13 @@ export const TerminalPane = memo(function TerminalPane({
     };
     window.addEventListener("keydown", handleShortcut, true);
     return () => window.removeEventListener("keydown", handleShortcut, true);
-  }, [activeTerminal, createTerminal, terminals, uiSettings.shortcutMode]);
+  }, [
+    active,
+    activeTerminal,
+    createTerminal,
+    terminals,
+    uiSettings.shortcutMode,
+  ]);
 
   if (!cwd) {
     return (
@@ -1406,7 +1426,7 @@ export const TerminalPane = memo(function TerminalPane({
                 <TerminalView
                   api={api}
                   terminal={terminal}
-                  active={terminal.id === activeId}
+                  active={active && terminal.id === activeId}
                   settings={uiSettings}
                   toolbarHost={toolbarHost}
                   menuHost={menuHost}
@@ -1424,7 +1444,7 @@ export const TerminalPane = memo(function TerminalPane({
         </div>
       )}
 
-      {settingsOpen
+      {active && settingsOpen
         ? createPortal(
             <TerminalSettingsDialog
               api={api}

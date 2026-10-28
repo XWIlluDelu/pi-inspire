@@ -29,12 +29,13 @@ for (const touch of [false, true]) {
         .getByRole("button", { name: "Toggle resources panel", exact: true })
         .click();
       const pane = page.locator(".ctx");
-      await pane.getByRole("button", { name: "Files", exact: true }).click();
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
       const tree = pane.getByRole("region", {
         name: "Workspace file tree",
         exact: true,
       });
       const open = async (name: string) => {
+        await pane.getByRole("tab", { name: "Files", exact: true }).click();
         await tree.getByRole("button", { name, exact: true }).click();
         await expect(
           pane.getByRole("button", { name: `Download ${name}`, exact: true }),
@@ -89,9 +90,7 @@ for (const touch of [false, true]) {
           ),
         )
         .toBe(true);
-      await pane
-        .getByRole("button", { name: "Back to Files", exact: true })
-        .click();
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
       await open("native-shell.log");
       await page.evaluate(() => {
         const state = window as unknown as {
@@ -267,7 +266,7 @@ test("History Copy reads the complete retained entry and saved image without exp
   });
   if ((await toggle.getAttribute("aria-expanded")) === "false")
     await toggle.click();
-  await page.getByRole("button", { name: "History", exact: true }).click();
+  await page.getByRole("tab", { name: "History", exact: true }).click();
   const history = page.getByRole("region", { name: "Conversation history" });
   await history
     .getByRole("searchbox", { name: "Find in history" })

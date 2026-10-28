@@ -21,6 +21,12 @@ export const MAX_MEDIA_PREVIEW_BYTES = 32 * 1024 * 1024;
 const HTML_PREVIEW_CSP =
   "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'";
 
+/** Open file tabs retain navigation identity only; preview bytes keep their existing lifetime. */
+export interface ResourceFileTab {
+  reference: string;
+  workspacePath?: string;
+}
+
 export type ResourcePreview =
   | { status: "loading"; reference: string }
   | { status: "error"; reference: string; message: string }

@@ -36,7 +36,7 @@ import {
   type WorkspaceBrowserState,
 } from "./controllers/workspace-controller";
 import { type EventSlice, emptyEventSlice } from "./events";
-import type { ResourcePreview } from "./resource-preview";
+import type { ResourceFileTab, ResourcePreview } from "./resource-preview";
 
 /** Context-window occupancy from Pi's session stats. `tokens`/`percent` are
  * null right after a compaction until the next assistant response reports
@@ -282,6 +282,7 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
    * citation and line-location semantics. */
   selectedResourceWorkspacePath: string | null;
   resourcePreview: ResourcePreview | null;
+  resourceTabs: ResourceFileTab[];
   gitStatus: GitStatusResponse | null;
   gitStatusError: string | null;
   gitStatusLoading: boolean;
@@ -304,6 +305,7 @@ export function emptyResourceInspectionState(): Pick<
   | "selectedResourceReference"
   | "selectedResourceWorkspacePath"
   | "resourcePreview"
+  | "resourceTabs"
   | "resourceAvailability"
   | "resourceWorkspacePaths"
 > {
@@ -312,6 +314,7 @@ export function emptyResourceInspectionState(): Pick<
     selectedResourceReference: null,
     selectedResourceWorkspacePath: null,
     resourcePreview: null,
+    resourceTabs: [],
     resourceAvailability: {},
     resourceWorkspacePaths: {},
   };

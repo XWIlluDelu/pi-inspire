@@ -3308,6 +3308,48 @@ export class AppStore {
     this.set({ resourcesOpen });
   };
 
+  selectResourceTab = (reference: string): Promise<void> => {
+    const tab = this.state.resourceTabs.find(
+      (tab) => tab.reference === reference,
+    );
+    if (!tab) return Promise.resolve();
+    if (
+      this.state.contextMode === "files" &&
+      this.state.fileBrowserView === "preview" &&
+      this.state.selectedResourceReference === reference
+    )
+      return Promise.resolve();
+    return this.resources.openResource(
+      tab.reference,
+      "files",
+      tab.workspacePath,
+    );
+  };
+
+  closeResourceTab = (reference: string): void => {
+    const index = this.state.resourceTabs.findIndex(
+      (tab) => tab.reference === reference,
+    );
+    if (index < 0) return;
+    const resourceTabs = this.state.resourceTabs.filter(
+      (tab) => tab.reference !== reference,
+    );
+    const active =
+      this.state.contextMode === "files" &&
+      this.state.fileBrowserView === "preview" &&
+      this.state.selectedResourceReference === reference;
+    this.set({ resourceTabs });
+    if (!active) return;
+    const next = resourceTabs[Math.min(index, resourceTabs.length - 1)];
+    if (next)
+      void this.resources.openResource(
+        next.reference,
+        "files",
+        next.workspacePath,
+      );
+    else this.resources.clearSelection();
+  };
+
   showFileBrowser = (): void => {
     this.resources.cancelRequest();
     this.set({

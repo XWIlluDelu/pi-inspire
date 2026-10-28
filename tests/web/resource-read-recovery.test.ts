@@ -26,6 +26,7 @@ function fixture() {
     selectedResourceReference: null,
     selectedResourceWorkspacePath: null,
     resourcePreview: null,
+    resourceTabs: [],
     resourceAvailability: {},
     resourceWorkspacePaths: {},
   };
@@ -174,7 +175,10 @@ describe("resource preview read recovery", () => {
         f.state.transcriptViewId = "new-view";
         f.controller.invalidate();
       }
-      if (change === "transport") f.rotate();
+      if (change === "transport") {
+        f.rotate();
+        expect(f.state.resourceTabs).toEqual([]);
+      }
       if (change === "closed") {
         f.state.resourcesOpen = false;
         f.controller.cancelRequest();

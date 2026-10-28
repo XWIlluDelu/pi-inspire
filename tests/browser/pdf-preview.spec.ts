@@ -125,8 +125,14 @@ test("PDF paints selectable pages, preserves zoom across resize and never runs d
   ).toBeLessThanOrEqual(1);
   await page.setViewportSize(viewport);
 
+  await resources.getByRole("tab", { name: "Files", exact: true }).click();
   await resources
-    .getByRole("button", { name: "unsafe.pdf", exact: true })
+    .getByRole("searchbox", { name: "Search workspace files" })
+    .fill("file-previews/unsafe.pdf");
+  await resources
+    .locator(
+      '[data-workspace-path="tests/browser/fixtures/file-previews/unsafe.pdf"]',
+    )
     .click();
   const staticPdf = page.getByRole("document", { name: "Preview unsafe.pdf" });
   await expect(staticPdf.locator(".pdf-preview__page")).toHaveAttribute(
@@ -139,6 +145,6 @@ test("PDF paints selectable pages, preserves zoom across resize and never runs d
   );
   expect(activePdfContent).toEqual([]);
   expect(externalRequests).toEqual([]);
-  await resources.getByRole("button", { name: "Back to file browser" }).click();
+  await resources.getByRole("tab", { name: "Files", exact: true }).click();
   await expect.poll(() => page.workers().length).toBe(0);
 });

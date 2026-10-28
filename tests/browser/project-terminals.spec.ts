@@ -32,7 +32,7 @@ test("terminal failures use shared error feedback with copy and explicit dismiss
   await pairedPage(page);
   await openMockSession(page, /Review extension event lifecycle/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await page.getByRole("tab", { name: "Terminal", exact: true }).click();
   const error = page.locator(".terminal-pane__error");
   await expect(error).toBeVisible();
   await expect(error).toHaveClass(/notice--error/);
@@ -98,7 +98,7 @@ for (const narrow of [false, true]) {
       await page
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
-      await page.getByRole("button", { name: "Terminal", exact: true }).click();
+      await page.getByRole("tab", { name: "Terminal", exact: true }).click();
       await expect.poll(() => terminal!.resizes.length).toBeGreaterThan(0);
       terminal!.write("QUOTE_HANDOFF_CONTENT\r\n");
       await page.getByLabel("Terminal actions", { exact: true }).click();
@@ -162,7 +162,7 @@ for (const touch of [false, true]) {
       await page
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
-      await page.getByRole("button", { name: "Terminal", exact: true }).click();
+      await page.getByRole("tab", { name: "Terminal", exact: true }).click();
       await page.getByLabel("Terminal actions", { exact: true }).click();
       await page
         .getByLabel("Terminals in all projects", { exact: true })
@@ -254,7 +254,7 @@ test("a replacement terminal snapshot retires output still waiting in xterm's pa
     });
   });
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await page.getByRole("tab", { name: "Terminal", exact: true }).click();
   await expect(
     page.getByRole("status", { name: "Controlling", exact: true }),
   ).toBeVisible();
@@ -350,7 +350,7 @@ test("terminal profiles keep long labels, the default marker, and keyboard focus
   await pairedPage(page);
   await openMockSession(page, /Review extension event lifecycle/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await page.getByRole("tab", { name: "Terminal", exact: true }).click();
   const trigger = page.getByLabel("Choose terminal profile", { exact: true });
   await trigger.focus();
   await trigger.press("Enter");
@@ -445,7 +445,7 @@ for (const theme of ["light", "dark"] as const) {
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
       const pane = page.locator(".ctx");
-      await pane.getByRole("button", { name: "Terminal", exact: true }).click();
+      await pane.getByRole("tab", { name: "Terminal", exact: true }).click();
       const error = pane.locator(
         source === "catalog"
           ? ".terminal-pane__error"
@@ -508,7 +508,7 @@ test("project terminals survive browser detach and keep multiple tabs", {
     );
   });
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await page.getByRole("tab", { name: "Terminal", exact: true }).click();
 
   const emptyTerminal = page.locator(".terminal-empty");
   await emptyTerminal.getByRole("button", { name: "New terminal" }).click();
@@ -577,7 +577,7 @@ test("project terminals survive browser detach and keep multiple tabs", {
     await expect(page.getByRole("main")).toBeVisible();
     await openMockSession(page, /Review extension event lifecycle/);
     await page.getByRole("button", { name: "Toggle resources panel" }).click();
-    await page.getByRole("button", { name: "Terminal", exact: true }).click();
+    await page.getByRole("tab", { name: "Terminal", exact: true }).click();
     await expect(page.locator(".terminal-tab__select")).toHaveCount(2);
     expect((await readTerminals()).terminals.map(({ id }) => id)).toEqual(
       terminalIds,
@@ -683,7 +683,7 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
         await page
           .getByRole("button", { name: "Toggle resources panel" })
           .click();
-      await page.getByRole("button", { name: "Terminal", exact: true }).click();
+      await page.getByRole("tab", { name: "Terminal", exact: true }).click();
       await page.locator(`#terminal-tab-${terminal.id}`).click();
       await expect(
         page.locator(".terminal-view--active .xterm-helper-textarea"),
@@ -862,9 +862,7 @@ for (const hasTouch of [false, true]) {
         });
         if ((await resources.getAttribute("aria-expanded")) === "false")
           await resources.click();
-        await page
-          .getByRole("button", { name: "Terminal", exact: true })
-          .click();
+        await page.getByRole("tab", { name: "Terminal", exact: true }).click();
         await expect(
           page.getByRole("status", { name: "Controlling", exact: true }),
         ).toBeVisible();
@@ -943,7 +941,7 @@ test.describe("terminal clipboard and focus ownership", () => {
       await page
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
-      await page.getByRole("button", { name: "Terminal", exact: true }).click();
+      await page.getByRole("tab", { name: "Terminal", exact: true }).click();
       await expect(
         page.getByRole("status", { name: "Controlling", exact: true }),
       ).toBeVisible();
@@ -1091,7 +1089,7 @@ test.describe("international terminal keyboard input", () => {
       await page
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
-      await page.getByRole("button", { name: "Terminal", exact: true }).click();
+      await page.getByRole("tab", { name: "Terminal", exact: true }).click();
       await expect(
         page.getByRole("status", { name: "Controlling", exact: true }),
       ).toBeVisible();
@@ -1297,7 +1295,7 @@ test("terminal search keeps IME keys native before ordinary match navigation", a
   await pairedPage(page);
   await openMockSession(page, /Review extension event lifecycle/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await page.getByRole("tab", { name: "Terminal", exact: true }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Controlling" }),
   ).toBeVisible();
@@ -1366,7 +1364,7 @@ test("compact terminal controls keep selection, search, and output scoped to the
       prompts.push(request.url());
   });
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("button", { name: "Terminal", exact: true }).click();
+  await page.getByRole("tab", { name: "Terminal", exact: true }).click();
   await page.locator(`#terminal-tab-${ids[0]}`).click();
   await expect(
     page.getByRole("status", { name: "Controlling", exact: true }),
@@ -1606,7 +1604,7 @@ test("compact terminal controls keep selection, search, and output scoped to the
       await page
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
-    await page.getByRole("button", { name: "Terminal", exact: true }).click();
+    await page.getByRole("tab", { name: "Terminal", exact: true }).click();
     const visibleInput = page.locator(
       ".terminal-views__item:not([hidden]) .xterm-helper-textarea",
     );
@@ -1668,7 +1666,7 @@ test.describe("touch terminal", () => {
     const terminal = (await response.json()) as { id: string };
     try {
       await page.getByRole("button", { name: "Toggle resources panel" }).tap();
-      await page.getByRole("button", { name: "Terminal", exact: true }).tap();
+      await page.getByRole("tab", { name: "Terminal", exact: true }).tap();
       await page.locator(`#terminal-tab-${terminal.id}`).tap();
       await expect(
         page.getByRole("status", { name: "Controlling", exact: true }),

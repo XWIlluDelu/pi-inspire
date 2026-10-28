@@ -147,7 +147,7 @@ test("saved side widths share a reading budget without changing preferences on r
 }) => {
   await page.addInitScript(() => {
     localStorage.setItem("inspire.nav-width", "460");
-    localStorage.setItem("inspire.ctx-width", "800");
+    localStorage.setItem("inspire.ctx-width", "1200");
   });
   await page.setViewportSize({ width: 1280, height: 900 });
   await pairedPage(page);
@@ -185,10 +185,10 @@ test("saved side widths share a reading budget without changing preferences on r
         localStorage.getItem("inspire.nav-width"),
         localStorage.getItem("inspire.ctx-width"),
       ]),
-    ).toEqual(["460", "800"]);
+    ).toEqual(["460", "1200"]);
   }
   expect((await page.locator(".nav").boundingBox())!.width).toBe(460);
-  expect((await page.locator(".ctx").boundingBox())!.width).toBe(800);
+  expect((await page.locator(".ctx").boundingBox())!.width).toBe(1200);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   await expect
@@ -485,6 +485,10 @@ test("workbench headers preserve controls, text baselines and drawer dismissal",
   await expect(
     page.getByRole("combobox", { name: "Thinking level" }),
   ).toBeDisabled();
+  await expect(page.locator(".topbar__git")).toHaveAccessibleName(
+    "Open Git changes: mock/analysis, 1234 changes",
+  );
+  await page.evaluate(() => document.fonts.ready);
 
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
@@ -499,11 +503,16 @@ test("workbench headers preserve controls, text baselines and drawer dismissal",
     expect(labelFits).toBe(true);
     const metadata = page.locator(".topbar__workspace-meta");
     if (width === 390) {
-      const meta = await metadata.boundingBox();
-      const git = await page.locator(".topbar__git").boundingBox();
-      expect(git!.x + git!.width).toBeLessThanOrEqual(
-        meta!.x + meta!.width + 1,
-      );
+      // Read both boxes in the same layout; Git arrives asynchronously after
+      // reload and can change the workspace metadata's width.
+      const rightOverflow = await metadata.evaluate((element) => {
+        const meta = element.getBoundingClientRect();
+        const git = element
+          .querySelector(".topbar__git")!
+          .getBoundingClientRect();
+        return git.right - meta.right;
+      });
+      expect(rightOverflow).toBeLessThanOrEqual(1);
     } else {
       // The 320px bar yields secondary workspace details to primary controls.
       await expect(metadata).toBeHidden();
@@ -520,13 +529,13 @@ test("workbench headers preserve controls, text baselines and drawer dismissal",
   }
 
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("button", { name: "History", exact: true }).click();
+  await page.getByRole("tab", { name: "History", exact: true }).click();
   const history = page.getByRole("dialog", { name: "Context panel" });
   await expect(history.getByRole("button", { name: /Refresh/ })).toHaveCount(1);
   await expect(
-    history.getByRole("button", { name: "Changes", exact: true }),
+    history.getByRole("tab", { name: "Changes", exact: true }),
   ).toHaveAttribute("title", "Changes (1234 changes)");
-  await expect(history.locator(".ctx__mode-badge")).toBeHidden();
+  await expect(history.locator(".ctx__mode-badge")).toHaveText("99+");
   const headerSpacing = await history.locator(".ctx__header").evaluate((el) => {
     const header = el.getBoundingClientRect();
     const tabs = el.querySelector(".ctx__modes")!.getBoundingClientRect();
@@ -534,31 +543,22 @@ test("workbench headers preserve controls, text baselines and drawer dismissal",
   });
   expect(headerSpacing.top).toBeGreaterThanOrEqual(1);
   expect(headerSpacing.bottom).toBeGreaterThanOrEqual(1);
-  const labelInsets = await history
-    .locator(".ctx__modes button")
-    .evaluateAll((buttons) =>
-      buttons.map((button) => {
-        const range = document.createRange();
-        range.selectNodeContents(button);
-        const text = range.getBoundingClientRect();
-        const bounds = button.getBoundingClientRect();
-        return Math.min(text.left - bounds.left, bounds.right - text.right);
+  const iconInsets = await history
+    .locator(".ctx__modes [role='tab']")
+    .evaluateAll((tabs) =>
+      tabs.map((tab) => {
+        const icon = tab.querySelector("svg")!.getBoundingClientRect();
+        const bounds = tab.getBoundingClientRect();
+        return Math.min(icon.left - bounds.left, bounds.right - icon.right);
       }),
     );
-  expect(Math.min(...labelInsets)).toBeGreaterThanOrEqual(0);
+  expect(Math.min(...iconInsets)).toBeGreaterThanOrEqual(0);
 
   await page.setViewportSize({ width: 1440, height: 1000 });
   const badge = page.locator(".ctx__mode-badge");
   await expect(badge).toBeVisible();
-  await page.evaluate(() => document.fonts.ready);
-  const label = page
-    .getByRole("button", { name: "Changes", exact: true })
-    .locator(".ctx__mode-label > span")
-    .first();
-  expect(
-    Math.abs(
-      (await badge.evaluate(textBaseline)) -
-        (await label.evaluate(textBaseline)),
-    ),
-  ).toBeLessThan(0.25);
+  await expect(badge).toHaveText("99+");
+  await expect(
+    page.getByRole("tab", { name: "Changes", exact: true }),
+  ).toHaveAttribute("title", "Changes (1234 changes)");
 });

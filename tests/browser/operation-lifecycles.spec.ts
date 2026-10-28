@@ -38,7 +38,7 @@ async function openTerminal(page: Page, pair: boolean) {
       .click();
   }
   await expect(sessionTitle).toHaveText(/Review extension event lifecycle/);
-  const terminalTab = page.getByRole("button", {
+  const terminalTab = page.getByRole("tab", {
     name: "Terminal",
     exact: true,
   });

@@ -16,7 +16,7 @@ async function openHistory(page: Page) {
   });
   if ((await toggle.getAttribute("aria-expanded")) === "false")
     await toggle.click();
-  await page.getByRole("button", { name: "History", exact: true }).click();
+  await page.getByRole("tab", { name: "History", exact: true }).click();
   return page.getByRole("region", { name: "Conversation history" });
 }
 

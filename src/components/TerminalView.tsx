@@ -315,7 +315,9 @@ export const TerminalView = memo(function TerminalView({
   }, []);
 
   const currentDimensions = useCallback(() => {
-    const proposed = fitRef.current?.proposeDimensions();
+    const proposed = activeRef.current
+      ? fitRef.current?.proposeDimensions()
+      : undefined;
     return safeDimensions(proposed, descriptorRef.current);
   }, []);
 
@@ -692,7 +694,7 @@ export const TerminalView = memo(function TerminalView({
       }
       if (xtermRef.current !== xterm) return;
       updateTheme();
-      fit.fit();
+      if (activeRef.current) fit.fit();
       connection.start();
     };
     void initialize();
