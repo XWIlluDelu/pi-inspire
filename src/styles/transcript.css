@@ -745,8 +745,8 @@
   flex-shrink: 0;
 }
 
-/* Center chevrons on Rajdhani's uppercase ink. The full dot matrix already
-   occupies its box symmetrically and should keep its natural flex alignment. */
+/* Chevrons and the complete dot pattern need different optical corrections
+   against Rajdhani's uppercase ink; keep their hit areas and guides unchanged. */
 .activity-fold__disclosure > svg,
 .activity-fold__boundary > svg,
 .activity-fold__omission > svg {
@@ -786,6 +786,7 @@
   width: 10px;
   height: 10px;
   margin-inline-start: 2px;
+  transform: translateY(-0.5px);
 }
 
 .activity-fold__kind,

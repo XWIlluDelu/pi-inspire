@@ -6,6 +6,8 @@ import { openMockSession, pairedPage } from "./support/navigation";
 import { textMarkOffsets } from "./support/text-baseline";
 
 async function expectActivityMarksCentered(control: Locator) {
+  // The nine cells span the matrix's complete box, including dim cells. Its
+  // center is compared with letter ink, not just with the control's line box.
   const offsets = await control.evaluate(textMarkOffsets, {
     label: ":scope > span:not(.activity-fold__matrix)",
     marks: ":scope > svg, :scope > .activity-fold__matrix",

@@ -62,6 +62,11 @@ for (const width of [1440, 768, 390, 320]) {
         ).toHaveAttribute("aria-selected", "true");
       }
       await page.setViewportSize({ width, height: 1000 });
+      // CSS changes at once, while React restores the desktop pane on its
+      // media-query update. Measure scrolling only after that owner transition.
+      await expect(
+        page.getByRole("complementary", { name: "Context panel", exact: true }),
+      ).toBeVisible();
     }
     const toolsBeforeScroll = (await modes.boundingBox())!;
     await fileTabs.evaluate((element) => {

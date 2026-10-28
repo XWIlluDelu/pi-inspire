@@ -314,7 +314,9 @@ test("Context deferred failure preserves its shell, focus and recovery", async (
     await page.unroute(pattern);
     await pane.getByRole("button", { name: "Reload" }).click();
     await expect(page.getByRole("main")).toBeVisible();
-    await toggle.click();
+    // Recovery reload restores the open drawer and its focus owner.
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(pane).toBeVisible();
     await expect(
       pane.getByRole("tab", { name: "Files", exact: true }),
     ).toBeFocused();

@@ -115,8 +115,10 @@ test("desktop pane gutters remain pointer and keyboard resize targets", async ({
     ),
   );
   await page.reload();
-  // Widths persist independently of whether the contextual pane starts open.
-  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  // Reload restores the open pane as well as both independently saved widths.
+  await expect(
+    page.getByRole("button", { name: "Toggle resources panel" }),
+  ).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator(".ctx")).toBeVisible();
   for (const [i, selector, label] of [
     [0, ".nav", "Resize navigation"],
@@ -539,10 +541,16 @@ test("workbench headers preserve controls, text baselines and drawer dismissal",
   const headerSpacing = await history.locator(".ctx__header").evaluate((el) => {
     const header = el.getBoundingClientRect();
     const tabs = el.querySelector(".ctx__modes")!.getBoundingClientRect();
-    return { top: tabs.top - header.top, bottom: header.bottom - tabs.bottom };
+    const strip = el.querySelector(".ctx__tabs")!.getBoundingClientRect();
+    return {
+      top: tabs.top - header.top,
+      bottom: header.bottom - tabs.bottom,
+      left: strip.left - header.left,
+    };
   });
-  expect(headerSpacing.top).toBeGreaterThanOrEqual(1);
-  expect(headerSpacing.bottom).toBeGreaterThanOrEqual(1);
+  expect(headerSpacing.top).toBeCloseTo(0, 2);
+  expect(headerSpacing.bottom).toBeCloseTo(0, 2);
+  expect(headerSpacing.left).toBeCloseTo(0, 2);
   const iconInsets = await history
     .locator(".ctx__modes [role='tab']")
     .evaluateAll((tabs) =>

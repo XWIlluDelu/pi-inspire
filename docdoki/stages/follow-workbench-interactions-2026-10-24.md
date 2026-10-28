@@ -221,6 +221,30 @@ palette names at 390px and 320px without document overflow. Keyboard focus retai
 Chimonanthus in each luminosity; ordinary source text follows Carbon & Silicon's neutral body ink.
 Full-page Light/Dark screenshots were reviewed using mock content only.
 
+## Complete-interface visual review
+
+Two browser review passes cover chat and expanded activity, Composer and attachments, navigation,
+Files/Changes/History/Terminal and file modes, the welcome page, Settings categories and menus at
+desktop and 390/320px widths. Carbon & Silicon Light/Dark and representative Chimonanthus views keep
+their existing type and spacing hierarchy. Logo comparisons use painted bounds; text controls are
+also checked against rendered letterforms rather than assuming their boxes share optical centers.
+
+The confirmed remaining layout residue was Files Recent reserving five rows even with only one
+reference. It now uses its actual content height, reclaiming 116px in the one-row case without
+changing the five-row case or the section gap. Empty, loading and retained-error states preserve
+their existing behavior. Unused measurements from the former split index are removed.
+
+Related browser checks now match the accepted full-height tabs and restored open panes after F5
+and recovery. Same-font comparisons of the complete nine-dot pattern at -1, -0.5 and 0px, both lit
+and partially lit, favor the half-pixel optical correction without changing colors. Marks retain
+their bound against the label's actual ink center. Responsive measurements wait for the desktop pane owner after a
+viewport change instead of sampling across drawer restoration. These changes preserve coordinate
+precision rather than adding arbitrary delays or weakening interaction checks. Physical-device
+font rasterization and every provider authentication step are outside this browser review.
+
+The 60 relevant Chromium scenarios pass across the main run and focused Activity rerun, together
+with project typechecking, scoped lint and the isolated production-mode build.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

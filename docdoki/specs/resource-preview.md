@@ -32,7 +32,9 @@ preview; Changes owns Git comparisons. [[composer]] owns file attachment and the
 
 The Files tool tab shows up to five deduplicated **Recent in this chat** references from
 one 16-reference Host page, followed by the workspace filesystem tree. Search replaces both sections
-while a query is present. Recent rows use an icon, filename, subdued parent path, and fixed trailing
+while a query is present. Recent occupies only the height of its available rows, with the normal
+section gap before the workspace tree; it does not reserve empty slots for five references.
+Recent rows use an icon, filename, subdued parent path, and fixed trailing
 Git state on one line. File icons, filename/parent labels and match emphasis follow [[design-system]].
 Search stacks the filename above its parent directory; both the row and caption retain full-path
 hover titles, and the row's accessible name and open target keep that exact path. Workspace search

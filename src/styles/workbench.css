@@ -438,14 +438,7 @@ body.pane-resizing--vertical .nav {
 }
 
 .res {
-  --files-search-size: 49px;
   --files-section-title-size: 30px;
-  --files-recent-size: 144px;
-  --files-index-default-size: calc(
-    var(--files-search-size) + var(--space-2) +
-      var(--files-section-title-size) + var(--files-recent-size) +
-      var(--space-3)
-  );
   overflow: hidden;
 }
 
@@ -573,7 +566,6 @@ body.pane-resizing--vertical .nav {
 }
 
 .recent-files {
-  min-height: var(--files-recent-size);
   display: flex;
   flex-direction: column;
   gap: 1px;
