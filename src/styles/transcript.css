@@ -745,12 +745,11 @@
   flex-shrink: 0;
 }
 
-/* Center marks on Rajdhani's uppercase ink, not its lower line-box center.
-   Move the marks only; disclosure hit areas and the content guide stay put. */
+/* Center chevrons on Rajdhani's uppercase ink. The full dot matrix already
+   occupies its box symmetrically and should keep its natural flex alignment. */
 .activity-fold__disclosure > svg,
 .activity-fold__boundary > svg,
-.activity-fold__omission > svg,
-.activity-fold__matrix {
+.activity-fold__omission > svg {
   transform: translateY(-1px);
 }
 

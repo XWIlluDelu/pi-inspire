@@ -284,7 +284,9 @@ Count capsules use `--accent-tint`/`--accent-deep`, smaller text on the label
 baseline and a distinct gap. When a complete label/count pair cannot fit, omit the count while
 retaining the exact Changes total in its title.
 
-Activity disclosure marks and Settings icons align optically with uppercase letters. A wrapped
+Activity disclosure marks and Settings icons align optically with uppercase letters. The nine-dot
+activity matrix keeps its natural flex alignment rather than inheriting the chevrons' upward
+correction; alignment is judged against the complete dot pattern and rendered letterforms. A wrapped
 Settings title keeps its icon beside the first line, outside the font line box, and its action
 independent of that group. Dialog titles, prose and deletion errors wrap long paths or identifiers
 within their content edges. Settings status and Host availability explanations stay within their
