@@ -163,6 +163,13 @@ result icons center vertically. Sixteen targeted checks, typechecking and the pr
 pass; isolated Chrome covers long-list scrolling, selection/refresh/return, light/dark themes and
 390px containment. This change does not alter resource authorization or reconnect controllers.
 
+A production-page follow-up caught a missed transition: after opening a file, closing/reopening
+the pane or reloading while in Changes retained its reference but retired its preview. Treating the
+reference as an active Source reopened the empty split. Changes now requires an actual resource
+preview (including loading/error) or a Git comparison selection; remembered tabs alone do not
+allocate Source space. The regression fixture retains that navigation metadata explicitly, while
+filesystem/Git-evidence checks use a real pending resource preview.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

@@ -45,7 +45,14 @@ afterEach(() => {
 describe("narrow Changes navigation", () => {
   it("keeps the desktop list and its position while source appears only for a selection", () => {
     const open = vi.spyOn(store, "openGitDiff").mockResolvedValue();
-    const state = { ...initial, sessionId: "s1", gitStatus: changed };
+    const state = {
+      ...initial,
+      sessionId: "s1",
+      gitStatus: changed,
+      // Closing the pane or restoring Changes keeps file-tab navigation but
+      // retires its old content. A remembered reference is not a Source view.
+      selectedResourceReference: "notes.md",
+    };
     const view = render(<ChangesPane state={state} />);
     const list = view.container.querySelector<HTMLElement>(".res__list")!;
     const detail = view.container.querySelector(".changes__detail")!;
@@ -419,6 +426,10 @@ describe("filesystem selection is not Git evidence", () => {
           state={{
             ...initial,
             selectedResourceReference: "output/report.txt",
+            resourcePreview: {
+              status: "loading",
+              reference: "output/report.txt",
+            },
             gitStatus,
             gitStatusError,
             selectedGitPathId: null,

@@ -657,9 +657,7 @@ export function ChangesPane({
 }) {
   const localReadings = useRef<ChangesReadingPositions>(new Map());
   const backRef = useRef<HTMLButtonElement>(null);
-  const selected = Boolean(
-    state.selectedGitPathId || state.selectedResourceReference,
-  );
+  const selected = Boolean(state.selectedGitPathId || state.resourcePreview);
   const previousView = useRef({
     narrow,
     selected: false,
