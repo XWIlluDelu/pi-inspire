@@ -258,13 +258,23 @@ export const ContextPane = memo(function ContextPane({
     [],
   );
 
+  const gitDetailView = !state.resourcesOpen
+    ? null
+    : state.contextMode === "changes"
+      ? "changes"
+      : state.contextMode !== "files"
+        ? null
+        : state.fileBrowserView === "browse"
+          ? "browse"
+          : state.resourceTabs.find(
+                (tab) => tab.reference === state.selectedResourceReference,
+              )?.view === "changes"
+            ? "diff"
+            : null;
   useEffect(() => {
-    const visible =
-      state.resourcesOpen &&
-      (state.contextMode === "files" || state.contextMode === "changes");
-    store.setGitSurfaceVisible("resources-pane", visible);
+    store.setGitSurfaceVisible("resources-pane", gitDetailView !== null);
     return () => store.setGitSurfaceVisible("resources-pane", false);
-  }, [state.contextMode, state.resourcesOpen]);
+  }, [gitDetailView]);
 
   const handleTerminalOpenFile = useCallback((reference: string) => {
     store.setContextMode("files");

@@ -7,6 +7,7 @@ import type {
 import { type Api, ApiError } from "../api";
 
 const GIT_DETAIL_REFRESH_INTERVAL_MS = 4_000;
+const GIT_STABLE_REFRESH_INTERVAL_MS = 8_000;
 const GIT_TOPBAR_REFRESH_INTERVAL_MS = 20_000;
 const TOPBAR_SURFACE = "topbar-git";
 
@@ -85,6 +86,8 @@ export class GitController {
   private observingVisibility = false;
   private selectedWorkspacePath: string | null = null;
   private selectionEpoch = 0;
+  private stableRefreshes = 0;
+  private refreshIntent = 0;
 
   constructor(private readonly host: GitControllerHost) {}
 
@@ -94,8 +97,10 @@ export class GitController {
 
   setSurfaceVisible(surface: string, visible: boolean): void {
     const previousInterval = this.refreshInterval();
+    const changed = this.surfaces.has(surface) !== visible;
     if (visible) this.surfaces.add(surface);
     else this.surfaces.delete(surface);
+    if (changed) this.resetRefreshCadence();
     const nextInterval = this.refreshInterval();
     if (nextInterval !== null) {
       this.observeVisibility();
@@ -118,6 +123,11 @@ export class GitController {
   }
 
   refreshStatus(): Promise<void> {
+    this.resetRefreshCadence();
+    return this.startStatusRefresh(false);
+  }
+
+  private startStatusRefresh(periodic: boolean): Promise<void> {
     if (!this.pageVisible() || !this.host.api() || !this.host.state().sessionId)
       return Promise.resolve();
     if (this.statusPromise) {
@@ -126,7 +136,7 @@ export class GitController {
     }
     this.clearRefreshTimer();
     const epoch = this.statusEpoch;
-    const promise = this.runStatusRefresh(epoch).finally(() => {
+    const promise = this.runStatusRefresh(epoch, periodic).finally(() => {
       if (this.statusPromise !== promise) return;
       this.statusPromise = null;
       this.scheduleRefresh();
@@ -276,6 +286,7 @@ export class GitController {
   }
 
   async openDiff(pathId: string, _legacySide?: GitDiffSide): Promise<void> {
+    this.resetRefreshCadence();
     const epoch = this.selectionEpoch;
     const selection = await this.resolveChange(pathId);
     if (selection && epoch === this.selectionEpoch)
@@ -284,6 +295,8 @@ export class GitController {
 
   /** Keep Changes aligned with a resource selected from either Files surface. */
   selectWorkspacePath(workspacePath: string): void {
+    if (this.selectedWorkspacePath !== workspacePath)
+      this.resetRefreshCadence();
     this.selectedWorkspacePath = workspacePath;
     const status = this.host.state().gitStatus;
     if (!status || status.kind !== "repository") return;
@@ -336,6 +349,7 @@ export class GitController {
   }
 
   clearDiffSelection(): void {
+    this.resetRefreshCadence();
     this.selectionEpoch += 1;
     this.cancelDiff();
     this.selectedWorkspacePath = null;
@@ -354,6 +368,7 @@ export class GitController {
   }
 
   async openChange(pathId: string, _legacySide?: GitDiffSide): Promise<void> {
+    this.resetRefreshCadence();
     const epoch = ++this.selectionEpoch;
     const selection = await this.resolveChange(pathId);
     if (!selection || epoch !== this.selectionEpoch) return;
@@ -392,7 +407,10 @@ export class GitController {
     this.selectedWorkspacePath = null;
   }
 
-  private async runStatusRefresh(epoch: number): Promise<void> {
+  private async runStatusRefresh(
+    epoch: number,
+    periodic: boolean,
+  ): Promise<void> {
     do {
       if (epoch !== this.statusEpoch) return;
       this.refreshQueued = false;
@@ -404,6 +422,8 @@ export class GitController {
       this.statusRequest = request;
       const selectionGeneration = state.selectionGeneration;
       const transportGeneration = this.host.transportGeneration();
+      const refreshIntent = this.refreshIntent;
+      const selectionEpoch = this.selectionEpoch;
       this.host.patch({
         gitStatusLoading: state.gitStatus === null,
         gitStatusRefreshing: state.gitStatus !== null,
@@ -456,6 +476,10 @@ export class GitController {
         const selectionChanged =
           selectedPathId !== currentState.selectedGitPathId ||
           selectedSide !== currentState.selectedGitSide;
+        let unchanged =
+          !state.gitStatusError &&
+          !selectionChanged &&
+          JSON.stringify(state.gitStatus) === JSON.stringify(status);
         if (selectionChanged) this.cancelDiff();
         this.host.patch({
           gitStatus: status,
@@ -492,9 +516,27 @@ export class GitController {
               },
               false,
             );
+          const nextDiff = this.host.state().gitDiff;
+          // Status may remain M while the file changes. Only a completed,
+          // successful diff can reuse its previous result and count as stable.
+          unchanged &&=
+            Boolean(change) &&
+            state.gitDiff?.status === "ready" &&
+            !state.gitDiff.refreshError &&
+            nextDiff?.status === "ready" &&
+            !nextDiff.refreshError &&
+            nextDiff.result === state.gitDiff.result;
         }
+        if (
+          current() &&
+          this.refreshIntent === refreshIntent &&
+          this.selectionEpoch === selectionEpoch
+        )
+          this.stableRefreshes =
+            periodic && unchanged ? Math.min(this.stableRefreshes + 1, 2) : 0;
       } catch (error) {
         if (!current()) continue;
+        if (this.refreshIntent === refreshIntent) this.stableRefreshes = 0;
         if (error instanceof ApiError && error.status === 401) {
           this.host.handleAuthFailure();
           return;
@@ -514,6 +556,8 @@ export class GitController {
           });
         }
       }
+      // A coalesced explicit hint is fresh intent, not another quiet poll.
+      periodic = false;
     } while (
       epoch === this.statusEpoch &&
       this.refreshQueued &&
@@ -523,6 +567,7 @@ export class GitController {
   }
 
   private cancelStatusRefresh(): void {
+    this.resetRefreshCadence();
     this.statusEpoch += 1;
     this.refreshQueued = false;
     this.statusRequest?.abort();
@@ -541,19 +586,30 @@ export class GitController {
     this.refreshTimer = null;
   }
 
+  private resetRefreshCadence(): void {
+    this.stableRefreshes = 0;
+    this.refreshIntent += 1;
+    if (this.refreshTimer) {
+      this.clearRefreshTimer();
+      this.scheduleRefresh();
+    }
+  }
+
   private scheduleRefresh(): void {
     const interval = this.refreshInterval();
     if (interval === null || !this.pageVisible() || this.refreshTimer) return;
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = null;
-      void this.refreshStatus();
+      void this.startStatusRefresh(true);
     }, interval);
   }
 
   private refreshInterval(): number | null {
     if (!this.hasVisibleSurface()) return null;
     return [...this.surfaces].some((surface) => surface !== TOPBAR_SURFACE)
-      ? GIT_DETAIL_REFRESH_INTERVAL_MS
+      ? this.stableRefreshes >= 2
+        ? GIT_STABLE_REFRESH_INTERVAL_MS
+        : GIT_DETAIL_REFRESH_INTERVAL_MS
       : GIT_TOPBAR_REFRESH_INTERVAL_MS;
   }
 

@@ -1319,6 +1319,39 @@ describe("Files pane", () => {
     },
   );
 
+  it("uses summary cadence while reading a body and refreshes immediately on returning to Files", async () => {
+    const view = render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Toggle resources panel" }),
+    );
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    await within(pane).findByRole("button", { name: "README.md" });
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        await store.openResource("notes.md");
+      });
+      const calls = gitStatusRequests;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(19_999);
+      });
+      expect(gitStatusRequests).toBe(calls);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(gitStatusRequests).toBe(calls + 1);
+      await act(async () => {
+        fireEvent.click(within(pane).getByRole("tab", { name: "Files" }));
+      });
+      expect(gitStatusRequests).toBe(calls + 2);
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("marks only an explicit refresh busy and prevents duplicate requests until it settles", async () => {
     store.setResourcesOpen(true);
     store.setContextMode("changes");

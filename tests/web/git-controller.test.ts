@@ -51,7 +51,10 @@ const visibleSelection = {
   gitDiff: { status: "ready" as const, result: diff("before") },
 };
 
-function createHarness(initial: Partial<GitControllerState> = {}) {
+function createHarness(
+  initial: Partial<GitControllerState> = {},
+  sharedApi?: Api,
+) {
   let state: GitControllerState = {
     sessionId: "s1",
     selectionGeneration: 1,
@@ -68,7 +71,7 @@ function createHarness(initial: Partial<GitControllerState> = {}) {
   };
   const gitStatus = vi.fn();
   const gitDiff = vi.fn();
-  const api = { gitStatus, gitDiff } as unknown as Api;
+  const api = sharedApi ?? ({ gitStatus, gitDiff } as unknown as Api);
   const openResourceFromGit =
     vi.fn<(change: GitFileChange, side: GitDiffSide) => Promise<void>>();
   const handleAuthFailure = vi.fn();
@@ -351,6 +354,205 @@ describe("GitController", () => {
     expect(harness.gitStatus).toHaveBeenCalledTimes(2);
 
     harness.controller.setSurfaceVisible("topbar-git", false);
+  });
+
+  it("backs off after two unchanged reads but detects new diff content with the same status", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness(visibleSelection);
+    harness.gitStatus.mockResolvedValue(modified);
+    harness.gitDiff.mockImplementation(async () => diff("before"));
+    harness.controller.setSurfaceVisible("detail", true);
+    await vi.advanceTimersByTimeAsync(0);
+
+    for (const count of [2, 3]) {
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(harness.gitDiff).toHaveBeenCalledTimes(count);
+    }
+    await vi.advanceTimersByTimeAsync(7_999);
+    expect(harness.gitDiff).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(harness.gitDiff).toHaveBeenCalledTimes(4);
+
+    harness.gitDiff.mockResolvedValue(diff("edited while still modified"));
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(harness.state().gitDiff).toMatchObject({
+      result: diff("edited while still modified"),
+    });
+    await vi.advanceTimersByTimeAsync(3_999);
+    expect(harness.gitDiff).toHaveBeenCalledTimes(5);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(harness.gitDiff).toHaveBeenCalledTimes(6);
+    harness.controller.setSurfaceVisible("detail", false);
+  });
+
+  it.each(["status", "diff"] as const)(
+    "restores the fast interval after a %s read fails",
+    async (failedRead) => {
+      vi.useFakeTimers();
+      const harness = createHarness(visibleSelection);
+      harness.gitStatus.mockResolvedValue(modified);
+      harness.gitDiff.mockResolvedValue(diff("before"));
+      harness.controller.setSurfaceVisible("detail", true);
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(harness.gitStatus).toHaveBeenCalledTimes(3);
+
+      (failedRead === "status"
+        ? harness.gitStatus
+        : harness.gitDiff
+      ).mockRejectedValueOnce(new Error("Read failed"));
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(harness.gitStatus).toHaveBeenCalledTimes(4);
+      const failed = harness.state();
+      expect(
+        failedRead === "status"
+          ? failed.gitStatusError
+          : failed.gitDiff?.status === "ready" && failed.gitDiff.refreshError,
+      ).toBe("Read failed");
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(harness.gitStatus).toHaveBeenCalledTimes(5);
+      harness.controller.setSurfaceVisible("detail", false);
+    },
+  );
+
+  it.each(["manual", "visible"] as const)(
+    "refreshes immediately and resets stable polling on %s intent",
+    async (intent) => {
+      vi.useFakeTimers();
+      let visibility: DocumentVisibilityState = "visible";
+      vi.spyOn(document, "visibilityState", "get").mockImplementation(
+        () => visibility,
+      );
+      const harness = createHarness(visibleSelection);
+      harness.gitStatus.mockResolvedValue(modified);
+      harness.gitDiff.mockResolvedValue(diff("before"));
+      harness.controller.setSurfaceVisible("detail", true);
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(harness.gitStatus).toHaveBeenCalledTimes(3);
+      if (intent === "manual") await harness.controller.refreshStatus();
+      else {
+        visibility = "hidden";
+        document.dispatchEvent(new Event("visibilitychange"));
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(harness.gitStatus).toHaveBeenCalledTimes(3);
+        visibility = "visible";
+        document.dispatchEvent(new Event("visibilitychange"));
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      expect(harness.gitStatus).toHaveBeenCalledTimes(4);
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(harness.gitStatus).toHaveBeenCalledTimes(5);
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(harness.gitStatus).toHaveBeenCalledTimes(6);
+      harness.controller.setSurfaceVisible("detail", false);
+    },
+  );
+
+  it("uses summary cadence without reading hidden diff and refreshes when detail returns", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness(visibleSelection);
+    harness.gitStatus.mockResolvedValue(modified);
+    harness.gitDiff.mockResolvedValue(diff("before"));
+    harness.controller.setSurfaceVisible("topbar-git", true);
+    await vi.advanceTimersByTimeAsync(0);
+    harness.controller.setSurfaceVisible("detail", true);
+    await vi.advanceTimersByTimeAsync(8_000);
+    const before = harness.gitStatus.mock.calls.length;
+    const diffBefore = harness.gitDiff.mock.calls.length;
+
+    harness.patch({ fileChangesVisible: false });
+    harness.controller.setSurfaceVisible("detail", false);
+    await vi.advanceTimersByTimeAsync(19_999);
+    expect(harness.gitStatus).toHaveBeenCalledTimes(before);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(harness.gitStatus).toHaveBeenCalledTimes(before + 1);
+    expect(harness.gitDiff).toHaveBeenCalledTimes(diffBefore);
+
+    harness.patch({ fileChangesVisible: true });
+    harness.controller.setSurfaceVisible("detail", true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.gitStatus).toHaveBeenCalledTimes(before + 2);
+    expect(harness.gitDiff).toHaveBeenCalledTimes(diffBefore + 1);
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(harness.gitStatus).toHaveBeenCalledTimes(before + 3);
+    harness.controller.setSurfaceVisible("detail", false);
+    harness.controller.setSurfaceVisible("topbar-git", false);
+  });
+
+  it("waits for a slow diff and keeps a new selection's cadence independent of the old read", async () => {
+    vi.useFakeTimers();
+    const other = { id: "other", display: "other.txt", utf8Path: "other.txt" };
+    const status = {
+      ...modified,
+      files: [
+        ...modified.files,
+        {
+          path: other,
+          worktree: { kind: "modified" as const },
+          untracked: false,
+        },
+      ],
+    };
+    const harness = createHarness({ ...visibleSelection, gitStatus: status });
+    harness.gitStatus.mockResolvedValue(status);
+    harness.gitDiff.mockResolvedValue(diff("before"));
+    harness.controller.setSurfaceVisible("detail", true);
+    await vi.advanceTimersByTimeAsync(8_000);
+    let release!: (result: ReturnType<typeof diff>) => void;
+    harness.gitDiff.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(harness.gitStatus).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(harness.gitStatus).toHaveBeenCalledTimes(4);
+    expect(harness.gitDiff).toHaveBeenCalledTimes(4);
+
+    const nextDiff = { ...diff("new selection"), path: other };
+    harness.gitDiff.mockResolvedValue(nextDiff);
+    await harness.controller.openChange(other.id);
+    release(diff("before"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.state().gitDiff).toMatchObject({ result: nextDiff });
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(harness.gitStatus).toHaveBeenCalledTimes(5);
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(harness.gitStatus).toHaveBeenCalledTimes(6);
+    harness.controller.setSurfaceVisible("detail", false);
+  });
+
+  it("keeps two clients' slow reads and cancellation independent", async () => {
+    vi.useFakeTimers();
+    const reads: Array<{ signal: AbortSignal; finish: () => void }> = [];
+    const gitStatus = vi.fn(
+      (_sessionId: string, signal: AbortSignal) =>
+        new Promise<GitStatusResponse>((resolve) => {
+          reads.push({ signal, finish: () => resolve(modified) });
+        }),
+    );
+    const gitDiff = vi.fn(async () => diff("before"));
+    const api = { gitStatus, gitDiff } as unknown as Api;
+    const first = createHarness(visibleSelection, api);
+    const second = createHarness(visibleSelection, api);
+    first.controller.setSurfaceVisible("detail", true);
+    second.controller.setSurfaceVisible("detail", true);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(gitStatus).toHaveBeenCalledTimes(2);
+
+    first.controller.setSurfaceVisible("detail", false);
+    expect(reads[0].signal.aborted).toBe(true);
+    expect(reads[1].signal.aborted).toBe(false);
+    reads[0].finish();
+    reads[1].finish();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(gitDiff).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(gitStatus).toHaveBeenCalledTimes(3);
+    second.controller.setSurfaceVisible("detail", false);
+    reads[2].finish();
+    await vi.advanceTimersByTimeAsync(0);
   });
 
   it("pauses polling while the page is hidden and refreshes on return", async () => {

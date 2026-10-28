@@ -398,6 +398,12 @@ claim that the file is clean.
 - Polling retains the selected path and reader position while that comparison remains present;
   explicit inspection refreshes the diff, and a vanished selection clears it. Git selection intent
   owns the pane, so a delayed Files response cannot replace a newer Git choice.
+- Files discovery, Changes and a visible diff use four-second polling. Two consecutive unchanged
+  successful polls extend that interval to eight seconds; a visible diff is actually reread before
+  judging it unchanged. A changed result, failure, explicit refresh, owner change or visibility
+  return resets the cadence. Body-only file readers need only the twenty-second topbar summary.
+  Hidden pages pause polling; each timer starts after the previous round finishes. This is a
+  bounded observation delay, not a cache that can claim an old diff is newly read.
 - Unified-diff file headers are recognized outside hunk bodies. Hunk lines with repeated `+` or `-`
   remain edits with correct line numbers.
 
