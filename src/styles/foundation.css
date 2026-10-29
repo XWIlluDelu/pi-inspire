@@ -30,7 +30,7 @@
   --ease-standard: ease-out;
   /* Fluid only for the untouched default. A user-resized inline value remains
      fixed; the handle still clamps it safely against the viewport. */
-  --nav-w: clamp(220px, calc(18.6667vw + 33.0667px), 272px);
+  --nav-w: clamp(220px, calc(18.6667vw + 33.0667px), 240px);
   --nav-w-collapsed: 48px;
   --ctx-w: clamp(340px, 38vw, 760px);
   --topbar-h: 44px;

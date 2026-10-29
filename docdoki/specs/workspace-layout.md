@@ -68,7 +68,7 @@ independent project shells in [[terminal]].
   focus and Escape ownership when a viewport change turns the underlying pane into a drawer;
   the lower drawer cannot trap or make that dialog inert.
 
-- Automatic desktop widths use 220–272px for navigation (48px collapsed) and 340–760px for context.
+- Automatic desktop widths use 220–240px for navigation (48px collapsed) and 340–760px for context.
   Navigation retains its 460px manual maximum. Context can be manually widened to the remaining
   shared conversation-width budget, without a separate fixed pixel ceiling; automatic defaults
   do not change.

@@ -290,6 +290,32 @@ deferred-prefix expansion and nested-call states. The regression now measures th
 path/stroke against letter ink; a former container-edge assertion is removed while title/detail
 alignment stays enforced. Typechecking, scoped formatting and the production-mode build pass.
 
+## Compact session navigation and contextual toolbar
+
+The 2026-10-29 user-approved adjustments were visually reviewed, followed by explicit approval
+to commit to auto-dev and publish the static build. Desktop navigation defaults to 220–240px rather than
+220–272px without migrating a saved width. Its session title owns the first line, with the
+existing age/project/activity metadata and trailing hover/focus actions below it. Ordinary
+pointer rows are 44px; coarse desktop rows are 52px with visible 36px actions. Narrow session
+markup and geometry remain unchanged. The context tool header is 36px desktop / 37px narrow,
+retaining 16px icons, the centered refresh separator and at least 32px coarse/narrow targets.
+
+Focused verification covers 16 Chromium scenarios and 24 navigation/resize unit cases, plus
+type checking, scoped Biome checks and an isolated production build. Real before/after pages
+use the same synthetic Chinese conversation at 1600×1000. Phone title, metadata, action and row
+rectangles match the prior build exactly; a saved 360px width survives reload. The coarse
+desktop check caught and corrected an inherited static action row; its actions remain positioned
+inside the second line. Publication uses the existing atomic static-build workflow without a Host restart;
+main and existing tags remain unchanged.
+
+The follow-up local refinement reserves a 12px status slot before the title so age keeps the
+title's start even when status changes; cross-project labels follow age. Hidden's independent
+rows retain a shallower indent than folder children while clearing the selection marker.
+A focused rendered review of Files/Changes/History/Terminal found one shared-control mismatch:
+History search now matches Files at 34px high, 13px icon, 12px inner inset and 8px gap, with a
+4px top inset. Content typography and terminal/code font roles remain unchanged. This follow-up
+uses targeted visual/interaction checks, type checking and an isolated build, not a repeated matrix.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

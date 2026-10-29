@@ -344,15 +344,23 @@ and baseline; New has slightly heavier text and a neutral plus. Their gap is 8px
 before projects, including in the Overlay header. The collapsed rail's mark expands navigation and
 its separate plus starts New; both logo forms share size and icon axis.
 
-New, Search, folder and session labels share a text axis; counts/ages share the right column.
+New, Search, folder and session titles share a text axis. Folder counts keep the right column;
+desktop session age and existing activity marks occupy a quieter second line, with curation
+actions at its trailing edge. Session titles retain their first-line width on hover and focus.
 Hidden folders add one indent, independent of workspace-tree nesting. Narrow/coarse-pointer
 New/Search rows are 36px high with 14px labels; icon-only rail/close actions retain 44px targets.
 WebKit uses 16px editing text to avoid focus zoom, retaining compact resting labels.
+
+The contextual tab/tool header is 36px on desktop and 37px in its narrow drawer. Its icons remain
+16px; desktop tool tiles are 26px high while coarse/narrow controls keep at least 32px targets.
+Open-file tabs fill the header height, and the short refresh separator remains centered.
 
 Session, conversation and workspace search use muted icons/placeholders and ink-colored input,
 stronger hover icons and accent focus borders. Session search rests on an inset control surface with
 a fine boundary that strengthens on hover and changes to surface fill on focus. Conversation/workspace search retain
 opaque surface fills and fine resting borders.
+Workspace and History search share a 34px field, 13px search icon, 12px inner inset and
+8px icon/text gap, starting 4px below the contextual tool header.
 
 Selected session rows have a translucent lifted surface; collapsed folders containing the selection
 have a quiet accent tint. Both use an inset straight, round-ended accent marker, with neutral ordinary

@@ -155,8 +155,8 @@ body.srail-dragging {
   .app--narrow .ctx__header {
     gap: var(--space-1);
     height: auto;
-    /* Match the compact header while retaining 34px touch controls. */
-    min-height: 41px;
+    /* Keep the compact tool strip around its existing 32px touch actions. */
+    min-height: 37px;
     padding: 0 var(--space-2);
   }
 
@@ -167,7 +167,7 @@ body.srail-dragging {
   }
 
   .app--narrow .ctx__modes button {
-    min-height: 34px;
+    min-height: 32px;
     padding: 4px 0;
   }
 
@@ -871,7 +871,7 @@ body.srail-dragging {
 
   .app--narrow .ctx__modes button {
     /* Match the condensed structural labels without a tall, narrow selected tile. */
-    min-height: 34px;
+    min-height: 32px;
   }
 }
 

@@ -802,6 +802,7 @@ export function BranchTree({
       <div className="history-outline" hidden={selectedId !== null}>
         <SearchField
           className="branch-tree__search"
+          iconSize={13}
           clearLabel="Clear history search"
           loading={reading}
           loadingLabel="Searching history"

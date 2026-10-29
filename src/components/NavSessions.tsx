@@ -29,10 +29,9 @@ function searchParentContext(cwd: string, query: string): string {
     : "";
 }
 
-/** One dense session line: the title at the left and one number at the right —
- * the activity age, in a fixed column the curation actions take over on hover
- * or focus. The message count is a tooltip fact, not a second number fighting
- * for the same edge. Cross-project path searches replace age with directory
+/** Desktop keeps identity above its existing age/status metadata; narrow rows
+ * retain their compact layout and persistent touch actions. The message count
+ * remains a tooltip fact. Cross-project path searches replace age with directory
  * context so the title keeps its space. */
 export const SessionRow = memo(function SessionRow({
   session,

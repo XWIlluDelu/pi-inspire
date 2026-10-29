@@ -184,7 +184,7 @@ body.pane-resizing--vertical .nav {
   justify-content: space-between;
   gap: var(--space-1);
   padding: 0 var(--space-3);
-  height: 40px;
+  height: 36px;
   background: var(--bg-context);
   font-size: var(--text-base);
   font-weight: 500;
@@ -297,7 +297,7 @@ body.pane-resizing--vertical .nav {
   position: relative;
   width: 30px;
   min-width: 30px;
-  height: 30px;
+  height: 26px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -894,6 +894,10 @@ body.pane-resizing--vertical .nav {
 /* Spend existing reader-header breathing room on touch targets, preserving
    the two-row header height and the icons' centers. Pointer layouts stay compact. */
 @media (pointer: coarse) {
+  .ctx__modes button {
+    min-height: 32px;
+  }
+
   .ctx__file-tab > .ctx__file-close {
     flex-basis: 32px;
     min-width: 32px;

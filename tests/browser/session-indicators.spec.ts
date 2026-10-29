@@ -61,8 +61,11 @@ test("sidebar work and unread outcomes share glyph geometry without animating at
     expect(
       await status.evaluate((el) => {
         const icon = el.getBoundingClientRect();
-        const title = el.closest(".nav__row-title")!.getBoundingClientRect();
-        return Math.abs(icon.y + icon.height / 2 - title.y - title.height / 2);
+        const meta = el
+          .closest(".nav__row")!
+          .querySelector(".nav__row-meta")!
+          .getBoundingClientRect();
+        return Math.abs(icon.y + icon.height / 2 - meta.y - meta.height / 2);
       }),
     ).toBeLessThanOrEqual(0.5);
   }
@@ -95,7 +98,10 @@ test("sidebar work and unread outcomes share glyph geometry without animating at
       .evaluate(
         (element) =>
           element.getBoundingClientRect().left -
-          element.closest(".nav__row-title")!.getBoundingClientRect().left,
+          element
+            .closest(".nav__row")!
+            .querySelector(".nav__row-meta")!
+            .getBoundingClientRect().left,
       );
   expect(await idleInset()).toBe(0);
   let release!: () => void;
@@ -114,8 +120,11 @@ test("sidebar work and unread outcomes share glyph geometry without animating at
   await expect(opening).toBeVisible();
   const offset = await opening.evaluate((element) => {
     const icon = element.querySelector("svg")!.getBoundingClientRect();
-    const title = element.closest(".nav__row-title")!.getBoundingClientRect();
-    return icon.y + icon.height / 2 - title.y - title.height / 2;
+    const meta = element
+      .closest(".nav__row")!
+      .querySelector(".nav__row-meta")!
+      .getBoundingClientRect();
+    return icon.y + icon.height / 2 - meta.y - meta.height / 2;
   });
   expect(Math.abs(offset)).toBeLessThanOrEqual(0.1);
   release();

@@ -56,6 +56,56 @@ for (const touch of [false, true]) {
   });
 }
 
+for (const touch of [false, true]) {
+  test.describe(`compact context toolbar · ${touch ? "coarse" : "fine"} pointer`, () => {
+    test.use({ hasTouch: touch });
+    test("context toolbar keeps icons centered in its compact desktop and narrow heights", async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await pairedPage(page);
+      await openMockSession(page, /Formula rendering and spectral analysis/);
+      await page
+        .getByRole("button", { name: "Toggle resources panel" })
+        .click();
+      for (const width of [1440, 390, 320]) {
+        await page.setViewportSize({ width, height: 900 });
+        const header = page.locator(".ctx__header");
+        await header.getByRole("tab", { name: "Files", exact: true }).waitFor();
+        await expect(header).toBeVisible();
+        if (width > 900) {
+          for (const row of await page.locator(".nav__row").all()) {
+            expect((await row.boundingBox())!.height).toBeLessThanOrEqual(
+              touch ? 54 : 46,
+            );
+          }
+        }
+        const box = (await header.boundingBox())!;
+        expect(box.height).toBe(width > 900 ? 36 : 37);
+        for (const tool of await header.getByRole("tab").all()) {
+          const target = (await tool.boundingBox())!;
+          const icon = (await tool.locator("svg").first().boundingBox())!;
+          expect(target.height).toBeGreaterThanOrEqual(
+            width > 900 && !touch ? 26 : 32,
+          );
+          expect(icon.width).toBeCloseTo(16, 2);
+          expect(icon.height).toBeCloseTo(16, 2);
+          expect(
+            Math.abs(icon.y + icon.height / 2 - box.y - box.height / 2),
+          ).toBeLessThanOrEqual(0.5);
+          expect(target.y).toBeGreaterThanOrEqual(box.y);
+          expect(target.y + target.height).toBeLessThanOrEqual(
+            box.y + box.height,
+          );
+        }
+        const files = header.getByRole("tab", { name: "Files", exact: true });
+        await files.click();
+        await expect(files).toHaveAttribute("aria-selected", "true");
+      }
+    });
+  });
+}
+
 test("desktop pane gutters remain pointer and keyboard resize targets", async ({
   page,
 }) => {

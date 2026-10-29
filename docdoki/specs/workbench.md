@@ -150,14 +150,17 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   disagree. Folder pins use the exact cwd identity that already defines groups and their collapse
   state.
 
-- An ordinary session row is one dense line carrying a single number: its title at the left, and at
-  the right a compact activity age in a fixed column, preceded by the owning project only where a
-  section crosses folders. Folder headers use the next legibility tier for their label and
-  persistent pin state, while putting their smaller session count in that same right-hand column, so
-  the panel reads down one rule. The exact timestamp and the message count stay in tooltips rather
-  than becoming a second number. The pin and hide actions take over that column on hover or focus
-  without moving anything. On phone-width layouts or without hover they remain visible beside the
-  age. Pin and Hide are frequent actions and stay directly accessible, not behind an overflow menu.
+- Desktop session rows use two compact lines: the title keeps the full first line; the existing
+  activity mark occupies a reserved 12px slot just before the title's left edge; age aligns with
+  the title even when no status is present. Cross-project metadata follows age on that quieter
+  second line. Hidden keeps enough leading gutter to separate status from its selection marker.
+  Pin/Hide or Restore/Delete appear at the trailing edge on hover or keyboard focus,
+  without hiding metadata or taking width from the title. Ordinary pointer rows are 44px high;
+  coarse desktop rows retain visible 36px actions. Narrow session layouts remain unchanged.
+  Folder headers retain their label tier, persistent pin state and trailing session count.
+  The exact timestamp and message count stay in tooltips. On phone-width layouts or without
+  hover the actions remain visible beside the age. Pin and Hide stay directly accessible,
+  not behind an overflow menu.
 
 - Project groups expose native expand/collapse controls across the header's main button. A single
   open/closed folder icon conveys the displayed state without a separate disclosure arrow, leaving

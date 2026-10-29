@@ -749,6 +749,112 @@
   }
 }
 
+/* Desktop sessions give the title its own line. The existing status mark and
+   age share the smaller second line; curation never takes title space. */
+@media (min-width: 901px) {
+  .nav__row-main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 18px 16px;
+    align-content: center;
+    align-items: center;
+    row-gap: 1px;
+    min-height: 44px;
+    padding-block: 4px;
+  }
+
+  .nav__row-title {
+    display: contents;
+  }
+
+  .nav__row-name {
+    grid-area: 1 / 1;
+    width: 100%;
+    line-height: 18px;
+  }
+
+  .nav__row-title > :is(.nav__row-state, .nav__row-dot) {
+    grid-area: 2 / 1;
+    justify-self: start;
+    z-index: 1;
+  }
+
+  .nav__row-state {
+    width: 12px;
+    height: 12px;
+    margin-inline-start: -18px;
+  }
+
+  .nav__row-dot {
+    margin-inline-start: calc(-18px + (12px - 7px) / 2);
+  }
+
+  .nav__row-meta {
+    grid-area: 2 / 1;
+    min-width: 0;
+    padding-inline-end: 52px;
+    gap: 6px;
+    line-height: 16px;
+  }
+
+  .nav__row:hover .nav__row-meta,
+  .nav__row:has(:focus-visible) .nav__row-meta {
+    opacity: 1;
+  }
+
+  .nav__row-age {
+    order: -1;
+    flex-basis: auto;
+    margin-inline-start: 0;
+    text-align: left;
+  }
+
+  .nav__row-actions {
+    position: absolute;
+    top: auto;
+    bottom: 1px;
+    transform: none;
+  }
+
+  .nav__row-action,
+  .nav__row-action-spacer {
+    width: 24px;
+    height: 24px;
+  }
+
+  .nav__hidden-content .nav__row-name,
+  .nav__hidden-content .nav__row-meta {
+    translate: none;
+  }
+
+  /* Keep the reserved status slot clear of Hidden's selection marker;
+     independent sessions remain shallower than a hidden folder's children. */
+  .nav__hidden-content > .nav__row > .nav__row-main {
+    padding-inline-start: 28px;
+  }
+}
+
+@media (min-width: 901px) and (hover: none) {
+  .nav__row {
+    display: block;
+  }
+
+  .nav__row-main {
+    width: 100%;
+    min-height: 52px;
+  }
+
+  .nav__row-meta {
+    padding-inline-end: 78px;
+  }
+
+  .nav__row-action,
+  .nav__row-action-spacer {
+    width: 36px;
+    height: 36px;
+  }
+}
+
 /* --- Shared workspace browser --- */
 
 .workspace-tree {
