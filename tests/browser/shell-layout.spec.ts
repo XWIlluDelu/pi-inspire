@@ -74,6 +74,12 @@ test("desktop pane gutters remain pointer and keyboard resize targets", async ({
     const initial = (await pane.boundingBox())!.width;
     const bounds = (await handle.boundingBox())!;
     expect(bounds.width).toBeGreaterThanOrEqual(8);
+    await page.mouse.move(800, 60);
+    await expect
+      .poll(() =>
+        handle.evaluate((el) => getComputedStyle(el, "::after").opacity),
+      )
+      .toBe("0");
     // Start near the header: a scroll thumb may correctly own lower parts
     // of the shared hit band. Exercise a real pointer, not dispatched events.
     const x = bounds.x + bounds.width / 2;
@@ -102,11 +108,23 @@ test("desktop pane gutters remain pointer and keyboard resize targets", async ({
       .poll(async () => (await pane.boundingBox())!.width)
       .toBeCloseTo(initial + 48, 0);
 
+    await page.mouse.move(800, 60);
     await handle.focus();
     await handle.press(selector === ".nav" ? "ArrowRight" : "ArrowLeft");
     await expect
+      .poll(() =>
+        handle.evaluate((el) => getComputedStyle(el, "::after").opacity),
+      )
+      .toBe("1");
+    await expect
       .poll(async () => (await pane.boundingBox())!.width)
       .toBeCloseTo(initial + 72, 0);
+    await page.keyboard.press("Tab");
+    await expect
+      .poll(() =>
+        handle.evaluate((el) => getComputedStyle(el, "::after").opacity),
+      )
+      .toBe("0");
   }
 
   const saved = await Promise.all(

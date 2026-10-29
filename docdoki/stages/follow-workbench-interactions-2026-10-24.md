@@ -178,9 +178,11 @@ on that same tab. Side selection, line counts and bounded previous/next change n
 the file toolbar; Source/Preview applies within body mode and Download stays at the trailing edge.
 The removed split component, secondary narrow Back level and their unused styles are retired.
 
-The two sidebars retain their established shared rail color and functional widths. Both resize
-boundaries use a 1px token-colored rule, a 2px hover/focus rule and an accent drag state, within the
-existing 8px hit band. The existing 12px content gutter and same-level file columns remain. A measured
+The two sidebars retain their established shared rail color and functional widths. Following the
+user's preference for the earlier unobtrusive design, both resize indicators are hidden at rest;
+hover/focus reveals a 2px neutral rule and dragging uses the accent state. This supersedes the
+resting 1px rule introduced with the file-tab work; the existing 8px hit band remains available.
+The existing 12px content gutter and same-level file columns remain. A measured
 320px reader initially squeezed its path to 26px; readers up to 520px now use a path row and action
 row in both modes, restoring 296px for that path without moving the trailing Download action.
 

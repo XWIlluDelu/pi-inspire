@@ -106,7 +106,8 @@
   }
 }
 
-/* Both outer panes share a quiet rule and an 8px resize hit band. */
+/* A quiet gutter separates both panes. The 8px hit band remains available;
+   hover, keyboard focus and dragging reveal its otherwise hidden divider. */
 .pane-resize {
   position: relative;
   flex: 0 0 auto;
@@ -133,7 +134,7 @@
 .pane-resize__hit::after {
   position: absolute;
   pointer-events: none;
-  opacity: 1;
+  opacity: 0;
   content: "";
   transition: opacity var(--dur-standard) var(--ease-standard);
 }
@@ -143,17 +144,16 @@
   top: var(--space-2);
   bottom: var(--space-2);
   left: 50%;
-  width: 1px;
+  width: 2px;
   border-radius: var(--radius-pill);
-  background: var(--hairline);
+  background: var(--thumb);
   transform: translateX(-50%);
 }
 
 .pane-resize__hit:hover::after,
 .pane-resize__hit:focus-visible::after,
 .pane-resize__hit--drag::after {
-  width: 2px;
-  background: var(--thumb);
+  opacity: 1;
 }
 
 .pane-resize--vertical .pane-resize__hit--drag::after {
