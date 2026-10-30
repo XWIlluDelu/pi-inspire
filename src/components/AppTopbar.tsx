@@ -435,6 +435,8 @@ export const AppTopbar = memo(function AppTopbar({
       projectionConflict: source.projectionConflict,
       connection: source.connection,
       connectionProblem: source.connectionProblem,
+      workspaceLoading:
+        !source.sessionId && (!source.bootstrapped || source.startupPending),
       resourcesOpen: source.resourcesOpen,
       observesRepository:
         Boolean(source.sessionId) &&
@@ -481,6 +483,7 @@ export const AppTopbar = memo(function AppTopbar({
               const problem = state.connectionProblem;
               const failure =
                 problem !== null && problem.kind !== "stream-interrupted";
+              if (state.workspaceLoading && !failure) return null;
               const label =
                 problem?.kind === "device-offline"
                   ? "Device offline"

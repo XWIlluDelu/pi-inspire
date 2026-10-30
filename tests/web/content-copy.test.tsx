@@ -33,7 +33,10 @@ describe("owned content copying", () => {
     rerender(<PathCopyButton path="/workspace/second.md" />);
     expect(button).toHaveFocus();
     expect(button).toHaveAccessibleName("Copy path /workspace/second.md");
-    expect(button.querySelector("svg")).toBeNull();
+    expect(button.querySelector(".copy-feedback")).toHaveAttribute(
+      "data-state",
+      "idle",
+    );
     fireEvent.click(button);
     await screen.findByRole("button", { name: "Path copied" });
     expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith(
@@ -73,7 +76,10 @@ describe("owned content copying", () => {
         await write.promise.catch(() => {});
       });
       expect(button).toHaveAccessibleName("Copy path /workspace/result.md");
-      expect(button.querySelector("svg")).toBeNull();
+      expect(button.querySelector(".copy-feedback")).toHaveAttribute(
+        "data-state",
+        "idle",
+      );
       expect(report).not.toHaveBeenCalled();
 
       current = true;

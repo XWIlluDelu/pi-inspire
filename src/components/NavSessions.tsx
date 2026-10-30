@@ -29,7 +29,7 @@ function searchParentContext(cwd: string, query: string): string {
     : "";
 }
 
-/** Desktop keeps identity above its existing age/status metadata; narrow rows
+/** Desktop keeps identity/status above its existing age/project metadata; narrow rows
  * retain their compact layout and persistent touch actions. The message count
  * remains a tooltip fact. Cross-project path searches replace age with directory
  * context so the title keeps its space. */

@@ -197,9 +197,10 @@ for (const mode of ["Files", "Changes"] as const) {
     await expect(state).toHaveCount(0);
     await expect(frame).toHaveCSS("overflow-y", "hidden");
     if (mode === "Files") {
-      await expect(pane.locator(".file-detail-header")).toContainText(
-        "document.md",
-      );
+      await expect(
+        pane.getByRole("button", { name: /Copy path .*document\.md/ }),
+      ).toBeVisible();
+      await expect(pane.locator(".file-detail-header")).toHaveCount(0);
       await expect(
         pane.getByRole("heading", { name: "Observation log · Station 07" }),
       ).toBeVisible();
@@ -307,7 +308,7 @@ test("conversation image-reference marks follow the first caption line across re
   }
 });
 
-test("file path toolbars distinguish the reader from browser chrome across palettes", async ({
+test("floating file actions distinguish the reader from browser chrome across palettes", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -354,9 +355,9 @@ test("file path toolbars distinguish the reader from browser chrome across palet
           .click();
         const surfaces = await pane.evaluate((el) => {
           const index = el.querySelector(".ctx__header")!;
-          const detail = el.querySelector(".file-detail-header")!;
+          const detail = el.querySelector(".file-preview__actions")!;
           const probe = document.createElement("span");
-          probe.style.backgroundColor = "var(--bg-surface)";
+          probe.style.backgroundColor = "var(--bg-file-surface)";
           detail.append(probe);
           const result = {
             index: getComputedStyle(index).backgroundColor,
@@ -373,18 +374,17 @@ test("file path toolbars distinguish the reader from browser chrome across palet
     await settings.press("Escape");
     for (const width of [1280, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });
-      const header = pane.locator(".file-detail-header");
-      const readerWidth = (await pane.locator(".file-preview").boundingBox())!
-        .width;
-      await expect(header).toHaveCSS(
-        "height",
-        readerWidth <= 520 ? "57px" : "34px",
-      );
+      const header = pane.locator(".file-preview__actions");
+      await expect(header).toHaveCSS("position", "absolute");
+      await expect(header).toHaveCSS("height", width <= 900 ? "38px" : "30px");
+      await expect(pane.locator(".file-detail-header")).toHaveCount(0);
       if (width <= 900) {
         await expect(
           pane.getByRole("tab", { name: "Files", exact: true }),
         ).toBeVisible();
-        expect((await header.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+        expect(
+          (await header.getByRole("button").first().boundingBox())!.height,
+        ).toBeGreaterThanOrEqual(32);
       }
       expect(
         await pane.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),

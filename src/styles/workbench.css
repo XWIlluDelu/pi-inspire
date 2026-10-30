@@ -488,7 +488,7 @@ body.pane-resizing--vertical .nav {
   box-sizing: border-box;
   flex: 0 0 auto;
   border-bottom: none;
-  padding: var(--space-1) var(--space-3) var(--space-3);
+  padding: var(--space-1) var(--space-3);
   background: transparent;
 }
 
@@ -510,7 +510,7 @@ body.pane-resizing--vertical .nav {
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: var(--space-2) var(--space-1);
+  padding: var(--space-1) var(--space-1) var(--space-2);
 }
 
 .files-browser__section {
@@ -626,6 +626,16 @@ body.pane-resizing--vertical .nav {
   color: var(--accent-deep);
 }
 
+/* Availability shares Git's trailing 16px status column, even without a path.
+   Its icon must not shrink when a long filename and path compete for space. */
+.recent-file__warning {
+  display: inline-flex;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+}
+
 .recent-file__name {
   min-width: 0;
   flex: 0 1 auto;
@@ -666,7 +676,6 @@ body.pane-resizing--vertical .nav {
   background: var(--bg-context);
 }
 
-.file-detail-header,
 .res__index-header {
   box-sizing: border-box;
   display: flex;
@@ -677,40 +686,25 @@ body.pane-resizing--vertical .nav {
   padding: 0 var(--space-3);
 }
 
-.file-detail-header {
-  background: var(--bg-surface);
-  height: 34px;
-  min-height: 34px;
-  flex: 0 0 34px;
-  justify-content: space-between;
-}
-
-/* A narrow reader needs a readable path as well as its comparison controls.
-   Keep the same two-row rhythm in body and diff modes. */
+/* File actions float within the preview instead of owning another header row.
+   Reserve their small top footprint in the readers so first content stays clear. */
 .file-preview {
-  container-type: inline-size;
-  container-name: file-reader;
+  --file-actions-height: 30px;
+  position: relative;
 }
 
-@container file-reader (max-width: 520px) {
-  .file-preview > .file-detail-header {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0;
-    height: auto;
-    min-height: 57px;
-    flex-basis: auto;
-    padding-block: var(--space-1);
-  }
-
-  .file-detail-header__path {
-    height: 24px;
-  }
-
-  .file-detail-header__actions {
-    justify-self: end;
-    min-height: 24px;
-  }
+.file-preview__actions {
+  position: absolute;
+  z-index: 2;
+  top: var(--space-2);
+  right: var(--space-3);
+  max-width: calc(100% - 2 * var(--space-3));
+  box-sizing: border-box;
+  padding: 2px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-file-surface);
+  overflow-x: auto;
 }
 
 .res__index-header {
@@ -765,20 +759,9 @@ body.pane-resizing--vertical .nav {
   font-weight: 600;
 }
 
-.file-detail-header__path {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow: hidden;
-}
-
-.file-detail-header__path > .file-path-action {
-  min-width: 0;
-}
-
 .file-path-action {
   display: inline-flex;
+  min-width: 0;
   max-width: 100%;
   height: 24px;
   align-items: center;
@@ -802,7 +785,7 @@ body.pane-resizing--vertical .nav {
 }
 
 .file-path-action:focus-visible {
-  /* The path column clips overflow to preserve the fixed action slots. */
+  /* Keep confirmation focus inside the compact control. */
   outline-offset: -2px;
 }
 
@@ -829,7 +812,7 @@ body.pane-resizing--vertical .nav {
   flex: 0 0 auto;
 }
 
-.file-detail-header .icon-button {
+.file-preview__actions .icon-button {
   width: 24px;
   height: 24px;
   border-radius: var(--radius-control);
@@ -842,7 +825,11 @@ body.pane-resizing--vertical .nav {
     color var(--dur-micro) var(--ease-standard);
 }
 
-.file-detail-header .icon-button:hover:not(:disabled) {
+.file-preview__actions :is(.icon-button, .file-detail-header__view):focus-visible {
+  outline-offset: -2px;
+}
+
+.file-preview__actions .icon-button:hover:not(:disabled) {
   background: var(--bg-inset);
   color: var(--ink);
 }
@@ -891,8 +878,7 @@ body.pane-resizing--vertical .nav {
   color: var(--ink);
 }
 
-/* Spend existing reader-header breathing room on touch targets, preserving
-   the two-row header height and the icons' centers. Pointer layouts stay compact. */
+/* The floating group retains larger touch targets without a separate path row. */
 @media (pointer: coarse) {
   .ctx__modes button {
     min-height: 32px;
@@ -903,13 +889,13 @@ body.pane-resizing--vertical .nav {
     min-width: 32px;
   }
 
-  .file-detail-header__actions .icon-button,
-  .file-detail-header__actions .file-detail-header__view {
+  .file-preview .file-detail-header__actions .icon-button,
+  .file-preview .file-detail-header__actions .file-detail-header__view {
     height: 32px;
     min-height: 32px;
   }
 
-  .file-detail-header__actions .icon-button {
+  .file-preview .file-detail-header__actions .icon-button {
     width: 32px;
     min-width: 32px;
   }
@@ -918,11 +904,7 @@ body.pane-resizing--vertical .nav {
     min-height: 32px;
   }
 
-  @container file-reader (max-width: 520px) {
-    .file-preview > .file-detail-header {
-      padding-block: 0;
-    }
-  }
+  .file-preview { --file-actions-height: 38px; }
 }
 
 .file-detail-header__view:hover:not(:disabled) {
@@ -949,7 +931,7 @@ body.pane-resizing--vertical .nav {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: var(--space-3);
+  padding: calc(var(--file-actions-height) + 2 * var(--space-2)) var(--space-3) var(--space-3);
 }
 
 /* Keep natural state size and room for focus rings when short readers scroll to actions. */
@@ -973,7 +955,13 @@ body.pane-resizing--vertical .nav {
 }
 
 .file-preview__content:has(> .source-reader) {
-  padding: 0;
+  padding: calc(var(--file-actions-height) + 2 * var(--space-2)) 0 0;
+}
+
+.file-preview .source-view__gutter,
+.file-preview .source-view__pre,
+.file-preview .source-diff__lines {
+  padding-top: 0;
 }
 
 .source-reader {

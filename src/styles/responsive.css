@@ -182,7 +182,20 @@ body.srail-dragging {
   }
 
   .app--narrow .file-preview__content:not(:has(> .source-reader)) {
-    padding: var(--space-2);
+    padding: calc(var(--file-actions-height) + 2 * var(--space-2)) var(--space-2) var(--space-2);
+  }
+
+  .app--narrow .file-preview { --file-actions-height: 38px; }
+
+  .app--narrow .file-preview__actions .icon-button,
+  .app--narrow .file-preview__actions .file-detail-header__view {
+    min-height: 32px;
+    height: 32px;
+  }
+
+  .app--narrow .file-preview__actions .icon-button {
+    min-width: 32px;
+    width: 32px;
   }
 
   @keyframes nav-drawer-in {
@@ -959,8 +972,4 @@ body.srail-dragging {
     animation: none !important;
     transition-duration: 0.01ms !important;
   }
-}
-
-@media (max-width: 900px) {
-  .file-preview > .file-detail-header { height: auto; min-height: 44px; flex-basis: auto; }
 }

@@ -14,8 +14,8 @@ import { fileIconForPath } from "../file-icons";
 import { gitDecorationForChange, presentGitFacet } from "../git-presentation";
 import type { ResourceRow } from "../resources";
 import { gitChangeForWorkspacePath, store } from "../store";
-import type { ContextPaneView } from "./context-pane-view";
 import { ChangesDetail } from "./ChangesPane";
+import type { ContextPaneView } from "./context-pane-view";
 import { FilePreview, type FileReadingState } from "./FilePreview";
 import { PiLoader } from "./PiLoader";
 import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
@@ -106,14 +106,16 @@ const RecentFileRow = memo(function RecentFileRow({
           {facet.mark}
         </span>
       ) : unavailable ? (
-        <AlertTriangle
-          size={12}
-          aria-label={
-            availability.availability === "ambiguous"
-              ? `File reference ambiguous: ${availability.message ?? "choose a match"}`
-              : `File unavailable: ${availability.message ?? availability.availability}`
-          }
-        />
+        <span className="recent-file__warning">
+          <AlertTriangle
+            size={12}
+            aria-label={
+              availability.availability === "ambiguous"
+                ? `File reference ambiguous: ${availability.message ?? "choose a match"}`
+                : `File unavailable: ${availability.message ?? availability.availability}`
+            }
+          />
+        </span>
       ) : null}
     </button>
   );

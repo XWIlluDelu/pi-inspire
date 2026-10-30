@@ -150,14 +150,19 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   disagree. Folder pins use the exact cwd identity that already defines groups and their collapse
   state.
 
-- Desktop session rows use two compact lines: the title keeps the full first line; the existing
-  activity mark occupies a reserved 12px slot just before the title's left edge; age aligns with
-  the title even when no status is present. Cross-project metadata follows age on that quieter
-  second line. Hidden keeps enough leading gutter to separate status from its selection marker.
+- Desktop session rows use two compact lines: the activity mark precedes the title on the first
+  line, centered in the same 16px icon slot and 8px label gap as same-level folder rows. The text
+  axis remains reserved when no status is present; age aligns with the title. Cross-project metadata
+  follows age on that quieter second line. Hidden keeps enough leading gutter to separate status
+  from its selection marker.
   Pin/Hide or Restore/Delete appear at the trailing edge on hover or keyboard focus,
   without hiding metadata or taking width from the title. Ordinary pointer rows are 44px high;
   coarse desktop rows retain visible 36px actions. Narrow session layouts remain unchanged.
   Folder headers retain their label tier, persistent pin state and trailing session count.
+  Desktop New/Search, folder headers and session-row surfaces share the same outer inset;
+  their internal icon/text axes remain stable. Hidden's full-width dock header remains distinct
+  from its inset contents; its root folders and row surfaces use the normal project axes without
+  an extra section-wide indent. Independent hidden sessions stay at that root text axis.
   The exact timestamp and message count stay in tooltips. On phone-width layouts or without
   hover the actions remain visible beside the age. Pin and Hide stay directly accessible,
   not behind an overflow menu.

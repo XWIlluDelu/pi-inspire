@@ -75,7 +75,7 @@ for (const touch of [false, true]) {
               .getByRole("tab", { name: "Changes", exact: true })
               .click();
             await expect(pane.locator(".res__list")).toBeVisible();
-            await expect(pane.locator(".file-detail-header")).toHaveCount(0);
+            await expect(pane.locator(".file-preview__actions")).toHaveCount(0);
             await pane
               .getByRole("button", { name: /page\.html, modified/ })
               .click();
@@ -83,7 +83,7 @@ for (const touch of [false, true]) {
               pane.getByRole("tab", { name: "page.html", exact: true }),
             ).toHaveAttribute("aria-selected", "true");
           }
-          const header = pane.locator(".file-detail-header");
+          const header = pane.locator(".file-preview__actions");
           await expect(header).toBeVisible();
           const headerTop = (await header.boundingBox())!.y;
           if (mode === "Files") filesHeaderTop = headerTop;
@@ -131,7 +131,7 @@ for (const touch of [false, true]) {
       }
       await pane.getByRole("tab", { name: "Files", exact: true }).click();
       await expect(pane.locator(".files-browser")).toBeVisible();
-      await expect(pane.locator(".file-detail-header")).toHaveCount(0);
+      await expect(pane.locator(".file-preview__actions")).toHaveCount(0);
     });
 
     test("centers diff recovery with its status and keeps retry reachable", async ({
@@ -458,7 +458,7 @@ for (const touch of [false, true]) {
         const savedBeforeNavigation = await position();
         await pane.getByRole("tab", { name: "Changes", exact: true }).click();
         await expect(pane.locator(".res__list")).toBeVisible();
-        await expect(pane.locator(".file-detail-header")).toHaveCount(0);
+        await expect(pane.locator(".file-preview__actions")).toHaveCount(0);
         await pane
           .getByRole("button", { name: /page\.html, modified/ })
           .click();
@@ -507,7 +507,7 @@ test("Files and Changes open one file tab with explicit body and diff views", as
     "title",
     "mock/analysis",
   );
-  await expect(resources.locator(".file-detail-header")).toHaveCount(0);
+  await expect(resources.locator(".file-preview__actions")).toHaveCount(0);
   await expect(resources.locator(".source-diff")).toHaveCount(0);
   await resources.getByRole("button", { name: /page\.html, modified/ }).click();
   const fileTab = resources.getByRole("tab", {
@@ -549,7 +549,7 @@ test("Files and Changes open one file tab with explicit body and diff views", as
   );
   await resources.getByRole("tab", { name: "Changes", exact: true }).click();
   await expect(resources.locator(".res__list")).toBeVisible();
-  await expect(resources.locator(".file-detail-header")).toHaveCount(0);
+  await expect(resources.locator(".file-preview__actions")).toHaveCount(0);
   await fileTab.click();
   await expect(frame.locator("h1")).toHaveText(
     "Quiet systems, legible signals.",
@@ -606,15 +606,15 @@ for (const hasTouch of [false, true]) {
         await expect(pane.locator(".res__index")).toHaveCount(0);
         await expect(pane.locator(".files-browser")).toHaveCount(0);
         const filesDetail = (await pane
-          .locator(".file-detail-header")
+          .locator(".file-preview__actions")
           .boundingBox())!;
         const content = (await pane
           .getByRole("tabpanel", { name: "File", exact: true })
           .boundingBox())!;
-        expect(filesDetail.y).toBeCloseTo(content.y, 1);
+        expect(filesDetail.y).toBeCloseTo(content.y + 8, 1);
         await pane.getByRole("tab", { name: "Changes", exact: true }).click();
         await expect(header).toBeVisible();
-        await expect(pane.locator(".file-detail-header")).toHaveCount(0);
+        await expect(pane.locator(".file-preview__actions")).toHaveCount(0);
         const list = pane.locator(".res__list");
         await expect(list).toBeVisible();
         const changesContent = (await pane
@@ -622,7 +622,7 @@ for (const hasTouch of [false, true]) {
           .boundingBox())!;
         const listBox = (await list.boundingBox())!;
         const headerBox = (await header.boundingBox())!;
-        expect(headerBox.y).toBeCloseTo(filesDetail.y, 1);
+        expect(headerBox.y).toBeCloseTo(changesContent.y, 1);
         expect(listBox.y).toBeCloseTo(headerBox.y + headerBox.height, 1);
         expect(listBox.y + listBox.height).toBeCloseTo(
           changesContent.y + changesContent.height,
@@ -640,7 +640,7 @@ for (const hasTouch of [false, true]) {
         });
         await expect(git).toHaveAttribute("aria-pressed", "true");
         expect(
-          (await pane.locator(".file-detail-header").boundingBox())!.y,
+          (await pane.locator(".file-preview__actions").boundingBox())!.y,
         ).toBeCloseTo(filesDetail.y, 1);
         await page.keyboard.press("Tab");
         await git.focus();
@@ -649,7 +649,7 @@ for (const hasTouch of [false, true]) {
         expect(await git.evaluate(focusRingClipping)).toBeLessThanOrEqual(0.5);
         await pane.getByRole("tab", { name: "Files", exact: true }).click();
         await expect(pane.locator(".files-browser")).toBeVisible();
-        await expect(pane.locator(".file-detail-header")).toHaveCount(0);
+        await expect(pane.locator(".file-preview__actions")).toHaveCount(0);
         const visibility = pane.getByRole("button", {
           name: "Show hidden files",
           exact: true,

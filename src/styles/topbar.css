@@ -389,6 +389,12 @@
 
 .topbar__status:not(:empty) { min-width: 44px; }
 
+/* Without session identity there is no text baseline to share. Center the
+   connection state in the action row instead of baseline's start fallback. */
+.topbar:not(:has(> .topbar__ident, > .topbar__rename)) > .topbar__status {
+  align-self: center;
+}
+
 .topbar__status > .chip {
   min-width: 0;
   max-width: 100%;

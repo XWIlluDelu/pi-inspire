@@ -61,11 +61,11 @@ test("sidebar work and unread outcomes share glyph geometry without animating at
     expect(
       await status.evaluate((el) => {
         const icon = el.getBoundingClientRect();
-        const meta = el
+        const title = el
           .closest(".nav__row")!
-          .querySelector(".nav__row-meta")!
+          .querySelector(".nav__row-name")!
           .getBoundingClientRect();
-        return Math.abs(icon.y + icon.height / 2 - meta.y - meta.height / 2);
+        return Math.abs(icon.y + icon.height / 2 - title.y - title.height / 2);
       }),
     ).toBeLessThanOrEqual(0.5);
   }

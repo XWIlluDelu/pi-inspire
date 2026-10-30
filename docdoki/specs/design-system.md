@@ -315,7 +315,10 @@ boundary with a faint close ring alongside its independent state treatments.
 [[workspace-layout]] owns pane geometry and resizing. Reading/Composer measures are Narrow 680px,
 Comfortable 820px and Wide 980px, bounded by center-pane width. The 44px topbar aligns the regions.
 Connecting/reconnecting uses a quiet, unboxed, accessibly named transport hint that disappears on
-recovery; offline and Host failures retain warning treatment.
+recovery; offline and Host failures retain warning treatment. While the central workspace-loading
+state is visible, omit the redundant topbar transport hint, without suppressing failures. Once
+loading settles, a status region without session identity is vertically centered in the topbar;
+a selected session retains the shared text baseline between identity and status.
 
 ## Scrolling
 
@@ -689,8 +692,8 @@ must not report against replacement content.
 Icon-bearing Copy actions show Copy at rest, the shared Π loader while pending, then Check after a
 successful write. The fixed icon slot uses a short fade/scale transition without moving the button or
 nearby labels. Reduced motion removes that transition. Text buttons reserve room for their alternate labels; loading is not artificially
-prolonged. Path labels and terminal-selection confirmations keep their existing
-context-specific presentation rather than becoming icon buttons.
+prolonged. File-preview Copy path uses this icon feedback in its floating action group; other path
+labels and terminal-selection confirmations keep their existing context-specific presentation.
 
 ## Searchable-surface focus
 

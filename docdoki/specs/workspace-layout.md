@@ -228,10 +228,12 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
 
   Changes always uses the available height for its grouped list, without a Source split or
   selection hint. Selecting a comparison opens or reuses the ordinary file tab in Git Changes
-  mode. Files opens that same tab in its body view. The file toolbar owns comparison-side selection,
-  counts and within-file previous/next change navigation; Download stays trailing. Source/Preview
-  remains a body-only reciprocal action. Narrow readers use a path row and an action row in both
-  modes rather than squeezing the path out of the toolbar. File identity, view, side and independent
+  mode. Files opens that same tab in its body view. A compact floating action group at the preview's
+  top-right owns counts, within-file previous/next change navigation, Git view, Copy path and trailing
+  Download. Source/Preview remains a body-only reciprocal action. There is no separate path/header
+  row, including on narrow readers; file tabs retain identity and Copy path exposes the full path.
+  The content viewport's top inset keeps scrolled text clear of controls, which retain keyboard focus and
+  narrow/touch targets. File identity, view, side and independent
   reading offsets survive tab switches and F5 under the existing session/workspace storage scope.
   [[resource-preview]] defines comparison authority and unavailable-content behavior.
 

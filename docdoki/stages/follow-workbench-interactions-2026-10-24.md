@@ -316,6 +316,57 @@ History search now matches Files at 34px high, 13px icon, 12px inner inset and 8
 4px top inset. Content typography and terminal/code font roles remain unchanged. This follow-up
 uses targeted visual/interaction checks, type checking and an isolated build, not a repeated matrix.
 
+The subsequent approved refinement puts session status beside the first-line title rather than
+second-line age. It uses the folder's 16px icon slot and 8px text gap with the existing 12px glyph;
+title and age axes remain unchanged when status disappears. Hidden and folder children keep their
+existing hierarchy and selection-marker clearance; the rules remain desktop-only.
+The rendered hover review also aligns desktop row surfaces to New/Search's 12px outer inset
+instead of the list's prior 8px, offsetting inner padding so icon/text axes do not move. Files
+retains its correct leading icon columns and directory depth; availability warnings now use a
+nonshrinking trailing 16px slot. Stacked search/list padding before Recent drops from 20px to 8px,
+without flattening the heading or Recent-to-workspace section rhythm.
+The approved Hidden follow-up removes its extra whole-folder indentation on desktop: project
+icons and content surfaces now follow normal projects, while the actual folder/session grouping
+and independently hidden root sessions remain intact.
+Focused final-build inspection confirms 12px shared surface insets, 24px icon centers and 40px
+title/age axes, including selected Hidden rows. Short/long missing-file warnings keep 12px glyphs
+in 16px slots at a 320px Files width; compact mobile rows retain their existing inline layout.
+Type checking, scoped Biome and the isolated build pass. No broad suite was repeated for these
+visual refinements. The user explicitly approved auto-dev publication without a screenshot approval
+gate; the existing atomic static-build flow avoids a Host restart and preserves live work.
+
+## Initial connection indicator placement
+
+The Android loading screenshot exposed a pre-existing baseline fallback and duplicate feedback:
+without a session title, the topbar connection glyph appeared at the row's top while the central
+workspace loader already explained startup. The approved simplification omits the ordinary topbar
+transport hint only while that central loading state is visible, including startup session recovery.
+Failures retain their existing warning/retry paths; session reconnect feedback remains available.
+The no-identity centering correction remains useful for Welcome's later connection states, while
+selected-session text baselines and shared loading-glyph geometry remain unchanged. This correction
+is included in that approved release. Six focused Chromium cases pass for initial loading, startup failure
+and retry, Welcome/session reconnect and existing title baselines. Type checking, scoped Biome
+checks and the isolated production build also pass.
+
+## Floating file actions and confirmation text
+
+The approved file-preview change permanently removes its path/header row. A compact action group
+floats at the content's top-right with the existing Git/body toggle, applicable change count and
+previous/next controls, icon-only Copy path and trailing Download. Copy reuses owned clipboard
+feedback; the full path remains in its accessible name/tooltip and copied value. A small top inset
+keeps the scrolling content viewport below the controls instead of hiding text underneath them.
+Narrow and coarse targets remain 32px; global file/tool tabs are unchanged.
+
+Delete confirmation changes only description padding: its text now starts with the session name
+inside the inset label, while icon/title hierarchy and trailing actions remain distinct. Before/after
+rendered measurements agree exactly after the correction. Both modal checks were cancelled, with
+DELETE requests blocked and none attempted.
+
+Twenty-one related unit cases, two existing fine/coarse focus scenarios, type checking and the
+isolated build pass. Actual previews cover Markdown/Source, 320px static HTML, two-change navigation,
+Copy path, mock download and Dark appearance. The user approved committing both completed batches
+to auto-dev and publishing the static build, without changing main/tags or restarting Host.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:
