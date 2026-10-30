@@ -182,10 +182,8 @@ body.srail-dragging {
   }
 
   .app--narrow .file-preview__content:not(:has(> .source-reader)) {
-    padding: calc(var(--file-actions-height) + 2 * var(--space-2)) var(--space-2) var(--space-2);
+    padding: var(--space-2);
   }
-
-  .app--narrow .file-preview { --file-actions-height: 38px; }
 
   .app--narrow .file-preview__actions .icon-button,
   .app--narrow .file-preview__actions .file-detail-header__view {

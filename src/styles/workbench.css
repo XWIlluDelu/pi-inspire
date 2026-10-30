@@ -686,12 +686,9 @@ body.pane-resizing--vertical .nav {
   padding: 0 var(--space-3);
 }
 
-/* File actions float within the preview instead of owning another header row.
-   Reserve their small top footprint in the readers so first content stays clear. */
-.file-preview {
-  --file-actions-height: 30px;
-  position: relative;
-}
+/* Actions overlay the reader without reserving a header-height band.
+   Reading intent collapses them to the same visible, keyboard-owned entry. */
+.file-preview { position: relative; }
 
 .file-preview__actions {
   position: absolute;
@@ -700,11 +697,21 @@ body.pane-resizing--vertical .nav {
   right: var(--space-3);
   max-width: calc(100% - 2 * var(--space-3));
   box-sizing: border-box;
-  padding: 2px;
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 2px 6px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
   background: var(--bg-file-surface);
-  overflow-x: auto;
+}
+
+.file-preview__actions-toggle { flex: 0 0 auto; }
+
+.file-preview__exports {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
 }
 
 .res__index-header {
@@ -807,10 +814,14 @@ body.pane-resizing--vertical .nav {
 
 .file-detail-header__actions {
   display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1);
-  flex: 0 0 auto;
+  gap: 2px;
 }
+
+.file-detail-header__actions[hidden] { display: none; }
 
 .file-preview__actions .icon-button {
   width: 24px;
@@ -840,7 +851,7 @@ body.pane-resizing--vertical .nav {
 }
 
 .changes__position {
-  min-width: 5ch;
+  min-width: var(--change-position-width, 3ch);
   text-align: center;
   white-space: nowrap;
   color: var(--muted);
@@ -850,9 +861,9 @@ body.pane-resizing--vertical .nav {
 
 .file-detail-header__view {
   display: inline-flex;
-  width: 64px;
+  width: 52px;
   height: 24px;
-  flex: 0 0 64px;
+  flex: 0 0 52px;
   align-items: center;
   justify-content: center;
   padding: 0 var(--space-2);
@@ -890,12 +901,14 @@ body.pane-resizing--vertical .nav {
   }
 
   .file-preview .file-detail-header__actions .icon-button,
-  .file-preview .file-detail-header__actions .file-detail-header__view {
+  .file-preview .file-detail-header__actions .file-detail-header__view,
+  .file-preview .file-preview__actions-toggle {
     height: 32px;
     min-height: 32px;
   }
 
-  .file-preview .file-detail-header__actions .icon-button {
+  .file-preview .file-detail-header__actions .icon-button,
+  .file-preview .file-preview__actions-toggle {
     width: 32px;
     min-width: 32px;
   }
@@ -904,7 +917,6 @@ body.pane-resizing--vertical .nav {
     min-height: 32px;
   }
 
-  .file-preview { --file-actions-height: 38px; }
 }
 
 .file-detail-header__view:hover:not(:disabled) {
@@ -931,7 +943,7 @@ body.pane-resizing--vertical .nav {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: calc(var(--file-actions-height) + 2 * var(--space-2)) var(--space-3) var(--space-3);
+  padding: var(--space-3);
 }
 
 /* Keep natural state size and room for focus rings when short readers scroll to actions. */
@@ -955,13 +967,13 @@ body.pane-resizing--vertical .nav {
 }
 
 .file-preview__content:has(> .source-reader) {
-  padding: calc(var(--file-actions-height) + 2 * var(--space-2)) 0 0;
+  padding: 0;
 }
 
 .file-preview .source-view__gutter,
 .file-preview .source-view__pre,
 .file-preview .source-diff__lines {
-  padding-top: 0;
+  padding-top: var(--space-3);
 }
 
 .source-reader {
@@ -1245,7 +1257,7 @@ button.res__more:hover {
 }
 
 .changes__stats {
-  gap: var(--space-2);
+  gap: var(--space-1);
   font: 500 var(--text-xs)/1 var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
@@ -1261,7 +1273,7 @@ button.res__more:hover {
 .changes__jump {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 0;
   border: 0;
   background: transparent;
 }

@@ -367,6 +367,28 @@ isolated build pass. Actual previews cover Markdown/Source, 320px static HTML, t
 Copy path, mock download and Dark appearance. The user approved committing both completed batches
 to auto-dev and publishing the static build, without changing main/tags or restarting Host.
 
+## Floating-toolbar follow-up and Hidden hierarchy
+
+User feedback confirmed that the previous content inset still looked like an unused header. The
+reader now uses its original top padding; the tools overlay it and collapse on direct reading input,
+with an explicit expand/collapse entry and Escape focus return. Programmatic diff navigation and
+reading restoration keep the tools expanded. Core action order starts with Source/Preview, then
+Git, change navigation/count, Copy path and Download. Source is directly available from Git even
+before its body has been read, while known unavailable source stays disabled. The compact `1/3`
+count reserves digits for its total; horizontal group padding is balanced.
+
+Hidden root projects and standalone sessions retain their shared axes and full-width interaction
+surfaces. Actual project children regain a 20px deeper title/status level. Desktop status glyphs
+right-align within the existing 16px folder slot, adding 2px selected-marker clearance without
+moving titles or the row boundaries. Mobile layout remains unchanged. The auxiliary user-message
+bubble inspection changed no CSS: equal 10px vertical padding gives a small 1–1.5 screenshot-pixel
+ink-center difference, insufficient evidence for a fixed offset.
+
+Thirty-one focused source/diff unit cases, type checking and the isolated build pass. Actual
+desktop/320px checks cover direct Git→Source, tab reuse, compact count navigation, reclaimed
+space, keyboard/read collapse and mixed Hidden hierarchy. Publication uses the authorized auto-dev
+static workflow; main and existing tags remain unchanged.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

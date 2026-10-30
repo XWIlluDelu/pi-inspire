@@ -229,11 +229,15 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
   Changes always uses the available height for its grouped list, without a Source split or
   selection hint. Selecting a comparison opens or reuses the ordinary file tab in Git Changes
   mode. Files opens that same tab in its body view. A compact floating action group at the preview's
-  top-right owns counts, within-file previous/next change navigation, Git view, Copy path and trailing
-  Download. Source/Preview remains a body-only reciprocal action. There is no separate path/header
+  top-right orders Source/Preview, Git view, within-file previous/next navigation and its compact
+  count, Copy path and trailing Download. Git view also offers Source to open the current file's
+  source directly, retaining the tab and body reading state. Known unavailable/binary source remains
+  disabled; a not-yet-read source can be requested. There is no separate path/header
   row, including on narrow readers; file tabs retain identity and Copy path exposes the full path.
-  The content viewport's top inset keeps scrolled text clear of controls, which retain keyboard focus and
-  narrow/touch targets. File identity, view, side and independent
+  The group overlays the normal reading canvas without reserving a full-width top band. Direct
+  reading input collapses it to an explicit entry; programmatic scrolling/restoration does not.
+  The entry expands the controls, and Escape collapses them while retaining keyboard focus.
+  Narrow/touch targets remain available; local wrapping avoids shrinking them. File identity, view, side and independent
   reading offsets survive tab switches and F5 under the existing session/workspace storage scope.
   [[resource-preview]] defines comparison authority and unavailable-content behavior.
 

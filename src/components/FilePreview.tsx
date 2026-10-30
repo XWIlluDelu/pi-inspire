@@ -1,8 +1,10 @@
 import {
   AlertTriangle,
+  ChevronRight,
   Download,
   FileText,
   GitCompareArrows,
+  MoreHorizontal,
   RotateCw,
 } from "lucide-react";
 import {
@@ -163,15 +165,18 @@ type FileViewMode = "preview" | "source";
 function FileViewControl({
   mode,
   onChange,
+  disabled = false,
 }: {
   mode: FileViewMode;
   onChange: (mode: FileViewMode) => void;
+  disabled?: boolean;
 }) {
   const target = mode === "preview" ? "source" : "preview";
   return (
     <button
       type="button"
       className="file-detail-header__view"
+      disabled={disabled}
       onClick={() => onChange(target)}
     >
       {target === "source" ? "Source" : "Preview"}
@@ -474,6 +479,20 @@ export function FilePreview({
     descriptor && fileView?.owner === readingPosition
       ? fileView.mode
       : (readingState?.mode ?? defaultView);
+  const [actionsExpanded, setActionsExpanded] = useState(true);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const actionsToggleRef = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    setActionsExpanded(true);
+  }, [state.sessionId, state.cwd, state.selectedResourceReference]);
+  const showBody = (mode: FileViewMode) => {
+    if (readingState) {
+      readingState.mode = mode;
+      readingState.save?.();
+    }
+    setFileView({ owner: readingPosition, mode });
+    if (changes) void store.setFileChangesView(false);
+  };
   const htmlScope = [
     descriptor?.id,
     preview?.status === "ready" ? preview.objectUrl : null,
@@ -612,85 +631,139 @@ export function FilePreview({
   return (
     <div className="file-preview">
       <div
-        className="file-preview__actions file-detail-header__actions"
+        className="file-preview__actions"
         role="toolbar"
         aria-label="File actions"
+        onKeyDown={(event) => {
+          if (event.key !== "Escape" || !actionsExpanded) return;
+          event.stopPropagation();
+          setActionsExpanded(false);
+          actionsToggleRef.current?.focus();
+        }}
       >
-        {changes?.controls}
+        <div
+          className="file-detail-header__actions"
+          ref={actionsRef}
+          hidden={!actionsExpanded}
+        >
+          {canToggle || changes ? (
+            <FileViewControl
+              mode={changes ? "preview" : viewMode}
+              disabled={
+                Boolean(changes) &&
+                (preview?.status === "error" ||
+                  (preview?.status === "ready" && preview.text === undefined))
+              }
+              onChange={showBody}
+            />
+          ) : null}
+          <button
+            type="button"
+            className="icon-button file-detail-header__git"
+            aria-label="Git changes"
+            title="Git changes"
+            aria-pressed={Boolean(changes)}
+            disabled={!state.sessionId || !state.selectedResourceReference}
+            onClick={() => void store.setFileChangesView(!changes)}
+          >
+            <GitCompareArrows size={14} aria-hidden />
+          </button>
+          {changes?.controls}
+          {canInteract ? (
+            <button
+              type="button"
+              className="file-detail-header__view file-detail-header__interaction"
+              aria-pressed={currentInteraction?.status === "running"}
+              aria-busy={currentInteraction?.status === "loading"}
+              disabled={preview?.status === "ready" && preview.refreshing}
+              title={
+                currentInteraction && currentInteraction.status !== "error"
+                  ? "Stop this page and return to static preview"
+                  : "Run this file's JavaScript and load its resources"
+              }
+              onClick={() => void toggleInteraction()}
+            >
+              {currentInteraction?.status === "loading" ? (
+                <PiLoader size={13} aria-hidden />
+              ) : null}
+              {currentInteraction && currentInteraction.status !== "error"
+                ? "Stop interaction"
+                : "Enable interaction"}
+            </button>
+          ) : null}
+          <div className="file-preview__exports">
+            <PathCopyButton path={displayPath} />
+            {descriptor && state.sessionId ? (
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={`Download ${descriptor.name}`}
+                title="Download"
+                disabled={currentDownload?.pending}
+                onClick={() => void downloadResource()}
+              >
+                <Download size={14} aria-hidden />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Download unavailable"
+                title="Download unavailable"
+                disabled
+              >
+                <Download size={14} aria-hidden />
+              </button>
+            )}
+          </div>
+        </div>
         <button
           type="button"
-          className="icon-button file-detail-header__git"
-          aria-label="Git changes"
-          title="Git changes"
-          aria-pressed={Boolean(changes)}
-          disabled={!state.sessionId || !state.selectedResourceReference}
-          onClick={() => void store.setFileChangesView(!changes)}
+          className="icon-button file-preview__actions-toggle"
+          ref={actionsToggleRef}
+          aria-label={
+            actionsExpanded ? "Hide file actions" : "Show file actions"
+          }
+          title={actionsExpanded ? "Hide file actions" : "Show file actions"}
+          aria-expanded={actionsExpanded}
+          onClick={() => {
+            setActionsExpanded(!actionsExpanded);
+            if (!actionsExpanded)
+              requestAnimationFrame(() => {
+                if (actionsRef.current?.hidden) return;
+                actionsRef.current
+                  ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+                  ?.focus();
+              });
+          }}
         >
-          <GitCompareArrows size={14} aria-hidden />
+          {actionsExpanded ? (
+            <ChevronRight size={14} aria-hidden />
+          ) : (
+            <MoreHorizontal size={14} aria-hidden />
+          )}
         </button>
-        {canInteract ? (
-          <button
-            type="button"
-            className="file-detail-header__view file-detail-header__interaction"
-            aria-pressed={currentInteraction?.status === "running"}
-            aria-busy={currentInteraction?.status === "loading"}
-            disabled={preview?.status === "ready" && preview.refreshing}
-            title={
-              currentInteraction && currentInteraction.status !== "error"
-                ? "Stop this page and return to static preview"
-                : "Run this file's JavaScript and load its resources"
-            }
-            onClick={() => void toggleInteraction()}
-          >
-            {currentInteraction?.status === "loading" ? (
-              <PiLoader size={13} aria-hidden />
-            ) : null}
-            {currentInteraction && currentInteraction.status !== "error"
-              ? "Stop interaction"
-              : "Enable interaction"}
-          </button>
-        ) : null}
-        {canToggle && !changes ? (
-          <FileViewControl
-            mode={viewMode}
-            onChange={(mode) => {
-              if (descriptor) {
-                if (readingState) {
-                  readingState.mode = mode;
-                  readingState.save?.();
-                }
-                setFileView({ owner: readingPosition, mode });
-              }
-            }}
-          />
-        ) : null}
-        <PathCopyButton path={displayPath} />
-        {descriptor && state.sessionId ? (
-          <button
-            type="button"
-            className="icon-button"
-            aria-label={`Download ${descriptor.name}`}
-            title="Download"
-            disabled={currentDownload?.pending}
-            onClick={() => void downloadResource()}
-          >
-            <Download size={14} aria-hidden />
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Download unavailable"
-            title="Download unavailable"
-            disabled
-          >
-            <Download size={14} aria-hidden />
-          </button>
-        )}
       </div>
       <div
         className="file-preview__content"
         ref={contentRef}
+        onPointerDownCapture={() => setActionsExpanded(false)}
+        onWheelCapture={() => setActionsExpanded(false)}
+        onTouchStartCapture={() => setActionsExpanded(false)}
+        onKeyDownCapture={(event) => {
+          if (
+            [
+              "ArrowDown",
+              "ArrowUp",
+              "PageDown",
+              "PageUp",
+              "Home",
+              "End",
+              " ",
+            ].includes(event.key)
+          )
+            setActionsExpanded(false);
+        }}
         onScrollCapture={(event) => {
           const element = event.target as HTMLElement;
           if (

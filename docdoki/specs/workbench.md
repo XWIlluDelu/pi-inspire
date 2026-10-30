@@ -151,7 +151,7 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   state.
 
 - Desktop session rows use two compact lines: the activity mark precedes the title on the first
-  line, centered in the same 16px icon slot and 8px label gap as same-level folder rows. The text
+  line, right-aligned inside the same 16px icon slot and 8px label gap as folder rows. The text
   axis remains reserved when no status is present; age aligns with the title. Cross-project metadata
   follows age on that quieter second line. Hidden keeps enough leading gutter to separate status
   from its selection marker.
@@ -162,7 +162,9 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   Desktop New/Search, folder headers and session-row surfaces share the same outer inset;
   their internal icon/text axes remain stable. Hidden's full-width dock header remains distinct
   from its inset contents; its root folders and row surfaces use the normal project axes without
-  an extra section-wide indent. Independent hidden sessions stay at that root text axis.
+  an extra section-wide indent. Independent hidden sessions stay at that root text axis;
+  actual project children use a further 20px indent so following root sessions cannot look like
+  children of the preceding project.
   The exact timestamp and message count stay in tooltips. On phone-width layouts or without
   hover the actions remain visible beside the age. Pin and Hide stay directly accessible,
   not behind an overflow menu.

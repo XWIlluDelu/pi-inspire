@@ -309,13 +309,13 @@ test("change navigation preserves addition and deletion colors", async ({
     );
   const original = await backgrounds();
   expect(original[0]).not.toBe(original[1]);
-  await expect(pane.getByLabel("Change position")).toHaveText("1 / 2");
+  await expect(pane.getByLabel("Change position")).toHaveText("1/2");
   await expect(
     pane.getByRole("button", { name: "Previous change", exact: true }),
   ).toBeDisabled();
 
   await pane.getByRole("button", { name: "Next change", exact: true }).click();
-  await expect(pane.getByLabel("Change position")).toHaveText("2 / 2");
+  await expect(pane.getByLabel("Change position")).toHaveText("2/2");
   await expect(
     pane.getByRole("button", { name: "Next change", exact: true }),
   ).toBeDisabled();
@@ -328,7 +328,7 @@ test("change navigation preserves addition and deletion colors", async ({
   await pane
     .getByRole("button", { name: "Previous change", exact: true })
     .click();
-  await expect(pane.getByLabel("Change position")).toHaveText("1 / 2");
+  await expect(pane.getByLabel("Change position")).toHaveText("1/2");
   expect(await backgrounds()).toEqual(original);
 });
 
@@ -446,7 +446,7 @@ for (const touch of [false, true]) {
       await expect(source).toHaveCount(0);
       await pane.getByRole("tab", { name: "page.html", exact: true }).click();
       await expect.poll(position).toEqual(saved);
-      await expect(pane.getByLabel("Change position")).toHaveText("1 / 1");
+      await expect(pane.getByLabel("Change position")).toHaveText("1/1");
       await expect(
         pane.getByRole("button", { name: "Next change", exact: true }),
       ).toBeDisabled();
@@ -526,7 +526,7 @@ test("Files and Changes open one file tab with explicit body and diff views", as
   await expect(
     resources.getByRole("region", { name: /Source changes for .*page\.html/ }),
   ).toBeVisible();
-  await expect(resources.getByLabel("Change position")).toHaveText("1 / 1");
+  await expect(resources.getByLabel("Change position")).toHaveText("1/1");
   await changes.click();
   await expect(changes).toHaveAttribute("aria-pressed", "false");
   await expect(frame.locator("h1")).toHaveText(

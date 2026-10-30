@@ -637,8 +637,13 @@ export function ChangesDetail({
           role="status"
           aria-label="Change position"
           aria-live="polite"
+          style={
+            {
+              "--change-position-width": `${String(count).length * 2 + 1}ch`,
+            } as CSSProperties
+          }
         >
-          {count ? `${(activeChange ?? 0) + 1} / ${count}` : "—"}
+          {count ? `${(activeChange ?? 0) + 1}/${count}` : "—"}
         </span>
       </div>
     </>

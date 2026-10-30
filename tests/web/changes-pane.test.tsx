@@ -165,15 +165,15 @@ describe("File Changes rendering and navigation", () => {
     );
     expect(rows[0].querySelector(".source-diff__mark")).toHaveTextContent("−");
     expect(screen.getByText("Source truncated")).toBeInTheDocument();
-    expect(screen.getByLabelText("Change position")).toHaveTextContent("1 / 2");
+    expect(screen.getByLabelText("Change position")).toHaveTextContent("1/2");
     expect(
       screen.getByRole("button", { name: "Previous change" }),
     ).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Next change" }));
-    expect(screen.getByLabelText("Change position")).toHaveTextContent("2 / 2");
+    expect(screen.getByLabelText("Change position")).toHaveTextContent("2/2");
     expect(screen.getByRole("button", { name: "Next change" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Previous change" }));
-    expect(screen.getByLabelText("Change position")).toHaveTextContent("1 / 2");
+    expect(screen.getByLabelText("Change position")).toHaveTextContent("1/2");
     expect(open).not.toHaveBeenCalled();
     expect(
       screen.queryByRole("combobox", { name: "Comparison side" }),
@@ -213,7 +213,7 @@ describe("File Changes rendering and navigation", () => {
     expect(screen.getByText(/Source refresh failed/)).toHaveTextContent(
       "Source refresh failed",
     );
-    expect(screen.getByLabelText("Change position")).toHaveTextContent("2 / 2");
+    expect(screen.getByLabelText("Change position")).toHaveTextContent("2/2");
 
     const otherPath = {
       id: "other",
@@ -247,15 +247,15 @@ describe("File Changes rendering and navigation", () => {
       screen.getByRole("region", { name: "Source changes for other.md" })
         .scrollTop,
     ).toBe(0);
-    expect(screen.getByLabelText("Change position")).toHaveTextContent("1 / 1");
+    expect(screen.getByLabelText("Change position")).toHaveTextContent("1/1");
     view.rerender(<Detail state={state} readingState={readingState} />);
     expect(source().scrollTop).toBe(300);
     expect(source().scrollLeft).toBe(20);
-    expect(screen.getByLabelText("Change position")).toHaveTextContent("2 / 2");
+    expect(screen.getByLabelText("Change position")).toHaveTextContent("2/2");
     view.unmount();
     render(<Detail state={state} readingState={readingState} />);
     expect(source().scrollTop).toBe(300);
-    expect(screen.getByLabelText("Change position")).toHaveTextContent("2 / 2");
+    expect(screen.getByLabelText("Change position")).toHaveTextContent("2/2");
     expect(readingState.save).toHaveBeenCalled();
   });
 
@@ -288,7 +288,7 @@ describe("File Changes rendering and navigation", () => {
     );
     callbacks.forEach((callback) => callback());
     expect(scroll).not.toHaveBeenCalled();
-    expect(screen.getByLabelText("Change position")).toHaveTextContent("1 / 2");
+    expect(screen.getByLabelText("Change position")).toHaveTextContent("1/2");
   });
 
   it("restores a file tab's reading after its Git selection resolves on remount", () => {
@@ -317,7 +317,7 @@ describe("File Changes rendering and navigation", () => {
     });
     expect(source.scrollTop).toBe(800);
     expect(source.scrollLeft).toBe(50);
-    expect(screen.getByLabelText("Change position")).toHaveTextContent("2 / 2");
+    expect(screen.getByLabelText("Change position")).toHaveTextContent("2/2");
 
     const otherPath = {
       id: "other",
@@ -342,7 +342,7 @@ describe("File Changes rendering and navigation", () => {
     });
     expect(otherSource.scrollTop).toBe(0);
     expect(otherSource.scrollLeft).toBe(0);
-    expect(screen.getByLabelText("Change position")).toHaveTextContent("1 / 2");
+    expect(screen.getByLabelText("Change position")).toHaveTextContent("1/2");
   });
 });
 
@@ -484,7 +484,7 @@ describe("Git evidence boundaries", () => {
     expect(
       screen.getByRole("region", { name: "Source changes for notes.md" }),
     ).toHaveTextContent("New heading");
-    expect(screen.getByLabelText("Change position")).toHaveTextContent("1 / 2");
+    expect(screen.getByLabelText("Change position")).toHaveTextContent("1/2");
     expect(screen.queryByText("Reading Git status")).toBeNull();
     expect(screen.queryByText("No Git comparison")).toBeNull();
   });

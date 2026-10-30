@@ -762,8 +762,7 @@
     padding-inline-start: var(--space-1);
   }
 
-  .nav__list .nav__row-main,
-  .nav__hidden-content > .nav__group > .nav__row > .nav__row-main {
+  .nav__list .nav__row-main {
     padding-inline-start: calc(var(--nav-label-inset) - var(--space-1));
   }
 
@@ -801,13 +800,13 @@
   .nav__row-state {
     width: var(--space-4);
     height: var(--space-4);
-    justify-content: center;
+    justify-content: flex-end;
     margin-inline-start: calc(-1 * (var(--space-4) + var(--space-2)));
   }
 
   .nav__row-dot {
     margin-inline-start: calc(
-      -1 * (var(--space-4) + var(--space-2)) + (var(--space-4) - 7px) / 2
+      -1 * (var(--space-4) + var(--space-2)) + var(--space-4) - 7px
     );
   }
 
