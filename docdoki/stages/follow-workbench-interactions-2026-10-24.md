@@ -506,6 +506,14 @@ state from changing the group's size. Normal Controlling text is removed; owners
 read-only and Take control behavior remain. The right gutter is 8px whitespace without a permanent
 panel border. Selected tabs use top/left/right hairlines and 4px top corners, open at the bottom.
 
+## Source icon and shared tab widths
+
+Source/Preview now uses CodeXml/Eye icon actions with the same accessible names and tooltips.
+File and terminal floating buttons increase together to 28px desktop with 16px glyphs, retaining
+32px touch/narrow targets and the existing gaps, padding and collapse behavior. File and terminal
+tabs share a 132px minimum and 180px maximum (bounded by the strip), keeping close actions aligned
+and long names ellipsized. Panel gutter, selected-tab borders and top corners are unchanged.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

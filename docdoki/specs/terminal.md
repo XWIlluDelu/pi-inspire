@@ -209,7 +209,8 @@ Diagnostics omit terminal input, output, and internal path-bearing failures.
 
 Each project terminal occupies a tab beside open files in the shared contextual strip. Terminal
 tabs use the file tab's padding, close slot, width cap and overflow rules; each 6px status dot
-sits within the same 13px icon slot. Names retain natural width rather than an invented fixed size.
+sits within the same 13px icon slot. File and terminal tabs share a 132px minimum and 180px cap,
+bounded by the strip width; longer names truncate within that shared geometry.
 Selecting a file or tool hides the terminal view without replacing its process or changing input ownership.
 The top Terminal shortcut creates and activates one default-profile terminal; existing terminals
 are reached through their tabs. The pane reads the catalog when the shared strip first opens so
@@ -217,7 +218,7 @@ existing terminal tabs remain reachable after refresh, including from Files. Bac
 polling remains limited to the active terminal surface.
 
 Profile choice, connection/control state, search, focus and More form a compact floating group at
-the same 24px desktop / 32px touch/narrow button tier as file actions, with 14px glyphs and shared
+the same 28px desktop / 32px touch/narrow button tier as file actions, with 16px glyphs and shared
 padding/gaps. The status/focus and search slots are reserved before the view mounts, so connection
 updates do not resize the group. Normal writable state has no visible Controlling label; its
 accessible state/tooltip and keyboard-focus action remain. Non-writable states retain connection

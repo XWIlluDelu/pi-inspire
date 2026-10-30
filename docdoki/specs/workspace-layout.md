@@ -212,6 +212,8 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
   expansions and scroll. File tabs retain independent reader modes and Source/rendered scroll
   offsets; [[resource-preview]] defines the boundary for embedded readers and execution.
   Overflowing file/terminal tabs scroll within their shared strip while the tool actions remain available.
+  Both use a 132px minimum for short titles and a 180px cap for longer names, bounded by strip
+  width, with matching close slots and label ellipsis.
   Filename tabs fill the header height, starting flush at its leading content edge, with internal
   label spacing rather than floating rounded backgrounds. Title and close action share one continuous
   tab background; close hover changes only its icon ink, and keyboard focus uses a thin outline.

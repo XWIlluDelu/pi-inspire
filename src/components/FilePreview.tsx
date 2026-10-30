@@ -1,7 +1,9 @@
 import {
   AlertTriangle,
   ChevronRight,
+  CodeXml,
   Download,
+  Eye,
   FileText,
   GitCompareArrows,
   MoreHorizontal,
@@ -175,11 +177,17 @@ function FileViewControl({
   return (
     <button
       type="button"
-      className="file-detail-header__view"
+      className="icon-button file-detail-header__view file-detail-header__mode"
+      aria-label={target === "source" ? "Source" : "Preview"}
+      title={target === "source" ? "Source" : "Preview"}
       disabled={disabled}
       onClick={() => onChange(target)}
     >
-      {target === "source" ? "Source" : "Preview"}
+      {target === "source" ? (
+        <CodeXml size={16} aria-hidden />
+      ) : (
+        <Eye size={16} aria-hidden />
+      )}
     </button>
   );
 }

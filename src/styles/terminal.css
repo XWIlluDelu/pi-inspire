@@ -159,7 +159,8 @@
    the terminal so no second header consumes output rows. */
 .file-preview__actions,
 .terminal-pane--shared .terminal-tabs-shell {
-  --floating-tool-size: 24px;
+  --floating-tool-size: 28px;
+  --floating-tool-icon: 16px;
 }
 
 .terminal-pane--shared .terminal-tabs-shell :is(.icon-button, .terminal-tabs__profile) {
@@ -171,8 +172,8 @@
 }
 
 .terminal-pane--shared .terminal-tabs-shell :is(.icon-button, .terminal-tabs__profile) > svg {
-  width: 14px;
-  height: 14px;
+  width: var(--floating-tool-icon);
+  height: var(--floating-tool-icon);
 }
 
 /* Reserve the status/focus and search slots before the active view mounts.

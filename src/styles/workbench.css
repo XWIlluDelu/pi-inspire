@@ -224,6 +224,7 @@ body.pane-resizing--vertical .nav {
 .ctx__file-tab {
   position: relative;
   flex: 0 0 auto;
+  min-width: min(132px, 100%);
   max-width: min(180px, 100%);
   display: flex;
   align-items: stretch;
@@ -262,6 +263,7 @@ body.pane-resizing--vertical .nav {
 }
 
 .ctx__file-tab > button > svg { flex: 0 0 auto; }
+.ctx__file-tab > button[role="tab"] { flex: 1; }
 .ctx__file-tab > button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; translate: 0 var(--ui-text-offset); }
 .ctx__file-tab > button:focus-visible { outline-offset: -2px; }
 .ctx__file-tab > button:hover { color: var(--ink); }
@@ -856,6 +858,11 @@ body.pane-resizing--vertical .nav {
     color var(--dur-micro) var(--ease-standard);
 }
 
+.file-preview__actions .icon-button > svg {
+  width: var(--floating-tool-icon);
+  height: var(--floating-tool-icon);
+}
+
 .file-preview__actions :is(.icon-button, .file-detail-header__view):focus-visible {
   outline-offset: -2px;
 }
@@ -882,7 +889,7 @@ body.pane-resizing--vertical .nav {
 .file-detail-header__view {
   display: inline-flex;
   width: 52px;
-  height: 24px;
+  height: var(--floating-tool-size);
   flex: 0 0 52px;
   align-items: center;
   justify-content: center;
@@ -903,6 +910,11 @@ body.pane-resizing--vertical .nav {
   width: auto;
   flex-basis: auto;
   white-space: nowrap;
+}
+
+.file-preview__actions .file-detail-header__mode {
+  flex: 0 0 var(--floating-tool-size);
+  padding: 0;
 }
 
 .file-detail-header__interaction[aria-pressed="true"] {
