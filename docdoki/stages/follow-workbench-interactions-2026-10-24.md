@@ -498,6 +498,14 @@ Hide/Show and toolbar Escape remain explicit collapse controls. Selection Copy/A
 copy confirmations temporarily share the same corner ownership as Search, restoring the previous
 tool state afterward. File-preview reading-intent collapse is unchanged.
 
+## Floating tool sizing and corrected panel edges
+
+File and terminal floating tools share 24px desktop / 32px touch/narrow buttons, 14px glyphs and
+the same padding/gaps. Reserved terminal status/focus and search slots prevent mount/connection
+state from changing the group's size. Normal Controlling text is removed; ownership, connection,
+read-only and Take control behavior remain. The right gutter is 8px whitespace without a permanent
+panel border. Selected tabs use top/left/right hairlines and 4px top corners, open at the bottom.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

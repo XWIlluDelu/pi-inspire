@@ -998,9 +998,6 @@ export const TerminalView = memo(function TerminalView({
                 ) : (
                   <Eye size={14} aria-hidden />
                 )}
-                <span className="terminal-view__status-label">
-                  {statusLabel}
-                </span>
               </span>
               <button
                 type="button"

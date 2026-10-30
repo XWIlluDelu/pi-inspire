@@ -82,10 +82,8 @@ independent project shells in [[terminal]].
   holds the other side at its current rendered width and clamps only the active side. Window
   resizing and pane visibility changes reflow the saved preferences together; they do not write
   temporary widths back to storage. Double-click resets only the chosen side.
-  Desktop panes are separated by 4px gutters
-  with 8px resize hit bands that remain available while their indicator is hidden at rest.
-  The right pane retains a weak 1px leading surface border so its stage-colored content remains
-  distinct from the conversation; that panel edge is separate from the hidden drag indicator.
+  Desktop navigation uses a 4px gutter; the right pane uses 8px of frame-colored whitespace,
+  without a permanent vertical border. Both keep 8px resize hit bands and hidden resting indicators.
   Hover, keyboard focus and active dragging reveal a straight 2px divider with round caps and
   inset ends, not an outline wrapping the adjacent pane's corners.
   The session header shares the reading surface without a separate bottom seam.
@@ -202,7 +200,7 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
   The right tool header shares the navigation/titlebar rail background, with one weak 1px hairline
   separating it from the content below. The file tree, History and file-preview canvas share the
   main reading-stage background; selected file/terminal tabs use that content surface with weak
-  top/right edges and an open bottom seam. Desktop top corners join the frame squarely. Search fields, floating actions,
+  top/left/right edges, small top-only corners and an open bottom seam. Desktop top corners join the frame squarely. Search fields, floating actions,
   authored documents and the terminal keep their own content-surface roles.
 
 - Open files and project terminals have tabs on the leading side of the contextual header.

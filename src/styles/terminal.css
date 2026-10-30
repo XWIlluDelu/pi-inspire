@@ -157,6 +157,47 @@
 
 /* Shared workbench tabs stay in their existing strip; controls alone overlay
    the terminal so no second header consumes output rows. */
+.file-preview__actions,
+.terminal-pane--shared .terminal-tabs-shell {
+  --floating-tool-size: 24px;
+}
+
+.terminal-pane--shared .terminal-tabs-shell :is(.icon-button, .terminal-tabs__profile) {
+  width: var(--floating-tool-size);
+  min-width: var(--floating-tool-size);
+  height: var(--floating-tool-size);
+  min-height: var(--floating-tool-size);
+  border-radius: var(--radius-control);
+}
+
+.terminal-pane--shared .terminal-tabs-shell :is(.icon-button, .terminal-tabs__profile) > svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Reserve the status/focus and search slots before the active view mounts.
+   Connection and ownership updates then replace glyphs without moving tools. */
+.terminal-pane--shared .terminal-view-controls {
+  flex: 0 0 calc(2 * var(--floating-tool-size) + 2px);
+  min-height: var(--floating-tool-size);
+}
+
+.terminal-pane--shared .terminal-view__status {
+  flex: 0 0 var(--floating-tool-size);
+  width: var(--floating-tool-size);
+  height: var(--floating-tool-size);
+  min-width: 0;
+  padding: 0;
+  gap: 0;
+}
+
+@media (pointer: coarse), (max-width: 900px) {
+  .file-preview__actions,
+  .terminal-pane--shared .terminal-tabs-shell {
+    --floating-tool-size: 32px;
+  }
+}
+
 .terminal-tabs--shared,
 .terminal-controls {
   display: contents;
@@ -665,16 +706,6 @@
   color: var(--muted);
   font: 400 var(--text-xs)/1 var(--font-sans);
   white-space: nowrap;
-}
-
-.terminal-view__status-label {
-  display: none;
-}
-
-@container project-terminal (min-width: 560px) {
-  .terminal-view__status-label {
-    display: inline;
-  }
 }
 
 .terminal-view__status--connecting > svg,

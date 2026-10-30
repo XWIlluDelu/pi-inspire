@@ -75,6 +75,7 @@
     --conversation-min-w: 400px;
     --navigation-min-w: 220px;
     --context-min-w: 0px;
+    --context-gutter: 0px;
   }
 
   .app:has(> .nav--rail) {
@@ -83,13 +84,14 @@
 
   .app:has(> .ctx) {
     --context-min-w: 320px;
+    --context-gutter: var(--space-2);
   }
 
   .app > .center {
     /* At the desktop breakpoint, reserve all space left by the two minimum
        side widths. Above it, protect a usable conversation without overflow. */
     min-width: min(var(--conversation-min-w), calc(
-      100% - var(--navigation-min-w) - var(--context-min-w) - 2 * var(--space-1)
+      100% - var(--navigation-min-w) - var(--context-min-w) - var(--space-1) - var(--context-gutter)
     ));
   }
 
@@ -101,7 +103,7 @@
   .ctx {
     min-width: var(--context-min-w);
     flex-shrink: 1;
-    border-left: 1px solid var(--line-subtle);
+    border-left: 0;
     border-radius: 0 0 var(--radius-surface) var(--radius-surface);
   }
 }
@@ -114,9 +116,12 @@
 }
 
 .pane-resize--vertical {
+  --pane-gutter: var(--space-1);
   z-index: 20;
-  width: var(--space-1);
+  width: var(--pane-gutter);
 }
+
+.pane-resize--ctx { --pane-gutter: var(--space-2); }
 
 .pane-resize__hit {
   position: absolute;
@@ -126,7 +131,7 @@
 .pane-resize--vertical .pane-resize__hit {
   top: 0;
   bottom: 0;
-  left: calc((var(--space-1) - 8px) / 2);
+  left: calc((var(--pane-gutter) - 8px) / 2);
   width: 8px;
   cursor: col-resize;
 }
@@ -228,7 +233,8 @@ body.pane-resizing--vertical .nav {
 .ctx__file-tab--active {
   background: var(--bg-stage);
   color: var(--accent-deep);
-  box-shadow: inset 0 1px var(--hairline), inset -1px 0 var(--hairline);
+  border-radius: var(--radius-control) var(--radius-control) 0 0;
+  box-shadow: inset 0 1px var(--hairline), inset -1px 0 var(--hairline), inset 1px 0 var(--hairline);
 }
 
 .ctx__file-tab--active::after {
@@ -838,8 +844,8 @@ body.pane-resizing--vertical .nav {
 .file-detail-header__actions[hidden] { display: none; }
 
 .file-preview__actions .icon-button {
-  width: 24px;
-  height: 24px;
+  width: var(--floating-tool-size);
+  height: var(--floating-tool-size);
   border-radius: var(--radius-control);
   border: 0;
   background: transparent;
