@@ -3,7 +3,6 @@ import {
   ChevronRight,
   CodeXml,
   Download,
-  Eye,
   FileText,
   GitCompareArrows,
   MoreHorizontal,
@@ -186,7 +185,7 @@ function FileViewControl({
       {target === "source" ? (
         <CodeXml size={16} aria-hidden />
       ) : (
-        <Eye size={16} aria-hidden />
+        <FileText size={16} aria-hidden />
       )}
     </button>
   );
