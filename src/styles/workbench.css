@@ -61,6 +61,7 @@
 
 .ctx {
   --bg-context: var(--bg-stage);
+  container: context-pane / inline-size;
   width: var(--ctx-w);
   flex: 0 0 auto;
   background: var(--bg-context);
@@ -210,22 +211,47 @@ body.pane-resizing--vertical .nav {
   margin-bottom: -1px;
 }
 
+.ctx__file-tabs-shell {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+}
+
 .ctx__file-tabs {
   min-width: 0;
   flex: 1;
   display: flex;
-  overflow-x: auto;
-  scrollbar-width: thin;
+  overflow: hidden;
   gap: 0;
 }
+
+.ctx__file-tab[hidden], .ctx__tab-overflow[hidden] { display: none; }
+
+.ctx__tab-overflow {
+  flex: 0 0 30px;
+  width: 30px;
+  display: flex;
+  align-items: center;
+}
+
+.ctx__tab-overflow .dropdown__trigger {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  justify-content: center;
+}
+
+.ctx__tab-overflow .dropdown__value,
+.ctx__tab-overflow .dropdown__trigger > .lucide-chevron-down { display: none; }
 
 .ctx__terminal-tabs { display: contents; }
 
 .ctx__file-tab {
   position: relative;
   flex: 0 0 auto;
-  min-width: min(132px, 100%);
-  max-width: min(180px, 100%);
+  min-width: 132px;
+  max-width: var(--ctx-tab-max, 180px);
   display: flex;
   align-items: stretch;
   color: var(--muted);
@@ -270,6 +296,25 @@ body.pane-resizing--vertical .nav {
 .ctx__file-tab--active > button[role="tab"] { color: inherit; }
 .ctx__file-tab > .ctx__file-close { flex: 0 0 22px; justify-content: center; padding-inline: 3px; }
 .ctx__file-tab > .ctx__file-close:focus-visible { outline-width: 1px; }
+
+/* Keep a full-size active tab plus its overflow trigger at the desktop pane's
+   minimum width. Compact spacing, not the icon or pointer targets. */
+@container context-pane (max-width: 400px) {
+  .ctx__header:has(.ctx__tabs) { padding-right: var(--space-1); gap: 0; }
+  .ctx__tabs { gap: 0; }
+  .ctx__tabs .ctx__modes { gap: 0; }
+}
+
+/* Below the width needed by all controls, let the tab strip own its row rather
+   than clipping the selected tab or removing the drawer's Close action. */
+@container context-pane (max-width: 340px) {
+  .app--narrow .ctx__header:has(.ctx__tabs) {
+    display: grid;
+    grid-template-columns: 1fr auto;
+  }
+  .app--narrow .ctx__tabs { display: contents; }
+  .app--narrow .ctx__file-tabs-shell { grid-column: 1 / -1; min-height: 36px; }
+}
 
 .ctx__modes {
   flex: 0 0 auto;

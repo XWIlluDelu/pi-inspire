@@ -231,11 +231,9 @@ export const TerminalPane = memo(function TerminalPane({
   const activeTabId = activeTerminal?.id;
 
   useLayoutEffect(() => {
-    if (!active || !activeTabId) return;
+    if (!active || !activeTabId || sharedTabs) return;
     const tab = document.getElementById(`terminal-tab-${activeTabId}`);
-    const strip = tab?.closest(
-      sharedTabs ? ".ctx__file-tabs" : ".terminal-tabs",
-    );
+    const strip = tab?.closest(".terminal-tabs");
     if (!tab || !strip) return;
     const reveal = () =>
       tab.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -831,7 +829,7 @@ export const TerminalPane = memo(function TerminalPane({
         ...(event.currentTarget
           .closest('[role="tablist"]')
           ?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []),
-      ];
+      ].filter((tab) => !tab.closest("[hidden]"));
       const index = tabs.indexOf(event.currentTarget);
       const next =
         event.key === "ArrowRight"

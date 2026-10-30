@@ -508,11 +508,24 @@ panel border. Selected tabs use top/left/right hairlines and 4px top corners, op
 
 ## Source icon and shared tab widths
 
-Source/Preview now uses CodeXml/Eye icon actions with the same accessible names and tooltips.
+Source/Preview uses CodeXml/FileText icon actions with the same accessible names and tooltips;
+the user's follow-up replaced the initial Eye choice with a document preview glyph.
 File and terminal floating buttons increase together to 28px desktop with 16px glyphs, retaining
 32px touch/narrow targets and the existing gaps, padding and collapse behavior. File and terminal
 tabs share a 132px minimum and 180px maximum (bounded by the strip), keeping close actions aligned
 and long names ellipsized. Panel gutter, selected-tab borders and top corners are unchanged.
+
+## Shared tab overflow
+
+File and portalled terminal tabs now share one measured overflow policy. Excess tabs remain
+mounted but move into More tabs, using the existing accessible Dropdown; selecting an entry
+reveals it without reordering or recreating content. Resize and title/selection changes update the
+visible subset, with the active tab reserved first and no horizontal scrollbar. The shared 132px
+minimum remains intact, including the minimum desktop pane; extremely narrow drawers retain all
+controls with a second row. Standalone/focused terminal windows keep their existing own strip.
+Focused browser checks cover mixed file/terminal overflow, revealing hidden file and terminal
+tabs, minimum-width and expanded-width resize, preserved order, and the 320px drawer layout.
+The resource-preview toggle case, typecheck, lint and isolated build pass; no full CI matrix was run.
 
 ## Undecided interaction proposals
 

@@ -33,6 +33,7 @@ import { hasActiveModal, recoverModalFocus } from "../use-modal-focus";
 import { readHistoryReading, workbenchSessionKey } from "../workbench-session";
 import { BranchTree } from "./BranchTree";
 import { ChangesPane } from "./ChangesPane";
+import { ContextTabStrip } from "./ContextTabStrip";
 import { selectContextPaneView } from "./context-pane-view";
 import type { FileReadingState } from "./FilePreview";
 import { FilesPane } from "./FilesPane";
@@ -94,21 +95,6 @@ export const ContextPane = memo(function ContextPane({
       if (!state.resourceTabs.some((tab) => tab.reference === reference))
         fileReadings.delete(reference);
   }, [fileReadings, state.resourceTabs]);
-  useEffect(() => {
-    const strip = fileTabsRef.current;
-    const tab = strip?.querySelector<HTMLElement>(".ctx__file-tab--active");
-    if (!strip || !tab) return;
-    const reveal = () =>
-      tab.scrollIntoView({ block: "nearest", inline: "nearest" });
-    reveal();
-    const observer = new ResizeObserver(reveal);
-    observer.observe(strip);
-    return () => observer.disconnect();
-  }, [
-    state.contextMode,
-    state.selectedResourceReference,
-    state.fileBrowserView,
-  ]);
   const activeFile =
     state.contextMode === "files" && state.fileBrowserView === "preview";
   const selectedReference = state.selectedResourceReference;
@@ -372,7 +358,7 @@ export const ContextPane = memo(function ContextPane({
               ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
                 '[role="tab"]',
               ),
-            ];
+            ].filter((tab) => !tab.closest("[hidden]"));
             const index = tabs.indexOf(event.target as HTMLButtonElement);
             const next =
               event.key === "ArrowRight"
@@ -390,7 +376,7 @@ export const ContextPane = memo(function ContextPane({
             tabs[next]?.click();
           }}
         >
-          <div className="ctx__file-tabs" ref={fileTabsRef}>
+          <ContextTabStrip stripRef={fileTabsRef}>
             {state.resourceTabs.map((tab) => {
               const path =
                 tab.workspacePath ??
@@ -453,7 +439,7 @@ export const ContextPane = memo(function ContextPane({
               );
             })}
             <div className="ctx__terminal-tabs" ref={setTerminalTabsHost} />
-          </div>
+          </ContextTabStrip>
           <div className="ctx__modes">
             {(["files", "changes", "branches"] as const).map((mode) => {
               const label =

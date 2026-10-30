@@ -96,6 +96,13 @@ independent project shells in [[terminal]].
 
 ## Short-window input and extension content
 
+The shared file/terminal strip retains each tab's 132px minimum and 180px cap. Excess tabs are
+reachable through a trailing ellipsis using the existing dropdown's keyboard and modal behavior;
+the selected tab remains visible and selecting an overflow entry preserves the underlying order.
+Opening, closing, renaming and resizing recompute the visible subset without unmounting readers or
+terminal processes. Compact pane spacing keeps room for a full tab and overflow trigger. Only
+drawers at 340px or narrower put the tab strip on its own row, retaining all tool and Close targets.
+
 Transcript and the complete Composer dock share the reading stage's height budget. Preserve a reading
 area while the draft and Pi's aboveEditor/belowEditor widgets yield through their own scrolling.
 Input text keeps its normal size; toolbars and Send/Stop retain their full targets. The minimum

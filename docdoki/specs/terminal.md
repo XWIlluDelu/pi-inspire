@@ -209,8 +209,10 @@ Diagnostics omit terminal input, output, and internal path-bearing failures.
 
 Each project terminal occupies a tab beside open files in the shared contextual strip. Terminal
 tabs use the file tab's padding, close slot, width cap and overflow rules; each 6px status dot
-sits within the same 13px icon slot. File and terminal tabs share a 132px minimum and 180px cap,
-bounded by the strip width; longer names truncate within that shared geometry.
+sits within the same 13px icon slot. File and terminal tabs share a 132px minimum and 180px cap;
+longer names truncate within that shared geometry. Tabs that do not fit move into the shared
+trailing More tabs menu, without horizontal scrolling or reducing that minimum. The active tab
+stays visible; choosing a hidden tab reveals it without changing the underlying file/terminal order.
 Selecting a file or tool hides the terminal view without replacing its process or changing input ownership.
 The top Terminal shortcut creates and activates one default-profile terminal; existing terminals
 are reached through their tabs. The pane reads the catalog when the shared strip first opens so
