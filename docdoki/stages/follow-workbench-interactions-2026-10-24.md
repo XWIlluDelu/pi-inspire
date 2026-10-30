@@ -438,6 +438,15 @@ remains 4px. The extra group gap is absent in constrained two-row desktop and mo
 Hidden independently lists standalone sessions before project folders and preserves internal and
 keyboard ordering; its boundary uses existing section spacing rather than extra indentation.
 
+## Delete-confirmation text alignment
+
+The screenshot-led confirmation review measures visible text rather than assuming centred line
+boxes. Plex title ink sat about 1.33px above the badge and close glyphs; the existing 1px optical
+text offset reduces that difference to about 0.33px. The session label and explanation already
+share their body reading column (individual letter side bearings differ by about 1px), and footer
+icon/label centres differ by about 0.36px, so those layers are retained. Dialog wording and delete
+behavior are unchanged; isolated confirmation checks block DELETE and only dismiss the dialog.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

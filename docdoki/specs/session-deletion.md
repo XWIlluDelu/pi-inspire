@@ -20,6 +20,11 @@ files, and newer browser preferences. Navigation curation remains in [[session-c
 
 ## Confirmation and ownership
 
+The confirmation's session-name text and explanatory lines share the inset body column. Its
+badge/title header retains a separate hierarchy; Plex title ink uses the shared optical offset to
+centre against the badge and close glyphs. Footer actions keep their existing label/icon centring
+and behavior rather than moving all layers onto one text origin.
+
 Deletion is a second-tier action inside Hidden. Confirmation names the exact targets and explains
 Trash, the permanent-delete fallback, and the exclusion of project files and separately stored forks.
 The browser submits bounded session identities; the Host resolves and validates their files.

@@ -1578,6 +1578,8 @@
 .session-delete__header .dialog__title {
   flex: 1 1 auto;
   min-width: 0;
+  /* Centre Plex's visible letters against the badge and close glyphs. */
+  translate: 0 var(--ui-text-offset);
 }
 
 .session-delete__icon {
