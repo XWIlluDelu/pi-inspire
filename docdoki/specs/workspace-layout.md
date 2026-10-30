@@ -84,6 +84,8 @@ independent project shells in [[terminal]].
   temporary widths back to storage. Double-click resets only the chosen side.
   Desktop panes are separated by 4px gutters
   with 8px resize hit bands that remain available while their indicator is hidden at rest.
+  The right pane retains a weak 1px leading surface border so its stage-colored content remains
+  distinct from the conversation; that panel edge is separate from the hidden drag indicator.
   Hover, keyboard focus and active dragging reveal a straight 2px divider with round caps and
   inset ends, not an outline wrapping the adjacent pane's corners.
   The session header shares the reading surface without a separate bottom seam.

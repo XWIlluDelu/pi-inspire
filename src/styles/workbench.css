@@ -101,7 +101,7 @@
   .ctx {
     min-width: var(--context-min-w);
     flex-shrink: 1;
-    border-left: 0;
+    border-left: 1px solid var(--line-subtle);
     border-radius: 0 0 var(--radius-surface) var(--radius-surface);
   }
 }
@@ -714,6 +714,10 @@ body.pane-resizing--vertical .nav {
 }
 
 .file-preview__actions-toggle { flex: 0 0 auto; }
+
+.file-preview__actions:has(> .file-preview__actions-toggle[aria-expanded="false"]) {
+  padding-inline: 2px;
+}
 
 .file-preview__exports {
   display: inline-flex;

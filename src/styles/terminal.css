@@ -165,10 +165,17 @@
 .ctx__terminal-select { flex: 1; }
 .ctx__file-tab > .ctx__terminal-select { cursor: pointer; }
 .ctx__file-tab .terminal-tab__status { align-self: center; }
+.ctx__terminal-icon {
+  display: inline-flex;
+  flex: 0 0 13px;
+  height: 13px;
+  align-items: center;
+  justify-content: center;
+}
 .ctx__file-tab .terminal-tab__rename {
   align-self: center;
-  /* Label: 8px inset + 6px status + 5px gap; input: 1px border + 5px padding. */
-  margin-left: 13px;
+  /* Same 13px icon slot as files; input contributes 1px border + 5px padding. */
+  margin-left: 20px;
   translate: 0 var(--ui-text-offset);
 }
 
@@ -200,6 +207,9 @@
 .terminal-controls[hidden],
 .terminal-pane--shared .terminal-controls[hidden] { display: none; }
 .terminal-controls-toggle { flex: 0 0 auto; }
+.terminal-pane--shared .terminal-tabs-shell:has(> .terminal-controls-toggle[aria-expanded="false"]) {
+  padding-inline: 2px;
+}
 .terminal-pane--shared .terminal-tabs__new {
   border: 0;
   padding: 0;

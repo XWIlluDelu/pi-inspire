@@ -207,8 +207,10 @@ Diagnostics omit terminal input, output, and internal path-bearing failures.
 
 ## Tabs, menus, and settings
 
-Each project terminal occupies a tab beside open files in the shared contextual strip. Selecting
-a file or tool hides the terminal view without replacing its process or changing input ownership.
+Each project terminal occupies a tab beside open files in the shared contextual strip. Terminal
+tabs use the file tab's padding, close slot, width cap and overflow rules; each 6px status dot
+sits within the same 13px icon slot. Names retain natural width rather than an invented fixed size.
+Selecting a file or tool hides the terminal view without replacing its process or changing input ownership.
 The top Terminal shortcut creates and activates one default-profile terminal; existing terminals
 are reached through their tabs. The pane reads the catalog when the shared strip first opens so
 existing terminal tabs remain reachable after refresh, including from Files. Background catalog

@@ -1075,10 +1075,18 @@ export const TerminalPane = memo(function TerminalPane({
               onKeyDown={(event) => handleTabKey(event, index)}
               title={`${terminalLabel(terminal)} — ${terminal.currentCwd}`}
             >
-              <span
-                className={`terminal-tab__status terminal-tab__status--${terminal.status}`}
-                aria-hidden
-              />
+              {sharedTabs ? (
+                <span className="ctx__terminal-icon" aria-hidden>
+                  <span
+                    className={`terminal-tab__status terminal-tab__status--${terminal.status}`}
+                  />
+                </span>
+              ) : (
+                <span
+                  className={`terminal-tab__status terminal-tab__status--${terminal.status}`}
+                  aria-hidden
+                />
+              )}
               <span className="terminal-tab__label">
                 {terminalLabel(terminal)}
               </span>

@@ -473,6 +473,17 @@ counts match requested actions; busy-close cancellation sends no removal. The na
 output at the pane top without a reserved second header and no viewport overflow. No user terminal
 or in-flight task is used by these checks.
 
+## Collapsed tools and right-panel edge
+
+Collapsed file and terminal tool groups reduce horizontal padding from 6px to 2px, matching the
+existing vertical padding without shrinking their icon-button hit areas. Desktop terminal controls
+become 34px square and file controls 30px square; expanded spacing remains unchanged. A weak 1px
+right-panel leading border distinguishes its stage-colored content from the conversation. The 4px
+gutter, 8px resize hit band and hidden-at-rest drag indicator remain unchanged; no header line changes.
+Terminal status dots retain 6px paint inside the file icon's 13px slot, so equal labels occupy equal
+tab widths. Shared padding, close slots, natural sizing and the 180px cap remain; rename inputs
+follow the same label origin.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:
