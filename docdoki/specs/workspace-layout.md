@@ -102,6 +102,11 @@ the selected tab remains visible and selecting an overflow entry preserves the u
 Opening, closing, renaming and resizing recompute the visible subset without unmounting readers or
 terminal processes. Compact pane spacing keeps room for a full tab and overflow trigger. Only
 drawers at 340px or narrower put the tab strip on its own row, retaining all tool and Close targets.
+Files/Changes/History use the same content-connected selected-tab background, top corners and
+fine boundary as file/terminal tabs, without an additional accent underline. The Terminal shortcut
+remains an action that creates a terminal. Inactive file hover surfaces share the 4px top corners.
+On fine-pointer desktop layouts, a strip with no open file or terminal tabs uses a 32px header;
+opened tabs keep the 36px full-height strip, while narrow/touch targets retain their existing size.
 
 Transcript and the complete Composer dock share the reading stage's height budget. Preserve a reading
 area while the draft and Pi's aboveEditor/belowEditor widgets yield through their own scrolling.

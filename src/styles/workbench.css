@@ -200,6 +200,10 @@ body.pane-resizing--vertical .nav {
 
 .ctx__header:has(.ctx__tabs) { padding-left: 0; }
 
+@media (min-width: 901px) and (pointer: fine) {
+  .ctx__header:has(.ctx__tabs):not(:has(.ctx__file-tab)) { height: 32px; }
+}
+
 .ctx__tabs {
   min-width: 0;
   flex: 1;
@@ -255,6 +259,7 @@ body.pane-resizing--vertical .nav {
   display: flex;
   align-items: stretch;
   color: var(--muted);
+  border-radius: var(--radius-control) var(--radius-control) 0 0;
 }
 
 .ctx__file-tab--active {
@@ -388,9 +393,21 @@ body.pane-resizing--vertical .nav {
 .ctx__modes button[aria-pressed="true"],
 .ctx__modes button[aria-selected="true"],
 .ctx__modes button.segmented__item--active {
+  align-self: stretch;
+  height: auto;
   background: var(--bg-stage);
-  box-shadow: inset 0 -2px 0 var(--accent);
+  border-radius: var(--radius-control) var(--radius-control) 0 0;
+  box-shadow: inset 0 1px var(--hairline), inset -1px 0 var(--hairline), inset 1px 0 var(--hairline);
   font-weight: 600;
+}
+
+.ctx__modes button:is([aria-pressed="true"], [aria-selected="true"], .segmented__item--active)::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 1px;
+  background: var(--bg-stage);
+  pointer-events: none;
 }
 
 .ctx__modes button:disabled {
@@ -950,20 +967,14 @@ body.pane-resizing--vertical .nav {
     color var(--dur-micro) var(--ease-standard);
 }
 
-.file-detail-header__interaction {
-  gap: var(--space-1);
-  width: auto;
-  flex-basis: auto;
-  white-space: nowrap;
-}
-
 .file-preview__actions .file-detail-header__mode {
   flex: 0 0 var(--floating-tool-size);
   padding: 0;
 }
 
 .file-detail-header__interaction[aria-pressed="true"] {
-  color: var(--ink);
+  color: var(--accent-deep);
+  background: var(--accent-tint);
 }
 
 /* The floating group retains larger touch targets without a separate path row. */

@@ -529,6 +529,19 @@ The resource-preview toggle case, typecheck, lint and isolated build pass; no fu
 
 ## Undecided interaction proposals
 
+## Connected tool tabs and interaction icon
+
+Fixed tool selection now uses the file tab's content-connected surface and fine top/side boundary
+instead of an underline; Terminal remains New terminal. All file-tab hover surfaces retain 4px
+top corners. Empty desktop strips reduce the necessary tool/header height from 36px to 32px without
+adding filler; Files search keeps its existing 4px internal top inset and no additional reserved row.
+HTML interaction uses ordinary/clicking pointer glyphs in the shared 28px desktop control, retaining
+Enable/Stop accessible actions, pressed/busy state, execution grants and revocation. Five targeted
+HTML tests pass; isolated visual checks verify actual selected/hover surfaces and both pointer
+states. No broad CI matrix or production restart is needed.
+
+## Undecided interaction proposals
+
 The following remain proposals, not implemented requirements:
 
 - A command-palette entry that discovers existing actions without duplicating their policy.

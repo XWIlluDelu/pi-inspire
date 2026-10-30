@@ -6,6 +6,8 @@ import {
   FileText,
   GitCompareArrows,
   MoreHorizontal,
+  MousePointer2,
+  MousePointerClick,
   RotateCw,
 } from "lucide-react";
 import {
@@ -679,23 +681,29 @@ export function FilePreview({
           {canInteract ? (
             <button
               type="button"
-              className="file-detail-header__view file-detail-header__interaction"
+              className="icon-button file-detail-header__interaction"
+              aria-label={
+                currentInteraction && currentInteraction.status !== "error"
+                  ? "Stop interaction"
+                  : "Enable interaction"
+              }
               aria-pressed={currentInteraction?.status === "running"}
               aria-busy={currentInteraction?.status === "loading"}
               disabled={preview?.status === "ready" && preview.refreshing}
               title={
                 currentInteraction && currentInteraction.status !== "error"
-                  ? "Stop this page and return to static preview"
-                  : "Run this file's JavaScript and load its resources"
+                  ? "Disable interaction"
+                  : "Enable interaction"
               }
               onClick={() => void toggleInteraction()}
             >
               {currentInteraction?.status === "loading" ? (
-                <PiLoader size={13} aria-hidden />
-              ) : null}
-              {currentInteraction && currentInteraction.status !== "error"
-                ? "Stop interaction"
-                : "Enable interaction"}
+                <PiLoader size={16} aria-hidden />
+              ) : currentInteraction?.status === "running" ? (
+                <MousePointerClick size={16} aria-hidden />
+              ) : (
+                <MousePointer2 size={16} aria-hidden />
+              )}
             </button>
           ) : null}
           <div className="file-preview__exports">
